@@ -77,25 +77,25 @@ interface Project {
 }
 
 const SCOPE_META: Record<string, { emoji: string; label: string; color: string }> = {
-  BOH:        { emoji: '🍳', label: 'Back of House',  color: '#F59E0B' },
-  FOH:        { emoji: '🪑', label: 'Front of House', color: '#6366F1' },
-  AG:         { emoji: '✨', label: 'AG / Finishing', color: '#EC4899' },
-  Equipment:  { emoji: '🛠', label: 'Small wares',    color: '#A855F7' },
-  MEP:        { emoji: '⚡', label: 'MEP',            color: '#FCD34D' },
-  Civil:      { emoji: '🏗', label: 'Civil',          color: '#94A3B8' },
-  Tech:       { emoji: '💻', label: 'Tech',           color: '#0EA5E9' },
-  Branding:   { emoji: '🎨', label: 'Branding',       color: '#EF4444' },
-  Permits:    { emoji: '📑', label: 'Permits',        color: '#22C55E' },
-  SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: '#5EEAD4' },
-  Other:      { emoji: '📦', label: 'Other',          color: '#9CA3AF' },
+  BOH:        { emoji: '🍳', label: 'Back of House',  color: '#a15c00' },
+  FOH:        { emoji: '🪑', label: 'Front of House', color: 'var(--erp-secondary)' },
+  AG:         { emoji: '✨', label: 'AG / Finishing', color: '#be185d' },
+  Equipment:  { emoji: '🛠', label: 'Small wares',    color: '#6b2f68' },
+  MEP:        { emoji: '⚡', label: 'MEP',            color: '#a15c00' },
+  Civil:      { emoji: '🏗', label: 'Civil',          color: '#7a6178' },
+  Tech:       { emoji: '💻', label: 'Tech',           color: '#1d4ed8' },
+  Branding:   { emoji: '🎨', label: 'Branding',       color: '#b42318' },
+  Permits:    { emoji: '📑', label: 'Permits',        color: '#3f7d20' },
+  SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: '#3f7d20' },
+  Other:      { emoji: '📦', label: 'Other',          color: '#7a6178' },
 }
 
 const PHASE_META: Record<Project['phase'], { label: string; bg: string; fg: string }> = {
-  planning:  { label: 'Planning',   bg: 'rgba(99,102,241,0.12)',  fg: '#A5B4FC' },
-  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: '#FCD34D' },
-  executing: { label: 'Executing',  bg: 'rgba(0,212,177,0.12)',   fg: '#00D4B1' },
-  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: '#D8B4FE' },
-  live:      { label: 'Live',       bg: 'rgba(34,197,94,0.15)',   fg: '#86EFAC' },
+  planning:  { label: 'Planning',   bg: 'rgb(61 31 59 / 0.12)',  fg: '#6b2f68' },
+  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: '#a15c00' },
+  executing: { label: 'Executing',  bg: 'rgb(135 197 64 / 0.12)',   fg: 'var(--erp-primary)' },
+  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: '#6b2f68' },
+  live:      { label: 'Live',       bg: 'rgba(34,197,94,0.15)',   fg: '#3f7d20' },
 }
 
 const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
@@ -196,7 +196,7 @@ export default function InvestmentDashboardPage() {
   const maxScope    = Math.max(1, ...agg.topScopes.map((s) => s.cents))
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
           <Link href="/finance" className="hover:text-white/70">← Finance</Link>
@@ -208,7 +208,7 @@ export default function InvestmentDashboardPage() {
               Roll-up of every project in Project Tracker — total ask, paid, committed, burn rate,
               spend by scope, top vendors. Read-only by design: log every PKR out in
               {' '}
-              <Link href="/finance/capex" className="text-kds-green font-bold hover:opacity-80">
+              <Link href="/finance/capex" className="text-primary-ink font-bold hover:opacity-80">
                 Project Tracker
               </Link>
               {' '}
@@ -216,7 +216,7 @@ export default function InvestmentDashboardPage() {
             </p>
           </div>
           <Link href="/finance/capex"
-            className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
             Open Project Tracker →
           </Link>
         </div>
@@ -226,7 +226,7 @@ export default function InvestmentDashboardPage() {
         {/* ── Empty state ───────────────────────────────────────────────── */}
         {!isLoading && projects.length === 0 && (
           <div className="rounded-2xl p-12 text-center"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <p className="text-4xl mb-2">📊</p>
             <p className="font-bold text-white/85">Nothing to roll up yet</p>
             <p className="text-sm text-white/45 mt-1 mb-4">
@@ -234,7 +234,7 @@ export default function InvestmentDashboardPage() {
               you log there shows up here.
             </p>
             <Link href="/finance/capex"
-              className="inline-block rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">
+              className="inline-block rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
               + Start a project
             </Link>
           </div>
@@ -249,28 +249,28 @@ export default function InvestmentDashboardPage() {
                 hint={`${projects.length} project${projects.length === 1 ? '' : 's'}`}
                 value={PKR_LAKHS(agg.totalAsk)}
                 subValue={PKR(agg.totalAsk)}
-                bg="rgba(99,102,241,0.05)" border="rgba(99,102,241,0.22)" color="#A5B4FC"
+                bg="rgb(61 31 59 / 0.05)" border="rgb(61 31 59 / 0.22)" color="#6b2f68"
               />
               <KpiTile
                 label="Paid to date"
                 hint={`${pctPaid}% of ask`}
                 value={PKR_LAKHS(agg.paid)}
                 subValue={PKR(agg.paid)}
-                bg="rgba(245,158,11,0.05)" border="rgba(245,158,11,0.22)" color="#FCD34D"
+                bg="rgba(245,158,11,0.05)" border="rgba(245,158,11,0.22)" color="#a15c00"
               />
               <KpiTile
                 label="Committed"
                 hint={`${pctCmttd}% of ask`}
                 value={PKR_LAKHS(agg.committed)}
                 subValue={`${PKR_LAKHS(agg.committed - agg.paid)} unpaid`}
-                bg="rgba(0,212,177,0.05)" border="rgba(0,212,177,0.22)" color="#00D4B1"
+                bg="rgb(135 197 64 / 0.05)" border="rgb(135 197 64 / 0.22)" color="var(--erp-primary)"
               />
               <KpiTile
                 label="Burn rate / mo"
                 hint={agg.runwayMonths ? `~${agg.runwayMonths.toFixed(1)} mo runway` : 'avg over 90 days'}
                 value={PKR_LAKHS(agg.burnPerMonth)}
                 subValue={`over last 90 days`}
-                bg="rgba(236,72,153,0.05)" border="rgba(236,72,153,0.22)" color="#F9A8D4"
+                bg="rgba(236,72,153,0.05)" border="rgba(236,72,153,0.22)" color="#be185d"
               />
             </div>
 
@@ -281,39 +281,39 @@ export default function InvestmentDashboardPage() {
                 hint="capitalised onto the fixed-asset register"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
                 subValue={PKR(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
-                bg="rgba(134,239,172,0.05)" border="rgba(134,239,172,0.22)" color="#86EFAC"
+                bg="rgba(134,239,172,0.05)" border="rgba(134,239,172,0.22)" color="#3f7d20"
               />
               <KpiTile
                 label="Not yet capitalised"
                 hint="advanced to suppliers, item not on the register yet"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
                 subValue={PKR(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
-                bg="rgba(252,211,77,0.05)" border="rgba(252,211,77,0.22)" color="#FCD34D"
+                bg="rgba(252,211,77,0.05)" border="rgba(252,211,77,0.22)" color="#a15c00"
               />
               <KpiTile
                 label="Prepaid rent · fees expensed"
                 hint="rent advances (1310) · broker / consultant fees (6110)"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0) + (p.books?.expensedCents ?? 0), 0))}
                 subValue={`${PKR(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0), 0))} prepaid · ${PKR(projects.reduce((t, p) => t + (p.books?.expensedCents ?? 0), 0))} fees`}
-                bg="rgba(165,180,252,0.05)" border="rgba(165,180,252,0.22)" color="#A5B4FC"
+                bg="rgba(165,180,252,0.05)" border="rgba(165,180,252,0.22)" color="#6b2f68"
               />
             </div>
 
             {/* ── Progress bar against total ask ─────────────────────────── */}
             {agg.totalAsk > 0 && (
               <div className="rounded-2xl p-4"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex justify-between items-baseline mb-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">Deployment vs total ask</p>
                   <p className="text-xs text-white/55">
-                    <span className="text-amber-400 font-bold">{PKR_LAKHS(agg.paid)} paid</span> ·
-                    <span className="text-kds-green font-bold ml-1.5">{PKR_LAKHS(agg.committed)} committed</span> ·
+                    <span className="text-amber-700 font-bold">{PKR_LAKHS(agg.paid)} paid</span> ·
+                    <span className="text-primary-ink font-bold ml-1.5">{PKR_LAKHS(agg.committed)} committed</span> ·
                     <span className="text-white/50 ml-1.5">{PKR_LAKHS(agg.totalAsk - agg.committed)} unallocated</span>
                   </p>
                 </div>
-                <div className="h-2.5 rounded-full overflow-hidden flex" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  <div className="h-full" style={{ width: `${Math.min(100, pctPaid)}%`, background: '#F59E0B' }} />
-                  <div className="h-full" style={{ width: `${Math.min(100, Math.max(0, pctCmttd - pctPaid))}%`, background: 'rgba(0,212,177,0.6)' }} />
+                <div className="h-2.5 rounded-full overflow-hidden flex" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }}>
+                  <div className="h-full" style={{ width: `${Math.min(100, pctPaid)}%`, background: '#a15c00' }} />
+                  <div className="h-full" style={{ width: `${Math.min(100, Math.max(0, pctCmttd - pctPaid))}%`, background: 'rgb(135 197 64 / 0.6)' }} />
                 </div>
               </div>
             )}
@@ -322,7 +322,7 @@ export default function InvestmentDashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr] gap-3">
               {/* Monthly burn chart */}
               <div className="rounded-2xl p-5"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-4">Monthly paid · last 6 months</p>
                 <div className="flex items-end gap-2 h-32">
                   {agg.last6Months.map((m) => {
@@ -336,8 +336,8 @@ export default function InvestmentDashboardPage() {
                           style={{
                             height: `${h}%`,
                             background: m.cents > 0
-                              ? 'linear-gradient(180deg, #F59E0B 0%, rgba(245,158,11,0.4) 100%)'
-                              : 'rgba(255,255,255,0.04)',
+                              ? 'linear-gradient(180deg, #a15c00 0%, rgba(245,158,11,0.4) 100%)'
+                              : 'rgb(var(--fg-rgb) / 0.04)',
                           }} />
                         <div className="text-[10px] text-white/50 font-bold uppercase">{m.label}</div>
                       </div>
@@ -348,10 +348,10 @@ export default function InvestmentDashboardPage() {
 
               {/* Projects list */}
               <div className="rounded-2xl p-5"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex justify-between items-baseline mb-3">
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">Projects ({projects.length})</p>
-                  <Link href="/finance/capex" className="text-[10px] text-kds-green font-bold hover:opacity-80">Manage →</Link>
+                  <Link href="/finance/capex" className="text-[10px] text-primary-ink font-bold hover:opacity-80">Manage →</Link>
                 </div>
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {projects.map((p) => {
@@ -361,16 +361,16 @@ export default function InvestmentDashboardPage() {
                     return (
                       <Link key={p.id} href={`/finance/capex?project=${p.id}`}
                         className="block rounded-xl p-3 transition-colors hover:bg-white/[0.04]"
-                        style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                         <div className="flex items-start justify-between gap-2">
                           <p className="font-bold text-sm text-white/90 truncate flex-1">{p.name}</p>
                           <span className="shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
                             style={{ background: phaseM.bg, color: phaseM.fg }}>{phaseM.label}</span>
                         </div>
                         <div className="flex items-center gap-2 mt-1.5">
-                          <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                          <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }}>
                             <div className="h-full"
-                              style={{ width: `${pct}%`, background: over ? '#FF4D4F' : pct > 70 ? '#F59E0B' : '#00D4B1' }} />
+                              style={{ width: `${pct}%`, background: over ? '#b42318' : pct > 70 ? '#a15c00' : 'var(--erp-primary)' }} />
                           </div>
                           <p className="text-[10px] text-white/55 shrink-0 font-mono">
                             {PKR_LAKHS(p.rollups.paidCents)} / {PKR_LAKHS(p.budgetEnvelopeCents || p.rollups.totalAskCents)}
@@ -378,7 +378,7 @@ export default function InvestmentDashboardPage() {
                         </div>
                         <p className="text-[10px] text-white/40 mt-1">
                           {p.lines.length} lines · {p.rollups.committedCents > 0 ? `${PKR_LAKHS(p.rollups.committedCents)} committed` : 'no commitments yet'}
-                          {over && <span className="text-red-400 font-bold"> · over by {PKR_LAKHS(p.rollups.varianceVsEnvelopeCents)}</span>}
+                          {over && <span className="text-red-700 font-bold"> · over by {PKR_LAKHS(p.rollups.varianceVsEnvelopeCents)}</span>}
                         </p>
                       </Link>
                     )
@@ -390,11 +390,11 @@ export default function InvestmentDashboardPage() {
             {/* ── Spend by scope ─────────────────────────────────────────── */}
             {agg.topScopes.length > 0 && (
               <div className="rounded-2xl p-5"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Spend by scope (across all projects)</p>
                 <div className="space-y-2">
                   {agg.topScopes.map((s) => {
-                    const meta = SCOPE_META[s.scope] ?? { emoji: '·', label: s.scope, color: '#9CA3AF' }
+                    const meta = SCOPE_META[s.scope] ?? { emoji: '·', label: s.scope, color: '#7a6178' }
                     const pct = (s.cents / maxScope) * 100
                     return (
                       <div key={s.scope} className="flex items-center gap-3">
@@ -402,7 +402,7 @@ export default function InvestmentDashboardPage() {
                           <span>{meta.emoji}</span>
                           <span className="font-bold">{meta.label}</span>
                         </div>
-                        <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                        <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.05)' }}>
                           <div className="h-full transition-all"
                             style={{ width: `${pct}%`, background: meta.color, opacity: 0.85 }} />
                         </div>
@@ -417,7 +417,7 @@ export default function InvestmentDashboardPage() {
             {/* ── 2-col: top vendors + recent payments ───────────────────── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <div className="rounded-2xl p-5"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Top vendors by spend</p>
                 {agg.topVendors.length === 0 ? (
                   <p className="text-xs text-white/40">No vendor payments recorded yet.</p>
@@ -425,14 +425,14 @@ export default function InvestmentDashboardPage() {
                   <div className="space-y-2">
                     {agg.topVendors.map((v) => (
                       <div key={v.name} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
-                        style={{ background: 'rgba(255,255,255,0.025)' }}>
+                        style={{ background: 'rgb(var(--fg-rgb) / 0.025)' }}>
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-white/85 truncate">{v.name}</p>
                           <p className="text-[10px] text-white/45">
                             {v.lines} line{v.lines === 1 ? '' : 's'} · {v.projects} project{v.projects === 1 ? '' : 's'}
                           </p>
                         </div>
-                        <p className="text-sm font-mono font-bold text-amber-400 shrink-0">{PKR_LAKHS(v.paid)}</p>
+                        <p className="text-sm font-mono font-bold text-amber-700 shrink-0">{PKR_LAKHS(v.paid)}</p>
                       </div>
                     ))}
                   </div>
@@ -440,7 +440,7 @@ export default function InvestmentDashboardPage() {
               </div>
 
               <div className="rounded-2xl p-5"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Recent payments</p>
                 {agg.recentPayments.length === 0 ? (
                   <p className="text-xs text-white/40">No payments logged yet. Add one from a line in Project Tracker.</p>
@@ -448,23 +448,23 @@ export default function InvestmentDashboardPage() {
                   <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                     {agg.recentPayments.map((r) => (
                       <div key={r.payment.id} className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs"
-                        style={{ background: 'rgba(255,255,255,0.02)' }}>
+                        style={{ background: 'rgb(var(--fg-rgb) / 0.02)' }}>
                         <span className="text-white/45 font-mono text-[10px] w-16 shrink-0">
                           {new Date(r.payment.paidAt!).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}
                         </span>
-                        <span className="font-mono font-bold text-amber-400 shrink-0 w-20 text-right">
+                        <span className="font-mono font-bold text-amber-700 shrink-0 w-20 text-right">
                           {PKR_LAKHS(r.payment.paidAmountCents ?? 0)}
                         </span>
                         <span className="text-white/80 truncate flex-1">{r.line.item}</span>
                         <span className="text-white/35 text-[10px] shrink-0 hidden sm:inline">{r.projectName}</span>
                         <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5 shrink-0"
                           style={{
-                            background: r.payment.label === 'deposit' ? 'rgba(99,102,241,0.15)'
+                            background: r.payment.label === 'deposit' ? 'rgb(61 31 59 / 0.15)'
                                       : r.payment.label === 'balance' ? 'rgba(34,197,94,0.15)'
                                       : 'rgba(245,158,11,0.15)',
-                            color:      r.payment.label === 'deposit' ? '#A5B4FC'
-                                      : r.payment.label === 'balance' ? '#86EFAC'
-                                      : '#FCD34D',
+                            color:      r.payment.label === 'deposit' ? '#6b2f68'
+                                      : r.payment.label === 'balance' ? '#3f7d20'
+                                      : '#a15c00',
                           }}>
                           {r.payment.label}
                         </span>

@@ -60,7 +60,7 @@ export default function LocationsPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
           <Link href="/configuration" className="hover:text-white/70">← Configuration Hub</Link>
@@ -77,7 +77,7 @@ export default function LocationsPage() {
           </div>
           <button
             onClick={() => setAdding(true)}
-            className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90"
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90"
           >
             + Add location
           </button>
@@ -89,7 +89,7 @@ export default function LocationsPage() {
 
         {!isLoading && locations.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
-            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="text-4xl mb-3">📍</p>
             <p className="font-bold text-white/85">No locations yet</p>
             <p className="text-sm text-white/45 mt-1 max-w-sm mx-auto">
@@ -102,7 +102,7 @@ export default function LocationsPage() {
           <div
             key={loc.id}
             className="rounded-2xl p-5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
@@ -129,7 +129,7 @@ export default function LocationsPage() {
                     {loc.concepts.map((cl) => (
                       <span key={cl.conceptId}
                         className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.18)' }}>
+                        style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
                         {cl.concept.name}{cl.isPrimary ? ' ★' : ''}
                       </span>
                     ))}
@@ -147,7 +147,7 @@ export default function LocationsPage() {
                 </button>
                 <button
                   onClick={() => setConfirmDelete(loc)}
-                  className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-300/70 hover:text-red-200 hover:border-red-500/40"
+                  className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-700/70 hover:text-red-700 hover:border-red-500/40"
                 >
                   Delete
                 </button>
@@ -171,10 +171,10 @@ export default function LocationsPage() {
       )}
 
       {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setConfirmDelete(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={() => setConfirmDelete(null)}>
           <div
             className="w-full max-w-md rounded-2xl overflow-hidden"
-            style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
+            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-5">
@@ -188,7 +188,7 @@ export default function LocationsPage() {
                 </p>
               )}
               {remove.isError && (
-                <p className="text-xs text-red-300 mt-3">{errorText(remove.error)}</p>
+                <p className="text-xs text-red-700 mt-3">{errorText(remove.error)}</p>
               )}
             </div>
             <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
@@ -257,10 +257,10 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
       <div
         className="w-full max-w-lg rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
@@ -277,26 +277,26 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
             <label className="text-xs text-white/55">Name *</label>
             <input value={name} onChange={(e) => setName(e.target.value)}
               placeholder="Gulberg Branch"
-              className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none" autoFocus />
+              className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none" autoFocus />
           </div>
           <div>
             <label className="text-xs text-white/55">Address</label>
             <input value={address} onChange={(e) => setAddress(e.target.value)}
               placeholder="MM Alam Road, Block H Gulberg III"
-              className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none" />
+              className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-white/55">City</label>
               <input value={city} onChange={(e) => setCity(e.target.value)}
                 placeholder="Lahore"
-                className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none" />
+                className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none" />
             </div>
             <div>
               <label className="text-xs text-white/55">Phone</label>
               <input value={phone} onChange={(e) => setPhone(e.target.value)}
                 placeholder="+92 42 1234567"
-                className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none" />
+                className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none" />
             </div>
           </div>
 
@@ -319,10 +319,10 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
                 <label key={c.id}
                   className="flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors"
                   style={{
-                    background: conceptIds.includes(c.id) ? 'rgba(0,212,177,0.08)' : 'rgba(255,255,255,0.025)',
-                    border: conceptIds.includes(c.id) ? '1px solid rgba(0,212,177,0.35)' : '1px solid rgba(255,255,255,0.05)',
+                    background: conceptIds.includes(c.id) ? 'rgb(135 197 64 / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
+                    border: conceptIds.includes(c.id) ? '1px solid rgb(135 197 64 / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.05)',
                   }}>
-                  <input type="checkbox" checked={conceptIds.includes(c.id)} onChange={() => toggleConcept(c.id)} className="accent-kds-green" />
+                  <input type="checkbox" checked={conceptIds.includes(c.id)} onChange={() => toggleConcept(c.id)} className="accent-primary" />
                   <span className="text-xs font-bold text-white/85">
                     {c.name}
                     {inPortfolio && c.tenant && (
@@ -339,13 +339,13 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
 
           {location && (
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-kds-green" />
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
               <span className="text-xs text-white/65">Active (uncheck to pause this location)</span>
             </label>
           )}
 
           {save.isError && (
-            <p className="text-xs text-red-300">{errorText(save.error)}</p>
+            <p className="text-xs text-red-700">{errorText(save.error)}</p>
           )}
         </div>
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
@@ -353,7 +353,7 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
           <button
             onClick={() => save.mutate()}
             disabled={save.isPending || !name.trim()}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50"
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"
           >
             {save.isPending ? 'Saving…' : location ? 'Save changes' : 'Create location'}
           </button>

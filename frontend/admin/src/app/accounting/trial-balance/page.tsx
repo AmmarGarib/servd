@@ -52,7 +52,7 @@ export default function TrialBalancePage() {
                 </div>
                 <div>
                   <p className="text-xs text-s-muted">Difference</p>
-                  <p className={`text-lg font-bold ${data.totals.differenceCents === 0 ? 'text-s-teal' : 'text-s-red'}`}>
+                  <p className={`text-lg font-bold ${data.totals.differenceCents === 0 ? 'text-primary-ink' : 'text-s-red'}`}>
                     {fmtPkr(data.totals.differenceCents)}
                     {data.totals.differenceCents !== 0 && <span className="ml-2 text-xs">⚠ books unbalanced</span>}
                   </p>

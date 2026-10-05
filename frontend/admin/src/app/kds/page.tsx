@@ -82,7 +82,7 @@ export default function KdsKitchenDashboard() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
+    <div className="erp-kitchen-dark h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-6 py-4 shrink-0">
         <div>
           <Link href="/w" className="text-sm text-gray-500 hover:text-gray-300 inline-flex items-center gap-1 mb-1 transition-colors">

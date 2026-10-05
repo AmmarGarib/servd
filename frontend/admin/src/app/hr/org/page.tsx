@@ -17,7 +17,7 @@ export default function HrOrgPage() {
   const { data: org, error } = useHrOrg()
   return (
     <HrShell title="Organization setup" subtitle="The lists every HR form picks from. Deactivating an entry hides it from new forms; past records keep it.">
-      {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       {org && (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           <DepartmentsPanel departments={org.departments} archived={org.archivedDepartments ?? []} />
@@ -61,7 +61,7 @@ function DepartmentsPanel({ departments, archived }: { departments: OrgData['dep
         ))}
       </ul>
       <AddRow value={name} onChange={setName} onAdd={() => add.mutate()} busy={add.isPending} placeholder="New department" />
-      {(add.error || patch.error) && <p className="text-xs text-red-400 mt-1">{((add.error || patch.error) as Error).message}</p>}
+      {(add.error || patch.error) && <p className="text-xs text-red-700 mt-1">{((add.error || patch.error) as Error).message}</p>}
       {archived.length > 0 && (
         <div className="mt-4">
           <p className="text-[11px] font-bold uppercase tracking-wider text-white/35 mb-1">Archived</p>
@@ -88,11 +88,11 @@ function DepartmentRow({ d, onRename, onHeadOffice, onArchive }: { d: OrgData['d
         <>
           <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) } }} />
-          <button className="text-xs text-kds-green font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+          <button className="text-xs text-primary-ink font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
         </>
       ) : (
         <>
-          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && <span className="text-[10px] font-bold text-amber-400 ml-2">HEAD OFFICE</span>}</span>
+          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && <span className="text-[10px] font-bold text-amber-700 ml-2">HEAD OFFICE</span>}</span>
           <button className="text-[11px] text-white/40 hover:text-white" onClick={() => { setName(d.name); setEditing(true) }}>Rename</button>
           <button className="text-[11px] text-white/40 hover:text-white" onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>
           <button className="text-[11px] text-white/40 hover:text-white" onClick={onArchive}>Archive</button>
@@ -135,7 +135,7 @@ function UnitsPanel({ kind, units }: { kind: string; units: Unit[] }) {
         <input className={`${inp} max-w-[90px]`} placeholder="Code" value={code} onChange={(e) => setCode(e.target.value)} />
         <button className={btn} disabled={!name.trim() || add.isPending} onClick={() => add.mutate()}>Add</button>
       </div>
-      {(add.error || patch.error) && <p className="text-xs text-red-400 mt-1">{((add.error || patch.error) as Error).message}</p>}
+      {(add.error || patch.error) && <p className="text-xs text-red-700 mt-1">{((add.error || patch.error) as Error).message}</p>}
     </div>
   )
 }
@@ -149,7 +149,7 @@ function UnitRow({ u, onRename, onToggle }: { u: Unit; onRename: (name: string) 
         <>
           <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) } }} />
-          <button className="text-xs text-kds-green font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+          <button className="text-xs text-primary-ink font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
         </>
       ) : (
         <>

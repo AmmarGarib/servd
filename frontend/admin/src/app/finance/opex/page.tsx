@@ -169,7 +169,7 @@ export default function OpexTrackerPage() {
   const sum = (rows: CashflowItem[]) => rows.reduce((s, r) => s + r.amountCents, 0)
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-5 border-b border-white/[0.05]">
         <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-1 flex-wrap">
@@ -179,7 +179,7 @@ export default function OpexTrackerPage() {
               Every recurring expense — rent, payroll, utilities, software, marketing. System tracks expected vs actual and flags vendor invoices that jump unexpectedly.
             </p>
           </div>
-          <button onClick={() => setCreatingCategory(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New category</button>
+          <button onClick={() => setCreatingCategory(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New category</button>
         </div>
       </header>
 
@@ -194,14 +194,14 @@ export default function OpexTrackerPage() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: '#C4B5FD' }}>
+                  style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
                   Joint venture
                 </span>
                 <span className="text-sm text-white/85 font-bold">{activeTenant.name}</span>
                 <span className="text-xs text-white/40">- every cost line below splits as:</span>
                 {jvPartners.map((p, i) => (
                   <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: '#DDD6FE' }}>
+                    style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
                     {p.label} {p.pct}%
                   </span>
                 ))}
@@ -213,19 +213,19 @@ export default function OpexTrackerPage() {
 
         {/* Top stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="Monthly run-rate" value={PKR(totalMonthly)} accent="#00D4B1"
+          <Stat label="Monthly run-rate" value={PKR(totalMonthly)} accent="var(--erp-primary-ink)"
             jvPartners={jvPartners} />
-          <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="#A5B4FC"
+          <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="#6b2f68"
             jvPartners={jvPartners} />
-          <Stat label="Categories over budget" value={`${overBudgetCount} / ${categories.length}`} accent={overBudgetCount > 0 ? '#FCA5A5' : '#86EFAC'} />
-          <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="#FCD34D"
+          <Stat label="Categories over budget" value={`${overBudgetCount} / ${categories.length}`} accent={overBudgetCount > 0 ? '#b42318' : '#3f7d20'} />
+          <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="#a15c00"
             jvPartners={jvPartners} />
         </div>
 
         {/* Cashflow horizon */}
         {cashflow.length > 0 && (
           <section className="rounded-2xl p-5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">90-day cashflow forecast</h2>
             <div className="grid grid-cols-3 gap-3">
               <CashBucket label="Next 30 days" rows={next30} total={sum(next30)} />
@@ -238,7 +238,7 @@ export default function OpexTrackerPage() {
         {/* Quick-add suggested categories */}
         {categories.length === 0 && (
           <section className="rounded-2xl p-5"
-            style={{ background: 'rgba(0,212,177,0.05)', border: '1px solid rgba(0,212,177,0.18)' }}>
+            style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
             <h2 className="text-sm font-black text-white/85">Pick the categories you actually pay for</h2>
             <p className="text-xs text-white/55 mt-1 mb-3">Tap one to add it. You can rename, set a monthly budget, and add lines underneath.</p>
             <div className="flex flex-wrap gap-1.5">
@@ -282,7 +282,7 @@ function PresetButton({ preset, onAdd }: { preset: { name: string; emoji: string
   return (
     <button onClick={() => add.mutate()} disabled={add.isPending}
       className="text-xs font-bold px-3 py-2 rounded-full"
-      style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.75)', border: '1px solid rgba(255,255,255,0.08)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.75)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
       {preset.emoji} {preset.name}
     </button>
   )
@@ -290,7 +290,7 @@ function PresetButton({ preset, onAdd }: { preset: { name: string; emoji: string
 
 function CashBucket({ label, rows, total }: { label: string; rows: CashflowItem[]; total: number }) {
   return (
-    <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-xl p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <p className="text-[10px] font-black uppercase tracking-wider text-white/45">{label}</p>
       <p className="text-lg font-black text-white/90 mt-1">{PKR(total)}</p>
       <p className="text-[11px] text-white/45">{rows.length} payments</p>
@@ -309,14 +309,14 @@ function Stat({ label, value, accent, jvPartners }: {
     return digits ? parseInt(digits) * 100 : 0
   })()
   return (
-    <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-xl p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/35">{label}</p>
       <p className="text-base font-black mt-1" style={{ color: accent }}>{value}</p>
       {jvPartners && jvPartners.length > 0 && rawCents > 0 && (
         <div className="mt-1.5 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
+              style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
               {p.label}: {PKR(Math.round(rawCents * p.pct / 100))}
             </span>
           ))}
@@ -341,9 +341,9 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
 
   return (
     <section className="rounded-2xl overflow-hidden"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <header className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap"
-        style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.04)' }}>
         <div className="flex items-center gap-2">
           {category.emoji && <span className="text-2xl">{category.emoji}</span>}
           <div>
@@ -351,7 +351,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             <p className="text-[11px] text-white/45">
               {category.lineCount} line{category.lineCount === 1 ? '' : 's'} · {PKR(category.monthlyExpectedCents)}/mo
               {category.budgetMonthlyCents > 0 && (
-                <span style={{ color: overBudget ? '#FCA5A5' : 'rgba(255,255,255,0.45)' }}>
+                <span style={{ color: overBudget ? '#b42318' : 'rgb(var(--fg-rgb) / 0.45)' }}>
                   {' '}· {variancePct >= 0 ? '+' : ''}{variancePct.toFixed(0)}% vs budget
                 </span>
               )}
@@ -360,23 +360,23 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
         </div>
         <div className="flex items-center gap-2">
           <button onClick={onEditCategory} className="text-xs text-white/55 hover:text-white">Edit category</button>
-          <button onClick={onAddLine} className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black hover:opacity-90">+ Line</button>
+          <button onClick={onAddLine} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on hover:opacity-90">+ Line</button>
         </div>
       </header>
 
       {/* Budgeted payroll from workforce/positions — only Payroll category. */}
       {isPayroll && payrollSnap?.budget && (
         <div className="px-5 py-4 border-b border-white/[0.04]"
-          style={{ background: 'rgba(0,212,177,0.04)' }}>
+          style={{ background: 'rgb(135 197 64 / 0.04)' }}>
           <div className="flex items-center justify-between mb-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-wider text-[#00D4B1]">Budgeted payroll · from workforce</p>
+              <p className="text-[10px] font-black uppercase tracking-wider text-primary-ink">Budgeted payroll · from workforce</p>
               <p className="text-[10px] text-white/40 mt-0.5">
                 {payrollSnap.budget.headcount} ppl
                 {payrollSnap.budget.openSeats > 0 && ` · ${payrollSnap.budget.openSeats} open`}
               </p>
             </div>
-            <Link href="/workforce/positions" className="text-[11px] text-[#00D4B1] hover:underline">Manage positions →</Link>
+            <Link href="/workforce/positions" className="text-[11px] text-primary-ink hover:underline">Manage positions →</Link>
           </div>
 
           {/* Gross / contributions / net stack. Mirrors the JV card on
@@ -390,7 +390,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             {positionsSummary && positionsSummary.contributions.map((c) => (
               <div key={c.id} className="flex justify-between items-baseline">
                 <span className="text-white/55 flex items-center gap-1.5">
-                  <span style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                  <span style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
                     {c.direction === 'incoming' ? '<--' : '-->'}
                   </span>
                   {c.label}
@@ -400,7 +400,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                   </span>
                 </span>
                 <span className="font-bold"
-                  style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                  style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
                   {c.direction === 'incoming' ? '-' : '+'} {PKR(c.monthlyCents)}
                 </span>
               </div>
@@ -408,14 +408,14 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             <div className="border-t border-white/10 mt-1 pt-2 flex justify-between items-baseline text-sm">
               <span className="font-bold text-white/85">Net to this tenant&apos;s P&L</span>
               <div className="text-right">
-                <span className="font-black block" style={{ color: '#00D4B1' }}>
+                <span className="font-black block" style={{ color: 'var(--erp-primary-ink)' }}>
                   {PKR(payrollSnap.budget.netMonthlyCents)}
                 </span>
                 {jvPartners && jvPartners.length > 0 && (
                   <div className="mt-1 flex gap-1.5 flex-wrap justify-end">
                     {jvPartners.map((p, i) => (
                       <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-                        style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
+                        style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
                         {p.label} {p.pct}%: {PKR(Math.round(payrollSnap.budget!.netMonthlyCents * p.pct / 100))}
                       </span>
                     ))}
@@ -430,14 +430,14 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
       {/* Live payroll panel — only renders for the Payroll category */}
       {isPayroll && payrollSnap && payrollSnap.runs.length > 0 && (
         <div className="px-5 py-3 border-b border-white/[0.04]"
-          style={{ background: 'rgba(99,102,241,0.04)' }}>
+          style={{ background: 'rgb(61 31 59 / 0.04)' }}>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-black uppercase tracking-wider text-[#A5B4FC]">Posted runs · last 6 months</p>
-            <Link href="/hr/payroll" className="text-[11px] text-[#A5B4FC] hover:underline">Open payroll →</Link>
+            <p className="text-[10px] font-black uppercase tracking-wider text-[#6b2f68]">Posted runs · last 6 months</p>
+            <Link href="/hr/payroll" className="text-[11px] text-[#6b2f68] hover:underline">Open payroll →</Link>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {payrollSnap.runs.slice(0, 6).map((r) => (
-              <div key={r.id} className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div key={r.id} className="rounded-lg p-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="text-[10px] text-white/45">{new Date(r.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</p>
                 <p className="text-xs font-bold text-white/85 mt-0.5">{PKR(r.totalGrossCents)}</p>
                 <p className="text-[10px] text-white/35">{r.lineCount} staff · {r.status}</p>
@@ -447,10 +447,10 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
         </div>
       )}
       {isPayroll && (!payrollSnap || payrollSnap.runs.length === 0) && (
-        <div className="px-5 py-3 border-b border-white/[0.04]" style={{ background: 'rgba(99,102,241,0.04)' }}>
+        <div className="px-5 py-3 border-b border-white/[0.04]" style={{ background: 'rgb(61 31 59 / 0.04)' }}>
           <p className="text-xs text-white/55">
-            No payroll runs yet. <Link href="/hr/payroll" className="text-[#A5B4FC] hover:underline">Run payroll</Link> to see actuals here, or
-            <Link href="/settings" className="text-[#A5B4FC] hover:underline ml-1">add staff</Link> to start tracking hours.
+            No payroll runs yet. <Link href="/hr/payroll" className="text-[#6b2f68] hover:underline">Run payroll</Link> to see actuals here, or
+            <Link href="/settings" className="text-[#6b2f68] hover:underline ml-1">add staff</Link> to start tracking hours.
           </p>
         </div>
       )}
@@ -478,7 +478,7 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-bold text-white/90 truncate">{line.name}</p>
             {line.source !== 'manual' && (
-              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.12)', color: '#A5B4FC' }}>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>
                 {line.source}
               </span>
             )}
@@ -494,7 +494,7 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
         </div>
 
         <div className="text-right whitespace-nowrap">
-          <p className="text-[11px]" style={{ color: dueSoon ? '#FCD34D' : 'rgba(255,255,255,0.45)' }}>
+          <p className="text-[11px]" style={{ color: dueSoon ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.45)' }}>
             {line.nextDueDate ? `due ${new Date(line.nextDueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
           </p>
         </div>
@@ -539,7 +539,7 @@ function CategoryModal({ category, onClose, onSaved }: { category?: Category; on
     <ModalFooter onCancel={onClose}>
       {category && (
         <button onClick={() => { if (confirm('Archive this category?')) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-red-400/70 px-4 py-2.5 text-xs hover:text-red-300 mr-auto">Archive</button>
+          className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 mr-auto">Archive</button>
       )}
       <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
         {save.isPending ? 'Saving…' : category ? 'Save' : 'Create category'}
@@ -623,7 +623,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
     <ModalFooter onCancel={onClose}>
       {line && (
         <button onClick={() => { if (confirm('Archive this line?')) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-red-400/70 px-4 py-2.5 text-xs hover:text-red-300 mr-auto">Archive</button>
+          className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 mr-auto">Archive</button>
       )}
       <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
@@ -665,22 +665,22 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
         const variancePct = p.expectedCents > 0 ? (variance / p.expectedCents) * 100 : 0
         return (
           <div key={p.id} className="rounded-lg p-3 grid grid-cols-[auto_1fr_auto_auto] gap-2 items-center"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <span className="text-xs text-white/55">{new Date(p.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</span>
             <div>
               <p className="text-sm font-mono text-white/85">{p.actualCents != null ? PKR(p.actualCents) : <em className="text-white/45">unpaid</em>}</p>
               {p.actualCents != null && Math.abs(variancePct) >= 5 && (
-                <p className="text-[11px]" style={{ color: variance > 0 ? '#FCA5A5' : '#86EFAC' }}>
+                <p className="text-[11px]" style={{ color: variance > 0 ? '#b42318' : '#3f7d20' }}>
                   {variance > 0 ? '+' : ''}{variancePct.toFixed(0)}% vs expected
                 </p>
               )}
             </div>
             {p.paidAt && (
               p.ledger?.status === 'posted'
-                ? <span className="text-[10px] font-black text-[#00D4B1]" title={p.ledger.accountCode ? `Booked to ${p.ledger.accountCode}` : undefined}>PAID · ON THE BOOKS</span>
+                ? <span className="text-[10px] font-black text-primary-ink" title={p.ledger.accountCode ? `Booked to ${p.ledger.accountCode}` : undefined}>PAID · ON THE BOOKS</span>
                 : p.ledger?.status === 'payroll'
                   ? <span className="text-[10px] font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
-                  : <span className="text-[10px] font-black text-[#FCD34D]" title="Paid before payments posted to the books — an admin can post it">PAID · NOT POSTED</span>
+                  : <span className="text-[10px] font-black text-[#a15c00]" title="Paid before payments posted to the books — an admin can post it">PAID · NOT POSTED</span>
             )}
             {p.paymentRef && <span className="text-[10px] font-mono text-white/45">{p.paymentRef}</span>}
           </div>
@@ -688,7 +688,7 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
       })}
     </div>
     {adding ? (
-      <div className="rounded-xl p-3 mt-2" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
         <div className="grid grid-cols-3 gap-2">
           <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
           <input type="date" value={periodEnd}   onChange={(e) => setPeriodEnd(e.target.value)}   className={fieldCls} />
@@ -701,11 +701,11 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
               placeholder="e.g. 6040" className={fieldCls} inputMode="numeric" />
           </div>
         )}
-        {addError && <p role="alert" className="text-[11px] text-[#FCA5A5] mt-2">{addError.message}</p>}
+        {addError && <p role="alert" className="text-[11px] text-[#b42318] mt-2">{addError.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => add.mutate()} disabled={add.isPending}
-            className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black disabled:opacity-50">+ Record</button>
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">+ Record</button>
         </div>
       </div>
     ) : (
@@ -720,9 +720,9 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
 // ─── Shared ───────────────────────────────────────────────────────────────
 
 function ModalShell({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
     <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-2xl overflow-hidden`}
-      style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+      style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
         <h2 className="font-black text-white/90">{title}</h2>
         <button onClick={onClose} className="text-white/40 text-xl">✕</button>
@@ -739,7 +739,7 @@ function ModalFooter({ children, onCancel }: { children: React.ReactNode; onCanc
 }
 function Section({ heading, children }: { heading: string; children: React.ReactNode }) {
   return <div className="rounded-xl p-3 space-y-2 mt-2"
-    style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    style={{ background: 'rgb(var(--fg-rgb) / 0.015)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
     <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">{heading}</p>
     {children}
   </div>
@@ -750,7 +750,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
   const msg = error instanceof Error ? error.message : 'Failed'
-  return <div className="rounded-xl px-4 py-3 text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
-const primaryBtn = "rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
+const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

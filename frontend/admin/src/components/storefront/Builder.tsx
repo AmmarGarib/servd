@@ -236,14 +236,14 @@ export function Builder({ slug }: { slug: string }) {
               <span>·</span>
               <span>{row?.liveVersion ? `Live: version ${row.liveVersion}` : 'Nothing live yet'}</span>
               {path && row?.liveVersion && (
-                <a href={`${STOREFRONT_URL}${path}`} target="_blank" rel="noopener noreferrer" className="text-s-teal hover:underline">View live</a>
+                <a href={`${STOREFRONT_URL}${path}`} target="_blank" rel="noopener noreferrer" className="text-primary-ink hover:underline">View live</a>
               )}
               {row && <StatusBadge row={row} />}
               {dirty && <span className="s-badge-amber">Unsaved changes</span>}
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {flash && <span className={`text-xs ${flash.ok ? 'text-s-teal' : 'text-s-red'}`}>{flash.text}</span>}
+            {flash && <span className={`text-xs ${flash.ok ? 'text-primary-ink' : 'text-s-red'}`}>{flash.text}</span>}
             <button type="button" onClick={() => setShowVersions(true)} className="s-btn-ghost text-xs">Versions</button>
             <button type="button" onClick={onPreview} disabled={!doc || !!busy} className="s-btn-secondary text-xs">{busy === 'preview' ? 'Opening...' : 'Preview'}</button>
             <button type="button" onClick={onDiscard} disabled={(!hasDraft && !dirty) || !!busy} className="s-btn-ghost text-xs">Discard draft</button>
@@ -296,7 +296,7 @@ export function Builder({ slug }: { slug: string }) {
                   <span className="text-s-muted">Editing</span>
                   {(['a', 'b'] as const).map((v) => (
                     <button key={v} type="button" onClick={() => { setVariant(v); setSelectedId(null) }}
-                      className={`px-3 py-1 rounded-lg border ${variant === v ? 'border-s-teal text-s-teal bg-s-teal-dim/40' : 'border-s-border text-s-muted'}`}>
+                      className={`px-3 py-1 rounded-lg border ${variant === v ? 'border-s-teal text-primary-ink bg-s-teal-dim/40' : 'border-s-border text-s-muted'}`}>
                       Variant {v.toUpperCase()} {v === 'a' ? `(${100 - ab.splitPct}%)` : `(${ab.splitPct}%)`}
                     </button>
                   ))}
@@ -316,7 +316,7 @@ export function Builder({ slug }: { slug: string }) {
               <div className="flex border-b border-s-border text-xs">
                 {([['element', 'Element'], ['page', isPopup ? 'Pop-up' : 'Page'], ...(isPopup ? [['rules', 'Rules']] : [])] as Array<[RightTab, string]>).map(([k, label]) => (
                   <button key={k} type="button" onClick={() => setTab(k)}
-                    className={`flex-1 px-3 py-2 font-semibold ${tab === k ? 'text-s-teal border-b-2 border-s-teal' : 'text-s-muted hover:text-s-text'}`}>
+                    className={`flex-1 px-3 py-2 font-semibold ${tab === k ? 'text-primary-ink border-b-2 border-s-teal' : 'text-s-muted hover:text-s-text'}`}>
                     {label}
                   </button>
                 ))}
@@ -389,7 +389,7 @@ function RejectDialog({ busy, onCancel, onReject }: { busy: boolean; onCancel: (
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="s-card w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-sm font-bold text-s-text">{title}</h2>
         {children}

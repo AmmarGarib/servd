@@ -62,7 +62,7 @@ export function LandingScrollHero({ config }: { config: HeroConfig }) {
             alignItems: 'center',
             gap: '0.5rem',
             background: 'var(--servd-green)',
-            color: 'white',
+            color: 'var(--servd-on-green)',
             fontFamily: 'var(--font-display)',
             fontWeight: 800,
             fontSize: '1rem',

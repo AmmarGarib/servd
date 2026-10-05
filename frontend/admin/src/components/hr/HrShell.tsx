@@ -37,7 +37,7 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
   const path = usePathname() ?? ''
   const { isHrAdmin } = useHrAccess()
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-6 pt-5 border-b border-white/[0.05]">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -53,7 +53,7 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
             return (
               <Link key={n.href} href={n.href}
                 className="px-3 py-2 text-xs font-bold whitespace-nowrap border-b-2"
-                style={{ borderColor: on ? '#00D4B1' : 'transparent', color: on ? '#00D4B1' : 'rgba(255,255,255,0.5)' }}>
+                style={{ borderColor: on ? 'var(--erp-primary)' : 'transparent', color: on ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.5)' }}>
                 {n.label}
               </Link>
             )
@@ -83,8 +83,8 @@ export function useHrSections() {
 
 export function Modal({ title, wide, onClose, children }: { title: string; wide?: boolean; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4 overflow-y-auto" onClick={onClose}>
-      <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} rounded-2xl p-6 my-8`} style={{ background: '#12131a', border: '1px solid rgba(255,255,255,0.08)' }}
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-secondary/50 p-4 overflow-y-auto" onClick={onClose}>
+      <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} rounded-2xl p-6 my-8`} style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4 mb-4">
           <p className="text-lg font-black text-white/90">{title}</p>
@@ -97,9 +97,9 @@ export function Modal({ title, wide, onClose, children }: { title: string; wide?
 }
 
 export function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'warn' | 'bad' | 'good' }) {
-  const color = tone === 'warn' ? '#f59e0b' : tone === 'bad' ? '#f87171' : tone === 'good' ? '#34d399' : 'rgba(255,255,255,0.9)'
+  const color = tone === 'warn' ? '#a15c00' : tone === 'bad' ? '#b42318' : tone === 'good' ? '#3f7d20' : 'rgb(var(--fg-rgb) / 0.9)'
   return (
-    <div className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+    <div className="rounded-2xl p-4" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
       <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
       <p className="text-xl font-black mt-1" style={{ color }}>{value}</p>
     </div>

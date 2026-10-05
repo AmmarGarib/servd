@@ -82,7 +82,7 @@ export default function PeriodClosePage() {
 
       <div className="p-6 max-w-2xl mx-auto space-y-4">
         {feedback && (
-          <div role={feedback.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${feedback.ok ? 'text-s-teal' : 'text-s-red'}`}>
+          <div role={feedback.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${feedback.ok ? 'text-primary-ink' : 'text-s-red'}`}>
             {feedback.msg}
           </div>
         )}
@@ -137,7 +137,7 @@ export default function PeriodClosePage() {
             <button
               onClick={() => reopen.mutate(reopenReason.trim())}
               disabled={reopen.isPending || reopenReason.trim().length < 5}
-              className="w-full py-2 rounded font-bold text-sm bg-s-red text-white disabled:opacity-50"
+              className="w-full py-2 rounded font-bold text-sm bg-s-red text-[#fff] disabled:opacity-50"
             >
               {reopen.isPending ? 'Reopening…' : 'Reopen'}
             </button>

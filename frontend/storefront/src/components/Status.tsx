@@ -26,8 +26,8 @@ const baseWrap: React.CSSProperties = {
 export function EmptyState({ title, message, action }: StatusProps) {
   return (
     <div role="status" aria-live="polite" style={baseWrap}>
-      <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#0a0a0a' }}>{title}</h2>
-      {message && <p style={{ color: 'rgba(0,0,0,0.5)', margin: 0, maxWidth: '28rem' }}>{message}</p>}
+      <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--servd-ink)' }}>{title}</h2>
+      {message && <p style={{ color: 'var(--servd-mute)', margin: 0, maxWidth: '28rem' }}>{message}</p>}
       {action && <div style={{ marginTop: '0.5rem' }}>{action}</div>}
     </div>
   )
@@ -36,8 +36,8 @@ export function EmptyState({ title, message, action }: StatusProps) {
 export function ErrorState({ title, message, action }: StatusProps) {
   return (
     <div role="alert" aria-live="assertive" style={baseWrap}>
-      <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#b91c1c' }}>{title}</h2>
-      {message && <p style={{ color: 'rgba(0,0,0,0.55)', margin: 0, maxWidth: '32rem' }}>{message}</p>}
+      <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--servd-danger)' }}>{title}</h2>
+      {message && <p style={{ color: 'var(--servd-mute)', margin: 0, maxWidth: '32rem' }}>{message}</p>}
       {action && <div style={{ marginTop: '0.5rem' }}>{action}</div>}
     </div>
   )

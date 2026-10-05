@@ -69,7 +69,7 @@ export default function WebhooksPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -80,29 +80,29 @@ export default function WebhooksPage() {
               HMAC-SHA256 (<code className="text-white/60">X-Servd-Signature</code>). Endpoints belong to the active company.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New webhook</button>
+          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New webhook</button>
         </div>
       </header>
 
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {data.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="font-bold text-white/85">No webhooks configured</p>
             <p className="text-sm text-white/45 mt-1">Subscribe an external system to order events.</p>
           </div>
         )}
         {data.map((h) => (
           <div key={h.id} className="rounded-2xl p-5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
-                <p className="font-mono text-sm text-white/85 truncate">{h.url}{!h.isActive && <span className="ml-2 text-[10px] text-amber-400">PAUSED</span>}</p>
+                <p className="font-mono text-sm text-white/85 truncate">{h.url}{!h.isActive && <span className="ml-2 text-[10px] text-amber-700">PAUSED</span>}</p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {h.events.map((e) => (
                     <span key={e} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={FIRING.has(e)
-                        ? { background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }
-                        : { background: 'rgba(245,158,11,0.08)', color: '#F59E0B' }}
+                        ? { background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }
+                        : { background: 'rgba(245,158,11,0.08)', color: '#a15c00' }}
                       title={FIRING.has(e) ? undefined : 'servd does not send this event yet'}>
                       {e}{FIRING.has(e) ? '' : ' · not sent yet'}
                     </span>
@@ -111,7 +111,7 @@ export default function WebhooksPage() {
                 <p className="text-xs text-white/40 mt-2">
                   {h.notes && <span>{h.notes} · </span>}
                   {h.lastSentAt ? <span>Last sent {new Date(h.lastSentAt).toLocaleString()} ({h.lastStatus})</span> : <span>Never sent</span>}
-                  {h.failureCount > 0 && <span className="text-red-400"> · {h.failureCount} failures</span>}
+                  {h.failureCount > 0 && <span className="text-red-700"> · {h.failureCount} failures</span>}
                 </p>
                 {pingResult[h.id] && <p className="text-xs font-mono text-white/60 mt-1">Test ping: {pingResult[h.id]}</p>}
               </div>
@@ -132,7 +132,7 @@ export default function WebhooksPage() {
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">
                   {h.isActive ? 'Pause' : 'Resume'}
                 </button>
-                <button onClick={() => { if (confirm('Delete webhook?')) del.mutate(h.id) }} className="rounded-lg border border-red-500/20 text-red-400/70 px-3 py-1.5 text-xs">Delete</button>
+                <button onClick={() => { if (confirm('Delete webhook?')) del.mutate(h.id) }} className="rounded-lg border border-red-500/20 text-red-700/70 px-3 py-1.5 text-xs">Delete</button>
               </div>
             </div>
             {logFor === h.id && <DeliveryLog subscriptionId={h.id} />}
@@ -154,14 +154,14 @@ export default function WebhooksPage() {
       )}
 
       {showSecret && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setShowSecret(null)}>
-          <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: '#14161e', border: '1px solid rgba(245,158,11,0.4)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={() => setShowSecret(null)}>
+          <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgba(245,158,11,0.4)' }} onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-white/[0.05]">
-              <h2 className="font-black text-amber-400">⚠ Save this signing secret now</h2>
+              <h2 className="font-black text-amber-700">⚠ Save this signing secret now</h2>
               <p className="text-xs text-white/55 mt-1">It won't be shown again.</p>
             </div>
             <div className="p-5">
-              <code className="block bg-white/[0.04] rounded-lg p-3 text-xs font-mono break-all text-[#00D4B1]">{showSecret}</code>
+              <code className="block bg-white/[0.04] rounded-lg p-3 text-xs font-mono break-all text-primary-ink">{showSecret}</code>
             </div>
             <div className="flex justify-end p-4 border-t border-white/[0.05]">
               <button onClick={() => setShowSecret(null)} className="rounded-xl bg-amber-400 px-4 py-2 text-xs font-black text-black">I've saved it</button>
@@ -189,7 +189,7 @@ function DeliveryLog({ subscriptionId }: { subscriptionId: string }) {
               <tr key={d.id} className="border-b border-white/[0.04]">
                 <td className="py-1.5 text-white/45 font-mono">{new Date(d.attemptedAt).toLocaleString()}</td>
                 <td className="py-1.5 text-white/75">{d.event}</td>
-                <td className={`py-1.5 font-mono ${d.status === 'success' ? 'text-kds-green' : 'text-red-400'}`}>{d.status}{d.responseCode ? ` ${d.responseCode}` : ''}</td>
+                <td className={`py-1.5 font-mono ${d.status === 'success' ? 'text-primary-ink' : 'text-red-700'}`}>{d.status}{d.responseCode ? ` ${d.responseCode}` : ''}</td>
                 <td className="py-1.5 text-white/40 font-mono text-right">{d.durationMs != null ? `${d.durationMs} ms` : ''}</td>
               </tr>
             ))}
@@ -228,8 +228,8 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
   function toggle(e: string) { setEvents((p) => p.includes(e) ? p.filter((x) => x !== e) : [...p, e]) }
   const list = allEvents.length > 0 ? allEvents : Array.from(FIRING)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{existing ? 'Edit webhook' : 'New webhook'}</h2>
           <button onClick={onClose} className="text-white/40 text-xl">✕</button>
@@ -250,8 +250,8 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
                     title={live ? undefined : 'servd does not send this event yet'}
                     className="text-xs font-semibold px-2 py-1.5 rounded-lg text-left disabled:opacity-35 disabled:cursor-not-allowed"
                     style={on
-                      ? { background: 'rgba(0,212,177,0.1)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.35)' }
-                      : { background: 'rgba(255,255,255,0.025)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      ? { background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.35)' }
+                      : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                     {e}{live ? '' : ' · not sent yet'}
                   </button>
                 )
@@ -259,12 +259,12 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
             </div>
           </div>
           <div><label className="text-xs text-white/55">Notes</label><input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={200} placeholder="Why this exists" className={fieldCls + ' mt-1'} /></div>
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-red-700">{error}</p>}
         </div>
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || !url || events.length === 0}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : existing ? 'Save' : 'Create webhook'}
           </button>
         </div>
@@ -273,4 +273,4 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
   )
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

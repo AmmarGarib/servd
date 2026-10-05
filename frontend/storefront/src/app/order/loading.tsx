@@ -3,7 +3,7 @@
 
 export default function OrderHubLoading() {
   return (
-    <div style={{ minHeight: '100dvh', background: '#fff' }}>
+    <div style={{ minHeight: '100dvh', background: 'var(--servd-bg)' }}>
       <header
         style={{
           display: 'flex',

@@ -59,7 +59,7 @@ function VariancePill({ cents, balanced }: { cents: number | null; balanced: boo
   if (cents === null) return <span className="text-xs text-s-muted">Pending</span>
   return (
     <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-      balanced ? 'bg-green-900/20 text-green-400' : 'bg-red-900/20 text-red-400'
+      balanced ? 'bg-green-100/20 text-green-700' : 'bg-red-100/20 text-red-700'
     }`}>
       {cents === 0 ? 'Balanced' : cents > 0 ? `+${fmtPkr(cents)}` : fmtPkr(cents)}
     </span>
@@ -96,7 +96,7 @@ function ShiftDetailPanel({
   const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-s-teal focus:outline-none w-full'
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-secondary/50 flex items-center justify-center z-50 p-4">
       <div className="bg-s-bg border border-s-border rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-s-bg border-b border-s-border px-5 py-4 flex items-center justify-between">
           <p className="font-bold text-s-text">Shift Reconciliation</p>
@@ -146,7 +146,7 @@ function ShiftDetailPanel({
                   ))}
                   <tr className="border-t-2 border-s-border font-semibold">
                     <td className="px-4 py-2.5 text-s-text">Expected cash</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-s-teal">{fmtPkr(data.expectedCashCents)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-primary-ink">{fmtPkr(data.expectedCashCents)}</td>
                   </tr>
                   {data.closingFloatCents !== null && (
                     <>
@@ -192,7 +192,7 @@ function ShiftDetailPanel({
                   )}
                   <tr className="font-semibold">
                     <td className="px-4 py-2.5 text-s-muted">Total sales (cash + card)</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-s-teal">{fmtPkr(data.grossCents)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-primary-ink">{fmtPkr(data.grossCents)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -233,13 +233,13 @@ function ShiftDetailPanel({
                 <button
                   onClick={() => complete.mutate()}
                   disabled={complete.isPending || !closingFloat}
-                  className="w-full rounded-xl bg-s-teal text-white font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
+                  className="w-full rounded-xl bg-primary text-primary-on font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
                   {complete.isPending ? 'Closing…' : 'Close shift'}
                 </button>
               </div>
             )}
             {complete.data && (
-              <div className={`rounded-lg p-3 text-sm ${complete.data.isBalanced ? 'bg-green-900/20 text-green-400' : 'bg-red-900/20 text-red-400'}`}>
+              <div className={`rounded-lg p-3 text-sm ${complete.data.isBalanced ? 'bg-green-100/20 text-green-700' : 'bg-red-100/20 text-red-700'}`}>
                 {complete.data.isBalanced
                   ? 'Balanced — shift closed and posted.'
                   : `Variance of ${fmtPkr(Math.abs(complete.data.varianceCents ?? 0))} flagged for review. Shift closed and posted.`}
@@ -346,12 +346,12 @@ function StatementLines({ importId }: { importId: string }) {
                   <span className="inline-flex gap-1">
                     <input value={contra} onChange={(e) => setContra(e.target.value)} placeholder="code (6080)" className="w-20 bg-s-card border border-s-border rounded px-1 py-0.5 text-s-text" />
                     <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="memo" className="w-28 bg-s-card border border-s-border rounded px-1 py-0.5 text-s-text" />
-                    <button onClick={() => adjust.mutate(l.id)} disabled={!contra.trim() || !memo.trim() || adjust.isPending} className="text-s-teal disabled:opacity-40">Book</button>
+                    <button onClick={() => adjust.mutate(l.id)} disabled={!contra.trim() || !memo.trim() || adjust.isPending} className="text-primary-ink disabled:opacity-40">Book</button>
                     <button onClick={() => setAdjusting(null)} className="text-s-muted">Cancel</button>
                   </span>
                 ) : (
                   <span className="inline-flex gap-3">
-                    <button onClick={() => setAdjusting(l.id)} className="text-s-teal">Book adjustment</button>
+                    <button onClick={() => setAdjusting(l.id)} className="text-primary-ink">Book adjustment</button>
                     <button onClick={() => ignore.mutate(l.id)} className="text-s-muted hover:text-s-text">Ignore</button>
                   </span>
                 )}
@@ -417,11 +417,11 @@ export default function ReconciliationPage() {
             </div>
             <div className="s-card p-4">
               <p className="text-xs text-s-muted">Balanced</p>
-              <p className="text-2xl font-bold text-green-400 mt-0.5">{balancedCount}</p>
+              <p className="text-2xl font-bold text-green-700 mt-0.5">{balancedCount}</p>
             </div>
             <div className="s-card p-4">
               <p className="text-xs text-s-muted">Variance / Pending</p>
-              <p className={`text-2xl font-bold mt-0.5 ${unbalancedCount > 0 ? 'text-red-400' : 'text-s-muted'}`}>
+              <p className={`text-2xl font-bold mt-0.5 ${unbalancedCount > 0 ? 'text-red-700' : 'text-s-muted'}`}>
                 {unbalancedCount}
               </p>
             </div>
@@ -439,7 +439,7 @@ export default function ReconciliationPage() {
               onClick={() => setTab(t.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
                 tab === t.key
-                  ? 'border-s-teal text-s-teal bg-s-bg-soft'
+                  ? 'border-s-teal text-primary-ink bg-s-bg-soft'
                   : 'border-transparent text-s-muted hover:text-s-text'
               }`}>
               {t.label}
@@ -488,7 +488,7 @@ export default function ReconciliationPage() {
                       <td className="px-4 py-2.5 text-right font-mono text-xs text-s-text">
                         {fmtPkr(s.totalSalesCents)}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-s-teal">
+                      <td className="px-4 py-2.5 text-right font-mono text-xs text-primary-ink">
                         {fmtPkr(s.expectedCashCents)}
                       </td>
                       <td className="px-4 py-2.5 text-right">
@@ -497,7 +497,7 @@ export default function ReconciliationPage() {
                       <td className="px-4 py-2.5 text-right">
                         <button
                           onClick={(e) => { e.stopPropagation(); setSelectedShift(s.shiftId) }}
-                          className="text-xs text-s-muted hover:text-s-teal transition-colors">
+                          className="text-xs text-s-muted hover:text-primary-ink transition-colors">
                           {s.status === 'open' ? 'Close →' : 'View →'}
                         </button>
                       </td>

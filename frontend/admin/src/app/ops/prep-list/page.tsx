@@ -43,7 +43,7 @@ export default function PrepListPage() {
   const shown = chosen ? concepts.filter((c) => c.id === chosen) : concepts
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-7 border-b border-white/[0.05]">
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Operations</p>
         <h1 className="text-2xl font-black text-white/90 mt-1">Prep list</h1>
@@ -61,9 +61,9 @@ export default function PrepListPage() {
                 <button key={c.id ?? 'all'} onClick={() => setPick(c.id)}
                   className="rounded-md px-2.5 py-1 font-bold transition-colors"
                   style={{
-                    background: on ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.04)',
-                    color: on ? '#00D4B1' : 'rgba(255,255,255,0.55)',
-                    border: on ? '1px solid rgba(0,212,177,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                    background: on ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.04)',
+                    color: on ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.55)',
+                    border: on ? '1px solid rgb(135 197 64 / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
                   }}>
                   {c.name}
                 </button>
@@ -76,9 +76,9 @@ export default function PrepListPage() {
               <button key={d} onClick={() => setDays(d)}
                 className="rounded-md px-2.5 py-1 font-bold transition-colors"
                 style={{
-                  background: days === d ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.04)',
-                  color: days === d ? '#00D4B1' : 'rgba(255,255,255,0.55)',
-                  border: days === d ? '1px solid rgba(0,212,177,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                  background: days === d ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.04)',
+                  color: days === d ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.55)',
+                  border: days === d ? '1px solid rgb(135 197 64 / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
                 }}>
                 {d === 1 ? 'tomorrow' : `${d} days`}
               </button>
@@ -105,7 +105,7 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
           {prepLoading && <p className="text-sm text-white/40">Computing forecast…</p>}
           {prepList && prepList.byStation.length === 0 && (
             <div className="rounded-2xl p-8 text-center"
-              style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               <p className="font-bold text-white/85">No prep computed</p>
               <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
                 The demand forecast needs ~2 weeks of completed orders before it can suggest prep quantities. Check back once you have history.
@@ -117,7 +117,7 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
               {prepList.byStation.map((s) => (
                 <div key={s.stationId}
                   className="rounded-2xl overflow-hidden"
-                  style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <div className="px-4 py-3 border-b border-white/[0.05] flex items-center justify-between">
                     <p className="font-black text-white/90">{s.stationName}</p>
                     <span className="text-[10px] text-white/40">{s.lines.length} ingredients</span>
@@ -145,7 +145,7 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
                             <td className="px-4 py-2 text-right text-white/65 font-mono">{l.requiredQty} {l.unit}</td>
                             <td className="px-4 py-2 text-right text-white/45 font-mono">{l.currentStock} {l.unit}</td>
                             <td className="px-4 py-2 text-right font-mono font-bold"
-                              style={{ color: short ? '#F59E0B' : '#00D4B1' }}>
+                              style={{ color: short ? '#a15c00' : 'var(--erp-primary-ink)' }}>
                               {short ? `+${l.shortfall} ${l.unit}` : '✓'}
                             </td>
                           </tr>
@@ -161,7 +161,7 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
           {prepList && prepList.unmappedItems.length > 0 && (
             <div className="mt-3 rounded-xl p-3 text-xs"
               style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>
-              <p className="font-bold text-amber-400">{prepList.unmappedItems.length} forecast item{prepList.unmappedItems.length === 1 ? '' : 's'} skipped</p>
+              <p className="font-bold text-amber-700">{prepList.unmappedItems.length} forecast item{prepList.unmappedItems.length === 1 ? '' : 's'} skipped</p>
               <ul className="text-white/55 mt-1 space-y-0.5">
                 {prepList.unmappedItems.slice(0, 5).map((u) => (
                   <li key={u.menuItemId}>· {u.qty}× {u.name} — {u.reason}</li>

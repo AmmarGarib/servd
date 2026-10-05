@@ -108,8 +108,8 @@ export default function FormatEditorPage() {
         <button className={btnGhost} onClick={exportJson}>Export JSON</button>
         <button className={btn} disabled={save.isPending || !dirty} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save new version'}</button>
       </>}>
-      {err && <div className="rounded-xl p-3 mb-4 text-sm text-red-300" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)' }}>{err.split(' · ').map((e) => <p key={e}>• {e}</p>)}</div>}
-      {ok && <p className="text-sm text-kds-green mb-4">{ok}</p>}
+      {err && <div className="rounded-xl p-3 mb-4 text-sm text-red-700" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)' }}>{err.split(' · ').map((e) => <p key={e}>• {e}</p>)}</div>}
+      {ok && <p className="text-sm text-primary-ink mb-4">{ok}</p>}
 
       <div className="grid xl:grid-cols-[1fr_320px] gap-5">
         <div className="space-y-3">
@@ -137,7 +137,7 @@ export default function FormatEditorPage() {
                           {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </td>
-                      <td className="px-1 py-1.5 text-center"><input type="checkbox" checked={!!f.required} onChange={(e) => upd(i, { required: e.target.checked })} className="accent-[#00D4B1]" aria-label="Required" /></td>
+                      <td className="px-1 py-1.5 text-center"><input type="checkbox" checked={!!f.required} onChange={(e) => upd(i, { required: e.target.checked })} className="accent-primary" aria-label="Required" /></td>
                       <td className="px-1 py-1.5 min-w-[180px]">
                         {(f.type === 'select' || f.type === 'multiselect') && <OptionsInput options={f.options ?? []} onSet={(options) => upd(i, { options })} />}
                         {f.type === 'orgunit' && (
@@ -158,11 +158,11 @@ export default function FormatEditorPage() {
                             {RECORD_SLOTS.map((s) => <option key={s} value={s}>{s}{requiredBinds.has(s) ? ' (required)' : ''}</option>)}
                           </select>
                         )}
-                        {sys && <p className="text-[10px] text-amber-400 mt-0.5">used by calculations</p>}
+                        {sys && <p className="text-[10px] text-amber-700 mt-0.5">used by calculations</p>}
                       </td>
                       <td className="px-1 py-1.5 min-w-[110px]"><input className={inp} value={f.group ?? ''} onChange={(e) => upd(i, { group: e.target.value || undefined })} aria-label="Group" /></td>
                       <td className="px-1 py-1.5">
-                        <button disabled={!!locked} onClick={() => touch(fields.filter((_, j) => j !== i))} className="text-white/35 hover:text-red-400 disabled:opacity-20 px-1" aria-label="Remove field" title={locked ? 'Needed by calculations — relabel instead' : 'Remove'}>✕</button>
+                        <button disabled={!!locked} onClick={() => touch(fields.filter((_, j) => j !== i))} className="text-white/35 hover:text-red-700 disabled:opacity-20 px-1" aria-label="Remove field" title={locked ? 'Needed by calculations — relabel instead' : 'Remove'}>✕</button>
                       </td>
                     </tr>
                   )
@@ -192,7 +192,7 @@ export default function FormatEditorPage() {
                   <select className={inp} value={w.role} onChange={(e) => { setWorkflow(workflow.map((x, j) => (j === i ? { ...x, role: e.target.value as WorkflowStep['role'] } : x))); setDirty(true) }} aria-label="Who approves">
                     {Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </select>
-                  <button onClick={() => { setWorkflow(workflow.filter((_, j) => j !== i)); setDirty(true) }} className="text-white/35 hover:text-red-400 px-1" aria-label="Remove step">✕</button>
+                  <button onClick={() => { setWorkflow(workflow.filter((_, j) => j !== i)); setDirty(true) }} className="text-white/35 hover:text-red-700 px-1" aria-label="Remove step">✕</button>
                 </div>
               ))}
               {workflow.length < 6 && <button className="text-xs font-bold text-white/50 hover:text-white" onClick={() => { setWorkflow([...workflow, { key: nextStepKey(workflow), label: 'HR approval', role: 'hr' }]); setDirty(true) }}>+ Add step</button>}
@@ -211,10 +211,10 @@ export default function FormatEditorPage() {
           </div>
           <div className="rounded-2xl p-4" style={card}>
             <p className="text-sm font-black text-white/85 mb-2">Versions</p>
-            <button className="w-full text-left text-xs py-1 text-white/60 hover:text-white" onClick={() => activate.mutate(0)}>Built-in default {info.current.isDefault && <span className="text-kds-green">· live</span>}</button>
+            <button className="w-full text-left text-xs py-1 text-white/60 hover:text-white" onClick={() => activate.mutate(0)}>Built-in default {info.current.isDefault && <span className="text-primary-ink">· live</span>}</button>
             {info.versions.map((v) => (
               <button key={v.version} className="w-full text-left text-xs py-1 text-white/60 hover:text-white" onClick={() => activate.mutate(v.version)}>
-                v{v.version} · {day(v.createdAt)}{v.note ? ` · ${v.note}` : ''} {v.isActive && <span className="text-kds-green">· live</span>}
+                v{v.version} · {day(v.createdAt)}{v.note ? ` · ${v.note}` : ''} {v.isActive && <span className="text-primary-ink">· live</span>}
               </button>
             ))}
             <p className="text-[10px] text-white/35 mt-2">Click a version to make it live again.</p>
@@ -282,7 +282,7 @@ function ImportJson({ onClose, onLoad }: { onClose: () => void; onLoad: (f: HrFi
     <Modal title="Import format (JSON)" wide onClose={onClose}>
       <p className="text-xs text-white/50 mb-2">Paste an exported format, or a list of fields. It replaces the fields in the editor; nothing is saved until you press “Save new version”.</p>
       <textarea className={`${inp} font-mono`} rows={14} value={text} onChange={(e) => setText(e.target.value)} />
-      {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
       <div className="flex gap-2 mt-3"><button className={btn} onClick={go}>Load into editor</button><button className={btnGhost} onClick={onClose}>Cancel</button></div>
     </Modal>
   )

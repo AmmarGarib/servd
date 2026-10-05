@@ -97,7 +97,7 @@ export default function SalesTaxReturnPage() {
             <div className="s-card p-4">
               <div className="flex justify-between text-base font-bold mb-2">
                 <span className="text-s-text">Net payable / (refund)</span>
-                <span className={data.netPayableCents >= 0 ? 'text-s-red' : 'text-s-teal'}>{fmtPkr(data.netPayableCents)}</span>
+                <span className={data.netPayableCents >= 0 ? 'text-s-red' : 'text-primary-ink'}>{fmtPkr(data.netPayableCents)}</span>
               </div>
               <p className="text-xs text-s-muted">Total taxable sales: {fmtPkr(data.taxableSalesCents)}</p>
             </div>

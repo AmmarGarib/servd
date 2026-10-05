@@ -27,10 +27,10 @@ interface Tile {
 }
 
 const STATUS_PILL: Record<Status, { label: string; bg: string; fg: string }> = {
-  ready:      { label: 'Ready',         bg: 'rgba(0,212,177,0.12)',  fg: '#00D4B1' },
-  incomplete: { label: 'Needs setup',   bg: 'rgba(245,158,11,0.12)', fg: '#F59E0B' },
-  optional:   { label: 'Optional',      bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.55)' },
-  unknown:    { label: '—',             bg: 'rgba(255,255,255,0.04)', fg: 'rgba(255,255,255,0.35)' },
+  ready:      { label: 'Ready',         bg: 'rgb(135 197 64 / 0.12)',  fg: 'var(--erp-primary)' },
+  incomplete: { label: 'Needs setup',   bg: 'rgba(245,158,11,0.12)', fg: '#a15c00' },
+  optional:   { label: 'Optional',      bg: 'rgb(var(--fg-rgb) / 0.06)', fg: 'rgb(var(--fg-rgb) / 0.55)' },
+  unknown:    { label: '—',             bg: 'rgb(var(--fg-rgb) / 0.04)', fg: 'rgb(var(--fg-rgb) / 0.35)' },
 }
 
 const CATEGORY_META = {
@@ -237,7 +237,7 @@ export default function ConfigurationHubPage() {
   const setupPct = totalCount > 0 ? Math.round((readyCount / totalCount) * 100) : 0
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       {/* Header */}
       <header className="px-7 py-7 border-b border-white/[0.05]">
         <div className="flex items-start justify-between gap-6 max-w-[1200px] mx-auto">
@@ -252,13 +252,13 @@ export default function ConfigurationHubPage() {
           {/* Setup progress card */}
           <div className="rounded-2xl p-4 min-w-[220px]"
             style={{
-              background: 'linear-gradient(135deg, rgba(0,212,177,0.08), rgba(99,102,241,0.05))',
-              border: '1px solid rgba(0,212,177,0.18)',
+              background: 'linear-gradient(135deg, rgb(135 197 64 / 0.08), rgb(61 31 59 / 0.05))',
+              border: '1px solid rgb(135 197 64 / 0.18)',
             }}>
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-white/40">Setup progress</p>
-            <p className="text-3xl font-black mt-1" style={{ color: '#00D4B1' }}>{setupPct}%</p>
+            <p className="text-3xl font-black mt-1" style={{ color: 'var(--erp-primary-ink)' }}>{setupPct}%</p>
             <div className="h-1.5 rounded-full mt-2 overflow-hidden bg-white/5">
-              <div className="h-full" style={{ width: `${setupPct}%`, background: 'linear-gradient(90deg, #00D4B1, #6366F1)' }} />
+              <div className="h-full" style={{ width: `${setupPct}%`, background: 'var(--erp-primary)' }} />
             </div>
             <p className="text-[11px] text-white/40 mt-2">
               {readyCount} ready · {incompleteCount} pending
@@ -302,11 +302,11 @@ function ConfigTile({ tile }: { tile: Tile }) {
       href={tile.href}
       className="group relative rounded-2xl p-4 transition-all duration-200 hover:-translate-y-0.5"
       style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgb(var(--fg-rgb) / 0.02)',
+        border: '1px solid rgb(var(--fg-rgb) / 0.06)',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(0,212,177,0.25)'; e.currentTarget.style.background = 'rgba(0,212,177,0.03)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.background = 'rgba(255,255,255,0.02)' }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgb(135 197 64 / 0.25)'; e.currentTarget.style.background = 'rgb(135 197 64 / 0.03)' }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)' }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <span className="text-2xl shrink-0">{tile.icon}</span>
@@ -322,7 +322,7 @@ function ConfigTile({ tile }: { tile: Tile }) {
       {tile.hint && (
         <p className="text-[11px] text-white/30 mt-2 italic">{tile.hint}</p>
       )}
-      <div className="mt-3 text-[11px] font-bold text-white/40 group-hover:text-[#00D4B1] transition-colors">
+      <div className="mt-3 text-[11px] font-bold text-white/40 group-hover:text-primary-ink transition-colors">
         Configure →
       </div>
     </Link>

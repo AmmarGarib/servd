@@ -54,18 +54,18 @@ export default function CurbsidePage() {
   })
 
   return (
-    <div className="flex h-screen flex-col bg-kds-bg text-kds-text">
-      <div className="flex items-center justify-between border-b border-kds-border bg-kds-card px-6 py-3">
+    <div className="flex h-screen flex-col bg-s-bg text-s-text">
+      <div className="flex items-center justify-between border-b border-s-border bg-s-surface px-6 py-3">
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-bold tracking-wide">CURBSIDE / CAR-HOPPING</h1>
-          <span className="text-xs text-kds-subtext">
+          <span className="text-xs text-s-muted">
             🚗 {data?.arrived.length ?? 0} here · {data?.enRoute.length ?? 0} en route
           </span>
         </div>
       </div>
 
       {isLoading && (
-        <div className="flex-1 flex items-center justify-center text-kds-subtext text-sm">Loading…</div>
+        <div className="flex-1 flex items-center justify-center text-s-muted text-sm">Loading…</div>
       )}
 
       {data && (
@@ -100,12 +100,12 @@ export default function CurbsidePage() {
 function Column({ title, subtitle, accent, children }: {
   title: string; subtitle: string; accent: 'amber' | 'muted'; children: React.ReactNode
 }) {
-  const headerColor = accent === 'amber' ? 'text-amber-300' : 'text-kds-subtext'
+  const headerColor = accent === 'amber' ? 'text-amber-700' : 'text-s-muted'
   return (
     <div className="flex flex-col gap-3 min-h-0">
       <div className="px-2">
         <div className={`text-sm font-bold uppercase tracking-[0.2em] ${headerColor}`}>{title}</div>
-        <div className="text-[11px] text-kds-subtext mt-0.5">{subtitle}</div>
+        <div className="text-[11px] text-s-muted mt-0.5">{subtitle}</div>
       </div>
       <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1">
         {children}
@@ -131,33 +131,33 @@ function CurbsideCard({
   const waitColor = waitMin == null ? '' :
     waitMin >= 5 ? 'bg-rose-500/15 border-rose-500/40' :
     waitMin >= 2 ? 'bg-amber-500/10 border-amber-500/30' :
-                   'bg-kds-card border-kds-border'
+                   'bg-s-surface border-s-border'
 
   return (
-    <div className={`rounded-lg border p-3 ${kind === 'arrived' ? waitColor : 'bg-kds-card border-kds-border/60'}`}>
+    <div className={`rounded-lg border p-3 ${kind === 'arrived' ? waitColor : 'bg-s-surface border-s-border/60'}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-base font-bold">{o.curbsideVehicle ?? 'No vehicle info'}</span>
-            {o.curbsidePlate && <span className="text-xs font-mono text-kds-subtext">{o.curbsidePlate}</span>}
+            {o.curbsidePlate && <span className="text-xs font-mono text-s-muted">{o.curbsidePlate}</span>}
             {o.curbsideSpot && (
-              <span className="text-[10px] font-bold uppercase px-1.5 rounded bg-indigo-500/20 text-indigo-300">
+              <span className="text-[10px] font-bold uppercase px-1.5 rounded bg-indigo-500/20 text-indigo-700">
                 Spot {o.curbsideSpot}
               </span>
             )}
           </div>
-          <div className="text-[11px] text-kds-subtext mt-0.5">
+          <div className="text-[11px] text-s-muted mt-0.5">
             {o.concept.name} · {o.customerName ?? 'Guest'} · Rs. {(o.totalCents / 100).toFixed(0)}
           </div>
           {kind === 'arrived' && (
             <div className="mt-2 text-xs font-bold tabular-nums">
-              <span className={waitMin != null && waitMin >= 5 ? 'text-rose-300' : waitMin != null && waitMin >= 2 ? 'text-amber-300' : 'text-emerald-300'}>
+              <span className={waitMin != null && waitMin >= 5 ? 'text-rose-700' : waitMin != null && waitMin >= 2 ? 'text-amber-700' : 'text-emerald-700'}>
                 ⏱ {waitMin}m waiting
               </span>
             </div>
           )}
           {kind === 'enRoute' && (
-            <div className="mt-2 text-[11px] text-kds-subtext">
+            <div className="mt-2 text-[11px] text-s-muted">
               Placed {placedAgoMin}m ago
             </div>
           )}
@@ -165,7 +165,7 @@ function CurbsideCard({
 
         {kind === 'arrived' && onRunOut && (
           <button onClick={onRunOut} disabled={disabled}
-            className="rounded-lg bg-emerald-500 hover:bg-emerald-400 px-3 py-2 text-xs font-bold text-black whitespace-nowrap disabled:opacity-50">
+            className="rounded-lg bg-primary hover:bg-primary-hover px-3 py-2 text-xs font-bold text-primary-on whitespace-nowrap disabled:opacity-50">
             ↗ Running it out
           </button>
         )}
@@ -176,7 +176,7 @@ function CurbsideCard({
 
 function Empty({ msg }: { msg: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-kds-border p-8 text-center text-xs text-kds-subtext">
+    <div className="rounded-lg border border-dashed border-s-border p-8 text-center text-xs text-s-muted">
       {msg}
     </div>
   )

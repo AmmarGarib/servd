@@ -44,7 +44,7 @@ export default function HrDocumentsPage() {
   return (
     <HrShell title="Documents" subtitle="CNICs, contracts, certificates and everything else on file — with expiry and verification."
       actions={<button className={btn} onClick={() => setAdding(true)}>Add document</button>}>
-      {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       <div className="flex flex-wrap gap-3 mb-4">
         <select className={`${inp} max-w-[200px]`} value={win} onChange={(e) => setWin(e.target.value)}>
           {WINDOWS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
@@ -58,7 +58,7 @@ export default function HrDocumentsPage() {
           {types.map((t) => <option key={t} value={t}>{human(t)}</option>)}
         </select>
         <label className="flex items-center gap-2 text-sm text-white/70">
-          <input type="checkbox" checked={unverified} onChange={(e) => setUnverified(e.target.checked)} className="h-4 w-4 accent-[#00D4B1]" />
+          <input type="checkbox" checked={unverified} onChange={(e) => setUnverified(e.target.checked)} className="h-4 w-4 accent-primary" />
           Unverified only
         </label>
       </div>
@@ -75,7 +75,7 @@ export default function HrDocumentsPage() {
             <tbody>
               {shown.map((d) => {
                 const exp = d.expiryDate ? new Date(d.expiryDate).getTime() : null
-                const tone = exp == null ? 'rgba(255,255,255,0.6)' : exp < now ? '#f87171' : exp < now + 30 * 86_400_000 ? '#f59e0b' : 'rgba(255,255,255,0.6)'
+                const tone = exp == null ? 'rgb(var(--fg-rgb) / 0.6)' : exp < now ? '#b42318' : exp < now + 30 * 86_400_000 ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.6)'
                 return (
                   <tr key={d.id} className="border-t border-white/[0.05]">
                     <td className="px-4 py-2"><Link href={`/hr/employees/${d.employeeId}`} className="font-bold text-white/85 hover:underline">{d.employee.fullName}</Link> <span className="text-white/35 text-xs">{d.employee.employeeCode}</span></td>
@@ -85,8 +85,8 @@ export default function HrDocumentsPage() {
                     </td>
                     <td className="px-4 py-2 text-white/60">{day(d.issueDate)}</td>
                     <td className="px-4 py-2" style={{ color: tone }}>{day(d.expiryDate)}</td>
-                    <td className="px-4 py-2 text-white/60">{d.verifiedAt ? day(d.verifiedAt) : <button className="text-xs font-bold text-kds-green" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Verify</button>}</td>
-                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/35 hover:text-red-400" onClick={() => { if (confirm('Delete this document?')) del.mutate(d.id) }}>Delete</button></td>
+                    <td className="px-4 py-2 text-white/60">{d.verifiedAt ? day(d.verifiedAt) : <button className="text-xs font-bold text-primary-ink" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Verify</button>}</td>
+                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/35 hover:text-red-700" onClick={() => { if (confirm('Delete this document?')) del.mutate(d.id) }}>Delete</button></td>
                   </tr>
                 )
               })}
@@ -130,7 +130,7 @@ function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
           <L label="Issued"><input type="date" className={inp} value={f.issueDate} onChange={(e) => setF({ ...f, issueDate: e.target.value })} /></L>
           <L label="Expires"><input type="date" className={inp} value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} /></L>
         </div>
-        {save.error && <p className="text-xs text-red-400">{(save.error as Error).message}</p>}
+        {save.error && <p className="text-xs text-red-700">{(save.error as Error).message}</p>}
         <div className="flex justify-end gap-2">
           <button className={btnGhost} onClick={onClose}>Cancel</button>
           <button className={btn} disabled={!f.employeeId || !f.docType || save.isPending} onClick={() => save.mutate()}>Save</button>

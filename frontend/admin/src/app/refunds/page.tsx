@@ -88,7 +88,7 @@ export default function RefundsPage() {
       <div className="p-6 max-w-6xl mx-auto space-y-4">
         {feedback && (
           <div role={feedback.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${feedback.ok ? 'border-l-4 border-s-teal' : 'border-l-4 border-s-red'}`}>
-            <span className={feedback.ok ? 'text-s-teal' : 'text-s-red'}>{feedback.msg}</span>
+            <span className={feedback.ok ? 'text-primary-ink' : 'text-s-red'}>{feedback.msg}</span>
           </div>
         )}
 
@@ -130,7 +130,7 @@ export default function RefundsPage() {
                     </td>
                     <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(o.totalCents)}</td>
                     <td className="px-4 py-2 text-right">
-                      <span className="text-xs text-s-teal">{selectedId === o.id ? '●' : 'Select →'}</span>
+                      <span className="text-xs text-primary-ink">{selectedId === o.id ? '●' : 'Select →'}</span>
                     </td>
                   </tr>
                 ))}
@@ -164,11 +164,11 @@ export default function RefundsPage() {
                   <label className="text-xs font-semibold text-s-muted">Mode</label>
                   <div className="flex gap-2">
                     <button onClick={() => setMode('refund')} aria-pressed={mode === 'refund'}
-                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'refund' ? 'bg-s-red text-white border-s-red' : 'border-s-border text-s-text bg-white'}`}>
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'refund' ? 'bg-s-red text-[#fff] border-s-red' : 'border-s-border text-s-text bg-s-surface'}`}>
                       Refund (paid)
                     </button>
                     <button onClick={() => setMode('cancel')} aria-pressed={mode === 'cancel'}
-                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'cancel' ? 'bg-s-amber text-white border-s-amber' : 'border-s-border text-s-text bg-white'}`}>
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'cancel' ? 'bg-s-amber text-[#fff] border-s-amber' : 'border-s-border text-s-text bg-s-surface'}`}>
                       Cancel (unpaid)
                     </button>
                   </div>
@@ -184,12 +184,12 @@ export default function RefundsPage() {
                       <input id="refund-amount" type="number" min="1" step="1" inputMode="decimal"
                         value={amount} onChange={(e) => setAmount(e.target.value)}
                         placeholder={(selectedOrder.totalCents / 100).toFixed(0)}
-                        className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm text-s-text" />
+                        className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text" />
                     </div>
                     <div className="space-y-1">
                       <label htmlFor="refund-method" className="text-xs font-semibold text-s-muted">Give back as</label>
                       <select id="refund-method" value={method} onChange={(e) => setMethod(e.target.value as '' | 'cash' | 'card')}
-                        className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm text-s-text">
+                        className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text">
                         <option value="">Same as paid</option>
                         <option value="cash">Cash (from my open drawer)</option>
                         <option value="card">Card reversal</option>
@@ -203,7 +203,7 @@ export default function RefundsPage() {
                   <select
                     value={REASON_PRESETS.includes(reason as never) ? reason : ''}
                     onChange={(e) => setReason(e.target.value)}
-                    className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm text-s-text"
+                    className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text"
                   >
                     <option value="">— Select preset or type below —</option>
                     {REASON_PRESETS.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -213,14 +213,14 @@ export default function RefundsPage() {
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder="Or describe in your own words…"
-                    className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm text-s-text"
+                    className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text"
                   />
                 </div>
 
                 <button
                   onClick={() => refund.mutate(selectedOrder)}
                   disabled={refund.isPending || reason.trim().length < 3 || (mode === 'refund' && selectedOrder.status !== 'completed')}
-                  className="w-full py-2 rounded font-bold text-sm bg-s-red text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full py-2 rounded font-bold text-sm bg-s-red text-[#fff] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {refund.isPending ? 'Processing…' : `${mode === 'cancel' ? 'Cancel' : 'Refund'} this order`}
                 </button>
@@ -235,7 +235,7 @@ export default function RefundsPage() {
         </div>
 
         <p className="text-xs text-s-muted">
-          Audit trail of every refund: <Link href="/accounting/audit-log?action=order" className="text-s-teal hover:underline">view in audit log</Link>.
+          Audit trail of every refund: <Link href="/accounting/audit-log?action=order" className="text-primary-ink hover:underline">view in audit log</Link>.
         </p>
       </div>
     </div>

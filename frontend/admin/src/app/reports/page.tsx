@@ -73,7 +73,7 @@ function DeltaBadge({ delta, invert = false }: { delta: DeltaResult | null; inve
   }
   // invert = for metrics where "more" is bad (e.g. avg cook time)
   const positive = invert ? delta.dir === 'down' : delta.dir === 'up'
-  const color = positive ? 'text-s-teal' : 'text-s-red'
+  const color = positive ? 'text-primary-ink' : 'text-s-red'
   const arrow = delta.dir === 'up' ? '↑' : '↓'
   return (
     <span className={`text-xs font-semibold ${color}`}>
@@ -83,10 +83,10 @@ function DeltaBadge({ delta, invert = false }: { delta: DeltaResult | null; inve
 }
 
 function RankDelta({ curr, prev }: { curr: number; prev: number | null }) {
-  if (prev === null) return <span className="text-xs font-bold text-s-teal">NEW</span>
+  if (prev === null) return <span className="text-xs font-bold text-primary-ink">NEW</span>
   const diff = prev - curr  // lower rank number = better; if prev > curr, rank improved
   if (diff === 0) return <span className="text-xs text-s-muted">=</span>
-  const color = diff > 0 ? 'text-s-teal' : 'text-s-red'
+  const color = diff > 0 ? 'text-primary-ink' : 'text-s-red'
   const arrow = diff > 0 ? '↑' : '↓'
   return <span className={`text-xs font-bold ${color}`}>{arrow}{Math.abs(diff)}</span>
 }
@@ -183,7 +183,7 @@ export default function ReportsPage() {
               <button key={p.days} onClick={() => applyPreset(p.days)}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                   preset === p.days
-                    ? 'bg-s-teal-dim border border-s-teal/40 text-s-teal'
+                    ? 'bg-s-teal-dim border border-s-teal/40 text-primary-ink'
                     : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'
                 }`}>
                 {p.label}
@@ -200,7 +200,7 @@ export default function ReportsPage() {
               <div
                 onClick={() => setCompare((v) => !v)}
                 className={`relative w-9 h-5 rounded-full transition-colors ${compare ? 'bg-s-teal' : 'bg-s-border'}`}>
-                <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${compare ? 'translate-x-4' : ''}`} />
+                <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-s-surface shadow transition-transform ${compare ? 'translate-x-4' : ''}`} />
               </div>
               <span className="text-xs text-s-muted whitespace-nowrap">Compare to prev period</span>
             </label>
@@ -218,7 +218,7 @@ export default function ReportsPage() {
           {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                tab === t ? 'border-s-teal text-s-teal' : 'border-transparent text-s-muted hover:text-s-text'
+                tab === t ? 'border-s-teal text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'
               }`}>
               {TAB_LABELS[t]}
             </button>
@@ -242,7 +242,7 @@ export default function ReportsPage() {
                   ]
                   exportToCsv(rows, `sales_${slug}.csv`)
                 }}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-s-teal hover:border-s-teal/40 transition-colors">
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
                 Export CSV
               </button>
             </div>
@@ -255,14 +255,14 @@ export default function ReportsPage() {
                   // and service charge. The books' revenue is the ledger P&L.
                   label: 'Sales (incl. GST)',
                   value: fmtPkrWhole(sales.totals.gross),
-                  color: 'text-gradient-brand',
+                  color: 'text-primary-ink',
                   sub: 'sales register — not the P&L',
                   delta: compare && prevSales ? computeDelta(sales.totals.gross, prevSales.totals.gross) : null,
                 },
                 {
                   label: 'Register net',
                   value: fmtPkrWhole(sales.totals.net),
-                  color: 'text-s-teal',
+                  color: 'text-primary-ink',
                   sub: 'register: sales − discounts',
                   delta: compare && prevSales ? computeDelta(sales.totals.net, prevSales.totals.net) : null,
                 },
@@ -371,7 +371,7 @@ export default function ReportsPage() {
                       }))
                       exportToCsv(rows as Record<string, unknown>[], `top-items_${slug}.csv`)
                     }}
-                    className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-s-teal hover:border-s-teal/40 transition-colors">
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
                     Export CSV
                   </button>
                 </div>
@@ -400,7 +400,7 @@ export default function ReportsPage() {
                           </div>
                           <div className="flex items-center gap-4 text-xs shrink-0">
                             <span className="text-s-muted">{item.quantity} sold</span>
-                            <span className="font-bold text-s-teal">{fmtPkrWhole(item.revenueCents)}</span>
+                            <span className="font-bold text-primary-ink">{fmtPkrWhole(item.revenueCents)}</span>
                             {compare && prevEntry && (
                               <span className="text-s-dim">{fmtPkrWhole(prevEntry.revenue)} prev</span>
                             )}
@@ -432,7 +432,7 @@ export default function ReportsPage() {
                     }))
                     exportToCsv(rows as Record<string, unknown>[], `stations_${slug}.csv`)
                   }}
-                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-s-teal hover:border-s-teal/40 transition-colors">
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
                   Export CSV
                 </button>
               </div>
@@ -461,7 +461,7 @@ export default function ReportsPage() {
                               <td className="font-semibold text-s-text">{s.stationName}</td>
                               <td className="text-right text-s-muted">{s.items}</td>
                               <td className="text-right">
-                                <span className={`font-bold ${s.avgMinutes > 15 ? 'text-s-red' : s.avgMinutes > 10 ? 'text-s-amber' : 'text-s-teal'}`}>
+                                <span className={`font-bold ${s.avgMinutes > 15 ? 'text-s-red' : s.avgMinutes > 10 ? 'text-s-amber' : 'text-primary-ink'}`}>
                                   {s.avgMinutes.toFixed(1)}m
                                 </span>
                               </td>
@@ -497,7 +497,7 @@ export default function ReportsPage() {
                     }))
                     exportToCsv(rows as Record<string, unknown>[], `by-channel_${slug}.csv`)
                   }}
-                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-s-teal hover:border-s-teal/40 transition-colors">
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
                   Export CSV
                 </button>
               </div>
@@ -529,7 +529,7 @@ export default function ReportsPage() {
                               </td>
                               <td className="text-right text-s-muted">{c.orders}</td>
                               <td className="text-right text-s-text">{fmtPkrWhole(c.gross)}</td>
-                              <td className="text-right font-bold text-s-teal">{fmtPkrWhole(c.net)}</td>
+                              <td className="text-right font-bold text-primary-ink">{fmtPkrWhole(c.net)}</td>
                               {compare && (
                                 <td className="text-right">
                                   {prev ? <DeltaBadge delta={delta} /> : <span className="text-xs text-s-dim">NEW</span>}

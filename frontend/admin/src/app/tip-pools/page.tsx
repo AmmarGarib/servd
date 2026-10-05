@@ -86,7 +86,7 @@ export default function TipPoolsPage() {
                   <td className="px-4 py-2 text-right font-mono text-xs">{fmtPkr(p.totalTipsCents)}</td>
                   <td className="px-4 py-2 text-right text-xs text-s-muted">{p._count.members}</td>
                   <td className="px-4 py-2"><span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
-                    p.status === 'paid' ? 'bg-s-teal text-white' : p.status === 'posted' ? 'bg-s-amber text-white' : 'bg-gray-200'
+                    p.status === 'paid' ? 'bg-primary text-primary-on' : p.status === 'posted' ? 'bg-s-amber text-[#fff]' : 'bg-s-elevated text-s-muted'
                   }`}>{p.status}</span></td>
                 </tr>
               ))}
@@ -134,7 +134,7 @@ export default function TipPoolsPage() {
                     {pay.isPending ? 'Paying…' : 'Mark paid (post JE)'}
                   </button>
                 )}
-                {detail.data.status === 'paid' && <span className="text-xs text-s-teal w-full text-center">Paid out ✓</span>}
+                {detail.data.status === 'paid' && <span className="text-xs text-primary-ink w-full text-center">Paid out ✓</span>}
               </div>
             </div>
           )}
@@ -166,8 +166,8 @@ function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   })
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-s-surface rounded-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-s-border flex justify-between">
           <h2 className="text-lg font-bold">New tip pool</h2>
           <button onClick={onClose} className="text-2xl leading-none text-s-muted">×</button>
@@ -175,23 +175,23 @@ function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-s-muted">Brand</span>
-            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5">
+            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
               <option value="">Choose the brand whose tips these are…</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </label>
           <label className="block">
             <span className="text-xs text-s-muted">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="text-xs text-s-muted">Start</span>
-              <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
             <label className="block">
               <span className="text-xs text-s-muted">End</span>
-              <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
           </div>
           <p className="text-[11px] text-s-muted">Adds up this brand&apos;s tips in the window and the hours its company&apos;s staff punched, then splits them by the company&apos;s tip-pool rules.</p>

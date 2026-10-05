@@ -25,7 +25,7 @@ export function SignupFormBlock({ block, onDone }: { block: SignupFormBlockT; on
     <div className="container" style={{ display: 'flex', justifyContent: 'center' }}>
       <div
         className="w-full rounded-3xl px-7 py-8 shadow-2xl"
-        style={{ maxWidth: '26rem', background: '#2D1E2F', color: 'white', textAlign: 'left' }}
+        style={{ maxWidth: '26rem', background: 'var(--servd-purple)', color: 'white', textAlign: 'left' }}
       >
         {(mounted && token) || justDone ? (
           <div>

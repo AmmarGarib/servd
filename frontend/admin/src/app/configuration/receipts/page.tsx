@@ -36,7 +36,7 @@ export default function ReceiptsPage() {
   function patch<K extends keyof Cfg>(k: K, v: Cfg[K]) { setForm((p) => ({ ...p, [k]: v })) }
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">🧾 Receipts &amp; cash drawer</h1>
@@ -89,7 +89,7 @@ export default function ReceiptsPage() {
 
         <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save changes'}
           </button>
         </div>
@@ -100,7 +100,7 @@ export default function ReceiptsPage() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-2xl p-5" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
       <div className="mt-4 space-y-3">{children}</div>
     </div>
@@ -108,6 +108,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-kds-green" /><span className="text-sm text-white/85">{label}</span></label>
+  return <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-primary" /><span className="text-sm text-white/85">{label}</span></label>
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

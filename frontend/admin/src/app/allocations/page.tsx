@@ -55,7 +55,7 @@ export default function AllocationsPage() {
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
         </div>
 
-        {feedback && <p className="text-s-teal text-sm">{feedback}</p>}
+        {feedback && <p className="text-primary-ink text-sm">{feedback}</p>}
 
         <div className="s-card overflow-hidden">
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Rules</div>

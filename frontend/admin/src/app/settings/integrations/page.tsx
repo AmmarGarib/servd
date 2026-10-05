@@ -73,44 +73,44 @@ export default function IntegrationsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-kds-bg p-6">
+    <div className="min-h-screen bg-s-bg p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-black text-kds-text">Integrations</h1>
-        <p className="text-sm text-kds-subtext mt-1">Connect external services to enable social posting and more.</p>
+        <h1 className="text-2xl font-black text-s-text">Integrations</h1>
+        <p className="text-sm text-s-muted mt-1">Connect external services to enable social posting and more.</p>
       </div>
 
       {socialConnected && (
-        <div className="mb-6 rounded-xl border border-kds-green bg-kds-green/10 p-4">
-          <p className="font-bold text-kds-green">✓ Connected to Facebook Page: {decodeURIComponent(socialConnected)}</p>
-          <p className="text-sm text-kds-subtext mt-1">Instagram and Facebook posting are now enabled in the Content Calendar.</p>
+        <div className="mb-6 rounded-xl border border-primary bg-primary/10 p-4">
+          <p className="font-bold text-primary-ink">✓ Connected to Facebook Page: {decodeURIComponent(socialConnected)}</p>
+          <p className="text-sm text-s-muted mt-1">Instagram and Facebook posting are now enabled in the Content Calendar.</p>
         </div>
       )}
       {socialError && (
-        <div className="mb-6 rounded-xl border border-kds-red bg-kds-red/10 p-4">
-          <p className="font-bold text-kds-red">⚠ Connection failed: {decodeURIComponent(socialError)}</p>
-          <p className="text-sm text-kds-subtext mt-1">Try again or check your Facebook App settings.</p>
+        <div className="mb-6 rounded-xl border border-s-red bg-s-red/10 p-4">
+          <p className="font-bold text-s-red">⚠ Connection failed: {decodeURIComponent(socialError)}</p>
+          <p className="text-sm text-s-muted mt-1">Try again or check your Facebook App settings.</p>
         </div>
       )}
       {connectErr && (
-        <div className="mb-6 rounded-xl border border-kds-red bg-kds-red/10 p-4">
-          <p className="font-bold text-kds-red">⚠ Could not start Meta connect</p>
-          <p className="text-sm text-kds-subtext mt-1">{connectErr}</p>
-          <p className="text-xs text-kds-subtext/70 mt-2">
-            Most often this means <code className="bg-kds-border px-1 rounded">FACEBOOK_APP_ID</code> /
-            <code className="bg-kds-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t set in the backend .env.
+        <div className="mb-6 rounded-xl border border-s-red bg-s-red/10 p-4">
+          <p className="font-bold text-s-red">⚠ Could not start Meta connect</p>
+          <p className="text-sm text-s-muted mt-1">{connectErr}</p>
+          <p className="text-xs text-s-muted/70 mt-2">
+            Most often this means <code className="bg-s-border px-1 rounded">FACEBOOK_APP_ID</code> /
+            <code className="bg-s-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t set in the backend .env.
           </p>
         </div>
       )}
 
       <div className="space-y-4 max-w-2xl mx-auto">
         {/* Meta / Facebook + Instagram */}
-        <div className="rounded-xl border border-kds-border bg-kds-card p-5">
+        <div className="rounded-xl border border-s-border bg-s-surface p-5">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
               <span className="text-3xl">📘</span>
               <div>
-                <h2 className="font-bold text-kds-text">Facebook & Instagram</h2>
-                <p className="text-sm text-kds-subtext">Schedule and publish posts directly from the Content Calendar.</p>
+                <h2 className="font-bold text-s-text">Facebook & Instagram</h2>
+                <p className="text-sm text-s-muted">Schedule and publish posts directly from the Content Calendar.</p>
               </div>
             </div>
             <button
@@ -118,8 +118,8 @@ export default function IntegrationsPage() {
               disabled={connecting || status?.configured === false}
               className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 status?.connected
-                  ? 'border border-kds-border text-kds-subtext hover:border-kds-red hover:text-kds-red'
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
+                  ? 'border border-s-border text-s-muted hover:border-s-red hover:text-s-red'
+                  : 'bg-blue-600 text-[#fff] hover:bg-blue-700'
               }`}
             >
               {connecting ? 'Opening Meta…' : status?.connected ? 'Reconnect' : 'Connect'}
@@ -130,47 +130,47 @@ export default function IntegrationsPage() {
               operator sees the actual blocker (missing .env values) rather
               than discovering it on click. Links to the runbook. */}
           {status && !status.configured && (
-            <div className="mt-4 rounded-lg border border-kds-amber/30 bg-kds-amber/5 p-3 text-xs space-y-1.5">
-              <p className="font-bold text-kds-amber">⚠ Meta App not configured</p>
-              <p className="text-kds-subtext">
-                <code className="bg-kds-border px-1 rounded">FACEBOOK_APP_ID</code> and
-                <code className="bg-kds-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t
-                set in <code className="bg-kds-border px-1 rounded">backend/.env</code>. You need
+            <div className="mt-4 rounded-lg border border-s-amber/30 bg-s-amber/5 p-3 text-xs space-y-1.5">
+              <p className="font-bold text-s-amber">⚠ Meta App not configured</p>
+              <p className="text-s-muted">
+                <code className="bg-s-border px-1 rounded">FACEBOOK_APP_ID</code> and
+                <code className="bg-s-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t
+                set in <code className="bg-s-border px-1 rounded">backend/.env</code>. You need
                 to create a Meta App at developers.facebook.com first — this is a one-time
                 manual step that has no programmatic path.
               </p>
-              <p className="text-kds-subtext pt-1">
+              <p className="text-s-muted pt-1">
                 <a href="https://github.com/AmmarGarib/servd/blob/main/docs/META_SETUP.md"
                   target="_blank" rel="noreferrer"
-                  className="text-kds-green underline">
+                  className="text-primary-ink underline">
                   Follow the META_SETUP runbook →
                 </a>
               </p>
-              <p className="text-kds-subtext pt-1">
+              <p className="text-s-muted pt-1">
                 Register this redirect URI in the Meta App:
-                <code className="bg-kds-border px-1 rounded ml-1 break-all">{status.redirectUri}</code>
+                <code className="bg-s-border px-1 rounded ml-1 break-all">{status.redirectUri}</code>
               </p>
             </div>
           )}
 
           {status?.connected && (
             <div className="mt-4 space-y-2">
-              <div className="flex items-center gap-3 rounded-lg bg-kds-bg p-3">
+              <div className="flex items-center gap-3 rounded-lg bg-s-bg p-3">
                 <span className="text-xl">📘</span>
                 <div>
-                  <p className="text-sm font-semibold text-kds-text">Facebook Page</p>
-                  <p className="text-xs text-kds-green">
+                  <p className="text-sm font-semibold text-s-text">Facebook Page</p>
+                  <p className="text-xs text-primary-ink">
                     ✓ {status.page?.name ?? 'Page'} (ID: {status.page?.id})
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 rounded-lg bg-kds-bg p-3">
+              <div className="flex items-center gap-3 rounded-lg bg-s-bg p-3">
                 <span className="text-xl">📸</span>
                 <div>
-                  <p className="text-sm font-semibold text-kds-text">Instagram Business</p>
+                  <p className="text-sm font-semibold text-s-text">Instagram Business</p>
                   {status.ig
-                    ? <p className="text-xs text-kds-green">✓ Connected (User ID: {status.ig.userId})</p>
-                    : <p className="text-xs text-kds-amber">⚠ No Instagram Business account found on this Page</p>
+                    ? <p className="text-xs text-primary-ink">✓ Connected (User ID: {status.ig.userId})</p>
+                    : <p className="text-xs text-s-amber">⚠ No Instagram Business account found on this Page</p>
                   }
                 </div>
               </div>
@@ -178,12 +178,12 @@ export default function IntegrationsPage() {
           )}
 
           {status?.configured && !status.connected && (
-            <div className="mt-4 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext space-y-1">
-              <p className="font-semibold text-kds-text">Before clicking Connect:</p>
+            <div className="mt-4 rounded-lg bg-s-bg p-3 text-xs text-s-muted space-y-1">
+              <p className="font-semibold text-s-text">Before clicking Connect:</p>
               <ul className="list-disc list-inside space-y-0.5">
                 <li>A Facebook Page for your restaurant (you must be Page admin)</li>
                 <li>An Instagram Business account linked to that Page</li>
-                <li>This redirect URI registered in your Meta App: <code className="bg-kds-border px-1 rounded break-all">{status.redirectUri}</code></li>
+                <li>This redirect URI registered in your Meta App: <code className="bg-s-border px-1 rounded break-all">{status.redirectUri}</code></li>
               </ul>
             </div>
           )}
@@ -195,30 +195,30 @@ export default function IntegrationsPage() {
             lib/mailer.ts — the same resolvers /health checks). This card used
             to tell operators to set WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID,
             which no outbound code reads, and had no email section at all. */}
-        <div className="rounded-xl border border-kds-border bg-kds-card p-5">
+        <div className="rounded-xl border border-s-border bg-s-surface p-5">
           <div className="flex items-center gap-3">
             <span className="text-3xl">💬</span>
             <div>
-              <h2 className="font-bold text-kds-text">WhatsApp &amp; email</h2>
-              <p className="text-sm text-kds-subtext">How servd reaches customers and staff: signup and sign-in codes, password resets, order and reservation messages.</p>
+              <h2 className="font-bold text-s-text">WhatsApp &amp; email</h2>
+              <p className="text-sm text-s-muted">How servd reaches customers and staff: signup and sign-in codes, password resets, order and reservation messages.</p>
             </div>
           </div>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <Link href="/configuration/whatsapp"
-              className="rounded-lg bg-kds-bg p-3 hover:bg-kds-border/40 transition-colors">
-              <p className="text-sm font-semibold text-kds-text">WhatsApp gateway →</p>
-              <p className="text-xs text-kds-subtext mt-0.5">Gateway URL and key, with a test send.</p>
+              className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
+              <p className="text-sm font-semibold text-s-text">WhatsApp gateway →</p>
+              <p className="text-xs text-s-muted mt-0.5">Gateway URL and key, with a test send.</p>
             </Link>
             <Link href="/configuration/email"
-              className="rounded-lg bg-kds-bg p-3 hover:bg-kds-border/40 transition-colors">
-              <p className="text-sm font-semibold text-kds-text">Email (SMTP) →</p>
-              <p className="text-xs text-kds-subtext mt-0.5">The backup channel when WhatsApp is down, with a test send.</p>
+              className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
+              <p className="text-sm font-semibold text-s-text">Email (SMTP) →</p>
+              <p className="text-xs text-s-muted mt-0.5">The backup channel when WhatsApp is down, with a test send.</p>
             </Link>
           </div>
-          <p className="mt-3 text-xs text-kds-subtext">
+          <p className="mt-3 text-xs text-s-muted">
             Inbound WhatsApp (customers and suppliers messaging you on the Meta Cloud API) is separate: it is verified with
-            <code className="bg-kds-border px-1 rounded mx-1">WHATSAPP_VERIFY_TOKEN</code> and
-            <code className="bg-kds-border px-1 rounded mx-1">APP_SECRET</code> in the backend environment.
+            <code className="bg-s-border px-1 rounded mx-1">WHATSAPP_VERIFY_TOKEN</code> and
+            <code className="bg-s-border px-1 rounded mx-1">APP_SECRET</code> in the backend environment.
           </p>
         </div>
 
@@ -257,19 +257,19 @@ export default function IntegrationsPage() {
           <div className="flex items-start gap-3">
             <span className="text-3xl">🏭</span>
             <div>
-              <h2 className="font-bold text-kds-text">Supplier Portal <span className="ml-2 rounded-full bg-purple-500/20 px-2 py-0.5 text-xs text-purple-300">SaaS</span></h2>
-              <p className="text-sm text-kds-subtext mt-0.5">
+              <h2 className="font-bold text-s-text">Supplier Portal <span className="ml-2 rounded-full bg-purple-500/20 px-2 py-0.5 text-xs text-purple-700">SaaS</span></h2>
+              <p className="text-sm text-s-muted mt-0.5">
                 Give your suppliers a private chat portal. Generate invite links from Supplier Chat.
                 Each supplier gets a unique URL — no login required.
               </p>
-              <p className="text-xs text-purple-300 mt-2">
+              <p className="text-xs text-purple-700 mt-2">
                 💡 This can be white-labelled and sold as a SaaS add-on to other restaurants.
                 Each restaurant&apos;s suppliers only see their own conversations.
               </p>
             </div>
           </div>
           <a href="/procurement/chat"
-            className="mt-4 inline-block rounded-xl border border-purple-500/40 px-4 py-2 text-sm font-bold text-purple-300 hover:bg-purple-500/10 transition-colors">
+            className="mt-4 inline-block rounded-xl border border-purple-500/40 px-4 py-2 text-sm font-bold text-purple-700 hover:bg-purple-500/10 transition-colors">
             Go to Supplier Chat →
           </a>
         </div>
@@ -298,13 +298,13 @@ function TaxAuthorityCard({
   status:     TaxAuthorityStatus
 }) {
   return (
-    <div className="rounded-xl border border-kds-border bg-kds-card p-5">
+    <div className="rounded-xl border border-s-border bg-s-surface p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="text-3xl">{icon}</span>
           <div>
-            <h2 className="font-bold text-kds-text">{title}</h2>
-            <p className="text-sm text-kds-subtext">{subtitle}</p>
+            <h2 className="font-bold text-s-text">{title}</h2>
+            <p className="text-sm text-s-muted">{subtitle}</p>
           </div>
         </div>
         {/* Tri-state badge — Not configured (grey) / Sandbox (amber) /
@@ -312,52 +312,52 @@ function TaxAuthorityCard({
         {status.configured ? (
           <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${
             status.mode === 'production'
-              ? 'border-kds-green text-kds-green'
-              : 'border-kds-amber text-kds-amber'
+              ? 'border-primary text-primary-ink'
+              : 'border-s-amber text-s-amber'
           }`}>
             {status.mode === 'production' ? '✓ Live' : 'Sandbox'}
           </span>
         ) : (
-          <span className="shrink-0 rounded-full border border-kds-border px-3 py-1 text-xs text-kds-subtext font-bold">
+          <span className="shrink-0 rounded-full border border-s-border px-3 py-1 text-xs text-s-muted font-bold">
             Not configured
           </span>
         )}
       </div>
 
       {!status.configured ? (
-        <div className="mt-4 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext space-y-1">
-          <p className="font-semibold text-kds-text">Not registered with {authority} yet</p>
+        <div className="mt-4 rounded-lg bg-s-bg p-3 text-xs text-s-muted space-y-1">
+          <p className="font-semibold text-s-text">Not registered with {authority} yet</p>
           <p>
-            Set <code className="bg-kds-border px-1 rounded">{envPrefix}_USERNAME</code> and
-            <code className="bg-kds-border px-1 rounded ml-1">{envPrefix}_PASSWORD</code> in
-            <code className="bg-kds-border px-1 rounded ml-1">backend/.env</code> after registering
-            your business at <a href={portalUrl} target="_blank" rel="noreferrer" className="text-kds-green underline">{portalUrl}</a>.
-            Defaults to sandbox; set <code className="bg-kds-border px-1 rounded">{envPrefix}_ENV=production</code> when you go live.
+            Set <code className="bg-s-border px-1 rounded">{envPrefix}_USERNAME</code> and
+            <code className="bg-s-border px-1 rounded ml-1">{envPrefix}_PASSWORD</code> in
+            <code className="bg-s-border px-1 rounded ml-1">backend/.env</code> after registering
+            your business at <a href={portalUrl} target="_blank" rel="noreferrer" className="text-primary-ink underline">{portalUrl}</a>.
+            Defaults to sandbox; set <code className="bg-s-border px-1 rounded">{envPrefix}_ENV=production</code> when you go live.
           </p>
-          <p className="text-kds-subtext/80 pt-1">
+          <p className="text-s-muted/80 pt-1">
             {regulation} Until configured, completed orders skip {authority} submission silently.
           </p>
-          <p className="text-kds-subtext/80 pt-1">
+          <p className="text-s-muted/80 pt-1">
             See <a href="https://github.com/AmmarGarib/servd/blob/main/docs/TAX_SETUP.md"
-              target="_blank" rel="noreferrer" className="text-kds-green underline">docs/TAX_SETUP.md</a> for the registration runbook.
+              target="_blank" rel="noreferrer" className="text-primary-ink underline">docs/TAX_SETUP.md</a> for the registration runbook.
           </p>
         </div>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-lg bg-kds-bg p-3">
-            <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Concepts registered</p>
-            <p className="text-lg font-black text-kds-text mt-0.5">
+          <div className="rounded-lg bg-s-bg p-3">
+            <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">Concepts registered</p>
+            <p className="text-lg font-black text-s-text mt-0.5">
               {status.conceptsRegistered}
-              {status.conceptsRegistered === 0 && <span className="text-xs font-normal text-kds-amber ml-2">⚠ none yet</span>}
+              {status.conceptsRegistered === 0 && <span className="text-xs font-normal text-s-amber ml-2">⚠ none yet</span>}
             </p>
-            <p className="text-[10px] text-kds-subtext/70 mt-0.5">
+            <p className="text-[10px] text-s-muted/70 mt-0.5">
               Each Concept needs a POSID from {authority} to submit invoices.
             </p>
           </div>
-          <div className="rounded-lg bg-kds-bg p-3">
-            <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Invoices submitted</p>
-            <p className="text-lg font-black text-kds-text mt-0.5">{status.invoicesSubmitted}</p>
-            <p className="text-[10px] text-kds-subtext/70 mt-0.5">
+          <div className="rounded-lg bg-s-bg p-3">
+            <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">Invoices submitted</p>
+            <p className="text-lg font-black text-s-text mt-0.5">{status.invoicesSubmitted}</p>
+            <p className="text-[10px] text-s-muted/70 mt-0.5">
               Lifetime count with an {authority} invoice number.
             </p>
           </div>

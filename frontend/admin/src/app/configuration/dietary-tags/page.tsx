@@ -21,7 +21,7 @@ export default function DietaryTagsPage() {
   if (isLoading) return <div className="p-8 text-white/60">Loading…</div>
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">🥗 Dietary tags &amp; allergens</h1>
@@ -37,7 +37,7 @@ export default function DietaryTagsPage() {
           items={dietary}
           onChange={setDietary}
           placeholder="e.g. Pescatarian"
-          accent="#00D4B1"
+          accent="#4f7a1c"
         />
         <ListEditor
           title="Allergens"
@@ -45,12 +45,12 @@ export default function DietaryTagsPage() {
           items={allergens}
           onChange={setAllergens}
           placeholder="e.g. Sesame"
-          accent="#F59E0B"
+          accent="#a15c00"
         />
 
         <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save taxonomy'}
           </button>
         </div>
@@ -73,7 +73,7 @@ function ListEditor({ title, desc, items, onChange, placeholder, accent }: {
 
   return (
     <div className="rounded-2xl p-5"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
       <p className="text-xs text-white/35 mt-0.5">{desc}</p>
 
@@ -93,10 +93,10 @@ function ListEditor({ title, desc, items, onChange, placeholder, accent }: {
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
           placeholder={placeholder}
           className="flex-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:outline-none"
-          style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+          style={{ borderColor: 'rgb(var(--fg-rgb) / 0.08)' }}
         />
         <button onClick={add} disabled={!next.trim()}
-          className="rounded-lg px-4 py-2 text-xs font-bold text-black disabled:opacity-50"
+          className="rounded-lg px-4 py-2 text-xs font-bold text-[#fff] disabled:opacity-50"
           style={{ background: accent }}>
           + Add
         </button>

@@ -86,7 +86,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
         }}
       >
       {/* Brand-mark — circular logo placeholder + name (new system, matches the
-          brand microsites). Name goes white over the dark hero, plum elsewhere. */}
+          brand microsites). Name goes white over the dark hero, purple elsewhere. */}
       <Link
         href="/"
         aria-label="servd home"
@@ -94,7 +94,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
       >
         <span aria-hidden="true" style={{
           width: '2.3rem', height: '2.3rem', borderRadius: '50%', flexShrink: 0,
-          background: 'var(--servd-green)', color: 'white',
+          background: 'var(--servd-green)', color: 'var(--servd-on-green)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem',
           letterSpacing: '-0.02em', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
@@ -107,7 +107,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
           lineHeight: 1,
           color: onDarkHero ? 'white' : 'var(--servd-black)',
         }}>
-          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+          servd<span style={{ color: onDarkHero ? 'var(--servd-green)' : 'var(--servd-green-dark)' }}>.</span>
         </span>
       </Link>
 
@@ -154,7 +154,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
                 width: '1.4rem',
                 height: '1.4rem',
                 borderRadius: '50%',
-                background: 'var(--servd-green)', color: 'white',
+                background: 'var(--servd-green)', color: 'var(--servd-on-green)',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -172,7 +172,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
             className="brand-pill"
             style={{
               ['--brand-accent' as string]: 'var(--servd-green)',
-              ['--brand-ink' as string]:    'white',
+              ['--brand-ink' as string]:    'var(--servd-on-green)',
               padding: '0.7rem 1.3rem',
               fontSize: '0.92rem',
               minHeight: '44px',

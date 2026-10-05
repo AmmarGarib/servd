@@ -38,15 +38,15 @@ export default function BusinessInfoPage() {
   })
 
   return (
-    <main style={{ minHeight: '100vh', background: '#0a0d12', color: '#E8EAF0', padding: '1.6rem 1.4rem 5rem' }}>
+    <main style={{ minHeight: '100vh', background: 'var(--bg)', color: '#3d1f3b', padding: '1.6rem 1.4rem 5rem' }}>
       <div style={{ maxWidth: '60rem', margin: '0 auto' }}>
-        <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.24em', textTransform: 'uppercase', color: '#6E7186', margin: 0 }}>
+        <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.24em', textTransform: 'uppercase', color: '#7a6178', margin: 0 }}>
           executive
         </p>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.1rem)', letterSpacing: '-0.02em', margin: '0.4rem 0 0' }}>
           Business info
         </h1>
-        <p style={{ color: '#6E7186', margin: '0.35rem 0 0', fontSize: '0.88rem', maxWidth: '40rem', lineHeight: 1.5 }}>
+        <p style={{ color: '#7a6178', margin: '0.35rem 0 0', fontSize: '0.88rem', maxWidth: '40rem', lineHeight: 1.5 }}>
           Phone, WhatsApp, address &amp; geo per brand. Edits flow to schema.org rich
           results, the Maps link, the storefront footer, /press, and the /locations
           pages — no code deploy needed.
@@ -54,10 +54,10 @@ export default function BusinessInfoPage() {
 
         <div style={{ marginTop: '1.8rem', display: 'grid', gap: '0.85rem' }}>
           {isLoading && (
-            <p style={{ color: '#6E7186', fontSize: '0.85rem', margin: 0 }}>Loading brands…</p>
+            <p style={{ color: '#7a6178', fontSize: '0.85rem', margin: 0 }}>Loading brands…</p>
           )}
           {concepts && concepts.length === 0 && (
-            <p style={{ color: '#6E7186', fontSize: '0.85rem', margin: 0 }}>No brands found.</p>
+            <p style={{ color: '#7a6178', fontSize: '0.85rem', margin: 0 }}>No brands found.</p>
           )}
           {(concepts ?? []).map((c) => (
             <BrandInfoCard key={c.id} concept={c} onSaved={() => void refetch()} />
@@ -107,8 +107,8 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
 
   return (
     <div style={{
-      background: '#161a24',
-      border: '1px solid rgba(255,255,255,0.06)',
+      background: 'var(--surface)',
+      border: '1px solid rgb(var(--fg-rgb) / 0.06)',
       borderRadius: '0.85rem',
       overflow: 'hidden',
     }}>
@@ -126,29 +126,29 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
         }}
       >
         <div>
-          <p style={{ fontWeight: 700, fontSize: '0.98rem', margin: 0, color: '#E8EAF0' }}>
+          <p style={{ fontWeight: 700, fontSize: '0.98rem', margin: 0, color: '#3d1f3b' }}>
             {concept.name}
           </p>
-          <p style={{ color: '#6E7186', fontSize: '0.78rem', margin: '0.2rem 0 0' }}>
+          <p style={{ color: '#7a6178', fontSize: '0.78rem', margin: '0.2rem 0 0' }}>
             {concept.addressLocality ?? concept.address ?? 'no address set'} · {concept.phone ?? 'no phone'}
           </p>
         </div>
         <span style={{
           fontSize: '0.68rem', fontWeight: 700,
-          color: filled(concept) === 'all' ? '#22C55E' : filled(concept) === 'some' ? '#F59E0B' : '#EF4444',
+          color: filled(concept) === 'all' ? '#3f7d20' : filled(concept) === 'some' ? '#a15c00' : '#b42318',
           background: filled(concept) === 'all' ? 'rgba(34,197,94,0.10)' : filled(concept) === 'some' ? 'rgba(245,158,11,0.10)' : 'rgba(239,68,68,0.10)',
           padding: '0.2rem 0.5rem', borderRadius: '999px',
           letterSpacing: '0.12em', textTransform: 'uppercase',
         }}>
           {filled(concept) === 'all' ? 'Complete' : filled(concept) === 'some' ? 'Partial' : 'Empty'}
         </span>
-        <span aria-hidden style={{ color: '#6E7186', fontSize: '0.85rem' }}>
+        <span aria-hidden style={{ color: '#7a6178', fontSize: '0.85rem' }}>
           {open ? '▲' : '▼'}
         </span>
       </button>
 
       {open && (
-        <div style={{ padding: '0.5rem 1.1rem 1.1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ padding: '0.5rem 1.1rem 1.1rem', borderTop: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
             <Field label="Phone (E.164)"
               value={draft.phone ?? ''} placeholder="+923001234567"
@@ -205,8 +205,8 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
               style={{
                 padding: '0.55rem 1.2rem',
                 borderRadius: '0.6rem',
-                background: dirty ? '#00D4B1' : '#1f2533',
-                color: dirty ? '#0a0a0a' : '#6E7186',
+                background: dirty ? 'var(--erp-primary)' : 'var(--elevated)',
+                color: dirty ? 'var(--erp-on-primary)' : '#7a6178',
                 fontWeight: 700, fontSize: '0.85rem',
                 border: 'none', cursor: dirty ? 'pointer' : 'not-allowed',
                 opacity: busy ? 0.6 : 1,
@@ -219,8 +219,8 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
                 onClick={() => setDraft(concept)}
                 style={{
                   padding: '0.55rem 1rem', borderRadius: '0.6rem',
-                  background: 'transparent', color: '#6E7186',
-                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: 'transparent', color: '#7a6178',
+                  border: '1px solid rgb(var(--fg-rgb) / 0.12)',
                   fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
                 }}>
                 Revert
@@ -228,7 +228,7 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
             )}
             {msg && (
               <span role="alert" style={{
-                color: msg.kind === 'ok' ? '#22C55E' : '#EF4444',
+                color: msg.kind === 'ok' ? '#3f7d20' : '#b42318',
                 fontSize: '0.8rem', fontWeight: 600,
               }}>{msg.text}</span>
             )}
@@ -254,7 +254,7 @@ function Field({
 }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-      <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9aa0b4' }}>
+      <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#7a6178' }}>
         {label}
       </span>
       <input
@@ -262,16 +262,16 @@ function Field({
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         style={{
-          background: '#0a0d12',
-          border: '1px solid rgba(255,255,255,0.10)',
+          background: 'var(--bg)',
+          border: '1px solid rgb(var(--fg-rgb) / 0.10)',
           borderRadius: '0.45rem',
           padding: '0.55rem 0.7rem',
-          color: '#E8EAF0',
+          color: '#3d1f3b',
           fontSize: '0.88rem',
           outline: 'none',
         }}
       />
-      {hint && <span style={{ fontSize: '0.7rem', color: '#6E7186', lineHeight: 1.35 }}>{hint}</span>}
+      {hint && <span style={{ fontSize: '0.7rem', color: '#7a6178', lineHeight: 1.35 }}>{hint}</span>}
     </label>
   )
 }
@@ -284,25 +284,25 @@ function SelectField({
 }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-      <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9aa0b4' }}>
+      <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#7a6178' }}>
         {label}
       </span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
-          background: '#0a0d12',
-          border: '1px solid rgba(255,255,255,0.10)',
+          background: 'var(--bg)',
+          border: '1px solid rgb(var(--fg-rgb) / 0.10)',
           borderRadius: '0.45rem',
           padding: '0.55rem 0.7rem',
-          color: '#E8EAF0',
+          color: '#3d1f3b',
           fontSize: '0.88rem',
           outline: 'none',
         }}
       >
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      {hint && <span style={{ fontSize: '0.7rem', color: '#6E7186', lineHeight: 1.35 }}>{hint}</span>}
+      {hint && <span style={{ fontSize: '0.7rem', color: '#7a6178', lineHeight: 1.35 }}>{hint}</span>}
     </label>
   )
 }
@@ -315,7 +315,7 @@ function ToggleField({
 }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-      <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9aa0b4' }}>
+      <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#7a6178' }}>
         {label}
       </span>
       <div style={{
@@ -326,11 +326,11 @@ function ToggleField({
           type="checkbox"
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}
-          style={{ width: '1.1rem', height: '1.1rem', accentColor: '#00D4B1' }}
+          style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--erp-primary)' }}
         />
-        <span style={{ color: '#E8EAF0', fontSize: '0.88rem' }}>{checked ? 'Yes' : 'No'}</span>
+        <span style={{ color: '#3d1f3b', fontSize: '0.88rem' }}>{checked ? 'Yes' : 'No'}</span>
       </div>
-      {hint && <span style={{ fontSize: '0.7rem', color: '#6E7186', lineHeight: 1.35 }}>{hint}</span>}
+      {hint && <span style={{ fontSize: '0.7rem', color: '#7a6178', lineHeight: 1.35 }}>{hint}</span>}
     </label>
   )
 }

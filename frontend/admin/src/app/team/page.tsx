@@ -24,13 +24,13 @@ interface Invite {
   createdAt: string
 }
 
-const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
-const input = 'w-full rounded-lg px-3 py-2 text-sm bg-black/30 border border-white/10 text-white/85 focus:outline-none focus:border-[#00D4B1]/60'
+const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
+const input = 'w-full rounded-lg px-3 py-2 text-sm bg-s-surface border border-white/10 text-white/85 focus:outline-none focus:border-primary/60'
 
 const INVITE_STATUS: Record<Invite['status'], { label: string; color: string }> = {
-  pending:   { label: 'Waiting for the CEO', color: '#f59e0b' },
-  active:    { label: 'Approved',            color: '#34d399' },
-  suspended: { label: 'Rejected / off',      color: '#f87171' },
+  pending:   { label: 'Waiting for the CEO', color: '#a15c00' },
+  active:    { label: 'Approved',            color: '#3f7d20' },
+  suspended: { label: 'Rejected / off',      color: '#b42318' },
 }
 
 export default function MyTeamPage() {
@@ -44,7 +44,7 @@ export default function MyTeamPage() {
   const pending = data?.pendingApprovals ?? 0
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
         <header>
           <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">Me</p>
@@ -55,8 +55,8 @@ export default function MyTeamPage() {
         {data?.me && (
           <div className="grid grid-cols-3 gap-3 max-w-xl">
             <Stat label="People" value={data.team.length} />
-            <Stat label="In today" value={inToday} color="#34d399" />
-            <Link href="/hr/approvals"><Stat label="Waiting on you" value={pending} color={pending > 0 ? '#f59e0b' : undefined} /></Link>
+            <Stat label="In today" value={inToday} color="#3f7d20" />
+            <Link href="/hr/approvals"><Stat label="Waiting on you" value={pending} color={pending > 0 ? '#a15c00' : undefined} /></Link>
           </div>
         )}
 
@@ -77,15 +77,15 @@ export default function MyTeamPage() {
                   <div className="flex items-center min-w-0 flex-1" style={{ paddingLeft: m.level * 18 }}>
                     {m.level > 0 && <span className="text-[10px] text-white/25 mr-1.5">└</span>}
                     {canOpenHr ? (
-                      <Link href={`/hr/employees/${m.id}`} className="text-sm font-semibold text-white/85 hover:text-[#00D4B1] truncate">{m.fullName}</Link>
+                      <Link href={`/hr/employees/${m.id}`} className="text-sm font-semibold text-white/85 hover:text-primary-ink truncate">{m.fullName}</Link>
                     ) : (
                       <span className="text-sm font-semibold text-white/85 truncate">{m.fullName}</span>
                     )}
                     <span className="ml-2 text-[11px] text-white/30 shrink-0">{m.employeeCode}</span>
                     {m.userId && <span className="ml-2 text-[9px] font-bold uppercase tracking-wider px-1 rounded shrink-0"
-                      style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>login</span>}
+                      style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>login</span>}
                   </div>
-                  <span className="text-[11px] font-bold shrink-0" style={{ color: today?.color ?? 'rgba(255,255,255,0.3)' }}>
+                  <span className="text-[11px] font-bold shrink-0" style={{ color: today?.color ?? 'rgb(var(--fg-rgb) / 0.3)' }}>
                     {today?.label ?? '—'}
                   </span>
                 </div>
@@ -100,7 +100,7 @@ export default function MyTeamPage() {
             {isCeo ? (
               <section className="rounded-2xl p-4" style={card}>
                 <p className="text-sm font-black text-white/85">Add a login</p>
-                <p className="text-xs text-white/45 mt-1">As CEO you add logins directly, with no approval step, from <Link href="/workforce" className="text-[#00D4B1] hover:underline">Workforce</Link>.</p>
+                <p className="text-xs text-white/45 mt-1">As CEO you add logins directly, with no approval step, from <Link href="/workforce" className="text-primary-ink hover:underline">Workforce</Link>.</p>
               </section>
             ) : childRoles.length > 0 ? (
               <AddLoginForm childRoles={childRoles} employees={rows.filter((r) => !r.userId)} />
@@ -191,10 +191,10 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
             {childRoles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
         </label>
-        {err && <p className="text-xs font-bold text-red-400">{err}</p>}
-        {done && <p className="text-xs font-bold text-[#34d399]">{done}</p>}
+        {err && <p className="text-xs font-bold text-red-700">{err}</p>}
+        {done && <p className="text-xs font-bold text-[#3f7d20]">{done}</p>}
         <button type="submit" disabled={invite.isPending}
-          className="rounded-lg px-3 py-2 text-xs font-black disabled:opacity-50" style={{ background: '#00D4B1', color: '#000' }}>
+          className="rounded-lg px-3 py-2 text-xs font-black disabled:opacity-50" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
           {invite.isPending ? 'Sending…' : 'Send for approval'}
         </button>
       </form>
@@ -234,7 +234,7 @@ function Stat({ label, value, color }: { label: string; value: number; color?: s
   return (
     <div className="rounded-2xl p-3" style={card}>
       <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
-      <p className="text-xl font-black mt-0.5" style={{ color: color ?? 'rgba(255,255,255,0.9)' }}>{value}</p>
+      <p className="text-xl font-black mt-0.5" style={{ color: color ?? 'rgb(var(--fg-rgb) / 0.9)' }}>{value}</p>
     </div>
   )
 }

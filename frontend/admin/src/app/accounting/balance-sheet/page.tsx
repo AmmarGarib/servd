@@ -105,7 +105,7 @@ export default function BalanceSheetPage() {
                 </div>
               </div>
               <div className="mt-3 pt-3 border-t border-s-border">
-                <p className={`text-sm ${data.totals.differenceCents === 0 ? 'text-s-teal' : 'text-s-red'}`}>
+                <p className={`text-sm ${data.totals.differenceCents === 0 ? 'text-primary-ink' : 'text-s-red'}`}>
                   {data.totals.differenceCents === 0
                     ? '✓ Balance sheet balances'
                     : `⚠ Off by ${fmtPkr(data.totals.differenceCents)} — investigate`}

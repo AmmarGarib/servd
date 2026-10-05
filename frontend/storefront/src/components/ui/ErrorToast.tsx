@@ -37,7 +37,7 @@ export function ErrorToast({ message, onDismiss, timeoutMs = 6000 }: Props) {
         className="flex items-start gap-3 rounded-2xl px-4 py-3.5 shadow-xl"
         style={{
           background: '#fff1f1',
-          border: '1.5px solid #ef4444',
+          border: '1.5px solid var(--servd-danger)',
           boxShadow: '0 8px 32px rgba(239,68,68,0.18)',
         }}
       >
@@ -47,12 +47,12 @@ export function ErrorToast({ message, onDismiss, timeoutMs = 6000 }: Props) {
             width: 18,
             height: 18,
             borderRadius: 999,
-            background: '#ef4444',
+            background: 'var(--servd-danger)',
             flex: 'none',
             marginTop: 2,
           }}
         />
-        <p className="flex-1 text-sm font-bold leading-snug" style={{ color: '#c0392b' }}>
+        <p className="flex-1 text-sm font-bold leading-snug" style={{ color: 'var(--servd-danger)' }}>
           {message}
         </p>
         <button

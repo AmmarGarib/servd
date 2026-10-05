@@ -52,7 +52,7 @@ export default function EmailSettingsPage() {
         value={k === 'pass' ? (f.pass ?? '') : v(k)}
         onChange={(e) => setF((p) => ({ ...p, [k]: e.target.value }))}
         placeholder={placeholder}
-        className="w-full px-3 py-2 rounded border border-s-border bg-white text-s-text font-mono text-xs"
+        className="w-full px-3 py-2 rounded border border-s-border bg-s-surface text-s-text font-mono text-xs"
       />
       {hint && <p className="text-[11px] text-s-muted mt-1">{hint}</p>}
     </div>
@@ -93,7 +93,7 @@ export default function EmailSettingsPage() {
           <Field k="from" label="SEND AS" placeholder="noreply@gsfoods.pk" hint="What customers see in the From line." />
 
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="px-4 py-2 rounded bg-black text-white text-sm font-semibold disabled:opacity-50">
+            className="px-4 py-2 rounded bg-secondary text-secondary-on text-sm font-semibold disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
           {save.isSuccess && <span className="ml-3 text-xs text-emerald-700">Saved.</span>}
@@ -104,7 +104,7 @@ export default function EmailSettingsPage() {
           <p className="text-sm font-semibold text-s-text">Send a test email</p>
           <div className="flex gap-2">
             <input value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com"
-              aria-label="Address to test" className="flex-1 px-3 py-2 rounded border border-s-border bg-white text-s-text text-sm" />
+              aria-label="Address to test" className="flex-1 px-3 py-2 rounded border border-s-border bg-s-surface text-s-text text-sm" />
             <button onClick={() => { setResult(null); test.mutate() }}
               disabled={test.isPending || !testTo.includes('@')}
               className="px-4 py-2 rounded border border-s-border text-sm font-semibold text-s-text disabled:opacity-50">

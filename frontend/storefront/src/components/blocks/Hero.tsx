@@ -22,8 +22,8 @@ export function Hero(block: HeroBlock) {
         display: 'flex',
         alignItems: 'center',
         background: block.imageUrl
-          ? `${block.background ?? '#0a0a0a'} url(${block.imageUrl}) center/cover`
-          : block.background ?? '#fff',
+          ? `${block.background ?? 'var(--servd-purple)'} url(${block.imageUrl}) center/cover`
+          : block.background ?? 'var(--servd-bg)',
         color: txt,
         overflow: 'hidden',
       }}
@@ -94,11 +94,11 @@ export function Hero(block: HeroBlock) {
                 <Link href={block.primaryCta.href} className="servd-cta"
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
-                    background: 'var(--servd-green)', color: 'white', fontWeight: 900,
+                    background: 'var(--servd-green)', color: 'var(--servd-on-green)', fontWeight: 900,
                     fontSize: 'clamp(1.1rem, 2.4vw, 1.6rem)',
                     padding: 'clamp(1.1rem, 2.6vw, 1.6rem) clamp(2.5rem, 6vw, 4rem)',
                     borderRadius: '999px', textDecoration: 'none',
-                    boxShadow: '0 14px 36px rgba(58,14,105,0.4)',
+                    boxShadow: '0 14px 36px rgba(61,31,59,0.4)',
                   }}>
                   {block.primaryCta.text}
                 </Link>
@@ -107,9 +107,9 @@ export function Hero(block: HeroBlock) {
                 <Link href={block.secondaryCta.href} style={{
                   display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
                   padding: '1rem 1.75rem', borderRadius: '999px',
-                  border: `1px solid ${block.imageUrl ? 'rgba(255,255,255,0.3)' : 'var(--servd-line)'}`,
-                  background: block.imageUrl ? 'rgba(255,255,255,0.12)' : '#fff',
-                  color: 'inherit', textDecoration: 'none', fontWeight: 600,
+                  border: `1px solid ${block.imageUrl ? 'rgba(255,255,255,0.3)' : 'var(--servd-purple)'}`,
+                  background: block.imageUrl ? 'rgba(255,255,255,0.12)' : 'var(--servd-purple)',
+                  color: block.imageUrl ? 'inherit' : 'var(--servd-on-purple)', textDecoration: 'none', fontWeight: 600,
                 }}>
                   {block.secondaryCta.text}
                 </Link>

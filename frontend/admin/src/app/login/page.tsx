@@ -70,12 +70,12 @@ export default function StaffLoginPage() {
   const [loading, setLoading] = useState(false)
 
   const field = 'w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none'
-  const fieldStyle = { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }
+  const fieldStyle = { background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }
   const cta = 'w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40'
   const ctaStyle = {
-    background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
-    color: '#000',
-    boxShadow: '0 4px 20px rgba(0,212,177,0.25)',
+    background: 'var(--erp-primary)',
+    color: 'var(--erp-on-primary)',
+    boxShadow: '0 4px 20px rgb(135 197 64 / 0.25)',
   }
 
   async function submitPassword(e: React.FormEvent) {
@@ -247,7 +247,7 @@ export default function StaffLoginPage() {
       <div className="flex items-center justify-between px-6 pt-5">
         <div className="flex items-center gap-2">
           <div className="h-7 w-7 rounded-lg flex items-center justify-center font-black text-white text-xs"
-            style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', boxShadow: '0 0 14px rgba(0,212,177,0.3)' }}>
+            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 14px rgb(135 197 64 / 0.3)' }}>
             S
           </div>
           <span className="text-sm font-black tracking-tight text-s-text">servd</span>
@@ -285,7 +285,7 @@ export default function StaffLoginPage() {
                 <input type="tel" inputMode="tel" autoComplete="tel" value={codePhone} autoFocus
                   onChange={(e) => setCodePhone(e.target.value)} placeholder="Your mobile number, e.g. 0300 1234567"
                   aria-label="Mobile number" className={field} style={fieldStyle} />
-                {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
+                {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
                 <button type="submit" disabled={loading || codePhone.replace(/\D/g, '').length < 10} className={cta} style={ctaStyle}>
                   {loading ? 'Sending…' : 'Send me a code'}
                 </button>
@@ -300,7 +300,7 @@ export default function StaffLoginPage() {
                   aria-label="Sign-in code"
                   className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
                   style={fieldStyle} />
-                {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
+                {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
                 <button type="submit" disabled={loading || codeValue.length < 6} className={cta} style={ctaStyle}>
                   {loading ? 'Checking…' : 'Sign in'}
                 </button>
@@ -324,7 +324,7 @@ export default function StaffLoginPage() {
                 className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
                 style={fieldStyle}
               />
-              {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
+              {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
               <button type="submit" disabled={loading || mfaCode.length < 6} className={cta} style={ctaStyle}>
                 {loading ? 'Checking…' : 'Sign in'}
               </button>
@@ -361,7 +361,7 @@ export default function StaffLoginPage() {
                   placeholder="Email" autoComplete="username" autoFocus
                   className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
                 />
-                {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+                {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
                   disabled={loading || !pwEmail.trim()}>
                   {loading ? 'Sending…' : 'Send reset link'}
@@ -407,7 +407,7 @@ export default function StaffLoginPage() {
                   className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
                 />
                 <p className="text-[10px] text-s-dim mb-3 text-center">At least 12 characters.</p>
-                {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+                {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
                   disabled={loading || !pwEmail.trim() || !cpCurrent || cpNew.length < 12}>
                   {loading ? 'Changing…' : 'Change password'}
@@ -431,7 +431,7 @@ export default function StaffLoginPage() {
                 placeholder="Password" autoComplete="current-password"
                 className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
-              {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+              {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
               <button type="submit" className={cta} style={ctaStyle}
                 disabled={loading || !pwEmail.trim() || pwPassword.length < 8}>
                 {loading ? 'Signing in…' : 'Sign in'}

@@ -42,7 +42,7 @@ export default function RefundPolicyPage() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">⚖️ Refund / void / comp policy</h1>
@@ -86,7 +86,7 @@ export default function RefundPolicyPage() {
 
         <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save policy'}
           </button>
         </div>
@@ -97,7 +97,7 @@ export default function RefundPolicyPage() {
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-2xl p-5" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
       {desc && <p className="text-xs text-white/35 mt-0.5">{desc}</p>}
       <div className="mt-4 space-y-3">{children}</div>
@@ -118,7 +118,7 @@ function Money({ label, value, onChange, optional }: { label: string; value: num
 function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex items-start gap-3 cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-kds-green mt-0.5" />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-primary mt-0.5" />
       <div>
         <p className="text-sm text-white/85">{label}</p>
         {hint && <p className="text-[11px] text-white/40">{hint}</p>}
@@ -127,4 +127,4 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint?: stri
   )
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

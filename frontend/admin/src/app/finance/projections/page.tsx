@@ -182,9 +182,9 @@ export default function ProjectionsPage() {
               <h1 className="text-2xl font-black">12-month P&L projections</h1>
               <p className="text-sm text-s-muted mt-1 max-w-2xl">
                 Timing &amp; capacity drive daily covers; covers × check avg drive revenue.
-                Staff cost pulls from <Link href="/workforce" className="text-s-teal hover:underline">Positions</Link>,
-                fixed opex from <Link href="/finance/opex" className="text-s-teal hover:underline">OpEx</Link>,
-                capex from <Link href="/finance/capex" className="text-s-teal hover:underline">Capex</Link>.
+                Staff cost pulls from <Link href="/workforce" className="text-primary-ink hover:underline">Positions</Link>,
+                fixed opex from <Link href="/finance/opex" className="text-primary-ink hover:underline">OpEx</Link>,
+                capex from <Link href="/finance/capex" className="text-primary-ink hover:underline">Capex</Link>.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -208,25 +208,25 @@ export default function ProjectionsPage() {
             label="Year-1 revenue"
             value={fmtPkrWhole(summary.year1TotalRevenueCents)}
             hint={`across ${brands.length} brand${brands.length === 1 ? '' : 's'}`}
-            color="#00D4B1"
+            color="var(--erp-primary-ink)"
           />
           <SummaryCard
             label="Year-1 combined P&L"
             value={fmtPkrWhole(summary.year1CombinedProfitCents)}
             hint={summary.year1CombinedProfitCents >= 0 ? 'profit (pre-tax)' : 'loss'}
-            color={summary.year1CombinedProfitCents >= 0 ? '#00D4B1' : '#FF4D4F'}
+            color={summary.year1CombinedProfitCents >= 0 ? 'var(--erp-primary-ink)' : '#b42318'}
           />
           <SummaryCard
             label="Capital ask"
             value={fmtPkrWhole(summary.capitalAskCents)}
             hint={`Capex ${fmtPkr(summary.totalCapexCents)} + 3-mo WC ${fmtPkr(summary.workingCapitalCents)}`}
-            color="#6366F1"
+            color="var(--erp-secondary)"
           />
           <SummaryCard
             label="Payback period"
             value={summary.paybackMonths != null ? `${(summary.paybackMonths / 12).toFixed(1)} yrs` : '—'}
             hint={summary.paybackMonths != null ? `${summary.paybackMonths} months at steady-state` : 'No profit at Month 12'}
-            color="#F59E0B"
+            color="#a15c00"
           />
         </section>
 
@@ -274,7 +274,7 @@ export default function ProjectionsPage() {
                 <tr className="border-t border-s-border bg-s-bg/40">
                   <td className="px-3 py-2 font-bold">Daily covers (calculated)</td>
                   {brands.map((b) => (
-                    <td key={b.conceptId} className="text-right px-3 py-2 font-mono font-black" style={{ color: '#00D4B1' }}>
+                    <td key={b.conceptId} className="text-right px-3 py-2 font-mono font-black" style={{ color: 'var(--erp-primary-ink)' }}>
                       {b.dailyCoversCalculated ?? <span className="text-s-dim font-normal">— (manual: {b.dailyCoversAtSS})</span>}
                     </td>
                   ))}
@@ -297,7 +297,7 @@ export default function ProjectionsPage() {
               <span className="font-bold">{c.name}</span>
               <span className="text-s-dim ml-2 text-xs">not in this projection</span>
             </span>
-            <button onClick={() => patchBrand(c.id, {})} className="text-xs text-s-teal hover:underline">+ Add to projection</button>
+            <button onClick={() => patchBrand(c.id, {})} className="text-xs text-primary-ink hover:underline">+ Add to projection</button>
           </div>
         ))}
 
@@ -439,7 +439,7 @@ function BrandBlock({ brand: b, months, patchBrand }: {
           {b.dailyCoversCalculated != null ? (
             <div className="flex items-baseline gap-2">
               <span className="text-[11px] text-s-muted">Daily covers at SS</span>
-              <span className="font-mono text-sm font-black" style={{ color: '#00D4B1' }}>{b.dailyCoversCalculated}</span>
+              <span className="font-mono text-sm font-black" style={{ color: 'var(--erp-primary-ink)' }}>{b.dailyCoversCalculated}</span>
               <span className="text-[10px] text-s-dim">(from timing block)</span>
             </div>
           ) : (
@@ -532,7 +532,7 @@ function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative,
       <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
       {brand.months.map((m) => {
         const v = pick(m)
-        const color = highlightSign ? (v >= 0 ? '#00D4B1' : '#FF4D4F') : negative ? '#9CA3AF' : 'inherit'
+        const color = highlightSign ? (v >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : negative ? '#7a6178' : 'inherit'
         return (
           <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
             {v === 0 ? <span className="text-s-dim">—</span> : display(v)}
@@ -540,7 +540,7 @@ function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative,
         )
       })}
       <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
-          style={{ color: highlightSign ? (total >= 0 ? '#00D4B1' : '#FF4D4F') : 'inherit' }}>
+          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : 'inherit' }}>
         {cumulative ? display(brand.months[brand.months.length - 1]!.cumulativeCents) : display(total)}
       </td>
     </tr>
@@ -562,7 +562,7 @@ function CombinedRow({ label, months, pick, negative, bold, cumulative, highligh
       <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
       {months.map((m) => {
         const v = pick(m)
-        const color = highlightSign ? (v >= 0 ? '#00D4B1' : '#FF4D4F') : negative ? '#9CA3AF' : 'inherit'
+        const color = highlightSign ? (v >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : negative ? '#7a6178' : 'inherit'
         return (
           <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
             {v === 0 ? <span className="text-s-dim">—</span> : fmtPkr(v)}
@@ -570,7 +570,7 @@ function CombinedRow({ label, months, pick, negative, bold, cumulative, highligh
         )
       })}
       <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
-          style={{ color: highlightSign ? (total >= 0 ? '#00D4B1' : '#FF4D4F') : 'inherit' }}>
+          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : 'inherit' }}>
         {cumulative ? fmtPkr(months[months.length - 1]!.cumulativeCents) : fmtPkr(total)}
       </td>
     </tr>

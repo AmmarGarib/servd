@@ -37,7 +37,7 @@ export default function ModifiersPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -49,7 +49,7 @@ export default function ModifiersPage() {
             </p>
           </div>
           <button onClick={() => setAdding(true)}
-            className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
             + New template
           </button>
         </div>
@@ -62,13 +62,13 @@ export default function ModifiersPage() {
         )}
         {data.map((t) => (
           <div key={t.id} className="rounded-2xl p-5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg font-black text-white/90">{t.name}</h3>
-                  {t.isRequired && <Pill bg="rgba(239,68,68,0.12)" fg="#EF4444">Required</Pill>}
-                  <Pill bg="rgba(255,255,255,0.06)" fg="rgba(255,255,255,0.55)">
+                  {t.isRequired && <Pill bg="rgba(239,68,68,0.12)" fg="#b42318">Required</Pill>}
+                  <Pill bg="rgb(var(--fg-rgb) / 0.06)" fg="rgb(var(--fg-rgb) / 0.55)">
                     {t.minSelect === t.maxSelect ? `Pick ${t.maxSelect}` : `Pick ${t.minSelect}-${t.maxSelect}`}
                   </Pill>
                 </div>
@@ -77,7 +77,7 @@ export default function ModifiersPage() {
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {t.options.map((o, i) => (
                       <span key={i} className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        style={{ background: 'rgba(0,212,177,0.08)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.15)' }}>
+                        style={{ background: 'rgb(135 197 64 / 0.08)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.15)' }}>
                         {o.name}{o.priceDeltaCents > 0 ? ` +${(o.priceDeltaCents / 100).toFixed(0)}` : o.priceDeltaCents < 0 ? ` ${(o.priceDeltaCents / 100).toFixed(0)}` : ''}
                         {o.isDefault ? ' ★' : ''}
                       </span>
@@ -88,7 +88,7 @@ export default function ModifiersPage() {
               <div className="flex flex-col gap-2 shrink-0">
                 <button onClick={() => setEditing(t)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Edit</button>
                 <button onClick={() => { if (confirm(`Delete "${t.name}"?`)) del.mutate(t.id) }}
-                  className="rounded-lg border border-red-500/20 text-red-400/70 px-3 py-1.5 text-xs hover:text-red-300">Delete</button>
+                  className="rounded-lg border border-red-500/20 text-red-700/70 px-3 py-1.5 text-xs hover:text-red-700">Delete</button>
               </div>
             </div>
           </div>
@@ -106,7 +106,7 @@ export default function ModifiersPage() {
 function Empty({ label, hint }: { label: string; hint: string }) {
   return (
     <div className="rounded-2xl p-10 text-center"
-      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
       <p className="font-bold text-white/85">{label}</p>
       <p className="text-sm text-white/45 mt-1">{hint}</p>
     </div>
@@ -148,9 +148,9 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
   function rm(idx: number) { setOptions((prev) => prev.filter((_, i) => i !== idx)) }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
       <div className="w-full max-w-xl rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{template ? 'Edit template' : 'New modifier template'}</h2>
@@ -171,7 +171,7 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
               <input type="number" value={maxSelect} onChange={(e) => setMaxSelect(Math.max(1, parseInt(e.target.value) || 1))} className={fieldCls} />
             </Field>
             <label className="flex items-end gap-2 pb-2 cursor-pointer">
-              <input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-kds-green" />
+              <input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-primary" />
               <span className="text-xs text-white/65">Required</span>
             </label>
           </div>
@@ -184,20 +184,20 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
                   <input value={o.name} onChange={(e) => update(idx, { name: e.target.value })} placeholder="Option name" className={fieldCls} />
                   <input type="number" value={o.priceDeltaCents} onChange={(e) => update(idx, { priceDeltaCents: parseInt(e.target.value) || 0 })} placeholder="±cents" className={fieldCls} />
                   <label className="flex items-center gap-1 text-[10px] text-white/55 cursor-pointer">
-                    <input type="checkbox" checked={o.isDefault} onChange={(e) => update(idx, { isDefault: e.target.checked })} className="accent-kds-green" />
+                    <input type="checkbox" checked={o.isDefault} onChange={(e) => update(idx, { isDefault: e.target.checked })} className="accent-primary" />
                     Default
                   </label>
-                  <button onClick={() => rm(idx)} className="text-white/30 hover:text-red-400 px-2">✕</button>
+                  <button onClick={() => rm(idx)} className="text-white/30 hover:text-red-700 px-2">✕</button>
                 </div>
               ))}
             </div>
-            <button onClick={add} className="mt-2 text-xs text-kds-green hover:underline">+ Add option</button>
+            <button onClick={add} className="mt-2 text-xs text-primary-ink hover:underline">+ Add option</button>
           </div>
         </div>
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : template ? 'Save changes' : 'Create template'}
           </button>
         </div>
@@ -206,7 +206,7 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
   )
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div>
 }

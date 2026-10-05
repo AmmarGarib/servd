@@ -34,7 +34,7 @@ export default function DepositDropsPage() {
   const [adding, setAdding] = useState(false)
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -44,13 +44,13 @@ export default function DepositDropsPage() {
               Record every cash drop to the bank. It posts to the bank's ledger account, and a variance against the shift (drops + counted close − float kept) auto-flags. Snap a teller-receipt photo to make the drop reconcilable on the bank statement.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ Record drop</button>
+          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ Record drop</button>
         </div>
       </header>
 
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-2">
         {drops.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="font-bold text-white/85">No drops recorded</p>
             <p className="text-sm text-white/45 mt-1">Drop cash at the bank? Record it here so we can reconcile.</p>
           </div>
@@ -58,8 +58,8 @@ export default function DepositDropsPage() {
         {drops.map((d) => (
           <div key={d.id} className="rounded-2xl p-5"
             style={{
-              background: 'rgba(255,255,255,0.025)',
-              border: `1px solid ${!d.withinTolerance ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.06)'}`,
+              background: 'rgb(var(--fg-rgb) / 0.025)',
+              border: `1px solid ${!d.withinTolerance ? 'rgba(245,158,11,0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
             }}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
@@ -68,13 +68,13 @@ export default function DepositDropsPage() {
                   {d.expectedCents > 0 && (
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
                       style={d.withinTolerance
-                        ? { background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }
-                        : { background: 'rgba(245,158,11,0.12)', color: '#FCD34D' }}>
+                        ? { background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }
+                        : { background: 'rgba(245,158,11,0.12)', color: '#a15c00' }}>
                       {d.varianceCents >= 0 ? '+' : ''}PKR {(d.varianceCents / 100).toLocaleString()}
                     </span>
                   )}
                   {!d.receiptUrl && d.amountCents >= 100000 && (
-                    <span className="text-[10px] font-bold text-amber-400">⚠ NO RECEIPT</span>
+                    <span className="text-[10px] font-bold text-amber-700">⚠ NO RECEIPT</span>
                   )}
                 </div>
                 <p className="text-xs text-white/45 mt-1">
@@ -83,7 +83,7 @@ export default function DepositDropsPage() {
                 {d.bagSerial && <p className="text-xs text-white/55 font-mono mt-1">Bag: {d.bagSerial}</p>}
                 {d.notes && <p className="text-xs text-white/55 mt-1">{d.notes}</p>}
               </div>
-              {d.receiptUrl && <a href={d.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-kds-green hover:underline">View receipt ↗</a>}
+              {d.receiptUrl && <a href={d.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-ink hover:underline">View receipt ↗</a>}
             </div>
           </div>
         ))}
@@ -121,8 +121,8 @@ function DropModal({ banks, onClose, onSaved }: { banks: BankAccount[]; onClose:
     onSuccess: () => onSaved(),
   })
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-    <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+    <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
         <h2 className="font-black text-white/90">Record bank deposit</h2>
         <button onClick={onClose} className="text-white/40 text-xl">✕</button>
@@ -157,15 +157,15 @@ function DropModal({ banks, onClose, onSaved }: { banks: BankAccount[]; onClose:
           <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
         </div>
         <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
-        {save.error && <div className="rounded-xl px-4 py-3 text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
+        {save.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
       </div>
       <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
         <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-        <button onClick={() => save.mutate()} disabled={save.isPending || amountCents <= 0} className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
+        <button onClick={() => save.mutate()} disabled={save.isPending || amountCents <= 0} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
       </div>
     </div>
   </div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

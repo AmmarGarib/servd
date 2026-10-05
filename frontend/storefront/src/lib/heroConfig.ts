@@ -10,7 +10,7 @@ export interface HeroConfig {
   mediaType: 'video' | 'image';
   mediaSrc: string;
   posterSrc?: string;
-  /** '' → the hero paints a plain obsidian-plum token background. */
+  /** '' → the hero paints a plain servd-purple token background. */
   bgImageSrc: string;
   title: string;
   date?: string;

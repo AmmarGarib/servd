@@ -15,13 +15,13 @@ export const metadata: Metadata = {
   title: 'servd — Operations',
   description: 'servd Hospitality Operations Platform',
   manifest: '/manifest.json',
-  appleWebApp: { capable: true, statusBarStyle: 'black', title: 'servd' },
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'servd' },
 }
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#0C0D10',
+  themeColor: '#f3e7cd',
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,7 +30,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const locale: Locale = raw in MESSAGES ? (raw as Locale) : 'en'
 
   return (
-    <html lang={locale} dir={locale === 'ur' ? 'rtl' : 'ltr'} className="dark">
+    <html lang={locale} dir={locale === 'ur' ? 'rtl' : 'ltr'} className="">
       <head>
         {/* Next.js's appleWebApp metadata emits the deprecated
             apple-mobile-web-app-capable tag; modern browsers want the

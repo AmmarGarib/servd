@@ -15,8 +15,8 @@ interface Unit { id: string; name: string; kind: string; minC: number | null; ma
 interface Task { id: string; name: string; area: string | null; frequency: string; lastDoneAt: string | null; due: boolean }
 interface Summary { units: Unit[]; readings: Reading[]; outOfRangeToday: number; cleaning: Task[]; cleaningDue: number }
 
-const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
-const inp = 'w-full rounded-xl px-3 py-3 text-base bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-kds-green'
+const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
+const inp = 'w-full rounded-xl px-3 py-3 text-base bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
 const limits = (u: { minC: number | null; maxC: number | null }) =>
   u.minC !== null && u.maxC !== null ? `${u.minC} to ${u.maxC}°C` : u.minC !== null ? `at least ${u.minC}°C` : u.maxC !== null ? `at most ${u.maxC}°C` : 'no limit'
 const inRange = (v: number, u: { minC: number | null; maxC: number | null }) =>
@@ -38,7 +38,7 @@ export default function FoodSafetyPage() {
 
   const checked = data?.units.filter((u) => u.checkedToday).length ?? 0
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/modules/haccp" className="text-xs text-white/40 hover:text-white/70">← Food safety</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Food safety logs</h1>
@@ -46,7 +46,7 @@ export default function FoodSafetyPage() {
       </header>
 
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-6">
-        {error && <p className="text-sm text-red-400">{(error as Error).message}</p>}
+        {error && <p className="text-sm text-red-700">{(error as Error).message}</p>}
         {data && (
           <div className="grid grid-cols-3 gap-3">
             <Stat label="Checked today" value={`${checked} / ${data.units.length}`} warn={checked < data.units.length} />
@@ -76,10 +76,10 @@ export default function FoodSafetyPage() {
                   style={{ ...card, borderColor: bad ? 'rgba(248,113,113,0.5)' : !u.checkedToday ? 'rgba(245,158,11,0.4)' : card.border }}>
                   <p className="font-bold text-white/90">{u.name}</p>
                   <p className="text-[11px] text-white/40">{limits(u)}</p>
-                  <p className="text-2xl font-black mt-2" style={{ color: bad ? '#f87171' : 'rgba(255,255,255,0.9)' }}>
+                  <p className="text-2xl font-black mt-2" style={{ color: bad ? '#b42318' : 'rgb(var(--fg-rgb) / 0.9)' }}>
                     {u.lastReading ? `${u.lastReading.readingC}°C` : '—'}
                   </p>
-                  <p className="text-[11px] mt-1" style={{ color: u.checkedToday ? 'rgba(255,255,255,0.4)' : '#f59e0b' }}>
+                  <p className="text-[11px] mt-1" style={{ color: u.checkedToday ? 'rgb(var(--fg-rgb) / 0.4)' : '#a15c00' }}>
                     {u.lastReading ? ago(u.lastReading.takenAt) : 'never checked'}{!u.checkedToday && ' · check due'}
                   </p>
                 </button>
@@ -104,7 +104,7 @@ export default function FoodSafetyPage() {
                 </div>
                 <button onClick={() => done.mutate(t.id)} disabled={done.isPending}
                   className="rounded-xl px-4 py-3 text-sm font-black shrink-0"
-                  style={t.due ? { background: '#00D4B1', color: '#000' } : { border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>
+                  style={t.due ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' } : { border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>
                   {t.due ? 'Mark done' : 'Done again'}
                 </button>
               </div>
@@ -120,7 +120,7 @@ export default function FoodSafetyPage() {
                 <div key={r.id} className="px-4 py-2.5 border-t border-white/[0.05] first:border-t-0 text-sm flex gap-3">
                   <span className="w-20 text-white/40 shrink-0">{new Date(r.takenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   <span className="flex-1 text-white/75">{r.unit?.name}</span>
-                  <span className="font-bold" style={{ color: r.withinRange ? 'rgba(255,255,255,0.85)' : '#f87171' }}>{r.readingC}°C</span>
+                  <span className="font-bold" style={{ color: r.withinRange ? 'rgb(var(--fg-rgb) / 0.85)' : '#b42318' }}>{r.readingC}°C</span>
                   {r.correctiveAction && <span className="text-[11px] text-white/45 truncate max-w-[40%]">{r.correctiveAction}</span>}
                 </div>
               ))}
@@ -138,7 +138,7 @@ function Stat({ label, value, warn }: { label: string; value: string; warn: bool
   return (
     <div className="rounded-2xl p-4" style={card}>
       <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
-      <p className="text-2xl font-black mt-1" style={{ color: warn ? '#f59e0b' : 'rgba(255,255,255,0.9)' }}>{value}</p>
+      <p className="text-2xl font-black mt-1" style={{ color: warn ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.9)' }}>{value}</p>
     </div>
   )
 }
@@ -156,8 +156,8 @@ function LogReading({ unit, onClose, onSaved }: { unit: Unit; onClose: () => voi
     onError: (e: Error) => setErr(e.message),
   })
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl p-6" style={{ background: '#12131a', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl p-6" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
         <p className="text-lg font-black text-white/90">{unit.name}</p>
         <p className="text-sm text-white/45">Limit: {limits(unit)}</p>
         <label className="block mt-4">
@@ -166,15 +166,15 @@ function LogReading({ unit, onClose, onSaved }: { unit: Unit; onClose: () => voi
         </label>
         {bad && (
           <label className="block mt-3">
-            <span className="text-[11px] font-bold" style={{ color: '#f87171' }}>Out of range — what did you do about it?</span>
+            <span className="text-[11px] font-bold" style={{ color: '#b42318' }}>Out of range — what did you do about it?</span>
             <textarea rows={3} className={inp} value={action} onChange={(e) => setAction(e.target.value)}
               placeholder="Moved stock to the walk-in, told the manager, called the engineer" />
           </label>
         )}
-        {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+        {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
         <div className="flex gap-2 mt-5">
           <button onClick={() => save.mutate()} disabled={save.isPending || !has || (bad && action.trim().length < 3)}
-            className="flex-1 rounded-xl bg-kds-green py-3 text-base font-black text-black disabled:opacity-50">{save.isPending ? 'Saving…' : 'Save reading'}</button>
+            className="flex-1 rounded-xl bg-primary py-3 text-base font-black text-primary-on disabled:opacity-50">{save.isPending ? 'Saving…' : 'Save reading'}</button>
           <button onClick={onClose} className="rounded-xl px-4 py-3 text-sm text-white/60 border border-white/10">Cancel</button>
         </div>
       </div>

@@ -1,13 +1,14 @@
 // servd's universal spinner (storefront) — a 9-cell ripple grid. Pure CSS:
 // keyframes + structure live in globals.css under `.servd-loader`; each cell's
 // colour is fed via the --cell-color custom property, so the same wave themes
-// to any brand. Mirrors the admin loader; default palette is servd royal purple.
+// to any brand. Mirrors the admin loader; default palette is servd purple → green.
 
 import React from 'react'
 
-// servd obsidian-plum gradient (the storefront brand). Simmer = single orange
-// signal (their rules ban gradients); Stackd = navy-grey.
-export const SERVD_CELLS = ['#2D1E2F', '#3D2540', '#4E2A4F', '#623A63', '#774B78', '#8C5E8E', '#A375A4', '#BE96BE', '#D9BFD9']
+// servd purple → green ramp (the storefront brand: purple #3d1f3b, green
+// #87c540 on bone). Simmer = single orange signal (their rules ban
+// gradients); Stackd = navy-grey.
+export const SERVD_CELLS = ['#3d1f3b', '#55304f', '#6e4566', '#4f7a1c', '#6a9f2e', '#87c540', '#a3d46c', '#bfe298', '#d6eab5']
 export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
 export const STACKD_CELLS = ['#142834', '#1E3340', '#293B47', '#384A56', '#45505C', '#5C6470', '#737A85', '#8D8F97', '#B0B2B8']
 
@@ -36,7 +37,7 @@ export function Loader({
           key={i}
           className="servd-loader-cell"
           aria-hidden
-          style={{ '--cell-color': colors[i % colors.length] ?? '#4E2A4F', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
+          style={{ '--cell-color': colors[i % colors.length] ?? '#87c540', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
         />
       ))}
     </div>

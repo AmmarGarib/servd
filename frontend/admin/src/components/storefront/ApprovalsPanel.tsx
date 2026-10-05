@@ -75,19 +75,19 @@ export function ApprovalsPanel() {
   return (
     <div className="space-y-8">
       {!isCeo && (
-        <p className="rounded-xl border border-kds-border bg-kds-card px-4 py-3 text-xs text-kds-subtext">
+        <p className="rounded-xl border border-s-border bg-s-surface px-4 py-3 text-xs text-s-muted">
           Only the CEO can approve storefront changes. Submitted drafts wait here until they are approved or sent back.
         </p>
       )}
 
       <section className="space-y-3">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-kds-subtext">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-s-muted">
           Waiting for approval{pendingRows.length > 0 ? ` (${pendingRows.length})` : ''}
         </h2>
-        {pending.isLoading && <p className="text-sm text-kds-subtext">Loading…</p>}
-        {pending.isError && <p className="text-sm text-kds-red">Could not load the approval queue.</p>}
+        {pending.isLoading && <p className="text-sm text-s-muted">Loading…</p>}
+        {pending.isError && <p className="text-sm text-s-red">Could not load the approval queue.</p>}
         {!pending.isLoading && !pending.isError && pendingRows.length === 0 && (
-          <p className="rounded-xl border border-dashed border-kds-border px-4 py-8 text-center text-sm text-kds-subtext">
+          <p className="rounded-xl border border-dashed border-s-border px-4 py-8 text-center text-sm text-s-muted">
             Nothing is waiting for approval.
           </p>
         )}
@@ -95,13 +95,13 @@ export function ApprovalsPanel() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-kds-subtext">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-s-muted">
           Approved, scheduled to publish{scheduledRows.length > 0 ? ` (${scheduledRows.length})` : ''}
         </h2>
         {!scheduled.isLoading && !scheduled.isError && scheduledRows.length === 0 && (
-          <p className="text-sm text-kds-subtext">No scheduled publishes.</p>
+          <p className="text-sm text-s-muted">No scheduled publishes.</p>
         )}
-        {scheduled.isError && <p className="text-sm text-kds-red">Could not load scheduled publishes.</p>}
+        {scheduled.isError && <p className="text-sm text-s-red">Could not load scheduled publishes.</p>}
         {scheduledRows.map((row) => <ApprovalRow key={row.id} row={row} isCeo={isCeo} />)}
       </section>
     </div>
@@ -150,16 +150,16 @@ function ApprovalRow({ row, isCeo }: { row: SiteLayoutListRow; isCeo: boolean })
   const error = (approve.error ?? reject.error) as Error | null
 
   return (
-    <div className="rounded-xl border border-kds-border bg-kds-card">
+    <div className="rounded-xl border border-s-border bg-s-surface">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate font-semibold text-kds-text">{row.title || describeSlug(row.slug)}</p>
-            <span className="rounded-full border border-kds-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-kds-subtext">{row.kind}</span>
-            {row.liveVersion === 0 && <span className="rounded-full bg-kds-green/15 px-2 py-0.5 text-[10px] font-semibold text-kds-green">first publish</span>}
+            <p className="truncate font-semibold text-s-text">{row.title || describeSlug(row.slug)}</p>
+            <span className="rounded-full border border-s-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-s-muted">{row.kind}</span>
+            {row.liveVersion === 0 && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary-ink">first publish</span>}
           </div>
-          <p className="mt-0.5 font-mono text-[11px] text-kds-subtext">{row.slug}</p>
-          <p className="mt-1 text-xs text-kds-subtext">
+          <p className="mt-0.5 font-mono text-[11px] text-s-muted">{row.slug}</p>
+          <p className="mt-1 text-xs text-s-muted">
             Submitted by {row.submittedBy?.name ?? 'unknown'} · {fmtWhen(row.submittedAt)}
             {row.liveVersion > 0 ? ` · live v${row.liveVersion}` : ''}
             {isScheduled ? ` · publishes ${fmtWhen(row.publishAt)}` : ''}
@@ -167,21 +167,21 @@ function ApprovalRow({ row, isCeo }: { row: SiteLayoutListRow; isCeo: boolean })
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => void openPreview()}
-            className="rounded-lg border border-kds-border px-3 py-1.5 text-xs text-kds-subtext hover:text-kds-text">
+            className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted hover:text-s-text">
             Preview
           </button>
           <Link href={builderHref(row.slug)}
-            className="rounded-lg border border-kds-border px-3 py-1.5 text-xs text-kds-subtext hover:text-kds-text">
+            className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted hover:text-s-text">
             Open in builder
           </Link>
           {isCeo && (
             <>
               <button onClick={() => setPanel(panel === 'approve' ? 'none' : 'approve')}
-                className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black hover:opacity-90">
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on hover:opacity-90">
                 {isScheduled ? 'Publish now' : 'Approve'}
               </button>
               <button onClick={() => setPanel(panel === 'reject' ? 'none' : 'reject')}
-                className="rounded-lg border border-kds-red/50 px-3 py-1.5 text-xs font-semibold text-kds-red hover:bg-kds-red/10">
+                className="rounded-lg border border-s-red/50 px-3 py-1.5 text-xs font-semibold text-s-red hover:bg-s-red/10">
                 Send back
               </button>
             </>
@@ -189,52 +189,52 @@ function ApprovalRow({ row, isCeo }: { row: SiteLayoutListRow; isCeo: boolean })
         </div>
       </div>
 
-      {previewError && <p className="px-4 pb-3 text-xs text-kds-red">{previewError}</p>}
+      {previewError && <p className="px-4 pb-3 text-xs text-s-red">{previewError}</p>}
 
       {isCeo && panel === 'approve' && (
-        <div className="flex flex-wrap items-center gap-3 border-t border-kds-border px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3 border-t border-s-border px-4 py-3">
           {isScheduled ? (
-            <span className="text-xs text-kds-subtext">Publish this now instead of at {fmtWhen(row.publishAt)}?</span>
+            <span className="text-xs text-s-muted">Publish this now instead of at {fmtWhen(row.publishAt)}?</span>
           ) : (
             <>
-              <label className="flex items-center gap-1.5 text-xs text-kds-text">
-                <input type="radio" checked={when === 'now'} onChange={() => setWhen('now')} className="accent-kds-green" />
+              <label className="flex items-center gap-1.5 text-xs text-s-text">
+                <input type="radio" checked={when === 'now'} onChange={() => setWhen('now')} className="accent-primary" />
                 Publish now
               </label>
-              <label className="flex items-center gap-1.5 text-xs text-kds-text">
-                <input type="radio" checked={when === 'later'} onChange={() => setWhen('later')} className="accent-kds-green" />
+              <label className="flex items-center gap-1.5 text-xs text-s-text">
+                <input type="radio" checked={when === 'later'} onChange={() => setWhen('later')} className="accent-primary" />
                 Publish at
               </label>
               {when === 'later' && (
                 <input type="datetime-local" value={publishAt} onChange={(e) => setPublishAt(e.target.value)}
-                  className="rounded-lg border border-kds-border bg-kds-bg px-2 py-1 text-xs text-kds-text focus:border-kds-green focus:outline-none" />
+                  className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text focus:border-primary focus:outline-none" />
               )}
             </>
           )}
           <button
             onClick={() => approve.mutate(!isScheduled && when === 'later' && laterIso ? { publishAt: laterIso.toISOString() } : {})}
             disabled={approve.isPending || (!isScheduled && when === 'later' && !laterValid)}
-            className="ml-auto rounded-lg bg-kds-green px-4 py-1.5 text-xs font-bold text-black hover:opacity-90 disabled:opacity-40">
+            className="ml-auto rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-40">
             {approve.isPending ? 'Approving…' : !isScheduled && when === 'later' ? 'Approve and schedule' : 'Approve and publish'}
           </button>
         </div>
       )}
 
       {isCeo && panel === 'reject' && (
-        <div className="space-y-2 border-t border-kds-border px-4 py-3">
+        <div className="space-y-2 border-t border-s-border px-4 py-3">
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} autoFocus
             placeholder="What needs to change? The author sees this note on their draft."
-            className="w-full resize-y rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-xs text-kds-text focus:border-kds-green focus:outline-none" />
+            className="w-full resize-y rounded-lg border border-s-border bg-s-bg px-3 py-2 text-xs text-s-text focus:border-primary focus:outline-none" />
           <div className="flex justify-end">
             <button onClick={() => reject.mutate()} disabled={reject.isPending || !note.trim()}
-              className="rounded-lg border border-kds-red/50 px-4 py-1.5 text-xs font-bold text-kds-red hover:bg-kds-red/10 disabled:opacity-40">
+              className="rounded-lg border border-s-red/50 px-4 py-1.5 text-xs font-bold text-s-red hover:bg-s-red/10 disabled:opacity-40">
               {reject.isPending ? 'Sending…' : 'Send back to draft'}
             </button>
           </div>
         </div>
       )}
 
-      {error && <p className="px-4 pb-3 text-xs text-kds-red">{error.message || 'Action failed'}</p>}
+      {error && <p className="px-4 pb-3 text-xs text-s-red">{error.message || 'Action failed'}</p>}
     </div>
   )
 }

@@ -72,7 +72,7 @@ export default function NaughtyListPage() {
   const [kindFilter, setKindFilter] = useState<string>('')
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/crm" className="text-xs text-white/40 hover:text-white/70">← CRM</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Naughty list</h1>
@@ -118,8 +118,8 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
     <button onClick={onClick}
       className="rounded-lg px-3 py-1.5 text-xs font-bold transition-all"
       style={active
-        ? { background: 'rgba(244,63,94,0.15)', color: '#fda4af', border: '1px solid rgba(244,63,94,0.4)' }
-        : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        ? { background: 'rgba(244,63,94,0.15)', color: '#b42318', border: '1px solid rgba(244,63,94,0.4)' }
+        : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
       {children}
     </button>
   )
@@ -156,7 +156,7 @@ function OffenderRow({ row }: { row: Row }) {
 
   return (
     <div className={`rounded-xl border ${banned ? 'border-rose-500/40' : activeStrikes >= 2 ? 'border-amber-500/40' : 'border-white/[0.08]'}`}
-      style={{ background: banned ? 'rgba(244,63,94,0.06)' : 'rgba(255,255,255,0.02)' }}>
+      style={{ background: banned ? 'rgba(244,63,94,0.06)' : 'rgb(var(--fg-rgb) / 0.02)' }}>
       <button onClick={() => setExpanded(!expanded)}
         className="w-full text-left px-4 py-3 flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -202,7 +202,7 @@ function StrikeMeter({ active }: { active: number }) {
     <div className="flex gap-1">
       {[1,2,3].map((n) => (
         <div key={n} className="w-2.5 h-2.5 rounded-full"
-          style={{ background: n <= active ? '#f43f5e' : 'rgba(255,255,255,0.12)' }} />
+          style={{ background: n <= active ? '#f43f5e' : 'rgb(var(--fg-rgb) / 0.12)' }} />
       ))}
     </div>
   )
@@ -226,16 +226,16 @@ function StrikeLine({ strike }: { strike: Strike }) {
         <div className="min-w-0 flex-1">
           <span className="font-bold text-white/85">{fmtKind(strike.kind)}</span>
           {strike.severity > 1 && (
-            <span className="ml-1.5 text-[9px] font-bold px-1.5 rounded text-rose-300"
+            <span className="ml-1.5 text-[9px] font-bold px-1.5 rounded text-rose-700"
               style={{ background: 'rgba(244,63,94,0.15)' }}>×{strike.severity}</span>
           )}
           <span className="text-white/40 ml-2">{new Date(strike.recordedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
-          {isReversed && <span className="ml-2 text-[10px] text-emerald-400">↺ reversed</span>}
+          {isReversed && <span className="ml-2 text-[10px] text-primary-ink">↺ reversed</span>}
           {isExpired && !isReversed && <span className="ml-2 text-[10px] text-white/40">expired</span>}
         </div>
         {!isReversed && !isExpired && (
           <button onClick={() => setShowForgive(!showForgive)}
-            className="text-[10px] text-emerald-400 hover:underline whitespace-nowrap">
+            className="text-[10px] text-primary-ink hover:underline whitespace-nowrap">
             forgive
           </button>
         )}
@@ -247,7 +247,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
             placeholder="Why are you forgiving this?"
             className="flex-1 rounded bg-white/[0.04] border border-white/[0.1] px-2 py-1 text-xs text-white/85" />
           <button onClick={() => reverse.mutate()} disabled={!reason.trim() || reverse.isPending}
-            className="rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold text-black disabled:opacity-40">
+            className="rounded bg-primary px-2 py-1 text-[10px] font-bold text-primary-on disabled:opacity-40">
             {reverse.isPending ? '…' : 'Forgive'}
           </button>
         </div>
@@ -280,11 +280,11 @@ function LiftBanForm({ customerId }: { customerId: string }) {
   if (!ban) return <p className="text-xs text-white/40">Ban already lifted.</p>
   return (
     <div>
-      <p className="text-[11px] text-rose-300 font-bold mb-2">Lift the ban</p>
+      <p className="text-[11px] text-rose-700 font-bold mb-2">Lift the ban</p>
       <p className="text-[10px] text-white/45 mb-2">{ban.reason}</p>
       {!confirm ? (
         <button onClick={() => setConfirm(true)}
-          className="rounded bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/25">
+          className="rounded bg-primary/15 border border-primary/30 px-3 py-1 text-[11px] font-bold text-primary-ink hover:bg-primary/25">
           Reinstate this customer →
         </button>
       ) : (
@@ -293,7 +293,7 @@ function LiftBanForm({ customerId }: { customerId: string }) {
             placeholder="Reason for lifting (audit trail)"
             className="flex-1 rounded bg-white/[0.04] border border-white/[0.1] px-2 py-1 text-xs text-white/85" />
           <button onClick={() => lift.mutate()} disabled={!reason.trim() || lift.isPending}
-            className="rounded bg-emerald-500 px-3 py-1 text-[11px] font-bold text-black disabled:opacity-40">
+            className="rounded bg-primary px-3 py-1 text-[11px] font-bold text-primary-on disabled:opacity-40">
             {lift.isPending ? '…' : 'Lift ban'}
           </button>
           <button onClick={() => setConfirm(false)} className="text-[10px] text-white/40">cancel</button>
@@ -321,7 +321,7 @@ function BansList() {
     <div className="space-y-6">
       {active.length > 0 && (
         <section>
-          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-rose-300 mb-2">Active ({active.length})</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-rose-700 mb-2">Active ({active.length})</p>
           <div className="space-y-2">{active.map((b) => <BanRow key={b.id} ban={b} />)}</div>
         </section>
       )}
@@ -340,8 +340,8 @@ function BanRow({ ban }: { ban: Ban }) {
   return (
     <div className="rounded-xl px-4 py-3 border"
       style={{
-        background: isLifted ? 'rgba(255,255,255,0.02)' : 'rgba(244,63,94,0.06)',
-        borderColor: isLifted ? 'rgba(255,255,255,0.08)' : 'rgba(244,63,94,0.3)',
+        background: isLifted ? 'rgb(var(--fg-rgb) / 0.02)' : 'rgba(244,63,94,0.06)',
+        borderColor: isLifted ? 'rgb(var(--fg-rgb) / 0.08)' : 'rgba(244,63,94,0.3)',
         opacity: isLifted ? 0.7 : 1,
       }}>
       <div className="flex items-center justify-between gap-3">
@@ -356,7 +356,7 @@ function BanRow({ ban }: { ban: Ban }) {
           </p>
           <p className="text-[11px] text-white/55 mt-1 italic">{ban.reason}</p>
           {isLifted && (
-            <p className="text-[10px] text-emerald-400/80 mt-1">
+            <p className="text-[10px] text-primary-ink/80 mt-1">
               Lifted {new Date(ban.liftedAt!).toLocaleDateString('en-GB')} — {ban.liftReason}
             </p>
           )}
@@ -373,8 +373,8 @@ function BanRow({ ban }: { ban: Ban }) {
 
 function Badge({ color, label }: { color: 'rose' | 'amber'; label: string }) {
   const styles = color === 'rose'
-    ? { bg: 'rgba(244,63,94,0.15)', text: '#fda4af' }
-    : { bg: 'rgba(245,158,11,0.15)', text: '#fcd34d' }
+    ? { bg: 'rgba(244,63,94,0.15)', text: '#b42318' }
+    : { bg: 'rgba(245,158,11,0.15)', text: '#a15c00' }
   return (
     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
       style={{ background: styles.bg, color: styles.text }}>{label}</span>

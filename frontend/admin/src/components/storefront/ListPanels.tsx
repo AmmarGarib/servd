@@ -23,7 +23,7 @@ function Row({ entry, row, href }: { entry: Entry; row: LayoutSummary | undefine
   return (
     <tr>
       <td>
-        <Link href={href} className="font-semibold text-s-text hover:text-s-teal">{entry.label}</Link>
+        <Link href={href} className="font-semibold text-s-text hover:text-primary-ink">{entry.label}</Link>
         <p className="text-[11px] text-s-muted font-mono">{entry.slug}{entry.hint ? ` · ${entry.hint}` : ''}</p>
       </td>
       <td className="text-xs">{row?.liveVersion ? `v${row.liveVersion}` : <span className="text-s-muted">Built-in / none</span>}</td>
@@ -32,7 +32,7 @@ function Row({ entry, row, href }: { entry: Entry; row: LayoutSummary | undefine
       <td className="text-right">
         <div className="flex justify-end gap-3 text-xs">
           {path && row?.liveVersion && <a href={`${STOREFRONT_URL}${path}`} target="_blank" rel="noopener noreferrer" className="text-s-muted hover:text-s-text">View live</a>}
-          <Link href={href} className="text-s-teal hover:underline">Edit</Link>
+          <Link href={href} className="text-primary-ink hover:underline">Edit</Link>
         </div>
       </td>
     </tr>

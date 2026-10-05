@@ -50,7 +50,7 @@ export default function HrReportsPage() {
 
   return (
     <HrShell title="HR reports" subtitle="Every report in the HR spec. Record-based reports use each section's current format for their columns.">
-      {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       <div className="grid lg:grid-cols-[280px_1fr] gap-5">
         <div className="space-y-4">
           {groups.map(([g, list]) => (
@@ -60,7 +60,7 @@ export default function HrReportsPage() {
                 {list.map((r) => (
                   <button key={r.key} onClick={() => setKey(r.key)}
                     className="w-full text-left rounded-lg px-3 py-2 text-sm"
-                    style={{ background: key === r.key ? 'rgba(0,212,177,0.12)' : 'transparent', color: key === r.key ? '#00D4B1' : 'rgba(255,255,255,0.75)' }}>
+                    style={{ background: key === r.key ? 'rgb(135 197 64 / 0.12)' : 'transparent', color: key === r.key ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.75)' }}>
                     {r.title}
                   </button>
                 ))}
@@ -92,10 +92,10 @@ export default function HrReportsPage() {
                   }}>Download CSV</button>
                   <button className={btnGhost} onClick={() => void preview.refetch()}>Refresh</button>
                 </div>
-                {dlErr && <p className="text-xs text-red-400 mt-2">{dlErr}</p>}
+                {dlErr && <p className="text-xs text-red-700 mt-2">{dlErr}</p>}
               </div>
 
-              {preview.error && <p className="text-sm text-red-400">{(preview.error as Error).message}</p>}
+              {preview.error && <p className="text-sm text-red-700">{(preview.error as Error).message}</p>}
               {preview.isLoading && <p className="text-sm text-white/40">Loading…</p>}
               {preview.data && <ReportView t={preview.data} />}
             </div>
@@ -118,13 +118,13 @@ function ReportView({ t }: { t: ReportTable }) {
         <p className="text-sm font-black text-white/85">{t.title}</p>
         <p className="text-xs text-white/40">{t.total} row{t.total === 1 ? '' : 's'}{t.total > t.rows.length ? ` · showing ${t.rows.length}, download for all` : ''}</p>
       </div>
-      {t.note && <p className="px-4 py-2 text-xs text-amber-400/90 border-b border-white/[0.06]">{t.note}</p>}
+      {t.note && <p className="px-4 py-2 text-xs text-amber-700/90 border-b border-white/[0.06]">{t.note}</p>}
       {t.rows.length === 0
         ? <p className="p-8 text-center text-sm text-white/40">Nothing for these dates.</p>
         : (
           <div className="overflow-x-auto max-h-[65vh]">
             <table className="w-full text-xs">
-              <thead className="sticky top-0" style={{ background: '#12131a' }}>
+              <thead className="sticky top-0" style={{ background: 'var(--surface)' }}>
                 <tr>{t.header.map((h) => <th key={h} className="px-3 py-2 text-left font-bold text-white/45 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>

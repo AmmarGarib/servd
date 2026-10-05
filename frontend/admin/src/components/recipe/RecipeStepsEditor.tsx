@@ -120,10 +120,10 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
   )
 
   return (
-    <div className="rounded-xl border" style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.015)' }}>
+    <div className="rounded-xl border" style={{ borderColor: 'rgb(var(--fg-rgb) / 0.06)', background: 'rgb(var(--fg-rgb) / 0.015)' }}>
 
       {/* Phase tabs */}
-      <div className="flex gap-1 p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+      <div className="flex gap-1 p-2 border-b" style={{ borderColor: 'rgb(var(--fg-rgb) / 0.06)' }}>
         {PHASES.map((p) => {
           const active = p.id === activePhase
           const count = steps.filter((s) => s.phase === p.id).length
@@ -131,8 +131,8 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
             <button key={p.id} onClick={() => setActivePhase(p.id)}
               className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-colors"
               style={active
-                ? { background: 'rgba(0,212,177,0.12)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.3)' }
-                : { background: 'transparent', color: 'rgba(255,255,255,0.5)', border: '1px solid transparent' }}>
+                ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.3)' }
+                : { background: 'transparent', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid transparent' }}>
               <span className="mr-1">{p.emoji}</span>
               {p.label}
               {count > 0 && <span className="ml-1.5 text-[10px] opacity-70">({count})</span>}
@@ -152,7 +152,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
 
         {!isLoading && phaseSteps.length === 0 && !drafting && (
           <div className="rounded-lg p-6 text-center"
-            style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.1)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px dashed rgb(var(--fg-rgb) / 0.1)' }}>
             <p className="text-xs text-white/45">No steps in this phase yet.</p>
           </div>
         )}
@@ -164,13 +164,13 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
             depCandidates={depCandidates} onSave={saveDraft} onCancel={() => setDrafting(null)} saving={update.isPending} />
           return (
             <div key={s.id} className="rounded-lg p-3 flex items-baseline gap-3 group"
-              style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <span className="text-[10px] font-black tabular-nums shrink-0 rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(99,102,241,0.12)', color: '#A5B4FC' }}>{s.ordinal}</span>
+                style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{s.ordinal}</span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-white/90 leading-snug">{s.instruction}</p>
                 <div className="flex items-center gap-2 mt-1 flex-wrap text-[10px]">
-                  <span style={{ color: '#00D4B1' }}>📍 {station?.name ?? 'No station'}</span>
+                  <span style={{ color: 'var(--erp-primary-ink)' }}>📍 {station?.name ?? 'No station'}</span>
                   <span className="text-white/40">⏱ {s.estimatedSeconds}s</span>
                   {s.dependsOnIds.length > 0 && (
                     <span className="text-white/40">
@@ -181,12 +181,12 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
               </div>
               <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 shrink-0">
                 <button onClick={() => startEdit(s)} className="text-[10px] px-2 py-1 rounded font-bold"
-                  style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)' }}>
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.7)' }}>
                   Edit
                 </button>
                 <button onClick={() => { if (confirm('Delete this step?')) remove.mutate(s.id) }}
                   className="text-[10px] px-2 py-1 rounded font-bold"
-                  style={{ background: 'rgba(255,77,79,0.08)', color: '#FF7B7D' }}>
+                  style={{ background: 'rgba(255,77,79,0.08)', color: '#b42318' }}>
                   Delete
                 </button>
               </div>
@@ -202,14 +202,14 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
         {!drafting && (
           <button onClick={startNew}
             className="w-full rounded-lg py-2.5 text-xs font-bold transition-colors mt-1"
-            style={{ background: 'rgba(0,212,177,0.06)', color: '#00D4B1', border: '1px dashed rgba(0,212,177,0.25)' }}>
+            style={{ background: 'rgb(135 197 64 / 0.06)', color: 'var(--erp-primary-ink)', border: '1px dashed rgb(135 197 64 / 0.25)' }}>
             + Add step
           </button>
         )}
       </div>
 
       {(create.error || update.error || remove.error) && (
-        <p className="px-4 pb-3 text-xs text-red-400">
+        <p className="px-4 pb-3 text-xs text-red-700">
           {(create.error || update.error || remove.error)?.message}
         </p>
       )}
@@ -234,13 +234,13 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
   }
   return (
     <div className="rounded-lg p-3 space-y-2"
-      style={{ background: 'rgba(0,212,177,0.04)', border: '1px solid rgba(0,212,177,0.2)' }}>
+      style={{ background: 'rgb(135 197 64 / 0.04)', border: '1px solid rgb(135 197 64 / 0.2)' }}>
       <div className="space-y-1">
         <label className="block text-[9px] uppercase tracking-wider font-black text-white/45">Step instruction (English)</label>
         <textarea value={draft.instruction ?? ''} onChange={(e) => setDraft({ ...draft, instruction: e.target.value })}
           rows={2} placeholder="e.g. 'Sear steak medium rare on grill, 90s/side'"
           className="w-full rounded-md px-3 py-2 text-sm focus:outline-none resize-none"
-          style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.92)' }} />
+          style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.92)' }} />
       </div>
 
       {/* Urdu instruction — backend schema supports per-step Urdu so a
@@ -253,7 +253,7 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
         <textarea value={draft.instructionUrdu ?? ''} onChange={(e) => setDraft({ ...draft, instructionUrdu: e.target.value })}
           rows={2} dir="rtl" placeholder="مثلاً: گرل پر سٹیک ۹۰ سیکنڈ فی طرف بھونیں"
           className="w-full rounded-md px-3 py-2 text-sm focus:outline-none resize-none"
-          style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.92)', fontFamily: 'sans-serif' }} />
+          style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.92)', fontFamily: 'sans-serif' }} />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -261,7 +261,7 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
           <label className="block text-[9px] uppercase tracking-wider font-black text-white/45 mb-1">Station</label>
           <select value={draft.stationId ?? ''} onChange={(e) => setDraft({ ...draft, stationId: e.target.value || null })}
             className="w-full rounded-md px-2.5 py-1.5 text-xs font-semibold cursor-pointer focus:outline-none"
-            style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}>
+            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
             <option value="">— pick a station —</option>
             {stations.map((s) => (
               <option key={s.id} value={s.id}>{s.name}{s.concept?.slug ? ` (${s.concept.slug})` : ''}</option>
@@ -273,7 +273,7 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
           <input type="number" min={0} value={draft.estimatedSeconds ?? 60}
             onChange={(e) => setDraft({ ...draft, estimatedSeconds: parseInt(e.target.value) || 0 })}
             className="w-full rounded-md px-2.5 py-1.5 text-xs font-semibold focus:outline-none"
-            style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }} />
+            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }} />
         </div>
       </div>
 
@@ -289,8 +289,8 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
                 <button key={c.id} type="button" onClick={() => toggleDep(c.id)}
                   className="text-[10px] rounded-full px-2 py-1 font-semibold transition-colors max-w-[260px] truncate"
                   style={on
-                    ? { background: '#00D4B1', color: '#000' }
-                    : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                    : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
                   title={c.instruction}>
                   {on ? '✓ ' : '+ '}{c.instruction.slice(0, 36)}{c.instruction.length > 36 ? '…' : ''}
                 </button>
@@ -303,12 +303,12 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
       <div className="flex gap-2 pt-1">
         <button onClick={onCancel}
           className="rounded-md px-3 py-1.5 text-xs font-bold"
-          style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)' }}>
+          style={{ background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>
           Cancel
         </button>
         <button onClick={onSave} disabled={saving || !draft.instruction?.trim()}
           className="flex-1 rounded-md py-1.5 text-xs font-black transition-all disabled:opacity-40"
-          style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
+          style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
           {saving ? 'Saving…' : draft.id ? 'Save changes' : 'Add step'}
         </button>
       </div>

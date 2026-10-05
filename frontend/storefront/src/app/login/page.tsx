@@ -10,13 +10,13 @@ import { LoginForm } from '../../components/auth/LoginForm'
 
 export default function LoginPage() {
   return (
-    <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: '#1E1420' }}>
-      <SmokeyBackground color="#4E2A4F" backdropBlur="sm" />
+    <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: 'var(--servd-black)' }}>
+      <SmokeyBackground color="#5c3458" backdropBlur="sm" />
 
       <div className="relative z-10 w-full max-w-sm">
         <Link href="/" aria-label="servd home" className="mb-6 block text-center"
           style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
-          servd<span style={{ color: '#C9A6F0' }}>.</span>
+          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
         </Link>
 
         <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>

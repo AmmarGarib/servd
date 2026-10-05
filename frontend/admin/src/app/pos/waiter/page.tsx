@@ -96,7 +96,7 @@ export default function WaiterPage() {
 
   if (step === 'done') {
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-6 bg-kds-bg px-6 text-center">
+      <div className="erp-kitchen-dark flex flex-col items-center justify-center h-screen gap-6 bg-kds-bg px-6 text-center">
         <div className="text-6xl">✅</div>
         <h1 className="text-2xl font-black text-kds-text">Order Sent!</h1>
         <p className="text-kds-subtext">Table {selectedTable?.label} · {cart.reduce((s, c) => s + c.qty, 0)} items sent to kitchen</p>

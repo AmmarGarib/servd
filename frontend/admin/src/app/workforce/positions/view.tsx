@@ -85,8 +85,8 @@ interface Summary {
 }
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
-  open:     { label: 'Open',     color: '#F59E0B', bg: 'rgba(245,158,11,0.10)' },
-  filled:   { label: 'Filled',   color: '#00D4B1', bg: 'rgba(0,212,177,0.10)' },
+  open:     { label: 'Open',     color: '#a15c00', bg: 'rgba(245,158,11,0.10)' },
+  filled:   { label: 'Filled',   color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.10)' },
   frozen:   { label: 'Frozen',   color: '#8E8E93', bg: 'rgba(142,142,147,0.10)' },
   archived: { label: 'Archived', color: '#6B7280', bg: 'rgba(107,114,128,0.10)' },
 }
@@ -209,28 +209,28 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
   }, [positions])
 
   return (
-    <div className={embedded ? '' : 'min-h-screen bg-kds-bg text-kds-text'}>
+    <div className={embedded ? '' : 'min-h-screen bg-s-bg text-s-text'}>
       {!embedded && (
-      <div className="border-b border-kds-border bg-kds-card">
+      <div className="border-b border-s-border bg-s-surface">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 text-xs text-kds-subtext mb-1">
-                <Link href="/workforce" className="hover:text-kds-text">Workforce</Link>
+              <div className="flex items-center gap-2 text-xs text-s-muted mb-1">
+                <Link href="/workforce" className="hover:text-s-text">Workforce</Link>
                 <span>/</span>
-                <span className="text-kds-text">Budgeted positions</span>
+                <span className="text-s-text">Budgeted positions</span>
               </div>
               <h1 className="text-2xl font-black">Budgeted positions</h1>
-              <p className="text-sm text-kds-subtext mt-1 max-w-2xl">
+              <p className="text-sm text-s-muted mt-1 max-w-2xl">
                 Every seat the org pays for, filled or not. Edits here update the
-                Payroll line in <Link href="/finance/opex" className="text-kds-green hover:underline">OpEx</Link> and
-                the labour cost on every <Link href="/finance/projections" className="text-kds-green hover:underline">projection</Link> on
+                Payroll line in <Link href="/finance/opex" className="text-primary-ink hover:underline">OpEx</Link> and
+                the labour cost on every <Link href="/finance/projections" className="text-primary-ink hover:underline">projection</Link> on
                 next load — no manual sync.
               </p>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowAdd(true)}
-                className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
+                className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
                 + New position
               </button>
             </div>
@@ -242,7 +242,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
       {embedded && (
         <div className="max-w-6xl mx-auto px-6 pt-4 flex justify-end">
           <button onClick={() => setShowAdd(true)}
-            className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
+            className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
             + New position
           </button>
         </div>
@@ -256,19 +256,19 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: '#C4B5FD' }}>
+                  style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
                   Joint venture
                 </span>
-                <span className="text-sm text-kds-text font-bold">{activeTenant.name}</span>
-                <span className="text-xs text-kds-subtext">- partner split:</span>
+                <span className="text-sm text-s-text font-bold">{activeTenant.name}</span>
+                <span className="text-xs text-s-muted">- partner split:</span>
                 {jvPartners.map((p, i) => (
                   <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: '#DDD6FE' }}>
+                    style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
                     {p.label} {p.pct}%
                   </span>
                 ))}
               </div>
-              <span className="text-[11px] text-kds-subtext hover:underline">Edit JV config →</span>
+              <span className="text-[11px] text-s-muted hover:underline">Edit JV config →</span>
             </div>
           </Link>
         )}
@@ -284,7 +284,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     ? `gross ${fmtPkrWhole(summary.totalTenantShareMonthlyCents)} +/- JV transfers`
                     : `equals gross (no contributions)`
                 }
-                accent="#00D4B1"
+                accent="var(--erp-primary-ink)"
                 jvPartners={jvPartners}
                 valueCents={summary.netMonthlyCents}
               />
@@ -292,7 +292,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                 label="Annualised net"
                 value={fmtPkrWhole(summary.annualisedNetCents)}
                 hint="net x 12 months"
-                accent="#6366F1"
+                accent="var(--erp-secondary)"
                 jvPartners={jvPartners}
                 valueCents={summary.annualisedNetCents}
               />
@@ -300,32 +300,32 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                 label="Headcount"
                 value={summary.totalHeadcount.toString()}
                 hint={`${summary.totalPositions} positions`}
-                accent="#F59E0B"
+                accent="#a15c00"
               />
               <StatCard
                 label="Open seats"
                 value={summary.byStatus.open.toString()}
                 hint={`${summary.byStatus.filled} filled, ${summary.byStatus.frozen} frozen`}
-                accent={summary.byStatus.open > 0 ? '#F59E0B' : '#8E8E93'}
+                accent={summary.byStatus.open > 0 ? '#a15c00' : '#8E8E93'}
               />
             </div>
 
-            <div className="mt-4 rounded-xl border border-kds-border bg-kds-card overflow-hidden">
-              <div className="px-4 py-3 border-b border-kds-border flex items-center justify-between gap-3">
+            <div className="mt-4 rounded-xl border border-s-border bg-s-surface overflow-hidden">
+              <div className="px-4 py-3 border-b border-s-border flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-bold">JV / inter-tenant contributions</p>
-                  <p className="text-[11px] text-kds-subtext">
+                  <p className="text-[11px] text-s-muted">
                     Subtracts incoming, adds outgoing &rarr; gives net P&L
                   </p>
                 </div>
                 <button onClick={() => setContribModal('new')}
-                  className="rounded-lg px-3 py-1.5 text-xs font-bold border border-kds-border text-kds-text hover:border-kds-green/40 hover:text-kds-green transition-colors">
+                  className="rounded-lg px-3 py-1.5 text-xs font-bold border border-s-border text-s-text hover:border-primary/40 hover:text-primary-ink transition-colors">
                   + Add contribution
                 </button>
               </div>
               {summary.contributions.length === 0 ? (
                 <div className="px-4 py-6 text-center">
-                  <p className="text-xs text-kds-subtext">
+                  <p className="text-xs text-s-muted">
                     No inter-tenant contributions yet. Use this for JV chargebacks
                     (e.g. one tenant contributes a lump sum to another for shared
                     head-office or commissary services).
@@ -334,30 +334,30 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
               ) : (
                 <div className="px-4 py-3 grid gap-2">
                   <div className="flex justify-between text-xs font-mono">
-                    <span className="text-kds-subtext">Position gross ({summary.totalPositions} seats)</span>
+                    <span className="text-s-muted">Position gross ({summary.totalPositions} seats)</span>
                     <span className="font-bold">{fmtPkrWhole(summary.totalTenantShareMonthlyCents)}</span>
                   </div>
                   {summary.contributions.map((c) => (
                     <button key={c.id} type="button" onClick={() => setContribModal(c)}
-                      className="text-left rounded-md px-1 py-1 -mx-1 hover:bg-kds-bg/40 transition-colors">
+                      className="text-left rounded-md px-1 py-1 -mx-1 hover:bg-s-bg/40 transition-colors">
                       <div className="flex justify-between text-xs font-mono items-baseline">
-                        <span className="text-kds-subtext flex items-center gap-1.5">
-                          <span style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                        <span className="text-s-muted flex items-center gap-1.5">
+                          <span style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
                             {c.direction === 'incoming' ? '<--' : '-->'}
                           </span>
                           {c.label}
-                          <span className="text-[10px] text-kds-subtext/70">
+                          <span className="text-[10px] text-s-muted/70">
                             ({c.direction === 'incoming' ? 'from' : 'to'}{' '}
                             {c.direction === 'incoming' ? c.sourceTenant.name : c.destinationTenant.name})
                           </span>
                         </span>
                         <span className="font-bold"
-                          style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                          style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
                           {c.direction === 'incoming' ? '-' : '+'} {fmtPkrWhole(c.monthlyCents)}
                         </span>
                       </div>
                       {c.internalSplit && c.internalSplit.length > 0 && (
-                        <div className="pl-5 pt-1 flex gap-3 flex-wrap text-[10px] text-kds-subtext font-mono">
+                        <div className="pl-5 pt-1 flex gap-3 flex-wrap text-[10px] text-s-muted font-mono">
                           {c.internalSplit.map((s, i) => (
                             <span key={i}>
                               {s.label}: {fmtPkrWhole(s.cents)}
@@ -367,9 +367,9 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                       )}
                     </button>
                   ))}
-                  <div className="border-t border-kds-border mt-1 pt-2 flex justify-between text-sm font-mono">
+                  <div className="border-t border-s-border mt-1 pt-2 flex justify-between text-sm font-mono">
                     <span className="font-bold">Net to this tenant&apos;s P&L</span>
-                    <span className="font-black" style={{ color: '#00D4B1' }}>
+                    <span className="font-black" style={{ color: 'var(--erp-primary-ink)' }}>
                       {fmtPkrWhole(summary.netMonthlyCents)}
                     </span>
                   </div>
@@ -381,19 +381,19 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
       </div>
 
       <div className="max-w-6xl mx-auto px-6 pb-12 pt-5">
-        {isLoading && <div className="p-8 text-center text-sm text-kds-subtext">Loading positions…</div>}
+        {isLoading && <div className="p-8 text-center text-sm text-s-muted">Loading positions…</div>}
 
         {!isLoading && positions.length === 0 && (
-          <div className="rounded-xl border border-kds-border bg-kds-card p-12 text-center">
+          <div className="rounded-xl border border-s-border bg-s-surface p-12 text-center">
             <p className="text-4xl mb-2">💼</p>
             <p className="text-sm font-semibold">No budgeted positions yet</p>
-            <p className="text-xs text-kds-subtext mt-1 max-w-md mx-auto">
+            <p className="text-xs text-s-muted mt-1 max-w-md mx-auto">
               Start with a position for each seat the org pays for. You don't need a
               named hire — just the designation, shift band, salary and which concept it serves.
               Designations and departments are set up in HR → Org setup.
             </p>
             <button onClick={() => setShowAdd(true)}
-              className="mt-4 rounded-lg px-4 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
+              className="mt-4 rounded-lg px-4 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
               + Create the first position
             </button>
           </div>
@@ -403,25 +403,25 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
           <div key={concept.key} className="mt-6">
             <div className="flex items-baseline justify-between gap-3 mb-2">
               <h2 className="text-lg font-black">{concept.title}</h2>
-              <p className="text-xs text-kds-subtext font-mono">
+              <p className="text-xs text-s-muted font-mono">
                 {concept.headcount} ppl · share {fmtPkrWhole(concept.share)} / month
               </p>
             </div>
-            <div className="rounded-xl border border-kds-border bg-kds-card overflow-hidden">
+            <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
               {concept.depts.map((dept, dIdx) => (
-                <div key={dept.key} className={dIdx > 0 ? 'border-t border-kds-border' : ''}>
-                  <div className="flex items-baseline justify-between gap-3 px-4 py-3 bg-kds-bg/30">
+                <div key={dept.key} className={dIdx > 0 ? 'border-t border-s-border' : ''}>
+                  <div className="flex items-baseline justify-between gap-3 px-4 py-3 bg-s-bg/30">
                     <p className="text-sm font-bold flex items-center gap-2">
                       <span>{dept.emoji ?? '·'}</span>
                       <span>{dept.title}</span>
                       {dept.isHeadOffice && (
                         <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                          style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                          style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
                           Head office
                         </span>
                       )}
                     </p>
-                    <p className="text-xs text-kds-subtext font-mono">
+                    <p className="text-xs text-s-muted font-mono">
                       {dept.headcount} ppl · {fmtPkrWhole(dept.share)}
                       {dept.gross !== dept.share && (
                         <span className="opacity-60"> (gross {fmtPkrWhole(dept.gross)})</span>
@@ -431,7 +431,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                   {dept.shiftGroups.map((shift) => (
                     <div key={shift.shiftBandLabel}>
                       {shift.shiftBandLabel !== 'Any shift' && (
-                        <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-kds-subtext bg-kds-bg/20">
+                        <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-s-muted bg-s-bg/20">
                           {shift.shiftBandLabel}
                         </div>
                       )}
@@ -488,15 +488,15 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
   valueCents?: number
 }) {
   return (
-    <div className="rounded-xl border border-kds-border bg-kds-card p-4">
-      <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">{label}</p>
+    <div className="rounded-xl border border-s-border bg-s-surface p-4">
+      <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">{label}</p>
       <p className="text-xl font-black mt-1" style={{ color: accent }}>{value}</p>
-      {hint && <p className="text-[10px] text-kds-subtext mt-0.5">{hint}</p>}
+      {hint && <p className="text-[10px] text-s-muted mt-0.5">{hint}</p>}
       {jvPartners && jvPartners.length > 0 && valueCents !== undefined && valueCents > 0 && (
         <div className="mt-2 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
+              style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
               {p.label} {p.pct}%: {fmtPkrWhole(Math.round(valueCents * p.pct / 100))}
             </span>
           ))}
@@ -522,17 +522,17 @@ function PositionRow({
 }) {
   const status = STATUS_META[position.status]
   return (
-    <div className="border-t border-kds-border first:border-t-0">
+    <div className="border-t border-s-border first:border-t-0">
       <button onClick={onExpand}
-        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-kds-bg/30 ${
-          expanded ? 'bg-kds-bg/40' : ''
+        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-s-bg/30 ${
+          expanded ? 'bg-s-bg/40' : ''
         }`}>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-semibold text-sm truncate">{position.title}</p>
             {position.headcount > 1 && (
               <span className="text-[10px] font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(0,212,177,0.10)', color: '#00D4B1' }}>
+                style={{ background: 'rgb(135 197 64 / 0.10)', color: 'var(--erp-primary-ink)' }}>
                 × {position.headcount}
               </span>
             )}
@@ -541,20 +541,20 @@ function PositionRow({
               {status.label}
             </span>
             {position.filledBy && (
-              <span className="text-[10px] text-kds-subtext">→ {position.filledBy.name}</span>
+              <span className="text-[10px] text-s-muted">→ {position.filledBy.name}</span>
             )}
           </div>
           {position.costShareNote && position.tenantCostShareCents !== position.monthlySalaryCents && (
-            <p className="text-[10px] text-kds-subtext mt-0.5 italic truncate">{position.costShareNote}</p>
+            <p className="text-[10px] text-s-muted mt-0.5 italic truncate">{position.costShareNote}</p>
           )}
         </div>
         <div className="shrink-0 text-right">
           <p className="text-sm font-bold font-mono">{fmtPkrWhole(position.tenantCostShareCents)}</p>
           {position.tenantCostShareCents !== position.monthlySalaryCents && (
-            <p className="text-[10px] text-kds-subtext font-mono opacity-70">gross {fmtPkrWhole(position.monthlySalaryCents)}</p>
+            <p className="text-[10px] text-s-muted font-mono opacity-70">gross {fmtPkrWhole(position.monthlySalaryCents)}</p>
           )}
         </div>
-        <span className="shrink-0 text-kds-subtext text-xs"
+        <span className="shrink-0 text-s-muted text-xs"
           style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 120ms' }}>▶</span>
       </button>
       {expanded && (
@@ -608,7 +608,7 @@ function PositionEditor({
   })
 
   return (
-    <div className="bg-kds-bg/30 border-t border-kds-border px-4 py-4 space-y-3">
+    <div className="bg-s-bg/30 border-t border-s-border px-4 py-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Designation" hint={current ? undefined : `"${position.title}" is not an HR designation — pick one (add it in HR → Org setup if it is missing).`}>
           <select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls}>
@@ -662,19 +662,19 @@ function PositionEditor({
           </Field>
         </div>
       </div>
-      {save.error && <p className="text-xs text-red-400">{(save.error as Error).message}</p>}
+      {save.error && <p className="text-xs text-red-700">{(save.error as Error).message}</p>}
       <div className="flex items-center justify-between gap-2 pt-2">
         <button onClick={() => archive.mutate()} disabled={archive.isPending}
-          className="rounded-lg px-3 py-2 text-xs font-bold text-red-400 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
+          className="rounded-lg px-3 py-2 text-xs font-bold text-red-700 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
           🗑 Archive
         </button>
         <div className="flex gap-2">
           <button onClick={onClose}
-            className="rounded-lg px-3 py-2 text-xs font-bold text-kds-subtext border border-kds-border hover:text-kds-text">
+            className="rounded-lg px-3 py-2 text-xs font-bold text-s-muted border border-s-border hover:text-s-text">
             Cancel
           </button>
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save changes'}
           </button>
         </div>
@@ -720,8 +720,8 @@ function AddPositionModal({
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-kds-card border border-kds-border rounded-xl p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50" onClick={onClose}>
+      <div className="bg-s-surface border border-s-border rounded-xl p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-black mb-4">New position</h2>
         <div className="space-y-3">
           <Field label="Designation" hint={designations.length ? undefined : 'No designations yet — add them in HR → Org setup.'}>
@@ -759,13 +759,13 @@ function AddPositionModal({
               onChange={(e) => setHeadcount(parseInt(e.target.value) || 1)} className={inputCls} />
           </Field>
         </div>
-        {create.error && <p className="text-xs text-red-400 mt-3">{(create.error as Error).message}</p>}
+        {create.error && <p className="text-xs text-red-700 mt-3">{(create.error as Error).message}</p>}
         <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-bold text-kds-subtext border border-kds-border hover:text-kds-text">
+          <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-bold text-s-muted border border-s-border hover:text-s-text">
             Cancel
           </button>
           <button onClick={() => create.mutate()} disabled={!designationId || gross <= 0 || create.isPending}
-            className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
             {create.isPending ? 'Creating…' : 'Create position'}
           </button>
         </div>
@@ -774,14 +774,14 @@ function AddPositionModal({
   )
 }
 
-const inputCls = 'w-full rounded-md border border-kds-border bg-kds-bg px-3 py-2 text-sm focus:border-kds-green focus:outline-none'
+const inputCls = 'w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext block mb-1">{label}</span>
+      <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted block mb-1">{label}</span>
       {children}
-      {hint && <span className="text-[10px] text-kds-subtext block mt-1">{hint}</span>}
+      {hint && <span className="text-[10px] text-s-muted block mt-1">{hint}</span>}
     </label>
   )
 }
@@ -853,13 +853,13 @@ function ContributionModal({
     && label.trim().length > 0
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="bg-kds-card border border-kds-border rounded-xl p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
+      <div className="bg-s-surface border border-s-border rounded-xl p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-black mb-1">
           {existing ? 'Edit contribution' : 'New inter-tenant contribution'}
         </h2>
-        <p className="text-xs text-kds-subtext mb-4">
+        <p className="text-xs text-s-muted mb-4">
           {existing
             ? 'Update the agreed monthly transfer or its internal split.'
             : 'Model a chargeback between two tenants you own (e.g. JV partner contributes to head office).'}
@@ -883,7 +883,7 @@ function ContributionModal({
             </Field>
           </div>
           {sourceTenantId && destinationTenantId && sourceTenantId === destinationTenantId && (
-            <p className="text-xs text-red-400">Source and destination must differ.</p>
+            <p className="text-xs text-red-700">Source and destination must differ.</p>
           )}
 
           <Field label="Category">
@@ -903,16 +903,16 @@ function ContributionModal({
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
                 Internal split (optional)
               </span>
               <button type="button"
                 onClick={() => setSplitRows([...splitRows, { label: '', cents: 0 }])}
-                className="text-[10px] font-bold text-kds-green hover:underline">
+                className="text-[10px] font-bold text-primary-ink hover:underline">
                 + Add line
               </button>
             </div>
-            <p className="text-[10px] text-kds-subtext mb-2">
+            <p className="text-[10px] text-s-muted mb-2">
               Document how the transfer breaks down internally (e.g. JV shares). Not enforced
               against the monthly amount &mdash; it&apos;s for reporting only.
             </p>
@@ -937,14 +937,14 @@ function ContributionModal({
                   </div>
                   <button type="button"
                     onClick={() => setSplitRows(splitRows.filter((_, j) => j !== i))}
-                    className="text-red-400 hover:bg-red-400/10 rounded-md px-2 text-sm">
+                    className="text-red-700 hover:bg-red-400/10 rounded-md px-2 text-sm">
                     &times;
                   </button>
                 </div>
               ))}
             </div>
             {splitRows.length > 0 && (
-              <p className={`text-[10px] mt-2 font-mono ${sumMismatch ? 'text-amber-400' : 'text-kds-subtext'}`}>
+              <p className={`text-[10px] mt-2 font-mono ${sumMismatch ? 'text-amber-700' : 'text-s-muted'}`}>
                 Split sum: PKR {(splitSum / 100).toLocaleString('en-PK')}
                 {sumMismatch && ` (differs from monthly PKR ${(monthlyCents / 100).toLocaleString('en-PK')} — that&apos;s OK if intentional)`}
               </p>
@@ -960,17 +960,17 @@ function ContributionModal({
         <div className="flex justify-between items-center gap-2 mt-5">
           {existing ? (
             <button onClick={() => archive.mutate()} disabled={archive.isPending}
-              className="rounded-lg px-3 py-2 text-xs font-bold text-red-400 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
+              className="rounded-lg px-3 py-2 text-xs font-bold text-red-700 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
               {archive.isPending ? 'Archiving…' : 'Archive'}
             </button>
           ) : <div />}
           <div className="flex gap-2">
             <button onClick={onClose}
-              className="rounded-lg px-3 py-2 text-xs font-bold text-kds-subtext border border-kds-border hover:text-kds-text">
+              className="rounded-lg px-3 py-2 text-xs font-bold text-s-muted border border-s-border hover:text-s-text">
               Cancel
             </button>
             <button onClick={() => save.mutate()} disabled={!canSave || save.isPending}
-              className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+              className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
               {save.isPending ? 'Saving…' : existing ? 'Save changes' : 'Create contribution'}
             </button>
           </div>

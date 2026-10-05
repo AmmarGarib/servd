@@ -27,12 +27,12 @@ export default function HrLettersPage() {
 
   return (
     <HrShell title="Letters" subtitle="Paste your own wording over any default. Placeholders like {{employee.fullName}} are filled in when a letter is printed.">
-      {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       <div className="grid lg:grid-cols-[260px_1fr] gap-5">
         <div className="space-y-1">
           {letters.map((l) => (
             <button key={l.key} onClick={() => setKey(l.key)} className="w-full text-left rounded-lg px-3 py-2 text-sm flex items-center justify-between gap-2"
-              style={{ background: key === l.key ? 'rgba(0,212,177,0.12)' : 'transparent', color: key === l.key ? '#00D4B1' : 'rgba(255,255,255,0.75)' }}>
+              style={{ background: key === l.key ? 'rgb(135 197 64 / 0.12)' : 'transparent', color: key === l.key ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.75)' }}>
               <span>{l.title}</span>
               {!l.isDefault && <span className="text-[10px] text-white/40">v{l.version}</span>}
             </button>
@@ -101,7 +101,7 @@ function Editor({ letter }: { letter: Letter }) {
           {!letter.isDefault && <button className={btnGhost} disabled={reset.isPending} onClick={() => { if (confirm('Discard your wording and go back to the built-in default?')) reset.mutate() }}>Reset to default</button>}
         </div>
         <p className="text-[11px] text-white/40">{letter.isDefault ? 'Using the built-in default.' : `Your version ${letter.version}.`} Write in HTML — &lt;p&gt; for paragraphs, &lt;strong&gt; for bold, &lt;table&gt; for tables. Or paste from Word into the box and tidy up.</p>
-        {(save.error || reset.error || print.error) && <p className="text-xs text-red-400">{((save.error || reset.error || print.error) as Error).message}</p>}
+        {(save.error || reset.error || print.error) && <p className="text-xs text-red-700">{((save.error || reset.error || print.error) as Error).message}</p>}
         {msg && <p className="text-xs text-white/60">{msg}</p>}
       </div>
 
@@ -124,7 +124,7 @@ function Editor({ letter }: { letter: Letter }) {
           </div>
         </div>
         <div className="space-y-3 min-w-0">
-          <iframe title="Letter preview" sandbox="" srcDoc={doc} className="w-full rounded-2xl bg-white" style={{ height: 520, border: 0 }} />
+          <iframe title="Letter preview" sandbox="" srcDoc={doc} className="w-full rounded-2xl bg-[#fff]" style={{ height: 520, border: 0 }} />
           <div className="rounded-2xl p-4 flex flex-wrap items-end gap-3" style={card}>
             <label className="block flex-1 min-w-[200px]">
               <span className="block text-[11px] font-bold text-white/55 mb-1">Print for an employee</span>

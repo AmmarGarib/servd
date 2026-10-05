@@ -8,33 +8,47 @@
 @tailwind utilities;
 
 :root {
-  /* servd primary — "obsidian plum". The variable names are kept as
-     "--servd-green-*" so we don't have to find/replace every reference
-     across the storefront, but the values are a deep plum/aubergine.
-     Treat them as "the servd brand color" semantically.
-     Obsidian plum: moody, premium, low-key. Lighter variant for soft
-     surfaces; darker (obsidian) for hover/contrast. */
-  --servd-green:        #4E2A4F;  /* obsidian plum — primary CTA, brand dot */
-  --servd-green-dark:   #2D1E2F;  /* obsidian — hover / pressed */
-  --servd-green-soft:   #ECE2EC;  /* soft plum tint for chips, success cards */
-  --servd-green-ink:    #1E1420;  /* darkest plum, used as text on soft */
-  --servd-black:        #0a0a0a;
-  --servd-ink:          #171717;
-  --servd-mute:         #525252;
-  --servd-dim:          #a3a3a3;
-  --servd-line:         rgba(0,0,0,0.08);
-  --servd-bg:           #ffffff;
-  --servd-surface:      #fafafa;
+  /* ── servd palette (owner, 2026-10-05): bone / green / purple ─────────────
+     Replaces the old "obsidian plum" (#4E2A4F / #2D1E2F). Token NAMES are
+     legacy and kept on purpose — "--servd-green" really is the green primary
+     now, but --servd-black is the deepest purple, not black. Treat them
+     semantically:
+       --servd-green       primary (#87c540) — CTA fills, brand dot, bands
+       --servd-on-green    text/icons ON --servd-green — purple, NEVER white
+       --servd-green-dark  green used as TEXT on bone (#4f7a1c) — the light
+                           green fails contrast as text; also focus rings
+       --servd-purple      secondary (#3d1f3b) — secondary buttons, dark bands
+       --servd-on-purple   text ON purple — bone
+       --servd-ink         body text — purple
+     Contrast rules: text on green is purple; green text on bone is the dark
+     #4f7a1c; secondary buttons are purple with bone text.
+     Brand microsites (simmer / stackd / flipd) remap these in their
+     .X-ordering blocks below and keep their own palettes. */
+  --servd-green:        #87c540;  /* primary green — CTA fills, brand dot */
+  --servd-green-hover:  #78b332;  /* primary hover / pressed (still carries purple text) */
+  --servd-green-dark:   #4f7a1c;  /* text-safe green on bone; focus rings */
+  --servd-green-soft:   #e2edc8;  /* soft green tint for chips, success cards */
+  --servd-green-ink:    #3a5c12;  /* deep green, text on --servd-green-soft */
+  --servd-on-green:     #3d1f3b;  /* text on --servd-green (purple, never white) */
+  --servd-purple:       #3d1f3b;  /* secondary — secondary buttons, dark bands */
+  --servd-on-purple:    #f3e7cd;  /* text on purple (bone) */
+  --servd-black:        #2a1428;  /* deepest purple — dark surfaces, purple hover */
+  --servd-ink:          #3d1f3b;  /* body text — purple */
+  --servd-mute:         #705764;  /* secondary text — purple over bone, ~5:1 */
+  --servd-dim:          #a3909e;  /* placeholders, separators */
+  --servd-line:         rgba(61,31,59,0.14);
+  --servd-bg:           #f3e7cd;  /* bone — main background */
+  --servd-surface:      #ece0c3;  /* deeper bone — panels, hover wells */
+  --servd-danger:       #b42318;  /* semantic error / destructive */
   /* Per-brand accents — exposed as CSS vars so the kinetic components
      (shapes, buttons, headlines) can pull whichever accent the page sets
      via inline style. Defaults to servd-green when no brand is active. */
   --brand-accent:       var(--servd-green);
   --brand-accent-dark:  var(--servd-green-dark);
   /* --brand-ink is the text colour that sits on top of --brand-accent.
-     Default is white because the servd primary (and most per-brand
-     accents) are dark. BrandShell overrides this dynamically using a
-     luminance check when a brand's accent is light (Flipd sky blue). */
-  --brand-ink:          white;
+     The servd default accent is the light green, so the default ink is
+     purple. BrandShell overrides this per brand using a luminance check. */
+  --brand-ink:          var(--servd-on-green);
   /* Display font for the kinetic look — used on hero headlines, eyebrow
      labels, marquee text, anywhere we want the "agency-modern" feel. */
   --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
@@ -166,6 +180,7 @@ summary:focus-visible {
   --servd-surface:    #f5eed8;
   --servd-green:      var(--simmer-orange);
   --servd-green-dark: var(--simmer-orange);
+  --servd-on-green:   #fff;  /* brand keeps its own on-accent ink */
 
   background: var(--simmer-bone);
   color: var(--simmer-green);
@@ -200,10 +215,10 @@ summary:focus-visible {
 /* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
    the servd default; remap to a faint orange wash so they tie to the
    single accent colour. */
-.simmer-ordering div[style*="rgba(58,14,105,0.06)"],
-.simmer-ordering div[style*="rgba(58,14,105,0.08)"],
-.simmer-ordering div[style*="rgba(58,14,105,0.25)"],
-.simmer-ordering div[style*="rgba(58,14,105,0.2)"] {
+.simmer-ordering div[style*="rgba(135,197,64,0.06)"],
+.simmer-ordering div[style*="rgba(135,197,64,0.08)"],
+.simmer-ordering div[style*="rgba(135,197,64,0.25)"],
+.simmer-ordering div[style*="rgba(135,197,64,0.2)"] {
   background: rgba(233,78,27,0.06) !important;
   border-color: rgba(233,78,27,0.20) !important;
 }
@@ -244,6 +259,7 @@ summary:focus-visible {
   --servd-surface:    var(--stackd-cement);
   --servd-green:      var(--stackd-cream);
   --servd-green-dark: var(--stackd-cream);
+  --servd-on-green:   #fff;  /* brand keeps its own on-accent ink */
 
   background: var(--stackd-plum);
   color: var(--stackd-cream);
@@ -270,10 +286,10 @@ summary:focus-visible {
   color: var(--stackd-cream);
 }
 /* Fulfilment / tip-rider blue washes → faint cream wash */
-.stackd-ordering div[style*="rgba(58,14,105,0.06)"],
-.stackd-ordering div[style*="rgba(58,14,105,0.08)"],
-.stackd-ordering div[style*="rgba(58,14,105,0.25)"],
-.stackd-ordering div[style*="rgba(58,14,105,0.2)"] {
+.stackd-ordering div[style*="rgba(135,197,64,0.06)"],
+.stackd-ordering div[style*="rgba(135,197,64,0.08)"],
+.stackd-ordering div[style*="rgba(135,197,64,0.25)"],
+.stackd-ordering div[style*="rgba(135,197,64,0.2)"] {
   background: rgba(242,235,218,0.06) !important;
   border-color: rgba(242,235,218,0.18) !important;
 }
@@ -349,6 +365,7 @@ summary:focus-visible {
   --servd-surface:    #FFFFFF;
   --servd-green:      var(--flipd-blue);
   --servd-green-dark: var(--flipd-blue-deep);
+  --servd-on-green:   #fff;  /* brand keeps its own on-accent ink */
 
   background: var(--flipd-bone);
   color: var(--flipd-blue);
@@ -372,10 +389,10 @@ summary:focus-visible {
   box-shadow: 0 1px 3px rgba(14,26,42,0.06) !important;
 }
 /* Fulfilment / tip-rider washes → faint sky wash */
-.flipd-ordering div[style*="rgba(58,14,105,0.06)"],
-.flipd-ordering div[style*="rgba(58,14,105,0.08)"],
-.flipd-ordering div[style*="rgba(58,14,105,0.25)"],
-.flipd-ordering div[style*="rgba(58,14,105,0.2)"] {
+.flipd-ordering div[style*="rgba(135,197,64,0.06)"],
+.flipd-ordering div[style*="rgba(135,197,64,0.08)"],
+.flipd-ordering div[style*="rgba(135,197,64,0.25)"],
+.flipd-ordering div[style*="rgba(135,197,64,0.2)"] {
   background: rgba(58,168,255,0.08) !important;
   border-color: rgba(58,168,255,0.22) !important;
 }
@@ -1591,7 +1608,7 @@ a { color: inherit; }
   justify-content: center;
   gap: 0.5rem;
   background: var(--servd-green);
-  color: white;
+  color: var(--servd-on-green);
   font-weight: 800;
   padding: 0.85rem 1.75rem;
   border-radius: 999px;
@@ -1601,7 +1618,7 @@ a { color: inherit; }
   transition: background 120ms ease, transform 120ms ease;
   letter-spacing: -0.005em;
 }
-.servd-btn-primary:hover { background: var(--servd-green-dark); color: white; }
+.servd-btn-primary:hover { background: var(--servd-green-hover); color: var(--servd-on-green); }
 .servd-btn-primary:active { transform: scale(0.98); }
 
 .servd-btn-secondary {
@@ -1609,25 +1626,25 @@ a { color: inherit; }
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  background: transparent;
-  color: white;
+  background: var(--servd-purple);
+  color: var(--servd-on-purple);
   font-weight: 600;
   padding: 0.85rem 1.5rem;
   border-radius: 999px;
-  border: 1px solid var(--servd-line);
+  border: 1px solid var(--servd-purple);
   cursor: pointer;
   text-decoration: none;
   transition: background 120ms ease;
 }
-.servd-btn-secondary:hover { background: var(--servd-surface); }
+.servd-btn-secondary:hover { background: var(--servd-black); color: var(--servd-on-purple); }
 
 .servd-btn-dark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  background: var(--servd-black);
-  color: white;
+  background: var(--servd-purple);
+  color: var(--servd-on-purple);
   font-weight: 700;
   padding: 0.85rem 1.75rem;
   border-radius: 999px;
@@ -1635,7 +1652,7 @@ a { color: inherit; }
   cursor: pointer;
   text-decoration: none;
 }
-.servd-btn-dark:hover { background: var(--servd-ink); }
+.servd-btn-dark:hover { background: var(--servd-black); }
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
@@ -1890,8 +1907,8 @@ a { color: inherit; }
 }
 
 /* Surface variants used by hero / section dividers in the new look. */
-.surface-ink { background: var(--servd-black); color: white; }
-.surface-warm { background: #faf6f1; color: var(--servd-ink); }
+.surface-ink { background: var(--servd-purple); color: var(--servd-on-purple); }
+.surface-warm { background: var(--servd-surface); color: var(--servd-ink); }
 
 /* Card hover — for the drag-rail brand cards, food shots, etc. */
 .kinetic-card {
@@ -2072,7 +2089,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   100% { transform: scale(0.995, 1.008) translateY(1px); }
 }
 
-/* ─── servd loader — the universal spinner (storefront, purple palette) ─────────
+/* ─── servd loader — the universal spinner (storefront, green→purple palette) ───
    9-cell ripple grid; cell colour fed via --cell-color so the wave themes to
    any brand. Pure CSS, no deps. Matches the admin loader's motion. */
 @keyframes servd-loader-ripple {

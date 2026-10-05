@@ -81,14 +81,14 @@ export function GroupOrderEntryClient({ brands }: Props) {
         <button onClick={() => setMode('start')} aria-pressed={mode === 'start'}
           className="px-4 py-2 rounded-full font-bold text-sm transition-colors"
           style={mode === 'start'
-            ? { background: 'var(--servd-green)', color: 'white', border: '1px solid var(--servd-green)' }
+            ? { background: 'var(--servd-green)', color: 'var(--servd-on-green)', border: '1px solid var(--servd-green)' }
             : { background: 'white', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}>
           Start a group
         </button>
         <button onClick={() => setMode('join')} aria-pressed={mode === 'join'}
           className="px-4 py-2 rounded-full font-bold text-sm transition-colors"
           style={mode === 'join'
-            ? { background: 'var(--servd-green)', color: 'white', border: '1px solid var(--servd-green)' }
+            ? { background: 'var(--servd-green)', color: 'var(--servd-on-green)', border: '1px solid var(--servd-green)' }
             : { background: 'white', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}>
           Join with code
         </button>
@@ -154,7 +154,7 @@ export function GroupOrderEntryClient({ brands }: Props) {
             <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Your name</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className="servd-input" placeholder="e.g. Sara K." />
           </label>
-          {err && <p className="text-sm" style={{ color: '#b91c1c' }}>{err}</p>}
+          {err && <p className="text-sm" style={{ color: 'var(--servd-danger)' }}>{err}</p>}
           <button onClick={start} disabled={busy || !conceptSlug || !name} className="servd-btn-primary w-full mt-2">
             {busy ? 'Creating…' : conceptSlug ? `Start group at ${brands.find((b) => b.slug === conceptSlug)?.name ?? conceptSlug}` : 'Pick a kitchen first'}
           </button>

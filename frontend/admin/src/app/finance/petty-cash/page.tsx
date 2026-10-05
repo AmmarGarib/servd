@@ -37,7 +37,7 @@ export default function PettyCashPage() {
   const [reconcileFor, setReconcileFor] = useState<Box | null>(null)
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -47,25 +47,25 @@ export default function PettyCashPage() {
               Float boxes for small operational spend. Every spend &gt; PKR 500 requires a receipt photo. Reconcile monthly — variance auto-flags to the owner inbox.
             </p>
           </div>
-          <button onClick={() => setCreating(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New box</button>
+          <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New box</button>
         </div>
       </header>
 
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-3">
         {boxes.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="font-bold text-white/85">No petty cash boxes</p>
             <p className="text-sm text-white/45 mt-1">Add a box to start tracking small spend with a paper trail.</p>
           </div>
         )}
         {boxes.map((b) => (
           <div key={b.id} className="rounded-2xl p-5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg font-black text-white/90">{b.name}</h3>
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }}>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>
                     PKR {(b.floatCents / 100).toLocaleString()}
                   </span>
                 </div>
@@ -76,7 +76,7 @@ export default function PettyCashPage() {
                   <div className="mt-3 space-y-1">
                     {b.movements.slice(0, 3).map((m) => (
                       <div key={m.id} className="text-xs flex items-center gap-2">
-                        <span className="font-bold" style={{ color: m.amountCents >= 0 ? '#00D4B1' : '#FCD34D' }}>
+                        <span className="font-bold" style={{ color: m.amountCents >= 0 ? 'var(--erp-primary-ink)' : '#a15c00' }}>
                           {m.amountCents >= 0 ? '+' : ''}PKR {(m.amountCents / 100).toLocaleString()}
                         </span>
                         <span className="text-white/55">{m.reason}</span>
@@ -87,7 +87,7 @@ export default function PettyCashPage() {
                 )}
               </div>
               <div className="flex flex-col gap-1.5 shrink-0">
-                <button onClick={() => setMovingFor(b)} className="rounded-lg bg-kds-green text-black px-3 py-1.5 text-xs font-bold hover:opacity-90">+ Movement</button>
+                <button onClick={() => setMovingFor(b)} className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold hover:opacity-90">+ Movement</button>
                 <button onClick={() => setReconcileFor(b)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Reconcile</button>
               </div>
             </div>
@@ -160,11 +160,11 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
   return <Modal title={`${type === 'topup' ? 'Top up' : 'Spend from'} ${box.name}`} onClose={onClose}>
     <div className="flex gap-2">
       <button type="button" onClick={() => setType('spend')} className="flex-1 rounded-lg px-4 py-2 text-sm font-bold"
-        style={type === 'spend' ? { background: 'rgba(245,158,11,0.15)', color: '#FCD34D', border: '1px solid rgba(245,158,11,0.4)' } : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        style={type === 'spend' ? { background: 'rgba(245,158,11,0.15)', color: '#a15c00', border: '1px solid rgba(245,158,11,0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
         Spend
       </button>
       <button type="button" onClick={() => setType('topup')} className="flex-1 rounded-lg px-4 py-2 text-sm font-bold"
-        style={type === 'topup' ? { background: 'rgba(0,212,177,0.12)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.4)' } : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        style={type === 'topup' ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
         Top up
       </button>
     </div>
@@ -218,7 +218,7 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
   })
 
   return <Modal title={`Reconcile ${box.name}`} onClose={onClose}>
-    <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <p className="text-xs text-white/55">System float</p>
       <p className="text-2xl font-black text-white/90">PKR {(box.floatCents / 100).toLocaleString()}</p>
     </div>
@@ -227,7 +227,7 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
       <p className="text-[10px] text-white/30 mt-1">≈ PKR {(counted / 100).toLocaleString()}</p>
     </Field>
     {Math.abs(variance) > 0 && (
-      <div className="rounded-lg p-3 text-sm font-bold" style={{ background: Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.08)' : 'rgba(0,212,177,0.08)', color: Math.abs(variance) >= 20000 ? '#FCD34D' : '#00D4B1', border: `1px solid ${Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgba(0,212,177,0.3)'}` }}>
+      <div className="rounded-lg p-3 text-sm font-bold" style={{ background: Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.08)' : 'rgb(135 197 64 / 0.08)', color: Math.abs(variance) >= 20000 ? '#a15c00' : 'var(--erp-primary)', border: `1px solid ${Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}` }}>
         Variance: {variance > 0 ? '+' : ''}PKR {(variance / 100).toLocaleString()}
         {Math.abs(variance) >= 20000 && ' — will flag'}
       </div>
@@ -239,8 +239,8 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-    <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+    <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
         <h2 className="font-black text-white/90">{title}</h2>
         <button onClick={onClose} className="text-white/40 text-xl">✕</button>
@@ -256,6 +256,6 @@ function Footer({ onCancel, primary }: { onCancel: () => void; primary: React.Re
   </div>
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
-function ErrorBanner({ error }: { error: unknown }) { const msg = error instanceof Error ? error.message : 'Failed'; return <div className="rounded-xl px-4 py-3 text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div> }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
-const primaryBtn = "rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50"
+function ErrorBanner({ error }: { error: unknown }) { const msg = error instanceof Error ? error.message : 'Failed'; return <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div> }
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
+const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

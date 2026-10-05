@@ -53,7 +53,7 @@ export default function PayrollRunPage() {
 
   return (
     <HrShell title={run ? `Payroll ${run.period}` : 'Payroll'}
-      actions={run && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[run.status] ?? '#f59e0b' }}>{human(run.status)}</span>}>
+      actions={run && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[run.status] ?? '#a15c00' }}>{human(run.status)}</span>}>
       {run && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -66,14 +66,14 @@ export default function PayrollRunPage() {
           </div>
           {warnings.length > 0 && (
             <div className="rounded-xl p-3 text-sm" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)' }}>
-              {warnings.map((w) => <p key={w} className="text-amber-300">⚠ {w}</p>)}
+              {warnings.map((w) => <p key={w} className="text-amber-700">⚠ {w}</p>)}
             </div>
           )}
           <div className="flex flex-wrap gap-2">
             {run.status === 'draft' && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>
               {canApprove && <button className={btn} disabled={act.isPending} onClick={() => act.mutate('approve')}>Approve</button>}
-              <button className="text-xs text-white/35 hover:text-red-400 ml-2" onClick={() => { if (confirm('Delete this draft payroll?')) act.mutate('delete') }}>Delete draft</button>
+              <button className="text-xs text-white/35 hover:text-red-700 ml-2" onClick={() => { if (confirm('Delete this draft payroll?')) act.mutate('delete') }}>Delete draft</button>
             </>}
             {run.status === 'approved' && isPayrollApprover && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
@@ -83,7 +83,7 @@ export default function PayrollRunPage() {
               <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Mark wages paid by bank transfer?')) act.mutate('paid-bank') }}>Mark paid (bank)</button>
               <button className={btnGhost} disabled={act.isPending} onClick={() => { if (confirm('Mark wages paid in cash?')) act.mutate('paid-cash') }}>Paid in cash</button>
             </>}
-            {run.paidAt && <span className="text-xs text-emerald-400">Paid {new Date(run.paidAt).toLocaleDateString('en-GB')}</span>}
+            {run.paidAt && <span className="text-xs text-emerald-700">Paid {new Date(run.paidAt).toLocaleDateString('en-GB')}</span>}
             <span className="ml-auto flex flex-wrap gap-2">
               <button className={btnGhost} onClick={() => dl('register')}>Payroll register</button>
               <button className={btnGhost} onClick={() => dl('bank')}>Bank transfer sheet</button>
@@ -91,7 +91,7 @@ export default function PayrollRunPage() {
               <button className={btnGhost} onClick={() => dl('deductions')}>Deduction report</button>
             </span>
           </div>
-          {err && <p className="text-xs text-red-400">{err}</p>}
+          {err && <p className="text-xs text-red-700">{err}</p>}
           {run.status === 'draft' && <p className="text-[11px] text-white/40">Approval must come from someone other than whoever created, recalculated or edited it (the CEO excepted){isPayrollApprover ? '' : ', and from the CEO, a co-owner or management'}.</p>}
 
           <div className="rounded-2xl overflow-x-auto" style={card}>
@@ -109,8 +109,8 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
-                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? '#f87171' : 'rgba(255,255,255,0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-amber-400" title={w.join('\n')}>⚠</span>}</td>
-                      <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-kds-green" onClick={() => setEditing(s)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
+                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? '#b42318' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-amber-700" title={w.join('\n')}>⚠</span>}</td>
+                      <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditing(s)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
                     </tr>
                   )
                 })}
@@ -153,11 +153,11 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
           {slip.lines.map((l) => (
             <div key={l.code + l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
-              <span style={{ color: l.kind === 'deduction' ? '#fca5a5' : l.kind === 'employer' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)' }}>{l.label}</span>
+              <span style={{ color: l.kind === 'deduction' ? '#b42318' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>
               <span className="text-white/85">{l.kind === 'deduction' ? '−' : ''}{rs(l.amountCents)}</span>
             </div>
           ))}
-          <div className="flex justify-between text-base font-black pt-2"><span className="text-white/85">Net</span><span className="text-kds-green">{rs(slip.netCents)}</span></div>
+          <div className="flex justify-between text-base font-black pt-2"><span className="text-white/85">Net</span><span className="text-primary-ink">{rs(slip.netCents)}</span></div>
           <button className={`${btnGhost} mt-3`} onClick={print}>Print payslip</button>
         </div>
         <div>
@@ -171,7 +171,7 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
               </label>
             ))}
           </div>
-          {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+          {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
           {draft && <button className={`${btn} mt-3`} disabled={save.isPending} onClick={() => save.mutate()}>Recalculate this payslip</button>}
           <p className="text-[10px] text-white/35 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
         </div>

@@ -48,7 +48,7 @@ export default function EditRecipePage() {
       <div className="p-12 text-center">
         <p className="text-sm text-s-muted">Couldn't load that recipe.</p>
         <button onClick={() => router.push('/accounting/recipes')}
-          className="mt-3 rounded-lg bg-s-teal text-black px-4 py-2 text-xs font-black">Back to list</button>
+          className="mt-3 rounded-lg bg-primary text-primary-on px-4 py-2 text-xs font-black">Back to list</button>
       </div>
     )
   }

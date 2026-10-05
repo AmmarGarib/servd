@@ -87,7 +87,7 @@ function ReorderButton({ orderId, conceptSlug, token, onError }: {
       onClick={onClick}
       disabled={busy}
       style={{
-        background: 'var(--servd-green)', color: 'white',
+        background: 'var(--servd-green)', color: 'var(--servd-on-green)',
         fontWeight: 700,
         fontSize: '0.8rem',
         padding: '0.45rem 0.9rem',
@@ -157,7 +157,7 @@ export default function OrdersPage() {
             <div role="status" style={{ padding: '4rem 0', textAlign: 'center', color: 'var(--servd-mute)' }}>Loading…</div>
           ) : error ? (
             <div role="alert" className="servd-card" style={{ padding: '2rem', textAlign: 'center' }}>
-              <p style={{ color: '#b91c1c', fontWeight: 600 }}>{error}</p>
+              <p style={{ color: 'var(--servd-danger)', fontWeight: 600 }}>{error}</p>
               <button onClick={() => window.location.reload()} className="servd-btn-secondary" style={{ marginTop: '1rem' }}>Try again</button>
             </div>
           ) : !profile?.orders.length ? (

@@ -34,11 +34,11 @@ export default function EmployeesPage() {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, ID, CNIC, phone"
           className="rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 w-72" aria-label="Search employees" />
         {[['current', 'Current'], ['', 'Everyone'], ['resigned', 'Resigned'], ['terminated', 'Terminated'], ['separated', 'Separated']].map(([k, l]) => (
-          <button key={k} onClick={() => setStatus(k!)} className={`rounded-full px-3 py-1 text-xs font-bold border ${status === k ? 'bg-kds-green text-black border-kds-green' : 'border-white/10 text-white/50'}`}>{l}</button>
+          <button key={k} onClick={() => setStatus(k!)} className={`rounded-full px-3 py-1 text-xs font-bold border ${status === k ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>{l}</button>
         ))}
       </div>
-      {error && <p className="text-sm text-red-400 mb-3">{(error as Error).message}</p>}
-      {csvErr && <p className="text-sm text-red-400 mb-3">Export failed: {csvErr}</p>}
+      {error && <p className="text-sm text-red-700 mb-3">{(error as Error).message}</p>}
+      {csvErr && <p className="text-sm text-red-700 mb-3">Export failed: {csvErr}</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
         <table className="w-full text-sm">
           <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
@@ -48,7 +48,7 @@ export default function EmployeesPage() {
             {rows.map((e) => (
               <tr key={e.id} className="border-t border-white/[0.05] hover:bg-white/[0.03]">
                 <td className="px-4 py-3 text-white/50 font-mono text-xs">{e.employeeCode}</td>
-                <td className="px-4 py-3"><Link href={`/hr/employees/${e.id}`} className="font-bold text-white/90 hover:underline">{e.fullName}</Link>{e.userId && <span className="ml-1 text-[10px] text-kds-green" title="Has a servd login">●</span>}</td>
+                <td className="px-4 py-3"><Link href={`/hr/employees/${e.id}`} className="font-bold text-white/90 hover:underline">{e.fullName}</Link>{e.userId && <span className="ml-1 text-[10px] text-primary-ink" title="Has a servd login">●</span>}</td>
                 <td className="px-4 py-3 text-white/65">{e.designation ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{e.department ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{e.branch ?? '—'}</td>
@@ -89,7 +89,7 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Add employee" wide onClose={onClose}>
       {form ? <FormRenderer fields={fields} value={v} onChange={setValue} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading format…</p>}
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending || !named} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Add employee'}</button>
         <button className={btnGhost} onClick={onClose}>Cancel</button>

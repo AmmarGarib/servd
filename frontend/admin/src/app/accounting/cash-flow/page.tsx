@@ -55,7 +55,7 @@ export default function CashFlowPage() {
                   {data.byCashAccount.map((r) => (
                     <tr key={r.code} className="border-t border-s-border">
                       <td className="px-4 py-2 text-s-text"><span className="font-mono text-xs text-s-muted mr-2">{r.code}</span>{r.name}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-teal">{fmtPkr(r.inflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-primary-ink">{fmtPkr(r.inflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.netCents)}</td>
                     </tr>
@@ -73,7 +73,7 @@ export default function CashFlowPage() {
                   {data.byCategory.map((r) => (
                     <tr key={r.category} className="border-t border-s-border first:border-0">
                       <td className="px-4 py-2 text-s-text capitalize">{r.category}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-teal">{fmtPkr(r.inflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-primary-ink">{fmtPkr(r.inflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.netCents)}</td>
                     </tr>
@@ -86,7 +86,7 @@ export default function CashFlowPage() {
             <div className="s-card p-4">
               <div className="flex justify-between font-bold">
                 <span className="text-s-text">Net Change in Cash</span>
-                <span className={data.totals.netCents >= 0 ? 'text-s-teal' : 'text-s-red'}>{fmtPkr(data.totals.netCents)}</span>
+                <span className={data.totals.netCents >= 0 ? 'text-primary-ink' : 'text-s-red'}>{fmtPkr(data.totals.netCents)}</span>
               </div>
             </div>
           </>

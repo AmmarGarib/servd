@@ -66,8 +66,8 @@ const SIGNIN_LABEL: Record<string, string> = {
   'auth.logout': 'Signed out',
 }
 
-const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
-const field = 'rounded-lg px-2.5 py-1.5 text-xs bg-black/30 border border-white/10 text-white/80 focus:outline-none focus:border-[#00D4B1]/60'
+const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
+const field = 'rounded-lg px-2.5 py-1.5 text-xs bg-white/[0.04] border border-white/10 text-white/80 focus:outline-none focus:border-primary/60'
 
 /** A yyyy-mm-dd from a date input → the start / end of that local day. */
 const dayStart = (d: string) => new Date(`${d}T00:00:00`).toISOString()
@@ -141,7 +141,7 @@ export default function UserAuditLogPage() {
         {([['signins', 'Sign-ins'], ['activity', 'Activity']] as const).map(([k, label]) => (
           <button key={k} onClick={() => { setTab(k); setActionText('') }}
             className="px-4 py-2 text-sm font-bold -mb-px border-b-2"
-            style={{ borderColor: tab === k ? '#00D4B1' : 'transparent', color: tab === k ? '#00D4B1' : 'rgba(255,255,255,0.5)' }}>
+            style={{ borderColor: tab === k ? 'var(--erp-primary)' : 'transparent', color: tab === k ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.5)' }}>
             {label}
           </button>
         ))}
@@ -181,8 +181,8 @@ export default function UserAuditLogPage() {
             <button key={f.key} onClick={() => setGroup(f.key)} aria-pressed={group === f.key}
               className="px-3 py-1.5 rounded-full text-xs font-semibold border"
               style={group === f.key
-                ? { background: 'rgba(0,212,177,0.12)', borderColor: 'rgba(0,212,177,0.4)', color: '#00D4B1' }
-                : { background: 'transparent', borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)' }}>
+                ? { background: 'rgb(135 197 64 / 0.12)', borderColor: 'rgb(135 197 64 / 0.4)', color: 'var(--erp-primary-ink)' }
+                : { background: 'transparent', borderColor: 'rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>
               {f.label}
             </button>
           ))}
@@ -192,7 +192,7 @@ export default function UserAuditLogPage() {
       <div className="rounded-2xl overflow-hidden" style={card}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-[11px] text-white/40" style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <thead className="text-[11px] text-white/40" style={{ background: 'rgb(var(--fg-rgb) / 0.02)' }}>
               <tr>
                 <th className="px-4 py-2 text-left font-semibold">When</th>
                 <th className="px-4 py-2 text-left font-semibold">What</th>
@@ -218,7 +218,7 @@ export default function UserAuditLogPage() {
         {feed.hasNextPage && (
           <div className="p-3 text-center border-t border-white/[0.05]">
             <button onClick={() => void feed.fetchNextPage()} disabled={feed.isFetchingNextPage}
-              className="text-xs font-bold text-[#00D4B1] hover:underline disabled:opacity-50">
+              className="text-xs font-bold text-primary-ink hover:underline disabled:opacity-50">
               {feed.isFetchingNextPage ? 'Loading…' : 'Load more'}
             </button>
           </div>
@@ -237,7 +237,7 @@ export default function UserAuditLogPage() {
 
 function Frame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-6 pt-6 pb-4 border-b border-white/[0.05]">
         <Link href="/w/dev" className="text-xs text-white/40 hover:text-white/70">← Dev</Link>
         <h1 className="text-2xl font-black text-white/90 mt-1">User audit log</h1>
@@ -273,8 +273,8 @@ function Row({ row, signins, open, onToggle, onUser }: {
         <td className="px-4 py-2 text-xs">
           <span className="font-mono rounded px-1.5 py-0.5"
             style={loud
-              ? { background: 'rgba(245,158,11,0.12)', color: '#F59E0B' }
-              : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.75)' }}>
+              ? { background: 'rgba(245,158,11,0.12)', color: '#a15c00' }
+              : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
             {signins ? (SIGNIN_LABEL[row.action] ?? row.action) : row.action}
           </span>
           {signins && m.reason && <span className="ml-2 text-[11px] text-white/40">{m.reason}</span>}
@@ -285,14 +285,14 @@ function Row({ row, signins, open, onToggle, onUser }: {
           ) : (
             <>
               <span>{after?.targetEmail ?? row.entity}</span>
-              {roleMove && <span className="ml-2 font-mono text-[11px] text-amber-400">{roleMove}</span>}
+              {roleMove && <span className="ml-2 font-mono text-[11px] text-amber-700">{roleMove}</span>}
               {!roleMove && row.entityId && <span className="text-white/35 ml-1">#{row.entityId.slice(0, 8)}</span>}
             </>
           )}
         </td>
         <td className="px-4 py-2 text-xs">
           {row.userId ? (
-            <button onClick={(e) => { e.stopPropagation(); onUser(row.userId!) }} className="text-[#00D4B1] hover:underline">
+            <button onClick={(e) => { e.stopPropagation(); onUser(row.userId!) }} className="text-primary-ink hover:underline">
               {row.userEmail ?? row.userId.slice(0, 8)}
             </button>
           ) : (
@@ -302,7 +302,7 @@ function Row({ row, signins, open, onToggle, onUser }: {
         <td className="px-4 py-2 text-right"><span className="text-xs text-white/35">{open ? '▾' : '▸'}</span></td>
       </tr>
       {open && (
-        <tr className="border-t border-white/[0.05]" style={{ background: 'rgba(255,255,255,0.015)' }}>
+        <tr className="border-t border-white/[0.05]" style={{ background: 'rgb(var(--fg-rgb) / 0.015)' }}>
           <td colSpan={5} className="px-6 py-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               {m.userAgent && <p className="md:col-span-2 text-white/45">Device: <span className="text-white/70">{m.userAgent}</span></p>}
@@ -321,7 +321,7 @@ function Json({ label, value }: { label: string; value: unknown }) {
   return (
     <div>
       <p className="font-semibold text-white/40 mb-1.5">{label}</p>
-      <pre className="rounded p-2 overflow-x-auto text-[11px] text-white/70" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <pre className="rounded p-2 overflow-x-auto text-[11px] text-white/70" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
         {value ? JSON.stringify(value, null, 2) : '(none)'}
       </pre>
     </div>
@@ -339,8 +339,8 @@ function UserDrawer({ userId, onClose, onFilter }: { userId: string; onClose: ()
   })
   const s = summary.data
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={onClose}>
-      <aside className="w-full max-w-md h-full overflow-y-auto p-5" style={{ background: '#12131a', borderLeft: '1px solid rgba(255,255,255,0.08)' }}
+    <div className="fixed inset-0 z-50 flex justify-end bg-secondary/40" onClick={onClose}>
+      <aside className="w-full max-w-md h-full overflow-y-auto p-5" style={{ background: 'var(--surface)', borderLeft: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -376,13 +376,13 @@ function UserDrawer({ userId, onClose, onFilter }: { userId: string; onClose: ()
 
         <div className="mt-5 flex items-center justify-between">
           <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Timeline</p>
-          <button onClick={onFilter} className="text-[11px] font-bold text-[#00D4B1] hover:underline">Filter the log to them</button>
+          <button onClick={onFilter} className="text-[11px] font-bold text-primary-ink hover:underline">Filter the log to them</button>
         </div>
         {timeline.isLoading && <p className="text-xs text-white/40 mt-2">Loading…</p>}
         {(timeline.data?.data ?? []).map((r) => (
           <div key={r.id} className="py-1.5 border-t border-white/[0.05] first:border-t-0">
             <div className="flex justify-between gap-2 text-xs">
-              <span className="font-mono" style={{ color: LOUD_ACTIONS.has(r.action) ? '#F59E0B' : 'rgba(255,255,255,0.75)' }}>{SIGNIN_LABEL[r.action] ?? r.action}</span>
+              <span className="font-mono" style={{ color: LOUD_ACTIONS.has(r.action) ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.75)' }}>{SIGNIN_LABEL[r.action] ?? r.action}</span>
               <span className="text-white/35 shrink-0">{new Date(r.createdAt).toLocaleString()}</span>
             </div>
             {!r.action.startsWith('auth.') && <p className="text-[11px] text-white/40">{r.entity}{r.entityId ? ` #${r.entityId.slice(0, 8)}` : ''}</p>}
@@ -398,7 +398,7 @@ function Mini({ label, value, warn }: { label: string; value: string; warn?: boo
   return (
     <div className="rounded-xl p-2.5" style={card}>
       <p className="text-[9px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
-      <p className="text-sm font-bold mt-0.5" style={{ color: warn ? '#F59E0B' : 'rgba(255,255,255,0.85)' }}>{value}</p>
+      <p className="text-sm font-bold mt-0.5" style={{ color: warn ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.85)' }}>{value}</p>
     </div>
   )
 }

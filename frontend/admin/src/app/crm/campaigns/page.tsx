@@ -32,13 +32,13 @@ interface Campaign {
 interface Segment { slug: string; name: string; description: string | null; memberCount: number }
 interface Concept { id: string; name: string }
 
-const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
+const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none w-full'
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-kds-subtext/20 text-kds-subtext',
-  scheduled: 'bg-kds-blue/20 text-kds-blue',
-  sending: 'bg-kds-blue/20 text-kds-blue',
-  sent: 'bg-kds-green/20 text-kds-green',
+  draft: 'bg-s-muted/20 text-s-muted',
+  scheduled: 'bg-s-blue/20 text-s-blue',
+  sending: 'bg-s-blue/20 text-s-blue',
+  sent: 'bg-primary/20 text-primary-ink',
 }
 
 const CHANNEL_LABEL: Record<string, string> = { email: 'Email', whatsapp: 'WhatsApp', sms: 'WhatsApp' }
@@ -46,23 +46,23 @@ const CHANNEL_LABEL: Record<string, string> = { email: 'Email', whatsapp: 'Whats
 function MessagePreview({ channel, subject, body, name }: { channel: Channel; subject: string; body: string; name: string }) {
   if (channel === 'email') {
     return (
-      <div className="rounded-xl border border-kds-border bg-kds-bg overflow-hidden text-sm">
-        <div className="bg-kds-card border-b border-kds-border px-4 py-3">
-          <p className="text-xs text-kds-subtext">Subject: <span className="font-semibold text-kds-text">{subject || '(no subject)'}</span></p>
+      <div className="rounded-xl border border-s-border bg-s-bg overflow-hidden text-sm">
+        <div className="bg-s-surface border-b border-s-border px-4 py-3">
+          <p className="text-xs text-s-muted">Subject: <span className="font-semibold text-s-text">{subject || '(no subject)'}</span></p>
         </div>
-        <div className="px-4 py-4 whitespace-pre-wrap text-kds-text leading-relaxed min-h-[80px]">
-          {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
+        <div className="px-4 py-4 whitespace-pre-wrap text-s-text leading-relaxed min-h-[80px]">
+          {body || <span className="text-s-muted italic">Message body will appear here</span>}
         </div>
-        <p className="px-4 pb-3 text-[10px] text-kds-subtext">An unsubscribe link is added to every email.</p>
+        <p className="px-4 pb-3 text-[10px] text-s-muted">An unsubscribe link is added to every email.</p>
       </div>
     )
   }
   return (
-    <div className="rounded-xl border border-kds-border bg-kds-bg p-4">
-      <p className="text-xs font-semibold text-kds-text mb-2">{name || 'Campaign'} · WhatsApp</p>
-      <div className="bg-[#25d366]/10 border border-[#25d366]/20 rounded-xl rounded-tl-none px-3 py-2 text-sm text-kds-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
-        {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
-        {'\n\n'}<span className="text-kds-subtext text-xs">Stop these messages: (link)</span>
+    <div className="rounded-xl border border-s-border bg-s-bg p-4">
+      <p className="text-xs font-semibold text-s-text mb-2">{name || 'Campaign'} · WhatsApp</p>
+      <div className="bg-[#25d366]/10 border border-[#25d366]/20 rounded-xl rounded-tl-none px-3 py-2 text-sm text-s-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
+        {body || <span className="text-s-muted italic">Message body will appear here</span>}
+        {'\n\n'}<span className="text-s-muted text-xs">Stop these messages: (link)</span>
       </div>
     </div>
   )
@@ -145,16 +145,16 @@ export default function CampaignsPage() {
   const segName = (slug: string) => segments.find((s) => s.slug === slug)?.name ?? slug
 
   return (
-    <div className="min-h-screen bg-kds-bg">
-      <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-s-bg">
+      <header className="border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
-          <Link href="/crm" className="text-kds-subtext text-sm hover:text-kds-text">← CRM</Link>
-          <h1 className="text-2xl font-black text-kds-text mt-0.5">Campaigns</h1>
-          <p className="text-sm text-kds-subtext">Email and WhatsApp broadcasts to a segment of your customers</p>
+          <Link href="/crm" className="text-s-muted text-sm hover:text-s-text">← CRM</Link>
+          <h1 className="text-2xl font-black text-s-text mt-0.5">Campaigns</h1>
+          <p className="text-sm text-s-muted">Email and WhatsApp broadcasts to a segment of your customers</p>
         </div>
         <button
           onClick={() => setShowForm(true)}
-          className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90">
+          className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90">
           + New campaign
         </button>
       </header>
@@ -162,18 +162,18 @@ export default function CampaignsPage() {
       <div className="p-6 max-w-5xl mx-auto">
         {showForm && (
           <form onSubmit={(e) => { e.preventDefault(); setError(null); create.mutate(false) }}
-            className="rounded-xl border border-kds-green bg-kds-card p-5 mb-6">
-            <p className="font-bold text-kds-text mb-4">New campaign</p>
-            {error && <p className="mb-3 rounded-lg bg-kds-red/10 border border-kds-red/30 px-3 py-2 text-sm text-kds-red">{error}</p>}
+            className="rounded-xl border border-primary bg-s-surface p-5 mb-6">
+            <p className="font-bold text-s-text mb-4">New campaign</p>
+            {error && <p className="mb-3 rounded-lg bg-s-red/10 border border-s-red/30 px-3 py-2 text-sm text-s-red">{error}</p>}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
               <div className="lg:col-span-2 grid grid-cols-2 gap-4 content-start">
                 <div>
-                  <label className="text-xs text-kds-subtext mb-1 block">Campaign name *</label>
+                  <label className="text-xs text-s-muted mb-1 block">Campaign name *</label>
                   <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
                     placeholder="Ramadan special" required className={inp} />
                 </div>
                 <div>
-                  <label className="text-xs text-kds-subtext mb-1 block">Channel *</label>
+                  <label className="text-xs text-s-muted mb-1 block">Channel *</label>
                   <select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value as Channel })} className={inp}>
                     <option value="whatsapp">WhatsApp</option>
                     <option value="email">Email</option>
@@ -181,37 +181,37 @@ export default function CampaignsPage() {
                 </div>
                 {form.channel === 'email' && (
                   <div className="col-span-2">
-                    <label className="text-xs text-kds-subtext mb-1 block">Subject *</label>
+                    <label className="text-xs text-s-muted mb-1 block">Subject *</label>
                     <input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}
                       placeholder="Something new on the menu" className={inp} />
                   </div>
                 )}
                 <div className="col-span-2">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-kds-subtext">Message *</label>
-                    <span className="text-xs text-kds-subtext">{form.body.length}/2000</span>
+                    <label className="text-xs text-s-muted">Message *</label>
+                    <span className="text-xs text-s-muted">{form.body.length}/2000</span>
                   </div>
                   <textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value.slice(0, 2000) })}
                     placeholder="Write your message…" required rows={5}
                     className={`${inp} resize-y`} />
                 </div>
                 <div className="col-span-2">
-                  <label className="text-xs text-kds-subtext mb-1 block">Segment</label>
+                  <label className="text-xs text-s-muted mb-1 block">Segment</label>
                   <select value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} className={inp}>
                     <option value="">Everyone reachable in the brands below</option>
                     {segments.map((s) => (
                       <option key={s.slug} value={s.slug}>{s.name} — {s.memberCount.toLocaleString()}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-kds-subtext mt-1">
+                  <p className="text-xs text-s-muted mt-1">
                     Segments are computed nightly per company — see <Link href="/crm/segments" className="underline">Segments</Link>.
                   </p>
                 </div>
                 <div className="col-span-2">
-                  <label className="text-xs text-kds-subtext mb-1 block">Brands</label>
+                  <label className="text-xs text-s-muted mb-1 block">Brands</label>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => setBrandIds([])}
-                      className={`rounded-full px-3 py-1 text-xs font-bold border ${brandIds.length === 0 ? 'bg-kds-green text-black border-kds-green' : 'border-kds-border text-kds-subtext'}`}>
+                      className={`rounded-full px-3 py-1 text-xs font-bold border ${brandIds.length === 0 ? 'bg-primary text-primary-on border-primary' : 'border-s-border text-s-muted'}`}>
                       All brands
                     </button>
                     {concepts.map((c) => {
@@ -219,15 +219,15 @@ export default function CampaignsPage() {
                       return (
                         <button type="button" key={c.id}
                           onClick={() => setBrandIds(on ? brandIds.filter((x) => x !== c.id) : [...brandIds, c.id])}
-                          className={`rounded-full px-3 py-1 text-xs font-bold border ${on ? 'bg-kds-green text-black border-kds-green' : 'border-kds-border text-kds-subtext'}`}>
+                          className={`rounded-full px-3 py-1 text-xs font-bold border ${on ? 'bg-primary text-primary-on border-primary' : 'border-s-border text-s-muted'}`}>
                           {c.name}
                         </button>
                       )
                     })}
                   </div>
-                  <p className="text-xs text-kds-subtext mt-2">
+                  <p className="text-xs text-s-muted mt-2">
                     {audience
-                      ? <>Reaches <strong className="text-kds-text">{audience.total.toLocaleString()}</strong> customer{audience.total === 1 ? '' : 's'} with {form.channel === 'email' ? 'an email' : 'a phone number'}
+                      ? <>Reaches <strong className="text-s-text">{audience.total.toLocaleString()}</strong> customer{audience.total === 1 ? '' : 's'} with {form.channel === 'email' ? 'an email' : 'a phone number'}
                           {audience.optedOut > 0 && <> · {audience.optedOut.toLocaleString()} unsubscribed and excluded</>}</>
                       : 'Counting…'}
                     {' '}Every message carries an unsubscribe link.
@@ -235,24 +235,24 @@ export default function CampaignsPage() {
                 </div>
               </div>
               <div className="space-y-3">
-                <p className="text-xs font-semibold text-kds-subtext uppercase tracking-wide">Preview</p>
+                <p className="text-xs font-semibold text-s-muted uppercase tracking-wide">Preview</p>
                 <MessagePreview channel={form.channel} subject={form.subject} body={form.body} name={form.name} />
               </div>
             </div>
             <div className="flex gap-3 mt-5">
               <button type="submit" disabled={create.isPending || !canSave}
-                className="rounded-xl border border-kds-border text-kds-text text-sm font-bold px-4 py-2 hover:border-kds-text disabled:opacity-50">
+                className="rounded-xl border border-s-border text-s-text text-sm font-bold px-4 py-2 hover:border-s-border-strong disabled:opacity-50">
                 {create.isPending ? 'Saving…' : 'Save as draft'}
               </button>
               <button type="button" disabled={create.isPending || !canSave}
                 onClick={() => {
                   if (confirm(`Send "${form.name}" now to ${audience?.total.toLocaleString() ?? 'all'} customers?`)) { setError(null); create.mutate(true) }
                 }}
-                className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
                 Save and send now
               </button>
               <button type="button" onClick={reset}
-                className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-text">
+                className="rounded-xl border border-s-border text-s-muted text-sm px-4 py-2 hover:border-s-border-strong">
                 Cancel
               </button>
             </div>
@@ -260,35 +260,35 @@ export default function CampaignsPage() {
         )}
 
         {isLoading ? (
-          <p className="text-kds-subtext text-sm">Loading…</p>
+          <p className="text-s-muted text-sm">Loading…</p>
         ) : campaigns.length === 0 ? (
           <div className="text-center py-16">
-            <p className="font-semibold text-kds-text">No campaigns yet</p>
-            <p className="text-sm text-kds-subtext mt-1">Create a broadcast to reach your customers</p>
+            <p className="font-semibold text-s-text">No campaigns yet</p>
+            <p className="text-sm text-s-muted mt-1">Create a broadcast to reach your customers</p>
           </div>
         ) : (
           <div className="space-y-3">
             {campaigns.map((c) => (
-              <div key={c.id} className="rounded-xl border border-kds-border bg-kds-card p-4">
+              <div key={c.id} className="rounded-xl border border-s-border bg-s-surface p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="rounded bg-kds-bg border border-kds-border px-2 py-0.5 text-xs text-kds-subtext">{CHANNEL_LABEL[c.channel] ?? c.channel}</span>
-                      <p className="font-bold text-kds-text">{c.name}</p>
+                      <span className="rounded bg-s-bg border border-s-border px-2 py-0.5 text-xs text-s-muted">{CHANNEL_LABEL[c.channel] ?? c.channel}</span>
+                      <p className="font-bold text-s-text">{c.name}</p>
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${STATUS_COLORS[c.status] ?? ''}`}>
                         {c.status}
                       </span>
-                      <span className="rounded bg-kds-bg border border-kds-border px-2 py-0.5 text-xs text-kds-subtext">
+                      <span className="rounded bg-s-bg border border-s-border px-2 py-0.5 text-xs text-s-muted">
                         {c.conceptIds && c.conceptIds.length > 0 ? c.conceptIds.map(conceptName).join(', ') : 'All brands'}
                       </span>
                       {c.segment && (
-                        <span className="rounded bg-kds-bg border border-kds-border px-2 py-0.5 text-xs text-kds-subtext">
+                        <span className="rounded bg-s-bg border border-s-border px-2 py-0.5 text-xs text-s-muted">
                           {c.segment.slug === 'legacy' ? c.segment.name : segName(c.segment.slug)}
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-kds-subtext mt-1 truncate">{c.body}</p>
-                    <p className="text-xs text-kds-subtext/60 mt-1">
+                    <p className="text-sm text-s-muted mt-1 truncate">{c.body}</p>
+                    <p className="text-xs text-s-muted/60 mt-1">
                       Created {formatDistanceToNowStrict(new Date(c.createdAt))} ago
                       {c.sentAt && ` · Sent ${formatDistanceToNowStrict(new Date(c.sentAt))} ago`}
                       {c.sentAt && c.recipientCount != null && ` to ${c.recipientCount.toLocaleString()}`}
@@ -298,7 +298,7 @@ export default function CampaignsPage() {
                     <button
                       onClick={() => { if (confirm(`Send "${c.name}" now to all recipients?`)) send.mutate(c.id) }}
                       disabled={send.isPending}
-                      className="rounded-xl bg-kds-green text-black text-xs font-bold px-3 py-1.5 hover:opacity-90 disabled:opacity-50 shrink-0">
+                      className="rounded-xl bg-primary text-primary-on text-xs font-bold px-3 py-1.5 hover:opacity-90 disabled:opacity-50 shrink-0">
                       {send.isPending ? 'Sending…' : 'Send now'}
                     </button>
                   )}

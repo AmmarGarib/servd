@@ -26,14 +26,14 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         padding: '2rem',
         gap: '1.25rem',
         textAlign: 'center',
-        background: '#fff',
-        color: '#0a0a0a',
+        background: 'var(--servd-bg)',
+        color: 'var(--servd-ink)',
       }}
     >
       <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2rem)', fontWeight: 800, margin: 0 }}>
         Something broke
       </h1>
-      <p style={{ color: 'rgba(0,0,0,0.55)', maxWidth: '32rem', margin: 0 }}>
+      <p style={{ color: 'var(--servd-mute)', maxWidth: '32rem', margin: 0 }}>
         We&rsquo;re sorry — that wasn&rsquo;t supposed to happen. You can try again, or head back to the menu.
         {error.digest && (
           <span style={{ display: 'block', fontSize: '0.75rem', marginTop: '0.5rem', opacity: 0.5 }}>
@@ -45,8 +45,8 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         <button
           onClick={reset}
           style={{
-            background: '#4ade80',
-            color: '#000',
+            background: 'var(--servd-green)',
+            color: 'var(--servd-on-green)',
             fontWeight: 800,
             padding: '0.75rem 2rem',
             borderRadius: '999px',
@@ -60,12 +60,12 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         <Link
           href="/order"
           style={{
-            background: 'transparent',
-            color: '#000',
+            background: 'var(--servd-purple)',
+            color: 'var(--servd-on-purple)',
             fontWeight: 600,
             padding: '0.75rem 2rem',
             borderRadius: '999px',
-            border: '1px solid rgba(0,0,0,0.15)',
+            border: '1px solid var(--servd-purple)',
             textDecoration: 'none',
             fontSize: '1rem',
           }}

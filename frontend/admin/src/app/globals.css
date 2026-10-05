@@ -12,7 +12,7 @@
      deliberate accent rather than a browser default. Mouse clicks don't trigger
      focus-visible, so this is invisible to pointer-driven flows. */
   *:focus-visible {
-    outline: 2px solid #00D4B1;
+    outline: 2px solid var(--erp-primary);
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -25,27 +25,49 @@
   /* Native <select> dropdowns inherit OS-default white-on-white styling on
      dark themes. Force dark across the app so opened menus are readable. */
   select option {
-    background-color: #14161e;
-    color: #f5f5f5;
+    background-color: var(--surface);
+    color: var(--text);
   }
   select option:hover,
   select option:checked {
-    background-color: #1f2230;
+    background-color: var(--elevated);
   }
 
+  /* servd ERP palette (owner, 2026-10-05): bone background, green primary,
+     purple secondary. Purple doubles as the text colour. `--fg-rgb` is the
+     foreground for the area: Tailwind's `white` resolves to it, so the many
+     `text-white/40` / `bg-white/[0.03]` utilities read as ink on bone, and the
+     sidebar (bone on purple) and the kitchen screens (white on dark) simply
+     redefine it. Never hard-code a colour in a page — use these. */
   :root {
-    --bg:             #0C0D10;
-    --surface:        #13151A;
-    --elevated:       #1A1D24;
-    --border:         #222530;
-    --border-strong:  #2E3340;
-    --text:           #E8EAF0;
-    --muted:          #6B7280;
-    --teal:           #00D4B1;
-    --indigo:         #6366F1;
+    --fg-rgb:          61 31 59;      /* ink = purple #3d1f3b */
+    --bg:              #f3e7cd;       /* bone */
+    --surface:         #faf4e6;       /* cards */
+    --elevated:        #ede0c2;       /* raised / row hover */
+    --border:          #e2d3b3;
+    --border-strong:   #cdbb95;
+    --text:            #3d1f3b;
+    --muted:           #7a6178;
+    --erp-primary:     #87c540;       /* green — buttons, active, highlights */
+    --erp-primary-hover: #76b032;
+    --erp-primary-ink: #4f7a1c;       /* green as TEXT on bone (contrast) */
+    --erp-on-primary:  #3d1f3b;       /* text on a green fill */
+    --erp-secondary:   #3d1f3b;       /* purple — secondary buttons, sidebar */
+    --erp-on-secondary:#f3e7cd;
+    --erp-danger:      #b42318;
+    --erp-warning:     #a15c00;
+    /* legacy names kept so older styles still resolve to the new palette */
+    --teal:            var(--erp-primary);
+    --indigo:          var(--erp-secondary);
   }
 
-  html { color-scheme: dark; }
+  /* Bone on purple: the sidebar. */
+  .erp-on-secondary { --fg-rgb: 243 231 205; color: rgb(243 231 205); }
+  .erp-on-secondary .ops-shimmer-text { background: none; -webkit-text-fill-color: #87c540; color: #87c540; }
+  /* Kitchen screens stay dark on purpose (glare at the pass). */
+  .erp-kitchen-dark { --fg-rgb: 255 255 255; color-scheme: dark; }
+
+  html { color-scheme: light; }
 
   body {
     background-color: var(--bg);
@@ -74,24 +96,24 @@
 
   /* ── Glass card ─────────────────────────────────────────────────────── */
   .glass {
-    background: rgba(19, 21, 26, 0.8);
+    background: rgb(250 244 230 / 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid rgb(var(--fg-rgb) / 0.06);
   }
 
   /* ── S-card ──────────────────────────────────────────────────────────── */
   .s-card {
     @apply rounded-xl transition-all duration-200;
-    background-color: #13151A;
-    border: 1px solid #222530;
+    background-color: var(--surface);
+    border: 1px solid var(--border);
   }
   .s-card-hover {
     @apply s-card cursor-pointer;
   }
   .s-card-hover:hover {
-    border-color: #2E3340;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,212,177,0.2);
+    border-color: var(--border-strong);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgb(135 197 64 / 0.2);
   }
 
   /* ── S-btn ───────────────────────────────────────────────────────────── */
@@ -101,68 +123,68 @@
   }
   .s-btn-primary {
     @apply s-btn font-semibold hover:opacity-90 active:scale-[0.98];
-    background-color: #00D4B1;
-    color: #0C0D10;
-    box-shadow: 0 0 20px rgba(0,212,177,0.15);
+    background-color: #87c540;
+    color: var(--erp-on-primary);
+    box-shadow: 0 0 20px rgb(135 197 64 / 0.15);
   }
   .s-btn-secondary {
     @apply s-btn active:scale-[0.98];
-    background-color: #1A1D24;
-    border: 1px solid #2E3340;
-    color: #E8EAF0;
+    background-color: var(--elevated);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
   }
-  .s-btn-secondary:hover { border-color: #00D4B1; color: #00D4B1; }
+  .s-btn-secondary:hover { border-color: #87c540; color: var(--erp-primary-ink); }
   .s-btn-ghost {
     @apply s-btn active:scale-[0.98];
-    color: #6B7280;
+    color: var(--muted);
   }
-  .s-btn-ghost:hover { color: #E8EAF0; background-color: #1A1D24; }
+  .s-btn-ghost:hover { color: var(--text); background-color: var(--elevated); }
   .s-btn-danger {
     @apply s-btn active:scale-[0.98];
-    background-color: #3D0D0D;
-    color: #FF4D4F;
+    background-color: #f5d6d0;
+    color: #b42318;
     border: 1px solid rgba(255,77,79,0.2);
   }
-  .s-btn-danger:hover { background-color: #FF4D4F; color: #fff; }
+  .s-btn-danger:hover { background-color: #b42318; color: #fff; }
 
   /* ── S-input ─────────────────────────────────────────────────────────── */
   .s-input {
     @apply w-full rounded-lg px-3 py-2 text-sm transition-colors duration-150 focus:outline-none;
-    background-color: #1A1D24;
-    border: 1px solid #222530;
-    color: #E8EAF0;
+    background-color: var(--elevated);
+    border: 1px solid var(--border);
+    color: var(--text);
   }
-  .s-input::placeholder { color: #3D4452; }
-  .s-input:focus { border-color: #00D4B1; box-shadow: 0 0 0 1px rgba(0,212,177,0.2); }
+  .s-input::placeholder { color: #a8949f; }
+  .s-input:focus { border-color: #87c540; box-shadow: 0 0 0 1px rgb(135 197 64 / 0.2); }
   .s-select { @apply s-input appearance-none; }
 
   /* ── S-badge ─────────────────────────────────────────────────────────── */
   .s-badge        { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold; }
-  .s-badge-teal   { @apply s-badge; background-color: #004D42; color: #00D4B1; }
-  .s-badge-red    { @apply s-badge; background-color: #3D0D0D; color: #FF4D4F; }
-  .s-badge-amber  { @apply s-badge; background-color: #3D2800; color: #F59E0B; }
-  .s-badge-blue   { @apply s-badge; background-color: #0D1F3D; color: #4F8EF7; }
-  .s-badge-indigo { @apply s-badge; background-color: #1E1F4E; color: #6366F1; }
-  .s-badge-muted  { @apply s-badge; background-color: #1A1D24; color: #6B7280; border: 1px solid #222530; }
+  .s-badge-teal   { @apply s-badge; background-color: #e3efcf; color: #4f7a1c; }
+  .s-badge-red    { @apply s-badge; background-color: #f5d6d0; color: #b42318; }
+  .s-badge-amber  { @apply s-badge; background-color: #f6e2bf; color: #a15c00; }
+  .s-badge-blue   { @apply s-badge; background-color: #dbe6fb; color: #1d4ed8; }
+  .s-badge-indigo { @apply s-badge; background-color: #e6dbe3; color: #3d1f3b; }
+  .s-badge-muted  { @apply s-badge; background-color: var(--elevated); color: var(--muted); border: 1px solid var(--border); }
 
   /* ── S-table ─────────────────────────────────────────────────────────── */
   .s-table { @apply w-full text-sm; }
-  .s-table thead { border-bottom: 1px solid #222530; }
-  .s-table thead th { @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider; color: #6B7280; white-space: nowrap; }
-  .s-table tbody tr { border-bottom: 1px solid rgba(34,37,48,0.5); transition: colors 0.15s; }
-  .s-table tbody tr:hover { background-color: rgba(26,29,36,0.5); }
-  .s-table tbody td { @apply px-4 py-3; color: #E8EAF0; white-space: nowrap; }
+  .s-table thead { border-bottom: 1px solid var(--border); }
+  .s-table thead th { @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider; color: var(--muted); white-space: nowrap; }
+  .s-table tbody tr { border-bottom: 1px solid rgb(var(--fg-rgb) / 0.08); transition: colors 0.15s; }
+  .s-table tbody tr:hover { background-color: rgb(var(--fg-rgb) / 0.04); }
+  .s-table tbody td { @apply px-4 py-3; color: var(--text); white-space: nowrap; }
 
   /* ── Metric card ─────────────────────────────────────────────────────── */
   .metric-card        { @apply s-card p-5 space-y-1; }
-  .metric-value       { @apply text-2xl font-bold tracking-tight; color: #E8EAF0; }
-  .metric-label       { @apply text-xs uppercase tracking-wider; color: #6B7280; }
-  .metric-change-up   { @apply text-xs font-medium; color: #00D4B1; }
-  .metric-change-down { @apply text-xs font-medium; color: #FF4D4F; }
+  .metric-value       { @apply text-2xl font-bold tracking-tight; color: var(--text); }
+  .metric-label       { @apply text-xs uppercase tracking-wider; color: var(--muted); }
+  .metric-change-up   { @apply text-xs font-medium; color: #4f7a1c; }
+  .metric-change-down { @apply text-xs font-medium; color: #b42318; }
 
   /* ── Stat bar ────────────────────────────────────────────────────────── */
-  .stat-bar-track { @apply w-full h-1.5 rounded-full; background-color: #222530; }
-  .stat-bar-fill  { @apply h-1.5 rounded-full transition-all duration-500; background: linear-gradient(135deg, #00D4B1 0%, #6366F1 100%); }
+  .stat-bar-track { @apply w-full h-1.5 rounded-full; background-color: var(--border); }
+  .stat-bar-fill  { @apply h-1.5 rounded-full transition-all duration-500; background: #87c540; }
 
   /* ── KDS ticket card ─────────────────────────────────────────────────── */
   .ticket-card { @apply rounded-lg p-4 transition-all; border: 1px solid #333333; background-color: #242424; min-height: 120px; }
@@ -182,8 +204,8 @@
   /* ── Shimmer skeleton ───────────────────────────────────────────────── */
   .skeleton {
     @apply rounded-lg;
-    background-color: #1A1D24;
-    background-image: linear-gradient(90deg, #1A1D24 25%, #222530 50%, #1A1D24 75%);
+    background-color: var(--elevated);
+    background-image: linear-gradient(90deg, var(--elevated) 25%, var(--border) 50%, var(--elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 2s linear infinite;
   }
@@ -209,11 +231,11 @@
 
   .grad-border {
     position: relative;
-    background: linear-gradient(135deg, #00D4B1, #6366F1);
+    background: #87c540;
     padding: 1px;
     border-radius: 14px;
   }
-  .grad-border-inner { background: #13151A; border-radius: 13px; height: 100%; width: 100%; }
+  .grad-border-inner { background: var(--surface); border-radius: 13px; height: 100%; width: 100%; }
 
   .nav-active-glow { position: relative; overflow: hidden; }
   .nav-active-glow::before {
@@ -223,8 +245,8 @@
     transform: translateY(-50%);
     width: 3px; height: 60%;
     border-radius: 0 3px 3px 0;
-    background: linear-gradient(180deg, #00D4B1, #6366F1);
-    box-shadow: 0 0 10px rgba(0,212,177,0.6);
+    background: #87c540;
+    box-shadow: 0 0 10px rgb(135 197 64 / 0.6);
   }
 
   .ops-grain::after {
@@ -240,7 +262,7 @@
   }
 
   .ops-shimmer-text {
-    background: linear-gradient(120deg, #00D4B1 0%, #6366F1 30%, #00D4B1 60%, #6366F1 90%, #00D4B1 100%);
+    background: linear-gradient(120deg, #87c540 0%, #3d1f3b 30%, #87c540 60%, #3d1f3b 90%, #87c540 100%);
     background-size: 300% auto;
     background-clip: text;
     -webkit-background-clip: text;
@@ -253,15 +275,11 @@
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
 
-  .text-gradient-brand {
-    background: linear-gradient(135deg, #00D4B1, #6366F1);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
+  /* Brand-accent text: the readable green on bone. */
+  .text-gradient-brand { color: var(--erp-primary-ink); }
 
   .border-gradient-brand {
-    border-image: linear-gradient(135deg, #00D4B1, #6366F1) 1;
+    border-image: #87c540 1;
   }
 
   .no-select { user-select: none; -webkit-user-select: none; }
@@ -350,7 +368,7 @@
     max-height: 50vh;
     /* s.border is a Tailwind colour, not a custom property, so var(--s-border)
        never resolved and this always used the fallback. It's the right value
-       anyway — s.border is #222530, which is invisible on the white panel
+       anyway — s.border is var(--border), which is invisible on the white panel
        below — so the dead var is dropped rather than defined. */
     border-top: 1px solid rgba(0,0,0,0.1);
     background: white;

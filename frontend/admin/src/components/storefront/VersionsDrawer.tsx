@@ -31,7 +31,7 @@ export function VersionsDrawer({ slug, isAdmin, liveVersion, onClose, onRolledBa
   const rows = [...(versions.data ?? [])].sort((a, b) => b.version - a.version)
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-secondary/50" onClick={onClose}>
       <aside className="h-full w-full max-w-md bg-s-surface border-l border-s-border flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-s-border flex items-center justify-between">
           <div>

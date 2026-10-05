@@ -199,7 +199,7 @@ export function LibraryPanel({
         {allowedKinds.includes('copy') && (
           <button
             onClick={() => setAddingCopy(true)}
-            className="rounded-xl border border-kds-border bg-kds-card px-4 py-2 text-sm font-semibold text-kds-text hover:border-kds-green"
+            className="rounded-xl border border-s-border bg-s-surface px-4 py-2 text-sm font-semibold text-s-text hover:border-primary"
           >
             New copy snippet
           </button>
@@ -213,7 +213,7 @@ export function LibraryPanel({
             key={k}
             onClick={() => setKind(k)}
             className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-              k === kind ? 'bg-kds-green text-black' : 'bg-kds-card text-kds-subtext hover:text-kds-text'
+              k === kind ? 'bg-primary text-primary-on' : 'bg-s-surface text-s-muted hover:text-s-text'
             }`}
           >
             {k === 'all' ? 'All' : KIND_LABEL[k]}
@@ -222,7 +222,7 @@ export function LibraryPanel({
         <select
           value={brand}
           onChange={(e) => setBrand(e.target.value)}
-          className="rounded-lg border border-kds-border bg-kds-card px-2 py-1.5 text-xs text-kds-text focus:border-kds-green focus:outline-none"
+          className="rounded-lg border border-s-border bg-s-surface px-2 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none"
         >
           <option value="">All brands</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -231,18 +231,18 @@ export function LibraryPanel({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search name, tag, text"
-          className="min-w-[12rem] flex-1 rounded-lg border border-kds-border bg-kds-card px-3 py-1.5 text-xs text-kds-text focus:border-kds-green focus:outline-none"
+          className="min-w-[12rem] flex-1 rounded-lg border border-s-border bg-s-surface px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none"
         />
       </div>
       {tagOptions.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-kds-subtext">Tags</span>
+          <span className="text-[11px] text-s-muted">Tags</span>
           {tagOptions.map((t) => (
             <button
               key={t}
               onClick={() => setTag(tag === t ? '' : t)}
               className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                tag === t ? 'bg-kds-green text-black' : 'border border-kds-border text-kds-subtext hover:text-kds-text'
+                tag === t ? 'bg-primary text-primary-on' : 'border border-s-border text-s-muted hover:text-s-text'
               }`}
             >
               #{t}
@@ -251,12 +251,12 @@ export function LibraryPanel({
         </div>
       )}
 
-      {isLoading && <p className="text-sm text-kds-subtext">Loading library…</p>}
-      {isError && <p className="text-sm text-kds-red">Could not load the library.</p>}
+      {isLoading && <p className="text-sm text-s-muted">Loading library…</p>}
+      {isError && <p className="text-sm text-s-red">Could not load the library.</p>}
       {!isLoading && !isError && assets.length === 0 && (
-        <div className="rounded-xl border border-dashed border-kds-border py-14 text-center">
-          <p className="text-sm font-semibold text-kds-text">Nothing here yet</p>
-          <p className="mt-1 text-xs text-kds-subtext">
+        <div className="rounded-xl border border-dashed border-s-border py-14 text-center">
+          <p className="text-sm font-semibold text-s-text">Nothing here yet</p>
+          <p className="mt-1 text-xs text-s-muted">
             {q || tag || brand ? 'No asset matches these filters.' : 'Upload a file or add a copy snippet to start the library.'}
           </p>
         </div>
@@ -268,15 +268,15 @@ export function LibraryPanel({
             <>
               <AssetPreview asset={a} />
               <div className="space-y-1 p-2.5 text-left">
-                <p className="truncate text-xs font-semibold text-kds-text" title={a.name}>{a.name}</p>
-                <p className="truncate text-[10px] text-kds-subtext">
+                <p className="truncate text-xs font-semibold text-s-text" title={a.name}>{a.name}</p>
+                <p className="truncate text-[10px] text-s-muted">
                   {KIND_LABEL[a.kind].replace(/s$/, '')}
                   {' · '}
                   {a.conceptId ? (brandName.get(a.conceptId) ?? 'Brand') : 'Any brand'}
                   {a.kind === 'font' && a.fontFamily ? ` · ${a.fontFamily}` : ''}
                 </p>
                 {a.tags.length > 0 && (
-                  <p className="truncate text-[10px] text-kds-subtext">{a.tags.map((t) => `#${t}`).join(' ')}</p>
+                  <p className="truncate text-[10px] text-s-muted">{a.tags.map((t) => `#${t}`).join(' ')}</p>
                 )}
               </div>
             </>
@@ -287,7 +287,7 @@ export function LibraryPanel({
                 key={a.id}
                 type="button"
                 onClick={() => onPick?.(a)}
-                className="overflow-hidden rounded-xl border border-kds-border bg-kds-card transition-colors hover:border-kds-green focus:border-kds-green focus:outline-none"
+                className="overflow-hidden rounded-xl border border-s-border bg-s-surface transition-colors hover:border-primary focus:border-primary focus:outline-none"
                 title={`Use ${a.name}`}
               >
                 {body}
@@ -295,20 +295,20 @@ export function LibraryPanel({
             )
           }
           return (
-            <div key={a.id} className="group relative overflow-hidden rounded-xl border border-kds-border bg-kds-card">
+            <div key={a.id} className="group relative overflow-hidden rounded-xl border border-s-border bg-s-surface">
               {body}
-              <div className="flex gap-1 border-t border-kds-border p-1.5">
+              <div className="flex gap-1 border-t border-s-border p-1.5">
                 <button onClick={() => copyToClipboard(a)}
-                  className="flex-1 rounded-md py-1 text-[11px] font-semibold text-kds-subtext hover:bg-kds-bg hover:text-kds-text">
+                  className="flex-1 rounded-md py-1 text-[11px] font-semibold text-s-muted hover:bg-s-bg hover:text-s-text">
                   {copied === a.id ? 'Copied' : a.kind === 'copy' ? 'Copy text' : 'Copy URL'}
                 </button>
                 <button onClick={() => setEditing(a)}
-                  className="flex-1 rounded-md py-1 text-[11px] font-semibold text-kds-subtext hover:bg-kds-bg hover:text-kds-text">
+                  className="flex-1 rounded-md py-1 text-[11px] font-semibold text-s-muted hover:bg-s-bg hover:text-s-text">
                   Edit
                 </button>
                 <button
                   onClick={() => { if (confirm(`Remove "${a.name}" from the library? Pages that use it will lose it.`)) remove.mutate(a.id) }}
-                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-kds-red hover:bg-kds-red/10">
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-s-red hover:bg-s-red/10">
                   Delete
                 </button>
               </div>
@@ -331,7 +331,7 @@ export function LibraryPanel({
 
 function AssetPreview({ asset: a }: { asset: LibraryAsset }) {
   if (a.kind === 'image') {
-    return <img src={a.url} alt={a.name} loading="lazy" className="h-32 w-full bg-kds-bg object-cover" />
+    return <img src={a.url} alt={a.name} loading="lazy" className="h-32 w-full bg-s-bg object-cover" />
   }
   if (a.kind === 'video') {
     return (
@@ -349,7 +349,7 @@ function AssetPreview({ asset: a }: { asset: LibraryAsset }) {
   }
   if (a.kind === 'font') {
     return (
-      <div className="flex h-32 flex-col justify-center gap-1 bg-kds-bg px-3 text-kds-text"
+      <div className="flex h-32 flex-col justify-center gap-1 bg-s-bg px-3 text-s-text"
         style={{ fontFamily: `${cssString(previewFamily(a))}, sans-serif` }}>
         <span className="text-3xl leading-none">Aa Bb</span>
         <span className="truncate text-xs">the quick brown fox jumps</span>
@@ -357,8 +357,8 @@ function AssetPreview({ asset: a }: { asset: LibraryAsset }) {
     )
   }
   return (
-    <div className="h-32 overflow-hidden bg-kds-bg px-3 py-2.5">
-      <p className="line-clamp-5 whitespace-pre-line text-xs text-kds-text">{a.text || 'Empty snippet'}</p>
+    <div className="h-32 overflow-hidden bg-s-bg px-3 py-2.5">
+      <p className="line-clamp-5 whitespace-pre-line text-xs text-s-text">{a.text || 'Empty snippet'}</p>
     </div>
   )
 }
@@ -424,40 +424,40 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
   const label = kinds.length === 1 ? `Upload ${KIND_LABEL[kinds[0]!].toLowerCase()}` : 'Upload files'
 
   return (
-    <div className="flex flex-1 flex-wrap items-center gap-2 rounded-xl border border-kds-border bg-kds-card p-2">
-      <label className={`cursor-pointer rounded-lg bg-kds-green px-4 py-2 text-sm font-bold text-black hover:opacity-90 ${busy ? 'pointer-events-none opacity-50' : ''}`}>
+    <div className="flex flex-1 flex-wrap items-center gap-2 rounded-xl border border-s-border bg-s-surface p-2">
+      <label className={`cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-on hover:opacity-90 ${busy ? 'pointer-events-none opacity-50' : ''}`}>
         {busy ?? label}
         <input ref={inputRef} type="file" multiple accept={acceptFor(kinds)} className="sr-only" onChange={(e) => void handleFiles(e)} />
       </label>
       <select value={brand} onChange={(e) => setBrand(e.target.value)}
-        className="rounded-lg border border-kds-border bg-kds-bg px-2 py-2 text-xs text-kds-text focus:border-kds-green focus:outline-none"
+        className="rounded-lg border border-s-border bg-s-bg px-2 py-2 text-xs text-s-text focus:border-primary focus:outline-none"
         title="Brand the upload is for">
         <option value="">For any brand</option>
         {concepts.map((c) => <option key={c.id} value={c.id}>For {c.name}</option>)}
       </select>
       <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated"
-        className="min-w-[10rem] flex-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-xs text-kds-text focus:border-kds-green focus:outline-none" />
-      <span className="text-[10px] text-kds-subtext">
+        className="min-w-[10rem] flex-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-xs text-s-text focus:border-primary focus:outline-none" />
+      <span className="text-[10px] text-s-muted">
         {[kinds.includes('image') && 'images', kinds.includes('video') && 'MP4/WebM up to 50 MB', kinds.includes('font') && 'WOFF2/WOFF/TTF/OTF'].filter(Boolean).join(' · ')}
       </span>
-      {error && <p className="basis-full text-xs text-kds-red">{error}</p>}
+      {error && <p className="basis-full text-xs text-s-red">{error}</p>}
     </div>
   )
 }
 
 // ─── Modals ────────────────────────────────────────────────────────────────────
 
-const inputCls = 'mt-1 w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none'
+const inputCls = 'mt-1 w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none'
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title}
-        className="max-h-[90vh] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl border border-kds-border bg-kds-card p-5"
+        className="max-h-[90vh] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl border border-s-border bg-s-surface p-5"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-kds-text">{title}</h2>
-          <button onClick={onClose} className="text-sm text-kds-subtext hover:text-kds-text" aria-label="Close">Close</button>
+          <h2 className="font-bold text-s-text">{title}</h2>
+          <button onClick={onClose} className="text-sm text-s-muted hover:text-s-text" aria-label="Close">Close</button>
         </div>
         {children}
       </div>
@@ -497,35 +497,35 @@ function EditAssetModal({ asset, concepts, onClose, onSaved }: {
   return (
     <Modal title={`Edit ${asset.kind === 'copy' ? 'snippet' : asset.kind}`} onClose={onClose}>
       <div className="space-y-3">
-        <label className="block text-xs text-kds-subtext">Name
+        <label className="block text-xs text-s-muted">Name
           <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
         </label>
         {asset.kind === 'copy' && (
-          <label className="block text-xs text-kds-subtext">Text
+          <label className="block text-xs text-s-muted">Text
             <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} className={`${inputCls} resize-y`} />
           </label>
         )}
         {asset.kind === 'font' && (
-          <label className="block text-xs text-kds-subtext">Font family
+          <label className="block text-xs text-s-muted">Font family
             <input value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} placeholder="e.g. Amarante" className={inputCls} />
             <span className="mt-1 block text-[10px]">The name pages use to pick this font. Keep it the same across a family&apos;s weights.</span>
           </label>
         )}
-        <label className="block text-xs text-kds-subtext">Brand
+        <label className="block text-xs text-s-muted">Brand
           <BrandSelect value={brand} onChange={setBrand} concepts={concepts} />
         </label>
-        <label className="block text-xs text-kds-subtext">Tags
+        <label className="block text-xs text-s-muted">Tags
           <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="ramadan, hero, menu" className={inputCls} />
         </label>
         {asset.kind !== 'copy' && (
-          <p className="truncate text-[10px] text-kds-subtext" title={asset.url}>{asset.filename} · {asset.contentType}</p>
+          <p className="truncate text-[10px] text-s-muted" title={asset.url}>{asset.filename} · {asset.contentType}</p>
         )}
       </div>
-      {save.isError && <p className="text-xs text-kds-red">{(save.error as Error).message || 'Save failed'}</p>}
+      {save.isError && <p className="text-xs text-s-red">{(save.error as Error).message || 'Save failed'}</p>}
       <div className="flex gap-2">
-        <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-2 text-sm text-kds-subtext hover:text-kds-text">Cancel</button>
+        <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-2 text-sm text-s-muted hover:text-s-text">Cancel</button>
         <button onClick={() => save.mutate()} disabled={save.isPending}
-          className="flex-1 rounded-xl bg-kds-green py-2 text-sm font-bold text-black hover:opacity-90 disabled:opacity-50">
+          className="flex-1 rounded-xl bg-primary py-2 text-sm font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
           {save.isPending ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -552,24 +552,24 @@ function CopySnippetModal({ concepts, defaultBrand, onClose, onSaved }: {
   return (
     <Modal title="New copy snippet" onClose={onClose}>
       <div className="space-y-3">
-        <label className="block text-xs text-kds-subtext">Name
+        <label className="block text-xs text-s-muted">Name
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ramadan hero line" className={inputCls} />
         </label>
-        <label className="block text-xs text-kds-subtext">Text
+        <label className="block text-xs text-s-muted">Text
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} className={`${inputCls} resize-y`} />
         </label>
-        <label className="block text-xs text-kds-subtext">Brand
+        <label className="block text-xs text-s-muted">Brand
           <BrandSelect value={brand} onChange={setBrand} concepts={concepts} />
         </label>
-        <label className="block text-xs text-kds-subtext">Tags
+        <label className="block text-xs text-s-muted">Tags
           <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="ramadan, hero" className={inputCls} />
         </label>
       </div>
-      {create.isError && <p className="text-xs text-kds-red">{(create.error as Error).message || 'Could not save'}</p>}
+      {create.isError && <p className="text-xs text-s-red">{(create.error as Error).message || 'Could not save'}</p>}
       <div className="flex gap-2">
-        <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-2 text-sm text-kds-subtext hover:text-kds-text">Cancel</button>
+        <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-2 text-sm text-s-muted hover:text-s-text">Cancel</button>
         <button onClick={() => create.mutate()} disabled={!canSave || create.isPending}
-          className="flex-1 rounded-xl bg-kds-green py-2 text-sm font-bold text-black hover:opacity-90 disabled:opacity-50">
+          className="flex-1 rounded-xl bg-primary py-2 text-sm font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
           {create.isPending ? 'Saving…' : 'Add snippet'}
         </button>
       </div>

@@ -30,9 +30,9 @@ interface ExceptionFlag {
 }
 
 const SEV_STYLE: Record<Severity, { bg: string; fg: string; label: string }> = {
-  low:      { bg: 'rgba(99,102,241,0.1)',  fg: '#A5B4FC', label: 'Low' },
-  medium:   { bg: 'rgba(245,158,11,0.12)', fg: '#FCD34D', label: 'Medium' },
-  high:     { bg: 'rgba(239,68,68,0.12)',  fg: '#FCA5A5', label: 'High' },
+  low:      { bg: 'rgb(61 31 59 / 0.1)',  fg: '#6b2f68', label: 'Low' },
+  medium:   { bg: 'rgba(245,158,11,0.12)', fg: '#a15c00', label: 'Medium' },
+  high:     { bg: 'rgba(239,68,68,0.12)',  fg: '#b42318', label: 'High' },
   critical: { bg: 'rgba(220,38,38,0.18)',  fg: '#FECACA', label: 'CRITICAL' },
 }
 
@@ -85,7 +85,7 @@ export default function ExceptionInboxPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Owner inbox</p>
         <h1 className="text-2xl font-black text-white/90 mt-1">⚠️ Exceptions</h1>
@@ -96,10 +96,10 @@ export default function ExceptionInboxPage() {
         {/* Stats strip */}
         {stats && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 max-w-3xl">
-            <Stat value={stats.open}         label="Open" accent="#FCA5A5" />
-            <Stat value={stats.acknowledged} label="Acknowledged" accent="#FCD34D" />
-            <Stat value={stats.last24h}      label="Last 24h" accent="#A5B4FC" />
-            <Stat value={stats.byKind.length} label="Distinct kinds" accent="#00D4B1" />
+            <Stat value={stats.open}         label="Open" accent="#b42318" />
+            <Stat value={stats.acknowledged} label="Acknowledged" accent="#a15c00" />
+            <Stat value={stats.last24h}      label="Last 24h" accent="#6b2f68" />
+            <Stat value={stats.byKind.length} label="Distinct kinds" accent="var(--erp-primary-ink)" />
           </div>
         )}
 
@@ -109,8 +109,8 @@ export default function ExceptionInboxPage() {
             <button key={s} onClick={() => setStatusFilter(s)}
               className="text-xs font-bold px-3 py-1.5 rounded-full"
               style={statusFilter === s
-                ? { background: 'rgba(0,212,177,0.15)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.4)' }
-                : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
               {s}
             </button>
           ))}
@@ -120,7 +120,7 @@ export default function ExceptionInboxPage() {
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-2">
         {flags.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
-            style={{ background: 'rgba(0,212,177,0.05)', border: '1px solid rgba(0,212,177,0.18)' }}>
+            style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
             <p className="text-3xl mb-2">✓</p>
             <p className="font-bold text-white/85">No {statusFilter} exceptions</p>
             <p className="text-sm text-white/45 mt-1">
@@ -133,7 +133,7 @@ export default function ExceptionInboxPage() {
           const sev = SEV_STYLE[f.severity]
           return (
             <div key={f.id} className="rounded-2xl p-5"
-              style={{ background: 'rgba(255,255,255,0.025)', border: `1px solid ${sev.bg.replace(/[\d.]+\)$/, '0.4)')}` }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: `1px solid ${sev.bg.replace(/[\d.]+\)$/, '0.4)')}` }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -147,7 +147,7 @@ export default function ExceptionInboxPage() {
                   </div>
                   <p className="text-sm text-white/65 mt-2 leading-relaxed">{f.description}</p>
                   {f.amountCents != null && (
-                    <p className="text-sm font-bold text-amber-400 mt-1">PKR {(f.amountCents / 100).toLocaleString()}</p>
+                    <p className="text-sm font-bold text-amber-700 mt-1">PKR {(f.amountCents / 100).toLocaleString()}</p>
                   )}
                   <p className="text-[11px] text-white/30 mt-2">
                     {new Date(f.createdAt).toLocaleString()}
@@ -155,8 +155,8 @@ export default function ExceptionInboxPage() {
                   </p>
                   {f.resolution && (
                     <div className="mt-3 rounded-lg p-3 text-xs text-white/65"
-                      style={{ background: 'rgba(0,212,177,0.06)', border: '1px solid rgba(0,212,177,0.18)' }}>
-                      <strong className="text-[#00D4B1]">Resolved:</strong> {f.resolution}
+                      style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+                      <strong className="text-primary-ink">Resolved:</strong> {f.resolution}
                     </div>
                   )}
                 </div>
@@ -167,14 +167,14 @@ export default function ExceptionInboxPage() {
                       Ack
                     </button>
                     <button onClick={() => setResolveFor(f)}
-                      className="rounded-lg bg-kds-green text-black px-3 py-1.5 text-xs font-bold hover:opacity-90">
+                      className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold hover:opacity-90">
                       Resolve
                     </button>
                   </div>
                 )}
                 {f.status === 'acknowledged' && (
                   <button onClick={() => setResolveFor(f)}
-                    className="rounded-lg bg-kds-green text-black px-3 py-1.5 text-xs font-bold hover:opacity-90 shrink-0">
+                    className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold hover:opacity-90 shrink-0">
                     Resolve
                   </button>
                 )}
@@ -192,7 +192,7 @@ export default function ExceptionInboxPage() {
 function Stat({ value, label, accent }: { value: number; label: string; accent: string }) {
   return (
     <div className="rounded-xl p-3"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <p className="text-2xl font-black" style={{ color: accent }}>{value}</p>
       <p className="text-[10px] font-bold uppercase tracking-wider text-white/45 mt-0.5">{label}</p>
     </div>
@@ -202,8 +202,8 @@ function Stat({ value, label, accent }: { value: number; label: string; accent: 
 function ResolveModal({ flag, onClose, onResolve, pending }: { flag: ExceptionFlag; onClose: () => void; onResolve: (r: string) => void; pending: boolean }) {
   const [resolution, setResolution] = useState('')
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-white/[0.05]">
           <h2 className="font-black text-white/90">Resolve flag</h2>
           <p className="text-xs text-white/45 mt-0.5 truncate">{flag.title}</p>
@@ -212,12 +212,12 @@ function ResolveModal({ flag, onClose, onResolve, pending }: { flag: ExceptionFl
           <label className="text-xs text-white/55">What did you do? *</label>
           <textarea value={resolution} onChange={(e) => setResolution(e.target.value)} rows={4}
             placeholder="Spoke with cashier. Reviewed footage. Counter-checked next shift's drawer. Variance traced to PKR 200 wrong-change incident; recovered."
-            className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none" autoFocus />
+            className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none" autoFocus />
         </div>
         <div className="flex justify-between p-4 border-t border-white/[0.05] bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => onResolve(resolution)} disabled={!resolution.trim() || pending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {pending ? 'Saving…' : 'Mark resolved'}
           </button>
         </div>

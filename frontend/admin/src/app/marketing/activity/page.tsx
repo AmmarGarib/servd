@@ -28,19 +28,19 @@ interface ActivityRow {
 }
 
 const ACTION_META: Record<string, { emoji: string; label: string; color: string }> = {
-  'campaign.create':         { emoji: '✉️', label: 'Drafted campaign',       color: '#00D4B1' },
-  'campaign.send':           { emoji: '📨', label: 'Sent campaign',          color: '#22C55E' },
-  'campaign.update':         { emoji: '✏️', label: 'Edited campaign',        color: '#94A3B8' },
-  'promo.create':            { emoji: '🎟', label: 'Created promo',          color: '#6366F1' },
-  'promo.update':            { emoji: '✏️', label: 'Updated promo',          color: '#94A3B8' },
-  'promo.deactivate':        { emoji: '🛑', label: 'Deactivated promo',      color: '#EF4444' },
-  'discount.create':         { emoji: '🏷', label: 'Added discount',         color: '#F59E0B' },
-  'discount.update':         { emoji: '✏️', label: 'Updated discount',       color: '#94A3B8' },
-  'concept.update':          { emoji: '🏢', label: 'Edited brand',           color: '#0EA5E9' },
-  'storefront.layout.update': { emoji: '🎨', label: 'Updated storefront',    color: '#EC4899' },
-  'media.upload':            { emoji: '🖼', label: 'Uploaded media',         color: '#A855F7' },
+  'campaign.create':         { emoji: '✉️', label: 'Drafted campaign',       color: 'var(--erp-primary-ink)' },
+  'campaign.send':           { emoji: '📨', label: 'Sent campaign',          color: '#3f7d20' },
+  'campaign.update':         { emoji: '✏️', label: 'Edited campaign',        color: '#7a6178' },
+  'promo.create':            { emoji: '🎟', label: 'Created promo',          color: 'var(--erp-secondary)' },
+  'promo.update':            { emoji: '✏️', label: 'Updated promo',          color: '#7a6178' },
+  'promo.deactivate':        { emoji: '🛑', label: 'Deactivated promo',      color: '#b42318' },
+  'discount.create':         { emoji: '🏷', label: 'Added discount',         color: '#a15c00' },
+  'discount.update':         { emoji: '✏️', label: 'Updated discount',       color: '#7a6178' },
+  'concept.update':          { emoji: '🏢', label: 'Edited brand',           color: '#1d4ed8' },
+  'storefront.layout.update': { emoji: '🎨', label: 'Updated storefront',    color: '#be185d' },
+  'media.upload':            { emoji: '🖼', label: 'Uploaded media',         color: '#6b2f68' },
   'content_event.create':    { emoji: '📅', label: 'Scheduled post',         color: '#F472B6' },
-  'content_event.publish':   { emoji: '🚀', label: 'Published post',         color: '#22C55E' },
+  'content_event.publish':   { emoji: '🚀', label: 'Published post',         color: '#3f7d20' },
 }
 
 export default function MarketingActivityPage() {
@@ -61,7 +61,7 @@ export default function MarketingActivityPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
           <Link href="/w/marketing" className="hover:text-white/70">← Marketing</Link>
@@ -76,7 +76,7 @@ export default function MarketingActivityPage() {
           <div className="flex items-center gap-2">
             <select value={days} onChange={(e) => setDays(parseInt(e.target.value, 10))}
               className="rounded-lg px-3 py-2 text-xs"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
               <option value={7}>7 days</option>
               <option value={14}>14 days</option>
               <option value={30}>30 days</option>
@@ -85,7 +85,7 @@ export default function MarketingActivityPage() {
             </select>
             <select value={userId} onChange={(e) => setUserId(e.target.value)}
               className="rounded-lg px-3 py-2 text-xs"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
               <option value="">All users</option>
               {team.map((u) => (
                 <option key={u.id} value={u.id}>{u.name} · {u.email}</option>
@@ -101,8 +101,8 @@ export default function MarketingActivityPage() {
           <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Marketing team ({team.length})</p>
           {team.length === 0 ? (
             <div className="rounded-xl p-5 text-sm text-white/45"
-              style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              No marketing-role users yet. Create one in <Link href="/workforce" className="text-kds-green hover:underline">Workforce</Link> with role = <code>marketing</code>.
+              style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
+              No marketing-role users yet. Create one in <Link href="/workforce" className="text-primary-ink hover:underline">Workforce</Link> with role = <code>marketing</code>.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -110,8 +110,8 @@ export default function MarketingActivityPage() {
                 <div key={u.id}
                   className="rounded-2xl p-4 cursor-pointer transition-colors"
                   style={{
-                    background: userId === u.id ? 'rgba(0,212,177,0.06)' : 'rgba(255,255,255,0.025)',
-                    border: userId === u.id ? '1px solid rgba(0,212,177,0.35)' : '1px solid rgba(255,255,255,0.06)',
+                    background: userId === u.id ? 'rgb(135 197 64 / 0.06)' : 'rgb(var(--fg-rgb) / 0.025)',
+                    border: userId === u.id ? '1px solid rgb(135 197 64 / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
                   }}
                   onClick={() => setUserId(userId === u.id ? '' : u.id)}>
                   <div className="flex items-start justify-between gap-2">
@@ -119,7 +119,7 @@ export default function MarketingActivityPage() {
                       <p className="font-bold text-white/85 truncate">{u.name}</p>
                       <p className="text-xs text-white/45 truncate">{u.email}</p>
                     </div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 shrink-0">{u.role}</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 shrink-0">{u.role}</span>
                   </div>
                   <div className="text-[11px] text-white/45 mt-2">
                     {u.lastActionAt
@@ -142,17 +142,17 @@ export default function MarketingActivityPage() {
 
           {!isLoading && activity.length === 0 && (
             <div className="rounded-2xl p-8 text-center"
-              style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               <p className="text-3xl mb-2">📭</p>
               <p className="text-sm text-white/65">No activity in the selected window.</p>
             </div>
           )}
 
           <div className="rounded-2xl overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="divide-y divide-white/[0.04]">
               {activity.map((row) => {
-                const meta = ACTION_META[row.action] ?? { emoji: '•', label: row.action, color: '#94A3B8' }
+                const meta = ACTION_META[row.action] ?? { emoji: '•', label: row.action, color: '#7a6178' }
                 return (
                   <details key={row.id} className="group">
                     <summary className="cursor-pointer list-none px-4 py-3 flex items-center gap-3 hover:bg-white/[0.015]">
@@ -173,7 +173,7 @@ export default function MarketingActivityPage() {
                     <div className="px-4 pb-3 pt-1 ml-9 text-[11px]">
                       {row.metadata && Object.keys(row.metadata).length > 0 && (
                         <pre className="rounded-lg p-2.5 overflow-x-auto"
-                          style={{ background: 'rgba(0,0,0,0.4)', color: 'rgba(255,255,255,0.7)' }}>
+                          style={{ background: 'rgb(var(--fg-rgb) / 0.06)', color: 'rgb(var(--fg-rgb) / 0.7)' }}>
                           {JSON.stringify(row.metadata, null, 2)}
                         </pre>
                       )}
@@ -182,14 +182,14 @@ export default function MarketingActivityPage() {
                           <div>
                             <p className="text-[10px] font-bold text-white/30 uppercase mb-1">Before</p>
                             <pre className="rounded-lg p-2 text-[10px] overflow-x-auto"
-                              style={{ background: 'rgba(255,77,79,0.05)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,77,79,0.15)' }}>
+                              style={{ background: 'rgba(255,77,79,0.05)', color: 'rgb(var(--fg-rgb) / 0.6)', border: '1px solid rgba(255,77,79,0.15)' }}>
                               {row.before ? JSON.stringify(row.before, null, 2) : '—'}
                             </pre>
                           </div>
                           <div>
                             <p className="text-[10px] font-bold text-white/30 uppercase mb-1">After</p>
                             <pre className="rounded-lg p-2 text-[10px] overflow-x-auto"
-                              style={{ background: 'rgba(0,212,177,0.05)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(0,212,177,0.15)' }}>
+                              style={{ background: 'rgb(135 197 64 / 0.05)', color: 'rgb(var(--fg-rgb) / 0.6)', border: '1px solid rgb(135 197 64 / 0.15)' }}>
                               {row.after ? JSON.stringify(row.after, null, 2) : '—'}
                             </pre>
                           </div>

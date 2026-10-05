@@ -43,7 +43,7 @@ interface Floor { id: string; name: string; tables: Array<{ id: string; label: s
 const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> = {
   booked:    { bg: 'rgba(59,130,246,0.12)',  text: '#1d4ed8', label: 'Booked' },
   confirmed: { bg: 'rgba(34,197,94,0.14)',   text: '#15803d', label: 'Confirmed' },
-  seated:    { bg: 'rgba(99,102,241,0.18)',  text: '#4338ca', label: 'Seated' },
+  seated:    { bg: 'rgb(61 31 59 / 0.18)',  text: '#4338ca', label: 'Seated' },
   completed: { bg: 'rgba(0,0,0,0.06)',       text: 'rgba(0,0,0,0.5)', label: 'Done' },
   no_show:   { bg: 'rgba(239,68,68,0.12)',   text: '#b91c1c', label: 'No show' },
   cancelled: { bg: 'rgba(239,68,68,0.12)',   text: '#b91c1c', label: 'Cancelled' },
@@ -133,11 +133,11 @@ export default function ReservationsPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
-            className="bg-white border border-s-border rounded px-2 py-1 text-sm">
+            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="bg-white border border-s-border rounded px-2 py-1 text-sm" />
+            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           <button onClick={() => setDate(todayPktIso())} className="s-btn-secondary text-xs">Today</button>
           <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New booking</button>
         </div>
@@ -223,11 +223,11 @@ export default function ReservationsPage() {
       )}
 
       <div className="px-6 pb-6 flex flex-wrap items-center gap-3 text-xs text-s-muted">
-        <Link href="/reservations/week"      className="text-s-teal hover:underline">📅 Week view</Link>
-        <Link href="/reservations/blockouts" className="text-s-teal hover:underline">🚫 Closures & blockouts</Link>
-        <Link href="/configuration/hours"    className="text-s-teal hover:underline">🕐 Service hours</Link>
-        <Link href="/reservations/analytics" className="text-s-teal hover:underline">📊 Analytics</Link>
-        <Link href="/floorplan"              className="text-s-teal hover:underline">🪑 Floor plan</Link>
+        <Link href="/reservations/week"      className="text-primary-ink hover:underline">📅 Week view</Link>
+        <Link href="/reservations/blockouts" className="text-primary-ink hover:underline">🚫 Closures & blockouts</Link>
+        <Link href="/configuration/hours"    className="text-primary-ink hover:underline">🕐 Service hours</Link>
+        <Link href="/reservations/analytics" className="text-primary-ink hover:underline">📊 Analytics</Link>
+        <Link href="/floorplan"              className="text-primary-ink hover:underline">🪑 Floor plan</Link>
       </div>
 
       {/* ── Customer-context drawer (right side, slides in when a customer
@@ -237,12 +237,12 @@ export default function ReservationsPage() {
           role="dialog"
           aria-modal="true"
           className="fixed inset-0 z-50 flex justify-end"
-          style={{ background: 'rgba(0,0,0,0.4)' }}
+          style={{ background: 'rgb(61 31 59 / 0.5)' }}
           onClick={() => setDrawerCustomerId(null)}>
           <div
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-md h-full overflow-y-auto p-5"
-            style={{ background: '#0e1014' }}>
+            style={{ background: 'var(--surface)' }}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-white/80">Customer context</h2>
               <button
@@ -294,14 +294,14 @@ function ReservationRow({
           </button>
         )}
         {r.status === 'booked' && (
-          <button onClick={() => onTransition('confirm')} className="text-[11px] font-bold px-2 py-1 rounded bg-s-teal text-white">Confirm</button>
+          <button onClick={() => onTransition('confirm')} className="text-[11px] font-bold px-2 py-1 rounded bg-primary text-primary-on">Confirm</button>
         )}
         {(r.status === 'booked' || r.status === 'confirmed') && (
           <SeatButton id={r.id} tables={tables} preselect={r.table?.id}
             onSeat={(tableId) => onTransition('seat', { tableId })} />
         )}
         {r.status === 'seated' && (
-          <button onClick={() => onTransition('complete')} className="text-[11px] font-bold px-2 py-1 rounded bg-black text-white">Complete</button>
+          <button onClick={() => onTransition('complete')} className="text-[11px] font-bold px-2 py-1 rounded bg-secondary text-secondary-on">Complete</button>
         )}
         {(r.status === 'booked' || r.status === 'confirmed') && (
           <button onClick={() => {
@@ -329,11 +329,11 @@ function SeatButton({
   const [open, setOpen] = useState(false)
   return (
     <span className="relative">
-      <button onClick={() => setOpen(!open)} className="text-[11px] font-bold px-2 py-1 rounded bg-indigo-600 text-white">
+      <button onClick={() => setOpen(!open)} className="text-[11px] font-bold px-2 py-1 rounded bg-secondary text-secondary-on">
         Seat →
       </button>
       {open && (
-        <span className="absolute right-0 top-full mt-1 z-20 bg-white border border-s-border rounded shadow-lg p-1 min-w-[180px]">
+        <span className="absolute right-0 top-full mt-1 z-20 bg-s-surface border border-s-border rounded shadow-lg p-1 min-w-[180px]">
           {tables.map((t) => (
             <button
               key={t.id}
@@ -393,41 +393,41 @@ function NewReservationModal({
   })
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-s-surface rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-s-border flex justify-between items-center">
           <h2 className="text-lg font-bold">New reservation</h2>
           <button onClick={onClose} aria-label="Close" className="text-2xl leading-none text-s-muted">×</button>
         </div>
         <div className="p-5 space-y-3 text-sm">
           <Field label="Guest name *">
-            <input autoFocus required value={guestName} onChange={(e) => setGuestName(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+            <input autoFocus required value={guestName} onChange={(e) => setGuestName(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </Field>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Phone">
-              <input value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="+92 …" className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+              <input value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="+92 …" className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Email">
-              <input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <Field label="Party">
-              <input type="number" min={1} max={50} value={partySize} onChange={(e) => setPartySize(parseInt(e.target.value, 10) || 1)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="number" min={1} max={50} value={partySize} onChange={(e) => setPartySize(parseInt(e.target.value, 10) || 1)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Date">
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Time">
-              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Duration (min)">
-              <input type="number" min={15} max={480} value={durationMin} onChange={(e) => setDurationMin(parseInt(e.target.value, 10) || 90)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="number" min={15} max={480} value={durationMin} onChange={(e) => setDurationMin(parseInt(e.target.value, 10) || 90)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Table">
-              <select value={tableId} onChange={(e) => setTableId(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1.5">
+              <select value={tableId} onChange={(e) => setTableId(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5">
                 <option value="">— Waitlist (assign later) —</option>
                 {tables.map((t) => (
                   <option key={t.id} value={t.id}>{t.label} ({t.capacity}p · {t.floorName})</option>
@@ -436,7 +436,7 @@ function NewReservationModal({
             </Field>
           </div>
           <Field label="Notes (allergies, occasion, requests)">
-            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1.5" />
+            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </Field>
           <div className="flex items-center gap-4 text-xs">
             <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={isVip} onChange={(e) => setIsVip(e.target.checked)} /> ⭐ VIP</label>

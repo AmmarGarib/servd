@@ -145,7 +145,7 @@ export default function StationKdsPage() {
   const waiting = steps.filter((s) => s.status === 'waiting')
 
   return (
-    <div className="flex h-screen flex-col bg-kds-bg">
+    <div className="erp-kitchen-dark flex h-screen flex-col bg-kds-bg">
       <NewOrderFlash />
       <div className="shrink-0 px-4 pt-3 pb-1 flex items-center justify-between gap-3 flex-wrap">
         <Link href="/expo" className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 transition-colors">

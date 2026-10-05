@@ -35,7 +35,7 @@ export default function CustomFieldsPage() {
   const del = useMutation({ mutationFn: (id: string) => api.delete(`/setup/custom-fields/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['custom-fields'] }) })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -45,7 +45,7 @@ export default function CustomFieldsPage() {
               Add fields to customers, orders, menu items, or suppliers — without changing code. They'll appear in the matching record's edit form.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New field</button>
+          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New field</button>
         </div>
       </header>
 
@@ -61,7 +61,7 @@ export default function CustomFieldsPage() {
                 </div>
                 <span className="text-[10px] text-white/30 font-mono">{fields.length} fields</span>
               </div>
-              <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="rounded-2xl overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 {fields.length === 0 && <p className="p-5 text-xs text-white/35">None.</p>}
                 {fields.map((f) => (
                   <div key={f.id} className="px-4 py-3 flex items-center justify-between gap-3 border-b border-white/[0.04] last:border-b-0 hover:bg-white/[0.02]">
@@ -69,14 +69,14 @@ export default function CustomFieldsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-white/85">{f.label}</p>
                         <code className="text-[10px] text-white/40 font-mono">{f.key}</code>
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgba(99,102,241,0.12)', color: '#A5B4FC' }}>{f.type}</span>
-                        {f.isRequired && <span className="text-[10px] text-red-400">required</span>}
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{f.type}</span>
+                        {f.isRequired && <span className="text-[10px] text-red-700">required</span>}
                       </div>
                       {f.helpText && <p className="text-xs text-white/40 mt-0.5">{f.helpText}</p>}
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <button onClick={() => setEditing(f)} className="text-xs text-white/55 hover:text-white">Edit</button>
-                      <button onClick={() => { if (confirm(`Delete "${f.label}"?`)) del.mutate(f.id) }} className="text-xs text-red-400/70 hover:text-red-300">Delete</button>
+                      <button onClick={() => { if (confirm(`Delete "${f.label}"?`)) del.mutate(f.id) }} className="text-xs text-red-700/70 hover:text-red-700">Delete</button>
                     </div>
                   </div>
                 ))}
@@ -116,8 +116,8 @@ function Modal({ field, onClose, onSaved }: { field: Def | null; onClose: () => 
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{field ? 'Edit field' : 'New custom field'}</h2>
           <button onClick={onClose} className="text-white/40 text-xl">✕</button>
@@ -154,14 +154,14 @@ function Modal({ field, onClose, onSaved }: { field: Def | null; onClose: () => 
           )}
           <Field label="Help text"><input value={helpText} onChange={(e) => setHelpText(e.target.value)} placeholder="Shown below the field" className={fieldCls} /></Field>
           <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-kds-green" /><span className="text-xs text-white/65">Required</span></label>
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showInList} onChange={(e) => setShowInList(e.target.checked)} className="accent-kds-green" /><span className="text-xs text-white/65">Show in list view</span></label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-primary" /><span className="text-xs text-white/65">Required</span></label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showInList} onChange={(e) => setShowInList(e.target.checked)} className="accent-primary" /><span className="text-xs text-white/65">Show in list view</span></label>
           </div>
         </div>
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || !label || (!field && !key)}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : field ? 'Save' : 'Create'}
           </button>
         </div>
@@ -170,5 +170,5 @@ function Modal({ field, onClose, onSaved }: { field: Def | null; onClose: () => 
   )
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }

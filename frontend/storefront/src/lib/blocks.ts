@@ -380,7 +380,7 @@ export const BLOCK_CATALOG: BlockSpec[] = [
       type: 'banner',
       title: 'Banner headline',
       subtitle: 'Optional supporting line.',
-      backgroundColor: '#0a0a0a', textColor: '#ffffff',
+      backgroundColor: '#3d1f3b', textColor: '#f3e7cd',
       align: 'center', height: 'md',
     }),
   },
@@ -450,7 +450,7 @@ export const BLOCK_CATALOG: BlockSpec[] = [
       type: 'quote',
       text: 'A short, memorable line that captures something true.',
       attribution: 'Source', size: 'lg',
-      background: 'var(--servd-black)', textColor: '#ffffff',
+      background: 'var(--servd-black)', textColor: '#f3e7cd',
       paddingY: 'xl',
     }),
   },
@@ -509,7 +509,7 @@ export function defaultServdHomeLayout(): Block[] {
       text: '"Everything I am craving in one place, one checkout. I order, I track it, done."',
       attribution: '— An Insider · Karachi',
       size: 'xl',
-      background: 'var(--servd-green)', textColor: '#ffffff',
+      background: 'var(--servd-green)', textColor: '#3d1f3b',  // purple on green, never white
       paddingY: 'xl',
     },
     {

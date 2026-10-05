@@ -95,7 +95,7 @@ export default function SplitPage() {
                     <td className="px-4 py-2 font-mono text-xs text-s-muted">{p.splitLabel ?? `Payment ${p.splitGroup ?? 1}`}</td>
                     <td className="px-4 py-2 text-xs text-s-text">{p.method}</td>
                     <td className="px-4 py-2 text-right font-mono text-xs">{fmtPkr(p.amountCents)}</td>
-                    <td className="px-4 py-2"><span className={`text-[10px] uppercase font-bold tracking-wider ${p.status === 'paid' ? 'text-s-teal' : 'text-s-amber'}`}>{p.status}</span></td>
+                    <td className="px-4 py-2"><span className={`text-[10px] uppercase font-bold tracking-wider ${p.status === 'paid' ? 'text-primary-ink' : 'text-s-amber'}`}>{p.status}</span></td>
                     <td className="px-4 py-2 text-right">
                       {p.status === 'pending' && (
                         <button onClick={() => {
@@ -104,7 +104,7 @@ export default function SplitPage() {
                           const gatewayRef = isCard ? (window.prompt('Terminal reference for this card / QR payment') ?? '').trim() : ''
                           if (isCard && !gatewayRef) return
                           settle.mutate({ paymentId: p.id, ...(gatewayRef && { gatewayRef }) })
-                        }} className="text-xs text-s-teal hover:underline">Settle →</button>
+                        }} className="text-xs text-primary-ink hover:underline">Settle →</button>
                       )}
                     </td>
                   </tr>
@@ -118,11 +118,11 @@ export default function SplitPage() {
         {/* Mode toggle */}
         <div className="flex gap-2">
           <button onClick={() => setMode('even')} aria-pressed={mode === 'even'}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold border ${mode === 'even' ? 'bg-black text-white border-black' : 'bg-white border-s-border'}`}>
+            className={`px-3 py-1.5 rounded-full text-xs font-bold border ${mode === 'even' ? 'bg-primary text-primary-on border-primary' : 'bg-s-surface border-s-border'}`}>
             Even split
           </button>
           <button onClick={() => setMode('custom')} aria-pressed={mode === 'custom'}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold border ${mode === 'custom' ? 'bg-black text-white border-black' : 'bg-white border-s-border'}`}>
+            className={`px-3 py-1.5 rounded-full text-xs font-bold border ${mode === 'custom' ? 'bg-primary text-primary-on border-primary' : 'bg-s-surface border-s-border'}`}>
             Custom amounts
           </button>
         </div>
@@ -132,12 +132,12 @@ export default function SplitPage() {
             <label className="block">
               <span className="text-xs text-s-muted">Number of ways</span>
               <input type="number" min={2} max={20} value={ways} onChange={(e) => setWays(parseInt(e.target.value, 10) || 2)}
-                className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5 text-sm" />
+                className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm" />
             </label>
             <label className="block">
               <span className="text-xs text-s-muted">Payment method</span>
               <select value={method} onChange={(e) => setMethod(e.target.value as typeof METHODS[number])}
-                className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5 text-sm">
+                className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm">
                 {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </label>
@@ -155,13 +155,13 @@ export default function SplitPage() {
             {drafts.map((d, i) => (
               <div key={i} className="grid grid-cols-[1fr_120px_120px_auto] gap-2 items-center">
                 <input value={d.label} onChange={(e) => setDrafts(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
-                  placeholder={`Split ${i + 1}`} className="bg-white border border-s-border rounded px-2 py-1.5 text-sm" />
+                  placeholder={`Split ${i + 1}`} className="bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm" />
                 <input type="number" value={d.amountCents / 100}
                   onChange={(e) => setDrafts(prev => prev.map((x, j) => j === i ? { ...x, amountCents: Math.round(parseFloat(e.target.value || '0') * 100) } : x))}
-                  className="bg-white border border-s-border rounded px-2 py-1.5 text-sm font-mono" />
+                  className="bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm font-mono" />
                 <select value={d.method}
                   onChange={(e) => setDrafts(prev => prev.map((x, j) => j === i ? { ...x, method: e.target.value } : x))}
-                  className="bg-white border border-s-border rounded px-2 py-1.5 text-xs">
+                  className="bg-s-surface border border-s-border rounded px-2 py-1.5 text-xs">
                   {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
                 <button onClick={() => setDrafts(prev => prev.filter((_, j) => j !== i))}
@@ -169,8 +169,8 @@ export default function SplitPage() {
               </div>
             ))}
             <button onClick={() => setDrafts(prev => [...prev, { label: `Diner ${prev.length + 1}`, amountCents: 0, method: 'card' }])}
-              className="text-xs text-s-teal hover:underline">+ Add another split</button>
-            <p className={`text-xs font-bold ${draftMatch ? 'text-s-teal' : 'text-s-red'}`}>
+              className="text-xs text-primary-ink hover:underline">+ Add another split</button>
+            <p className={`text-xs font-bold ${draftMatch ? 'text-primary-ink' : 'text-s-red'}`}>
               Sum: {fmtPkr(draftTotal)} · {draftMatch ? '✓ matches' : `must equal ${fmtPkr(order.totalCents)}`}
             </p>
             <button onClick={() => splitCustom.mutate()} disabled={splitCustom.isPending || !draftMatch} className="s-btn-primary w-full">

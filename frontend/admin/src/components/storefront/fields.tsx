@@ -44,7 +44,7 @@ export function AlignSelect({ value, onChange }: { value: Align; onChange: (v: A
     <div className="flex gap-1">
       {(['left', 'center', 'right'] as const).map((a) => (
         <button key={a} type="button" onClick={() => onChange(a)} aria-pressed={value === a}
-          className={`flex-1 py-1.5 rounded text-xs font-semibold border ${value === a ? 'bg-s-teal text-black border-s-teal' : 'bg-s-bg-soft text-s-text border-s-border'}`}>
+          className={`flex-1 py-1.5 rounded text-xs font-semibold border ${value === a ? 'bg-primary text-primary-on border-s-teal' : 'bg-s-bg-soft text-s-text border-s-border'}`}>
           {a}
         </button>
       ))}
@@ -86,7 +86,7 @@ export function LibraryPickerModal({ kinds, title, onPick, onClose }: {
   onClose: () => void
 }) {
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="s-card w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-s-border flex items-center justify-between">
           <h2 className="text-sm font-bold text-s-text">{title}</h2>
@@ -115,7 +115,7 @@ export function MediaInput({ value, onChange, kind, placeholder }: {
         <button type="button" onClick={() => setOpen(true)} className="s-btn-secondary text-xs shrink-0">Library</button>
       </div>
       {value && (
-        <div className="h-20 w-32 rounded-lg overflow-hidden border border-s-border bg-black/30">
+        <div className="h-20 w-32 rounded-lg overflow-hidden border border-s-border bg-s-elevated">
           {kind === 'video'
             ? <video src={value} className="h-full w-full object-cover" muted playsInline />
             // eslint-disable-next-line @next/next/no-img-element
@@ -147,7 +147,7 @@ export function CopyInput({ value, onChange, rows, placeholder }: {
       {rows
         ? <textarea rows={rows} value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="s-input resize-y" />
         : <input value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="s-input" />}
-      <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[11px] text-s-teal hover:underline">Insert copy from library</button>
+      <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[11px] text-primary-ink hover:underline">Insert copy from library</button>
       {open && (
         <LibraryPickerModal kinds={['copy']} title="Insert a copy snippet"
           onPick={(a) => insert(a.text ?? '')} onClose={() => setOpen(false)} />

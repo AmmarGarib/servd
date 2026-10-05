@@ -52,7 +52,7 @@ export default function AuditLogPage() {
               onClick={() => setAction(f.key)}
               aria-pressed={action === f.key}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${
-                action === f.key ? 'bg-black text-white border-black' : 'bg-white border-s-border text-s-text hover:bg-s-bg-soft'
+                action === f.key ? 'bg-primary text-primary-on border-primary' : 'bg-s-surface border-s-border text-s-text hover:bg-s-bg-soft'
               }`}
             >
               {f.label}

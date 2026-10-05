@@ -74,7 +74,7 @@ export default function ReservationsWeekPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
-            className="bg-white border border-s-border rounded px-2 py-1 text-sm">
+            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => setAnchor(new Date(weekStart.getTime() - 7 * 86_400_000).toISOString().slice(0, 10))}
@@ -120,7 +120,7 @@ export default function ReservationsWeekPage() {
                       <div
                         key={r.id}
                         title={`${r.guestName} · ${r.partySize}p · ${r.table?.label ?? 'unseated'}`}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-s-border truncate flex items-center gap-1"
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-s-surface border border-s-border truncate flex items-center gap-1"
                       >
                         <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[r.status] ?? 'bg-gray-400'}`} />
                         <span className="truncate">{r.isVip ? '⭐ ' : ''}{r.guestName} · {r.partySize}p</span>

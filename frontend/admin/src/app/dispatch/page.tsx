@@ -23,7 +23,7 @@ interface RiderRow {
 const STATUS_DOT: Record<RiderRow['status'], string> = {
   available: 'bg-s-teal',
   busy:      'bg-s-amber',
-  offline:   'bg-gray-400',
+  offline:   'bg-s-border-strong',
 }
 
 function fmtAge(ms: number | null): string {
@@ -101,12 +101,12 @@ export default function DispatchPage() {
                 {r.lastLat != null && r.lastLng != null && (
                   <a target="_blank" rel="noopener noreferrer"
                     href={`https://www.google.com/maps?q=${r.lastLat},${r.lastLng}`}
-                    className="text-[11px] text-s-teal hover:underline">map ↗</a>
+                    className="text-[11px] text-primary-ink hover:underline">map ↗</a>
                 )}
                 <select
                   value={r.status}
                   onChange={(e) => setStatus.mutate({ id: r.id, status: e.target.value as RiderRow['status'] })}
-                  className="text-xs bg-white border border-s-border rounded px-2 py-1"
+                  className="text-xs bg-s-surface border border-s-border rounded px-2 py-1"
                 >
                   <option value="available">available</option>
                   <option value="busy">busy</option>
@@ -132,7 +132,7 @@ export default function DispatchPage() {
                       <div className="mt-2 flex gap-3">
                         {o.status === 'ready' && (
                           <button onClick={() => delivered.mutate(o.id)} disabled={delivered.isPending}
-                            className="text-[11px] text-s-teal hover:underline disabled:opacity-50">Delivered</button>
+                            className="text-[11px] text-primary-ink hover:underline disabled:opacity-50">Delivered</button>
                         )}
                         <button onClick={() => unassign.mutate(o.id)} disabled={unassign.isPending}
                           className="text-[11px] text-s-red hover:underline disabled:opacity-50">Unassign</button>

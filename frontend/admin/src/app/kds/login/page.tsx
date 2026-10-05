@@ -24,7 +24,7 @@ export default function KDSLoginRedirect() {
   }, [user, router])
 
   return (
-    <div className="min-h-screen bg-s-bg flex items-center justify-center">
+    <div className="erp-kitchen-dark min-h-screen bg-s-bg flex items-center justify-center">
       <p className="text-sm text-s-dim">Taking you to sign in…</p>
     </div>
   )

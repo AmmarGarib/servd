@@ -13,7 +13,7 @@
 import React from 'react'
 
 // 9-cell brand palettes. SERVD is the house gradient used everywhere by default.
-export const SERVD_CELLS = ['#00D4B1', '#0CC6B9', '#19B9C1', '#25ABC9', '#329DD1', '#3E8FD9', '#4A82E1', '#5774E9', '#6366F1']
+export const SERVD_CELLS = ['var(--erp-primary)', '#0CC6B9', '#19B9C1', '#25ABC9', '#329DD1', '#3E8FD9', '#4A82E1', '#5774E9', 'var(--erp-secondary)']
 // Simmer's brand rules ban gradients → a single orange signal that ripples by
 // timing alone (still reads as a wave, stays brand-compliant).
 export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
@@ -46,7 +46,7 @@ export function Loader({
           key={i}
           className="servd-loader-cell"
           aria-hidden
-          style={{ '--cell-color': colors[i % colors.length] ?? '#00D4B1', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
+          style={{ '--cell-color': colors[i % colors.length] ?? 'var(--erp-primary)', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
         />
       ))}
     </div>
@@ -69,7 +69,7 @@ export function LoadingScreen({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1.1rem', minHeight }}>
       <Loader size={size} colors={colors} />
-      {label && <p style={{ color: '#6E7186', fontSize: '0.8rem', letterSpacing: '0.04em', margin: 0 }}>{label}</p>}
+      {label && <p style={{ color: '#7a6178', fontSize: '0.8rem', letterSpacing: '0.04em', margin: 0 }}>{label}</p>}
     </div>
   )
 }

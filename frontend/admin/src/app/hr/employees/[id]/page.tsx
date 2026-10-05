@@ -34,7 +34,7 @@ export default function EmployeeProfilePage() {
   return (
     <HrShell title={e ? e.fullName : 'Employee'} subtitle={e ? `${e.employeeCode} · ${p?.labels.designation ?? 'No designation'} · ${p?.labels.department ?? 'No department'} · ${p?.labels.branch ?? 'No branch'}` : undefined}
       actions={e && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[e.status] }}>{human(e.status)}</span>}>
-      {error && <p className="text-sm text-red-400">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700">{(error as Error).message}</p>}
       {p && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
@@ -46,7 +46,7 @@ export default function EmployeeProfilePage() {
           </div>
           <div className="flex gap-1 mb-5 overflow-x-auto">
             {TABS.map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap ${tab === t ? 'bg-kds-green text-black' : 'text-white/50 border border-white/10'}`}>{t}</button>
+              <button key={t} onClick={() => setTab(t)} className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap ${tab === t ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>{t}</button>
             ))}
           </div>
           {tab === 'Profile' && <ProfileTab p={p} />}
@@ -88,8 +88,8 @@ function ProfileTab({ p }: { p: Profile }) {
   return (
     <div className="rounded-2xl p-5" style={card}>
       <FormRenderer fields={form.current.fields} value={v} onChange={(x) => { setValue(x); setOk(false) }} ctx={{ lookups, org }} />
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
-      {ok && <p className="text-xs text-kds-green mt-3">Saved.</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
+      {ok && <p className="text-xs text-primary-ink mt-3">Saved.</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending || !value} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save changes'}</button>
         {value && <button className={btnGhost} onClick={() => setValue(null)}>Discard</button>}
@@ -121,17 +121,17 @@ function DocumentsTab({ p }: { p: Profile }) {
         <input type="date" className={inp} title="Expiry date" value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} aria-label="Expiry date" />
         <button className={btn} disabled={add.isPending} onClick={() => add.mutate()}>Add</button>
       </div>
-      {err && <p className="text-xs text-red-400">{err}</p>}
+      {err && <p className="text-xs text-red-700">{err}</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {p.documents.length === 0 && <p className="p-6 text-sm text-white/40 text-center">No documents yet.</p>}
         {p.documents.map((d) => (
           <div key={d.id} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex items-center gap-3 text-sm">
             <span className="font-bold text-white/85 w-48 shrink-0">{d.title || human(d.docType)}</span>
-            {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-kds-green text-xs hover:underline">Open</a> : <span className="text-xs text-white/30">No file</span>}
-            <span className="text-xs" style={{ color: soon(d.expiryDate) ? '#f59e0b' : 'rgba(255,255,255,0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
+            {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-primary-ink text-xs hover:underline">Open</a> : <span className="text-xs text-white/30">No file</span>}
+            <span className="text-xs" style={{ color: soon(d.expiryDate) ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
             <span className="ml-auto flex gap-3">
-              {d.verifiedAt ? <span className="text-xs text-kds-green">Verified</span> : <button className="text-xs text-white/50 hover:text-white" onClick={() => verify.mutate(d.id)}>Mark verified</button>}
-              <button className="text-xs text-white/35 hover:text-red-400" onClick={() => { if (confirm('Delete this document?')) del.mutate(d.id) }}>Delete</button>
+              {d.verifiedAt ? <span className="text-xs text-primary-ink">Verified</span> : <button className="text-xs text-white/50 hover:text-white" onClick={() => verify.mutate(d.id)}>Mark verified</button>}
+              <button className="text-xs text-white/35 hover:text-red-700" onClick={() => { if (confirm('Delete this document?')) del.mutate(d.id) }}>Delete</button>
             </span>
           </div>
         ))}
@@ -157,13 +157,13 @@ function RequestsTab({ p }: { p: Profile }) {
 }
 
 function LeaveTab({ p }: { p: Profile }) {
-  if (p.leaveBalances.length === 0) return <p className="text-sm text-white/40">No leave types set up yet — add them under <Link href="/hr/s/leave_type" className="text-kds-green">Leave types</Link>.</p>
+  if (p.leaveBalances.length === 0) return <p className="text-sm text-white/40">No leave types set up yet — add them under <Link href="/hr/s/leave_type" className="text-primary-ink">Leave types</Link>.</p>
   return (
     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {p.leaveBalances.map((b) => (
         <div key={b.leaveTypeId} className="rounded-2xl p-4" style={card}>
           <p className="text-sm font-black text-white/85">{b.name} <span className="text-[10px] font-bold text-white/35">{b.paid ? 'PAID' : 'UNPAID'}</span></p>
-          <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? '#f87171' : '#34d399' }}>{b.balance}</p>
+          <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? '#b42318' : '#3f7d20' }}>{b.balance}</p>
           <p className="text-[11px] text-white/45 mt-1">{b.entitlement} entitled {b.carriedForward ? `+${b.carriedForward} carried ` : ''}{b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
         </div>
       ))}
@@ -180,7 +180,7 @@ function PayTab({ p }: { p: Profile }) {
         {p.loans.map((l) => (
           <div key={l.id} className="text-sm py-2 border-t border-white/[0.05] first:border-t-0">
             <div className="flex justify-between"><span className="text-white/80">{human(l.type)} · {rs(l.amountCents)} over {l.installments} months from {l.firstPeriod}</span></div>
-            <div className="h-1.5 rounded-full bg-white/5 mt-2"><div className="h-full rounded-full bg-kds-green" style={{ width: `${l.amountCents ? (l.recoveredCents / l.amountCents) * 100 : 0}%` }} /></div>
+            <div className="h-1.5 rounded-full bg-white/5 mt-2"><div className="h-full rounded-full bg-primary" style={{ width: `${l.amountCents ? (l.recoveredCents / l.amountCents) * 100 : 0}%` }} /></div>
             <p className="text-[11px] text-white/45 mt-1">{rs(l.recoveredCents)} recovered · {rs(l.outstandingCents)} outstanding</p>
           </div>
         ))}
@@ -191,7 +191,7 @@ function PayTab({ p }: { p: Profile }) {
         {p.salaryHistory.map((s, i) => (
           <div key={i} className="flex justify-between text-sm py-1.5 border-t border-white/[0.05] first:border-t-0">
             <span className="text-white/70">{human(s.section)} · {day(s.effectiveDate)}</span>
-            <span className="text-white/85">{rs(s.grossCents)}{!s.applied && <span className="text-[10px] text-amber-400"> scheduled</span>}</span>
+            <span className="text-white/85">{rs(s.grossCents)}{!s.applied && <span className="text-[10px] text-amber-700"> scheduled</span>}</span>
           </div>
         ))}
       </div>
@@ -212,7 +212,7 @@ function LettersTab({ p }: { p: Profile }) {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
         {letters.map((l) => <button key={l.key} className="rounded-xl p-3 text-left text-sm font-bold text-white/80 hover:bg-white/[0.05]" style={card} onClick={() => render.mutate(l.key)}>{l.title}</button>)}
       </div>
-      {msg && <p className="text-xs text-amber-400 mt-3">{msg}</p>}
+      {msg && <p className="text-xs text-amber-700 mt-3">{msg}</p>}
     </div>
   )
 }
@@ -245,7 +245,7 @@ function LoginTab({ p }: { p: Profile }) {
             <button className={btnGhost} onClick={() => link.mutate(null)}>Unlink</button>
           </div>
         ) : error ? (
-          <p className="text-xs text-amber-400">{(error as Error).message}</p>
+          <p className="text-xs text-amber-700">{(error as Error).message}</p>
         ) : (
           <div className="flex gap-2">
             <select className={inp} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Login to link">
@@ -255,7 +255,7 @@ function LoginTab({ p }: { p: Profile }) {
             <button className={btn} disabled={!pick || link.isPending} onClick={() => link.mutate(pick)}>Link</button>
           </div>
         )}
-        {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+        {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
       </div>
       <KioskPinCard p={p} />
     </div>
@@ -284,7 +284,7 @@ function KioskPinCard({ p }: { p: Profile }) {
         <p className="text-xs text-white/45">This person has a login, so they clock in with it — no kiosk PIN needed.</p>
       ) : (
         <>
-          <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? '#34d399' : 'rgba(255,255,255,0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
+          <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? '#3f7d20' : 'rgb(var(--fg-rgb) / 0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
           <div className="flex gap-2">
             <input className={inp} inputMode="numeric" maxLength={6} placeholder="4–6 digits" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="New kiosk PIN" />
             <button className={btn} disabled={pin.length < 4 || save.isPending} onClick={() => save.mutate()}>{p.kioskPinSet ? 'Change' : 'Set'}</button>

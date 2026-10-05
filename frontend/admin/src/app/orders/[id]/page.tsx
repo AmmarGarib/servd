@@ -95,44 +95,44 @@ async function openInvoice(invoiceId: string) {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  received:  'bg-kds-blue/20 text-kds-blue',
-  confirmed: 'bg-kds-amber/20 text-kds-amber',
-  preparing: 'bg-kds-amber/20 text-kds-amber',
-  ready:     'bg-kds-green/20 text-kds-green',
-  completed: 'bg-kds-subtext/20 text-kds-subtext',
-  cancelled: 'bg-kds-red/20 text-kds-red',
-  rejected:  'bg-kds-red/30 text-kds-red',
-  refunded:  'bg-purple-900/20 text-purple-400',
+  received:  'bg-s-blue/20 text-s-blue',
+  confirmed: 'bg-s-amber/20 text-s-amber',
+  preparing: 'bg-s-amber/20 text-s-amber',
+  ready:     'bg-primary/20 text-primary-ink',
+  completed: 'bg-s-muted/20 text-s-muted',
+  cancelled: 'bg-s-red/20 text-s-red',
+  rejected:  'bg-s-red/30 text-s-red',
+  refunded:  'bg-purple-100/20 text-purple-700',
 }
 
 const SOURCE_COLORS: Record<string, string> = {
-  pos:       'bg-purple-900/40 text-purple-400',
-  servd:     'bg-blue-900/40 text-kds-blue',
-  cart:      'bg-orange-900/40 text-orange-400',
-  manual:    'bg-kds-card text-kds-subtext',
+  pos:       'bg-purple-100/40 text-purple-700',
+  servd:     'bg-blue-100/40 text-s-blue',
+  cart:      'bg-orange-100 text-orange-700',
+  manual:    'bg-s-surface text-s-muted',
 }
 
 const ITEM_STATUS_COLORS: Record<string, string> = {
-  pending:   'text-kds-subtext bg-kds-bg',
-  preparing: 'text-kds-amber bg-kds-amber/10',
-  ready:     'text-kds-green bg-kds-green/10',
-  bumped:    'text-kds-subtext/60 bg-kds-bg',
-  held:      'text-kds-blue bg-kds-blue/10',
-  recalled:  'text-kds-amber bg-kds-amber/10',
-  voided:    'text-kds-red bg-kds-red/10',
+  pending:   'text-s-muted bg-s-bg',
+  preparing: 'text-s-amber bg-s-amber/10',
+  ready:     'text-primary-ink bg-primary/10',
+  bumped:    'text-s-muted/60 bg-s-bg',
+  held:      'text-s-blue bg-s-blue/10',
+  recalled:  'text-s-amber bg-s-amber/10',
+  voided:    'text-s-red bg-s-red/10',
 }
 
 const PAYMENT_COLORS: Record<string, string> = {
-  cash:             'text-kds-green bg-kds-green/10',
-  card:             'text-kds-blue bg-kds-blue/10',
+  cash:             'text-primary-ink bg-primary/10',
+  card:             'text-s-blue bg-s-blue/10',
   // F-PAY02: jazzcash/easypaisa keys kept here only for historical rows that
   // existed before the enum drop — the map is a defensive lookup, dead values
   // are harmless. New rows can only land as cash/card/keenu_qr/split/comp.
-  jazzcash:         'text-orange-400 bg-orange-900/20',
-  easypaisa:        'text-green-400 bg-green-900/20',
-  keenu_qr:         'text-purple-400 bg-purple-900/20',
-  comp:             'text-kds-subtext bg-kds-card',
-  wallet:           'text-kds-amber bg-kds-amber/10',
+  jazzcash:         'text-orange-700 bg-orange-100',
+  easypaisa:        'text-green-700 bg-green-100/20',
+  keenu_qr:         'text-purple-700 bg-purple-100/20',
+  comp:             'text-s-muted bg-s-surface',
+  wallet:           'text-s-amber bg-s-amber/10',
 }
 
 const STATUS_NEXT: Record<string, string> = {
@@ -171,9 +171,9 @@ function RefundModal({
   })
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-kds-card border border-kds-border rounded-2xl p-6 max-w-sm w-full space-y-4">
-        <p className="font-bold text-kds-text text-lg">Refund / Cancel Order</p>
+    <div className="fixed inset-0 bg-secondary/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
+        <p className="font-bold text-s-text text-lg">Refund / Cancel Order</p>
         <div className="flex gap-2">
           {(['refund', 'cancel'] as const).map((m) => (
             <button
@@ -181,34 +181,34 @@ function RefundModal({
               onClick={() => setMode(m)}
               className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
                 mode === m
-                  ? 'bg-kds-green text-black border-kds-green'
-                  : 'border-kds-border text-kds-subtext hover:text-kds-text'
+                  ? 'bg-primary text-primary-on border-primary'
+                  : 'border-s-border text-s-muted hover:text-s-text'
               }`}>
               {m === 'refund' ? 'Refund' : 'Cancel (no refund)'}
             </button>
           ))}
         </div>
         <div>
-          <label className="text-xs text-kds-subtext block mb-1">Reason (required)</label>
+          <label className="text-xs text-s-muted block mb-1">Reason (required)</label>
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={3}
             placeholder="Explain the reason for this refund/cancellation…"
-            className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none resize-none"
+            className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none resize-none"
           />
         </div>
         {refund.isError && (
-          <p className="text-sm text-kds-red">{(refund.error as Error).message}</p>
+          <p className="text-sm text-s-red">{(refund.error as Error).message}</p>
         )}
         <div className="flex gap-3">
           <button
             onClick={() => refund.mutate()}
             disabled={refund.isPending || reason.trim().length < 3}
-            className="flex-1 rounded-xl bg-kds-red text-white text-sm font-bold py-2 hover:opacity-90 disabled:opacity-40">
+            className="flex-1 rounded-xl bg-s-red text-[#fff] text-sm font-bold py-2 hover:opacity-90 disabled:opacity-40">
             {refund.isPending ? 'Processing…' : mode === 'refund' ? 'Refund' : 'Cancel order'}
           </button>
-          <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border text-kds-subtext text-sm py-2 hover:border-kds-text">
+          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-text">
             Cancel
           </button>
         </div>
@@ -275,18 +275,18 @@ export default function OrderDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-kds-bg flex items-center justify-center">
-        <p className="text-kds-subtext">Loading order…</p>
+      <div className="min-h-screen bg-s-bg flex items-center justify-center">
+        <p className="text-s-muted">Loading order…</p>
       </div>
     )
   }
 
   if (isError || !order) {
     return (
-      <div className="min-h-screen bg-kds-bg flex items-center justify-center">
+      <div className="min-h-screen bg-s-bg flex items-center justify-center">
         <div className="text-center space-y-2">
-          <p className="text-kds-red font-semibold">Order not found</p>
-          <Link href="/orders" className="text-sm text-kds-subtext hover:text-kds-text">
+          <p className="text-s-red font-semibold">Order not found</p>
+          <Link href="/orders" className="text-sm text-s-muted hover:text-s-text">
             ← Back to orders
           </Link>
         </div>
@@ -311,7 +311,7 @@ export default function OrderDetailPage() {
   ].filter((e) => e.time !== null)
 
   return (
-    <div className="min-h-screen bg-kds-bg">
+    <div className="min-h-screen bg-s-bg">
       {refundOpen && (
         <RefundModal
           orderId={id}
@@ -321,14 +321,14 @@ export default function OrderDetailPage() {
       )}
 
       {/* ── Header ── */}
-      <header className="sticky top-0 z-10 bg-kds-bg/80 backdrop-blur border-b border-kds-border px-6 py-4">
+      <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <Link href="/orders" className="text-xs text-kds-subtext hover:text-kds-text">
+            <Link href="/orders" className="text-xs text-s-muted hover:text-s-text">
               ← Orders
             </Link>
             <div className="flex items-center gap-3 mt-0.5">
-              <h1 className="text-xl font-bold text-kds-text font-mono">
+              <h1 className="text-xl font-bold text-s-text font-mono">
                 #{order.id.slice(0, 8).toUpperCase()}
               </h1>
               <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${STATUS_COLORS[order.status] ?? ''}`}>
@@ -338,7 +338,7 @@ export default function OrderDetailPage() {
                 {order.source}
               </span>
             </div>
-            <p className="text-xs text-kds-subtext mt-0.5">
+            <p className="text-xs text-s-muted mt-0.5">
               {order.concept.name} ·{' '}
               {formatDistanceToNowStrict(new Date(order.placedAt))} ago ·{' '}
               {format(new Date(order.placedAt), 'dd MMM yyyy, HH:mm')}
@@ -351,7 +351,7 @@ export default function OrderDetailPage() {
               <button
                 onClick={() => updateStatus.mutate(nextStatus)}
                 disabled={updateStatus.isPending}
-                className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
                 {updateStatus.isPending ? '…' : STATUS_CTA[order.status]}
               </button>
             )}
@@ -360,18 +360,18 @@ export default function OrderDetailPage() {
                 setNoteDraft(order.deliveryNotes ?? '')
                 setNoteOpen(!noteOpen)
               }}
-              className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-green hover:text-kds-green transition-colors">
+              className="rounded-xl border border-s-border text-s-muted text-sm px-4 py-2 hover:border-primary hover:text-primary-ink transition-colors">
               {order.deliveryNotes ? 'Edit Note' : '+ Note'}
             </button>
             <button
               onClick={() => void reprintReceipt(order.id)}
-              className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-purple-400 hover:text-purple-400 transition-colors">
+              className="rounded-xl border border-s-border text-s-muted text-sm px-4 py-2 hover:border-purple-400 hover:text-purple-700 transition-colors">
               Print Receipt
             </button>
             {!['cancelled', 'refunded'].includes(order.status) && (
               <button
                 onClick={() => setRefundOpen(true)}
-                className="rounded-xl border border-kds-red/40 bg-kds-red/10 text-kds-red text-sm font-semibold px-4 py-2 hover:bg-kds-red/20 transition-colors">
+                className="rounded-xl border border-s-red/40 bg-s-red/10 text-s-red text-sm font-semibold px-4 py-2 hover:bg-s-red/20 transition-colors">
                 Refund
               </button>
             )}
@@ -385,18 +385,18 @@ export default function OrderDetailPage() {
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               placeholder="Add a note about this order…"
-              className="flex-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none"
+              className="flex-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none"
               autoFocus
             />
             <button
               onClick={() => saveNote.mutate(noteDraft)}
               disabled={saveNote.isPending}
-              className="rounded-lg bg-kds-green text-black font-bold px-4 py-2 text-xs hover:opacity-90 disabled:opacity-50">
+              className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-xs hover:opacity-90 disabled:opacity-50">
               {saveNote.isPending ? 'Saving…' : 'Save'}
             </button>
             <button
               onClick={() => setNoteOpen(false)}
-              className="text-xs text-kds-subtext hover:text-kds-text">
+              className="text-xs text-s-muted hover:text-s-text">
               Cancel
             </button>
           </div>
@@ -410,99 +410,99 @@ export default function OrderDetailPage() {
           <div className="space-y-5">
 
             {/* Customer */}
-            <div className="rounded-xl border border-kds-border bg-kds-card p-4">
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-3">Customer</p>
+            <div className="rounded-xl border border-s-border bg-s-surface p-4">
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-3">Customer</p>
               {order.customer ? (
                 <div className="space-y-1">
                   <Link
                     href={`/crm?customer=${order.customer.id}`}
-                    className="text-sm font-semibold text-kds-green hover:underline">
+                    className="text-sm font-semibold text-primary-ink hover:underline">
                     {order.customer.name}
                   </Link>
                   {order.customer.phone && (
-                    <p className="text-sm text-kds-subtext">{order.customer.phone}</p>
+                    <p className="text-sm text-s-muted">{order.customer.phone}</p>
                   )}
                   {order.customer.email && (
-                    <p className="text-xs text-kds-subtext">{order.customer.email}</p>
+                    <p className="text-xs text-s-muted">{order.customer.email}</p>
                   )}
                   {order.loyaltyPointsEarned != null && (
-                    <p className="text-xs text-kds-amber mt-1">
+                    <p className="text-xs text-s-amber mt-1">
                       +{order.loyaltyPointsEarned} loyalty pts earned
                     </p>
                   )}
                 </div>
               ) : (
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold text-kds-text">
+                  <p className="text-sm font-semibold text-s-text">
                     {order.customerName ?? order.table?.label ?? 'Guest'}
                   </p>
-                  <p className="text-xs text-kds-subtext">No linked account</p>
+                  <p className="text-xs text-s-muted">No linked account</p>
                 </div>
               )}
               {order.posStaff && (
-                <p className="text-xs text-kds-subtext mt-2">
-                  Served by: <span className="text-kds-text">{order.posStaff.name}</span>
+                <p className="text-xs text-s-muted mt-2">
+                  Served by: <span className="text-s-text">{order.posStaff.name}</span>
                 </p>
               )}
             </div>
 
             {/* Fulfilment */}
-            <div className="rounded-xl border border-kds-border bg-kds-card p-4">
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-3">Fulfilment</p>
+            <div className="rounded-xl border border-s-border bg-s-surface p-4">
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-3">Fulfilment</p>
               {order.curbsideVehicle ? (
                 <div className="space-y-1.5 text-sm">
-                  <p className="font-semibold text-kds-green">Curbside pickup</p>
-                  <p className="text-kds-subtext">Vehicle: {order.curbsideVehicle}</p>
-                  {order.curbsidePlate && <p className="text-kds-subtext">Plate: {order.curbsidePlate}</p>}
-                  {order.curbsideSpot && <p className="text-kds-subtext">Spot: {order.curbsideSpot}</p>}
+                  <p className="font-semibold text-primary-ink">Curbside pickup</p>
+                  <p className="text-s-muted">Vehicle: {order.curbsideVehicle}</p>
+                  {order.curbsidePlate && <p className="text-s-muted">Plate: {order.curbsidePlate}</p>}
+                  {order.curbsideSpot && <p className="text-s-muted">Spot: {order.curbsideSpot}</p>}
                   {order.curbsideArrivedAt ? (
-                    <p className="text-xs text-kds-green">
+                    <p className="text-xs text-primary-ink">
                       Arrived {formatDistanceToNowStrict(new Date(order.curbsideArrivedAt))} ago
                     </p>
                   ) : (
-                    <p className="text-xs text-kds-amber">En route</p>
+                    <p className="text-xs text-s-amber">En route</p>
                   )}
                 </div>
               ) : order.rider ? (
                 <div className="space-y-1 text-sm">
-                  <p className="font-semibold text-kds-text">Delivery</p>
-                  {order.deliveryNotes && <p className="text-kds-subtext text-xs">{order.deliveryNotes}</p>}
-                  <div className="pt-2 border-t border-kds-border/50 mt-2">
-                    <p className="text-xs text-kds-subtext">Rider: <span className="text-kds-text font-semibold">{order.rider.name}</span></p>
-                    <p className="text-xs text-kds-subtext">{order.rider.phone}</p>
+                  <p className="font-semibold text-s-text">Delivery</p>
+                  {order.deliveryNotes && <p className="text-s-muted text-xs">{order.deliveryNotes}</p>}
+                  <div className="pt-2 border-t border-s-border/50 mt-2">
+                    <p className="text-xs text-s-muted">Rider: <span className="text-s-text font-semibold">{order.rider.name}</span></p>
+                    <p className="text-xs text-s-muted">{order.rider.phone}</p>
                   </div>
                 </div>
               ) : order.table ? (
                 <div className="text-sm">
-                  <p className="font-semibold text-kds-text">Dine-in</p>
-                  <p className="text-kds-subtext">Table {order.table.label}</p>
+                  <p className="font-semibold text-s-text">Dine-in</p>
+                  <p className="text-s-muted">Table {order.table.label}</p>
                 </div>
               ) : (
-                <p className="text-sm text-kds-subtext capitalize">{order.source === 'pos' ? 'Point of sale' : 'Takeaway / pickup'}</p>
+                <p className="text-sm text-s-muted capitalize">{order.source === 'pos' ? 'Point of sale' : 'Takeaway / pickup'}</p>
               )}
               {order.deliveryNotes && (
-                <div className="mt-3 pt-3 border-t border-kds-border/50">
-                  <p className="text-xs text-kds-subtext">Note:</p>
-                  <p className="text-sm text-kds-text mt-0.5">{order.deliveryNotes}</p>
+                <div className="mt-3 pt-3 border-t border-s-border/50">
+                  <p className="text-xs text-s-muted">Note:</p>
+                  <p className="text-sm text-s-text mt-0.5">{order.deliveryNotes}</p>
                 </div>
               )}
             </div>
 
             {/* Timeline */}
             {timeline.length > 0 && (
-              <div className="rounded-xl border border-kds-border bg-kds-card p-4">
-                <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-3">Timeline</p>
+              <div className="rounded-xl border border-s-border bg-s-surface p-4">
+                <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-3">Timeline</p>
                 <div className="relative pl-4">
                   {timeline.map((ev, i) => (
                     <div key={ev.label} className="relative mb-3 last:mb-0">
                       {/* Line */}
                       {i < timeline.length - 1 && (
-                        <div className="absolute left-[-9px] top-4 w-px h-full bg-kds-border" />
+                        <div className="absolute left-[-9px] top-4 w-px h-full bg-s-border" />
                       )}
                       {/* Dot */}
-                      <div className="absolute left-[-13px] top-1.5 h-2 w-2 rounded-full bg-kds-green" />
-                      <p className="text-xs font-semibold text-kds-text">{ev.label}</p>
-                      <p className="text-[11px] text-kds-subtext">
+                      <div className="absolute left-[-13px] top-1.5 h-2 w-2 rounded-full bg-primary" />
+                      <p className="text-xs font-semibold text-s-text">{ev.label}</p>
+                      <p className="text-[11px] text-s-muted">
                         {ev.time ? format(new Date(ev.time), 'dd MMM yyyy, HH:mm') : '—'}
                       </p>
                     </div>
@@ -516,49 +516,49 @@ export default function OrderDetailPage() {
           <div className="lg:col-span-2 space-y-5">
 
             {/* Items table */}
-            <div className="rounded-xl border border-kds-border overflow-hidden">
-              <div className="px-4 py-3 bg-kds-card border-b border-kds-border flex items-center justify-between">
-                <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest">
+            <div className="rounded-xl border border-s-border overflow-hidden">
+              <div className="px-4 py-3 bg-s-surface border-b border-s-border flex items-center justify-between">
+                <p className="text-xs font-bold text-s-muted uppercase tracking-widest">
                   Items ({order.items.length})
                 </p>
               </div>
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-kds-card/50 border-b border-kds-border">
+                <thead className="bg-s-surface/50 border-b border-s-border">
                   <tr>
                     {['Item', 'Qty', 'Unit Price', 'Subtotal', 'Status', ''].map((h) => (
-                      <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-kds-subtext">{h}</th>
+                      <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-s-muted">{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-kds-border">
+                <tbody className="divide-y divide-s-border">
                   {order.items.map((item) => {
                     const modifiersTotal = item.modifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
                     const effectivePrice = item.unitPriceCents + modifiersTotal
                     const lineTotal = effectivePrice * item.quantity
                     return (
-                      <tr key={item.id} className="hover:bg-kds-card/40">
+                      <tr key={item.id} className="hover:bg-s-surface/40">
                         <td className="px-4 py-3">
-                          <p className="font-medium text-kds-text">{item.name}</p>
+                          <p className="font-medium text-s-text">{item.name}</p>
                           {item.modifiers.length > 0 && (
-                            <p className="text-xs text-kds-subtext mt-0.5">
+                            <p className="text-xs text-s-muted mt-0.5">
                               {item.modifiers.map((m) =>
                                 `${m.name}${m.priceDeltaCents !== 0 ? ` (${m.priceDeltaCents > 0 ? '+' : ''}${fmtPkrWhole(m.priceDeltaCents)})` : ''}`
                               ).join(', ')}
                             </p>
                           )}
                           {item.notes && (
-                            <p className="text-xs text-kds-amber mt-0.5 italic">{item.notes}</p>
+                            <p className="text-xs text-s-amber mt-0.5 italic">{item.notes}</p>
                           )}
                           {item.station && (
-                            <p className="text-[10px] text-kds-subtext/60 mt-0.5">{item.station.name}</p>
+                            <p className="text-[10px] text-s-muted/60 mt-0.5">{item.station.name}</p>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-kds-subtext">{item.quantity}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-kds-text">{fmtPkrWhole(effectivePrice)}</td>
-                        <td className="px-4 py-3 font-mono text-xs font-bold text-kds-green">{fmtPkrWhole(lineTotal)}</td>
+                        <td className="px-4 py-3 text-s-muted">{item.quantity}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-s-text">{fmtPkrWhole(effectivePrice)}</td>
+                        <td className="px-4 py-3 font-mono text-xs font-bold text-primary-ink">{fmtPkrWhole(lineTotal)}</td>
                         <td className="px-4 py-3">
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${ITEM_STATUS_COLORS[item.status] ?? 'text-kds-subtext'}`}>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${ITEM_STATUS_COLORS[item.status] ?? 'text-s-muted'}`}>
                             {item.status}
                           </span>
                         </td>
@@ -567,7 +567,7 @@ export default function OrderDetailPage() {
                             <button
                               onClick={() => promptVoid(item.id, item.name)}
                               disabled={voidLine.isPending}
-                              className="rounded-lg border border-kds-red/40 text-kds-red text-[11px] font-semibold px-2 py-1 hover:bg-kds-red/10 transition-colors disabled:opacity-50">
+                              className="rounded-lg border border-s-red/40 text-s-red text-[11px] font-semibold px-2 py-1 hover:bg-s-red/10 transition-colors disabled:opacity-50">
                               Void
                             </button>
                           )}
@@ -581,64 +581,64 @@ export default function OrderDetailPage() {
             </div>
 
             {/* Financials */}
-            <div className="rounded-xl border border-kds-border bg-kds-card p-4">
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-3">Financials</p>
+            <div className="rounded-xl border border-s-border bg-s-surface p-4">
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-3">Financials</p>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-kds-subtext">Items subtotal</span>
-                  <span className="font-mono text-kds-text">{fmtPkrWhole(itemsSubtotal)}</span>
+                  <span className="text-s-muted">Items subtotal</span>
+                  <span className="font-mono text-s-text">{fmtPkrWhole(itemsSubtotal)}</span>
                 </div>
                 {order.taxCents > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-kds-subtext">Tax</span>
-                    <span className="font-mono text-kds-text">{fmtPkrWhole(order.taxCents)}</span>
+                    <span className="text-s-muted">Tax</span>
+                    <span className="font-mono text-s-text">{fmtPkrWhole(order.taxCents)}</span>
                   </div>
                 )}
                 {order.tipCents > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-kds-subtext">Tip</span>
-                    <span className="font-mono text-kds-text">{fmtPkrWhole(order.tipCents)}</span>
+                    <span className="text-s-muted">Tip</span>
+                    <span className="font-mono text-s-text">{fmtPkrWhole(order.tipCents)}</span>
                   </div>
                 )}
                 {order.serviceChargeCents > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-kds-subtext">Service charge</span>
-                    <span className="font-mono text-kds-text">{fmtPkrWhole(order.serviceChargeCents)}</span>
+                    <span className="text-s-muted">Service charge</span>
+                    <span className="font-mono text-s-text">{fmtPkrWhole(order.serviceChargeCents)}</span>
                   </div>
                 )}
                 {order.discountCents > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-kds-subtext">Discount</span>
-                    <span className="font-mono text-kds-red">-{fmtPkrWhole(order.discountCents)}</span>
+                    <span className="text-s-muted">Discount</span>
+                    <span className="font-mono text-s-red">-{fmtPkrWhole(order.discountCents)}</span>
                   </div>
                 )}
                 {order.walletAmountCents > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-kds-subtext">Wallet used</span>
-                    <span className="font-mono text-kds-amber">-{fmtPkrWhole(order.walletAmountCents)}</span>
+                    <span className="text-s-muted">Wallet used</span>
+                    <span className="font-mono text-s-amber">-{fmtPkrWhole(order.walletAmountCents)}</span>
                   </div>
                 )}
-                <div className="flex justify-between pt-2 border-t border-kds-border">
-                  <span className="font-bold text-kds-text">Total</span>
-                  <span className="font-mono font-bold text-kds-green text-base">{fmtPkrWhole(order.totalCents)}</span>
+                <div className="flex justify-between pt-2 border-t border-s-border">
+                  <span className="font-bold text-s-text">Total</span>
+                  <span className="font-mono font-bold text-primary-ink text-base">{fmtPkrWhole(order.totalCents)}</span>
                 </div>
               </div>
 
               {/* Payments */}
               {order.payments.length > 0 && (
-                <div className="mt-4 pt-4 border-t border-kds-border space-y-2">
-                  <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">Payments</p>
+                <div className="mt-4 pt-4 border-t border-s-border space-y-2">
+                  <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Payments</p>
                   {order.payments.map((p) => (
                     <div key={p.id} className="flex items-center justify-between">
-                      <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${PAYMENT_COLORS[p.method] ?? 'text-kds-subtext bg-kds-bg'}`}>
+                      <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${PAYMENT_COLORS[p.method] ?? 'text-s-muted bg-s-bg'}`}>
                         {p.method.replace('_', ' ')}
                       </span>
                       <div className="text-right">
-                        <span className="font-mono text-sm font-bold text-kds-green">{fmtPkrWhole(p.amountCents)}</span>
+                        <span className="font-mono text-sm font-bold text-primary-ink">{fmtPkrWhole(p.amountCents)}</span>
                         {p.changeCents != null && p.changeCents > 0 && (
-                          <p className="text-xs text-kds-subtext">Change: {fmtPkrWhole(p.changeCents)}</p>
+                          <p className="text-xs text-s-muted">Change: {fmtPkrWhole(p.changeCents)}</p>
                         )}
-                        <p className="text-[10px] text-kds-subtext capitalize">{p.status}</p>
+                        <p className="text-[10px] text-s-muted capitalize">{p.status}</p>
                       </div>
                     </div>
                   ))}
@@ -647,19 +647,19 @@ export default function OrderDetailPage() {
 
               {/* Tax documents — the numbered invoice and any credit notes */}
               {(order.taxInvoices?.length ?? 0) > 0 && (
-                <div className="mt-4 pt-4 border-t border-kds-border space-y-2">
-                  <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">Tax documents</p>
+                <div className="mt-4 pt-4 border-t border-s-border space-y-2">
+                  <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Tax documents</p>
                   {order.taxInvoices!.map((inv) => (
                     <div key={inv.id} className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-mono text-sm text-kds-text">{inv.invoiceNumber}</p>
-                        <p className="text-[10px] text-kds-subtext">
+                        <p className="font-mono text-sm text-s-text">{inv.invoiceNumber}</p>
+                        <p className="text-[10px] text-s-muted">
                           {inv.type === 'credit_note' ? 'Credit note' : 'Tax invoice'} · {format(new Date(inv.issuedAt), 'dd MMM yyyy, HH:mm')}
                         </p>
                       </div>
                       <button
                         onClick={() => void openInvoice(inv.id)}
-                        className="rounded-lg border border-kds-border text-kds-subtext text-xs px-3 py-1.5 hover:border-kds-green hover:text-kds-green transition-colors">
+                        className="rounded-lg border border-s-border text-s-muted text-xs px-3 py-1.5 hover:border-primary hover:text-primary-ink transition-colors">
                         View
                       </button>
                     </div>

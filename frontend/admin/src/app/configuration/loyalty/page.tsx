@@ -227,7 +227,7 @@ function TierRow({ tier, expanded, onToggle, onSaved, onDeleted }: {
             <span className="font-bold text-s-text">{tier.displayName || tier.tier}</span>
             <span className="text-[10px] uppercase tracking-wider text-s-dim font-mono">{tier.tier}</span>
             {tier.isPaid && (
-              <span className="text-[10px] uppercase font-bold tracking-wider rounded-full px-2 py-0.5 bg-amber-400/10 text-amber-300 border border-amber-400/30">
+              <span className="text-[10px] uppercase font-bold tracking-wider rounded-full px-2 py-0.5 bg-amber-400/10 text-amber-700 border border-amber-400/30">
                 PAID · PKR {((tier.monthlyPriceCents ?? 0) / 100).toLocaleString()}/mo
               </span>
             )}
@@ -339,7 +339,7 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
 
   return (
     <div className={`p-5 ${isNew ? 'rounded-xl border border-s-teal bg-s-teal-dim/30' : 'border-t border-s-border bg-s-bg/30'} space-y-5`}>
-      {isNew && <p className="text-xs font-bold text-s-teal">+ New tier</p>}
+      {isNew && <p className="text-xs font-bold text-primary-ink">+ New tier</p>}
 
       {/* Identity */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -465,7 +465,7 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
         <div className="space-y-1.5">
           {form.customPerks.map((p, i) => (
             <div key={i} className="flex items-center gap-2 rounded-md bg-s-bg/40 px-3 py-2">
-              <span className="text-s-teal text-xs">•</span>
+              <span className="text-primary-ink text-xs">•</span>
               <span className="flex-1 text-sm text-s-text">{p}</span>
               <button onClick={() => removePerk(i)} className="text-[10px] text-s-dim hover:text-s-red">remove</button>
             </div>

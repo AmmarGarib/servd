@@ -32,20 +32,20 @@ async function reprintReceipt(orderId: string) {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  received:  'bg-kds-blue/20 text-kds-blue',
-  confirmed: 'bg-kds-amber/20 text-kds-amber',
-  preparing: 'bg-kds-amber/20 text-kds-amber',
-  ready:     'bg-kds-green/20 text-kds-green',
-  completed: 'bg-kds-subtext/20 text-kds-subtext',
-  cancelled: 'bg-kds-red/20 text-kds-red',
-  rejected:  'bg-kds-red/30 text-kds-red',
+  received:  'bg-s-blue/20 text-s-blue',
+  confirmed: 'bg-s-amber/20 text-s-amber',
+  preparing: 'bg-s-amber/20 text-s-amber',
+  ready:     'bg-primary/20 text-primary-ink',
+  completed: 'bg-s-muted/20 text-s-muted',
+  cancelled: 'bg-s-red/20 text-s-red',
+  rejected:  'bg-s-red/30 text-s-red',
 }
 
 const SOURCE_COLORS: Record<string, string> = {
-  pos:        'bg-purple-900/40 text-purple-400',
-  servd:      'bg-blue-900/40 text-kds-blue',
-  cart:       'bg-orange-900/40 text-orange-400',
-  manual:     'bg-kds-card text-kds-subtext',
+  pos:        'bg-purple-100/40 text-purple-700',
+  servd:      'bg-blue-100/40 text-s-blue',
+  cart:       'bg-orange-100 text-orange-700',
+  manual:     'bg-s-surface text-s-muted',
 }
 
 // Three live columns, not four. The CEO's flow has just two human actions on
@@ -178,26 +178,26 @@ export default function OrdersPage() {
   const selCount = selected.size
 
   return (
-    <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
-      <header className="border-b border-kds-border px-4 py-3 md:px-6 md:py-4 flex items-center justify-between gap-3">
+    <div className="h-screen flex flex-col bg-s-bg overflow-hidden">
+      <header className="border-b border-s-border px-4 py-3 md:px-6 md:py-4 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-black text-kds-text mt-0.5">Orders</h1>
-          <p className="text-xs md:text-sm text-kds-subtext">Live pipeline and history</p>
+          <h1 className="text-xl md:text-2xl font-black text-s-text mt-0.5">Orders</h1>
+          <p className="text-xs md:text-sm text-s-muted">Live pipeline and history</p>
         </div>
         <Link href="/expo"
-          className="shrink-0 rounded-xl border border-kds-border px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
+          className="shrink-0 rounded-xl border border-s-border px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
           Open Expo ↗
         </Link>
       </header>
 
       {/* ── Mobile concept filter strip ── */}
-      <div className="lg:hidden flex gap-2 overflow-x-auto px-4 py-2.5 border-b border-kds-border scrollbar-hide">
+      <div className="lg:hidden flex gap-2 overflow-x-auto px-4 py-2.5 border-b border-s-border scrollbar-hide">
         {[{ id: 'all', name: 'All', primaryColor: null }, ...concepts].map((c) => (
           <button key={c.id} onClick={() => setConceptFilter(c.id)}
             className={`shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
               conceptFilter === c.id
-                ? 'bg-kds-green text-black'
-                : 'bg-kds-card border border-kds-border text-kds-subtext'
+                ? 'bg-primary text-primary-on'
+                : 'bg-s-surface border border-s-border text-s-muted'
             }`}>
             {c.primaryColor && <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c.primaryColor }} />}
             {c.name}
@@ -207,14 +207,14 @@ export default function OrdersPage() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Concept sidebar (desktop only) ── */}
-        <aside className="hidden lg:block w-52 shrink-0 border-r border-kds-border overflow-y-auto">
-          <p className="px-4 pt-4 pb-2 text-xs font-bold text-kds-subtext uppercase tracking-widest">Concept</p>
+        <aside className="hidden lg:block w-52 shrink-0 border-r border-s-border overflow-y-auto">
+          <p className="px-4 pt-4 pb-2 text-xs font-bold text-s-muted uppercase tracking-widest">Concept</p>
           {[{ id: 'all', name: 'All concepts', primaryColor: null }, ...concepts].map((c) => (
             <button key={c.id} onClick={() => setConceptFilter(c.id)}
-              className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors border-b border-kds-border/40 ${
+              className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors border-b border-s-border/40 ${
                 conceptFilter === c.id
-                  ? 'bg-kds-card border-l-2 border-l-kds-green font-semibold text-kds-text'
-                  : 'text-kds-subtext hover:bg-kds-card/50'
+                  ? 'bg-s-surface border-l-2 border-l-primary font-semibold text-s-text'
+                  : 'text-s-muted hover:bg-s-surface/50'
               }`}>
               {c.primaryColor && <div className="h-4 w-4 rounded-full shrink-0" style={{ background: c.primaryColor }} />}
               {c.name}
@@ -222,10 +222,10 @@ export default function OrdersPage() {
           ))}
           {tab === 'live' && liveOrders.length > 0 && (
             <div className="px-4 pt-4 space-y-1">
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">Queue</p>
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Queue</p>
               {LIVE_STATUSES.map((s) => (grouped[s]?.length ?? 0) > 0 && (
                 <div key={s} className="flex items-center justify-between">
-                  <span className="text-xs text-kds-subtext capitalize">{s}</span>
+                  <span className="text-xs text-s-muted capitalize">{s}</span>
                   <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_COLORS[s] ?? ''}`}>
                     {grouped[s]?.length}
                   </span>
@@ -237,11 +237,11 @@ export default function OrdersPage() {
 
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           {/* ── Tabs ── */}
-          <div className="flex gap-1 px-6 pt-4 border-b border-kds-border pb-0">
+          <div className="flex gap-1 px-6 pt-4 border-b border-s-border pb-0">
             {(['live', 'history'] as Tab[]).map((t) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
-                  ${tab === t ? 'border-kds-green text-kds-green bg-kds-card' : 'border-transparent text-kds-subtext hover:text-kds-text'}`}>
+                  ${tab === t ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
                 {t === 'live'
                   ? `Live${liveOrders.length > 0 ? ` (${liveOrders.length})` : ''}`
                   : 'History'}
@@ -249,7 +249,7 @@ export default function OrdersPage() {
             ))}
             {canSeeReports && (
               <Link href="/reports"
-                className="ml-auto px-4 py-2 text-sm font-medium text-kds-subtext hover:text-kds-green transition-colors">
+                className="ml-auto px-4 py-2 text-sm font-medium text-s-muted hover:text-primary-ink transition-colors">
                 Sales by channel ↗
               </Link>
             )}
@@ -262,8 +262,8 @@ export default function OrdersPage() {
               liveOrders.length === 0 ? (
                 <div className="text-center py-16">
                   <p className="text-4xl mb-3">✅</p>
-                  <p className="font-semibold text-kds-text">Queue is clear</p>
-                  <p className="text-sm text-kds-subtext mt-1">New orders appear here automatically every 8 seconds</p>
+                  <p className="font-semibold text-s-text">Queue is clear</p>
+                  <p className="text-sm text-s-muted mt-1">New orders appear here automatically every 8 seconds</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5">
@@ -273,37 +273,37 @@ export default function OrdersPage() {
                         <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${STATUS_COLORS[s] ?? ''}`}>
                           {STATUS_LABEL[s]}
                         </span>
-                        <span className="text-xs text-kds-subtext">{grouped[s]?.length ?? 0}</span>
+                        <span className="text-xs text-s-muted">{grouped[s]?.length ?? 0}</span>
                       </div>
                       <div className="space-y-2">
                         {(grouped[s] ?? []).map((order) => (
                           <div key={order.id}
                             onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}
-                            className={`rounded-xl border bg-kds-card p-3 cursor-pointer transition-colors ${
-                              expandedId === order.id ? 'border-kds-green' : 'border-kds-border hover:border-kds-green/50'
+                            className={`rounded-xl border bg-s-surface p-3 cursor-pointer transition-colors ${
+                              expandedId === order.id ? 'border-primary' : 'border-s-border hover:border-primary/50'
                             }`}>
                             <div className="flex items-start justify-between gap-1">
-                              <p className="font-mono text-xs text-kds-subtext">#{order.id.slice(-5).toUpperCase()}</p>
+                              <p className="font-mono text-xs text-s-muted">#{order.id.slice(-5).toUpperCase()}</p>
                               <span className={`text-xs font-bold px-1.5 py-0.5 rounded uppercase ${SOURCE_COLORS[order.source] ?? ''}`}>
                                 {order.source}
                               </span>
                             </div>
-                            <p className="text-sm font-semibold text-kds-text mt-1 truncate">
+                            <p className="text-sm font-semibold text-s-text mt-1 truncate">
                               {order.customerName ?? order.table?.label ?? 'Guest'}
                             </p>
                             <div className="flex items-center justify-between mt-1.5">
-                              <span className="text-xs text-kds-subtext">{order.items.length} item{order.items.length !== 1 ? 's' : ''}</span>
-                              <span className="text-xs font-bold text-kds-green">{fmtPkrWhole(order.totalCents)}</span>
+                              <span className="text-xs text-s-muted">{order.items.length} item{order.items.length !== 1 ? 's' : ''}</span>
+                              <span className="text-xs font-bold text-primary-ink">{fmtPkrWhole(order.totalCents)}</span>
                             </div>
                             {expandedId === order.id && (
-                              <div className="mt-2 pt-2 border-t border-kds-border/50 space-y-1">
+                              <div className="mt-2 pt-2 border-t border-s-border/50 space-y-1">
                                 {order.items.map((item) => (
-                                  <p key={item.id} className="text-xs text-kds-subtext">{item.quantity}× {item.name}</p>
+                                  <p key={item.id} className="text-xs text-s-muted">{item.quantity}× {item.name}</p>
                                 ))}
                                 {STATUS_NEXT[s] && (
                                   <button onClick={(e) => { e.stopPropagation(); updateStatus.mutate({ id: order.id, s: STATUS_NEXT[s]! }) }}
                                     disabled={updateStatus.isPending}
-                                    className="mt-2 w-full rounded-lg bg-kds-green text-black text-xs font-bold py-1.5 hover:opacity-90 disabled:opacity-50">
+                                    className="mt-2 w-full rounded-lg bg-primary text-primary-on text-xs font-bold py-1.5 hover:opacity-90 disabled:opacity-50">
                                     {STATUS_CTA[s]}
                                   </button>
                                 )}
@@ -312,8 +312,8 @@ export default function OrdersPage() {
                           </div>
                         ))}
                         {(grouped[s]?.length ?? 0) === 0 && (
-                          <div className="rounded-xl border border-dashed border-kds-border/40 p-4 text-center">
-                            <p className="text-xs text-kds-subtext/40">—</p>
+                          <div className="rounded-xl border border-dashed border-s-border/40 p-4 text-center">
+                            <p className="text-xs text-s-muted/40">—</p>
                           </div>
                         )}
                       </div>
@@ -342,74 +342,74 @@ export default function OrdersPage() {
                   <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={sel} />
                   {(source || status || dateFrom) && (
                     <button onClick={() => { setSource(''); setStatus(''); setDateFrom('') }}
-                      className="text-xs text-kds-subtext hover:text-kds-red">Clear filters</button>
+                      className="text-xs text-s-muted hover:text-s-red">Clear filters</button>
                   )}
                 </div>
 
                 {histLoading ? (
-                  <p className="text-kds-subtext text-sm">Loading…</p>
+                  <p className="text-s-muted text-sm">Loading…</p>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-kds-border">
+                  <div className="overflow-x-auto rounded-xl border border-s-border">
                     <table className="w-full text-sm">
-                      <thead className="bg-kds-card border-b border-kds-border">
+                      <thead className="bg-s-surface border-b border-s-border">
                         <tr>
                           <th className="px-3 py-3 w-10">
                             <input
                               type="checkbox"
                               checked={histOrders.length > 0 && selected.size === histOrders.length}
                               onChange={toggleAll}
-                              className="rounded border-kds-border accent-kds-green cursor-pointer"
+                              className="rounded border-s-border accent-primary cursor-pointer"
                             />
                           </th>
                           {['#', 'Source', 'Concept', 'Customer', 'Items', 'Total', 'Status', 'When', '', ''].map((h, i) => (
-                            <th key={`${h}-${i}`} className="px-4 py-3 text-left font-semibold text-kds-subtext">{h}</th>
+                            <th key={`${h}-${i}`} className="px-4 py-3 text-left font-semibold text-s-muted">{h}</th>
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-kds-border">
+                      <tbody className="divide-y divide-s-border">
                         {histOrders.map((order: Order) => {
                           const noteState = notes[order.id] ?? { open: false, draft: order.deliveryNotes ?? '' }
                           const isSelected = selected.has(order.id)
                           return (
                             <>
                               <tr key={order.id}
-                                className={`hover:bg-kds-card/50 cursor-pointer transition-colors ${isSelected ? 'bg-kds-green/5' : ''}`}
+                                className={`hover:bg-s-surface/50 cursor-pointer transition-colors ${isSelected ? 'bg-primary/5' : ''}`}
                                 onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}>
                                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                                   <input
                                     type="checkbox"
                                     checked={isSelected}
                                     onChange={() => toggleSelect(order.id)}
-                                    className="rounded border-kds-border accent-kds-green cursor-pointer"
+                                    className="rounded border-s-border accent-primary cursor-pointer"
                                   />
                                 </td>
-                                <td className="px-4 py-3 font-mono text-xs text-kds-subtext">#{order.id.slice(-6).toUpperCase()}</td>
+                                <td className="px-4 py-3 font-mono text-xs text-s-muted">#{order.id.slice(-6).toUpperCase()}</td>
                                 <td className="px-4 py-3">
                                   <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${SOURCE_COLORS[order.source] ?? ''}`}>
                                     {order.source}
                                   </span>
                                 </td>
-                                <td className="px-4 py-3 text-kds-text">{order.concept.name}</td>
+                                <td className="px-4 py-3 text-s-text">{order.concept.name}</td>
                                 <td className="px-4 py-3">
                                   {order.customerName ? (
                                     <Link
                                       href={`/crm?search=${encodeURIComponent(order.customerName)}`}
                                       onClick={(e) => e.stopPropagation()}
-                                      className="text-blue-400 hover:text-blue-300 hover:underline transition-colors text-sm">
+                                      className="text-blue-700 hover:text-blue-700 hover:underline transition-colors text-sm">
                                       {order.customerName}
                                     </Link>
                                   ) : (
-                                    <span className="text-kds-subtext">{order.table?.label ?? '—'}</span>
+                                    <span className="text-s-muted">{order.table?.label ?? '—'}</span>
                                   )}
                                 </td>
-                                <td className="px-4 py-3 text-kds-subtext">{order.items.length}</td>
-                                <td className="px-4 py-3 font-bold text-kds-green">{fmtPkrWhole(order.totalCents)}</td>
+                                <td className="px-4 py-3 text-s-muted">{order.items.length}</td>
+                                <td className="px-4 py-3 font-bold text-primary-ink">{fmtPkrWhole(order.totalCents)}</td>
                                 <td className="px-4 py-3">
                                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[order.status] ?? ''}`}>
                                     {order.status}
                                   </span>
                                 </td>
-                                <td className="px-4 py-3 text-kds-subtext text-xs">
+                                <td className="px-4 py-3 text-s-muted text-xs">
                                   {formatDistanceToNowStrict(new Date(order.placedAt))} ago
                                 </td>
                                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -419,14 +419,14 @@ export default function OrdersPage() {
                                         ...prev,
                                         [order.id]: { open: !prev[order.id]?.open, draft: prev[order.id]?.draft ?? order.deliveryNotes ?? '' },
                                       }))}
-                                      className="text-xs px-2 py-1 rounded border border-kds-border/50 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors whitespace-nowrap">
+                                      className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
                                       {order.deliveryNotes ? 'Edit note' : '+ Note'}
                                     </button>
                                     {(order.source === 'pos' || order.status === 'completed' || order.status === 'cancelled') && (
                                       <button
                                         onClick={() => void reprintReceipt(order.id)}
                                         title="Reprint receipt"
-                                        className="text-xs px-2 py-1 rounded border border-kds-border/50 text-kds-subtext hover:border-purple-400 hover:text-purple-400 transition-colors whitespace-nowrap">
+                                        className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-purple-400 hover:text-purple-700 transition-colors whitespace-nowrap">
                                         🖨 Reprint
                                       </button>
                                     )}
@@ -435,7 +435,7 @@ export default function OrdersPage() {
                                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                   <Link
                                     href={`/orders/${order.id}`}
-                                    className="text-xs px-2 py-1 rounded border border-kds-border/50 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors whitespace-nowrap">
+                                    className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
                                     View →
                                   </Link>
                                 </td>
@@ -443,24 +443,24 @@ export default function OrdersPage() {
                               {/* Note inline editor */}
                               {noteState.open && (
                                 <tr key={`${order.id}-note`}>
-                                  <td colSpan={11} className="px-6 py-3 bg-kds-card/60 border-b border-kds-border">
+                                  <td colSpan={11} className="px-6 py-3 bg-s-surface/60 border-b border-s-border">
                                     <div className="flex items-center gap-3">
                                       <input
                                         value={noteState.draft}
                                         onChange={(e) => setNotes((prev) => ({ ...prev, [order.id]: { ...noteState, draft: e.target.value } }))}
                                         placeholder="Add a note about this order…"
-                                        className="flex-1 rounded-lg bg-kds-bg border border-kds-border px-3 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none"
+                                        className="flex-1 rounded-lg bg-s-bg border border-s-border px-3 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
                                         autoFocus
                                       />
                                       <button
                                         onClick={() => saveNote.mutate({ id: order.id, note: noteState.draft })}
                                         disabled={saveNote.isPending}
-                                        className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50 whitespace-nowrap">
+                                        className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50 whitespace-nowrap">
                                         {saveNote.isPending ? 'Saving…' : 'Save note'}
                                       </button>
                                       <button
                                         onClick={() => setNotes((prev) => ({ ...prev, [order.id]: { ...noteState, open: false } }))}
-                                        className="text-xs text-kds-subtext hover:text-kds-text">
+                                        className="text-xs text-s-muted hover:text-s-text">
                                         Cancel
                                       </button>
                                     </div>
@@ -470,17 +470,17 @@ export default function OrdersPage() {
                               {/* Expanded items */}
                               {expandedId === order.id && (
                                 <tr key={`${order.id}-x`}>
-                                  <td colSpan={11} className="px-6 py-3 bg-kds-card/40 border-b border-kds-border">
+                                  <td colSpan={11} className="px-6 py-3 bg-s-surface/40 border-b border-s-border">
                                     <div className="space-y-1">
                                       {order.items.map((item) => (
                                         <div key={item.id} className="flex items-center gap-3 text-xs">
-                                          <span className="text-kds-subtext">{item.quantity}×</span>
-                                          <span className="text-kds-text">{item.name}</span>
-                                          <span className="ml-auto text-kds-subtext">{fmtPkrWhole(item.unitPriceCents * item.quantity)}</span>
+                                          <span className="text-s-muted">{item.quantity}×</span>
+                                          <span className="text-s-text">{item.name}</span>
+                                          <span className="ml-auto text-s-muted">{fmtPkrWhole(item.unitPriceCents * item.quantity)}</span>
                                         </div>
                                       ))}
                                       {order.deliveryNotes && (
-                                        <p className="text-xs text-kds-subtext pt-2 border-t border-kds-border/50 mt-1">
+                                        <p className="text-xs text-s-muted pt-2 border-t border-s-border/50 mt-1">
                                           📍 {order.deliveryNotes}
                                         </p>
                                       )}
@@ -494,7 +494,7 @@ export default function OrdersPage() {
                       </tbody>
                     </table>
                     {histOrders.length === 0 && !histLoading && (
-                      <div className="py-12 text-center text-kds-subtext">No orders found</div>
+                      <div className="py-12 text-center text-s-muted">No orders found</div>
                     )}
                   </div>
                 )}
@@ -507,9 +507,9 @@ export default function OrdersPage() {
 
       {/* ════ BULK ACTION FLOATING BAR ════ */}
       {tab === 'history' && selCount >= 2 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-kds-border bg-kds-card shadow-2xl px-5 py-3">
-          <span className="text-sm font-semibold text-kds-text">{selCount} selected</span>
-          <div className="w-px h-5 bg-kds-border" />
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-s-border bg-s-surface shadow-2xl px-5 py-3">
+          <span className="text-sm font-semibold text-s-text">{selCount} selected</span>
+          <div className="w-px h-5 bg-s-border" />
           <button
             onClick={() => {
               const reason = window.prompt(`Reason for cancelling ${selCount} orders (required):`)?.trim() ?? ''
@@ -517,19 +517,19 @@ export default function OrdersPage() {
               bulkCancel.mutate({ ids: Array.from(selected), reason })
             }}
             disabled={bulkCancel.isPending || bulkUpdate.isPending}
-            className="rounded-lg border border-kds-red/40 bg-kds-red/10 text-kds-red font-semibold px-4 py-1.5 text-sm hover:bg-kds-red/20 transition-colors disabled:opacity-50">
+            className="rounded-lg border border-s-red/40 bg-s-red/10 text-s-red font-semibold px-4 py-1.5 text-sm hover:bg-s-red/20 transition-colors disabled:opacity-50">
             {bulkCancel.isPending ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
             onClick={() => bulkUpdate.mutate({ ids: Array.from(selected), s: 'completed' })}
             disabled={bulkUpdate.isPending}
-            className="rounded-lg border border-kds-green/40 bg-kds-green/10 text-kds-green font-semibold px-4 py-1.5 text-sm hover:bg-kds-green/20 transition-colors disabled:opacity-50">
+            className="rounded-lg border border-primary/40 bg-primary/10 text-primary-ink font-semibold px-4 py-1.5 text-sm hover:bg-primary/20 transition-colors disabled:opacity-50">
             {bulkUpdate.isPending ? 'Updating…' : 'Complete'}
           </button>
-          <div className="w-px h-5 bg-kds-border" />
+          <div className="w-px h-5 bg-s-border" />
           <button
             onClick={() => setSelected(new Set())}
-            className="text-xs text-kds-subtext hover:text-kds-text transition-colors">
+            className="text-xs text-s-muted hover:text-s-text transition-colors">
             Clear
           </button>
         </div>
@@ -538,4 +538,4 @@ export default function OrdersPage() {
   )
 }
 
-const sel = 'rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none'
+const sel = 'rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none'

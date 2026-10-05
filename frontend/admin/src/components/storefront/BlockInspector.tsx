@@ -121,7 +121,7 @@ function AnimationPreview({ animation, delay, duration }: { animation: Animation
       <div className="h-16 flex-1 rounded-lg bg-s-bg border border-s-border flex items-center justify-center overflow-hidden">
         <div key={`${run}-${animation}-${delay}-${duration}`}
           style={{ animation: `sfb-${animation} ${duration}ms ease-out ${delay}ms both` }}
-          className="px-3 py-1.5 rounded bg-s-teal text-black text-xs font-bold">
+          className="px-3 py-1.5 rounded bg-primary text-primary-on text-xs font-bold">
           Element
         </div>
       </div>
@@ -260,7 +260,7 @@ function GalleryFields({ block, set }: FP) {
           </div>
         </div>
       ))}
-      <button type="button" onClick={() => set({ images: [...images, { url: '' }] })} className="text-xs text-s-teal hover:underline">+ Add image</button>
+      <button type="button" onClick={() => set({ images: [...images, { url: '' }] })} className="text-xs text-primary-ink hover:underline">+ Add image</button>
     </>
   )
 }
@@ -276,7 +276,7 @@ function StatsFields({ block, set }: FP) {
           <button type="button" onClick={() => set({ stats: stats.filter((_, j) => j !== i) })} className="text-xs text-s-red px-1">Remove</button>
         </div>
       ))}
-      <button type="button" onClick={() => set({ stats: [...stats, { value: '', label: '' }] })} className="text-xs text-s-teal hover:underline">+ Add stat</button>
+      <button type="button" onClick={() => set({ stats: [...stats, { value: '', label: '' }] })} className="text-xs text-primary-ink hover:underline">+ Add stat</button>
     </>
   )
 }
@@ -293,7 +293,7 @@ function VoicesFields({ block, set }: FP) {
           <button type="button" onClick={() => set({ voices: voices.filter((_, j) => j !== i) })} className="text-xs text-s-red px-1">Remove</button>
         </div>
       ))}
-      <button type="button" onClick={() => set({ voices: [...voices, { brand: '', line: '' }] })} className="text-xs text-s-teal hover:underline">+ Add voice</button>
+      <button type="button" onClick={() => set({ voices: [...voices, { brand: '', line: '' }] })} className="text-xs text-primary-ink hover:underline">+ Add voice</button>
     </>
   )
 }

@@ -27,7 +27,7 @@ interface FoodCostData {
 }
 
 const STATUS_STYLES = {
-  good:     { badge: 's-badge-teal',  text: 'text-s-teal',  bar: 'bg-s-teal',  label: 'On Target ✓' },
+  good:     { badge: 's-badge-teal',  text: 'text-primary-ink',  bar: 'bg-s-teal',  label: 'On Target ✓' },
   warning:  { badge: 's-badge-amber', text: 'text-s-amber', bar: 'bg-s-amber', label: 'Watch ⚠' },
   critical: { badge: 's-badge-red',   text: 'text-s-red',   bar: 'bg-s-red',   label: 'Over Budget ✕' },
 }
@@ -71,7 +71,7 @@ export default function FoodCostPage() {
             <p className="text-xs text-s-muted">Accounting</p>
             <h1 className="text-xl font-bold text-s-text">Food Cost Analysis</h1>
           </div>
-          <Link href="/accounting" className="text-xs text-s-teal hover:underline">← Hub</Link>
+          <Link href="/accounting" className="text-xs text-primary-ink hover:underline">← Hub</Link>
         </div>
       </header>
 
@@ -116,7 +116,7 @@ export default function FoodCostPage() {
               onClick={() => { setDateFrom(p.from); setDateTo(p.to) }}
               className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
                 dateFrom === p.from && dateTo === p.to
-                  ? 'border-s-teal/40 bg-s-teal-dim text-s-teal'
+                  ? 'border-s-teal/40 bg-s-teal-dim text-primary-ink'
                   : 'border-s-border bg-s-surface text-s-muted hover:text-s-text'
               }`}>
               {p.label}
@@ -141,7 +141,7 @@ export default function FoodCostPage() {
               </div>
               <div className="s-card p-4">
                 <p className="metric-label">Variance</p>
-                <p className={`text-3xl font-black tabular-nums ${fc.variance > 0 ? 'text-s-red' : 'text-s-teal'}`}>
+                <p className={`text-3xl font-black tabular-nums ${fc.variance > 0 ? 'text-s-red' : 'text-primary-ink'}`}>
                   {fc.variance > 0 ? '+' : ''}{fc.variance}%
                 </p>
                 <span className={`s-badge ${styles?.badge} text-[10px] mt-1 inline-block`}>{styles?.label}</span>
@@ -175,7 +175,7 @@ export default function FoodCostPage() {
               </div>
               <div className="flex justify-between text-[11px] text-s-muted">
                 <span>0%</span>
-                <span className="text-s-teal">30% target</span>
+                <span className="text-primary-ink">30% target</span>
                 <span>35%</span>
                 <span>50%+</span>
               </div>
@@ -193,7 +193,7 @@ export default function FoodCostPage() {
                       onClick={() => setSortKey(k)}
                       className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
                         sortKey === k
-                          ? 'border-s-teal/40 bg-s-teal-dim text-s-teal'
+                          ? 'border-s-teal/40 bg-s-teal-dim text-primary-ink'
                           : 'border-s-border bg-s-surface text-s-muted hover:text-s-text'
                       }`}>
                       {k === 'totalCost' ? 'By Cost' : k === 'foodCostPct' ? 'By FC%' : 'By Qty'}
@@ -233,10 +233,10 @@ export default function FoodCostPage() {
                           <td className="text-right text-s-muted">{fmtPkrWhole(item.costPerPortion)}</td>
                           <td className="text-right font-semibold text-s-text">{fmtPkrWhole(item.totalCost)}</td>
                           <td className="text-right text-s-muted">{fmtPkrWhole(item.revenue)}</td>
-                          <td className={`text-right font-bold ${fcHigh ? 'text-s-red' : fcWarn ? 'text-s-amber' : 'text-s-teal'}`}>
+                          <td className={`text-right font-bold ${fcHigh ? 'text-s-red' : fcWarn ? 'text-s-amber' : 'text-primary-ink'}`}>
                             {item.foodCostPct}%
                           </td>
-                          <td className={`text-right font-bold ${item.marginPct < 50 ? 'text-s-amber' : 'text-s-teal'}`}>
+                          <td className={`text-right font-bold ${item.marginPct < 50 ? 'text-s-amber' : 'text-primary-ink'}`}>
                             {item.marginPct}%
                           </td>
                         </tr>
@@ -254,7 +254,7 @@ export default function FoodCostPage() {
                   <p className="font-semibold text-s-amber text-sm">
                     ⚠ {data!.itemsWithoutRecipe.length} items sold without recipes (excluded from analysis)
                   </p>
-                  <Link href="/accounting/recipes" className="text-xs text-s-teal hover:underline">Build Recipes →</Link>
+                  <Link href="/accounting/recipes" className="text-xs text-primary-ink hover:underline">Build Recipes →</Link>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {data!.itemsWithoutRecipe.map((item) => (

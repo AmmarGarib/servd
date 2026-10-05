@@ -82,15 +82,15 @@ export function TenantField({
   return (
     <label className={`block ${className ?? ''}`}>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
-          {label}{required && <span className="text-red-400"> *</span>}
+        <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
+          {label}{required && <span className="text-red-700"> *</span>}
         </span>
-        <span className="text-[10px] text-kds-subtext/70">{hint}</span>
+        <span className="text-[10px] text-s-muted/70">{hint}</span>
       </div>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none">
+        className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none">
         {viewAll && !value && <option value="">— pick a company —</option>}
         {tenants.map((t) => (
           <option key={t.id} value={t.id}>{t.name}</option>
@@ -134,7 +134,7 @@ export function TenantChip({
   if (!resolved && !tenantId) {
     return (
       <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-        style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}
+        style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
         title="No company assigned — edit to fix.">
         {fallback}
       </span>
@@ -148,7 +148,7 @@ export function TenantChip({
 
   return (
     <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-      style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+      style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
       {resolved.name}
     </span>
   )

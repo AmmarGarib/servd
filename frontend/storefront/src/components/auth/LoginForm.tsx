@@ -8,7 +8,7 @@ import { MagneticButton } from '../ui/MagneticButton'
 
 // The storefront's sign-in form (email/password → /auth/customer/login →
 // setAuth). Shared by /login and the `signup_form` block (mode 'login') so
-// there is exactly one sign-in flow. Styled for a dark plum surface — callers
+// there is exactly one sign-in flow. Styled for a dark purple surface — callers
 // put it on one.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -90,7 +90,7 @@ export function LoginForm({
         </div>
 
         <MagneticButton type="submit" disabled={loading}
-          className="group w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-white text-[#4E2A4F] hover:bg-white/90"
+          className="group w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-[var(--servd-green)] text-[color:var(--servd-on-green)] hover:bg-[var(--servd-green-hover)]"
           style={{ boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>
           {loading ? 'Signing in…' : 'Sign in'}
           {!loading && <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />}

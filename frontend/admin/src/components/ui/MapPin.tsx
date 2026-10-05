@@ -170,7 +170,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
     if (markerRef.current) { markerRef.current.setLatLng([lat, lng]); return }
     const icon = L.divIcon({
       className: '',
-      html: `<div style="width:22px;height:22px;background:#00D4B1;border:3px solid #000;border-radius:50% 50% 50% 0;transform:rotate(-45deg) translate(-50%,-100%);box-shadow:0 4px 12px rgba(0,0,0,0.5);"></div>`,
+      html: `<div style="width:22px;height:22px;background:var(--erp-primary);border:3px solid #3d1f3b;border-radius:50% 50% 50% 0;transform:rotate(-45deg) translate(-50%,-100%);box-shadow:0 4px 12px rgba(0,0,0,0.5);"></div>`,
       iconSize: [22, 22], iconAnchor: [0, 0],
     })
     const marker = L.marker([lat, lng], { draggable: true, icon }).addTo(map)
@@ -236,7 +236,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
   }
 
   const lat = value.lat, lng = value.lng
-  const inputCls = 'w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none'
+  const inputCls = 'w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none'
 
   return (
     <div className="space-y-2">
@@ -256,12 +256,12 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
             className={inputCls}
           />
           <button type="button" onClick={() => void resolveMapsLink(mapsLink)} disabled={resolving || !mapsLink.trim()}
-            className="rounded-lg bg-kds-green px-3 py-2 text-xs font-bold text-black hover:opacity-90 disabled:opacity-40 whitespace-nowrap">
+            className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-40 whitespace-nowrap">
             {resolving ? 'Finding…' : 'Drop pin'}
           </button>
         </div>
         {resolvedName && (
-          <p className="text-[11px] mt-1" style={{ color: '#00D4B1' }}>Pinned to “{resolvedName}” from the link.</p>
+          <p className="text-[11px] mt-1" style={{ color: 'var(--erp-primary-ink)' }}>Pinned to “{resolvedName}” from the link.</p>
         )}
       </div>
 
@@ -276,7 +276,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ittehad Commercial, DHA Phase 6" className={inputCls} />
           {(searching || results.length > 0) && (
             <div className="absolute top-full left-0 right-0 mt-1 z-[1000] rounded-lg overflow-hidden"
-              style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 12px 28px rgba(0,0,0,0.5)' }}>
+              style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(61 31 59 / 0.18)' }}>
               {searching && <p className="text-xs text-white/45 px-3 py-2">Searching…</p>}
               {results.map((r, i) => (
                 <button key={i} type="button" onClick={() => pick(r)} className="w-full text-left px-3 py-2 text-xs text-white/75 hover:bg-white/[0.05]">
@@ -289,13 +289,13 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
       </div>
 
       <p className="text-[11px] text-white/45 flex items-center gap-1.5">
-        <span className="text-kds-green">●</span>
+        <span className="text-primary-ink">●</span>
         Click anywhere on the map to drop a pin, then drag it to fine-tune.
         {!useGoogle && <span className="text-white/30">· Showing OpenStreetMap tiles — add a Google Maps API key to switch to Google.</span>}
       </p>
 
       <div className="rounded-xl overflow-hidden border border-white/[0.08] relative" style={{ height }}>
-        <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#1a1d24' }} />
+        <div ref={containerRef} style={{ width: '100%', height: '100%', background: 'var(--elevated)' }} />
         {!mapReady && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <p className="text-xs text-white/35">Loading map…</p>
@@ -325,7 +325,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
       </details>
 
       {hint && <p className="text-[11px] text-white/35">{hint}</p>}
-      {error && <p className="text-[11px] text-red-400">{error}</p>}
+      {error && <p className="text-[11px] text-red-700">{error}</p>}
     </div>
   )
 }

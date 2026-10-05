@@ -141,17 +141,17 @@ export default function FloorplanPage() {
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           <select value={conceptId} onChange={(e) => { setConceptId(e.target.value); setFloorId('') }}
-            className="bg-white border border-s-border rounded px-2 py-1 text-sm">
+            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
 
-          <div className="rounded-full border border-s-border bg-white p-0.5 flex">
+          <div className="rounded-full border border-s-border bg-s-surface p-0.5 flex">
             <button onClick={() => setMode('live')}  aria-pressed={mode === 'live'}
-              className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'live' ? 'bg-s-teal text-white' : 'text-s-text'}`}>
+              className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'live' ? 'bg-primary text-primary-on' : 'text-s-text'}`}>
               ● Live
             </button>
             <button onClick={() => setMode('edit')} aria-pressed={mode === 'edit'}
-              className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'edit' ? 'bg-black text-white' : 'text-s-text'}`}>
+              className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'edit' ? 'bg-primary text-primary-on' : 'text-s-text'}`}>
               Edit
             </button>
           </div>
@@ -167,7 +167,7 @@ export default function FloorplanPage() {
               onClick={() => setFloorId(f.id)}
               aria-pressed={floorId === f.id}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${
-                floorId === f.id ? 'bg-black text-white border-black' : 'bg-white border-s-border text-s-text hover:bg-s-bg-soft'
+                floorId === f.id ? 'bg-primary text-primary-on border-primary' : 'bg-s-surface border-s-border text-s-text hover:bg-s-bg-soft'
               }`}
             >
               {f.name} <span className="ml-1 opacity-60">{f.tables.length}</span>
@@ -175,14 +175,14 @@ export default function FloorplanPage() {
           ))}
           <button
             onClick={() => setShowNewFloor(true)}
-            className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-white border-dashed border-s-border text-s-muted hover:bg-s-bg-soft"
+            className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-s-surface border-dashed border-s-border text-s-muted hover:bg-s-bg-soft"
           >
             + New floor
           </button>
           {currentFloor && (
             <button
               onClick={() => setShowLayouts(true)}
-              className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-white border-s-border text-s-text hover:bg-s-bg-soft"
+              className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-s-surface border-s-border text-s-text hover:bg-s-bg-soft"
               title="Drop a pre-built table arrangement onto this floor"
             >
               📐 Layouts
@@ -212,7 +212,7 @@ export default function FloorplanPage() {
                 }
                 if (e.key === 'Escape') setShowNewFloor(false)
               }}
-              className="flex-1 bg-white border border-s-border rounded px-2 py-1 text-sm"
+              className="flex-1 bg-s-surface border border-s-border rounded px-2 py-1 text-sm"
             />
             <button onClick={() => setShowNewFloor(false)} className="text-xs text-s-muted">Cancel</button>
           </div>
@@ -236,12 +236,12 @@ export default function FloorplanPage() {
             </p>
             <div className="flex flex-wrap gap-2">
               {unplaced.map((t) => (
-                <span key={t.id} className="inline-flex items-center gap-2 rounded-full border border-s-border bg-white px-3 py-1 text-xs">
+                <span key={t.id} className="inline-flex items-center gap-2 rounded-full border border-s-border bg-s-surface px-3 py-1 text-xs">
                   <span className="font-semibold">{t.label}</span>
                   {t.capacity != null && <span className="text-s-muted">{t.capacity} seats</span>}
                   {currentFloor ? (
                     <button onClick={() => placeTable.mutate(t.id)} disabled={placeTable.isPending}
-                      className="text-s-teal hover:underline disabled:opacity-50">
+                      className="text-primary-ink hover:underline disabled:opacity-50">
                       Place on {currentFloor.name}
                     </button>
                   ) : (
@@ -269,7 +269,7 @@ export default function FloorplanPage() {
         )}
 
         <p className="text-xs text-s-muted mt-6">
-          See reservations on the <Link href="/reservations" className="text-s-teal hover:underline">reservations page</Link>.
+          See reservations on the <Link href="/reservations" className="text-primary-ink hover:underline">reservations page</Link>.
         </p>
       </div>
     </div>

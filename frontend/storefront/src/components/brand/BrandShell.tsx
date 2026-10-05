@@ -36,7 +36,8 @@ export function BrandShell({ concept, children }: Props) {
   // accents get black ink, dark accents (flipd blue, stackd plum, simmer
   // green, servd royal blue) get white. Defaults to white when
   // we can't parse the accent (e.g. it's a CSS var name).
-  const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
+  const accentInk = !concept.primaryColor ? 'var(--servd-on-green)'   // servd default green → purple ink
+    : accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
   const surface = brandSurface(concept.slug)
   // The ?turf=muted A/B switch lived here: it overrode --flipd-sky/-green/
   // -pale/-ink so the two padel-court shade sets could be compared live.

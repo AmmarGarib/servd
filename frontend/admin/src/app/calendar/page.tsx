@@ -36,10 +36,10 @@ interface CalEvent {
 const TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: string; emoji: string }> = {
   social_post:         { label: 'Social Post',  color: '#3b82f6', bg: 'bg-blue-500',   emoji: '📱' },
   menu_change:         { label: 'Menu Change',  color: '#f97316', bg: 'bg-orange-500', emoji: '🍽' },
-  seasonal_ingredient: { label: 'Seasonal',     color: '#22c55e', bg: 'bg-green-500',  emoji: '🌿' },
-  deal:                { label: 'Deal',          color: '#a855f7', bg: 'bg-purple-500', emoji: '🎁' },
-  shoot:               { label: 'Shoot',         color: '#ec4899', bg: 'bg-pink-500',   emoji: '📸' },
-  event_promo:         { label: 'Event/Promo',   color: '#ef4444', bg: 'bg-red-500',    emoji: '🎉' },
+  seasonal_ingredient: { label: 'Seasonal',     color: '#3f7d20', bg: 'bg-green-500',  emoji: '🌿' },
+  deal:                { label: 'Deal',          color: '#6b2f68', bg: 'bg-purple-500', emoji: '🎁' },
+  shoot:               { label: 'Shoot',         color: '#be185d', bg: 'bg-pink-500',   emoji: '📸' },
+  event_promo:         { label: 'Event/Promo',   color: '#b42318', bg: 'bg-red-500',    emoji: '🎉' },
   reminder:            { label: 'Reminder',      color: '#eab308', bg: 'bg-yellow-500', emoji: '🔔' },
   task:                { label: 'Task',           color: '#64748b', bg: 'bg-slate-500',  emoji: '✅' },
 }
@@ -111,19 +111,19 @@ export default function CalendarPage() {
   const dayEvents = selectedDay ? eventsForDay(selectedDay) : []
 
   return (
-    <div className="flex h-screen flex-col bg-kds-bg text-kds-text">
+    <div className="flex h-screen flex-col bg-s-bg text-s-text">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-kds-border bg-kds-card px-6 py-3">
+      <div className="flex items-center justify-between border-b border-s-border bg-s-surface px-6 py-3">
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-black">Content Calendar</h1>
           <div className="flex items-center gap-1">
-            <button onClick={prevMonth} className="rounded p-1 hover:bg-kds-border text-lg">‹</button>
+            <button onClick={prevMonth} className="rounded p-1 hover:bg-s-elevated text-lg">‹</button>
             <span className="min-w-36 text-center font-semibold">{monthLabel}</span>
-            <button onClick={nextMonth} className="rounded p-1 hover:bg-kds-border text-lg">›</button>
+            <button onClick={nextMonth} className="rounded p-1 hover:bg-s-elevated text-lg">›</button>
           </div>
           <button
             onClick={() => setViewMonth({ year: today.getFullYear(), month: today.getMonth() })}
-            className="rounded border border-kds-border px-2 py-1 text-xs text-kds-subtext hover:text-kds-text"
+            className="rounded border border-s-border px-2 py-1 text-xs text-s-muted hover:text-s-text"
           >
             Today
           </button>
@@ -131,14 +131,14 @@ export default function CalendarPage() {
         <div className="flex items-center gap-3">
           {/* Filters */}
           <select value={filterDept} onChange={(e) => setFilterDept(e.target.value)}
-            className="rounded-lg border border-kds-border bg-kds-bg px-2 py-1 text-xs text-kds-text">
+            className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text">
             <option value="">All Departments</option>
             {DEPT_OPTIONS.filter(Boolean).map((d) => (
               <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>
             ))}
           </select>
           <select value={filterType} onChange={(e) => setFilterType(e.target.value as EventType | '')}
-            className="rounded-lg border border-kds-border bg-kds-bg px-2 py-1 text-xs text-kds-text">
+            className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text">
             <option value="">All Types</option>
             {Object.entries(TYPE_CONFIG).map(([k, v]) => (
               <option key={k} value={k}>{v.emoji} {v.label}</option>
@@ -146,7 +146,7 @@ export default function CalendarPage() {
           </select>
           <button
             onClick={() => setCreateOnDay(today)}
-            className="rounded-lg bg-kds-green px-4 py-1.5 text-sm font-bold text-black hover:opacity-90"
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm font-bold text-primary-on hover:opacity-90"
           >
             + New Event
           </button>
@@ -157,9 +157,9 @@ export default function CalendarPage() {
         {/* Calendar grid */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Day headers */}
-          <div className="grid grid-cols-7 border-b border-kds-border">
+          <div className="grid grid-cols-7 border-b border-s-border">
             {DAYS.map((d) => (
-              <div key={d} className="py-2 text-center text-xs font-bold uppercase tracking-wider text-kds-subtext">
+              <div key={d} className="py-2 text-center text-xs font-bold uppercase tracking-wider text-s-muted">
                 {d}
               </div>
             ))}
@@ -170,7 +170,7 @@ export default function CalendarPage() {
             <div className="grid grid-cols-7" style={{ gridAutoRows: 'minmax(80px, 1fr)' }}>
               {grid.map((day, i) => {
                 if (!day) return (
-                  <div key={`empty-${i}`} className="border-b border-r border-kds-border bg-kds-bg/30 p-1" />
+                  <div key={`empty-${i}`} className="border-b border-r border-s-border bg-s-bg/30 p-1" />
                 )
                 const dayEvts = eventsForDay(day)
                 const isToday = isSameDay(day, today)
@@ -180,12 +180,12 @@ export default function CalendarPage() {
                   <div
                     key={day.toISOString()}
                     onClick={() => setSelectedDay(isSelected ? null : day)}
-                    className={`cursor-pointer border-b border-r border-kds-border p-1 transition-colors hover:bg-kds-card/60
-                      ${isSelected ? 'bg-kds-card ring-1 ring-inset ring-kds-green' : ''}
+                    className={`cursor-pointer border-b border-r border-s-border p-1 transition-colors hover:bg-s-elevated/60
+                      ${isSelected ? 'bg-s-surface ring-1 ring-inset ring-primary' : ''}
                     `}
                   >
                     <div className={`mb-1 flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold
-                      ${isToday ? 'bg-kds-green text-black' : 'text-kds-subtext'}
+                      ${isToday ? 'bg-primary text-primary-on' : 'text-s-muted'}
                     `}>
                       {day.getDate()}
                     </div>
@@ -204,7 +204,7 @@ export default function CalendarPage() {
                         )
                       })}
                       {dayEvts.length > 3 && (
-                        <div className="text-xs text-kds-subtext pl-1">+{dayEvts.length - 3} more</div>
+                        <div className="text-xs text-s-muted pl-1">+{dayEvts.length - 3} more</div>
                       )}
                     </div>
                   </div>
@@ -216,25 +216,25 @@ export default function CalendarPage() {
 
         {/* Day detail sidebar */}
         {selectedDay && (
-          <div className="w-80 shrink-0 overflow-y-auto border-l border-kds-border bg-kds-card p-4">
+          <div className="w-80 shrink-0 overflow-y-auto border-l border-s-border bg-s-surface p-4">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="font-bold">{fmtDate(selectedDay)}</h2>
               <button
                 onClick={() => setCreateOnDay(selectedDay)}
-                className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black"
+                className="rounded-lg bg-primary px-3 py-1 text-xs font-bold text-primary-on"
               >
                 + Add
               </button>
             </div>
             {dayEvents.length === 0 && (
-              <p className="text-sm text-kds-subtext">Nothing planned. Click + Add to schedule something.</p>
+              <p className="text-sm text-s-muted">Nothing planned. Click + Add to schedule something.</p>
             )}
             {dayEvents.map((e) => {
               const cfg = TYPE_CONFIG[e.type]
               return (
                 <div key={e.id}
                   onClick={() => setEditEvent(e)}
-                  className="mb-3 cursor-pointer rounded-xl border border-kds-border p-3 hover:border-kds-green/50 transition-colors"
+                  className="mb-3 cursor-pointer rounded-xl border border-s-border p-3 hover:border-primary/50 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-base">{cfg.emoji}</span>
@@ -242,23 +242,23 @@ export default function CalendarPage() {
                     <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-bold text-white`}
                       style={{ backgroundColor: cfg.color }}>{cfg.label}</span>
                   </div>
-                  {e.description && <p className="text-xs text-kds-subtext line-clamp-2">{e.description}</p>}
-                  {e.assignee && <p className="text-xs text-kds-subtext mt-1">👤 {e.assignee.name}</p>}
+                  {e.description && <p className="text-xs text-s-muted line-clamp-2">{e.description}</p>}
+                  {e.assignee && <p className="text-xs text-s-muted mt-1">👤 {e.assignee.name}</p>}
                   {e.socialPost && (
                     <div className="mt-1 text-xs">
-                      <span className={`font-bold ${e.socialPost.status === 'published' ? 'text-kds-green' : e.socialPost.status === 'failed' ? 'text-kds-red' : 'text-kds-amber'}`}>
+                      <span className={`font-bold ${e.socialPost.status === 'published' ? 'text-primary-ink' : e.socialPost.status === 'failed' ? 'text-s-red' : 'text-s-amber'}`}>
                         {e.socialPost.platform} · {e.socialPost.status}
                       </span>
                     </div>
                   )}
                   <div className="mt-1.5 flex items-center gap-2">
                     <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                      e.status === 'done' ? 'border-kds-green text-kds-green' :
-                      e.status === 'live' ? 'border-kds-amber text-kds-amber' :
-                      e.status === 'cancelled' ? 'border-kds-red text-kds-red' :
-                      'border-kds-border text-kds-subtext'
+                      e.status === 'done' ? 'border-primary text-primary-ink' :
+                      e.status === 'live' ? 'border-s-amber text-s-amber' :
+                      e.status === 'cancelled' ? 'border-s-red text-s-red' :
+                      'border-s-border text-s-muted'
                     }`}>{e.status}</span>
-                    {e.department && <span className="text-xs text-kds-subtext">{e.department}</span>}
+                    {e.department && <span className="text-xs text-s-muted">{e.department}</span>}
                   </div>
                 </div>
               )
@@ -268,7 +268,7 @@ export default function CalendarPage() {
       </div>
 
       {/* Event type legend */}
-      <div className="flex gap-4 border-t border-kds-border bg-kds-card px-6 py-2 overflow-x-auto">
+      <div className="flex gap-4 border-t border-s-border bg-s-surface px-6 py-2 overflow-x-auto">
         {Object.entries(TYPE_CONFIG).map(([k, v]) => (
           <button
             key={k}
@@ -369,8 +369,8 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70" onClick={onClose}>
-      <div className="w-full max-w-xl rounded-t-2xl bg-kds-card p-5 max-h-[90vh] overflow-y-auto"
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-secondary/40" onClick={onClose}>
+      <div className="w-full max-w-xl rounded-t-2xl bg-s-surface p-5 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-bold text-lg">{event ? 'Edit Event' : 'New Event'}</h2>
@@ -378,69 +378,69 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
             {event && (
               <button
                 onClick={() => { if (window.confirm('Delete this event?')) deleteMutation.mutate() }}
-                className="rounded-lg border border-kds-red px-3 py-1 text-xs text-kds-red hover:bg-kds-red/10"
+                className="rounded-lg border border-s-red px-3 py-1 text-xs text-s-red hover:bg-s-red/10"
               >
                 Delete
               </button>
             )}
-            <button onClick={onClose} className="text-kds-subtext text-2xl leading-none">✕</button>
+            <button onClick={onClose} className="text-s-muted text-2xl leading-none">✕</button>
           </div>
         </div>
 
         {/* Tabs (only show social tab for social_post type) */}
         {type === 'social_post' && (
-          <div className="mb-4 flex gap-1 rounded-lg border border-kds-border p-1 text-xs font-bold">
-            <button onClick={() => setTab('details')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'details' ? 'bg-kds-green text-black' : 'text-kds-subtext'}`}>Details</button>
-            <button onClick={() => setTab('social')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'social' ? 'bg-kds-green text-black' : 'text-kds-subtext'}`}>📱 Social Post</button>
+          <div className="mb-4 flex gap-1 rounded-lg border border-s-border p-1 text-xs font-bold">
+            <button onClick={() => setTab('details')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'details' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}>Details</button>
+            <button onClick={() => setTab('social')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'social' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}>📱 Social Post</button>
           </div>
         )}
 
         {tab === 'details' && (
           <div className="space-y-3">
             <div>
-              <label className="text-xs text-kds-subtext">Title *</label>
+              <label className="text-xs text-s-muted">Title *</label>
               <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none" />
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-kds-subtext">Type</label>
+                <label className="text-xs text-s-muted">Type</label>
                 <select value={type} onChange={(e) => setType(e.target.value as EventType)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {Object.entries(TYPE_CONFIG).map(([k, v]) => (
                     <option key={k} value={k}>{v.emoji} {v.label}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-kds-subtext">Status</label>
+                <label className="text-xs text-s-muted">Status</label>
                 <select value={status} onChange={(e) => setStatus(e.target.value as EventStatus)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-kds-subtext">Date</label>
+                <label className="text-xs text-s-muted">Date</label>
                 <input type="date" value={startDate} onChange={(e) => setStart(e.target.value)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm" />
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm" />
               </div>
               <div>
-                <label className="text-xs text-kds-subtext">End Date (optional)</label>
+                <label className="text-xs text-s-muted">End Date (optional)</label>
                 <input type="date" value={endDate} onChange={(e) => setEnd(e.target.value)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm" />
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm" />
               </div>
               <div>
-                <label className="text-xs text-kds-subtext">Department</label>
+                <label className="text-xs text-s-muted">Department</label>
                 <select value={department} onChange={(e) => setDept(e.target.value)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {DEPT_OPTIONS.map((d) => <option key={d} value={d}>{d || 'None'}</option>)}
                 </select>
               </div>
             </div>
             <div>
-              <label className="text-xs text-kds-subtext">Notes / Description</label>
+              <label className="text-xs text-s-muted">Notes / Description</label>
               <textarea value={description} onChange={(e) => setDesc(e.target.value)} rows={3}
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm resize-none" />
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none" />
             </div>
           </div>
         )}
@@ -449,44 +449,44 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-kds-subtext">Platform</label>
+                <label className="text-xs text-s-muted">Platform</label>
                 <select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   <option value="instagram">📸 Instagram</option>
                   <option value="facebook">🤝 Facebook</option>
                   <option value="tiktok">🎵 TikTok</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs text-kds-subtext">Publish Time</label>
+                <label className="text-xs text-s-muted">Publish Time</label>
                 <input type="datetime-local" value={scheduledFor}
                   onChange={(e) => setSchedFor(e.target.value)}
-                  className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm" />
+                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm" />
               </div>
             </div>
             <div>
-              <label className="text-xs text-kds-subtext">Image URL</label>
+              <label className="text-xs text-s-muted">Image URL</label>
               <input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)}
                 placeholder="https://..."
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm" />
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm" />
               {mediaUrl && (
                 <img src={mediaUrl} alt="preview" className="mt-2 h-32 w-full rounded-lg object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
               )}
             </div>
             <div>
-              <label className="text-xs text-kds-subtext">Caption (max 2200 chars)</label>
+              <label className="text-xs text-s-muted">Caption (max 2200 chars)</label>
               <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={5}
                 placeholder={`Write your ${platform} caption here…\n\n#hashtags`}
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm resize-none font-mono" />
-              <p className="mt-1 text-right text-xs text-kds-subtext">{caption.length}/2200</p>
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none font-mono" />
+              <p className="mt-1 text-right text-xs text-s-muted">{caption.length}/2200</p>
             </div>
             {event?.socialPost?.status === 'failed' && (
-              <div className="rounded-lg bg-kds-red/10 border border-kds-red p-3 text-xs text-kds-red">
+              <div className="rounded-lg bg-s-red/10 border border-s-red p-3 text-xs text-s-red">
                 ⚠ Last publish failed: {event.socialPost.error}
               </div>
             )}
             {event?.socialPost?.status === 'published' && (
-              <div className="rounded-lg bg-kds-green/10 border border-kds-green p-3 text-xs text-kds-green">
+              <div className="rounded-lg bg-primary/10 border border-primary p-3 text-xs text-primary-ink">
                 ✓ Published {event.socialPost.publishedAt ? new Date(event.socialPost.publishedAt).toLocaleString('en-PK') : ''}
               </div>
             )}
@@ -494,17 +494,17 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
         )}
 
         {saveMutation.isError && (
-          <p className="mt-2 text-sm text-kds-red">Save failed — check required fields.</p>
+          <p className="mt-2 text-sm text-s-red">Save failed — check required fields.</p>
         )}
 
         <div className="mt-4 flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext hover:text-kds-text text-sm">
+          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-3 text-s-muted hover:text-s-text text-sm">
             Cancel
           </button>
           <button
             onClick={() => saveMutation.mutate()}
             disabled={!title.trim() || saveMutation.isPending}
-            className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-black disabled:opacity-50 hover:opacity-90 text-sm"
+            className="flex-1 rounded-xl bg-primary py-3 font-bold text-primary-on disabled:opacity-50 hover:opacity-90 text-sm"
           >
             {saveMutation.isPending ? 'Saving…' : event ? 'Save Changes' : 'Create Event'}
           </button>

@@ -15,11 +15,11 @@ interface Account {
 }
 
 const TYPE_COLOR: Record<AccountType, { bg: string; fg: string }> = {
-  asset:     { bg: 'rgba(0,212,177,0.12)', fg: '#00D4B1' },
-  liability: { bg: 'rgba(245,158,11,0.12)', fg: '#F59E0B' },
-  equity:    { bg: 'rgba(99,102,241,0.12)', fg: '#A5B4FC' },
-  revenue:   { bg: 'rgba(34,197,94,0.12)', fg: '#86EFAC' },
-  expense:   { bg: 'rgba(239,68,68,0.12)', fg: '#EF4444' },
+  asset:     { bg: 'rgb(135 197 64 / 0.12)', fg: 'var(--erp-primary)' },
+  liability: { bg: 'rgba(245,158,11,0.12)', fg: '#a15c00' },
+  equity:    { bg: 'rgb(61 31 59 / 0.12)', fg: '#6b2f68' },
+  revenue:   { bg: 'rgba(34,197,94,0.12)', fg: '#3f7d20' },
+  expense:   { bg: 'rgba(239,68,68,0.12)', fg: '#b42318' },
 }
 
 export default function ChartOfAccountsPage() {
@@ -35,17 +35,17 @@ export default function ChartOfAccountsPage() {
   }, { asset: [], liability: [], equity: [], revenue: [], expense: [] })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
             <h1 className="text-2xl font-black text-white/90">📒 Chart of accounts</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              The ledger codes the platform posts against. Add custom accounts (e.g. <code className="text-[#00D4B1]">6210 — Marketing software</code>) to mirror your accountant's tree.
+              The ledger codes the platform posts against. Add custom accounts (e.g. <code className="text-primary-ink">6210 — Marketing software</code>) to mirror your accountant's tree.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New account</button>
+          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New account</button>
         </div>
       </header>
 
@@ -53,7 +53,7 @@ export default function ChartOfAccountsPage() {
         {(['asset', 'liability', 'equity', 'revenue', 'expense'] as AccountType[]).map((t) => (
           <section key={t}>
             <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">{t}s · {grouped[t].length}</h2>
-            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {grouped[t].length === 0 && <p className="p-5 text-xs text-white/35">No {t} accounts.</p>}
               {grouped[t].map((a) => (
                 <div key={a.id} className="px-4 py-3 flex items-center justify-between gap-3 border-b border-white/[0.04] last:border-b-0 hover:bg-white/[0.02]">
@@ -97,9 +97,9 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{account ? 'Edit account' : 'New account'}</h2>
@@ -124,7 +124,7 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={fieldCls} placeholder="What goes here vs other accounts" /></Field>
           {account && (
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-kds-green" />
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
               <span className="text-xs text-white/65">Active</span>
             </label>
           )}
@@ -132,7 +132,7 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || (!account && !code.trim())}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : account ? 'Save' : 'Create'}
           </button>
         </div>
@@ -141,5 +141,5 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
   )
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none disabled:opacity-50"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none disabled:opacity-50"
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }

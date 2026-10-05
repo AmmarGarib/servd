@@ -50,9 +50,9 @@ export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 
 // Shared status badge styling — reused by the recipe list + approvals inbox.
 export const recipeStatusMeta: Record<RecipeStatus, { label: string; color: string; bg: string }> = {
-  iteration:        { label: 'Testing',          color: '#FDB022', bg: 'rgba(245,158,11,0.12)' },
-  pending_approval: { label: 'Pending approval',  color: '#A5B4FC', bg: 'rgba(99,102,241,0.15)' },
-  production:       { label: 'Live',              color: '#5EEAD4', bg: 'rgba(0,212,177,0.12)' },
+  iteration:        { label: 'Testing',          color: '#a15c00', bg: 'rgba(245,158,11,0.12)' },
+  pending_approval: { label: 'Pending approval',  color: '#6b2f68', bg: 'rgb(61 31 59 / 0.15)' },
+  production:       { label: 'Live',              color: '#3f7d20', bg: 'rgb(135 197 64 / 0.12)' },
 }
 
 export interface RecipeFormInitial {
@@ -420,7 +420,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
           <h1 className="text-2xl font-black">{isEdit ? 'Edit recipe' : 'New recipe'}</h1>
           <p className="text-sm text-s-muted mt-1 max-w-2xl">
             Pure cost: ingredients in, plate cost (or cost-per-gram) out — numbers update live as you edit.
-            Selling price &amp; margins are set in <Link href="/menu-engineering" className="text-s-teal hover:underline">Menu Engineering</Link>.
+            Selling price &amp; margins are set in <Link href="/menu-engineering" className="text-primary-ink hover:underline">Menu Engineering</Link>.
           </p>
         </div>
       </header>
@@ -440,8 +440,8 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                   onClick={() => setKind(t.v)}
                   className="text-left rounded-xl px-3 py-2 border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{
-                    background:  kind === t.v ? 'rgba(0,212,177,0.10)' : 'rgba(255,255,255,0.02)',
-                    borderColor: kind === t.v ? '#00D4B1' : 'rgba(255,255,255,0.08)',
+                    background:  kind === t.v ? 'rgb(135 197 64 / 0.10)' : 'rgb(var(--fg-rgb) / 0.02)',
+                    borderColor: kind === t.v ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <div className="text-sm font-bold">{t.label}</div>
                   <div className="text-[10px] text-s-muted">{t.hint}</div>
@@ -465,7 +465,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                 </div>
                 {initial.status === 'iteration' && (
                   <button type="button" onClick={() => submitForProd.mutate()} disabled={submitForProd.isPending}
-                    className="rounded-lg bg-s-teal text-black px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
+                    className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
                     {submitForProd.isPending ? 'Submitting…' : 'Submit for production'}
                   </button>
                 )}
@@ -474,7 +474,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                 )}
               </div>
               {initial.status === 'iteration' && initial.rejectionReason && (
-                <p className="mt-2 text-[11px]" style={{ color: '#FDB022' }}>
+                <p className="mt-2 text-[11px]" style={{ color: '#a15c00' }}>
                   Previously sent back by the CEO: “{initial.rejectionReason}”
                 </p>
               )}
@@ -640,7 +640,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                         <td className="px-2 py-1.5">
                           <button onClick={() => setIngs(ings.filter((_, j) => j !== i))}
                             disabled={ings.length === 1}
-                            className="text-red-400 hover:bg-red-400/10 rounded px-2 disabled:opacity-30">×</button>
+                            className="text-red-700 hover:bg-red-400/10 rounded px-2 disabled:opacity-30">×</button>
                         </td>
                       </tr>
                     )
@@ -649,7 +649,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
               </table>
             </div>
             <button onClick={() => setIngs([...ings, blankRow()])}
-              className="mt-2 text-xs text-s-teal hover:underline font-bold">+ Add ingredient</button>
+              className="mt-2 text-xs text-primary-ink hover:underline font-bold">+ Add ingredient</button>
 
             {/* Recipe-level rollup + pricing knobs (folded in from the old Section 3) */}
             <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 pt-3 border-t border-s-border">
@@ -677,7 +677,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
               <div className="mt-3 text-[11px] text-s-muted">
                 Allergens (auto): {allAllergens.map((a) => (
                   <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
-                    style={{ background: 'rgba(245,158,11,0.15)', color: '#FDB022' }}>{a}</span>
+                    style={{ background: 'rgba(245,158,11,0.15)', color: '#a15c00' }}>{a}</span>
                 ))}
               </div>
             )}
@@ -725,11 +725,11 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                     </div>
                     <button type="button" title="Remove step"
                       onClick={() => setMethodSteps(methodSteps.filter((_, j) => j !== i))}
-                      className="mt-1 text-red-400 hover:bg-red-400/10 rounded px-2 shrink-0">×</button>
+                      className="mt-1 text-red-700 hover:bg-red-400/10 rounded px-2 shrink-0">×</button>
                   </div>
                 ))}
                 <button type="button" onClick={() => setMethodSteps([...methodSteps, { station: '', instruction: '' }])}
-                  className="mt-1 text-xs text-s-teal hover:underline font-bold">+ Add step</button>
+                  className="mt-1 text-xs text-primary-ink hover:underline font-bold">+ Add step</button>
               </div>
             )}
           </Section>
@@ -748,10 +748,10 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             <strong className="text-s-text">Heads-up:</strong> Live Opex/Portion isn't shown until save.
             The backend reads current OpexLine entries for {activeConcept?.name ?? 'your brand'} and divides by{' '}
             <strong className="text-s-text">forecast portions/month</strong> ({activeConcept?.forecastPortionsPerMonth ?? '—'}).
-            Set that on the brand in <Link href="/settings" className="text-s-teal hover:underline">Tenants &amp; Brands</Link>.
+            Set that on the brand in <Link href="/settings" className="text-primary-ink hover:underline">Tenants &amp; Brands</Link>.
           </div>
           {err && (
-            <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-400">{err}</div>
+            <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-700">{err}</div>
           )}
           <div className="flex gap-2">
             <button onClick={() => router.push('/accounting/recipes')}
@@ -759,7 +759,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
               Cancel
             </button>
             <button onClick={submit} disabled={save.isPending}
-              className="flex-1 rounded-lg bg-s-teal text-black py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">
+              className="flex-1 rounded-lg bg-primary text-primary-on py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">
               {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Save recipe'}
             </button>
           </div>
@@ -815,9 +815,9 @@ function CostPanel({ computed, kind, yieldGrams }: {
     const cpg = yieldGrams && yieldGrams > 0 ? v.totalRecipe / yieldGrams : null
     return (
       <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
-        <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgba(99,102,241,0.10)' }}>
+        <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(61 31 59 / 0.10)' }}>
           <p className="text-[10px] uppercase tracking-wider text-s-muted">Sub recipe</p>
-          <p className="text-base font-black mt-0.5" style={{ color: '#A5B4FC' }}>Costed per gram — not sold directly</p>
+          <p className="text-base font-black mt-0.5" style={{ color: '#6b2f68' }}>Costed per gram — not sold directly</p>
         </header>
         <div className="p-4 space-y-3">
           <div>
@@ -838,9 +838,9 @@ function CostPanel({ computed, kind, yieldGrams }: {
 
   return (
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
-      <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgba(0,212,177,0.08)' }}>
+      <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(135 197 64 / 0.08)' }}>
         <p className="text-[10px] uppercase tracking-wider text-s-muted">Recipe cost</p>
-        <p className="text-base font-black mt-0.5" style={{ color: '#5EEAD4' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
+        <p className="text-base font-black mt-0.5" style={{ color: '#3f7d20' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
       </header>
 
       <div className="p-4 space-y-3">
@@ -853,7 +853,7 @@ function CostPanel({ computed, kind, yieldGrams }: {
         </div>
         <p className="text-[10px] text-s-dim">
           Selling price, contribution margin and profitability live in{' '}
-          <Link href="/menu-engineering" className="text-s-teal hover:underline">Menu Engineering</Link>.
+          <Link href="/menu-engineering" className="text-primary-ink hover:underline">Menu Engineering</Link>.
         </p>
       </div>
     </div>
@@ -866,7 +866,7 @@ function Line({ label, value, dim, bold, highlight, highlightColor }: {
   return (
     <div className="flex justify-between items-baseline gap-2 text-xs font-mono py-0.5">
       <span className={dim ? 'text-s-dim' : 'text-s-muted'}>{label}</span>
-      <span className={`${bold ? 'font-black' : ''}`} style={{ color: highlight ? (highlightColor ?? '#00D4B1') : undefined }}>
+      <span className={`${bold ? 'font-black' : ''}`} style={{ color: highlight ? (highlightColor ?? 'var(--erp-primary-ink)') : undefined }}>
         {value}
       </span>
     </div>

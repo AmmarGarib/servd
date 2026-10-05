@@ -111,7 +111,7 @@ export default function OrderStatusPage() {
       </div>
       <Link href={`/${slug}`}
         className="rounded-2xl font-black px-8 py-4 text-sm transition-transform active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
+        style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
         Back to menu
       </Link>
     </main>
@@ -227,7 +227,7 @@ export default function OrderStatusPage() {
                         className="h-9 w-9 rounded-full flex items-center justify-center text-sm transition-all duration-700"
                         style={{
                           background: done ? color : 'var(--servd-surface)',
-                          color: done ? (isLight(color) ? '#000' : '#fff') : 'var(--servd-dim)',
+                          color: done ? (order.concept.primaryColor ? (isLight(color) ? '#000' : '#fff') : 'var(--servd-on-green)') : 'var(--servd-dim)',
                           boxShadow: current ? `0 0 18px color-mix(in srgb, ${color} 60%, transparent)` : 'none',
                           transform: current ? 'scale(1.15)' : 'scale(1)',
                         }}>
@@ -265,7 +265,7 @@ export default function OrderStatusPage() {
           </div>
 
           {order.rider && (
-            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--servd-line)', background: 'rgba(58,14,105,0.06)' }}>
+            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--servd-line)', background: 'rgba(135,197,64,0.06)' }}>
               <div className="flex items-center gap-3">
                 <span style={{ color: 'var(--servd-green-dark)' }}><BikeIcon /></span>
                 <div className="flex-1 min-w-0">
@@ -324,7 +324,7 @@ export default function OrderStatusPage() {
         )}
         {order.curbsideVehicle && order.curbsideArrivedAt && !order.curbsideRunnerOutAt && (
           <div className="rounded-2xl px-4 py-3.5 text-center"
-            style={{ background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }}>
+            style={{ background: 'rgba(135,197,64,0.1)', border: '1px solid rgba(135,197,64,0.35)', color: 'var(--servd-green-dark)' }}>
             <p className="font-black text-sm">We see you. Bringing your food now.</p>
             <p className="text-xs mt-0.5 opacity-70">{order.curbsideVehicle}</p>
           </div>
@@ -340,7 +340,7 @@ export default function OrderStatusPage() {
         {order.status === 'completed' && token && (
           <Link href={`/orders/${order.id}/review`}
             className="block w-full rounded-3xl overflow-hidden transition-transform active:scale-[0.98]"
-            style={{ background: 'var(--servd-green)', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
+            style={{ background: 'var(--servd-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
             <div className="px-6 py-5 flex items-center justify-between gap-4">
               <div>
                 <p className="font-display font-black text-lg leading-tight" style={{ fontFamily: 'var(--font-display)', color: '#0a0a0a' }}>How was it?</p>
@@ -388,9 +388,9 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
     <button onClick={tap} disabled={busy}
       className="flex items-center justify-center gap-2 w-full rounded-2xl py-4 font-black text-sm tracking-wide transition-transform active:scale-[0.98]"
       style={{
-        background: 'var(--servd-green)', color: 'white',
+        background: 'var(--servd-green)', color: 'var(--servd-on-green)',
         border: '1px solid var(--servd-green-dark)',
-        boxShadow: '0 6px 18px rgba(58,14,105,0.28)',
+        boxShadow: '0 6px 18px rgba(61,31,59,0.28)',
         opacity: busy ? 0.6 : 1,
       }}>
       <CarIcon />

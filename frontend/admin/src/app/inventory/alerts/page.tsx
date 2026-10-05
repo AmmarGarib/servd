@@ -56,7 +56,7 @@ export default function InventoryAlertsPage() {
           </div>
           <div className="s-card p-4 border-l-4 border-s-teal">
             <p className="text-xs text-s-muted">Healthy</p>
-            <p className="text-2xl font-bold text-s-teal">{ok.length}</p>
+            <p className="text-2xl font-bold text-primary-ink">{ok.length}</p>
             <p className="text-[11px] text-s-dim">no action needed</p>
           </div>
         </div>
@@ -84,7 +84,7 @@ function Section({ title, rows, loading, severity }: { title: string; rows: Inve
   // s.red / s.amber are TAILWIND colours (tailwind.config.ts), not CSS custom
   // properties — `var(--s-red)` never resolved, so both severities rendered
   // the same colourless stripe. Hex straight from the config.
-  const accent = severity === 'red' ? '#FF4D4F' : '#F59E0B'
+  const accent = severity === 'red' ? '#b42318' : '#a15c00'
   return (
     <div className="s-card overflow-hidden">
       <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft" style={{ borderLeft: `3px solid ${accent}` }}>
@@ -117,7 +117,7 @@ function Section({ title, rows, loading, severity }: { title: string; rows: Inve
                   </div>
                 </td>
                 <td className="px-4 py-2 text-right">
-                  <Link href="/inventory/count" className="text-xs text-s-teal hover:underline">Count →</Link>
+                  <Link href="/inventory/count" className="text-xs text-primary-ink hover:underline">Count →</Link>
                 </td>
               </tr>
             )

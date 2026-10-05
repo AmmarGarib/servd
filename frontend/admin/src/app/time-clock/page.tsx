@@ -137,23 +137,23 @@ export default function TimeClockPage() {
   const punchedIn = status.data?.punchedIn ?? false
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)' }}>
       <div className="w-full max-w-md p-6">
         <div className="flex gap-1 mb-4 justify-center">
           {(['me', 'kiosk'] as const).map((m) => (
             <button key={m} onClick={() => { setMode(m); setFeedback(''); setStage('idle') }}
               className="rounded-full px-4 py-1.5 text-xs font-bold"
-              style={mode === m ? { background: '#22c55e', color: '#000' } : { color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}>
+              style={mode === m ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' } : { color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
               {m === 'me' ? 'Me' : 'Staff without a login'}
             </button>
           ))}
         </div>
 
-        <div className="aspect-square rounded-2xl overflow-hidden mb-4 relative" style={{ background: '#0d0f15', border: '1px solid #1a1d24' }}>
+        <div className="aspect-square rounded-2xl overflow-hidden mb-4 relative" style={{ background: 'var(--surface)', border: '1px solid var(--elevated)' }}>
           <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
           <canvas ref={canvasRef} className="hidden" />
           <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
-            style={{ background: coords ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)', color: coords ? '#22c55e' : '#fca5a5' }}>
+            style={{ background: coords ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)', color: coords ? '#3f7d20' : '#b42318' }}>
             {coords ? 'located' : geoErr ? 'no location' : 'locating…'}
           </div>
         </div>
@@ -171,8 +171,8 @@ export default function TimeClockPage() {
               {status.isLoading ? '…' : punchedIn ? `On shift since ${new Date(status.data!.shift!.clockInAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : 'Not clocked in'}
             </p>
             {punchedIn
-              ? <button onClick={() => punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.35)' }}>Clock out</button>
-              : <button onClick={() => punchMe('in')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: '#22c55e', color: '#000' }}>Clock in</button>}
+              ? <button onClick={() => punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'rgba(239,68,68,0.15)', color: '#b42318', border: '1px solid rgba(239,68,68,0.35)' }}>Clock out</button>
+              : <button onClick={() => punchMe('in')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>Clock in</button>}
           </div>
         )}
 
@@ -180,7 +180,7 @@ export default function TimeClockPage() {
           <>
             <input type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Employee ID (e.g. EMP-0012)" autoComplete="off"
               className="w-full mb-3 rounded-xl px-4 py-3 text-center text-white outline-none"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+              style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }} />
             <div className="text-center mb-3">
               <span className="text-4xl font-black text-white tracking-[0.5em]" style={{ fontFamily: 'monospace' }}>{pin.split('').map(() => '●').join('') || '____'}</span>
             </div>
@@ -197,7 +197,7 @@ export default function TimeClockPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-4 text-center mt-2"
             style={stage === 'error' ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' } : { background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
-            <p className="text-sm font-bold" style={{ color: stage === 'error' ? '#fca5a5' : '#86efac' }}>{feedback}</p>
+            <p className="text-sm font-bold" style={{ color: stage === 'error' ? '#b42318' : '#3f7d20' }}>{feedback}</p>
           </div>
         )}
       </div>
@@ -208,7 +208,7 @@ export default function TimeClockPage() {
 function PinKey({ digit, onClick, highlight }: { digit: string; onClick: () => void; highlight?: boolean }) {
   return (
     <button onClick={onClick} className="aspect-square rounded-2xl text-2xl font-black active:scale-95 transition-transform"
-      style={highlight ? { background: '#22c55e', color: '#000' } : { background: 'rgba(255,255,255,0.06)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' }}>
+      style={highlight ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' } : { background: 'rgb(var(--fg-rgb) / 0.06)', color: 'var(--text)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
       {digit}
     </button>
   )

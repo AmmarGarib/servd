@@ -54,7 +54,7 @@ function Strip({ children }: { children: ReactNode }) {
   return (
     <div role="status" style={{
       position: 'sticky', top: 0, zIndex: 70,
-      background: '#2D1E2F', color: '#fff', textAlign: 'center',
+      background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', textAlign: 'center',
       fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.04em', padding: '0.45rem 1rem',
     }}>
       {children}

@@ -24,14 +24,14 @@ export default function OrderHubError({ error, reset }: { error: Error & { diges
       <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2rem)', fontWeight: 800, margin: 0 }}>
         We can&rsquo;t load brands right now.
       </h1>
-      <p style={{ color: 'rgba(0,0,0,0.5)', maxWidth: '32rem', margin: 0 }}>
+      <p style={{ color: 'var(--servd-mute)', maxWidth: '32rem', margin: 0 }}>
         Our kitchen system might be briefly unavailable. Try again in a moment, or come back to the home screen.
       </p>
       <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
         <button
           onClick={reset}
           style={{
-            background: '#4ade80', color: '#000', fontWeight: 800,
+            background: 'var(--servd-green)', color: 'var(--servd-on-green)', fontWeight: 800,
             padding: '0.7rem 1.75rem', borderRadius: '999px', border: 'none', cursor: 'pointer',
           }}
         >
@@ -40,8 +40,8 @@ export default function OrderHubError({ error, reset }: { error: Error & { diges
         <Link
           href="/"
           style={{
-            background: 'transparent', color: '#000', fontWeight: 600,
-            padding: '0.7rem 1.75rem', borderRadius: '999px', border: '1px solid rgba(0,0,0,0.15)', textDecoration: 'none',
+            background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', fontWeight: 600,
+            padding: '0.7rem 1.75rem', borderRadius: '999px', border: '1px solid var(--servd-purple)', textDecoration: 'none',
           }}
         >
           Home

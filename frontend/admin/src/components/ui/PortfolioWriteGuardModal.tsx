@@ -59,13 +59,13 @@ export function PortfolioWriteGuardModal() {
   return (
     <div role="dialog" aria-modal="true"
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.65)' }}
+      style={{ background: 'rgb(61 31 59 / 0.5)' }}
       onClick={cancel}>
       <div onClick={(e) => e.stopPropagation()}
         className="w-full max-w-md rounded-2xl"
-        style={{ background: '#0e1014', border: '1px solid rgba(255,255,255,0.08)' }}>
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
         <div className="px-6 pt-6 pb-4 border-b border-white/[0.06]">
-          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-kds-green">Portfolio mode</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-primary-ink">Portfolio mode</p>
           <h2 className="text-xl font-black text-white/95 mt-1">Which company is this for?</h2>
           <p className="text-xs text-white/45 mt-1.5">
             {intent
@@ -83,14 +83,14 @@ export function PortfolioWriteGuardModal() {
               key={t.id}
               onClick={() => pick(t.id)}
               className="w-full text-left rounded-xl px-4 py-3 transition-all flex items-center justify-between gap-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
               <div className="min-w-0 flex-1">
                 <p className="font-bold text-sm text-white/90 truncate">{t.name}</p>
                 <p className="text-[11px] text-white/40 mt-0.5">
                   {t.industry ?? 'Restaurant'} · {t.role ?? 'member'} · <span className="font-mono">{t.slug}</span>
                 </p>
               </div>
-              <span className="text-xs text-kds-green font-bold whitespace-nowrap">Use this →</span>
+              <span className="text-xs text-primary-ink font-bold whitespace-nowrap">Use this →</span>
             </button>
           ))}
         </div>

@@ -217,7 +217,7 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
   if (display === 'bar') {
     return (
       <div role="region" aria-label={label} className="sv-popup" {...common}
-        style={{ position: 'relative', background: '#2D1E2F', color: '#fff', paddingRight: '3rem' }}>
+        style={{ position: 'relative', background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', paddingRight: '3rem' }}>
         {fontStyle}
         <PopupBlocks blocks={blocks} compact />
         <CloseButton onClose={onClose} light style={{ position: 'absolute', top: '50%', right: '0.5rem', transform: 'translateY(-50%)' }} />
@@ -298,7 +298,7 @@ export function PopupPreview({ layout }: { layout: SiteLayoutRead }) {
       </p>
       {!open && (
         <button type="button" onClick={() => setOpen(true)}
-          style={{ padding: '0.7rem 1.4rem', borderRadius: 999, border: 'none', background: 'var(--servd-green)', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+          style={{ padding: '0.7rem 1.4rem', borderRadius: 999, border: 'none', background: 'var(--servd-green)', color: 'var(--servd-on-green)', fontWeight: 800, cursor: 'pointer' }}>
           Show pop-up again
         </button>
       )}

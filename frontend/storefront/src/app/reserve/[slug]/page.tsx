@@ -190,7 +190,7 @@ export default function ReservePage() {
   }
 
   return (
-    <div style={{ background: '#fff', minHeight: '100dvh' }}>
+    <div style={{ background: 'var(--servd-bg)', minHeight: '100dvh' }}>
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
           <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
@@ -270,7 +270,7 @@ export default function ReservePage() {
                           borderRadius: '999px',
                           border: `1px solid ${sel ? 'var(--servd-green-dark)' : 'var(--servd-line)'}`,
                           background: sel ? 'var(--servd-green)' : (s.available ? '#fff' : 'rgba(0,0,0,0.04)'),
-                          color: sel ? 'var(--servd-black)' : (s.available ? 'var(--servd-ink)' : 'var(--servd-dim)'),
+                          color: sel ? 'var(--servd-on-green)' : (s.available ? 'var(--servd-ink)' : 'var(--servd-dim)'),
                           fontWeight: sel ? 800 : 500,
                           fontSize: '0.875rem',
                           cursor: s.available ? 'pointer' : 'not-allowed',
@@ -316,7 +316,7 @@ export default function ReservePage() {
               </div>
 
               {error && (
-                <p role="alert" style={{ marginTop: '0.75rem', color: '#b91c1c', fontSize: '0.85rem' }}>{error}</p>
+                <p role="alert" style={{ marginTop: '0.75rem', color: 'var(--servd-danger)', fontSize: '0.85rem' }}>{error}</p>
               )}
 
               <MagneticButton type="submit" disabled={submitting || !name.trim() || !phone.trim()} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>

@@ -28,7 +28,7 @@ export default function HrSectionsPage() {
                   </div>
                   <p className="text-[11px] text-white/40 mt-0.5">
                     {s.kind === 'page' ? 'Screen' : s.config ? 'Setup list' : 'Records'}
-                    {s.format && !s.format.isDefault && <span className="text-kds-green"> · HR format v{s.format.version}</span>}
+                    {s.format && !s.format.isDefault && <span className="text-primary-ink"> · HR format v{s.format.version}</span>}
                     {s.format?.workflow?.length ? ` · ${s.format.workflow.length}-step approval` : ''}
                   </p>
                 </Link>

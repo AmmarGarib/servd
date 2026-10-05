@@ -69,9 +69,9 @@ function ResetPasswordInner() {
   }
 
   const field = 'w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none'
-  const fieldStyle = { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }
+  const fieldStyle = { background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }
   const cta = 'w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40'
-  const ctaStyle = { background: 'linear-gradient(135deg,#00D4B1 0%,#6366F1 100%)', color: '#05070B' }
+  const ctaStyle = { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
 
   return (
     <div className="min-h-screen bg-s-bg flex flex-col">
@@ -125,7 +125,7 @@ function ResetPasswordInner() {
                 className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
               <p className="text-[10px] text-s-dim mb-3 text-center">At least {MIN_LENGTH} characters.</p>
-              {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+              {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
               <button type="submit" className={cta} style={ctaStyle}
                 disabled={loading || pw1.length < MIN_LENGTH}>
                 {loading ? 'Setting…' : 'Set password'}

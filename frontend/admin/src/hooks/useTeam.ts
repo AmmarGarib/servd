@@ -38,11 +38,11 @@ export function useTeam() {
 }
 
 export const TODAY_META: Record<string, { label: string; color: string }> = {
-  present:  { label: 'In',        color: '#34d399' },
-  late:     { label: 'Late',      color: '#f59e0b' },
-  absent:   { label: 'Absent',    color: '#f87171' },
-  on_leave: { label: 'On leave',  color: '#60a5fa' },
-  off:      { label: 'Off today', color: 'rgba(255,255,255,0.4)' },
+  present:  { label: 'In',        color: '#3f7d20' },
+  late:     { label: 'Late',      color: '#a15c00' },
+  absent:   { label: 'Absent',    color: '#b42318' },
+  on_leave: { label: 'On leave',  color: '#1d4ed8' },
+  off:      { label: 'Off today', color: 'rgb(var(--fg-rgb) / 0.4)' },
 }
 
 export function isInToday(m: TeamMember): boolean {

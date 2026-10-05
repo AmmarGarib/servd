@@ -36,10 +36,10 @@ export default function BlockoutsPage() {
   })
 
   const KIND_LABEL: Record<Blockout['kind'], { label: string; tone: string }> = {
-    closure:          { label: 'Closed',          tone: 'bg-s-red text-white' },
-    private_event:    { label: 'Private event',   tone: 'bg-indigo-500 text-white' },
-    reduced_capacity: { label: 'Reduced',         tone: 'bg-s-amber text-white' },
-    custom:           { label: 'Custom',          tone: 'bg-gray-500 text-white' },
+    closure:          { label: 'Closed',          tone: 'bg-s-red text-[#fff]' },
+    private_event:    { label: 'Private event',   tone: 'bg-secondary text-secondary-on' },
+    reduced_capacity: { label: 'Reduced',         tone: 'bg-s-amber text-[#fff]' },
+    custom:           { label: 'Custom',          tone: 'bg-s-elevated text-s-text' },
   }
 
   return (
@@ -50,7 +50,7 @@ export default function BlockoutsPage() {
           <h1 className="text-xl font-bold text-s-text">Closures & blockouts</h1>
         </div>
         <div className="flex items-center gap-2">
-          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-white border border-s-border rounded px-2 py-1 text-sm">
+          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New blockout</button>
@@ -129,8 +129,8 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
   })
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-s-surface rounded-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-s-border flex justify-between">
           <h2 className="text-lg font-bold">New blockout</h2>
           <button onClick={onClose} className="text-2xl leading-none text-s-muted">×</button>
@@ -138,7 +138,7 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-s-muted">Kind</span>
-            <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5">
+            <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
               <option value="closure">Closure (no bookings)</option>
               <option value="private_event">Private event</option>
               <option value="reduced_capacity">Reduced capacity</option>
@@ -148,22 +148,22 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="text-xs text-s-muted">Start</span>
-              <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
             <label className="block">
               <span className="text-xs text-s-muted">End</span>
-              <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
           </div>
           {kind === 'reduced_capacity' && (
             <label className="block">
               <span className="text-xs text-s-muted">Tables available</span>
-              <input type="number" min={1} value={capacityCap} onChange={(e) => setCapacityCap(e.target.value === '' ? '' : Number(e.target.value))} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="number" min={1} value={capacityCap} onChange={(e) => setCapacityCap(e.target.value === '' ? '' : Number(e.target.value))} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
           )}
           <label className="block">
             <span className="text-xs text-s-muted">Reason / note (optional)</span>
-            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Eid closure, full buyout for company X" className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Eid closure, full buyout for company X" className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </label>
           {err && <p className="text-xs text-s-red">{err}</p>}
         </div>

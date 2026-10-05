@@ -22,7 +22,7 @@ export default function NotFound() {
       }}
     >
       <p style={{
-        color: 'rgba(0,0,0,0.4)',
+        color: 'var(--servd-mute)',
         fontSize: 'clamp(0.7rem, 1.8vw, 0.85rem)',
         fontWeight: 500,
         letterSpacing: '0.18em',
@@ -39,15 +39,15 @@ export default function NotFound() {
       }}>
         We couldn&rsquo;t find that.
       </h1>
-      <p style={{ color: 'rgba(0,0,0,0.5)', maxWidth: '28rem', margin: 0 }}>
+      <p style={{ color: 'var(--servd-mute)', maxWidth: '28rem', margin: 0 }}>
         The page may have moved, or the brand may no longer be on servd.
       </p>
       <Link
         href="/order"
         style={{
           display: 'inline-block',
-          background: '#4ade80',
-          color: '#000',
+          background: 'var(--servd-green)',
+          color: 'var(--servd-on-green)',
           fontWeight: 800,
           fontSize: '1rem',
           padding: '0.75rem 2rem',

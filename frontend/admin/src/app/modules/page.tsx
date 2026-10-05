@@ -49,7 +49,7 @@ export default function WorkspacesPage() {
           const open = mine.has(w.id)
           return (
             <section key={w.id} className="rounded-2xl p-5"
-              style={{ background: 'rgba(255,255,255,0.025)', border: `1px solid ${open ? 'rgba(0,212,177,0.22)' : 'rgba(255,255,255,0.07)'}` }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: `1px solid ${open ? 'rgb(135 197 64 / 0.22)' : 'rgb(var(--fg-rgb) / 0.07)'}` }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-black text-s-text">{w.title}</h2>
@@ -62,12 +62,12 @@ export default function WorkspacesPage() {
                 </div>
                 {open ? (
                   <Link href={`/w/${w.id}`} className="text-xs font-bold px-3 py-1.5 rounded-lg"
-                    style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.25)' }}>
+                    style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.25)' }}>
                     Open {w.title} →
                   </Link>
                 ) : (
                   <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-full text-s-dim"
-                    style={{ border: '1px solid rgba(255,255,255,0.08)' }}>No access</span>
+                    style={{ border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>No access</span>
                 )}
               </div>
 
@@ -77,7 +77,7 @@ export default function WorkspacesPage() {
                   const gaps = gapsForModules(s.modules)
                   return (
                     <div key={s.key} className="rounded-xl p-3"
-                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                       <p className="text-sm font-bold text-s-text">{s.title}</p>
                       <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1">
                         {pages.length === 0 && <span className="text-[11px] text-s-dim">No admin page</span>}
@@ -85,7 +85,7 @@ export default function WorkspacesPage() {
                           const mod = moduleOfPage(p.href)
                           const can = !allowed || (mod ? allowed.has(mod) : true)
                           return can ? (
-                            <Link key={p.href} href={p.href} className="text-[11px] text-s-teal hover:underline">{p.label}</Link>
+                            <Link key={p.href} href={p.href} className="text-[11px] text-primary-ink hover:underline">{p.label}</Link>
                           ) : (
                             <span key={p.href} className="text-[11px] text-s-dim">{p.label}</span>
                           )

@@ -55,7 +55,7 @@ export function FormRenderer({ fields, value, onChange, ctx }: {
 function FieldLabel({ f }: { f: HrField }) {
   return (
     <span className="block text-[11px] font-bold text-white/55 mb-1">
-      {f.label}{f.required && <span className="text-red-400"> *</span>}
+      {f.label}{f.required && <span className="text-red-700"> *</span>}
     </span>
   )
 }
@@ -97,7 +97,7 @@ function FieldInput({ f, v, onSet, ctx }: { f: HrField; v: unknown; onSet: (v: u
     case 'boolean':
       return (
         <label className="flex items-center gap-2 min-h-[38px] text-sm text-white/80">
-          <input type="checkbox" checked={v === true} disabled={dis} onChange={(e) => onSet(e.target.checked)} className="h-4 w-4 accent-[#00D4B1]" />
+          <input type="checkbox" checked={v === true} disabled={dis} onChange={(e) => onSet(e.target.checked)} className="h-4 w-4 accent-primary" />
           {v === true ? 'Yes' : 'No'}
         </label>
       )
@@ -173,7 +173,7 @@ function ChipPicker({ options, value, onSet, disabled }: { options: Array<{ id: 
         return (
           <button type="button" key={o.id} disabled={disabled}
             onClick={() => onSet(on ? value.filter((x) => x !== o.id) : [...value, o.id])}
-            className={`rounded-full px-2.5 py-1 text-xs font-bold border ${on ? 'bg-kds-green text-black border-kds-green' : 'border-white/10 text-white/55'}`}>
+            className={`rounded-full px-2.5 py-1 text-xs font-bold border ${on ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/55'}`}>
             {o.label}
           </button>
         )
@@ -198,7 +198,7 @@ function TableInput({ f, rows, onSet, ctx }: { f: HrField; rows: Values[]; onSet
                     <FieldInput f={c} v={r[c.key]} onSet={(v) => update(i, c.key, v)} ctx={ctx} />
                   </td>
                 ))}
-                <td className="px-2"><button type="button" onClick={() => onSet(rows.filter((_, j) => j !== i))} className="text-white/35 hover:text-red-400" aria-label="Remove row">✕</button></td>
+                <td className="px-2"><button type="button" onClick={() => onSet(rows.filter((_, j) => j !== i))} className="text-white/35 hover:text-red-700" aria-label="Remove row">✕</button></td>
               </tr>
             ))}
           </tbody>

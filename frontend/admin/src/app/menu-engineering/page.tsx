@@ -36,10 +36,10 @@ function fmtPct(n: number) { return `${n.toFixed(1)}%` }
 
 // Food-cost % health: same thresholds as the old recipe-page badges.
 function fcColor(pct: number | null) {
-  if (pct === null) return 'rgba(255,255,255,0.35)'
-  if (pct <= 28)    return '#00D4B1'
-  if (pct <= 35)    return '#F59E0B'
-  return '#FF4D4F'
+  if (pct === null) return 'rgb(var(--fg-rgb) / 0.35)'
+  if (pct <= 28)    return 'var(--erp-primary-ink)'
+  if (pct <= 35)    return '#a15c00'
+  return '#b42318'
 }
 
 export default function MenuEngineeringPage() {
@@ -137,7 +137,7 @@ export default function MenuEngineeringPage() {
             {
               label: 'Avg Food Cost',
               value: avgFc != null ? fmtPct(avgFc) : '—',
-              color: avgFc == null ? 'text-s-muted' : avgFc <= 28 ? 'text-s-teal' : avgFc <= 35 ? 'text-s-amber' : 'text-s-red',
+              color: avgFc == null ? 'text-s-muted' : avgFc <= 28 ? 'text-primary-ink' : avgFc <= 35 ? 'text-s-amber' : 'text-s-red',
             },
             { label: 'Over 35% FC', value: String(overBudget), color: overBudget ? 'text-s-red' : 'text-s-muted' },
           ].map(({ label, value, color }) => (
@@ -155,7 +155,7 @@ export default function MenuEngineeringPage() {
         ) : plates.length === 0 ? (
           <div className="s-card text-center py-16">
             <p className="text-s-dim text-sm">
-              No plate recipes yet — build one in <Link href="/accounting/recipes" className="text-s-teal hover:underline">Recipes</Link> and it appears here for pricing.
+              No plate recipes yet — build one in <Link href="/accounting/recipes" className="text-primary-ink hover:underline">Recipes</Link> and it appears here for pricing.
             </p>
           </div>
         ) : (
@@ -173,7 +173,7 @@ export default function MenuEngineeringPage() {
                   <div
                     className="flex items-center gap-4 px-4 py-3 cursor-pointer select-none"
                     onClick={() => router.push(`/menu-engineering/${r.id}`)}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = '')}
                     style={{ transition: 'background 0.12s' }}
                   >
@@ -224,7 +224,7 @@ export default function MenuEngineeringPage() {
                       <div className="text-right" style={{ minWidth: 110 }}>
                         <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Contribution</p>
                         <p className="text-xs font-bold font-mono"
-                          style={{ color: cm === null ? 'rgba(255,255,255,0.3)' : cm >= 0 ? '#00D4B1' : '#FF4D4F' }}>
+                          style={{ color: cm === null ? 'rgb(var(--fg-rgb) / 0.3)' : cm >= 0 ? 'var(--erp-primary-ink)' : '#b42318' }}>
                           {cm !== null ? `${fmtPkrWhole(cm)}${cmPct !== null ? ` · ${fmtPct(cmPct)}` : ''}` : '—'}
                         </p>
                       </div>
@@ -246,7 +246,7 @@ export default function MenuEngineeringPage() {
         <p className="text-[11px] text-s-dim">
           Contribution margin = selling price − plate cost − packaging. Net profit also subtracts opex/portion.
           Sales-mix quadrant analysis (Stars / Dogs) lives under{' '}
-          <Link href="/accounting/menu-engineering" className="text-s-teal hover:underline">Finance → Sales Quadrants</Link>.
+          <Link href="/accounting/menu-engineering" className="text-primary-ink hover:underline">Finance → Sales Quadrants</Link>.
         </p>
       </div>
     </div>

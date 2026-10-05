@@ -29,7 +29,7 @@ interface Item {
 // 'dozen' is not offered: recipe costing treats every non-kg/litre unit as
 // per piece, so a dozen-priced item costed 12x too much.
 const UNITS = ['g', 'ml', 'each', 'kg', 'litres', 'pcs']
-const fi = 'rounded-md border border-kds-border bg-kds-bg px-2 py-1 text-sm text-kds-text focus:border-kds-green focus:outline-none'
+const fi = 'rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm text-s-text focus:border-primary focus:outline-none'
 
 function pkr(cents: number | null): string {
   if (cents == null) return ''
@@ -95,53 +95,53 @@ export default function SourcingPage() {
   const unassignedCount = (items ?? []).filter((i) => !i.tenantId).length
 
   return (
-    <div className="min-h-screen bg-kds-bg">
-      <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+    <div className="min-h-screen bg-s-bg">
+      <header className="border-b border-s-border px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-black text-kds-text mt-0.5">Sourcing Master Sheet</h1>
-          <p className="text-sm text-kds-subtext">
+          <h1 className="text-2xl font-black text-s-text mt-0.5">Sourcing Master Sheet</h1>
+          <p className="text-sm text-s-muted">
             {filtered.length} ingredients · {pricedCount} costed. This catalogue feeds{' '}
-            <Link href="/accounting/recipes" className="text-kds-green hover:underline">Recipe</Link> costing.
-            Stock on hand lives on <Link href="/inventory" className="text-kds-green hover:underline">Inventory</Link>.
+            <Link href="/accounting/recipes" className="text-primary-ink hover:underline">Recipe</Link> costing.
+            Stock on hand lives on <Link href="/inventory" className="text-primary-ink hover:underline">Inventory</Link>.
           </p>
-          <p className="text-xs text-kds-subtext mt-1">
+          <p className="text-xs text-s-muted mt-1">
             Cost is the average of what deliveries cost. You can type an opening cost for an item that has not been delivered yet.
           </p>
         </div>
         <button onClick={() => setShowAdd((s) => !s)}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + Add ingredient
         </button>
       </header>
 
       {unassignedCount > 0 && (
-        <div className="mx-6 mt-4 rounded-xl border border-kds-amber/40 bg-kds-amber/5 px-4 py-3 text-sm text-kds-text">
+        <div className="mx-6 mt-4 rounded-xl border border-s-amber/40 bg-s-amber/5 px-4 py-3 text-sm text-s-text">
           {unassignedCount} ingredient{unassignedCount === 1 ? ' has' : 's have'} no company. Their waste never reaches the books and
           their cost can be moved by either company&rsquo;s deliveries. Assign each one in the Company column.
         </div>
       )}
 
       {showAdd && (
-        <div className="mx-6 mt-4 rounded-xl border border-kds-border bg-kds-card p-4">
+        <div className="mx-6 mt-4 rounded-xl border border-s-border bg-s-surface p-4">
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end">
-            <label className="col-span-2 text-xs text-kds-subtext">Name
+            <label className="col-span-2 text-xs text-s-muted">Name
               <input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
                 placeholder="e.g. Beef Tenderloin" className={fi + ' w-full mt-1'} autoFocus />
             </label>
-            <label className="text-xs text-kds-subtext">Unit
+            <label className="text-xs text-s-muted">Unit
               <select value={addForm.unit} onChange={(e) => setAddForm({ ...addForm, unit: e.target.value })} className={fi + ' w-full mt-1'}>
                 {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
             </label>
-            <label className="text-xs text-kds-subtext">Opening cost (PKR/unit)
+            <label className="text-xs text-s-muted">Opening cost (PKR/unit)
               <input type="number" step="any" min={0} value={addForm.pricePkr} onChange={(e) => setAddForm({ ...addForm, pricePkr: e.target.value })}
                 placeholder="1.5" className={fi + ' w-full mt-1'} />
             </label>
-            <label className="text-xs text-kds-subtext">Category
+            <label className="text-xs text-s-muted">Category
               <input value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })}
                 placeholder="protein, produce…" className={fi + ' w-full mt-1'} />
             </label>
-            <label className="text-xs text-kds-subtext">Source / notes
+            <label className="text-xs text-s-muted">Source / notes
               <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
                 placeholder="Region / supplier" className={fi + ' w-full mt-1'} />
             </label>
@@ -155,13 +155,13 @@ export default function SourcingPage() {
           <div className="mt-3 flex items-center gap-3">
             <button onClick={() => add.mutate()}
               disabled={!addForm.name.trim() || (needsCompanyPick && !addForm.tenantId) || add.isPending}
-              className="rounded-lg bg-kds-green text-black font-bold px-4 py-2 text-sm disabled:opacity-50">
+              className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50">
               {add.isPending ? 'Adding…' : 'Add ingredient'}
             </button>
-            <span className="text-xs text-kds-subtext">
+            <span className="text-xs text-s-muted">
               {needsCompanyPick ? 'Added to the company you pick.' : 'Added to your current company.'}
             </span>
-            {err && <span className="text-xs text-kds-red">{err}</span>}
+            {err && <span className="text-xs text-s-red">{err}</span>}
           </div>
         </div>
       )}
@@ -172,11 +172,11 @@ export default function SourcingPage() {
           className={fi + ' w-full max-w-md mb-3'} />
 
         {isLoading ? (
-          <p className="text-sm text-kds-subtext">Loading…</p>
+          <p className="text-sm text-s-muted">Loading…</p>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-kds-border">
+          <div className="overflow-x-auto rounded-xl border border-s-border">
             <table className="w-full text-sm">
-              <thead className="text-kds-subtext bg-kds-card">
+              <thead className="text-s-muted bg-s-surface">
                 <tr className="text-left">
                   <th className="px-3 py-2 font-bold">Ingredient</th>
                   <th className="px-3 py-2 font-bold w-24">Unit</th>
@@ -188,7 +188,7 @@ export default function SourcingPage() {
               </thead>
               <tbody>
                 {filtered.map((it) => (
-                  <tr key={it.id} className="border-t border-kds-border">
+                  <tr key={it.id} className="border-t border-s-border">
                     <td className="px-3 py-1.5">
                       <input key={`n${it.id}${it.name}`} defaultValue={it.name}
                         onBlur={(e) => saveField(it, 'name', e.target.value)} className={fi + ' w-full min-w-[180px]'} />
@@ -201,9 +201,9 @@ export default function SourcingPage() {
                     </td>
                     <td className="px-3 py-1.5">
                       {it.costSource === 'deliveries' ? (
-                        <span className="block w-full text-right font-mono text-kds-text" title="Average of what deliveries cost — moves when stock is received">
+                        <span className="block w-full text-right font-mono text-s-text" title="Average of what deliveries cost — moves when stock is received">
                           {pkr(it.unitCostCents) || '—'}
-                          <span className="ml-1 text-[10px] font-sans text-kds-subtext">avg</span>
+                          <span className="ml-1 text-[10px] font-sans text-s-muted">avg</span>
                         </span>
                       ) : (
                         <input key={`p${it.id}${it.unitCostCents}`} type="number" step="any" min={0} defaultValue={pkr(it.unitCostCents)}
@@ -237,7 +237,7 @@ export default function SourcingPage() {
             </table>
           </div>
         )}
-        {patch.isError && <p className="mt-2 text-xs text-kds-red">{(patch.error as Error)?.message}</p>}
+        {patch.isError && <p className="mt-2 text-xs text-s-red">{(patch.error as Error)?.message}</p>}
       </main>
     </div>
   )

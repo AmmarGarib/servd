@@ -65,7 +65,7 @@ export default function PhysicalCountPage() {
   const lineCount = Object.values(lines).filter((l) => l.physicalQty !== '').length
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/inventory" className="text-xs text-white/40 hover:text-white/70">← Inventory</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">📋 Physical count</h1>
@@ -78,16 +78,16 @@ export default function PhysicalCountPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgba(0,212,177,0.1)',
-              color: feedback.startsWith('⚠') ? '#FCD34D' : '#00D4B1',
-              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgba(0,212,177,0.3)'}`,
+              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(135 197 64 / 0.1)',
+              color: feedback.startsWith('⚠') ? '#a15c00' : 'var(--erp-primary-ink)',
+              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
             }}>{feedback}</div>
         )}
 
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items…"
-          className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3 text-sm text-white/85 focus:border-kds-green focus:outline-none" />
+          className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3 text-sm text-white/85 focus:border-primary focus:outline-none" />
 
-        <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-2xl overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           {filtered.length === 0 && <p className="p-5 text-xs text-white/35 italic">No items match.</p>}
           {filtered.map((item) => {
             const line = lines[item.id]
@@ -105,8 +105,8 @@ export default function PhysicalCountPage() {
                   <input type="number" step="0.01" value={line?.physicalQty ?? ''}
                     onChange={(e) => setQty(item, e.target.value === '' ? '' : parseFloat(e.target.value))}
                     placeholder="Counted"
-                    className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none" />
-                  <span className="text-xs font-bold" style={{ color: variance == null ? 'rgba(255,255,255,0.3)' : flag ? '#FCD34D' : '#00D4B1' }}>
+                    className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none" />
+                  <span className="text-xs font-bold" style={{ color: variance == null ? 'rgb(var(--fg-rgb) / 0.3)' : flag ? '#a15c00' : 'var(--erp-primary-ink)' }}>
                     {variance != null ? `${variance > 0 ? '+' : ''}${variance.toFixed(1)}%` : '—'}
                     {flag && <span className="ml-1">⚠</span>}
                   </span>
@@ -123,14 +123,14 @@ export default function PhysicalCountPage() {
 
         <div>
           <label className="text-xs text-white/55">Count notes</label>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Spot-check Friday morning, line cooks present, freezer #2 inspected." className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 mt-1 focus:border-kds-green focus:outline-none" />
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Spot-check Friday morning, line cooks present, freezer #2 inspected." className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 mt-1 focus:border-primary focus:outline-none" />
         </div>
 
-        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
+        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
 
         <div className="flex justify-end pt-2">
           <button onClick={() => submit.mutate()} disabled={submit.isPending || lineCount === 0}
-            className="rounded-xl bg-kds-green px-6 py-3 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : `Submit count (${lineCount} item${lineCount === 1 ? '' : 's'}) →`}
           </button>
         </div>

@@ -54,9 +54,9 @@ function FlameIcon() {
 }
 
 const DIETARY_BADGE: Record<string, { label: string; color: string; withIcon: boolean }> = {
-  vegetarian:  { label: 'Veg',   color: 'rgba(58,14,105,0.15)',  withIcon: true  },
-  vegan:       { label: 'Vegan', color: 'rgba(58,14,105,0.15)',  withIcon: true  },
-  halal:       { label: 'Halal', color: 'rgba(58,14,105,0.15)',  withIcon: false },
+  vegetarian:  { label: 'Veg',   color: 'rgba(135,197,64,0.15)',  withIcon: true  },
+  vegan:       { label: 'Vegan', color: 'rgba(135,197,64,0.15)',  withIcon: true  },
+  halal:       { label: 'Halal', color: 'rgba(135,197,64,0.15)',  withIcon: false },
   gluten_free: { label: 'GF',    color: 'rgba(245,158,11,0.15)', withIcon: false },
 }
 interface Category   { id: string; name: string; sortOrder: number; items: MenuItem[] }
@@ -634,7 +634,7 @@ function ItemDetailModal({
                   <span style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--servd-ink)' }}>{g.name}</span>
                   {g.isRequired && (
                     <span style={{
-                      background: 'var(--servd-green)', color: 'white',
+                      background: 'var(--servd-green)', color: 'var(--servd-on-green)',
                       fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em',
                       textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px',
                     }}>Required</span>
@@ -651,7 +651,7 @@ function ItemDetailModal({
                         style={{
                           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                           padding: '0.55rem 0.75rem', borderRadius: '0.5rem',
-                          background: checked ? 'rgba(58,14,105,0.08)' : 'transparent',
+                          background: checked ? 'rgba(135,197,64,0.08)' : 'transparent',
                           border: checked ? '1px solid var(--servd-green)' : '1px solid transparent',
                           cursor: reachedMax ? 'not-allowed' : 'pointer',
                           opacity: reachedMax ? 0.5 : 1,

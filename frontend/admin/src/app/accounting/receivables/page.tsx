@@ -21,19 +21,19 @@ interface Invoice {
 interface Ledger { invoices: Invoice[]; aging: Record<string, number>; outstandingCents: number }
 interface Concept { id: string; name: string }
 
-const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
-const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-kds-green'
+const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
+const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
 const today = () => new Date().toISOString().slice(0, 10)
 const plusDays = (d: string, n: number) => new Date(new Date(d).getTime() + n * 86_400_000).toISOString().slice(0, 10)
-const STATUS_COLOR: Record<string, string> = { open: '#60a5fa', partial: '#f59e0b', paid: '#34d399', void: 'rgba(255,255,255,0.35)' }
+const STATUS_COLOR: Record<string, string> = { open: '#1d4ed8', partial: '#a15c00', paid: '#3f7d20', void: 'rgb(var(--fg-rgb) / 0.35)' }
 
 function L({ t, children }: { t: string; children: React.ReactNode }) {
   return <label className="block"><span className="text-[11px] font-bold text-white/50">{t}</span>{children}</label>
 }
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: '#12131a', border: '1px solid rgba(255,255,255,0.08)' }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <p className="text-lg font-black text-white/90 mb-4">{title}</p>
         {children}
@@ -54,7 +54,7 @@ export default function ReceivablesPage() {
   const [voiding, setVoiding] = useState<Invoice | null>(null)
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/modules/tax" className="text-xs text-white/40 hover:text-white/70">← Tax, invoices & filing</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -62,7 +62,7 @@ export default function ReceivablesPage() {
             <h1 className="text-2xl font-black text-white/90">Receivables</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">Invoices for customers who pay later. Till sales settle on the spot and never appear here.</p>
           </div>
-          <button onClick={() => setRaising(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New invoice</button>
+          <button onClick={() => setRaising(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New invoice</button>
         </div>
       </header>
 
@@ -73,7 +73,7 @@ export default function ReceivablesPage() {
               ['31–60', data.aging['31-60'] ?? 0], ['61–90', data.aging['61-90'] ?? 0], ['90+', data.aging['90+'] ?? 0]].map(([l, v], i) => (
               <div key={l as string} className="rounded-2xl p-4" style={card}>
                 <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{l}</p>
-                <p className="text-lg font-black mt-1" style={{ color: i >= 4 && (v as number) > 0 ? '#f87171' : 'rgba(255,255,255,0.9)' }}>{fmtPkrWhole(v as number)}</p>
+                <p className="text-lg font-black mt-1" style={{ color: i >= 4 && (v as number) > 0 ? '#b42318' : 'rgb(var(--fg-rgb) / 0.9)' }}>{fmtPkrWhole(v as number)}</p>
               </div>
             ))}
           </div>
@@ -82,7 +82,7 @@ export default function ReceivablesPage() {
         <div className="flex gap-2">
           {([['outstanding', 'Outstanding'], ['', 'All'], ['paid', 'Paid'], ['void', 'Void']] as const).map(([k, l]) => (
             <button key={k} onClick={() => setFilter(k)}
-              className={`rounded-full px-3 py-1 text-xs font-bold border ${filter === k ? 'bg-kds-green text-black border-kds-green' : 'border-white/10 text-white/50'}`}>{l}</button>
+              className={`rounded-full px-3 py-1 text-xs font-bold border ${filter === k ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>{l}</button>
           ))}
         </div>
 
@@ -106,14 +106,14 @@ export default function ReceivablesPage() {
                   <tr key={i.id} className="border-t border-white/[0.05]">
                     <td className="px-4 py-3"><p className="font-bold text-white/90">{i.number}</p><p className="text-[11px] text-white/40 truncate max-w-[180px]">{i.description}</p></td>
                     <td className="px-4 py-3 text-white/70">{i.customerName}</td>
-                    <td className="px-4 py-3 text-white/60">{new Date(i.dueDate).toLocaleDateString()}{i.bucket && i.bucket !== 'current' && <span className="ml-1 text-[10px] text-red-400">{i.bucket}d</span>}</td>
+                    <td className="px-4 py-3 text-white/60">{new Date(i.dueDate).toLocaleDateString()}{i.bucket && i.bucket !== 'current' && <span className="ml-1 text-[10px] text-red-700">{i.bucket}d</span>}</td>
                     <td className="px-4 py-3 text-white/80">{fmtPkrWhole(i.totalCents)}</td>
                     <td className="px-4 py-3 text-white/60">{fmtPkrWhole(i.paidCents)}</td>
                     <td className="px-4 py-3 font-bold text-white/90">{fmtPkrWhole(i.balanceCents)}</td>
                     <td className="px-4 py-3"><span className="text-xs font-bold" style={{ color: STATUS_COLOR[i.status] }}>{i.status}</span></td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {(i.status === 'open' || i.status === 'partial') &&
-                        <button onClick={() => setPaying(i)} className="text-xs font-bold text-kds-green mr-3">Record payment</button>}
+                        <button onClick={() => setPaying(i)} className="text-xs font-bold text-primary-ink mr-3">Record payment</button>}
                       {i.status === 'open' && i.paidCents === 0 &&
                         <button onClick={() => setVoiding(i)} className="text-xs font-bold text-white/40 hover:text-white">Void</button>}
                     </td>
@@ -173,10 +173,10 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
         </L>
       </div>
       <p className="text-sm text-white/60 mt-3">Total: <strong className="text-white/90">{fmtPkrWhole(Math.round(total * 100))}</strong></p>
-      {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button onClick={() => save.mutate()} disabled={save.isPending || !f.customerName || !f.amount || !f.description}
-          className="rounded-lg bg-kds-green px-4 py-2 text-sm font-black text-black disabled:opacity-50">{save.isPending ? 'Saving…' : 'Raise invoice'}</button>
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">{save.isPending ? 'Saving…' : 'Raise invoice'}</button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>
       </div>
     </Modal>
@@ -207,9 +207,9 @@ function Pay({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           <option value="bank">Bank transfer</option><option value="cheque">Cheque</option><option value="cash">Cash</option><option value="card">Card</option></select></L>
         <L t="Reference"><input className={inp} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></L>
       </div>
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
-        <button onClick={() => go.mutate()} disabled={go.isPending || !Number(amount)} className="rounded-lg bg-kds-green px-4 py-2 text-sm font-black text-black disabled:opacity-50">{go.isPending ? 'Saving…' : 'Record payment'}</button>
+        <button onClick={() => go.mutate()} disabled={go.isPending || !Number(amount)} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">{go.isPending ? 'Saving…' : 'Record payment'}</button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>
       </div>
     </Modal>
@@ -229,9 +229,9 @@ function Void({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
     <Modal title={`Void ${inv.number}`} onClose={onClose}>
       <p className="text-sm text-white/60">This reverses the invoice in the ledger. It stays on record as void.</p>
       <div className="mt-4"><L t="Reason"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Raised in error" /></L></div>
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
-        <button onClick={() => go.mutate()} disabled={go.isPending || reason.trim().length < 3} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-black text-white disabled:opacity-50">{go.isPending ? 'Voiding…' : 'Void invoice'}</button>
+        <button onClick={() => go.mutate()} disabled={go.isPending || reason.trim().length < 3} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-black text-[#fff] disabled:opacity-50">{go.isPending ? 'Voiding…' : 'Void invoice'}</button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>
       </div>
     </Modal>

@@ -37,9 +37,9 @@ export default function HrSettingsPage() {
   return (
     <HrShell title="HR settings" subtitle="The rules payroll, overtime, attendance and leave are calculated with — for the active company."
       actions={s && <button className={btn} disabled={save.isPending} onClick={() => save.mutate(s)}>{save.isPending ? 'Saving…' : 'Save settings'}</button>}>
-      {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
-      {save.error && <p className="text-sm text-red-400 mb-4">{(save.error as Error).message}</p>}
-      {save.isSuccess && <p className="text-sm text-emerald-400 mb-4">Saved. The next payroll calculation uses these.</p>}
+      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {save.error && <p className="text-sm text-red-700 mb-4">{(save.error as Error).message}</p>}
+      {save.isSuccess && <p className="text-sm text-emerald-700 mb-4">Saved. The next payroll calculation uses these.</p>}
       {s && (
         <div className="grid lg:grid-cols-2 gap-4">
           <Panel title="Pay & overtime">
@@ -128,7 +128,7 @@ function Money({ label, help, v, warn, onSet }: { label: string; help?: string; 
       <span className="block text-[11px] font-bold text-white/55 mb-1">{label}</span>
       <input type="number" min={0} step="any" className={inp} value={v == null ? '' : v / 100}
         onChange={(e) => onSet(e.target.value === '' ? null : Math.round(Number(e.target.value) * 100))} />
-      {help && <span className={`block text-[10px] mt-1 ${warn ? 'text-amber-400' : 'text-white/35'}`}>{help}</span>}
+      {help && <span className={`block text-[10px] mt-1 ${warn ? 'text-amber-700' : 'text-white/35'}`}>{help}</span>}
     </label>
   )
 }
@@ -136,7 +136,7 @@ function Money({ label, help, v, warn, onSet }: { label: string; help?: string; 
 function Check({ label, v, onSet }: { label: string; v: boolean; onSet: (v: boolean) => void }) {
   return (
     <label className="flex items-center gap-2 text-sm text-white/80">
-      <input type="checkbox" checked={v} onChange={(e) => onSet(e.target.checked)} className="h-4 w-4 accent-[#00D4B1]" />
+      <input type="checkbox" checked={v} onChange={(e) => onSet(e.target.checked)} className="h-4 w-4 accent-primary" />
       {label}
     </label>
   )

@@ -25,14 +25,14 @@ interface Floor {
 }
 
 const STATUS_COLORS: Record<string, { fill: string; stroke: string; text: string; label: string }> = {
-  available:      { fill: 'rgba(34,197,94,0.16)',   stroke: 'rgba(22,163,74,0.55)',  text: '#0a0a0a', label: 'Available' },
-  reserved:       { fill: 'rgba(59,130,246,0.16)',  stroke: 'rgba(59,130,246,0.55)', text: '#0a0a0a', label: 'Reserved'  },
-  seated:         { fill: 'rgba(99,102,241,0.18)',  stroke: 'rgba(99,102,241,0.6)',  text: '#0a0a0a', label: 'Seated'    },
-  ordered:        { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: '#0a0a0a', label: 'Ordered'   },
-  eating:         { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: '#0a0a0a', label: 'Eating'    },
-  check:          { fill: 'rgba(217,119,6,0.22)',   stroke: 'rgba(217,119,6,0.8)',   text: '#0a0a0a', label: 'Check'     },
-  cleaning:       { fill: 'rgba(168,85,247,0.16)',  stroke: 'rgba(168,85,247,0.6)',  text: '#0a0a0a', label: 'Cleaning'  },
-  out_of_service: { fill: 'rgba(0,0,0,0.08)',       stroke: 'rgba(0,0,0,0.3)',       text: '#0a0a0a', label: 'OOS'       },
+  available:      { fill: 'rgba(34,197,94,0.16)',   stroke: 'rgba(22,163,74,0.55)',  text: 'var(--text)', label: 'Available' },
+  reserved:       { fill: 'rgba(59,130,246,0.16)',  stroke: 'rgba(59,130,246,0.55)', text: 'var(--text)', label: 'Reserved'  },
+  seated:         { fill: 'rgb(61 31 59 / 0.18)',  stroke: 'rgb(61 31 59 / 0.6)',  text: 'var(--text)', label: 'Seated'    },
+  ordered:        { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: 'var(--text)', label: 'Ordered'   },
+  eating:         { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: 'var(--text)', label: 'Eating'    },
+  check:          { fill: 'rgba(217,119,6,0.22)',   stroke: 'rgba(217,119,6,0.8)',   text: 'var(--text)', label: 'Check'     },
+  cleaning:       { fill: 'rgba(168,85,247,0.16)',  stroke: 'rgba(168,85,247,0.6)',  text: 'var(--text)', label: 'Cleaning'  },
+  out_of_service: { fill: 'rgba(0,0,0,0.08)',       stroke: 'rgba(0,0,0,0.3)',       text: 'var(--text)', label: 'OOS'       },
 }
 
 function statusOf(t: LiveTable): string {

@@ -30,16 +30,17 @@ import type {
 // ── Palette (root storefront tokens; the app has no CSS variables) ─────────
 
 const APP_TEXT = '#ffffff'
-const INK = '#171717'
-const PLUM = '#4E2A4F'
-const PLUM_SOFT = '#ECE2EC'
-const PLUM_INK = '#1E1420'
+const INK = '#3d1f3b'
+const GREEN = '#87c540'
+const GREEN_SOFT = '#e2edc8'
+const GREEN_INK = '#3a5c12'
 
+// Mirrors the storefront's :root --servd-* tokens (bone / green / purple, 2026-10-05).
 const CSS_VARS: Record<string, string> = {
-  '--servd-green': PLUM, '--servd-green-dark': '#2D1E2F', '--servd-green-soft': PLUM_SOFT,
-  '--servd-green-ink': PLUM_INK, '--servd-black': '#0a0a0a', '--servd-ink': INK,
-  '--servd-mute': '#525252', '--servd-dim': '#a3a3a3', '--servd-line': 'rgba(0,0,0,0.08)',
-  '--servd-bg': '#ffffff', '--servd-surface': '#fafafa',
+  '--servd-green': GREEN, '--servd-green-dark': '#4f7a1c', '--servd-green-soft': GREEN_SOFT,
+  '--servd-green-ink': GREEN_INK, '--servd-on-green': INK, '--servd-black': '#2a1428', '--servd-ink': INK,
+  '--servd-mute': '#705764', '--servd-dim': '#a3909e', '--servd-line': 'rgba(61,31,59,0.14)',
+  '--servd-bg': '#f3e7cd', '--servd-surface': '#ece0c3',
   '--simmer-green': '#06392F', '--simmer-bone': '#EDE6D3', '--simmer-walnut': '#3D2817',
   '--simmer-black': '#0E0E0E', '--simmer-orange': '#E94E1B',
   '--stackd-plum': '#7C2946', '--stackd-plum-dark': '#3D1122', '--stackd-cream': '#FCE8CE',
@@ -308,7 +309,7 @@ function Kicker({ text, look, center }: { text: string | undefined; look: Look; 
   if (!text) return null
   return (
     <Text style={{
-      color: look.onLight ? PLUM : PLUM_SOFT, fontFamily: look.body, fontWeight: '700', fontSize: 11,
+      color: look.onLight ? '#4f7a1c' : GREEN, fontFamily: look.body, fontWeight: '700', fontSize: 11,
       letterSpacing: 2.5, textTransform: 'uppercase', marginBottom: 8, textAlign: center ? 'center' : 'left',
     }}>
       {text}
@@ -325,7 +326,7 @@ function Button({
   const { onAction } = useContext(Ctx)
   const sz = BUTTON_SIZE[size] ?? BUTTON_SIZE.lg
   const palette: Record<ButtonStyle, { bg: string; fg: string; border: string }> = {
-    primary:   look.onLight ? { bg: PLUM, fg: '#fff', border: PLUM } : { bg: PLUM_SOFT, fg: PLUM_INK, border: PLUM_SOFT },
+    primary:   { bg: GREEN, fg: INK, border: GREEN },
     secondary: { bg: '#fff', fg: INK, border: 'rgba(0,0,0,0.12)' },
     dark:      { bg: '#0a0a0a', fg: '#fff', border: look.onLight ? '#0a0a0a' : 'rgba(255,255,255,0.18)' },
     ghost:     { bg: 'transparent', fg: look.fg, border: look.onLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.25)' },
@@ -558,7 +559,7 @@ function KitchensView({ b, look }: P<KitchensBlock>) {
           accessibilityRole="link"
           activeOpacity={0.85}
           style={{ flexDirection: 'row', borderRadius: 16, borderWidth: 1, borderColor: border, backgroundColor: card, overflow: 'hidden', marginBottom: 12 }}>
-          <View style={{ width: 6, backgroundColor: c.primaryColor ?? PLUM }} />
+          <View style={{ width: 6, backgroundColor: c.primaryColor ?? GREEN }} />
           <View style={{ flex: 1, padding: 16 }}>
             <Text style={heading({ ...look, fg: look.onLight ? INK : '#fff' }, 18)}>{c.name}</Text>
             {c.description ? (
@@ -615,7 +616,7 @@ function FeaturedMenuView({ b, look }: P<FeaturedMenuBlock>) {
             style={{ width: cardW, borderRadius: 16, overflow: 'hidden', backgroundColor: card, borderWidth: 1, borderColor: look.onLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)' }}>
             {it.imageUrl
               ? <Image source={{ uri: it.imageUrl }} resizeMode="cover" style={{ width: '100%', aspectRatio: 4 / 3 }} />
-              : <View style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: look.onLight ? PLUM_SOFT : '#1a1420' }} />}
+              : <View style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: look.onLight ? GREEN_SOFT : '#2a1428' }} />}
             <View style={{ padding: 14 }}>
               <Text numberOfLines={1} style={heading(cardFg, 15)}>{it.name}</Text>
               {it.description ? <Text numberOfLines={2} style={copy(cardFg, 13, { opacity: 0.6, marginTop: 4 })}>{it.description}</Text> : null}
@@ -662,7 +663,7 @@ function ReviewsView({ b, look }: P<ReviewsBlock>) {
       </View>
       {data.reviews.slice(0, b.max ?? 6).map((r) => (
         <View key={r.id} style={{ backgroundColor: card, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: look.onLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)' }}>
-          <Text accessibilityLabel={`${r.rating} out of 5`} style={{ color: look.onLight ? PLUM : PLUM_SOFT, fontSize: 14, marginBottom: 8 }}>{stars(r.rating)}</Text>
+          <Text accessibilityLabel={`${r.rating} out of 5`} style={{ color: look.onLight ? INK : GREEN, fontSize: 14, marginBottom: 8 }}>{stars(r.rating)}</Text>
           {r.comment ? <Text style={copy(cardFg, 15, { marginBottom: 10 })}>{`“${r.comment}”`}</Text> : null}
           <Text style={copy(cardFg, 12, { opacity: 0.55 })}>
             {r.customerName} · {new Date(r.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}

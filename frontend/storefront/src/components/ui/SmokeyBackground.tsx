@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // Interactive WebGL "smokey" aurora background — the glowing wave ripples
 // toward the cursor. Themed via `color` (defaults to servd deep purple).
@@ -59,9 +59,13 @@ function hexToRgb(hex: string): [number, number, number] {
   ]
 }
 
-export function SmokeyBackground({ color = '#4E2A4F', className = '', backdropBlur = 'sm' }: SmokeyBackgroundProps) {
+export function SmokeyBackground({ color = '#5c3458', className = '', backdropBlur = 'sm' }: SmokeyBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mouse = useRef({ x: 0, y: 0, hovering: false })
+  // Hidden until the shader program links: a device that can't run it (no
+  // WebGL, or a compile failure) shows the page's solid background instead of
+  // a blank white canvas over white-text inputs.
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -95,6 +99,7 @@ export function SmokeyBackground({ color = '#4E2A4F', className = '', backdropBl
       return
     }
     gl.useProgram(program)
+    setReady(true)
 
     const buf = gl.createBuffer()
     gl.bindBuffer(gl.ARRAY_BUFFER, buf)
@@ -149,7 +154,7 @@ export function SmokeyBackground({ color = '#4E2A4F', className = '', backdropBl
 
   return (
     <div className={`absolute inset-0 w-full h-full overflow-hidden ${className}`}>
-      <canvas ref={canvasRef} className="w-full h-full block" />
+      <canvas ref={canvasRef} className="w-full h-full block" style={{ visibility: ready ? 'visible' : 'hidden' }} />
       <div className={`absolute inset-0 ${BLUR[backdropBlur]}`} />
     </div>
   )

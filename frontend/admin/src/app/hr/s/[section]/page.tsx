@@ -45,12 +45,12 @@ export default function HrSectionPage() {
         <button className={btn} onClick={() => setCreating(true)}>+ New</button>
       </>}
     >
-      {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
-      {csvErr && <p className="text-sm text-red-400 mb-4">Export failed: {csvErr}</p>}
+      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {csvErr && <p className="text-sm text-red-700 mb-4">Export failed: {csvErr}</p>}
       <div className="flex flex-wrap gap-2 mb-4">
         {['', 'draft', 'submitted', 'approved', 'rejected', 'cancelled'].map((s) => (
           <button key={s || 'all'} onClick={() => setStatus(s)}
-            className={`rounded-full px-3 py-1 text-xs font-bold border ${status === s ? 'bg-kds-green text-black border-kds-green' : 'border-white/10 text-white/50'}`}>
+            className={`rounded-full px-3 py-1 text-xs font-bold border ${status === s ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>
             {s ? human(s) : 'All'}
           </button>
         ))}
@@ -60,7 +60,7 @@ export default function HrSectionPage() {
             {fmt.stages.map((s) => <option key={s} value={s}>{human(s)}</option>)}
           </select>
         )}
-        {fmt && !fmt.isDefault && <span className="ml-auto text-[11px] text-kds-green self-center">Using HR format v{fmt.version}</span>}
+        {fmt && !fmt.isDefault && <span className="ml-auto text-[11px] text-primary-ink self-center">Using HR format v{fmt.version}</span>}
       </div>
 
       {data && data.records.length === 0 && (
@@ -120,7 +120,7 @@ function OpenRecord({ record, listFormat, listTenantId, onChanged }: { record: H
   const { data: lookups } = useHrLookups(record.tenantId)
   const { data: org } = useHrOrg(record.tenantId)
   const format = same ? listFormat : own?.format
-  if (error) return <p className="text-sm text-red-400">{(error as Error).message}</p>
+  if (error) return <p className="text-sm text-red-700">{(error as Error).message}</p>
   if (!format) return <p className="text-sm text-white/40">Loading its format…</p>
   return (
     <>
@@ -145,7 +145,7 @@ function NewRecord({ section, format, onClose, onSaved }: { section: string; for
     <Modal title={`New — ${format.title}`} wide onClose={onClose}>
       <FormRenderer fields={leaveFields(section, format.fields, value)} value={value}
         onChange={(x) => setValue(withLeaveDays(section, format.fields, value, x))} ctx={{ lookups, org }} />
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending} onClick={() => save.mutate(true)}>{hasWorkflow ? 'Submit for approval' : 'Save'}</button>
         {hasWorkflow && <button className={btnGhost} disabled={save.isPending} onClick={() => save.mutate(false)}>Save as draft</button>}

@@ -39,7 +39,7 @@ export default function PaymentMethodsPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
           <Link href="/configuration" className="hover:text-white/70">← Configuration Hub</Link>
@@ -55,13 +55,13 @@ export default function PaymentMethodsPage() {
       <div className="px-7 py-6 max-w-3xl mx-auto space-y-5">
         {/* Setup overview */}
         <div className="rounded-2xl p-5"
-          style={{ background: 'linear-gradient(135deg, rgba(0,212,177,0.06), rgba(99,102,241,0.04))', border: '1px solid rgba(0,212,177,0.18)' }}>
-          <p className="text-[10px] font-black uppercase tracking-[0.28em] text-kds-green/70 mb-2">When you sign up with a gateway</p>
+          style={{ background: 'linear-gradient(135deg, rgb(135 197 64 / 0.06), rgb(61 31 59 / 0.04))', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+          <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary-ink/70 mb-2">When you sign up with a gateway</p>
           <ol className="text-sm text-white/75 space-y-2 leading-relaxed">
-            <li><span className="font-bold text-kds-green">1.</span> The gateway gives you a <strong>merchant ID</strong> (or store ID), one or more <strong>secret keys</strong>, and a <strong>sandbox base URL</strong> for testing.</li>
-            <li><span className="font-bold text-kds-green">2.</span> Paste the secrets into your backend's <code className="font-mono text-xs px-1 py-0.5 rounded bg-white/10">.env</code> file using the variable names listed below — <em>never</em> commit these to git.</li>
-            <li><span className="font-bold text-kds-green">3.</span> Set the <strong>callback URL</strong> on the gateway's portal to <code className="font-mono text-xs px-1 py-0.5 rounded bg-white/10">https://&lt;your-domain&gt;/api/v1/webhooks/&lt;provider&gt;</code> so success/failure events reach servd.</li>
-            <li><span className="font-bold text-kds-green">4.</span> Toggle the gateway on below. Test in sandbox mode first; flip to live once a few test transactions reconcile.</li>
+            <li><span className="font-bold text-primary-ink">1.</span> The gateway gives you a <strong>merchant ID</strong> (or store ID), one or more <strong>secret keys</strong>, and a <strong>sandbox base URL</strong> for testing.</li>
+            <li><span className="font-bold text-primary-ink">2.</span> Paste the secrets into your backend's <code className="font-mono text-xs px-1 py-0.5 rounded bg-white/10">.env</code> file using the variable names listed below — <em>never</em> commit these to git.</li>
+            <li><span className="font-bold text-primary-ink">3.</span> Set the <strong>callback URL</strong> on the gateway's portal to <code className="font-mono text-xs px-1 py-0.5 rounded bg-white/10">https://&lt;your-domain&gt;/api/v1/webhooks/&lt;provider&gt;</code> so success/failure events reach servd.</li>
+            <li><span className="font-bold text-primary-ink">4.</span> Toggle the gateway on below. Test in sandbox mode first; flip to live once a few test transactions reconcile.</li>
           </ol>
         </div>
 
@@ -114,15 +114,15 @@ function GatewayCard({ gw }: { gw: Gateway }) {
   })
 
   const statusColor = isEnabled
-    ? gw.ready ? '#00D4B1' : '#F59E0B'
-    : 'rgba(255,255,255,0.4)'
+    ? gw.ready ? '#4f7a1c' : '#a15c00'
+    : 'rgb(var(--fg-rgb) / 0.4)'
   const statusLabel = isEnabled
     ? gw.ready ? (isLive ? 'LIVE' : 'SANDBOX') : 'NEEDS SECRETS'
     : 'DISABLED'
 
   return (
     <div className="rounded-2xl overflow-hidden"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
 
       {/* Card header */}
       <div className="px-5 py-4 flex items-start justify-between gap-3 border-b border-white/[0.04]">
@@ -162,10 +162,10 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               <div className="space-y-1.5">
                 {gw.envStatus.map((e) => (
                   <div key={e.name} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
-                    style={{ background: e.set ? 'rgba(0,212,177,0.05)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgba(0,212,177,0.2)' : 'rgba(245,158,11,0.25)'}` }}>
+                    style={{ background: e.set ? 'rgb(135 197 64 / 0.05)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgb(135 197 64 / 0.2)' : 'rgba(245,158,11,0.25)'}` }}>
                     <code className="text-xs font-mono text-white/85">{e.name}</code>
                     <span className="text-[10px] font-black"
-                      style={{ color: e.set ? '#00D4B1' : '#F59E0B' }}>
+                      style={{ color: e.set ? 'var(--erp-primary-ink)' : '#a15c00' }}>
                       {e.set ? '✓ SET' : '⚠ NOT SET'}
                     </span>
                   </div>
@@ -173,7 +173,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               </div>
               {gw.docsUrl && (
                 <a href={gw.docsUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-block mt-3 text-xs text-kds-green hover:underline">
+                  className="inline-block mt-3 text-xs text-primary-ink hover:underline">
                   Open {gw.label} merchant docs →
                 </a>
               )}
@@ -183,22 +183,22 @@ function GatewayCard({ gw }: { gw: Gateway }) {
           {/* Toggles */}
           <div className="space-y-2">
             <label className="flex items-center justify-between rounded-lg px-3 py-2.5 cursor-pointer"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               <div>
                 <p className="text-sm font-bold text-white/85">Enable {gw.label}</p>
                 <p className="text-xs text-white/45">Show this method on POS + storefront checkout</p>
               </div>
-              <input type="checkbox" checked={isEnabled} onChange={(e) => setIsEnabled(e.target.checked)} className="accent-kds-green h-5 w-5" />
+              <input type="checkbox" checked={isEnabled} onChange={(e) => setIsEnabled(e.target.checked)} className="accent-primary h-5 w-5" />
             </label>
 
             {gw.envVars.length > 0 && (
               <label className="flex items-center justify-between rounded-lg px-3 py-2.5 cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div>
                   <p className="text-sm font-bold text-white/85">Live mode</p>
                   <p className="text-xs text-white/45">Off = sandbox / test transactions only. Flip on once you've reconciled a few sandbox runs.</p>
                 </div>
-                <input type="checkbox" checked={isLive} onChange={(e) => setIsLive(e.target.checked)} disabled={!gw.ready} className="accent-kds-green h-5 w-5 disabled:opacity-40" />
+                <input type="checkbox" checked={isLive} onChange={(e) => setIsLive(e.target.checked)} disabled={!gw.ready} className="accent-primary h-5 w-5 disabled:opacity-40" />
               </label>
             )}
           </div>
@@ -209,7 +209,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               <label className="text-xs text-white/55">Merchant / Store ID</label>
               <input value={merchantId} onChange={(e) => setMerchantId(e.target.value)}
                 placeholder="MC-12345"
-                className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none font-mono" />
+                className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none font-mono" />
               <p className="text-[10px] text-white/35 mt-1">Public identifier the gateway gave you. Safe to store here (not a secret).</p>
             </div>
           )}
@@ -220,7 +220,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
                 <label className="text-xs text-white/55">Callback URL (server-to-server webhook)</label>
                 <input value={callbackUrl} onChange={(e) => setCallbackUrl(e.target.value)}
                   placeholder={`https://your-domain.com/api/v1/webhooks/${gw.provider}`}
-                  className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none font-mono" />
+                  className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none font-mono" />
                 <p className="text-[10px] text-white/35 mt-1">
                   Paste this URL into the gateway's merchant portal so they POST payment results back to us.
                 </p>
@@ -230,13 +230,13 @@ function GatewayCard({ gw }: { gw: Gateway }) {
                   <label className="text-xs text-white/55">Success redirect</label>
                   <input value={successUrl} onChange={(e) => setSuccessUrl(e.target.value)}
                     placeholder="https://your-domain.com/checkout/success"
-                    className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-xs text-white/85 focus:border-kds-green focus:outline-none font-mono" />
+                    className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-xs text-white/85 focus:border-primary focus:outline-none font-mono" />
                 </div>
                 <div>
                   <label className="text-xs text-white/55">Failure redirect</label>
                   <input value={failureUrl} onChange={(e) => setFailureUrl(e.target.value)}
                     placeholder="https://your-domain.com/checkout/failed"
-                    className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-xs text-white/85 focus:border-kds-green focus:outline-none font-mono" />
+                    className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-xs text-white/85 focus:border-primary focus:outline-none font-mono" />
                 </div>
               </div>
             </div>
@@ -246,7 +246,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
             <label className="text-xs text-white/55">Notes (internal)</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               placeholder="e.g. negotiated rate 1.7%, support contact: ali@keenu.pk"
-              className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-xs text-white/85 focus:border-kds-green focus:outline-none resize-none" />
+              className="w-full mt-1 rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-xs text-white/85 focus:border-primary focus:outline-none resize-none" />
           </div>
 
           <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
@@ -256,7 +256,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
             <button
               onClick={() => save.mutate()}
               disabled={save.isPending}
-              className="rounded-xl bg-kds-green px-5 py-2 text-xs font-black text-black hover:opacity-90 disabled:opacity-50"
+              className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-on hover:opacity-90 disabled:opacity-50"
             >
               {save.isPending ? 'Saving…' : 'Save changes'}
             </button>

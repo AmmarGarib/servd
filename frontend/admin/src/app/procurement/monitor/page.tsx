@@ -38,20 +38,20 @@ interface PurchaseOrder {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  draft:            'text-kds-subtext border-kds-border',
-  pending_approval: 'text-kds-amber border-kds-amber',
-  sent:             'text-blue-400 border-blue-400',
-  received:         'text-kds-green border-kds-green',
-  partial:          'text-kds-amber border-kds-amber',
-  cancelled:        'text-kds-red border-kds-red',
+  draft:            'text-s-muted border-s-border',
+  pending_approval: 'text-s-amber border-s-amber',
+  sent:             'text-blue-700 border-blue-400',
+  received:         'text-primary-ink border-primary',
+  partial:          'text-s-amber border-s-amber',
+  cancelled:        'text-s-red border-s-red',
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  meat:       'bg-red-500/20 text-red-300',
-  fish:       'bg-blue-500/20 text-blue-300',
-  farm:       'bg-green-500/20 text-green-300',
-  dairy:      'bg-yellow-500/20 text-yellow-300',
-  'dry-goods':'bg-orange-500/20 text-orange-300',
+  meat:       'bg-red-500/20 text-red-700',
+  fish:       'bg-blue-500/20 text-blue-700',
+  farm:       'bg-green-500/20 text-green-700',
+  dairy:      'bg-yellow-500/20 text-yellow-700',
+  'dry-goods':'bg-orange-500/20 text-orange-700',
 }
 
 function daysAgo(date: string) {
@@ -129,14 +129,14 @@ export default function ProcurementMonitorPage() {
     .slice(0, 50)
 
   return (
-    <div className="min-h-screen bg-kds-bg p-6">
+    <div className="min-h-screen bg-s-bg p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link href="/procurement" className="text-xs text-kds-subtext hover:text-kds-text mb-0.5 inline-block">← Procurement</Link>
-          <h1 className="text-2xl font-black text-kds-text">Procurement Monitor</h1>
-          <p className="text-sm text-kds-subtext mt-0.5">Track all procurement staff, suppliers, and orders</p>
+          <Link href="/procurement" className="text-xs text-s-muted hover:text-s-text mb-0.5 inline-block">← Procurement</Link>
+          <h1 className="text-2xl font-black text-s-text">Procurement Monitor</h1>
+          <p className="text-sm text-s-muted mt-0.5">Track all procurement staff, suppliers, and orders</p>
         </div>
-        <a href="/procurement/chat" className="rounded-xl bg-kds-green px-4 py-2 text-sm font-bold text-black hover:opacity-90">
+        <a href="/procurement/chat" className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-primary-on hover:opacity-90">
           💬 Supplier Chat
         </a>
       </div>
@@ -144,7 +144,7 @@ export default function ProcurementMonitorPage() {
       {/* Filters */}
       <div className="mb-6 flex gap-3 flex-wrap">
         <select value={selectedStaff} onChange={(e) => setSelectedStaff(e.target.value)}
-          className="rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text">
+          className="rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text">
           <option value="all">All Staff</option>
           {/* Roles that plausibly own supplier accounts. Procurement, the
               management tiers, and BOH-management (head chef) all touch
@@ -159,7 +159,7 @@ export default function ProcurementMonitorPage() {
           ))}
         </select>
         <select value={selectedCat} onChange={(e) => setSelectedCat(e.target.value)}
-          className="rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text">
+          className="rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text">
           <option value="all">All Categories</option>
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
@@ -170,22 +170,22 @@ export default function ProcurementMonitorPage() {
         {Array.from(byStaff.entries()).map(([staffId, { staffName, suppliers: sups }]) => {
           const pending = pendingByStaff.get(staffId)
           return (
-            <div key={staffId} className="rounded-xl border border-kds-border bg-kds-card p-4">
+            <div key={staffId} className="rounded-xl border border-s-border bg-s-surface p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
-                  <p className="font-bold text-kds-text">{staffName}</p>
-                  <p className="text-xs text-kds-subtext">{sups.length} supplier{sups.length !== 1 ? 's' : ''}</p>
+                  <p className="font-bold text-s-text">{staffName}</p>
+                  <p className="text-xs text-s-muted">{sups.length} supplier{sups.length !== 1 ? 's' : ''}</p>
                 </div>
                 {pending && pending.count > 0 && (
                   <div className="text-right">
-                    <p className="text-sm font-bold text-kds-amber">{pending.count} pending</p>
-                    <p className="text-xs text-kds-subtext">{fmtPkrWhole(pending.totalCents)}</p>
+                    <p className="text-sm font-bold text-s-amber">{pending.count} pending</p>
+                    <p className="text-xs text-s-muted">{fmtPkrWhole(pending.totalCents)}</p>
                   </div>
                 )}
               </div>
               <div className="space-y-1.5">
                 {sups.map((s) => {
-                  const catStyle = s.category ? (CATEGORY_COLORS[s.category] ?? 'bg-kds-border/30 text-kds-subtext') : ''
+                  const catStyle = s.category ? (CATEGORY_COLORS[s.category] ?? 'bg-s-border/30 text-s-muted') : ''
                   // Resolve tenant chip the same way /workforce does — prefer
                   // hydrated relation, fall back to a name lookup in the
                   // operator's tenant list.
@@ -199,12 +199,12 @@ export default function ProcurementMonitorPage() {
                             {s.category}
                           </span>
                         )}
-                        <span className="truncate text-sm text-kds-text">{s.name}</span>
+                        <span className="truncate text-sm text-s-text">{s.name}</span>
                         {/* Indigo brand chip — shown only in portfolio view,
                             mirrors the workforce hub. */}
                         {viewAll && tenant && (
                           <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                            style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                            style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
                             {tenant.name}
                           </span>
                         )}
@@ -212,14 +212,14 @@ export default function ProcurementMonitorPage() {
                             a company assignment via the edit drawer. */}
                         {!s.tenantId && (
                           <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                            style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}
+                            style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
                             title="No company assigned — click Edit to fix.">
                             ⚠ No company
                           </span>
                         )}
                       </div>
                       <button onClick={() => setEditSupplier(s)}
-                        className="shrink-0 text-xs text-kds-subtext hover:text-kds-text">Edit</button>
+                        className="shrink-0 text-xs text-s-muted hover:text-s-text">Edit</button>
                     </div>
                   )
                 })}
@@ -228,17 +228,17 @@ export default function ProcurementMonitorPage() {
           )
         })}
         {byStaff.size === 0 && (
-          <p className="col-span-full text-center text-kds-subtext py-8">No suppliers found. Add suppliers in Procurement.</p>
+          <p className="col-span-full text-center text-s-muted py-8">No suppliers found. Add suppliers in Procurement.</p>
         )}
       </div>
 
       {/* Recent orders */}
       <div>
-        <h2 className="mb-4 text-lg font-bold text-kds-text">Recent Orders (30 days)</h2>
-        <div className="overflow-x-auto rounded-xl border border-kds-border bg-kds-card">
+        <h2 className="mb-4 text-lg font-bold text-s-text">Recent Orders (30 days)</h2>
+        <div className="overflow-x-auto rounded-xl border border-s-border bg-s-surface">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-kds-border text-xs uppercase tracking-wide text-kds-subtext">
+              <tr className="border-b border-s-border text-xs uppercase tracking-wide text-s-muted">
                 <th className="px-4 py-3 text-left">Supplier</th>
                 <th className="px-4 py-3 text-left">Category</th>
                 <th className="px-4 py-3 text-left">Staff</th>
@@ -251,33 +251,33 @@ export default function ProcurementMonitorPage() {
             <tbody>
               {recentOrders.map((po) => {
                 const sup = suppliers.find((s) => s.id === po.supplierId)
-                const statusClass = STATUS_COLORS[po.status] ?? 'text-kds-subtext border-kds-border'
+                const statusClass = STATUS_COLORS[po.status] ?? 'text-s-muted border-s-border'
                 return (
-                  <tr key={po.id} className="border-b border-kds-border last:border-0 hover:bg-kds-bg/30">
-                    <td className="px-4 py-3 font-medium text-kds-text">{po.supplier?.name ?? '—'}</td>
+                  <tr key={po.id} className="border-b border-s-border last:border-0 hover:bg-s-bg/30">
+                    <td className="px-4 py-3 font-medium text-s-text">{po.supplier?.name ?? '—'}</td>
                     <td className="px-4 py-3">
                       {po.supplier?.category && (
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CATEGORY_COLORS[po.supplier.category] ?? 'bg-kds-border/30 text-kds-subtext'}`}>
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CATEGORY_COLORS[po.supplier.category] ?? 'bg-s-border/30 text-s-muted'}`}>
                           {po.supplier.category}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-kds-subtext">{sup?.assignedStaff?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-muted">{sup?.assignedStaff?.name ?? '—'}</td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full border px-2 py-0.5 text-xs font-bold ${statusClass}`}>
                         {po.status.replace('_', ' ')}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-kds-text">{fmtPkrWhole(po.totalCents)}</td>
-                    <td className="px-4 py-3 text-kds-subtext">{daysAgo(po.orderDate)}</td>
-                    <td className="px-4 py-3 text-kds-subtext">
+                    <td className="px-4 py-3 font-mono text-s-text">{fmtPkrWhole(po.totalCents)}</td>
+                    <td className="px-4 py-3 text-s-muted">{daysAgo(po.orderDate)}</td>
+                    <td className="px-4 py-3 text-s-muted">
                       {po.expectedDate ? new Date(po.expectedDate).toLocaleDateString('en-PK') : '—'}
                     </td>
                   </tr>
                 )
               })}
               {recentOrders.length === 0 && (
-                <tr><td colSpan={7} className="py-8 text-center text-kds-subtext">No orders in the last 30 days</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-s-muted">No orders in the last 30 days</td></tr>
               )}
             </tbody>
           </table>
@@ -324,50 +324,50 @@ function SupplierEditDrawer({
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-2xl bg-kds-card p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-secondary/50" onClick={onClose}>
+      <div className="w-full max-w-md rounded-t-2xl bg-s-surface p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-kds-text">{supplier.name}</h2>
-          <button onClick={onClose} className="text-kds-subtext text-2xl leading-none">✕</button>
+          <h2 className="font-bold text-s-text">{supplier.name}</h2>
+          <button onClick={onClose} className="text-s-muted text-2xl leading-none">✕</button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-kds-subtext">Category</label>
+            <label className="text-xs text-s-muted">Category</label>
             <input value={category} onChange={(e) => setCategory(e.target.value)}
               placeholder="meat, fish, farm, dairy, dry-goods…"
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm" />
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm" />
           </div>
           <div>
-            <label className="text-xs text-kds-subtext">Assigned Procurement Staff</label>
+            <label className="text-xs text-s-muted">Assigned Procurement Staff</label>
             <select value={assignedStaffId} onChange={(e) => setAssignedStaff(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
               <option value="">— Unassigned —</option>
               {staff.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select>
           </div>
           {tenants.length > 0 && (
             <div>
-              <label className="text-xs text-kds-subtext">
-                Company {!supplier.tenantId && <span className="text-red-400">— orphan, pick one</span>}
+              <label className="text-xs text-s-muted">
+                Company {!supplier.tenantId && <span className="text-red-700">— orphan, pick one</span>}
               </label>
               <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                 {!supplier.tenantId && <option value="">— pick a company —</option>}
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
           )}
           <div>
-            <label className="text-xs text-kds-subtext">Notes</label>
+            <label className="text-xs text-s-muted">Notes</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm resize-none" />
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none" />
           </div>
         </div>
-        {save.isError && <p className="text-sm text-kds-red">Save failed</p>}
+        {save.isError && <p className="text-sm text-s-red">Save failed</p>}
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext hover:text-kds-text text-sm">Cancel</button>
+          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-3 text-s-muted hover:text-s-text text-sm">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-black disabled:opacity-50 hover:opacity-90 text-sm">
+            className="flex-1 rounded-xl bg-primary py-3 font-bold text-primary-on disabled:opacity-50 hover:opacity-90 text-sm">
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
         </div>

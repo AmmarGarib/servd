@@ -92,7 +92,7 @@ export default function HoursPage() {
   const concept = concepts.find((c) => c.id === conceptId)
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">🕒 Hours of operation</h1>
@@ -105,9 +105,9 @@ export default function HoursPage() {
         {concepts.length === 0 ? (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>
-            <p className="font-bold text-amber-400">Add a brand first</p>
+            <p className="font-bold text-amber-700">Add a brand first</p>
             <p className="text-sm text-white/45 mt-1">
-              Hours attach to a brand. <Link href="/onboarding" className="text-amber-400 hover:underline">Run setup wizard</Link>.
+              Hours attach to a brand. <Link href="/onboarding" className="text-amber-700 hover:underline">Run setup wizard</Link>.
             </p>
           </div>
         ) : (
@@ -122,7 +122,7 @@ export default function HoursPage() {
             {isLoading && <p className="text-xs text-white/40">Loading hours…</p>}
 
             <div className="rounded-2xl p-5"
-              style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{concept?.name ?? 'Brand'} weekly hours</h2>
                 <div className="flex gap-1.5">
@@ -140,10 +140,10 @@ export default function HoursPage() {
               <div className="space-y-2">
                 {days.map((d, i) => (
                   <div key={i} className="rounded-lg p-3 space-y-2"
-                    style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                     <div className="flex items-center gap-3">
                       <label className="flex items-center gap-2 cursor-pointer w-20">
-                        <input type="checkbox" checked={d.isOpen} onChange={(e) => patch(i, { isOpen: e.target.checked })} className="accent-kds-green" />
+                        <input type="checkbox" checked={d.isOpen} onChange={(e) => patch(i, { isOpen: e.target.checked })} className="accent-primary" />
                         <span className="text-sm font-bold text-white/85">{DAY_LABELS[i]}</span>
                       </label>
                       {d.isOpen ? (
@@ -165,10 +165,10 @@ export default function HoursPage() {
                         <label className="flex items-center gap-1.5 cursor-pointer">
                           <input type="checkbox" checked={w.isReservable}
                             onChange={(e) => patchWindow(i, wi, { isReservable: e.target.checked })}
-                            className="accent-kds-green" />
+                            className="accent-primary" />
                           <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Reservable</span>
                         </label>
-                        <button onClick={() => removeWindow(i, wi)} className="ml-auto text-xs text-red-400/80 hover:text-red-400">Remove</button>
+                        <button onClick={() => removeWindow(i, wi)} className="ml-auto text-xs text-red-700/80 hover:text-red-700">Remove</button>
                       </div>
                     ))}
                   </div>
@@ -178,7 +178,7 @@ export default function HoursPage() {
 
             <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
               <button onClick={() => save.mutate()} disabled={save.isPending || !conceptId}
-                className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
                 {save.isPending ? 'Saving…' : 'Save hours'}
               </button>
             </div>
@@ -189,4 +189,4 @@ export default function HoursPage() {
   )
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

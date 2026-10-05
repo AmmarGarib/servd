@@ -337,9 +337,9 @@ export default function RecipesPage() {
             <h1 className="text-xl font-bold text-s-text">Recipe Costing</h1>
           </div>
           <div className="flex items-center gap-3">
-            <Link href="/accounting" className="text-xs text-s-teal hover:underline">← Hub</Link>
+            <Link href="/accounting" className="text-xs text-primary-ink hover:underline">← Hub</Link>
             {isCeo && (
-              <Link href="/accounting/recipes/approvals" className="text-xs text-s-teal hover:underline">Approvals</Link>
+              <Link href="/accounting/recipes/approvals" className="text-xs text-primary-ink hover:underline">Approvals</Link>
             )}
             <Link href="/accounting/recipes/new" className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</Link>
           </div>
@@ -369,7 +369,7 @@ export default function RecipesPage() {
                 key={s.key || 'all'}
                 onClick={() => setSeasonFilter(s.key)}
                 className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
-                  seasonFilter === s.key ? 'bg-s-teal text-black' : 'text-s-muted hover:text-s-text'
+                  seasonFilter === s.key ? 'bg-primary text-primary-on' : 'text-s-muted hover:text-s-text'
                 }`}
               >
                 {s.label}
@@ -390,7 +390,7 @@ export default function RecipesPage() {
           <div className="grid grid-cols-4 gap-3">
             {[
               { label: 'Total Recipes', value: String(recipes!.length),  color: 'text-s-text' },
-              { label: 'Plates',        value: String(plateCount),       color: 'text-s-teal' },
+              { label: 'Plates',        value: String(plateCount),       color: 'text-primary-ink' },
               { label: 'Components',    value: String(componentCount),   color: 'text-s-text' },
               { label: 'Q Factor Rate', value: 'per recipe',             color: 'text-s-muted' },
             ].map(({ label, value, color }) => (
@@ -422,7 +422,7 @@ export default function RecipesPage() {
               <button key={k.key || 'all'} type="button"
                 onClick={() => setKindFilter(k.key)}
                 className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
-                  kindFilter === k.key ? 'bg-s-teal text-black' : 'text-s-muted hover:text-s-text'
+                  kindFilter === k.key ? 'bg-primary text-primary-on' : 'text-s-muted hover:text-s-text'
                 }`}>
                 {k.label}
               </button>
@@ -461,7 +461,7 @@ export default function RecipesPage() {
                   <div
                     className="flex items-center gap-4 px-4 py-3 cursor-pointer select-none"
                     onClick={() => setExpanded(isOpen ? null : r.id)}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = '')}
                     style={{ transition: 'background 0.12s' }}
                   >
@@ -476,12 +476,12 @@ export default function RecipesPage() {
                             plate vs component recipes in the mixed list. */}
                         {r.kind === 'component' ? (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC', border: '1px solid rgba(99,102,241,0.3)' }}>
+                            style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68', border: '1px solid rgb(61 31 59 / 0.3)' }}>
                             🧩 Component
                           </span>
                         ) : (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgba(0,212,177,0.12)', color: '#5EEAD4', border: '1px solid rgba(0,212,177,0.3)' }}>
+                            style={{ background: 'rgb(135 197 64 / 0.12)', color: '#3f7d20', border: '1px solid rgb(135 197 64 / 0.3)' }}>
                             🍽 Plate
                           </span>
                         )}
@@ -536,13 +536,13 @@ export default function RecipesPage() {
                             approval inbox from here — no need to open the editor. */}
                         {r.status === 'iteration' && (
                           <button onClick={() => submitMut.mutate(r.id)} disabled={submitMut.isPending}
-                            className="text-xs px-2 py-1 rounded font-bold text-black bg-s-teal hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            className="text-xs px-2 py-1 rounded font-bold text-primary-on bg-primary hover:opacity-90 disabled:opacity-50 transition-opacity"
                             title="Submit this testing recipe for CEO approval">
                             Submit
                           </button>
                         )}
                         <button onClick={() => openEdit(r)}
-                          className="text-xs px-2 py-1 rounded text-s-muted hover:text-s-teal hover:bg-s-teal-dim transition-colors">
+                          className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-s-teal-dim transition-colors">
                           Edit
                         </button>
                         <button
@@ -563,7 +563,7 @@ export default function RecipesPage() {
 
                       {/* Spreadsheet header strip */}
                       <div className="grid grid-cols-6 gap-4 text-center px-6 py-3 border-b border-s-border/40"
-                        style={{ background: 'rgba(0,212,177,0.04)' }}>
+                        style={{ background: 'rgb(135 197 64 / 0.04)' }}>
                         {[
                           // For plate recipes the "PORTIONS" + "PORTION COST"
                           // headers make sense. For prep we swap them out for
@@ -597,12 +597,12 @@ export default function RecipesPage() {
                       <div className="overflow-x-auto">
                         <table className="w-full" style={{ fontSize: '11px' }}>
                           <thead>
-                            <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <tr style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                               {[
                                 'INGREDIENT', 'PURCHASE QTY', 'PURCHASE COST',
                                 'YIELD %', 'USABLE QTY', 'COST / UNIT', 'RECIPE QTY', 'RECIPE COST',
                               ].map((h) => (
-                                <th key={h} style={{ fontSize: '8px', letterSpacing: '0.15em', color: 'rgba(255,255,255,0.28)' }}
+                                <th key={h} style={{ fontSize: '8px', letterSpacing: '0.15em', color: 'rgb(var(--fg-rgb) / 0.28)' }}
                                   className="px-4 py-2 text-left font-black uppercase">{h}</th>
                               ))}
                             </tr>
@@ -623,9 +623,9 @@ export default function RecipesPage() {
 
                               return (
                                 <tr key={ing.id}
-                                  style={{ borderTop: idx > 0 ? '1px solid rgba(255,255,255,0.04)' : undefined }}>
-                                  <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                                    {isPrep && <span className="mr-1 text-[9px] text-indigo-300">🧩</span>}
+                                  style={{ borderTop: idx > 0 ? '1px solid rgb(var(--fg-rgb) / 0.04)' : undefined }}>
+                                  <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>
+                                    {isPrep && <span className="mr-1 text-[9px] text-indigo-700">🧩</span>}
                                     {sourceName}
                                   </td>
                                   <td className="px-4 py-2.5 text-s-muted">
@@ -649,10 +649,10 @@ export default function RecipesPage() {
                                   <td className="px-4 py-2.5 text-s-muted">
                                     PKR {costPerUnit.toFixed(4)}/{ing.unit}
                                   </td>
-                                  <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                                  <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>
                                     {ing.quantity.toLocaleString('en', { maximumFractionDigits: 3 })} {ing.unit}
                                   </td>
-                                  <td className="px-4 py-2.5 font-bold text-s-teal">
+                                  <td className="px-4 py-2.5 font-bold text-primary-ink">
                                     PKR {(ing.ingredientCostCents / 100).toFixed(2)}
                                   </td>
                                 </tr>
@@ -660,35 +660,35 @@ export default function RecipesPage() {
                             })}
                           </tbody>
                           <tfoot>
-                            <tr style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.015)' }}>
+                            <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)', background: 'rgb(var(--fg-rgb) / 0.015)' }}>
                               <td colSpan={7} className="px-4 py-2 text-right font-black uppercase"
-                                style={{ fontSize: '8px', letterSpacing: '0.15em', color: 'rgba(255,255,255,0.28)' }}>
+                                style={{ fontSize: '8px', letterSpacing: '0.15em', color: 'rgb(var(--fg-rgb) / 0.28)' }}>
                                 Ingredient Subtotal
                               </td>
-                              <td className="px-4 py-2 font-black" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                              <td className="px-4 py-2 font-black" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>
                                 {fmtPkr(r.ingredientCostCents)}
                               </td>
                             </tr>
-                            <tr style={{ borderTop: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.01)' }}>
+                            <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.04)', background: 'rgb(var(--fg-rgb) / 0.01)' }}>
                               <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
                                 Q Factor — {r.qFactorPct ?? 10}% misc. (salt, oil, unmeasured items)
                               </td>
                               <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.qFactorCents)}</td>
                             </tr>
                             {r.laborCostCents > 0 && (
-                              <tr style={{ borderTop: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.01)' }}>
+                              <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.04)', background: 'rgb(var(--fg-rgb) / 0.01)' }}>
                                 <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
                                   Labor — {r.laborMinutes} min @ PKR 50/hr
                                 </td>
                                 <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.laborCostCents)}</td>
                               </tr>
                             )}
-                            <tr style={{ borderTop: '2px solid rgba(0,212,177,0.2)', background: 'rgba(0,212,177,0.04)' }}>
-                              <td colSpan={7} className="px-4 py-3 text-right font-black uppercase text-s-teal"
+                            <tr style={{ borderTop: '2px solid rgb(135 197 64 / 0.2)', background: 'rgb(135 197 64 / 0.04)' }}>
+                              <td colSpan={7} className="px-4 py-3 text-right font-black uppercase text-primary-ink"
                                 style={{ fontSize: '8.5px', letterSpacing: '0.15em' }}>
                                 Total Recipe Cost
                               </td>
-                              <td className="px-4 py-3 font-black text-s-teal">{fmtPkr(r.totalCostCents)}</td>
+                              <td className="px-4 py-3 font-black text-primary-ink">{fmtPkr(r.totalCostCents)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -697,7 +697,7 @@ export default function RecipesPage() {
                       {/* Bottom metrics bar — pure cost. Pricing + margins for
                           plates moved to the Menu Engineering page. */}
                       <div className="px-5 py-3 flex flex-wrap items-center gap-6 border-t border-s-border/40"
-                        style={{ background: 'rgba(255,255,255,0.01)' }}>
+                        style={{ background: 'rgb(var(--fg-rgb) / 0.01)' }}>
                         {r.kind === 'plate' ? (
                           <>
                             <span className="text-xs">
@@ -706,7 +706,7 @@ export default function RecipesPage() {
                             </span>
                             <span className="text-xs ml-auto text-s-dim italic">
                               Selling price &amp; margins live in{' '}
-                              <Link href="/menu-engineering" className="text-s-teal hover:underline not-italic" onClick={(e) => e.stopPropagation()}>
+                              <Link href="/menu-engineering" className="text-primary-ink hover:underline not-italic" onClick={(e) => e.stopPropagation()}>
                                 Menu Engineering
                               </Link>.
                             </span>
@@ -723,7 +723,7 @@ export default function RecipesPage() {
                             </span>
                             <span className="text-xs">
                               <span className="text-s-muted">Cost per gram: </span>
-                              <span className="font-bold text-s-teal">
+                              <span className="font-bold text-primary-ink">
                                 {r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—'}
                               </span>
                             </span>
@@ -749,7 +749,7 @@ export default function RecipesPage() {
       {/* ── Create / Edit Modal ─────────────────────────────────────────────── */}
       {modal !== null && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 bg-secondary/40 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) closeModal() }}
         >
           <div className="bg-s-surface border border-s-border rounded-2xl shadow-modal w-full max-w-2xl max-h-[calc(100vh-5rem)] overflow-y-auto animate-scale-in">
@@ -773,16 +773,16 @@ export default function RecipesPage() {
                     <button type="button" onClick={() => setKind('plate')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'plate'
-                        ? { background: 'rgba(0,212,177,0.10)', border: '1px solid rgba(0,212,177,0.4)' }
-                        : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        ? { background: 'rgb(135 197 64 / 0.10)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                        : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                       <p className="text-sm font-bold text-s-text">🍽 Finished plate</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A menu item — costed as plate cost (margin vs. menu price).</p>
                     </button>
                     <button type="button" onClick={() => setKind('component')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'component'
-                        ? { background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.4)' }
-                        : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        ? { background: 'rgb(61 31 59 / 0.10)', border: '1px solid rgb(61 31 59 / 0.4)' }
+                        : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                       <p className="text-sm font-bold text-s-text">🧩 Component</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A batch sub-recipe (sauce, marinade, dough) used inside plates — costed per gram.</p>
                     </button>
@@ -875,9 +875,9 @@ export default function RecipesPage() {
                   is NOT the same as bump-able routing — see the "Bump-able
                   steps (during service)" section further down for that. */}
               <div className="space-y-3 border border-s-border rounded-xl p-4"
-                style={{ background: 'rgba(0,212,177,0.03)' }}>
+                style={{ background: 'rgb(135 197 64 / 0.03)' }}>
                 <div>
-                  <p className="text-xs font-black text-s-teal uppercase tracking-wider mb-0.5">
+                  <p className="text-xs font-black text-primary-ink uppercase tracking-wider mb-0.5">
                     Cook's notes (method)
                   </p>
                   <p className="text-[10px] text-s-dim">
@@ -905,7 +905,7 @@ export default function RecipesPage() {
               {/* Seasonality */}
               <div className="rounded-xl p-4" style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.18)' }}>
                 <div className="flex items-baseline justify-between mb-3">
-                  <p className="text-xs font-black text-amber-400 uppercase tracking-wider">Seasonality</p>
+                  <p className="text-xs font-black text-amber-700 uppercase tracking-wider">Seasonality</p>
                   <p className="text-[10px] text-s-muted">Tag the seasons this dish belongs to. Year-round = always available.</p>
                 </div>
 
@@ -924,7 +924,7 @@ export default function RecipesPage() {
                       <button key={s.key} type="button"
                         onClick={() => setSeasons((prev) => prev.includes(s.key) ? prev.filter((x) => x !== s.key) : [...prev, s.key])}
                         className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
-                          active ? 'bg-amber-400 text-black border border-amber-400' : 'border border-s-border text-s-muted hover:text-s-text'
+                          active ? 'bg-primary text-primary-on border border-primary' : 'border border-s-border text-s-muted hover:text-s-text'
                         }`}>
                         {s.label}
                       </button>
@@ -956,7 +956,7 @@ export default function RecipesPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-black text-s-muted uppercase tracking-wider">Ingredients</label>
-                  <button type="button" onClick={addIng} className="text-xs text-s-teal hover:underline">+ Add Row</button>
+                  <button type="button" onClick={addIng} className="text-xs text-primary-ink hover:underline">+ Add Row</button>
                 </div>
 
                 {/* Each row now has a Raw/Component source toggle on the left.
@@ -1086,12 +1086,12 @@ export default function RecipesPage() {
                           {kind === 'plate' ? (
                             <div>
                               <p className="text-s-muted mb-0.5">Plate cost</p>
-                              <p className="font-bold text-s-teal">{fmtPkr(portCents)}</p>
+                              <p className="font-bold text-primary-ink">{fmtPkr(portCents)}</p>
                             </div>
                           ) : (
                             <div>
                               <p className="text-s-muted mb-0.5">Cost per gram</p>
-                              <p className="font-bold text-s-teal">
+                              <p className="font-bold text-primary-ink">
                                 {costPerGramP !== null ? `PKR ${costPerGramP.toFixed(3)}/g` : '—'}
                               </p>
                             </div>
@@ -1112,7 +1112,7 @@ export default function RecipesPage() {
                   that drives KDS bumping during service. */}
               <div className="space-y-2 pt-2 border-t border-s-border">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-wider" style={{ color: '#A5B4FC' }}>
+                  <p className="text-xs font-black uppercase tracking-wider" style={{ color: '#6b2f68' }}>
                     🍳 Bump-able steps (during service)
                   </p>
                   <p className="text-[11px] text-s-dim mt-0.5">
@@ -1125,7 +1125,7 @@ export default function RecipesPage() {
                   <RecipeStepsEditor recipeId={(modal as Recipe).id} />
                 ) : (
                   <div className="rounded-lg p-4 text-center"
-                    style={{ background: 'rgba(99,102,241,0.05)', border: '1px dashed rgba(99,102,241,0.25)' }}>
+                    style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px dashed rgb(61 31 59 / 0.25)' }}>
                     <p className="text-xs font-bold text-white/70">
                       Save the recipe first to add bump-able steps
                     </p>
@@ -1161,7 +1161,7 @@ function Metric({ label, value, bold, teal, dim, className }: {
   return (
     <div className="text-right">
       <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">{label}</p>
-      <p className={`text-xs ${bold ? 'font-bold' : 'font-semibold'} ${teal ? 'text-s-teal' : dim ? 'text-s-dim' : className ?? 'text-s-text'}`}>
+      <p className={`text-xs ${bold ? 'font-bold' : 'font-semibold'} ${teal ? 'text-primary-ink' : dim ? 'text-s-dim' : className ?? 'text-s-text'}`}>
         {value}
       </p>
     </div>

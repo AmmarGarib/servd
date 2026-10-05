@@ -153,7 +153,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
           selectedId={selectedId}
           gridSize={snap > 0 ? snap : 0}
           onTablePointerDown={onTableDown}
-          colorFor={() => ({ fill: 'rgba(34,197,94,0.18)', stroke: 'rgba(22,163,74,0.6)', text: '#0a0a0a' })}
+          colorFor={() => ({ fill: 'rgba(34,197,94,0.18)', stroke: 'rgba(22,163,74,0.6)', text: 'var(--bg)' })}
           ariaLabel={`Editing ${floor.name}`}
         />
         <div className="mt-2 flex items-center justify-between text-xs text-s-muted flex-wrap gap-2">
@@ -167,7 +167,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
         <div className="s-card p-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-s-muted mb-2">Layout</h3>
           <label className="block text-xs text-s-muted mb-1">Snap to grid</label>
-          <select value={snap} onChange={(e) => setSnap(parseInt(e.target.value, 10))} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm text-s-text">
+          <select value={snap} onChange={(e) => setSnap(parseInt(e.target.value, 10))} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm text-s-text">
             <option value="0">Off (1px)</option>
             <option value="10">10px</option>
             <option value="20">20px</option>
@@ -177,7 +177,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
             <button
               onClick={handleSave}
               disabled={!dirty || saving}
-              className="flex-1 py-1.5 rounded font-bold text-sm bg-s-teal text-white disabled:opacity-50"
+              className="flex-1 py-1.5 rounded font-bold text-sm bg-primary text-primary-on disabled:opacity-50"
             >
               {saving ? 'Saving…' : dirty ? 'Save layout' : 'Saved'}
             </button>
@@ -190,34 +190,34 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
           <div className="s-card p-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-s-muted mb-2">{selected.label}</h3>
             <Field label="Shape">
-              <select value={selected.shape} onChange={(e) => patchSelected({ shape: e.target.value as FloorTable['shape'] })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm">
+              <select value={selected.shape} onChange={(e) => patchSelected({ shape: e.target.value as FloorTable['shape'] })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
                 {SHAPES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Width">
-                <input type="number" min={20} max={800} value={selected.width} onChange={(e) => patchSelected({ width: snapTo(parseInt(e.target.value, 10) || 20) })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+                <input type="number" min={20} max={800} value={selected.width} onChange={(e) => patchSelected({ width: snapTo(parseInt(e.target.value, 10) || 20) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
               </Field>
               <Field label="Height">
-                <input type="number" min={20} max={800} value={selected.height} onChange={(e) => patchSelected({ height: snapTo(parseInt(e.target.value, 10) || 20) })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+                <input type="number" min={20} max={800} value={selected.height} onChange={(e) => patchSelected({ height: snapTo(parseInt(e.target.value, 10) || 20) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
               </Field>
               <Field label="Rotation°">
-                <input type="number" min={0} max={359} value={selected.rotation} onChange={(e) => patchSelected({ rotation: ((parseInt(e.target.value, 10) || 0) % 360 + 360) % 360 })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+                <input type="number" min={0} max={359} value={selected.rotation} onChange={(e) => patchSelected({ rotation: ((parseInt(e.target.value, 10) || 0) % 360 + 360) % 360 })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
               </Field>
               <Field label="Capacity">
-                <input type="number" min={1} max={50} value={selected.capacity} onChange={(e) => patchSelected({ capacity: parseInt(e.target.value, 10) || 1 })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+                <input type="number" min={1} max={50} value={selected.capacity} onChange={(e) => patchSelected({ capacity: parseInt(e.target.value, 10) || 1 })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-1">
               <Field label="X">
-                <input type="number" value={selected.x} onChange={(e) => patchSelected({ x: snapTo(parseInt(e.target.value, 10) || 0) })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+                <input type="number" value={selected.x} onChange={(e) => patchSelected({ x: snapTo(parseInt(e.target.value, 10) || 0) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
               </Field>
               <Field label="Y">
-                <input type="number" value={selected.y} onChange={(e) => patchSelected({ y: snapTo(parseInt(e.target.value, 10) || 0) })} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+                <input type="number" value={selected.y} onChange={(e) => patchSelected({ y: snapTo(parseInt(e.target.value, 10) || 0) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
               </Field>
             </div>
             {onDeleteTable && (
-              <button onClick={handleDelete} className="mt-3 w-full py-1.5 rounded font-bold text-xs bg-s-red text-white">
+              <button onClick={handleDelete} className="mt-3 w-full py-1.5 rounded font-bold text-xs bg-s-red text-[#fff]">
                 Delete table
               </button>
             )}
@@ -232,17 +232,17 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
         <div className="s-card p-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-s-muted mb-2">Add table</h3>
           <Field label="Label">
-            <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+            <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           </Field>
           <Field label="Capacity">
-            <input type="number" min={1} max={50} value={newCapacity} onChange={(e) => setNewCapacity(parseInt(e.target.value, 10) || 1)} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm" />
+            <input type="number" min={1} max={50} value={newCapacity} onChange={(e) => setNewCapacity(parseInt(e.target.value, 10) || 1)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           </Field>
           <Field label="Shape">
-            <select value={newShape} onChange={(e) => setNewShape(e.target.value as FloorTable['shape'])} className="w-full bg-white border border-s-border rounded px-2 py-1 text-sm">
+            <select value={newShape} onChange={(e) => setNewShape(e.target.value as FloorTable['shape'])} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
               {SHAPES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
-          <button onClick={handleAddTable} className="mt-2 w-full py-1.5 rounded font-bold text-xs bg-black text-white">
+          <button onClick={handleAddTable} className="mt-2 w-full py-1.5 rounded font-bold text-xs bg-secondary text-secondary-on">
             + Add to {floor.name}
           </button>
         </div>

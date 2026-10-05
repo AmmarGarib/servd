@@ -30,8 +30,8 @@ export default function LandingPage() {
       {/* ── Nav ─────────────────────────────────────────────────────────────── */}
       <nav className="fixed top-0 inset-x-0 z-50 bg-s-bg/80 backdrop-blur border-b border-s-border/50 px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="h-7 w-7 rounded-lg bg-gradient-brand flex items-center justify-center">
-            <span className="text-xs font-black text-s-bg">S</span>
+          <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center">
+            <span className="text-xs font-black text-primary-on">S</span>
           </div>
           <span className="text-sm font-black text-s-text tracking-tight">servd</span>
         </div>
@@ -41,7 +41,7 @@ export default function LandingPage() {
             Order Online →
           </a>
           <Link href="/login"
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-s-border bg-s-surface hover:border-s-teal/40 hover:text-s-teal text-s-muted transition-all">
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-s-border bg-s-surface hover:border-s-teal/40 hover:text-primary-ink text-s-muted transition-all">
             Staff Login
           </Link>
         </div>
@@ -51,21 +51,21 @@ export default function LandingPage() {
       <section className="relative pt-32 pb-24 px-6 text-center overflow-hidden">
         {/* Ambient glows */}
         <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[600px] h-[300px] rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse, rgba(0,212,177,0.08) 0%, transparent 70%)' }} />
+          style={{ background: 'radial-gradient(ellipse, rgb(135 197 64 / 0.08) 0%, transparent 70%)' }} />
         <div className="absolute top-40 left-1/4 w-64 h-64 rounded-full pointer-events-none"
-          style={{ background: 'rgba(99,102,241,0.06)', filter: 'blur(60px)' }} />
+          style={{ background: 'rgb(61 31 59 / 0.06)', filter: 'blur(60px)' }} />
         <div className="absolute top-40 right-1/4 w-48 h-48 rounded-full pointer-events-none"
-          style={{ background: 'rgba(0,212,177,0.05)', filter: 'blur(50px)' }} />
+          style={{ background: 'rgb(135 197 64 / 0.05)', filter: 'blur(50px)' }} />
 
         <div className="relative max-w-3xl mx-auto animate-fade-in">
           <div className="inline-flex items-center gap-2 rounded-full border border-s-teal/20 bg-s-teal-dim/40 px-3 py-1 mb-6">
             <span className="h-1.5 w-1.5 rounded-full bg-s-teal animate-pulse" />
-            <span className="text-xs font-medium text-s-teal">Restaurant operations platform</span>
+            <span className="text-xs font-medium text-primary-ink">Restaurant operations platform</span>
           </div>
 
           <h1 className="text-5xl sm:text-6xl font-black text-s-text leading-[1.05] tracking-tight mb-5">
             The complete OS<br />
-            <span className="text-gradient-brand">for your restaurant</span>
+            <span className="text-primary-ink">for your restaurant</span>
           </h1>
 
           <p className="text-lg text-s-muted leading-relaxed max-w-xl mx-auto mb-10">
@@ -75,7 +75,7 @@ export default function LandingPage() {
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link href="/login"
-              className="inline-flex items-center gap-2 rounded-xl bg-s-teal text-s-bg font-black px-6 py-3 text-sm hover:opacity-90 transition-opacity shadow-glow-teal">
+              className="inline-flex items-center gap-2 rounded-xl bg-primary text-primary-on font-black px-6 py-3 text-sm hover:opacity-90 transition-opacity">
               Staff Portal →
             </Link>
             <a href={STOREFRONT_URL}
@@ -117,11 +117,11 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col gap-2">
               <Link href="/login"
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-s-teal text-s-bg font-black px-4 py-2.5 text-sm hover:opacity-90 transition-opacity">
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-on font-black px-4 py-2.5 text-sm hover:opacity-90 transition-opacity">
                 Sign In to Operations →
               </Link>
               <Link href="/kds/login"
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-s-teal/20 text-s-teal font-semibold px-4 py-2.5 text-sm hover:bg-s-teal-dim transition-all text-xs">
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-s-teal/20 text-primary-ink font-semibold px-4 py-2.5 text-sm hover:bg-s-teal-dim transition-all text-xs">
                 Kitchen Display (PIN)
               </Link>
             </div>
@@ -136,7 +136,7 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col gap-2">
               <a href={STOREFRONT_URL}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-s-indigo text-white font-black px-4 py-2.5 text-sm hover:opacity-90 transition-opacity">
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-secondary text-secondary-on font-black px-4 py-2.5 text-sm hover:opacity-90 transition-opacity">
                 Order Now →
               </a>
               <a href={`${STOREFRONT_URL}/login`}

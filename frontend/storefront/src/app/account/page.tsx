@@ -153,10 +153,10 @@ export default function AccountPage() {
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
       <div className="text-5xl">⚠</div>
-      <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
+      <p className="text-sm" style={{ color: 'var(--servd-danger)' }}>{error || 'Account not found'}</p>
       <Link href="/browse"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
-        style={{ background: 'var(--servd-green)', color: '#fff', boxShadow: '0 4px 20px rgba(58,14,105,0.3)' }}>
+        style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 4px 20px rgba(61,31,59,0.3)' }}>
         Browse brands
       </Link>
     </main>
@@ -198,7 +198,7 @@ export default function AccountPage() {
         <button onClick={() => { clearAuth(); router.replace('/browse') }}
           className="text-xs font-bold transition-colors px-3 py-1.5 rounded-xl"
           style={{ color: 'var(--servd-mute)', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'var(--servd-danger)'; e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
           onMouseLeave={e => { e.currentTarget.style.color = 'var(--servd-mute)'; e.currentTarget.style.background = 'rgba(239,68,68,0.06)' }}>
           Sign out
         </button>
@@ -234,7 +234,7 @@ export default function AccountPage() {
               style={{ background: 'var(--servd-green)' }} />
             <div className="p-4 flex flex-col items-center text-center gap-3 h-full pb-5">
               <div className="h-16 w-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white mt-1"
-                style={{ background: 'var(--servd-green)', boxShadow: '0 0 20px rgba(58,14,105,0.28)' }}>
+                style={{ background: 'var(--servd-green)', boxShadow: '0 0 20px rgba(61,31,59,0.28)' }}>
                 {initials}
               </div>
               <div>
@@ -330,14 +330,14 @@ export default function AccountPage() {
             <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
             <button onClick={() => setShowAddAddr(!showAddAddr)}
               className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
-              style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.2)' }}>
+              style={{ background: 'rgba(135,197,64,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(135,197,64,0.2)' }}>
               + Add
             </button>
           </div>
 
           {showAddAddr && (
             <div className="rounded-2xl p-4 mb-3 space-y-3"
-              style={{ background: '#fff', border: '1px solid rgba(58,14,105,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+              style={{ background: '#fff', border: '1px solid rgba(135,197,64,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <div>
                 <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Label (e.g. Home, Work, Gym)</label>
                 <input value={addrForm.label} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
@@ -358,7 +358,7 @@ export default function AccountPage() {
               <div className="flex gap-2">
                 <button onClick={() => void saveAddress()} disabled={addrSaving || !addrForm.label || !addrForm.address}
                   className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
-                  style={{ background: 'var(--servd-green)', color: 'white' }}>
+                  style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                   {addrSaving ? 'Saving…' : 'Save address'}
                 </button>
                 <button onClick={() => setShowAddAddr(false)}
@@ -384,9 +384,9 @@ export default function AccountPage() {
             <div className="space-y-2">
               {addresses.map((addr) => (
                 <div key={addr.id} className="rounded-2xl p-4 flex items-center gap-3"
-                  style={{ background: 'white', border: addr.isDefault ? '1px solid rgba(58,14,105,0.3)' : '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                  style={{ background: 'white', border: addr.isDefault ? '1px solid rgba(135,197,64,0.3)' : '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
                   <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0"
-                    style={{ background: addr.isDefault ? 'rgba(58,14,105,0.12)' : 'var(--servd-surface)', color: addr.isDefault ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
+                    style={{ background: addr.isDefault ? 'rgba(135,197,64,0.12)' : 'var(--servd-surface)', color: addr.isDefault ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
                       <circle cx="12" cy="10" r="3"/>
@@ -397,7 +397,7 @@ export default function AccountPage() {
                       <p className="font-black text-sm" style={{ color: '#0f1a0f' }}>{addr.label}</p>
                       {addr.isDefault && (
                         <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full"
-                          style={{ background: 'rgba(58,14,105,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
+                          style={{ background: 'rgba(135,197,64,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
                       )}
                     </div>
                     <p className="text-xs line-clamp-1 mt-0.5" style={{ color: 'rgba(15,26,15,0.45)' }}>{addr.address}</p>
@@ -413,7 +413,7 @@ export default function AccountPage() {
                     <button onClick={() => void deleteAddress(addr.id)}
                       className="text-[10px] font-bold transition-colors"
                       style={{ color: 'rgba(220,38,38,0.6)' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = '#dc2626')}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-danger)')}
                       onMouseLeave={e => (e.currentTarget.style.color = 'rgba(220,38,38,0.6)')}>
                       Remove
                     </button>
@@ -426,7 +426,7 @@ export default function AccountPage() {
 
         {/* ── How to earn more ── */}
         <div className="mb-3 rounded-2xl p-4"
-          style={{ background: 'linear-gradient(135deg, rgba(58,14,105,0.06) 0%, rgba(58,14,105,0.06) 100%)', border: '1px solid rgba(58,14,105,0.15)' }}>
+          style={{ background: 'linear-gradient(135deg, rgba(135,197,64,0.06) 0%, rgba(135,197,64,0.06) 100%)', border: '1px solid rgba(135,197,64,0.15)' }}>
           <div className="flex items-center gap-2 mb-2">
             <p className="text-[9px] font-black uppercase tracking-[0.28em]"
               style={{ color: 'var(--servd-mute)' }}>How to earn</p>
@@ -469,7 +469,7 @@ export default function AccountPage() {
                 className="rounded-xl p-3 flex flex-col gap-1.5"
                 style={{
                   background: 'rgba(255,255,255,0.7)',
-                  border: '1px solid rgba(58,14,105,0.12)',
+                  border: '1px solid rgba(135,197,64,0.12)',
                   animation: `revealUp 0.4s ${i * 0.06}s both`,
                   color: 'var(--servd-green-dark)',
                 }}>
@@ -641,7 +641,7 @@ function ReferralSection({
         Refer & earn
       </p>
       <h3 className="text-lg font-black mt-1 mb-2" style={{ color: '#7c2d12' }}>
-        Invite a friend, earn <span style={{ color: '#dc2626' }}>+200 pts each</span>
+        Invite a friend, earn <span style={{ color: 'var(--servd-green-dark)' }}>+200 pts each</span>
       </h3>
       <p className="text-xs mb-4" style={{ color: '#9a3412' }}>
         They sign up with your code. You both get PKR 200 off — credited the moment they place their first order.
@@ -663,7 +663,7 @@ function ReferralSection({
       <div className="flex gap-2">
         <button onClick={shareNative}
           className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold"
-          style={{ background: 'var(--servd-green)', color: 'white' }}>
+          style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
           Share invite link
         </button>
         <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
@@ -738,7 +738,7 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
         <button
           onClick={() => setOpen(!open)}
           className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
-          style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.2)' }}>
+          style={{ background: 'rgba(135,197,64,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(135,197,64,0.2)' }}>
           {open ? 'Hide' : `Show ${recent.length}`}
         </button>
       </div>
@@ -759,7 +759,7 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="h-7 w-7 rounded-xl flex items-center justify-center shrink-0 text-xs"
                     style={{
-                      background: isEarn ? 'rgba(58,14,105,0.1)' : isRedeem ? 'rgba(239,68,68,0.1)' : 'rgba(0,0,0,0.05)',
+                      background: isEarn ? 'rgba(135,197,64,0.1)' : isRedeem ? 'rgba(239,68,68,0.1)' : 'rgba(0,0,0,0.05)',
                     }}>
                     {isEarn ? '↑' : isRedeem ? '↓' : '~'}
                   </div>
@@ -773,7 +773,7 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
                   </div>
                 </div>
                 <span className="font-black text-sm shrink-0 tabular-nums"
-                  style={{ color: isEarn ? 'var(--servd-green-dark)' : isRedeem ? '#dc2626' : 'var(--servd-mute)' }}>
+                  style={{ color: isEarn ? 'var(--servd-green-dark)' : isRedeem ? 'var(--servd-danger)' : 'var(--servd-mute)' }}>
                   {isEarn ? '+' : isRedeem ? '−' : ''}{pts.toLocaleString()} pts
                 </span>
               </div>
@@ -857,8 +857,8 @@ function MyBookingsSection({ token }: { token: string | null }) {
             return (
               <div key={r.id} className="rounded-xl p-3 flex items-start gap-3"
                 style={{
-                  background: isCancelled ? 'rgba(239,68,68,0.05)' : 'rgba(58,14,105,0.05)',
-                  border: isCancelled ? '1px solid rgba(239,68,68,0.15)' : '1px solid rgba(58,14,105,0.15)',
+                  background: isCancelled ? 'rgba(239,68,68,0.05)' : 'rgba(135,197,64,0.05)',
+                  border: isCancelled ? '1px solid rgba(239,68,68,0.15)' : '1px solid rgba(135,197,64,0.15)',
                   opacity: isCancelled ? 0.65 : 1,
                 }}>
                 <div className="min-w-0 flex-1">
@@ -871,7 +871,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                           ? 'rgba(239,68,68,0.15)'
                           : r.status === 'confirmed' ? 'rgba(20,184,166,0.15)' : 'rgba(59,130,246,0.15)',
                         color: isCancelled
-                          ? '#dc2626'
+                          ? 'var(--servd-danger)'
                           : r.status === 'confirmed' ? '#0d9488' : '#2563eb',
                       }}>
                       {isCancelled ? 'Cancelled' : r.status}
@@ -889,7 +889,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                   {r.confirmToken && r.status === 'booked' && !isCancelled && (
                     <Link href={`/reserve/confirm/${r.confirmToken}`}
                       className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap text-center"
-                      style={{ background: 'var(--servd-green)', color: 'white' }}>
+                      style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                       Confirm
                     </Link>
                   )}
@@ -898,7 +898,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                       onClick={() => void cancelReservation(r.id, r.confirmToken)}
                       disabled={isCancelling}
                       className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap transition-all disabled:opacity-50"
-                      style={{ background: 'rgba(239,68,68,0.08)', color: '#dc2626', border: '1px solid rgba(239,68,68,0.2)' }}>
+                      style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--servd-danger)', border: '1px solid rgba(239,68,68,0.2)' }}>
                       {isCancelling ? 'Cancelling…' : 'Cancel'}
                     </button>
                   )}
@@ -972,7 +972,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {r.tags.map((t) => (
                   <span key={t} className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                    style={{ background: 'rgba(58,14,105,0.1)', color: '#15803d' }}>{t}</span>
+                    style={{ background: 'rgba(135,197,64,0.1)', color: '#15803d' }}>{t}</span>
                 ))}
               </div>
             )}
@@ -1034,13 +1034,13 @@ function MyFavoritesSection({ token }: { token: string | null }) {
               <span className="text-xs" style={{ color: 'var(--servd-mute)' }}>
                 Ordered {it.timesOrdered}×
               </span>
-              <span className="text-sm font-black" style={{ color: 'var(--servd-green)' }}>
+              <span className="text-sm font-black" style={{ color: 'var(--servd-green-dark)' }}>
                 Rs. {(it.priceCents / 100).toFixed(0)}
               </span>
             </div>
             {!it.isAvailable && (
               <div className="mt-1.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ color: '#dc2626' }}>
+                style={{ color: 'var(--servd-danger)' }}>
                 Currently unavailable
               </div>
             )}
@@ -1114,7 +1114,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
         </button>
       ) : (
         <div className="rounded-2xl p-5 space-y-3"
-          style={{ background: '#fff', border: '1px solid rgba(58,14,105,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+          style={{ background: '#fff', border: '1px solid rgba(135,197,64,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between">
             <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Tell us what went wrong</p>
             <button onClick={() => setOpen(false)} className="text-xs" style={{ color: 'var(--servd-mute)' }}>Close</button>
@@ -1122,7 +1122,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
 
           {success && (
             <div className="rounded-xl px-3 py-2 text-xs font-bold"
-              style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.25)' }}>
+              style={{ background: 'rgba(135,197,64,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(135,197,64,0.25)' }}>
               ✓ Got it — a manager will reach out within 24 hours.
             </div>
           )}
@@ -1155,7 +1155,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
                 <button key={c.key} onClick={() => setCategory(c.key)}
                   className="rounded-xl px-2 py-3 text-xs font-bold transition-all flex items-center justify-center text-center"
                   style={category === c.key
-                    ? { background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }
+                    ? { background: 'rgba(135,197,64,0.1)', border: '1px solid rgba(135,197,64,0.35)', color: 'var(--servd-green-dark)' }
                     : { background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', color: 'var(--servd-mute)' }}>
                   {c.label}
                 </button>
@@ -1182,12 +1182,12 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </div>
 
           {error && (
-            <p className="text-xs" style={{ color: '#dc2626' }}>{error}</p>
+            <p className="text-xs" style={{ color: 'var(--servd-danger)' }}>{error}</p>
           )}
 
           <button onClick={() => void submit()} disabled={submitting || !title.trim() || !description.trim()}
             className="w-full rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
-            style={{ background: 'var(--servd-green)', color: 'white' }}>
+            style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
             {submitting ? 'Sending…' : 'Send to manager'}
           </button>
         </div>
@@ -1251,7 +1251,7 @@ function VerifyContactBanner({ token, profile, onVerified }: {
           {pending.map((c) => (
             <button key={c} disabled={busy} onClick={() => { void send(c) }}
               className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
-              style={{ background: 'var(--servd-green)', color: '#fff' }}>
+              style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
               Verify {labelFor(c)}
             </button>
           ))}
@@ -1264,12 +1264,12 @@ function VerifyContactBanner({ token, profile, onVerified }: {
             className="flex-1 min-w-0 px-3 py-2 rounded-xl text-sm" style={{ border: '1px solid rgba(0,0,0,0.15)' }} />
           <button disabled={busy || code.length < 6} onClick={() => { void confirm() }}
             className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
-            style={{ background: 'var(--servd-green)', color: '#fff' }}>
+            style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
             Verify
           </button>
         </div>
       )}
-      {msg && <p className="text-xs mt-2" style={{ color: '#dc2626' }}>{msg}</p>}
+      {msg && <p className="text-xs mt-2" style={{ color: 'var(--servd-danger)' }}>{msg}</p>}
     </div>
   )
 }

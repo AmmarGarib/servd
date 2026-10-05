@@ -79,10 +79,10 @@ export default function RecipeApprovalsPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                      style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                      style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
                       {r.kind === 'component' ? 'Sub recipe' : 'Plate'}
                     </span>
-                    <Link href={`/accounting/recipes/${r.id}`} className="font-semibold text-s-text text-sm truncate hover:text-s-teal">
+                    <Link href={`/accounting/recipes/${r.id}`} className="font-semibold text-s-text text-sm truncate hover:text-primary-ink">
                       {r.name}
                     </Link>
                   </div>
@@ -102,7 +102,7 @@ export default function RecipeApprovalsPage() {
                   </button>
                   <button type="button" disabled={busy}
                     onClick={() => approve.mutate(r.id)}
-                    className="rounded-lg bg-s-teal text-black px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
+                    className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
                     Approve → Production
                   </button>
                 </div>
@@ -111,7 +111,7 @@ export default function RecipeApprovalsPage() {
           </div>
         )}
         {(approve.isError || reject.isError) && (
-          <p className="mt-3 text-xs text-red-400">
+          <p className="mt-3 text-xs text-red-700">
             {(approve.error as Error)?.message ?? (reject.error as Error)?.message}
           </p>
         )}

@@ -126,7 +126,7 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
       <div className="flex items-center justify-between border-b border-kds-border px-4 py-2">
         <div className="flex items-baseline gap-3">
           <span className={`text-2xl font-bold tabular-nums ${
-            isHeavy ? 'text-amber-300' : 'text-kds-text'
+            isHeavy ? 'text-amber-700' : 'text-kds-text'
           }`}>
             {bucket.slotLabel}
           </span>
@@ -139,12 +139,12 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
         </div>
         <div className="flex items-center gap-2">
           {bucket.vip > 0 && (
-            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300">
+            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">
               ★ {bucket.vip} VIP
             </span>
           )}
           {bucket.hasNotes && (
-            <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-300">
+            <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">
               ⚑ notes
             </span>
           )}
@@ -160,18 +160,18 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
                 <span className="text-kds-subtext">·</span>
                 <span className="font-bold text-kds-green">×{r.partySize}</span>
                 {r.isVip && (
-                  <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-300">★</span>
+                  <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-700">★</span>
                 )}
                 <span className={`rounded-full px-1.5 text-[10px] font-bold uppercase ${
-                  r.status === 'confirmed' ? 'bg-teal-500/20 text-teal-300' :
-                  r.status === 'seated'    ? 'bg-indigo-500/20 text-indigo-300' :
-                                             'bg-blue-500/20 text-blue-300'
+                  r.status === 'confirmed' ? 'bg-teal-500/20 text-teal-700' :
+                  r.status === 'seated'    ? 'bg-indigo-500/20 text-indigo-700' :
+                                             'bg-blue-500/20 text-blue-700'
                 }`}>
                   {r.status}
                 </span>
               </div>
               {r.notes && (
-                <div className="mt-0.5 text-xs italic text-rose-300">⚑ {r.notes}</div>
+                <div className="mt-0.5 text-xs italic text-rose-700">⚑ {r.notes}</div>
               )}
               <div className="mt-0.5 text-[11px] text-kds-subtext">
                 {r.concept.name}
@@ -200,7 +200,7 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
 function Empty({ msg, err = false }: { msg: string; err?: boolean }) {
   return (
     <div className={`rounded-lg border border-dashed border-kds-border p-12 text-center text-sm ${
-      err ? 'text-rose-300' : 'text-kds-subtext'
+      err ? 'text-rose-700' : 'text-kds-subtext'
     }`}>
       {msg}
     </div>

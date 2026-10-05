@@ -176,9 +176,9 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
       <div className="w-full max-w-4xl rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }} onClick={(e) => e.stopPropagation()}>
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
 
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <div>
@@ -194,12 +194,12 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
               <button key={l.id} onClick={() => setSelected(l)}
                 className="text-left rounded-xl p-4 transition-all"
                 style={selected?.id === l.id
-                  ? { background: 'rgba(0,212,177,0.08)', border: '1px solid rgba(0,212,177,0.4)' }
-                  : { background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  ? { background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                  : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-3xl">{l.emoji}</span>
                   <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
-                    style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.55)' }}>
+                    style={{ background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
                     {l.tables.length} tables
                   </span>
                 </div>
@@ -212,22 +212,22 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
 
           {selected && (
             <div className="mt-5 rounded-xl p-4"
-              style={{ background: 'rgba(0,212,177,0.05)', border: '1px solid rgba(0,212,177,0.2)' }}>
-              <p className="text-sm font-bold text-[#00D4B1]">{selected.emoji} {selected.name}</p>
+              style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.2)' }}>
+              <p className="text-sm font-bold text-primary-ink">{selected.emoji} {selected.name}</p>
               <p className="text-xs text-white/65 mt-1">{selected.description}</p>
 
               {hasExistingTables && (
                 <label className="flex items-center gap-2 mt-3 cursor-pointer">
-                  <input type="checkbox" checked={clearExisting} onChange={(e) => setClearExisting(e.target.checked)} className="accent-kds-green" />
+                  <input type="checkbox" checked={clearExisting} onChange={(e) => setClearExisting(e.target.checked)} className="accent-primary" />
                   <span className="text-xs text-white/85">
                     Clear existing tables on this floor first
-                    <span className="text-amber-400/80 ml-1">⚠ destructive</span>
+                    <span className="text-amber-700/80 ml-1">⚠ destructive</span>
                   </span>
                 </label>
               )}
 
               {apply.error && (
-                <p className="text-xs text-red-400 mt-3">{(apply.error as Error).message}</p>
+                <p className="text-xs text-red-700 mt-3">{(apply.error as Error).message}</p>
               )}
             </div>
           )}
@@ -237,7 +237,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => selected && apply.mutate(selected)}
             disabled={!selected || apply.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {apply.isPending ? 'Applying…' : selected ? `Apply layout (${selected.tables.length} tables)` : 'Pick a layout'}
           </button>
         </div>

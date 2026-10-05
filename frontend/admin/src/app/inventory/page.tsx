@@ -149,54 +149,54 @@ export default function InventoryPage() {
   const totalWasteCost = wasteLogs.reduce((s, w) => s + (w.estimatedCostCents ?? 0), 0)
 
   return (
-    <div className="min-h-screen bg-kds-bg">
+    <div className="min-h-screen bg-s-bg">
       {/* Toast */}
       {toast && (
-        <div className="fixed top-4 right-4 z-50 rounded-xl border border-kds-border bg-kds-card px-4 py-3 text-sm text-kds-text shadow-xl">
+        <div className="fixed top-4 right-4 z-50 rounded-xl border border-s-border bg-s-surface px-4 py-3 text-sm text-s-text shadow-xl">
           {toast}
         </div>
       )}
 
-      <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between">
+      <header className="border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-black text-kds-text mt-0.5">Inventory</h1>
-          <p className="text-sm text-kds-subtext">
+          <h1 className="text-2xl font-black text-s-text mt-0.5">Inventory</h1>
+          <p className="text-sm text-s-muted">
             {tracked.length} items tracked{alertCount > 0 ? ` · ` : ''}
-            {alertCount > 0 && <span className="text-kds-red font-semibold">{alertCount} low stock alert{alertCount !== 1 ? 's' : ''}</span>}
+            {alertCount > 0 && <span className="text-s-red font-semibold">{alertCount} low stock alert{alertCount !== 1 ? 's' : ''}</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/inventory/count"
-            className="rounded-xl border border-kds-border text-kds-text font-bold px-4 py-2 text-sm hover:border-kds-green hover:text-kds-green">
+            className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary hover:text-primary-ink">
             Stock count
           </Link>
           <button onClick={() => setShowAdd(true)}
-            className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
             + Add item
           </button>
         </div>
       </header>
 
       {alertCount > 0 && (
-        <div className="mx-6 mt-4 rounded-xl border border-kds-red/40 bg-red-950/15 px-4 py-3 flex items-center gap-3 cursor-pointer"
+        <div className="mx-6 mt-4 rounded-xl border border-s-red/40 bg-red-100/15 px-4 py-3 flex items-center gap-3 cursor-pointer"
           onClick={() => setTab('alerts')}>
           <span className="text-lg leading-none">⚠️</span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-kds-red">
+            <p className="text-sm font-bold text-s-red">
               {alertCount} item{alertCount !== 1 ? 's' : ''} below par level
             </p>
-            <p className="text-xs text-kds-red/70 mt-0.5">
+            <p className="text-xs text-s-red/70 mt-0.5">
               {tracked.filter(isBelowPar).map(i => i.name).slice(0, 4).join(', ')}
               {alertCount > 4 ? ` +${alertCount - 4} more` : ''}
             </p>
           </div>
-          <span className="text-xs text-kds-red/60 shrink-0">View alerts →</span>
+          <span className="text-xs text-s-red/60 shrink-0">View alerts →</span>
         </div>
       )}
 
       <div className="flex flex-col h-[calc(100vh-89px)]">
         {/* Tabs */}
-        <div className="flex gap-1 px-6 pt-4 border-b border-kds-border pb-0">
+        <div className="flex gap-1 px-6 pt-4 border-b border-s-border pb-0">
           {([
             { key: 'stock', label: 'All stock' },
             { key: 'alerts', label: alertCount > 0 ? `Alerts (${alertCount})` : 'Alerts' },
@@ -204,7 +204,7 @@ export default function InventoryPage() {
           ] as { key: Tab; label: string }[]).map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
-                ${tab === t.key ? 'border-kds-green text-kds-green bg-kds-card' : 'border-transparent text-kds-subtext hover:text-kds-text'}`}>
+                ${tab === t.key ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
               {t.label}
             </button>
           ))}
@@ -214,8 +214,8 @@ export default function InventoryPage() {
 
           {/* Add form */}
           {showAdd && (
-            <div className="rounded-xl border border-kds-green bg-kds-card p-4 space-y-3">
-              <p className="font-bold text-kds-text text-sm">Add inventory item</p>
+            <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+              <p className="font-bold text-s-text text-sm">Add inventory item</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <F label="Item name">
                   <input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
@@ -238,9 +238,9 @@ export default function InventoryPage() {
               {/* Tenant picker — hidden when the operator has one tenant
                   (auto-defaults). In portfolio view it's required and
                   prompts "— pick a company —". */}
-              <p className="text-xs text-kds-subtext">
+              <p className="text-xs text-s-muted">
                 New items start at zero on hand. Record the opening stock with a{' '}
-                <Link href="/inventory/count" className="text-kds-green hover:underline">stock count</Link>.
+                <Link href="/inventory/count" className="text-primary-ink hover:underline">stock count</Link>.
               </p>
               {needsCompanyPick && (
                 <TenantField value={addForm.tenantId} autoDefault={false}
@@ -254,20 +254,20 @@ export default function InventoryPage() {
                     addMutation.mutate()
                   }}
                   disabled={!addForm.name || !addForm.parLevel || (needsCompanyPick && !addForm.tenantId) || addMutation.isPending}
-                  className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                  className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {addMutation.isPending ? 'Adding…' : 'Add item'}
                 </button>
                 <button onClick={() => setShowAdd(false)}
-                  className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+                  className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
-              {addMutation.isError && <p className="text-xs text-kds-red">{(addMutation.error as Error).message}</p>}
+              {addMutation.isError && <p className="text-xs text-s-red">{(addMutation.error as Error).message}</p>}
             </div>
           )}
 
           {/* Log Waste inline form */}
           {wasteItemId && (
-            <div className="rounded-xl border border-kds-red/50 bg-red-950/10 p-4 space-y-3">
-              <p className="font-bold text-kds-red text-sm">
+            <div className="rounded-xl border border-s-red/50 bg-red-100/10 p-4 space-y-3">
+              <p className="font-bold text-s-red text-sm">
                 Log waste — {items.find((i) => i.id === wasteItemId)?.name}
               </p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -293,19 +293,19 @@ export default function InventoryPage() {
               <div className="flex gap-2">
                 <button onClick={() => wasteMutation.mutate(wasteItemId)}
                   disabled={!wasteForm.quantity || wasteMutation.isPending}
-                  className="rounded-xl bg-kds-red text-white font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                  className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {wasteMutation.isPending ? 'Logging…' : 'Log waste & deduct stock'}
                 </button>
                 <button onClick={() => setWasteItemId(null)}
-                  className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+                  className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
-              {wasteMutation.isError && <p className="text-xs text-kds-red">{(wasteMutation.error as Error).message}</p>}
+              {wasteMutation.isError && <p className="text-xs text-s-red">{(wasteMutation.error as Error).message}</p>}
             </div>
           )}
 
           {/* ════ ALL STOCK ════ */}
           {tab === 'stock' && (
-            isLoading ? <p className="text-kds-subtext text-sm">Loading…</p> :
+            isLoading ? <p className="text-s-muted text-sm">Loading…</p> :
             Object.keys(grouped).length === 0 ? (
               <EmptyStateGuide
                 icon="📦"
@@ -326,32 +326,32 @@ export default function InventoryPage() {
                     delivery (owner decision 28) — there is no +/- or "set to". */}
                 <div className="flex items-center gap-3 flex-wrap">
                   <Link href="/inventory/count"
-                    className="text-sm rounded-xl border border-kds-border px-4 py-2 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors font-semibold">
+                    className="text-sm rounded-xl border border-s-border px-4 py-2 text-s-muted hover:border-primary hover:text-primary-ink transition-colors font-semibold">
                     Count stock
                   </Link>
                   <button
                     onClick={() => downloadStockCsv(items)}
-                    className="text-sm rounded-xl border border-kds-border px-4 py-2 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors font-semibold">
+                    className="text-sm rounded-xl border border-s-border px-4 py-2 text-s-muted hover:border-primary hover:text-primary-ink transition-colors font-semibold">
                     Export CSV
                   </button>
-                  <span className="text-xs text-kds-subtext">Stock changes come from counts, waste logs and deliveries.</span>
+                  <span className="text-xs text-s-muted">Stock changes come from counts, waste logs and deliveries.</span>
                 </div>
 
                 {Object.entries(grouped).map(([cat, catItems]) => (
                   <div key={cat}>
-                    <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">{cat}</p>
-                    <div className="rounded-xl border border-kds-border overflow-hidden">
+                    <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">{cat}</p>
+                    <div className="rounded-xl border border-s-border overflow-hidden">
                       {catItems.map((item) => {
                         const isLow = item.currentStock <= item.parLevel
                         return (
                           <div key={item.id}
-                            className={`border-b border-kds-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-950/5' : ''}`}>
+                            className={`border-b border-s-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-100/5' : ''}`}>
                             <div className="flex items-center justify-between px-4 py-3">
                               <div className="flex items-center gap-3 min-w-0 flex-wrap">
-                                <span className={`text-sm font-semibold ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
+                                <span className={`text-sm font-semibold ${isLow ? 'text-s-red' : 'text-s-text'}`}>
                                   {item.name}
                                 </span>
-                                {isLow && <span className="text-xs font-bold text-kds-red bg-red-950/30 px-2 py-0.5 rounded-full">Low stock</span>}
+                                {isLow && <span className="text-xs font-bold text-s-red bg-red-100/30 px-2 py-0.5 rounded-full">Low stock</span>}
                                 {/* Brand chip in portfolio view — every item
                                     belongs to one company. Orphan rows always
                                     show "⚠ No company". */}
@@ -359,16 +359,16 @@ export default function InventoryPage() {
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
-                                <span className={`font-black text-lg w-14 text-center ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
+                                <span className={`font-black text-lg w-14 text-center ${isLow ? 'text-s-red' : 'text-s-text'}`}>
                                   {item.currentStock}
                                 </span>
-                                <span className="text-xs text-kds-subtext w-16">{item.unit} · par {item.parLevel}</span>
+                                <span className="text-xs text-s-muted w-16">{item.unit} · par {item.parLevel}</span>
                                 <Link href={`/inventory/count?item=${item.id}`}
-                                  className="text-xs px-2 py-1 rounded-lg border border-kds-border text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
+                                  className="text-xs px-2 py-1 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
                                   count
                                 </Link>
                                 <button onClick={() => { setWasteItemId(item.id); setWasteForm({ ...wasteForm, unit: item.unit }) }}
-                                  className="text-xs px-2 py-1 rounded-lg border border-kds-red/30 text-kds-red/70 hover:border-kds-red hover:text-kds-red transition-colors">
+                                  className="text-xs px-2 py-1 rounded-lg border border-s-red/30 text-s-red/70 hover:border-s-red hover:text-s-red transition-colors">
                                   waste
                                 </button>
                               </div>
@@ -386,55 +386,55 @@ export default function InventoryPage() {
           {/* ════ ALERTS ════ */}
           {tab === 'alerts' && (
             alerts.length === 0 ? (
-              <div className="text-center py-16 text-kds-subtext">
+              <div className="text-center py-16 text-s-muted">
                 <p className="text-4xl mb-3">✅</p>
-                <p className="font-semibold text-kds-text">All stocked up</p>
+                <p className="font-semibold text-s-text">All stocked up</p>
                 <p className="text-sm mt-1">No items are below par level</p>
               </div>
             ) : (
-              <div className="rounded-xl border border-kds-red/30 overflow-hidden">
-                <div className="px-4 py-3 bg-red-950/10 border-b border-kds-red/30 flex items-center justify-between">
-                  <p className="font-bold text-kds-red text-sm">⚠ {alerts.length} item{alerts.length !== 1 ? 's' : ''} below par level</p>
-                  <p className="text-xs text-kds-subtext">Suggested order quantities to reach par</p>
+              <div className="rounded-xl border border-s-red/30 overflow-hidden">
+                <div className="px-4 py-3 bg-red-100/10 border-b border-s-red/30 flex items-center justify-between">
+                  <p className="font-bold text-s-red text-sm">⚠ {alerts.length} item{alerts.length !== 1 ? 's' : ''} below par level</p>
+                  <p className="text-xs text-s-muted">Suggested order quantities to reach par</p>
                 </div>
                 <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-kds-card border-b border-kds-red/20">
+                  <thead className="bg-s-surface border-b border-s-red/20">
                     <tr>
-                      <th className="px-4 py-2.5 text-left text-xs text-kds-subtext font-semibold">Item</th>
-                      <th className="px-4 py-2.5 text-right text-xs text-kds-subtext font-semibold">Current</th>
-                      <th className="px-4 py-2.5 text-right text-xs text-kds-subtext font-semibold">Par Level</th>
-                      <th className="px-4 py-2.5 text-right text-xs text-kds-subtext font-semibold">Suggested Order Qty</th>
-                      <th className="px-4 py-2.5 text-right text-xs text-kds-subtext font-semibold"></th>
+                      <th className="px-4 py-2.5 text-left text-xs text-s-muted font-semibold">Item</th>
+                      <th className="px-4 py-2.5 text-right text-xs text-s-muted font-semibold">Current</th>
+                      <th className="px-4 py-2.5 text-right text-xs text-s-muted font-semibold">Par Level</th>
+                      <th className="px-4 py-2.5 text-right text-xs text-s-muted font-semibold">Suggested Order Qty</th>
+                      <th className="px-4 py-2.5 text-right text-xs text-s-muted font-semibold"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {alerts.map((item) => {
                       const suggestedQty = Math.max(0, item.parLevel - item.currentStock)
                       return (
-                        <tr key={item.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/40">
+                        <tr key={item.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-elevated/40">
                           <td className="px-4 py-3">
-                            <p className="text-sm font-semibold text-kds-text">{item.name}</p>
-                            <p className="text-xs text-kds-subtext">{item.notes ?? 'Uncategorised'}</p>
+                            <p className="text-sm font-semibold text-s-text">{item.name}</p>
+                            <p className="text-xs text-s-muted">{item.notes ?? 'Uncategorised'}</p>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <p className="text-lg font-black text-kds-red">
+                            <p className="text-lg font-black text-s-red">
                               {item.currentStock}
                               <span className="text-xs font-normal ml-1">{item.unit}</span>
                             </p>
                           </td>
-                          <td className="px-4 py-3 text-right text-sm text-kds-subtext">
+                          <td className="px-4 py-3 text-right text-sm text-s-muted">
                             {item.parLevel} {item.unit}
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-kds-amber/10 border border-kds-amber/30 px-3 py-1 text-sm font-semibold text-kds-amber">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-s-amber/10 border border-s-amber/30 px-3 py-1 text-sm font-semibold text-s-amber">
                               Order {suggestedQty} {item.unit}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button
                               onClick={() => showToast('Purchase order feature coming soon')}
-                              className="text-xs px-3 py-1.5 rounded-lg border border-kds-border text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors whitespace-nowrap">
+                              className="text-xs px-3 py-1.5 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
                               Create PO
                             </button>
                           </td>
@@ -453,62 +453,62 @@ export default function InventoryPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-bold text-kds-text">Waste & Spoilage Log</p>
-                  <p className="text-xs text-kds-subtext mt-0.5">
+                  <p className="text-sm font-bold text-s-text">Waste & Spoilage Log</p>
+                  <p className="text-xs text-s-muted mt-0.5">
                     {wasteLogs.length} entries · estimated cost:{' '}
-                    <span className="text-kds-red font-semibold">
+                    <span className="text-s-red font-semibold">
                       PKR {Math.round(totalWasteCost / 100).toLocaleString()}
                     </span>
                   </p>
                 </div>
                 <button onClick={() => setTab('stock')}
-                  className="text-xs rounded-lg bg-kds-red/10 border border-kds-red/30 text-kds-red px-3 py-1.5 font-semibold hover:bg-kds-red/20">
+                  className="text-xs rounded-lg bg-s-red/10 border border-s-red/30 text-s-red px-3 py-1.5 font-semibold hover:bg-s-red/20">
                   Log waste →
                 </button>
               </div>
 
               {wasteLoading ? (
-                <p className="text-kds-subtext text-sm">Loading…</p>
+                <p className="text-s-muted text-sm">Loading…</p>
               ) : wasteLogs.length === 0 ? (
-                <div className="text-center py-16 text-kds-subtext">
+                <div className="text-center py-16 text-s-muted">
                   <p className="text-4xl mb-3">✅</p>
-                  <p className="font-semibold text-kds-text">No waste logged</p>
+                  <p className="font-semibold text-s-text">No waste logged</p>
                   <p className="text-sm mt-1">Use the "waste" button on any inventory item to record spoilage</p>
                 </div>
               ) : (
-                <div className="rounded-xl border border-kds-border overflow-hidden">
+                <div className="rounded-xl border border-s-border overflow-hidden">
                   <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-kds-border bg-kds-card">
-                        <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Item</th>
-                        <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Qty</th>
-                        <th className="px-4 py-2.5 text-xs text-kds-subtext font-semibold">Reason</th>
-                        <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Est. Cost</th>
-                        <th className="px-4 py-2.5 text-xs text-kds-subtext font-semibold">Recorded</th>
+                      <tr className="border-b border-s-border bg-s-surface">
+                        <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Item</th>
+                        <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Qty</th>
+                        <th className="px-4 py-2.5 text-xs text-s-muted font-semibold">Reason</th>
+                        <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Est. Cost</th>
+                        <th className="px-4 py-2.5 text-xs text-s-muted font-semibold">Recorded</th>
                       </tr>
                     </thead>
                     <tbody>
                       {wasteLogs.map((log) => (
-                        <tr key={log.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/40">
+                        <tr key={log.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-elevated/40">
                           <td className="px-4 py-3">
-                            <p className="font-semibold text-kds-text">{log.inventoryItem.name}</p>
-                            {log.notes && <p className="text-xs text-kds-subtext mt-0.5">{log.notes}</p>}
+                            <p className="font-semibold text-s-text">{log.inventoryItem.name}</p>
+                            {log.notes && <p className="text-xs text-s-muted mt-0.5">{log.notes}</p>}
                           </td>
-                          <td className="px-4 py-3 text-right font-bold text-kds-red">
+                          <td className="px-4 py-3 text-right font-bold text-s-red">
                             {log.quantity} {log.unit}
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-kds-red/10 text-kds-red capitalize">
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-s-red/10 text-s-red capitalize">
                               {log.reason.replace('_', ' ')}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right text-kds-subtext">
+                          <td className="px-4 py-3 text-right text-s-muted">
                             {log.estimatedCostCents != null
                               ? `PKR ${Math.round(log.estimatedCostCents / 100).toLocaleString()}`
                               : '—'}
                           </td>
-                          <td className="px-4 py-3 text-xs text-kds-subtext">
+                          <td className="px-4 py-3 text-xs text-s-muted">
                             {new Date(log.recordedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                             {log.recordedBy && <span className="ml-1 opacity-60">· {log.recordedBy.name}</span>}
                           </td>
@@ -531,10 +531,10 @@ export default function InventoryPage() {
 function F({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-xs text-kds-subtext font-medium">{label}</label>
+      <label className="text-xs text-s-muted font-medium">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
   )
 }
 
-const fi = 'w-full rounded-lg bg-kds-bg border border-kds-border px-3 py-2 text-kds-text text-sm focus:border-kds-green focus:outline-none transition-colors'
+const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none transition-colors'

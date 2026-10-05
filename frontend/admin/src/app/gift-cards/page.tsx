@@ -15,10 +15,10 @@ interface GiftCard {
 }
 
 const STATUS_COLOR: Record<GiftCard['status'], string> = {
-  active:        'bg-s-teal text-white',
-  redeemed_full: 'bg-gray-300 text-gray-700',
-  expired:       'bg-s-amber text-white',
-  voided:        'bg-s-red text-white',
+  active:        'bg-primary text-primary-on',
+  redeemed_full: 'bg-s-border-strong text-s-text',
+  expired:       'bg-s-amber text-[#fff]',
+  voided:        'bg-s-red text-[#fff]',
 }
 
 export default function GiftCardsPage() {
@@ -69,21 +69,21 @@ export default function GiftCardsPage() {
           <div className="flex gap-2 flex-wrap items-end">
             <label className="flex-1 min-w-[220px]">
               <span className="block text-xs text-s-muted mb-1">Order ID</span>
-              <input value={redeemOrder} onChange={(e) => setRedeemOrder(e.target.value)} placeholder="order id" className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm font-mono" />
+              <input value={redeemOrder} onChange={(e) => setRedeemOrder(e.target.value)} placeholder="order id" className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm font-mono" />
             </label>
             <label className="flex-1 min-w-[160px]">
               <span className="block text-xs text-s-muted mb-1">Card code</span>
-              <input value={redeemCode} onChange={(e) => setRedeemCode(e.target.value)} placeholder="GS-XXXX-XXXX" className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm font-mono uppercase" />
+              <input value={redeemCode} onChange={(e) => setRedeemCode(e.target.value)} placeholder="GS-XXXX-XXXX" className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm font-mono uppercase" />
             </label>
             <label className="w-32">
               <span className="block text-xs text-s-muted mb-1">Amount (PKR)</span>
-              <input type="number" min={1} value={redeemAmt} onChange={(e) => setRedeemAmt(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm" />
+              <input type="number" min={1} value={redeemAmt} onChange={(e) => setRedeemAmt(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm" />
             </label>
             <button onClick={() => redeem.mutate()} disabled={!redeemCode.trim() || !redeemOrder.trim() || redeem.isPending} className="s-btn-primary text-sm">
               {redeem.isPending ? 'Applying…' : 'Apply'}
             </button>
           </div>
-          {feedback && <p className={`text-xs mt-2 ${feedback.ok ? 'text-s-teal' : 'text-s-red'}`}>{feedback.msg}</p>}
+          {feedback && <p className={`text-xs mt-2 ${feedback.ok ? 'text-primary-ink' : 'text-s-red'}`}>{feedback.msg}</p>}
         </div>
 
         {/* List */}
@@ -125,7 +125,7 @@ export default function GiftCardsPage() {
         </div>
 
         <p className="text-xs text-s-muted">
-          See balances + redemptions in <Link href="/accounting/audit-log?action=giftcard" className="text-s-teal hover:underline">audit log</Link>.
+          See balances + redemptions in <Link href="/accounting/audit-log?action=giftcard" className="text-primary-ink hover:underline">audit log</Link>.
         </p>
       </div>
 
@@ -157,8 +157,8 @@ function NewGiftCardModal({ onClose, onCreated }: { onClose: () => void; onCreat
   })
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-s-surface rounded-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-s-border flex justify-between">
           <h2 className="text-lg font-bold">Issue gift card</h2>
           <button onClick={onClose} className="text-2xl leading-none text-s-muted">×</button>
@@ -166,29 +166,29 @@ function NewGiftCardModal({ onClose, onCreated }: { onClose: () => void; onCreat
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-s-muted">Amount (PKR)</span>
-            <input type="number" min={100} max={100000} value={amount} onChange={(e) => setAmount(Number(e.target.value))} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+            <input type="number" min={100} max={100000} value={amount} onChange={(e) => setAmount(Number(e.target.value))} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </label>
           <label className="block">
             <span className="text-xs text-s-muted">Recipient name</span>
-            <input value={recipient} onChange={(e) => setRecipient(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+            <input value={recipient} onChange={(e) => setRecipient(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="text-xs text-s-muted">Recipient email</span>
-              <input type="email" value={recEmail} onChange={(e) => setRecEmail(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="email" value={recEmail} onChange={(e) => setRecEmail(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
             <label className="block">
               <span className="text-xs text-s-muted">Buyer email</span>
-              <input type="email" value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+              <input type="email" value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
           </div>
           <label className="block">
             <span className="text-xs text-s-muted">Message (optional)</span>
-            <textarea rows={2} value={message} onChange={(e) => setMessage(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
+            <textarea rows={2} value={message} onChange={(e) => setMessage(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </label>
           <label className="block">
             <span className="text-xs text-s-muted">Payment</span>
-            <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5">
+            <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
               <option value="card">Card</option>
               <option value="cash">Cash</option>
               <option value="bank_transfer">Bank transfer</option>

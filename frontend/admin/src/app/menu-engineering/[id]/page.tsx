@@ -40,10 +40,10 @@ interface CostingReadout {
 
 function fmtPct(n: number) { return `${n.toFixed(1)}%` }
 function fcColor(pct: number | null) {
-  if (pct === null) return 'rgba(255,255,255,0.35)'
-  if (pct <= 28)    return '#00D4B1'
-  if (pct <= 35)    return '#F59E0B'
-  return '#FF4D4F'
+  if (pct === null) return 'rgb(var(--fg-rgb) / 0.35)'
+  if (pct <= 28)    return 'var(--erp-primary-ink)'
+  if (pct <= 35)    return '#a15c00'
+  return '#b42318'
 }
 
 function Line({ label, value, op, bold, dim, color }: {
@@ -127,7 +127,7 @@ export default function PlatePricingPage() {
       <div className="p-12 text-center">
         <p className="text-sm text-s-muted">Couldn&apos;t load this plate.</p>
         <button onClick={() => router.push('/menu-engineering')}
-          className="mt-3 rounded-lg bg-s-teal text-black px-4 py-2 text-xs font-black">Back to Menu Engineering</button>
+          className="mt-3 rounded-lg bg-primary text-primary-on px-4 py-2 text-xs font-black">Back to Menu Engineering</button>
       </div>
     )
   }
@@ -152,10 +152,10 @@ export default function PlatePricingPage() {
   const netPct  = priceCents > 0 ? (net / priceCents) * 100 : 0
   const actualFc = priceCents > 0 ? (plate / priceCents) * 100 : null
   const verdict = priceCents <= 0
-    ? { label: 'Set a selling price', color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.04)' }
-    : net > 0 ? { label: '✓ Profitable', color: '#00D4B1', bg: 'rgba(0,212,177,0.10)' }
-    : cm > 0  ? { label: '⚠ Covers food, loses opex', color: '#F59E0B', bg: 'rgba(245,158,11,0.10)' }
-    :           { label: '✗ Loses every plate', color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' }
+    ? { label: 'Set a selling price', color: 'rgb(var(--fg-rgb) / 0.4)', bg: 'rgb(var(--fg-rgb) / 0.04)' }
+    : net > 0 ? { label: '✓ Profitable', color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.10)' }
+    : cm > 0  ? { label: '⚠ Covers food, loses opex', color: '#a15c00', bg: 'rgba(245,158,11,0.10)' }
+    :           { label: '✗ Loses every plate', color: '#b42318', bg: 'rgba(255,77,79,0.10)' }
 
   return (
     <div className="min-h-screen bg-s-bg text-s-text">
@@ -177,7 +177,7 @@ export default function PlatePricingPage() {
           </div>
           <p className="text-xs text-s-dim mt-1">
             {data.brand?.name ?? '—'} · cost comes from the{' '}
-            <Link href={`/accounting/recipes/${id}`} className="text-s-teal hover:underline">recipe</Link> — this page owns the pricing.
+            <Link href={`/accounting/recipes/${id}`} className="text-primary-ink hover:underline">recipe</Link> — this page owns the pricing.
           </p>
         </div>
       </header>
@@ -191,7 +191,7 @@ export default function PlatePricingPage() {
             <Line op="+" label={`Q factor (${recipe.qFactorPct}%)`} value={fmtPkrWhole(cost.qFactorCents)} dim />
             <Line op="=" label="Total recipe cost" value={fmtPkrWhole(cost.totalRecipeCents)} bold />
             <Line op="÷" label={`Portions (${recipe.servings})`} value="" dim />
-            <Line op="=" label="Plate cost" value={fmtPkrWhole(plate)} bold color="#5EEAD4" />
+            <Line op="=" label="Plate cost" value={fmtPkrWhole(plate)} bold color="#3f7d20" />
           </section>
 
           <section className="rounded-xl border border-s-border bg-s-surface p-5">
@@ -204,16 +204,16 @@ export default function PlatePricingPage() {
             <Line op="+" label="Workforce payroll (brand share)" value={fmtPkrWhole(cost.payrollShareMonthlyCents)} dim />
             <Line op="=" label="Monthly opex" value={fmtPkrWhole(cost.opexLinesMonthlyCents + cost.payrollShareMonthlyCents)} bold />
             <Line op="÷" label={`Forecast portions / month (${cost.brandForecastPortions || '—'})`} value="" dim />
-            <Line op="=" label="OpEx / portion" value={cost.brandForecastPortions > 0 ? fmtPkrWhole(opex) : '—'} bold color="#A5B4FC" />
+            <Line op="=" label="OpEx / portion" value={cost.brandForecastPortions > 0 ? fmtPkrWhole(opex) : '—'} bold color="#6b2f68" />
             {cost.payrollTenantMonthlyCents === 0 && (
               <p className="text-[10px] text-s-dim mt-2">
                 No posted payroll runs in the last 90 days — run payroll in{' '}
-                <Link href="/hr/payroll" className="text-s-teal hover:underline">HR → Payroll</Link> and this fills in automatically.
+                <Link href="/hr/payroll" className="text-primary-ink hover:underline">HR → Payroll</Link> and this fills in automatically.
               </p>
             )}
             {cost.brandForecastPortions === 0 && (
-              <p className="text-[10px] mt-2" style={{ color: '#FDB022' }}>
-                Set the brand&apos;s forecast portions/month in <Link href="/settings" className="text-s-teal hover:underline">Tenants &amp; Brands</Link> to spread opex per plate.
+              <p className="text-[10px] mt-2" style={{ color: '#a15c00' }}>
+                Set the brand&apos;s forecast portions/month in <Link href="/settings" className="text-primary-ink hover:underline">Tenants &amp; Brands</Link> to spread opex per plate.
               </p>
             )}
           </section>
@@ -229,7 +229,7 @@ export default function PlatePricingPage() {
               every plate&apos;s contribution is pure profit.
             </p>
             {priceCents <= 0 || cm <= 0 ? (
-              <p className="text-xs" style={{ color: '#FDB022' }}>
+              <p className="text-xs" style={{ color: '#a15c00' }}>
                 {priceCents <= 0
                   ? 'Set a selling price to see the break-even volume.'
                   : 'Contribution per plate is zero or negative at this price — no volume breaks even. Raise the price or cut plate cost.'}
@@ -244,11 +244,11 @@ export default function PlatePricingPage() {
                 <>
                   <Line label="Contribution / plate (at this price)" value={fmtPkrWhole(cm)} />
                   <Line op="÷" label="into brand overheads / month" value={fmtPkrWhole(overheadMonthly)} dim />
-                  <Line op="=" label="Plates to break even" bold color="#5EEAD4"
+                  <Line op="=" label="Plates to break even" bold color="#3f7d20"
                     value={`${beMonthly.toLocaleString('en')} / month · ~${beDaily < 10 ? beDaily.toFixed(1) : Math.ceil(beDaily)} / day`} />
                   <Line label="After that, each plate earns" value={`${fmtPkrWhole(cm)} pure margin`} dim />
                   {coverage !== null && (
-                    <p className="text-[10px] mt-2" style={{ color: coverage >= 1 ? '#00D4B1' : '#FF6B6B' }}>
+                    <p className="text-[10px] mt-2" style={{ color: coverage >= 1 ? 'var(--erp-primary-ink)' : '#b42318' }}>
                       {coverage >= 1
                         ? `Your forecast (${forecast.toLocaleString('en')}/month) covers break-even ${coverage.toFixed(1)}× — if this plate alone carried all overheads.`
                         : `Your forecast (${forecast.toLocaleString('en')}/month) is below break-even — this plate alone couldn't carry the overheads.`}
@@ -278,10 +278,10 @@ export default function PlatePricingPage() {
               </label>
               <div className="flex-1 min-w-[140px]">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Price that hits it</p>
-                <p className="text-xl font-black" style={{ color: '#5EEAD4' }}>{fmtPkrWhole(fcTargetCents)}</p>
+                <p className="text-xl font-black" style={{ color: '#3f7d20' }}>{fmtPkrWhole(fcTargetCents)}</p>
               </div>
               <button type="button" onClick={() => setPricePkr(Math.round(fcTargetCents / 100))}
-                className="rounded-lg bg-s-teal text-black px-3 py-2 text-xs font-black hover:opacity-90">
+                className="rounded-lg bg-primary text-primary-on px-3 py-2 text-xs font-black hover:opacity-90">
                 Use this price
               </button>
             </div>
@@ -318,13 +318,13 @@ export default function PlatePricingPage() {
             <Line op="−" label="Plate cost" value={fmtPkrWhole(plate)} />
             <Line op="−" label={`Packaging (${packaging ?? 8}%)`} value={fmtPkrWhole(packagingCost)} dim />
             <Line op="=" label="Contribution margin" bold
-              value={`${fmtPkrWhole(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? '#00D4B1' : '#FF4D4F'} />
+              value={`${fmtPkrWhole(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? 'var(--erp-primary-ink)' : '#b42318'} />
             <Line op="−" label="OpEx / portion" value={fmtPkrWhole(opex)} dim />
             <Line op="=" label="Net profit / portion" bold
-              value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? '#00D4B1' : '#FF4D4F'} />
+              value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? 'var(--erp-primary-ink)' : '#b42318'} />
 
             <button onClick={() => save.mutate()} disabled={save.isPending}
-              className="mt-4 w-full rounded-lg bg-s-teal text-black py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">
+              className="mt-4 w-full rounded-lg bg-primary text-primary-on py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">
               {save.isPending ? 'Saving…' : 'Save pricing'}
             </button>
             <p className="text-[10px] text-s-dim mt-2">Saving syncs the selling price to the menu item.</p>

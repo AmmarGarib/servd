@@ -128,9 +128,9 @@ export const day = (iso: string | null | undefined) =>
 export const human = (s: string | null | undefined) => (s ? s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : '—')
 
 export const STATUS_COLOR: Record<string, string> = {
-  draft: 'rgba(255,255,255,0.45)', submitted: '#f59e0b', approved: '#34d399', rejected: '#f87171', cancelled: 'rgba(255,255,255,0.3)',
-  active: '#34d399', on_leave: '#60a5fa', resigned: '#f59e0b', terminated: '#f87171', separated: 'rgba(255,255,255,0.4)',
-  locked: '#34d399',
+  draft: 'rgb(var(--fg-rgb) / 0.45)', submitted: '#a15c00', approved: '#3f7d20', rejected: '#b42318', cancelled: 'rgb(var(--fg-rgb) / 0.3)',
+  active: '#3f7d20', on_leave: '#1d4ed8', resigned: '#a15c00', terminated: '#b42318', separated: 'rgb(var(--fg-rgb) / 0.4)',
+  locked: '#3f7d20',
 }
 
 export const ROLE_LABEL: Record<string, string> = { hod: 'Reporting manager', hr: 'HR', management: 'Management' }
@@ -180,10 +180,10 @@ export function leaveFields(section: string, fields: HrField[], value: Record<st
   return fields.map((f) => (f.bind === 'quantity' && !single ? { ...f, readOnly: true } : f))
 }
 
-// Shared dark styling, matching the other finance / ops pages.
-export const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' } as const
-export const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-kds-green'
-export const btn = 'rounded-lg bg-kds-green px-4 py-2 text-sm font-black text-black disabled:opacity-50'
+// Shared HR styling on the servd palette (bone / green / purple).
+export const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' } as const
+export const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
+export const btn = 'rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on hover:bg-primary-hover disabled:opacity-50'
 export const btnGhost = 'rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10 hover:text-white disabled:opacity-50'
 
 /** Value a field shows in a list or detail view. */

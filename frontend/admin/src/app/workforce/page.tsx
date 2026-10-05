@@ -131,9 +131,9 @@ const CATEGORIES: Category[] = [
 ]
 
 const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: string; bg: string }> = {
-  active:    { label: 'Active',    color: '#00D4B1', bg: 'rgba(0,212,177,0.10)' },
-  pending:   { label: 'Pending',   color: '#F59E0B', bg: 'rgba(245,158,11,0.10)' },
-  suspended: { label: 'Suspended', color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' },
+  active:    { label: 'Active',    color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.10)' },
+  pending:   { label: 'Pending',   color: '#a15c00', bg: 'rgba(245,158,11,0.10)' },
+  suspended: { label: 'Suspended', color: '#b42318', bg: 'rgba(255,77,79,0.10)' },
 }
 
 // The API derives the status in one place (auth/accountStatus.ts) — including
@@ -280,16 +280,16 @@ function WorkforcePageInner() {
   const invitedBy = useMemo(() => new Map(pendingQueue.map((p) => [p.id, p.invitedBy ?? null])), [pendingQueue])
 
   return (
-    <div className="min-h-screen bg-kds-bg text-kds-text">
-      <div className="border-b border-kds-border bg-kds-card">
+    <div className="min-h-screen bg-s-bg text-s-text">
+      <div className="border-b border-s-border bg-s-surface">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-black">Workforce</h1>
-              <p className="text-sm text-kds-subtext mt-1">
+              <p className="text-sm text-s-muted mt-1">
                 {activeTab === 'positions'
                   ? 'Every seat the org pays for, filled or not. Edits flow live into /finance/opex + projections.'
-                  : <>Every staff member, every category. {users.length} total · <span className={pendingCount > 0 ? 'text-amber-400 font-bold' : ''}>{pendingCount} pending</span></>}
+                  : <>Every staff member, every category. {users.length} total · <span className={pendingCount > 0 ? 'text-amber-700 font-bold' : ''}>{pendingCount} pending</span></>}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -297,13 +297,13 @@ function WorkforcePageInner() {
                 <button
                   onClick={() => { setActiveTab('people'); setActiveCategory('all'); setStatusFilter('pending'); router.replace('/workforce?status=pending') }}
                   className="rounded-lg px-3 py-2 text-xs font-bold border transition-colors"
-                  style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.35)', color: '#F59E0B' }}>
+                  style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.35)', color: '#a15c00' }}>
                   ⏳ Review {pendingCount} pending
                 </button>
               )}
               {canEdit && activeTab === 'people' && (
                 <button onClick={() => setAddOpen(true)}
-                  className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
+                  className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
                   + Add staff
                 </button>
               )}
@@ -316,20 +316,20 @@ function WorkforcePageInner() {
           Two faces of "workforce" — the org chart in head vs the org chart
           on the ground. Positions feed live into /finance/opex; People drive
           access, scheduling, payroll runs. */}
-      <div className="max-w-6xl mx-auto px-6 pt-4 border-b border-kds-border">
+      <div className="max-w-6xl mx-auto px-6 pt-4 border-b border-s-border">
         <div className="flex gap-2">
           <button onClick={() => { setActiveTab('people'); router.replace('/workforce') }}
             className="px-4 py-2.5 text-sm font-bold transition-colors"
             style={activeTab === 'people'
-              ? { color: '#00D4B1', borderBottom: '2px solid #00D4B1', marginBottom: '-1px' }
-              : { color: 'rgba(255,255,255,0.5)' }}>
+              ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-primary)', marginBottom: '-1px' }
+              : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
             👥 People ({users.length})
           </button>
           <button onClick={() => { setActiveTab('positions'); router.replace('/workforce?tab=positions') }}
             className="px-4 py-2.5 text-sm font-bold transition-colors"
             style={activeTab === 'positions'
-              ? { color: '#00D4B1', borderBottom: '2px solid #00D4B1', marginBottom: '-1px' }
-              : { color: 'rgba(255,255,255,0.5)' }}>
+              ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-primary)', marginBottom: '-1px' }
+              : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
             💼 Positions (budget)
           </button>
         </div>
@@ -369,7 +369,7 @@ function WorkforcePageInner() {
             return (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider transition-colors ${
-                  active ? 'bg-kds-green text-black' : 'text-kds-subtext hover:bg-kds-card hover:text-kds-text'
+                  active ? 'bg-primary text-primary-on' : 'text-s-muted hover:bg-s-surface hover:text-s-text'
                 }`}>
                 {s === 'all' ? 'All status' : s}
               </button>
@@ -379,17 +379,17 @@ function WorkforcePageInner() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, email or job title…"
-            className="ml-auto rounded-lg px-3 py-1.5 text-sm bg-kds-card border border-kds-border focus:border-kds-green focus:outline-none w-64"
+            className="ml-auto rounded-lg px-3 py-1.5 text-sm bg-s-surface border border-s-border focus:border-primary focus:outline-none w-64"
           />
         </div>
 
-        <div className="mt-4 mb-12 rounded-xl border border-kds-border bg-kds-card overflow-hidden">
-          {isLoading && <div className="p-8 text-center text-sm text-kds-subtext">Loading staff…</div>}
+        <div className="mt-4 mb-12 rounded-xl border border-s-border bg-s-surface overflow-hidden">
+          {isLoading && <div className="p-8 text-center text-sm text-s-muted">Loading staff…</div>}
           {!isLoading && filtered.length === 0 && (
             <div className="p-12 text-center">
               <p className="text-4xl mb-2">📭</p>
               <p className="text-sm font-semibold">No staff here yet</p>
-              <p className="text-xs text-kds-subtext mt-1">
+              <p className="text-xs text-s-muted mt-1">
                 {statusFilter === 'pending'
                   ? 'Nobody is waiting for approval.'
                   : activeCategory === 'all'
@@ -438,7 +438,7 @@ function WorkforcePageInner() {
 
 export default function WorkforcePage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-kds-subtext">Loading…</div>}>
+    <Suspense fallback={<div className="p-8 text-sm text-s-muted">Loading…</div>}>
       <WorkforcePageInner />
     </Suspense>
   )
@@ -453,24 +453,24 @@ function CategoryChip({
     <button onClick={onClick}
       className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
         active
-          ? 'bg-kds-green text-black'
-          : 'bg-kds-card border border-kds-border text-kds-text hover:border-kds-green/40'
+          ? 'bg-primary text-primary-on'
+          : 'bg-s-surface border border-s-border text-s-text hover:border-primary/40'
       }`}>
       <span>{emoji}</span>
       <span>{label}</span>
-      <span className={`text-[10px] font-black ${active ? 'opacity-60' : 'text-kds-subtext'}`}>{count}</span>
+      <span className={`text-[10px] font-black ${active ? 'opacity-60' : 'text-s-muted'}`}>{count}</span>
     </button>
   )
 }
 
 function CategoryBlurb({ category }: { category: Category }) {
   return (
-    <div className="mt-3 flex items-center gap-3 rounded-lg border border-kds-border bg-kds-card/50 px-4 py-2.5">
+    <div className="mt-3 flex items-center gap-3 rounded-lg border border-s-border bg-s-surface/50 px-4 py-2.5">
       <span className="text-xl">{category.emoji}</span>
-      <p className="text-xs text-kds-subtext flex-1">{category.blurb}</p>
+      <p className="text-xs text-s-muted flex-1">{category.blurb}</p>
       {category.specialistHref && (
         <Link href={category.specialistHref}
-          className="text-xs font-bold text-kds-green hover:opacity-80">
+          className="text-xs font-bold text-primary-ink hover:opacity-80">
           {category.specialistLabel ?? 'Open ›'}
         </Link>
       )}
@@ -506,26 +506,26 @@ function StaffRow({
     ?? (user.tenantId ? tenants.find((t) => t.id === user.tenantId) ?? null : null)
 
   return (
-    <div className="border-b border-kds-border last:border-b-0">
+    <div className="border-b border-s-border last:border-b-0">
       <button
         type="button"
         onClick={canEdit ? onExpand : undefined}
         disabled={!canEdit}
         className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
-          canEdit ? 'hover:bg-kds-bg/30 cursor-pointer' : 'cursor-default'
-        } ${expanded ? 'bg-kds-bg/40' : ''}`}>
+          canEdit ? 'hover:bg-s-bg/30 cursor-pointer' : 'cursor-default'
+        } ${expanded ? 'bg-s-bg/40' : ''}`}>
         <div className="h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-black"
           style={{
             background: isUnnamed
-              ? 'rgba(255,255,255,0.06)'
-              : 'linear-gradient(135deg, rgba(0,212,177,0.4), rgba(99,102,241,0.4))',
-            color: isUnnamed ? 'rgba(255,255,255,0.4)' : '#000',
+              ? 'rgb(var(--fg-rgb) / 0.06)'
+              : 'linear-gradient(135deg, rgb(135 197 64 / 0.4), rgb(61 31 59 / 0.4))',
+            color: isUnnamed ? 'rgb(var(--fg-rgb) / 0.4)' : 'var(--text)',
           }}>
           {isUnnamed ? '?' : user.name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className={`font-semibold text-sm truncate ${isUnnamed ? 'italic text-kds-subtext' : ''}`}>
+            <p className={`font-semibold text-sm truncate ${isUnnamed ? 'italic text-s-muted' : ''}`}>
               {isUnnamed ? 'Unnamed staff — tap to fill in' : user.name}
             </p>
             <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
@@ -534,7 +534,7 @@ function StaffRow({
             </span>
             {!user.hasPin && status === 'active' && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}>
+                style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}>
                 No PIN
               </span>
             )}
@@ -545,7 +545,7 @@ function StaffRow({
                 approving access to THAT company. */}
             {(showTenantChip || status === 'pending') && (user.tenants ?? (tenant ? [tenant] : [])).map((t) => (
               <span key={t.id} className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
                 {t.name}
               </span>
             ))}
@@ -553,14 +553,14 @@ function StaffRow({
                 with no company is a data bug; surface it everywhere. */}
             {!user.tenantId && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}
+                style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
                 title="This staff row has no company assigned. Tap to fix.">
                 ⚠ No company
               </span>
             )}
           </div>
-          <p className="text-xs text-kds-subtext truncate">
-            {user.jobTitle && <span className="text-kds-text font-medium">{user.jobTitle}</span>}
+          <p className="text-xs text-s-muted truncate">
+            {user.jobTitle && <span className="text-s-text font-medium">{user.jobTitle}</span>}
             {user.jobTitle && (user.email || user.phone) && <span> · </span>}
             {user.email}{user.email && user.phone ? ' · ' : ''}{user.phone}
             {!user.jobTitle && !user.email && !user.phone && (
@@ -568,22 +568,22 @@ function StaffRow({
             )}
           </p>
           {status === 'pending' && invitedBy !== undefined && (
-            <p className="text-[11px] text-amber-400/80 truncate">
+            <p className="text-[11px] text-amber-700/80 truncate">
               {invitedBy ? <>Added by <span className="font-bold">{invitedBy.name}</span></> : 'Signed up themselves'}
               {tenant && <> · {tenant.name}</>}
             </p>
           )}
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-[11px] font-bold text-kds-text">
+          <p className="text-[11px] font-bold text-s-text">
             {cat?.emoji ?? '·'} {cat?.label ?? roleLabel(user.role)}
           </p>
-          <p className="text-[10px] text-kds-subtext mt-0.5">
+          <p className="text-[10px] text-s-muted mt-0.5">
             {user.jobTitle ? roleLabel(user.role) : 'No role title set'}
           </p>
         </div>
         {canEdit && (
-          <span className="shrink-0 text-kds-subtext"
+          <span className="shrink-0 text-s-muted"
             style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 120ms' }}>
             ▶
           </span>
@@ -732,7 +732,7 @@ function InlineEditor({
   })
 
   return (
-    <div className="bg-kds-bg/30 border-t border-kds-border px-4 py-4 space-y-3">
+    <div className="bg-s-bg/30 border-t border-s-border px-4 py-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)}
@@ -772,14 +772,14 @@ function InlineEditor({
         {tenants.length > 0 && (
           <div className="md:col-span-2">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
-                Companies {!user.tenantId && <span className="text-red-400">— orphan, pick at least one</span>}
+              <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
+                Companies {!user.tenantId && <span className="text-red-700">— orphan, pick at least one</span>}
               </span>
-              <span className="text-[10px] text-kds-subtext/70">
+              <span className="text-[10px] text-s-muted/70">
                 Tick every company this person works for. The first one is their primary.
               </span>
             </div>
-            <div className="flex flex-wrap gap-2 rounded-lg border border-kds-border bg-kds-bg p-2">
+            <div className="flex flex-wrap gap-2 rounded-lg border border-s-border bg-s-bg p-2">
               {tenants.map((t) => {
                 const checked = tenantIds.includes(t.id)
                 const isPrimary = tenantId === t.id
@@ -790,8 +790,8 @@ function InlineEditor({
                     onClick={() => toggleTenant(t.id)}
                     className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
                       checked
-                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                        : 'bg-kds-card text-kds-subtext border border-kds-border hover:border-indigo-400/30'
+                        ? 'bg-indigo-500/20 text-indigo-700 border border-indigo-500/40'
+                        : 'bg-s-surface text-s-muted border border-s-border hover:border-indigo-400/30'
                     }`}>
                     <span>{checked ? '✓' : '+'}</span>
                     <span>{t.name}</span>
@@ -801,10 +801,10 @@ function InlineEditor({
               })}
             </div>
             {tenantIds.length > 1 && (
-              <div className="mt-2 flex items-center gap-2 text-[11px] text-kds-subtext">
+              <div className="mt-2 flex items-center gap-2 text-[11px] text-s-muted">
                 <span>Primary company:</span>
                 <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
-                  className="rounded-md border border-kds-border bg-kds-bg px-2 py-1 text-xs focus:border-kds-green focus:outline-none">
+                  className="rounded-md border border-s-border bg-s-bg px-2 py-1 text-xs focus:border-primary focus:outline-none">
                   {tenantIds.map((id) => {
                     const t = tenants.find((tt) => tt.id === id)
                     return t ? <option key={id} value={id}>{t.name}</option> : null
@@ -823,19 +823,19 @@ function InlineEditor({
           land on a focused dashboard. Stations are grouped by concept so
           duplicate names across brands stay distinguishable. */}
       {stationsByConcept.length > 0 && (
-        <div className="rounded-lg border border-kds-border bg-kds-bg/60 p-3 space-y-2">
+        <div className="rounded-lg border border-s-border bg-s-bg/60 p-3 space-y-2">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
                 Kitchen stations
               </p>
-              <p className="text-[10px] text-kds-subtext/80 mt-0.5">
+              <p className="text-[10px] text-s-muted/80 mt-0.5">
                 Stations this person works. Empty = not restricted (sees every active station in Kitchen view).
               </p>
             </div>
             {stationIds.length > 0 && (
               <button type="button" onClick={() => setStationIds([])}
-                className="text-[10px] text-kds-subtext hover:text-kds-text underline">
+                className="text-[10px] text-s-muted hover:text-s-text underline">
                 Clear all
               </button>
             )}
@@ -843,7 +843,7 @@ function InlineEditor({
           <div className="space-y-2">
             {stationsByConcept.map((g) => (
               <div key={g.conceptId}>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-kds-subtext mb-1">{g.conceptName}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">{g.conceptName}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {g.stations.map((s) => {
                     const checked = stationIds.includes(s.id)
@@ -854,8 +854,8 @@ function InlineEditor({
                         onClick={() => toggleStation(s.id)}
                         className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${
                           checked
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            : 'bg-kds-card text-kds-subtext border border-kds-border hover:border-emerald-400/30'
+                            ? 'bg-emerald-500/20 text-emerald-700 border border-emerald-500/40'
+                            : 'bg-s-surface text-s-muted border border-s-border hover:border-emerald-400/30'
                         }`}>
                         <span>{checked ? '✓' : '+'}</span>
                         <span>{s.name}</span>
@@ -869,15 +869,15 @@ function InlineEditor({
         </div>
       )}
 
-      {err && <p className="text-xs font-bold text-red-400">{err}</p>}
+      {err && <p className="text-xs font-bold text-red-700">{err}</p>}
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <button onClick={() => save.mutate()} disabled={save.isPending}
-          className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+          className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
           {save.isPending ? 'Saving…' : 'Save changes'}
         </button>
         <button onClick={onClose}
-          className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text">
+          className="rounded-lg px-3 py-2 text-xs font-bold border border-s-border text-s-muted hover:text-s-text">
           Cancel
         </button>
 
@@ -886,41 +886,41 @@ function InlineEditor({
           {status === 'pending' && (
             <>
               {!user.tenantId && (
-                <span className="text-[10px] text-amber-400">Tick a company and save before approving.</span>
+                <span className="text-[10px] text-amber-700">Tick a company and save before approving.</span>
               )}
               <button onClick={() => approve.mutate()} disabled={approve.isPending || !user.tenantId}
                 title='They are sent a link to set their password when email or WhatsApp is set up; otherwise use "New password" afterwards.'
-                className="rounded-md px-2 py-1.5 text-[11px] font-bold bg-amber-400/15 border border-amber-400/30 text-amber-400 hover:bg-amber-400/25">
+                className="rounded-md px-2 py-1.5 text-[11px] font-bold bg-amber-400/15 border border-amber-400/30 text-amber-700 hover:bg-amber-400/25">
                 Approve
               </button>
               <button onClick={() => reject.mutate()} disabled={reject.isPending}
-                className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40">
+                className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-red-700 hover:border-red-400/40">
                 Reject
               </button>
             </>
           )}
           {status === 'active' && (
             <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
-              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-amber-400 hover:border-amber-400/40">
+              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-amber-700 hover:border-amber-400/40">
               Suspend
             </button>
           )}
           {status === 'suspended' && (
             <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
-              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-emerald-400 hover:border-emerald-400/40">
+              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-emerald-700 hover:border-emerald-400/40">
               Reactivate
             </button>
           )}
           <button onClick={() => {
               if (window.confirm(`Issue a new password for ${user.name}? Their current one stops working immediately and they will be signed out everywhere.`)) reissue.mutate()
             }} disabled={reissue.isPending}
-            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-emerald-400 hover:border-emerald-400/40">
+            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-emerald-700 hover:border-emerald-400/40">
             {reissue.isPending ? 'Issuing…' : 'New password'}
           </button>
           <button onClick={() => {
               if (window.confirm(`Delete ${user.name}? This soft-deletes — history is preserved.`)) remove.mutate()
             }} disabled={remove.isPending}
-            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40">
+            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-red-700 hover:border-red-400/40">
             🗑 Delete
           </button>
         </div>
@@ -929,23 +929,23 @@ function InlineEditor({
             is stored, so this is the only moment it exists in readable form. */}
         {reissued && (
           <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-emerald-400/80 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-emerald-700/80 mb-1">
               New password for {user.name} — shown once
             </div>
-            <div className="font-mono text-sm font-bold text-emerald-400 break-all mb-2">{reissued}</div>
+            <div className="font-mono text-sm font-bold text-emerald-700 break-all mb-2">{reissued}</div>
             <div className="flex gap-2">
               <button
                 onClick={() => { void navigator.clipboard?.writeText(reissued).catch(() => undefined) }}
-                className="rounded-md px-2 py-1 text-[11px] font-bold border border-kds-border text-kds-text hover:border-emerald-400/40">
+                className="rounded-md px-2 py-1 text-[11px] font-bold border border-s-border text-s-text hover:border-emerald-400/40">
                 Copy
               </button>
               <button
                 onClick={() => setReissued(null)}
-                className="rounded-md px-2 py-1 text-[11px] font-bold text-kds-subtext hover:text-kds-text">
+                className="rounded-md px-2 py-1 text-[11px] font-bold text-s-muted hover:text-s-text">
                 Done
               </button>
             </div>
-            <p className="text-[10px] text-kds-subtext/70 mt-2">
+            <p className="text-[10px] text-s-muted/70 mt-2">
               They can set their own from the &ldquo;Change my password&rdquo; link on the sign-in page.
             </p>
           </div>
@@ -1027,24 +1027,24 @@ function AddStaffModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-kds-card border border-kds-border rounded-2xl p-5 w-full max-w-md"
+    <div className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-s-surface border border-s-border rounded-2xl p-5 w-full max-w-md"
         onClick={(e) => e.stopPropagation()}>
         {issued ? (
           <>
             <h2 className="font-black text-lg mb-1">{issued.name} is set up</h2>
-            <p className="text-xs text-kds-subtext mb-4">
+            <p className="text-xs text-s-muted mb-4">
               Give them these two things. The password is shown <strong>once</strong> — we
               store only a hash, so nobody can look it up later. If you lose it, issue a new one.
             </p>
-            <div className="rounded-lg border border-kds-border bg-kds-bg p-3 space-y-2 mb-4">
+            <div className="rounded-lg border border-s-border bg-s-bg p-3 space-y-2 mb-4">
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-kds-subtext mb-0.5">Email</div>
-                <div className="font-mono text-sm text-kds-text break-all">{issued.email}</div>
+                <div className="text-[10px] uppercase tracking-wider text-s-muted mb-0.5">Email</div>
+                <div className="font-mono text-sm text-s-text break-all">{issued.email}</div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-kds-subtext mb-0.5">Password</div>
-                <div className="font-mono text-base font-bold text-emerald-400 break-all">{issued.password}</div>
+                <div className="text-[10px] uppercase tracking-wider text-s-muted mb-0.5">Password</div>
+                <div className="font-mono text-base font-bold text-emerald-700 break-all">{issued.password}</div>
               </div>
             </div>
             <div className="flex gap-2">
@@ -1053,23 +1053,23 @@ function AddStaffModal({
                   void navigator.clipboard?.writeText(`${issued.email}\n${issued.password}`)
                     .then(() => setCopied(true)).catch(() => undefined)
                 }}
-                className="flex-1 rounded-lg py-2 text-xs font-bold border border-kds-border text-kds-text hover:border-emerald-400/40">
+                className="flex-1 rounded-lg py-2 text-xs font-bold border border-s-border text-s-text hover:border-emerald-400/40">
                 {copied ? 'Copied' : 'Copy both'}
               </button>
               <button
                 onClick={() => onCreated(null)}
-                className="flex-1 rounded-lg py-2 text-xs font-black bg-emerald-500 text-black">
+                className="flex-1 rounded-lg py-2 text-xs font-black bg-primary text-primary-on">
                 Done
               </button>
             </div>
-            <p className="text-[10px] text-kds-subtext/70 mt-3">
+            <p className="text-[10px] text-s-muted/70 mt-3">
               They can change it themselves from the &ldquo;Change my password&rdquo; link on the sign-in page.
             </p>
           </>
         ) : (
         <>
         <h2 className="font-black text-lg mb-1">Add staff</h2>
-        <p className="text-xs text-kds-subtext mb-4">
+        <p className="text-xs text-s-muted mb-4">
           Their email is how they sign in, so it is required and must be
           @gsfoods.pk. We generate a password and show it once on the next
           screen for you to hand over.
@@ -1093,14 +1093,14 @@ function AddStaffModal({
           {tenants.length > 1 && (
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
-                  Companies <span className="text-red-400">*</span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
+                  Companies <span className="text-red-700">*</span>
                 </span>
-                <span className="text-[10px] text-kds-subtext/70">
+                <span className="text-[10px] text-s-muted/70">
                   Tick all that apply. First = primary.
                 </span>
               </div>
-              <div className="flex flex-wrap gap-2 rounded-lg border border-kds-border bg-kds-bg p-2">
+              <div className="flex flex-wrap gap-2 rounded-lg border border-s-border bg-s-bg p-2">
                 {tenants.map((t) => {
                   const checked = tenantIds.includes(t.id)
                   const isPrimary = primaryTenantId === t.id
@@ -1111,8 +1111,8 @@ function AddStaffModal({
                       onClick={() => toggleTenant(t.id)}
                       className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
                         checked
-                          ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                          : 'bg-kds-card text-kds-subtext border border-kds-border hover:border-indigo-400/30'
+                          ? 'bg-indigo-500/20 text-indigo-700 border border-indigo-500/40'
+                          : 'bg-s-surface text-s-muted border border-s-border hover:border-indigo-400/30'
                       }`}>
                       <span>{checked ? '✓' : '+'}</span>
                       <span>{t.name}</span>
@@ -1141,20 +1141,20 @@ function AddStaffModal({
           </Field>
         </div>
 
-        <p className="mt-3 text-[11px] text-kds-subtext">
+        <p className="mt-3 text-[11px] text-s-muted">
           Tick the company / category / role title now. What each role can open is set
           per role in Module Access.
         </p>
 
-        {err && <p className="mt-2 text-xs font-bold text-red-400">{err}</p>}
+        {err && <p className="mt-2 text-xs font-bold text-red-700">{err}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose}
-            className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text">
+            className="rounded-lg px-3 py-2 text-xs font-bold border border-s-border text-s-muted hover:text-s-text">
             Cancel
           </button>
           <button onClick={submit} disabled={create.isPending}
-            className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
             {create.isPending ? 'Adding…' : 'Add staff →'}
           </button>
         </div>
@@ -1168,14 +1168,14 @@ function AddStaffModal({
 // ─── Small UI bits ───────────────────────────────────────────────────────────
 
 const inputCls =
-  'w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm focus:border-kds-green focus:outline-none'
+  'w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">{label}</span>
-        {hint && <span className="text-[10px] text-kds-subtext/70">{hint}</span>}
+        <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">{label}</span>
+        {hint && <span className="text-[10px] text-s-muted/70">{hint}</span>}
       </div>
       {children}
     </label>

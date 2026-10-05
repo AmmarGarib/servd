@@ -217,7 +217,7 @@ const ScrollExpandMedia = ({
                 style={{ objectPosition: 'center' }}
               />
             ) : (
-              <div aria-hidden='true' className='w-screen h-screen' style={{ background: 'var(--servd-green-dark)' }} />
+              <div aria-hidden='true' className='w-screen h-screen' style={{ background: 'var(--servd-purple)' }} />
             )}
             <div className='absolute inset-0 bg-black/10' />
           </motion.div>

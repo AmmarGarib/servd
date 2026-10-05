@@ -58,7 +58,7 @@ export default function OperationsPage() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">⚙️ Operations rules</h1>
@@ -81,8 +81,8 @@ export default function OperationsPage() {
                 <button key={ch} type="button" onClick={() => toggleChannel(ch)}
                   className="text-xs font-semibold px-3 py-1 rounded-full"
                   style={channels.includes(ch)
-                    ? { background: 'rgba(0,212,177,0.15)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.4)' }
-                    : { background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                    : { background: 'rgb(var(--fg-rgb) / 0.03)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                   {ch}
                 </button>
               ))}
@@ -104,7 +104,7 @@ export default function OperationsPage() {
             <p className="text-[10px] text-white/30 mt-0.5">0 = not in the pool. Weights multiply hours when the split is by role; with the other splits they only decide who is in.</p>
             <div className="grid grid-cols-2 gap-2 mt-2">
               {TIP_ROLES.map((r) => (
-                <label key={r.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-1.5" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <label key={r.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-1.5" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <span className="text-xs text-white/70">{r.label}</span>
                   <input type="number" step="0.05" min={0} max={10} className="w-20 rounded bg-white/[0.03] border border-white/[0.08] px-2 py-1 text-sm text-white/85 text-right"
                     value={form.tipPoolRoleWeights?.[r.key] ?? r.fallback}
@@ -149,9 +149,9 @@ export default function OperationsPage() {
         </Section>
 
         <div className="flex justify-end items-center gap-3 pt-4 border-t border-white/[0.05]">
-          {saveError && <p className="text-xs text-red-400 mr-auto">{saveError.message}</p>}
+          {saveError && <p className="text-xs text-red-700 mr-auto">{saveError.message}</p>}
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save changes'}
           </button>
         </div>
@@ -162,7 +162,7 @@ export default function OperationsPage() {
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-2xl p-5" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
       {desc && <p className="text-xs text-white/35 mt-0.5">{desc}</p>}
       <div className="mt-4 space-y-3">{children}</div>
@@ -171,6 +171,6 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-kds-green" /><span className="text-sm text-white/85">{label}</span></label>
+  return <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-primary" /><span className="text-sm text-white/85">{label}</span></label>
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

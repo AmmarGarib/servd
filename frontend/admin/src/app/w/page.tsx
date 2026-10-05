@@ -20,5 +20,5 @@ export default function WorkspaceLanding() {
     router.replace(first ? `/w/${first.id}` : '/modules')
   }, [isError, isLoading, workspaces, router])
 
-  return <div className="min-h-screen p-8 text-sm text-white/40" style={{ background: '#090a0e' }}>Opening your workspace…</div>
+  return <div className="min-h-screen p-8 text-sm text-white/40" style={{ background: 'var(--bg)' }}>Opening your workspace…</div>
 }

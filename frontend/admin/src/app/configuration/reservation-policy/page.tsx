@@ -46,7 +46,7 @@ export default function ReservationPolicyPage() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">📅 Reservation policy</h1>
@@ -120,7 +120,7 @@ export default function ReservationPolicyPage() {
 
         <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
           <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save policy'}
           </button>
         </div>
@@ -131,7 +131,7 @@ export default function ReservationPolicyPage() {
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-2xl p-5" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
       {desc && <p className="text-xs text-white/35 mt-0.5">{desc}</p>}
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">{children}</div>
@@ -150,12 +150,12 @@ function Num({ label, value, onChange, suffix }: { label: string; value: number 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex items-center gap-2 cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-kds-green" />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-primary" />
       <span className="text-sm text-white/85">{label}</span>
     </label>
   )
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 
 const DEFAULT_DAYPARTS: Daypart[] = [
   { label: 'Lunch',      startHour: 0,  endHour: 12 },
@@ -197,7 +197,7 @@ function DaypartsEditor({ value, onChange }: { value: Daypart[]; onChange: (d: D
   }
 
   return (
-    <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="rounded-2xl p-5" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <div className="flex items-baseline justify-between">
         <div>
           <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">Daypart grouping</h2>
@@ -236,7 +236,7 @@ function DaypartsEditor({ value, onChange }: { value: Daypart[]; onChange: (d: D
             <button
               onClick={() => remove(i)}
               disabled={value.length <= 1}
-              className="col-span-1 rounded-lg bg-white/[0.05] hover:bg-rose-500/20 px-2 py-2 text-xs text-white/55 hover:text-rose-300 disabled:opacity-30">
+              className="col-span-1 rounded-lg bg-white/[0.05] hover:bg-rose-500/20 px-2 py-2 text-xs text-white/55 hover:text-rose-700 disabled:opacity-30">
               ×
             </button>
           </div>
@@ -250,7 +250,7 @@ function DaypartsEditor({ value, onChange }: { value: Daypart[]; onChange: (d: D
       {issues.length > 0 && (
         <ul className="mt-3 space-y-0.5">
           {issues.map((m, i) => (
-            <li key={i} className="text-[11px] text-rose-300">⚠ {m}</li>
+            <li key={i} className="text-[11px] text-rose-700">⚠ {m}</li>
           ))}
         </ul>
       )}

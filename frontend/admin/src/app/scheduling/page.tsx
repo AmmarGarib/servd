@@ -25,7 +25,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PLANNERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'hr']
 const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', none: '' }
 const SOURCE_TONE: Record<Cell['source'], string> = {
-  roster: 'rgba(0,212,177,0.12)', swap: 'rgba(99,102,241,0.18)', exception: 'rgba(245,158,11,0.16)', none: 'transparent',
+  roster: 'rgb(135 197 64 / 0.12)', swap: 'rgb(61 31 59 / 0.18)', exception: 'rgba(245,158,11,0.16)', none: 'transparent',
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -72,8 +72,8 @@ export default function SchedulingPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-black" style={{ color: 'rgba(255,255,255,0.92)' }}>Rota</h1>
-          <p className="text-sm mt-0.5 max-w-2xl" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          <h1 className="text-xl font-black" style={{ color: 'rgb(var(--fg-rgb) / 0.92)' }}>Rota</h1>
+          <p className="text-sm mt-0.5 max-w-2xl" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>
             Generated from each person&apos;s standing shift and weekly offs in <Link href="/hr/s/roster" className="underline">HR → Roster</Link> (shifts are in <Link href="/hr/s/shift" className="underline">HR → Shift master</Link>). A change made here is a one-off for that day. Swaps are requested and approved in <Link href="/hr/s/shift_swap" className="underline">HR → Shift swap</Link>.
           </p>
         </div>
@@ -84,44 +84,44 @@ export default function SchedulingPage() {
           <option value="">Select brand…</option>
           {concepts?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="p-2 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }} aria-label="Previous week">‹</button>
-        <span className="text-sm font-semibold px-2" style={{ color: 'rgba(255,255,255,0.7)' }}>{fmtDay(dates[0]!)} – {fmtDay(dates[6]!)}</span>
-        <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="p-2 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }} aria-label="Next week">›</button>
-        <button onClick={() => setWeekStart(ymd(mondayOf(new Date())))} className="px-3 py-1.5 rounded-xl text-xs font-semibold" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.4)' }}>This week</button>
+        <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Previous week">‹</button>
+        <span className="text-sm font-semibold px-2" style={{ color: 'rgb(var(--fg-rgb) / 0.7)' }}>{fmtDay(dates[0]!)} – {fmtDay(dates[6]!)}</span>
+        <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Next week">›</button>
+        <button onClick={() => setWeekStart(ymd(mondayOf(new Date())))} className="px-3 py-1.5 rounded-xl text-xs font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.4)' }}>This week</button>
         {conceptId && planner && (
           <button onClick={() => { if (confirm('Copy last week\'s one-off changes to this week? The roster repeats by itself.')) copyWeek.mutate() }} disabled={copyWeek.isPending}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', color: 'rgba(165,168,255,0.9)' }}>
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgb(61 31 59 / 0.1)', border: '1px solid rgb(61 31 59 / 0.3)', color: 'rgba(165,168,255,0.9)' }}>
             {copyWeek.isPending ? 'Copying…' : 'Copy last week\'s changes'}
           </button>
         )}
       </div>
 
-      {toast && <div className="px-4 py-2.5 rounded-xl text-sm" style={{ background: 'rgba(0,212,177,0.08)', border: '1px solid rgba(0,212,177,0.25)', color: '#00D4B1' }}>{toast}</div>}
+      {toast && <div className="px-4 py-2.5 rounded-xl text-sm" style={{ background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.25)', color: 'var(--erp-primary-ink)' }}>{toast}</div>}
 
       {conceptId && cost.data && (
-        <div className="px-4 py-2.5 rounded-xl text-sm space-y-1" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
-          <p>Rota cost this week: <strong style={{ color: 'rgba(255,255,255,0.85)' }}>{fmtPkrWhole(cost.data.totalCents)}</strong> · {cost.data.totalHours.toFixed(1)} hrs</p>
-          <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>At each person&apos;s HR rate: {cost.data.basis}.</p>
-          {cost.data.byEmployee.some((u) => u.rateUnset) && <p className="text-xs" style={{ color: '#F59E0B' }}>Some rostered people have no gross salary in HR — their hours are costed at zero.</p>}
+        <div className="px-4 py-2.5 rounded-xl text-sm space-y-1" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.06)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
+          <p>Rota cost this week: <strong style={{ color: 'rgb(var(--fg-rgb) / 0.85)' }}>{fmtPkrWhole(cost.data.totalCents)}</strong> · {cost.data.totalHours.toFixed(1)} hrs</p>
+          <p className="text-[11px]" style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>At each person&apos;s HR rate: {cost.data.basis}.</p>
+          {cost.data.byEmployee.some((u) => u.rateUnset) && <p className="text-xs" style={{ color: '#a15c00' }}>Some rostered people have no gross salary in HR — their hours are costed at zero.</p>}
         </div>
       )}
 
       {!conceptId && (
-        <div className="flex items-center justify-center h-48 rounded-2xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>Select a brand to see its rota</p>
+        <div className="flex items-center justify-center h-48 rounded-2xl" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+          <p className="text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Select a brand to see its rota</p>
         </div>
       )}
-      {conceptId && week.error && <p className="text-sm text-red-400">{(week.error as Error).message}</p>}
+      {conceptId && week.error && <p className="text-sm text-red-700">{(week.error as Error).message}</p>}
 
       {conceptId && week.data && (
-        <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <div className="overflow-x-auto">
             <table className="w-full" style={{ minWidth: '820px' }}>
               <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                  <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider w-[180px]" style={{ color: 'rgba(255,255,255,0.3)' }}>Staff</th>
+                <tr style={{ background: 'rgb(var(--fg-rgb) / 0.03)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+                  <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider w-[180px]" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Staff</th>
                   {dates.map((d, i) => (
-                    <th key={d} className="text-center px-2 py-3 text-[11px] font-bold" style={{ color: d === today ? '#00D4B1' : 'rgba(255,255,255,0.3)' }}>
+                    <th key={d} className="text-center px-2 py-3 text-[11px] font-bold" style={{ color: d === today ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
                       <div>{DAYS[i]}</div><div className="font-normal">{fmtDay(d)}</div>
                     </th>
                   ))}
@@ -129,13 +129,13 @@ export default function SchedulingPage() {
               </thead>
               <tbody>
                 {week.data.staff.length === 0 && (
-                  <tr><td colSpan={8} className="text-center py-12 text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>No current HR employees work for this brand. Add them in <Link href="/hr/employees" className="underline">HR → Employees</Link>.</td></tr>
+                  <tr><td colSpan={8} className="text-center py-12 text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>No current HR employees work for this brand. Add them in <Link href="/hr/employees" className="underline">HR → Employees</Link>.</td></tr>
                 )}
                 {week.data.staff.map((m) => (
-                  <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <tr key={m.id} style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.04)' }}>
                     <td className="px-4 py-3">
-                      <div className="font-semibold text-sm" style={{ color: 'rgba(255,255,255,0.8)' }}>{m.name}</div>
-                      <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>{m.designation ?? m.employeeCode}</div>
+                      <div className="font-semibold text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>{m.name}</div>
+                      <div className="text-[11px]" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>{m.designation ?? m.employeeCode}</div>
                     </td>
                     {dates.map((d) => {
                       const c = cellOf(m.id, d)
@@ -145,13 +145,13 @@ export default function SchedulingPage() {
                           <button type="button" disabled={!clickable} onClick={() => c && setEditing({ member: m, cell: c })}
                             title={!m.canHaveExceptions && planner ? 'No servd login — change their standing shift in HR → Roster' : undefined}
                             className="w-full min-h-[48px] rounded-lg px-2 py-1.5 text-left disabled:cursor-default"
-                            style={{ background: c ? SOURCE_TONE[c.source] : 'transparent', border: '1px solid rgba(255,255,255,0.06)' }}>
+                            style={{ background: c ? SOURCE_TONE[c.source] : 'transparent', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                             {c?.kind === 'shift' && c.segments.map((s, i) => (
-                              <div key={i} className="text-xs font-semibold" style={{ color: 'rgba(255,255,255,0.8)' }}>{s.start}–{s.end}{s.shiftName && <span className="font-normal" style={{ color: 'rgba(255,255,255,0.4)' }}> {s.shiftName}</span>}</div>
+                              <div key={i} className="text-xs font-semibold" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>{s.start}–{s.end}{s.shiftName && <span className="font-normal" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}> {s.shiftName}</span>}</div>
                             ))}
-                            {c?.kind === 'off' && <div className="text-xs font-bold" style={{ color: 'rgba(255,255,255,0.45)' }}>Off</div>}
-                            {(!c || c.kind === 'none') && <div className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>—</div>}
-                            {c && c.source !== 'none' && <div className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>{SOURCE_LABEL[c.source]}</div>}
+                            {c?.kind === 'off' && <div className="text-xs font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.45)' }}>Off</div>}
+                            {(!c || c.kind === 'none') && <div className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.2)' }}>—</div>}
+                            {c && c.source !== 'none' && <div className="text-[10px] mt-0.5" style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>{SOURCE_LABEL[c.source]}</div>}
                           </button>
                         </td>
                       )
@@ -194,11 +194,11 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-full max-w-md rounded-2xl p-6 space-y-4" style={{ background: '#0d0f15', border: '1px solid rgba(255,255,255,0.1)' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgb(61 31 59 / 0.5)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="w-full max-w-md rounded-2xl p-6 space-y-4" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
         <div>
-          <h2 className="text-base font-bold" style={{ color: 'rgba(255,255,255,0.9)' }}>{member.name} · {fmtDay(cell.date)}</h2>
-          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          <h2 className="text-base font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{member.name} · {fmtDay(cell.date)}</h2>
+          <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>
             {cell.kind === 'off' ? 'Off' : cell.kind === 'shift' ? cell.segments.map((s) => `${s.start}–${s.end}`).join(', ') : 'Nothing planned'}
             {cell.source !== 'none' && ` (${SOURCE_LABEL[cell.source]})`}. A change here applies to this day only.
           </p>
@@ -212,28 +212,28 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
                 {shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.start}–{s.end})</option>)}
               </select>
               <button disabled={!shiftId || add.isPending} onClick={() => add.mutate({ shiftId, ...(notes && { notes }) })}
-                className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgba(0,212,177,0.12)', border: '1px solid rgba(0,212,177,0.3)', color: '#00D4B1' }}>Set</button>
+                className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(135 197 64 / 0.12)', border: '1px solid rgb(135 197 64 / 0.3)', color: 'var(--erp-primary-ink)' }}>Set</button>
             </div>
           )}
           <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
-            <label className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Start<input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="s-input w-full text-sm px-3 py-2 rounded-xl mt-1" /></label>
-            <label className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>End<input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="s-input w-full text-sm px-3 py-2 rounded-xl mt-1" /></label>
+            <label className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>Start<input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="s-input w-full text-sm px-3 py-2 rounded-xl mt-1" /></label>
+            <label className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>End<input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="s-input w-full text-sm px-3 py-2 rounded-xl mt-1" /></label>
             <button disabled={add.isPending} onClick={() => add.mutate({ startTime: start, endTime: end, ...(notes && { notes }) })}
-              className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgba(0,212,177,0.12)', border: '1px solid rgba(0,212,177,0.3)', color: '#00D4B1' }}>{cell.source === 'exception' && cell.kind === 'shift' ? 'Add hours' : 'Set hours'}</button>
+              className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(135 197 64 / 0.12)', border: '1px solid rgb(135 197 64 / 0.3)', color: 'var(--erp-primary-ink)' }}>{cell.source === 'exception' && cell.kind === 'shift' ? 'Add hours' : 'Set hours'}</button>
           </div>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note (optional)" className="s-input w-full text-sm px-3 py-2 rounded-xl" />
         </div>
 
-        {err && <p className="text-xs" style={{ color: '#FF4D4F' }}>{err}</p>}
+        {err && <p className="text-xs" style={{ color: '#b42318' }}>{err}</p>}
 
         <div className="flex flex-wrap gap-2">
           <button disabled={add.isPending} onClick={() => add.mutate({ off: true, ...(notes && { notes }) })}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>Day off</button>
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.7)' }}>Day off</button>
           {exceptionIds.length > 0 && (
             <button disabled={backToRoster.isPending} onClick={() => backToRoster.mutate()}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#F59E0B' }}>Back to roster</button>
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#a15c00' }}>Back to roster</button>
           )}
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)' }}>Close</button>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>Close</button>
         </div>
       </div>
     </div>

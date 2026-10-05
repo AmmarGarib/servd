@@ -285,14 +285,14 @@ function NavLinks({
                   onClick={() => onNavigate?.()}
                   className="flex items-center gap-2 rounded-md transition-all duration-150 ml-7 mr-1.5 px-2.5 py-1.5 group"
                   style={isActive(pathname, c.href) ? {
-                    background: 'rgba(0,212,177,0.08)',
-                    color: '#00D4B1',
+                    background: 'rgb(135 197 64 / 0.08)',
+                    color: 'var(--erp-primary-ink)',
                   } : {
                     background: 'transparent',
-                    color: 'rgba(255,255,255,0.32)',
+                    color: 'rgb(var(--fg-rgb) / 0.32)',
                   }}
-                  onMouseEnter={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
-                  onMouseLeave={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgba(255,255,255,0.32)' }}
+                  onMouseEnter={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.65)' }}
+                  onMouseLeave={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.32)' }}
                 >
                   <span className="text-[10px] opacity-50">└</span>
                   <span className="text-[11.5px] font-medium leading-none truncate flex-1">{c.label}</span>
@@ -338,20 +338,20 @@ function NavLinks({
         return (
           <div key={g.id}>
             {collapsed ? (
-              <div className="h-px mx-2 mb-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
+              <div className="h-px mx-2 mb-2" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }} />
             ) : (
               <div className="flex items-center gap-1 px-2.5 pb-1">
                 <button onClick={() => toggleGroup(g, index)}
                   className="flex items-center gap-1.5 flex-1 min-w-0 rounded-md px-1.5 py-1 text-left hover:bg-white/[0.03]"
                   title={open ? `Collapse ${g.title}` : `Expand ${g.title}`}>
                   <span className="transition-transform duration-150"
-                    style={{ color: 'rgba(255,255,255,0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
+                    style={{ color: 'rgb(var(--fg-rgb) / 0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
                   <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"
-                    style={{ color: open ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.4)' }}>{g.title}</span>
+                    style={{ color: open ? 'rgb(var(--fg-rgb) / 0.7)' : 'rgb(var(--fg-rgb) / 0.4)' }}>{g.title}</span>
                 </button>
                 <Link href={`/w/${g.id}`} onClick={onNavigate}
                   className="text-[10px] font-bold px-1.5 py-1 rounded-md hover:bg-white/[0.05]"
-                  style={{ color: isActive(pathname, `/w/${g.id}`) ? '#00D4B1' : 'rgba(255,255,255,0.3)' }}
+                  style={{ color: isActive(pathname, `/w/${g.id}`) ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.3)' }}
                   title={`${g.title} home`}>
                   home
                 </Link>
@@ -373,7 +373,7 @@ function NavLinks({
           href="/modules"
           onClick={onNavigate}
           className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold transition-colors"
-          style={{ color: 'rgba(255,255,255,0.45)', background: 'rgba(255,255,255,0.03)' }}
+          style={{ color: 'rgb(var(--fg-rgb) / 0.45)', background: 'rgb(var(--fg-rgb) / 0.03)' }}
           title="All workspaces"
         >
           <span aria-hidden>⊞</span>
@@ -386,7 +386,7 @@ function NavLinks({
 
 function SubHeader({ title }: { title: string }) {
   return (
-    <p className="px-4 pt-1 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'rgba(255,255,255,0.22)' }}>
+    <p className="px-4 pt-1 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'rgb(var(--fg-rgb) / 0.22)' }}>
       {title}
     </p>
   )
@@ -397,23 +397,23 @@ function SectionHeader({ title, collapsed, onClick }: { title: string; collapsed
     <button onClick={onClick}
       className="flex items-center gap-1.5 px-4 pb-1.5 w-full group"
       title={collapsed ? `Expand ${title}` : `Collapse ${title}`}>
-      <div className="h-px flex-1" style={{ background: 'rgba(255,255,255,0.05)' }} />
+      <div className="h-px flex-1" style={{ background: 'rgb(var(--fg-rgb) / 0.05)' }} />
       <span className="flex items-center gap-1">
         <span
           className="transition-transform duration-150"
           style={{
-            color: 'rgba(255,255,255,0.18)',
+            color: 'rgb(var(--fg-rgb) / 0.18)',
             display: 'inline-block',
             transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
             fontSize: '8px',
           }}
         >▼</span>
         <span className="text-[9px] font-black uppercase tracking-[0.28em] group-hover:text-white/45 transition-colors"
-          style={{ color: 'rgba(255,255,255,0.32)' }}>
+          style={{ color: 'rgb(var(--fg-rgb) / 0.32)' }}>
           {title}
         </span>
       </span>
-      <div className="h-px flex-1" style={{ background: 'rgba(255,255,255,0.05)' }} />
+      <div className="h-px flex-1" style={{ background: 'rgb(var(--fg-rgb) / 0.05)' }} />
     </button>
   )
 }
@@ -444,21 +444,20 @@ function NavLinkRow({
       <Link href={item.href}
         onClick={() => onNavigate?.()}
         title={collapsed ? item.label : undefined}
-        className={`nav-active-glow flex items-center gap-2.5 rounded-[10px] transition-all duration-150 flex-1 ${
+        className={`${active ? 'nav-active-glow ' : ''}flex items-center gap-2.5 rounded-[10px] transition-all duration-150 flex-1 ${
           collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2'
         }`}
         style={active ? {
-          background: 'linear-gradient(135deg, rgba(0,212,177,0.1) 0%, rgba(99,102,241,0.08) 100%)',
-          border: '1px solid rgba(0,212,177,0.18)',
-          color: '#00D4B1',
-          boxShadow: '0 0 12px rgba(0,212,177,0.08)',
+          background: 'rgb(135 197 64 / 0.16)',
+          border: '1px solid rgb(135 197 64 / 0.3)',
+          color: 'var(--erp-primary)',
         } : {
           background: 'transparent',
           border: '1px solid transparent',
-          color: 'rgba(255,255,255,0.42)',
+          color: 'rgb(var(--fg-rgb) / 0.72)',
         }}
-        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.78)' } }}
-        onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.42)' } }}
+        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.95)' } }}
+        onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.72)' } }}
       >
         <span className="text-[15px] shrink-0">{item.icon}</span>
         {!collapsed && (
@@ -466,7 +465,7 @@ function NavLinkRow({
         )}
         {!collapsed && item.badge && (
           <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full"
-            style={{ background: 'rgba(255,77,79,0.18)', color: '#FF4D4F' }}>
+            style={{ background: 'rgba(255,77,79,0.18)', color: '#b42318' }}>
             {item.badge}
           </span>
         )}
@@ -478,7 +477,7 @@ function NavLinkRow({
           <button onClick={(e) => { e.stopPropagation(); onTogglePin() }}
             className="p-1 rounded hover:bg-white/10 transition-colors"
             title={pinned ? 'Unpin' : 'Pin to top'}
-            style={{ color: pinned ? '#F59E0B' : 'rgba(255,255,255,0.15)', opacity: pinned ? 1 : 0 }}
+            style={{ color: pinned ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.15)', opacity: pinned ? 1 : 0 }}
             onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
             onMouseLeave={(e) => { if (!pinned) e.currentTarget.style.opacity = '0' }}
           >
@@ -490,7 +489,7 @@ function NavLinkRow({
             <button onClick={(e) => { e.stopPropagation(); onToggleExpand?.() }}
               className="p-1 rounded hover:bg-white/10 transition-colors"
               title={expanded ? 'Collapse' : 'Expand'}
-              style={{ color: 'rgba(255,255,255,0.3)' }}>
+              style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>
               <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2"
                 style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
                 <path d="M4 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
@@ -544,23 +543,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const initials = user?.name?.[0]?.toUpperCase() ?? '?'
 
+  // Purple sidebar, bone text (the .erp-on-secondary class flips --fg-rgb).
   const sidebarBg = {
-    background: 'linear-gradient(180deg, #0d0f15 0%, #0b0d12 50%, #0d0f16 100%)',
-    borderRight: '1px solid rgba(255,255,255,0.055)',
-    boxShadow: 'inset -1px 0 0 rgba(0,212,177,0.04)',
+    background: 'var(--erp-secondary)',
+    borderRight: '1px solid rgb(0 0 0 / 0.08)',
   }
 
   function UserFooter({ collapsed: c }: { collapsed: boolean }) {
     return (
       <div className={`relative z-10 shrink-0 ${c ? 'px-1.5 py-2' : 'px-3 py-3'}`}
-        style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+        style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         {c ? (
           <button onClick={() => void handleClockOut()} disabled={clockingOut}
             className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
-            style={{ color: 'rgba(255,255,255,0.2)' }}
+            style={{ color: 'rgb(var(--fg-rgb) / 0.2)' }}
             title="Clock out"
-            onMouseEnter={(e) => (e.currentTarget.style.color = '#FF4D4F')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.2)')}>
+            onMouseEnter={(e) => (e.currentTarget.style.color = '#b42318')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.2)')}>
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
               <path d="M10 5L13 7.5m0 0L10 10M13 7.5H6M6 3H4a1.5 1.5 0 00-1.5 1.5v6A1.5 1.5 0 004 12H6"
                 stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -571,9 +570,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <UserIdentityCard initials={initials} />
             <button onClick={() => void handleClockOut()} disabled={clockingOut}
               className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-all disabled:opacity-50"
-              style={{ background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.18)', color: '#FF4D4F' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,77,79,0.14)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,77,79,0.08)' }}>
+              style={{ background: 'rgba(255,138,128,0.12)', border: '1px solid rgba(255,138,128,0.3)', color: '#ffb4ab' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,138,128,0.2)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,138,128,0.12)' }}>
               <svg width="12" height="12" viewBox="0 0 13 13" fill="none">
                 <path d="M9 4L11.5 6.5m0 0L9 9M11.5 6.5H5M5 2H3.5A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5"
                   stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -620,21 +619,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     return (
       <div className="rounded-xl px-2 py-1.5"
-        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+        style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         <div className="flex items-center gap-2.5">
           <div className="h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-xs font-black"
             style={{
-              background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
-              color: '#000',
-              boxShadow: '0 0 10px rgba(0,212,177,0.25)',
+              background: 'var(--erp-primary)',
+              color: 'var(--erp-on-primary)',
+              boxShadow: '0 0 10px rgb(135 197 64 / 0.25)',
             }}>
             {initials}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold truncate" style={{ color: 'rgba(255,255,255,0.75)' }}>
+            <p className="text-xs font-semibold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.75)' }}>
               {user?.name ?? 'Staff'}
             </p>
-            <p className="text-[10px]" style={{ color: isSuper ? '#FCD34D' : 'rgba(255,255,255,0.25)' }}>
+            <p className="text-[10px]" style={{ color: isSuper ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.25)' }}>
               {isSuper ? '👑 CEO' : roleLabel(user?.role)}
             </p>
           </div>
@@ -648,11 +647,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors"
             onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
-            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#F59E0B' }} />
-            <span className="text-[10px] font-bold flex-1" style={{ color: '#F59E0B' }}>
+            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#a15c00' }} />
+            <span className="text-[10px] font-bold flex-1" style={{ color: '#a15c00' }}>
               {pending.length} pending {pending.length === 1 ? 'signup' : 'signups'}
             </span>
-            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>→</span>
+            <span className="text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>→</span>
           </Link>
         )}
 
@@ -661,18 +660,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className={`${pending.length > 0 ? 'mt-0.5' : 'mt-1.5 pt-1.5 border-t border-white/[0.05]'} flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors`}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
-            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#F59E0B' }} />
-            <span className="text-[10px] font-bold flex-1" style={{ color: '#F59E0B' }}>
+            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#a15c00' }} />
+            <span className="text-[10px] font-bold flex-1" style={{ color: '#a15c00' }}>
               {pendingLayouts.length} storefront {pendingLayouts.length === 1 ? 'change' : 'changes'} to approve
             </span>
-            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>→</span>
+            <span className="text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>→</span>
           </Link>
         )}
 
         {isSuper && (
           <div className={`${hasQueue ? 'mt-1' : 'mt-1.5'} pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5`}>
             <span className="text-[9px] uppercase tracking-wider font-bold shrink-0"
-              style={{ color: viewAs ? '#A5B4FC' : 'rgba(255,255,255,0.3)' }}>
+              style={{ color: viewAs ? '#6b2f68' : 'rgb(var(--fg-rgb) / 0.3)' }}>
               {viewAs ? '🔭 As' : 'View as'}
             </span>
             <select
@@ -680,9 +679,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               onChange={(e) => setRole((e.target.value || null) as ViewAsRole)}
               className="flex-1 text-[10.5px] font-semibold rounded-md px-1.5 py-1 cursor-pointer focus:outline-none"
               style={{
-                background: viewAs ? 'rgba(99,102,241,0.12)' : 'rgba(0,0,0,0.3)',
-                color: viewAs ? '#A5B4FC' : 'rgba(255,255,255,0.6)',
-                border: `1px solid ${viewAs ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.06)'}`,
+                background: viewAs ? 'rgb(61 31 59 / 0.12)' : 'rgba(0,0,0,0.3)',
+                color: viewAs ? '#6b2f68' : 'rgb(var(--fg-rgb) / 0.6)',
+                border: `1px solid ${viewAs ? 'rgb(61 31 59 / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
               }}>
               <option value="">Myself</option>
               {switchTargets.map((opt) => (
@@ -696,7 +695,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#090a0e' }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
 
       {/* ── Mobile overlay ─────────────────────────────────────────────────── */}
       {mobileOpen && (
@@ -708,25 +707,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* ── Mobile drawer ──────────────────────────────────────────────────── */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[220px] flex flex-col transition-transform duration-300 md:hidden ${
+        className={`erp-on-secondary fixed inset-y-0 left-0 z-50 w-[220px] flex flex-col transition-transform duration-300 md:hidden ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={sidebarBg}
       >
         <div className="absolute pointer-events-none select-none"
           style={{ width: '200px', height: '200px', bottom: '20%', left: '-60px',
-            background: 'radial-gradient(circle, rgba(0,212,177,0.06) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(135 197 64 / 0.06) 0%, transparent 70%)',
             animation: 'ops-glowPulse 8s ease-in-out infinite' }} />
         <div className="absolute pointer-events-none select-none"
           style={{ width: '160px', height: '160px', top: '15%', right: '-70px',
-            background: 'radial-gradient(circle, rgba(99,102,241,0.05) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(61 31 59 / 0.05) 0%, transparent 70%)',
             animation: 'ops-glowPulse 11s ease-in-out infinite reverse' }} />
 
         <div className="relative z-10 flex items-center h-[54px] shrink-0 px-4 gap-3"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center relative overflow-hidden"
-            style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', boxShadow: '0 0 16px rgba(0,212,177,0.35)' }}>
-            <span className="text-xs font-black text-black relative z-10">S</span>
+            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 16px rgb(135 197 64 / 0.35)' }}>
+            <span className="text-xs font-black relative z-10" style={{ color: 'var(--erp-on-primary)' }}>S</span>
           </div>
           <span className="text-sm font-black tracking-tight ops-shimmer-text flex-1">servd</span>
           <button onClick={() => setMobileOpen(false)}
@@ -745,25 +744,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* ── Desktop sidebar ────────────────────────────────────────────────── */}
       <aside
-        className={`hidden md:flex flex-col shrink-0 relative transition-all duration-300 overflow-hidden ${
+        className={`erp-on-secondary hidden md:flex flex-col shrink-0 relative transition-all duration-300 overflow-hidden ${
           collapsed ? 'w-[52px]' : 'w-[220px]'
         }`}
         style={sidebarBg}
       >
         <div className="absolute pointer-events-none select-none"
           style={{ width: '200px', height: '200px', bottom: '20%', left: '-60px',
-            background: 'radial-gradient(circle, rgba(0,212,177,0.06) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(135 197 64 / 0.06) 0%, transparent 70%)',
             animation: 'ops-glowPulse 8s ease-in-out infinite' }} />
         <div className="absolute pointer-events-none select-none"
           style={{ width: '160px', height: '160px', top: '15%', right: '-70px',
-            background: 'radial-gradient(circle, rgba(99,102,241,0.05) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(61 31 59 / 0.05) 0%, transparent 70%)',
             animation: 'ops-glowPulse 11s ease-in-out infinite reverse' }} />
 
         <div className={`relative z-10 flex items-center h-[54px] shrink-0 ${collapsed ? 'justify-center' : 'px-4 gap-3'}`}
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center relative overflow-hidden"
-            style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', boxShadow: '0 0 16px rgba(0,212,177,0.35)' }}>
-            <span className="text-xs font-black text-black relative z-10">S</span>
+            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 16px rgb(135 197 64 / 0.35)' }}>
+            <span className="text-xs font-black relative z-10" style={{ color: 'var(--erp-on-primary)' }}>S</span>
           </div>
           {!collapsed && (
             <>
@@ -782,9 +781,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {collapsed && (
           <button onClick={() => setCollapsedPersisted(false)}
             className="relative z-10 flex justify-center py-2.5 transition-colors"
-            style={{ color: 'rgba(255,255,255,0.2)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.55)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.2)')}>
+            style={{ color: 'rgb(var(--fg-rgb) / 0.2)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.55)')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.2)')}>
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
               <path d="M5 2l5 4.5L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -798,19 +797,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* ── Main content ──────────────────────────────────────────────────── */}
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden" style={{ background: '#090a0e' }}>
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>
 
         <header className="md:hidden flex items-center h-[54px] shrink-0 px-4 gap-3"
-          style={{ background: '#0d0f15', borderBottom: '1px solid rgba(255,255,255,0.055)' }}>
+          style={{ background: 'var(--surface)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.055)' }}>
           <button onClick={() => setMobileOpen(true)}
             className="text-white/40 hover:text-white/80 transition-colors p-1.5 rounded-lg"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>
           <div className="h-6 w-6 rounded-md flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)' }}>
+            style={{ background: 'var(--erp-primary)' }}>
             <span className="text-[10px] font-black text-black">S</span>
           </div>
           <span className="text-sm font-black tracking-tight ops-shimmer-text">servd</span>
@@ -837,9 +836,9 @@ function PortfolioBanner() {
   return (
     <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
       style={{
-        background: 'rgba(0,212,177,0.08)',
-        borderBottom: '1px solid rgba(0,212,177,0.2)',
-        color: '#00D4B1',
+        background: 'rgb(135 197 64 / 0.08)',
+        borderBottom: '1px solid rgb(135 197 64 / 0.2)',
+        color: 'var(--erp-primary-ink)',
       }}>
       <span className="font-black">∞</span>
       <span className="font-bold">Portfolio view</span>
@@ -868,16 +867,16 @@ function ImpersonationBanner() {
   return (
     <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
       style={{
-        background: 'rgba(99,102,241,0.12)',
-        borderBottom: '1px solid rgba(99,102,241,0.3)',
-        color: '#A5B4FC',
+        background: 'rgb(61 31 59 / 0.12)',
+        borderBottom: '1px solid rgb(61 31 59 / 0.3)',
+        color: '#6b2f68',
       }}>
       <span className="font-black">{opt?.emoji ?? '🔭'}</span>
       <span className="font-bold">Viewing as {opt?.label ?? viewAs}</span>
       <span className="text-white/55">— sidebar & action buttons reflect what this role sees. Writes still run as you.</span>
       <button onClick={() => clear()}
         className="ml-auto rounded-md px-2 py-0.5 text-[10px] font-bold transition-colors"
-        style={{ background: 'rgba(99,102,241,0.2)', color: '#A5B4FC' }}>
+        style={{ background: 'rgb(61 31 59 / 0.2)', color: '#6b2f68' }}>
         Back to CEO view
       </button>
     </div>

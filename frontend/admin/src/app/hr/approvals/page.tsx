@@ -31,7 +31,7 @@ export default function ApprovalsPage() {
               <div className="flex items-center gap-3">
                 <span className="text-sm font-bold text-white/90">{r.sectionTitle}</span>
                 <span className="text-sm text-white/65">{r.employee?.fullName ?? r.label}</span>
-                <span className="ml-auto text-[11px] text-amber-400">{r.step.label}</span>
+                <span className="ml-auto text-[11px] text-amber-700">{r.step.label}</span>
               </div>
               <p className="text-[11px] text-white/40 mt-0.5">{r.label} · raised {day(r.createdAt)}</p>
             </button>
@@ -40,7 +40,7 @@ export default function ApprovalsPage() {
         <div className="rounded-2xl p-4" style={card}>
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-black text-white/85">My team</p>
-            <Link href="/team" className="text-[11px] font-bold text-[#00D4B1] hover:underline">Whole tree →</Link>
+            <Link href="/team" className="text-[11px] font-bold text-primary-ink hover:underline">Whole tree →</Link>
           </div>
           {!team?.me && <p className="text-xs text-white/40">Your login isn&rsquo;t linked to an employee record, so no team is shown. HR can link it from the employee&rsquo;s profile.</p>}
           {team?.me && team.team.length === 0 && <p className="text-xs text-white/40">Nobody reports to you.</p>}

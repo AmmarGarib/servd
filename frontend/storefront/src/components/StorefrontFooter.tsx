@@ -35,11 +35,12 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
       style={{
         padding: 'clamp(4rem, 7vw, 6rem) 0 2rem',
         marginTop: '4rem',
-        // Brand-purple footer (was a black slab). Accent is a light lavender so
-        // the eyebrow / "Let's go" / dot / pill read against the deep purple.
-        background: 'linear-gradient(165deg, #4E2A4F 0%, #2D1E2F 55%, #1E1420 100%)',
-        ['--brand-accent' as string]: '#C9A4F2',
-        ['--brand-ink' as string]:    '#2D1E2F',
+        // servd-purple footer. Accent is the servd green so the eyebrow /
+        // "Let's go" / dot / pill read against the purple; text on the green
+        // pill is purple (never white).
+        background: 'linear-gradient(165deg, var(--servd-purple) 0%, var(--servd-black) 100%)',
+        ['--brand-accent' as string]: 'var(--servd-green)',
+        ['--brand-ink' as string]:    'var(--servd-on-green)',
       } as React.CSSProperties}
     >
       <div className="container relative z-10">

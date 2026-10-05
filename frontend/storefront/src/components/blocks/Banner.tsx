@@ -6,14 +6,14 @@ const HEIGHT: Record<NonNullable<BannerBlock['height']>, string> = {
 }
 
 export function Banner(block: BannerBlock) {
-  const txt = block.textColor ?? '#fff'
+  const txt = block.textColor ?? 'var(--servd-on-purple)'
   return (
     <div style={{
       minHeight: HEIGHT[block.height ?? 'md'],
       display: 'flex', alignItems: 'center',
       background: block.backgroundUrl
-        ? `${block.backgroundColor ?? '#0a0a0a'} url(${block.backgroundUrl}) center/cover`
-        : block.backgroundColor ?? '#0a0a0a',
+        ? `${block.backgroundColor ?? 'var(--servd-purple)'} url(${block.backgroundUrl}) center/cover`
+        : block.backgroundColor ?? 'var(--servd-purple)',
       color: txt,
       position: 'relative',
     }}>
@@ -40,7 +40,7 @@ export function Banner(block: BannerBlock) {
         {block.cta && (
           <Link href={block.cta.href} style={{
             display: 'inline-flex', marginTop: '1.5rem',
-            background: 'var(--servd-green)', color: 'white',
+            background: 'var(--servd-green)', color: 'var(--servd-on-green)',
             padding: '0.85rem 1.75rem', borderRadius: '999px',
             fontWeight: 900, textDecoration: 'none',
           }}>

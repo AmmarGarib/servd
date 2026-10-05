@@ -37,12 +37,12 @@ export default function ReservationAnalyticsPage() {
           <h1 className="text-xl font-bold text-s-text">Reservation analytics</h1>
         </div>
         <div className="flex items-center gap-2">
-          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-white border border-s-border rounded px-2 py-1 text-sm">
+          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-white border border-s-border rounded px-2 py-1 text-sm" />
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           <span className="text-xs text-s-muted">→</span>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-white border border-s-border rounded px-2 py-1 text-sm" />
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
         </div>
       </header>
 
@@ -94,7 +94,7 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
   return (
     <div className="s-card p-4">
       <p className="text-xs text-s-muted">{label}</p>
-      <p className={`text-2xl font-bold ${tone === 'red' ? 'text-s-red' : tone === 'ok' ? 'text-s-teal' : 'text-s-text'}`}>{value}</p>
+      <p className={`text-2xl font-bold ${tone === 'red' ? 'text-s-red' : tone === 'ok' ? 'text-primary-ink' : 'text-s-text'}`}>{value}</p>
       {sub && <p className="text-[11px] text-s-dim mt-0.5">{sub}</p>}
     </div>
   )

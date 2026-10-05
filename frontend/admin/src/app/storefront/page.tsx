@@ -42,7 +42,7 @@ function StorefrontHub() {
         <nav className="flex gap-1 mt-4 -mb-px">
           {TABS.map((t) => (
             <button key={t.id} type="button" onClick={() => router.replace(`/storefront?tab=${t.id}`)}
-              className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.id ? 'border-s-teal text-s-teal' : 'border-transparent text-s-muted hover:text-s-text'}`}>
+              className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.id ? 'border-s-teal text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'}`}>
               {t.label}
               {t.id === 'approvals' && !!pending.data && <span className="s-badge-amber ml-2">{pending.data}</span>}
             </button>

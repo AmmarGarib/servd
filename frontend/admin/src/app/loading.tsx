@@ -5,7 +5,7 @@ import { LoadingScreen } from '../components/ui/Loader'
 
 export default function Loading() {
   return (
-    <div style={{ minHeight: '100vh', background: '#0a0d12', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <LoadingScreen label="Loading…" />
     </div>
   )

@@ -80,15 +80,15 @@ export default function MenuPage() {
   })
 
   return (
-    <div className="min-h-screen bg-kds-bg p-6">
+    <div className="min-h-screen bg-s-bg p-6">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-black text-kds-text mt-1">Menu Editor</h1>
+          <h1 className="text-2xl font-black text-s-text mt-1">Menu Editor</h1>
         </div>
         <button
           onClick={() => { setView('items'); setAddingCategory(true) }}
           disabled={!conceptId}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 hover:opacity-90 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 hover:opacity-90 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
           + Add Category
         </button>
@@ -102,7 +102,7 @@ export default function MenuPage() {
             key={c.id}
             onClick={() => setSelectedConceptId(c.id)}
             className={`shrink-0 rounded-lg px-4 py-2 font-semibold text-sm transition-colors flex items-center gap-2 ${
-              c.id === conceptId ? 'bg-kds-green text-black' : 'bg-kds-card text-kds-subtext hover:text-kds-text'
+              c.id === conceptId ? 'bg-primary text-primary-on' : 'bg-s-surface text-s-muted hover:text-s-text'
             }`}
           >
             <span>{c.name}</span>
@@ -111,16 +111,16 @@ export default function MenuPage() {
             )}
           </button>
         ))}
-        {concepts.length === 0 && <p className="text-kds-subtext text-sm">Loading concepts…</p>}
+        {concepts.length === 0 && <p className="text-s-muted text-sm">Loading concepts…</p>}
       </div>
 
       {/* Views — the item editor, the quick 86 board and the storefront time
           windows (the last two moved here from the retired Visual Layout page). */}
-      <div className="mb-6 flex gap-1 border-b border-kds-border">
+      <div className="mb-6 flex gap-1 border-b border-s-border">
         {(Object.keys(VIEW_LABEL) as MenuView[]).map((v) => (
           <button key={v} onClick={() => setView(v)}
             className={`rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              view === v ? 'border-kds-green text-kds-green' : 'border-transparent text-kds-subtext hover:text-kds-text'
+              view === v ? 'border-primary text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'
             }`}>
             {VIEW_LABEL[v]}
           </button>
@@ -154,13 +154,13 @@ export default function MenuPage() {
         />
       )}
 
-      {isLoading && <p className="text-kds-subtext">Loading menu…</p>}
+      {isLoading && <p className="text-s-muted">Loading menu…</p>}
 
       {/* Categories + Items */}
       <div className="space-y-8">
         {categories.map((cat) => (
           <section key={cat.id}>
-            <div className="flex items-center justify-between mb-3 border-b border-kds-border pb-2 gap-3">
+            <div className="flex items-center justify-between mb-3 border-b border-s-border pb-2 gap-3">
               {editingCatId === cat.id ? (
                 /* Inline edit mode — rename input + Save/Cancel/Delete row. */
                 <div className="flex-1 flex items-center gap-2 flex-wrap">
@@ -175,17 +175,17 @@ export default function MenuPage() {
                         setEditingCatId(null); setCatError(null)
                       }
                     }}
-                    className="rounded-lg bg-kds-bg border border-kds-border px-3 py-1.5 text-lg font-bold text-kds-text focus:border-kds-green focus:outline-none"
+                    className="rounded-lg bg-s-bg border border-s-border px-3 py-1.5 text-lg font-bold text-s-text focus:border-primary focus:outline-none"
                   />
                   <button
                     onClick={() => editingCatName.trim() && renameCategory.mutate({ id: cat.id, name: editingCatName.trim() })}
                     disabled={!editingCatName.trim() || editingCatName.trim() === cat.name || renameCategory.isPending}
-                    className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-40">
+                    className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-40">
                     {renameCategory.isPending ? 'Saving…' : 'Save'}
                   </button>
                   <button
                     onClick={() => { setEditingCatId(null); setCatError(null) }}
-                    className="rounded-lg border border-kds-border text-kds-subtext px-3 py-1.5 text-xs hover:text-kds-text">
+                    className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs hover:text-s-text">
                     Cancel
                   </button>
                   <button
@@ -200,10 +200,10 @@ export default function MenuPage() {
                       }
                     }}
                     disabled={removeCategory.isPending}
-                    className="rounded-lg border border-kds-red/40 text-kds-red px-3 py-1.5 text-xs hover:bg-kds-red/10 ml-auto">
+                    className="rounded-lg border border-s-red/40 text-s-red px-3 py-1.5 text-xs hover:bg-s-red/10 ml-auto">
                     🗑 Delete category
                   </button>
-                  {catError && <p className="basis-full text-xs text-kds-red font-semibold">{catError}</p>}
+                  {catError && <p className="basis-full text-xs text-s-red font-semibold">{catError}</p>}
                 </div>
               ) : (
                 <>
@@ -211,8 +211,8 @@ export default function MenuPage() {
                     onClick={() => { setEditingCatId(cat.id); setEditingCatName(cat.name); setCatError(null) }}
                     className="group flex items-center gap-2 text-left hover:opacity-80"
                     title="Click to rename or delete">
-                    <h2 className="text-lg font-bold text-kds-text">{cat.name}</h2>
-                    <span className="text-xs text-kds-subtext opacity-0 group-hover:opacity-100 transition-opacity">
+                    <h2 className="text-lg font-bold text-s-text">{cat.name}</h2>
+                    <span className="text-xs text-s-muted opacity-0 group-hover:opacity-100 transition-opacity">
                       ✎ Edit
                     </span>
                   </button>
@@ -222,7 +222,7 @@ export default function MenuPage() {
                       the recipe's suggested price. */}
                   <Link
                     href={`/accounting/recipes/new?brandId=${conceptId}&categoryId=${cat.id}`}
-                    className="text-sm text-kds-green hover:underline font-medium"
+                    className="text-sm text-primary-ink hover:underline font-medium"
                   >
                     + Add via Recipe
                   </Link>
@@ -234,40 +234,40 @@ export default function MenuPage() {
               {cat.items.map((item) => (
                 <div
                   key={item.id}
-                  className={`rounded-xl border bg-kds-card p-4 ${
-                    item.isAvailable ? 'border-kds-border' : 'border-kds-red opacity-60'
+                  className={`rounded-xl border bg-s-surface p-4 ${
+                    item.isAvailable ? 'border-s-border' : 'border-s-red opacity-60'
                   }`}
                 >
                   {item.imageUrl && (
                     <img src={item.imageUrl} alt={item.name} className="mb-2 h-20 w-full rounded-lg object-cover" />
                   )}
-                  <p className="font-semibold text-kds-text">{item.name}</p>
+                  <p className="font-semibold text-s-text">{item.name}</p>
                   {item.description && (
-                    <p className="text-xs text-kds-subtext mt-0.5 line-clamp-2">{item.description}</p>
+                    <p className="text-xs text-s-muted mt-0.5 line-clamp-2">{item.description}</p>
                   )}
-                  <p className="mt-1 font-bold text-kds-green">{fmtPkrWhole(item.priceCents)}</p>
-                  {!item.isAvailable && <p className="text-xs text-kds-red font-bold mt-1">86&apos;d</p>}
+                  <p className="mt-1 font-bold text-primary-ink">{fmtPkrWhole(item.priceCents)}</p>
+                  {!item.isAvailable && <p className="text-xs text-s-red font-bold mt-1">86&apos;d</p>}
 
                   <div className="mt-3 flex gap-2">
                     <button
                       onClick={() => toggle86.mutate({ id: item.id, isAvailable: !item.isAvailable })}
                       className={`flex-1 rounded-lg py-2 text-xs font-bold transition-colors ${
                         item.isAvailable
-                          ? 'bg-kds-red/20 text-kds-red hover:bg-kds-red/40'
-                          : 'bg-kds-green/20 text-kds-green hover:bg-kds-green/40'
+                          ? 'bg-s-red/20 text-s-red hover:bg-s-red/40'
+                          : 'bg-primary/20 text-primary-ink hover:bg-primary/40'
                       }`}
                     >
                       {item.isAvailable ? '86 Item' : 'Restore'}
                     </button>
                     <button
                       onClick={() => setEditItem(item)}
-                      className="rounded-lg border border-kds-border px-3 py-2 text-xs text-kds-subtext hover:text-kds-text"
+                      className="rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => { if (window.confirm(`Delete "${item.name}"?`)) deleteItem.mutate(item.id) }}
-                      className="rounded-lg border border-kds-border px-2 py-2 text-xs text-kds-red hover:border-kds-red"
+                      className="rounded-lg border border-s-border px-2 py-2 text-xs text-s-red hover:border-s-red"
                     >
                       ✕
                     </button>
@@ -278,7 +278,7 @@ export default function MenuPage() {
               {cat.items.length === 0 && (
                 <Link
                   href={`/accounting/recipes/new?brandId=${conceptId}&categoryId=${cat.id}`}
-                  className="rounded-xl border border-dashed border-kds-border p-6 text-center text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors col-span-full"
+                  className="rounded-xl border border-dashed border-s-border p-6 text-center text-s-muted hover:border-primary hover:text-primary-ink transition-colors col-span-full"
                 >
                   + Add first item via Recipe
                 </Link>
@@ -329,30 +329,30 @@ function AvailabilityBoard({ categories, loading, pendingId, onToggle }: {
   const off = categories.reduce((n, c) => n + c.items.filter((i) => !i.isAvailable).length, 0)
   return (
     <div className="max-w-3xl space-y-4">
-      <p className="text-sm text-kds-subtext">
+      <p className="text-sm text-s-muted">
         Switch an item off to 86 it: it drops off the storefront menu at once and the kitchen screens are told.
-        {off > 0 && <span className="ml-1 font-semibold text-kds-red">{off} item{off === 1 ? '' : 's'} 86&apos;d now.</span>}
+        {off > 0 && <span className="ml-1 font-semibold text-s-red">{off} item{off === 1 ? '' : 's'} 86&apos;d now.</span>}
       </p>
-      {loading && <p className="text-sm text-kds-subtext">Loading menu…</p>}
-      {!loading && categories.length === 0 && <p className="text-sm text-kds-subtext">No categories yet — add them in the Items view.</p>}
+      {loading && <p className="text-sm text-s-muted">Loading menu…</p>}
+      {!loading && categories.length === 0 && <p className="text-sm text-s-muted">No categories yet — add them in the Items view.</p>}
       {categories.map((cat) => (
-        <div key={cat.id} className="overflow-hidden rounded-xl border border-kds-border">
-          <div className="flex items-center justify-between border-b border-kds-border bg-kds-card px-4 py-2.5">
-            <p className="font-bold text-kds-text">{cat.name}</p>
-            <p className="text-xs text-kds-subtext">
+        <div key={cat.id} className="overflow-hidden rounded-xl border border-s-border">
+          <div className="flex items-center justify-between border-b border-s-border bg-s-surface px-4 py-2.5">
+            <p className="font-bold text-s-text">{cat.name}</p>
+            <p className="text-xs text-s-muted">
               {cat.items.filter((i) => i.isAvailable).length} of {cat.items.length} on
             </p>
           </div>
-          {cat.items.length === 0 && <p className="px-4 py-3 text-xs italic text-kds-subtext">No items in this category</p>}
+          {cat.items.length === 0 && <p className="px-4 py-3 text-xs italic text-s-muted">No items in this category</p>}
           {cat.items.map((item) => (
             <div key={item.id}
-              className={`flex items-center justify-between gap-3 border-b border-kds-border/50 px-4 py-2.5 last:border-0 ${item.isAvailable ? '' : 'opacity-60'}`}>
+              className={`flex items-center justify-between gap-3 border-b border-s-border/50 px-4 py-2.5 last:border-0 ${item.isAvailable ? '' : 'opacity-60'}`}>
               <div className="min-w-0">
-                <p className={`truncate text-sm font-medium ${item.isAvailable ? 'text-kds-text' : 'text-kds-subtext line-through'}`}>{item.name}</p>
-                <p className="text-xs text-kds-subtext">{fmtPkrWhole(item.priceCents)}</p>
+                <p className={`truncate text-sm font-medium ${item.isAvailable ? 'text-s-text' : 'text-s-muted line-through'}`}>{item.name}</p>
+                <p className="text-xs text-s-muted">{fmtPkrWhole(item.priceCents)}</p>
               </div>
               <div className="flex shrink-0 items-center gap-3">
-                {!item.isAvailable && <span className="rounded-full bg-kds-red/15 px-2 py-0.5 text-xs font-bold text-kds-red">86&apos;d</span>}
+                {!item.isAvailable && <span className="rounded-full bg-s-red/15 px-2 py-0.5 text-xs font-bold text-s-red">86&apos;d</span>}
                 <Switch value={item.isAvailable} disabled={pendingId === item.id}
                   label={item.isAvailable ? `86 ${item.name}` : `Restore ${item.name}`}
                   onChange={(v) => onToggle(item.id, v)} />
@@ -369,8 +369,8 @@ function Switch({ value, onChange, disabled, label }: { value: boolean; onChange
   return (
     <button type="button" role="switch" aria-checked={value} aria-label={label} title={label}
       disabled={disabled} onClick={() => onChange(!value)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-kds-green' : 'bg-kds-border'}`}>
-      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-primary' : 'bg-s-border'}`}>
+      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-s-surface shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   )
 }
@@ -387,11 +387,11 @@ function TimeWindows({ categories, loading, onSaved }: {
 }) {
   return (
     <div className="max-w-2xl space-y-3">
-      <p className="text-sm text-kds-subtext">
+      <p className="text-sm text-s-muted">
         Limit a category to certain hours on the storefront, e.g. breakfast 08:00 to 11:30. Leave both blank for always on.
       </p>
-      {loading && <p className="text-sm text-kds-subtext">Loading…</p>}
-      {!loading && categories.length === 0 && <p className="text-sm text-kds-subtext">No categories yet.</p>}
+      {loading && <p className="text-sm text-s-muted">Loading…</p>}
+      {!loading && categories.length === 0 && <p className="text-sm text-s-muted">No categories yet.</p>}
       {categories.map((cat) => (
         <TimeWindowRow key={`${cat.id}:${cat.timeRestrictionStart ?? ''}:${cat.timeRestrictionEnd ?? ''}`} cat={cat} onSaved={onSaved} />
       ))}
@@ -413,35 +413,35 @@ function TimeWindowRow({ cat, onSaved }: { cat: WindowedCategory; onSaved: () =>
     onSuccess: onSaved,
   })
 
-  const inputCls = 'rounded-lg border border-kds-border bg-kds-bg px-2 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none'
+  const inputCls = 'rounded-lg border border-s-border bg-s-bg px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none'
   return (
-    <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-3">
+    <div className="rounded-xl border border-s-border bg-s-surface px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-semibold text-kds-text">{cat.name}</p>
+        <p className="font-semibold text-s-text">{cat.name}</p>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-xs text-kds-subtext">From
+          <label className="flex items-center gap-2 text-xs text-s-muted">From
             <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
           </label>
-          <label className="flex items-center gap-2 text-xs text-kds-subtext">To
+          <label className="flex items-center gap-2 text-xs text-s-muted">To
             <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
           </label>
           {(start || end) && (
-            <button onClick={() => { setStart(''); setEnd('') }} className="text-xs text-kds-subtext hover:text-kds-red">Clear</button>
+            <button onClick={() => { setStart(''); setEnd('') }} className="text-xs text-s-muted hover:text-s-red">Clear</button>
           )}
           {dirty && (
             <button onClick={() => save.mutate()} disabled={invalid || save.isPending}
-              className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black hover:opacity-90 disabled:opacity-40">
+              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-40">
               {save.isPending ? 'Saving…' : 'Save'}
             </button>
           )}
         </div>
       </div>
-      <p className={`mt-1.5 text-xs ${invalid ? 'text-kds-red' : 'text-kds-subtext'}`}>
+      <p className={`mt-1.5 text-xs ${invalid ? 'text-s-red' : 'text-s-muted'}`}>
         {invalid
           ? (!!start !== !!end ? 'Set both From and To, or clear both.' : 'To must be later than From (windows cannot run past midnight).')
           : start && end ? `Shown ${start} to ${end} only` : 'Always shown'}
       </p>
-      {save.isError && <p className="mt-1 text-xs text-kds-red">{(save.error as Error).message || 'Save failed'}</p>}
+      {save.isError && <p className="mt-1 text-xs text-s-red">{(save.error as Error).message || 'Save failed'}</p>}
     </div>
   )
 }
@@ -457,26 +457,26 @@ function AddCategoryForm({ conceptId, sortOrder, onSaved, onCancel }: {
   })
 
   return (
-    <div className="mb-6 rounded-xl border border-kds-green bg-kds-card p-4 space-y-3">
-      <h3 className="font-bold text-kds-text">New Category</h3>
+    <div className="mb-6 rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+      <h3 className="font-bold text-s-text">New Category</h3>
       <input
         autoFocus
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) mutation.mutate() }}
         placeholder="e.g. Starters, Mains, Drinks, Desserts"
-        className="w-full rounded-lg bg-kds-bg border border-kds-border px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none"
+        className="w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none"
       />
-      {mutation.isError && <p className="text-kds-red text-sm">Failed to create — make sure you&apos;re logged in as admin/manager.</p>}
+      {mutation.isError && <p className="text-s-red text-sm">Failed to create — make sure you&apos;re logged in as admin/manager.</p>}
       <div className="flex gap-2">
         <button
           onClick={() => { if (name.trim()) mutation.mutate() }}
           disabled={!name.trim() || mutation.isPending}
-          className="rounded-lg bg-kds-green text-black font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90"
+          className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90"
         >
           {mutation.isPending ? 'Creating…' : 'Create Category'}
         </button>
-        <button onClick={onCancel} className="rounded-lg border border-kds-border text-kds-subtext px-4 py-2 text-sm hover:text-kds-text">
+        <button onClick={onCancel} className="rounded-lg border border-s-border text-s-muted px-4 py-2 text-sm hover:text-s-text">
           Cancel
         </button>
       </div>
@@ -505,50 +505,50 @@ function AddItemForm({ conceptId, categoryId, displayOrder, onSaved, onCancel }:
   })
 
   return (
-    <div className="mb-4 rounded-xl border border-kds-green bg-kds-card p-4 space-y-3">
-      <h3 className="font-bold text-kds-text">New Menu Item</h3>
+    <div className="mb-4 rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+      <h3 className="font-bold text-s-text">New Menu Item</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="sm:col-span-2">
-          <label className="text-xs text-kds-subtext">Item name *</label>
+          <label className="text-xs text-s-muted">Item name *</label>
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Grilled Chicken Sandwich"
-            className="w-full mt-1 rounded-lg bg-kds-bg border border-kds-border px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm"
+            className="w-full mt-1 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
           />
         </div>
         <div className="sm:col-span-2">
-          <label className="text-xs text-kds-subtext">Description (optional)</label>
+          <label className="text-xs text-s-muted">Description (optional)</label>
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Brief description for customers"
-            className="w-full mt-1 rounded-lg bg-kds-bg border border-kds-border px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm"
+            className="w-full mt-1 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
           />
         </div>
         <div>
-          <label className="text-xs text-kds-subtext">Price (PKR) *</label>
+          <label className="text-xs text-s-muted">Price (PKR) *</label>
           <input
             type="number"
             min="0"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
             placeholder="850"
-            className="w-full mt-1 rounded-lg bg-kds-bg border border-kds-border px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm"
+            className="w-full mt-1 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
           />
         </div>
       </div>
-      {mutation.isError && <p className="text-kds-red text-sm">Save failed — check the price is a valid number.</p>}
+      {mutation.isError && <p className="text-s-red text-sm">Save failed — check the price is a valid number.</p>}
       <div className="flex gap-2">
         <button
           onClick={() => { if (name.trim() && price) mutation.mutate() }}
           disabled={!name.trim() || !price || mutation.isPending}
-          className="rounded-lg bg-kds-green text-black font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90"
+          className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90"
         >
           {mutation.isPending ? 'Saving…' : 'Add to Menu'}
         </button>
-        <button onClick={onCancel} className="rounded-lg border border-kds-border text-kds-subtext px-4 py-2 text-sm hover:text-kds-text">
+        <button onClick={onCancel} className="rounded-lg border border-s-border text-s-muted px-4 py-2 text-sm hover:text-s-text">
           Cancel
         </button>
       </div>
@@ -638,120 +638,120 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-secondary/50" onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-t-2xl bg-kds-card p-5 space-y-4 max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-lg rounded-t-2xl bg-s-surface p-5 space-y-4 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-kds-text">Edit: {item.name}</h2>
-          <button onClick={onClose} className="text-kds-subtext text-2xl leading-none">✕</button>
+          <h2 className="font-bold text-s-text">Edit: {item.name}</h2>
+          <button onClick={onClose} className="text-s-muted text-2xl leading-none">✕</button>
         </div>
         <div className="space-y-3">
           {/* Image */}
           <div>
-            <label className="text-xs text-kds-subtext">Item Image</label>
+            <label className="text-xs text-s-muted">Item Image</label>
             <div className="mt-1 flex items-center gap-3">
               {imageUrl
-                ? <img src={imageUrl} alt="preview" className="h-16 w-16 rounded-lg object-cover border border-kds-border" />
-                : <div className="h-16 w-16 rounded-lg border border-dashed border-kds-border bg-kds-bg flex items-center justify-center text-2xl">📷</div>
+                ? <img src={imageUrl} alt="preview" className="h-16 w-16 rounded-lg object-cover border border-s-border" />
+                : <div className="h-16 w-16 rounded-lg border border-dashed border-s-border bg-s-bg flex items-center justify-center text-2xl">📷</div>
               }
-              <label className={`cursor-pointer rounded-lg border border-kds-border px-3 py-2 text-xs text-kds-subtext hover:text-kds-text transition-colors ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              <label className={`cursor-pointer rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text transition-colors ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
                 {uploading ? 'Uploading…' : 'Upload Image'}
                 <input type="file" accept="image/*" className="sr-only" onChange={handleImageUpload} />
               </label>
               {imageUrl && (
-                <button onClick={() => setImageUrl('')} className="text-xs text-kds-red hover:underline">Remove</button>
+                <button onClick={() => setImageUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
               )}
             </div>
-            {uploadError && <p className="text-xs text-kds-red mt-1">{uploadError}</p>}
+            {uploadError && <p className="text-xs text-s-red mt-1">{uploadError}</p>}
           </div>
 
           {/* Video (optional) — when set, takes the place of the image
               on the storefront menu (auto-plays muted in a loop). */}
           <div>
-            <label className="text-xs text-kds-subtext">Item Video (optional — wins over image when set)</label>
+            <label className="text-xs text-s-muted">Item Video (optional — wins over image when set)</label>
             <div className="mt-1 flex items-center gap-3">
               {videoUrl
-                ? <video src={videoUrl} muted playsInline loop autoPlay className="h-16 w-16 rounded-lg object-cover border border-kds-border" />
-                : <div className="h-16 w-16 rounded-lg border border-dashed border-kds-border bg-kds-bg flex items-center justify-center text-2xl">▶</div>
+                ? <video src={videoUrl} muted playsInline loop autoPlay className="h-16 w-16 rounded-lg object-cover border border-s-border" />
+                : <div className="h-16 w-16 rounded-lg border border-dashed border-s-border bg-s-bg flex items-center justify-center text-2xl">▶</div>
               }
-              <label className={`cursor-pointer rounded-lg border border-kds-border px-3 py-2 text-xs text-kds-subtext hover:text-kds-text transition-colors ${videoUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              <label className={`cursor-pointer rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text transition-colors ${videoUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                 {videoUploading ? 'Uploading…' : 'Upload Video'}
                 <input type="file" accept="video/mp4,video/webm" className="sr-only" onChange={handleVideoUpload} />
               </label>
               {videoUrl && (
-                <button onClick={() => setVideoUrl('')} className="text-xs text-kds-red hover:underline">Remove</button>
+                <button onClick={() => setVideoUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
               )}
             </div>
-            <p className="text-[10px] text-kds-subtext mt-1">
+            <p className="text-[10px] text-s-muted mt-1">
               MP4 or WebM, up to 25 MB. Loops silently on the storefront menu.
             </p>
-            {videoUploadError && <p className="text-xs text-kds-red mt-1">{videoUploadError}</p>}
+            {videoUploadError && <p className="text-xs text-s-red mt-1">{videoUploadError}</p>}
           </div>
 
           {/* Name */}
           <div>
-            <label className="text-xs text-kds-subtext">Name (English)</label>
+            <label className="text-xs text-s-muted">Name (English)</label>
             <input value={name} onChange={(e) => setName(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none" />
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
           </div>
           <div>
-            <label className="text-xs text-kds-subtext">اردو نام — Urdu name (for KDS)</label>
+            <label className="text-xs text-s-muted">اردو نام — Urdu name (for KDS)</label>
             <input
               value={nameUrdu}
               onChange={(e) => setNameUrdu(e.target.value)}
               dir="rtl"
               placeholder="مثلاً: گرلڈ چکن سینڈوچ"
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none"
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none"
               style={{ fontFamily: 'sans-serif' }}
             />
           </div>
           <div>
-            <label className="text-xs text-kds-subtext">Description</label>
+            <label className="text-xs text-s-muted">Description</label>
             <input value={description} onChange={(e) => setDescription(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none" />
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
           </div>
           <div>
-            <label className="text-xs text-kds-subtext">Price (PKR)</label>
+            <label className="text-xs text-s-muted">Price (PKR)</label>
             <input type="number" value={price} onChange={(e) => setPrice(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none" />
+              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
           </div>
 
           {/* Instructions */}
-          <div className="border-t border-kds-border pt-3">
-            <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide">Kitchen Instructions</label>
-            <p className="text-xs text-kds-subtext mb-2">Shown to kitchen staff when they tap the dish name on KDS</p>
+          <div className="border-t border-s-border pt-3">
+            <label className="text-xs font-semibold text-s-muted uppercase tracking-wide">Kitchen Instructions</label>
+            <p className="text-xs text-s-muted mb-2">Shown to kitchen staff when they tap the dish name on KDS</p>
             <div>
-              <label className="text-xs text-kds-subtext">Instructions (English)</label>
+              <label className="text-xs text-s-muted">Instructions (English)</label>
               <textarea
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
                 rows={4}
                 placeholder="e.g. 1. Grill chicken breast 6 min each side&#10;2. Toast bun 2 min&#10;3. Add sauces, lettuce, tomato&#10;4. Plate immediately"
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm resize-none"
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
               />
             </div>
             <div className="mt-2">
-              <label className="text-xs text-kds-subtext">ہدایات — Instructions (اردو)</label>
+              <label className="text-xs text-s-muted">ہدایات — Instructions (اردو)</label>
               <textarea
                 value={instructionsUrdu}
                 onChange={(e) => setInstructionsUrdu(e.target.value)}
                 rows={4}
                 dir="rtl"
                 placeholder="مثلاً: ۱. چکن گرل کریں ۶ منٹ..."
-                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm resize-none"
+                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
                 style={{ fontFamily: 'sans-serif' }}
               />
             </div>
           </div>
         </div>
 
-        {save.isError && <p className="text-sm text-kds-red">Save failed</p>}
+        {save.isError && <p className="text-sm text-s-red">Save failed</p>}
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext hover:text-kds-text">Cancel</button>
+          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-3 text-s-muted hover:text-s-text">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || uploading}
-            className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-black disabled:opacity-50 hover:opacity-90">
+            className="flex-1 rounded-xl bg-primary py-3 font-bold text-primary-on disabled:opacity-50 hover:opacity-90">
             {save.isPending ? 'Saving…' : 'Save Changes'}
           </button>
         </div>

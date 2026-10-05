@@ -45,11 +45,11 @@ export const BRAND_PALETTES: Record<string, BrandPalette> = {
     note: 'Warm industrial — red plum field, cream type, one cool pale-blue accent.',
   },
   flipd: {
-    accent: '#294375', surfaceBg: '#294375', surfaceText: '#FED561',
+    accent: '#294375', surfaceBg: '#294375', surfaceText: '#a15c00',
     swatches: [
       { name: 'Flipd Blue (Pantone 19-4057)', hex: '#294375' },
       { name: 'Blue deep', hex: '#1D3159' },
-      { name: 'Smash Mustard (Pantone 13-0840)', hex: '#FED561' },
+      { name: 'Smash Mustard (Pantone 13-0840)', hex: '#a15c00' },
       { name: 'Bone (Pantone 9180)', hex: '#F9F0E1' },
     ],
     note: 'Blue + mustard with a navy/bone checker. Not padel — the court is never borrowed.',

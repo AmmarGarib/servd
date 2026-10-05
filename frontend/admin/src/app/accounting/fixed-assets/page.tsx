@@ -29,8 +29,8 @@ interface Register {
 }
 interface Concept { id: string; name: string }
 
-const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
-const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-kds-green'
+const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
+const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
 // Typical lives — a starting point the form fills in; change to your policy.
 const DEFAULT_LIFE: Record<string, number> = { kitchen_equipment: 60, furniture_fixtures: 84, it_equipment: 36, vehicles: 60, leasehold: 120 }
 
@@ -57,7 +57,7 @@ export default function FixedAssetsPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/modules/assets" className="text-xs text-white/40 hover:text-white/70">← Equipment & fixed assets</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
@@ -67,7 +67,7 @@ export default function FixedAssetsPage() {
               Equipment and fit-out you own. Adding one puts it on the balance sheet; depreciation is charged monthly, straight line.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ Add asset</button>
+          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ Add asset</button>
         </div>
       </header>
 
@@ -89,7 +89,7 @@ export default function FixedAssetsPage() {
           <input type="month" value={period || data?.currentPeriod || ''} onChange={(e) => setPeriod(e.target.value)}
             className="rounded-lg px-3 py-1.5 text-sm bg-white/[0.04] border border-white/10 text-white/90" aria-label="Month" />
           <button onClick={() => { setRunMsg(''); run.mutate() }} disabled={run.isPending}
-            className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-black text-black disabled:opacity-50">
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-black text-primary-on disabled:opacity-50">
             {run.isPending ? 'Posting…' : 'Charge month'}
           </button>
           <p className="text-xs text-white/50">{runMsg || 'Safe to run again — each asset is charged once per month. Charge the final month before disposing.'}</p>
@@ -153,8 +153,8 @@ function L({ t, children }: { t: string; children: React.ReactNode }) {
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: '#12131a', border: '1px solid rgba(255,255,255,0.08)' }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <p className="text-lg font-black text-white/90 mb-4">{title}</p>
         {children}
@@ -206,10 +206,10 @@ function AddAsset({ reg, concepts, onClose }: { reg: Register; concepts: Concept
       {f.funding === 'existing' && (
         <p className="text-[11px] text-white/45 mt-3">Already owned: enters the books against owner&rsquo;s capital. Use the original purchase date and cost, and depreciation catches up as you charge each month.</p>
       )}
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button onClick={() => save.mutate()} disabled={save.isPending || !f.name || !f.cost}
-          className="rounded-lg bg-kds-green px-4 py-2 text-sm font-black text-black disabled:opacity-50">{save.isPending ? 'Saving…' : 'Add to register'}</button>
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">{save.isPending ? 'Saving…' : 'Add to register'}</button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>
       </div>
     </Modal>
@@ -234,10 +234,10 @@ function Dispose({ asset, onClose }: { asset: Asset; onClose: () => void }) {
         <label className="block"><span className="text-[11px] font-bold text-white/50">Date</span><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Sold for (PKR, 0 if scrapped)</span><input type="number" min={0} className={inp} value={proceeds} onChange={(e) => setProceeds(e.target.value)} /></label>
       </div>
-      <p className="text-xs mt-3" style={{ color: gl >= 0 ? '#34d399' : '#f87171' }}>{gl >= 0 ? `Gain of ${fmtPkrWhole(gl)}` : `Loss of ${fmtPkrWhole(-gl)}`}</p>
-      {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+      <p className="text-xs mt-3" style={{ color: gl >= 0 ? '#3f7d20' : '#b42318' }}>{gl >= 0 ? `Gain of ${fmtPkrWhole(gl)}` : `Loss of ${fmtPkrWhole(-gl)}`}</p>
+      {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
       <div className="flex gap-2 mt-5">
-        <button onClick={() => go.mutate()} disabled={go.isPending} className="rounded-lg bg-kds-green px-4 py-2 text-sm font-black text-black disabled:opacity-50">{go.isPending ? 'Posting…' : 'Dispose'}</button>
+        <button onClick={() => go.mutate()} disabled={go.isPending} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">{go.isPending ? 'Posting…' : 'Dispose'}</button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>
       </div>
     </Modal>

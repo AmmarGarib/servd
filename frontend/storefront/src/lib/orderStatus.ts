@@ -30,9 +30,9 @@ export interface OrderStatusVisual {
 }
 
 // Palette discipline: each status picks a single hue. The "ready" status
-// historically mixed our purple brand colour for the chip background
-// with a green text colour — a bug that read as "this chip is broken".
-// Ready now lives entirely in the brand purple family.
+// historically mixed a purple chip background with a green text colour —
+// a bug that read as "this chip is broken". Ready now lives entirely in the
+// servd green family (green wash, text-safe dark green #4f7a1c).
 export const ORDER_STATUS: Record<OrderStatus, OrderStatusVisual> = {
   received: {
     label:    'Received',
@@ -60,7 +60,7 @@ export const ORDER_STATUS: Record<OrderStatus, OrderStatusVisual> = {
   },
   ready: {
     label:    'Ready',
-    bg:       'rgba(58,14,105,0.15)',
+    bg:       'rgba(135,197,64,0.15)',
     text:     'var(--servd-green-dark)',
     bar:      'var(--servd-green)',
     headline: 'Ready',
@@ -77,16 +77,16 @@ export const ORDER_STATUS: Record<OrderStatus, OrderStatusVisual> = {
   cancelled: {
     label:    'Cancelled',
     bg:       'rgba(239,68,68,0.12)',
-    text:     '#dc2626',
-    bar:      '#ef4444',
+    text:     'var(--servd-danger)',
+    bar:      'var(--servd-danger)',
     headline: 'Order cancelled',
     sub:      'Something went wrong with this order.',
   },
   refunded: {
     label:    'Refunded',
     bg:       'rgba(239,68,68,0.12)',
-    text:     '#dc2626',
-    bar:      '#ef4444',
+    text:     'var(--servd-danger)',
+    bar:      'var(--servd-danger)',
     headline: 'Order refunded',
     sub:      'A refund is on its way.',
   },

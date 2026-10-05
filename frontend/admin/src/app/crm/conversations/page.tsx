@@ -44,8 +44,8 @@ interface Message {
 }
 
 const CHANNEL_META: Record<string, { icon: string; label: string; color: string }> = {
-  web_portal: { icon: '🌐', label: 'Portal',   color: 'text-kds-subtext' },
-  email:      { icon: '📧', label: 'Email',    color: 'text-blue-400' },
+  web_portal: { icon: '🌐', label: 'Portal',   color: 'text-s-muted' },
+  email:      { icon: '📧', label: 'Email',    color: 'text-blue-700' },
   whatsapp:   { icon: '💬', label: 'WhatsApp', color: 'text-[#25D366]' },
 }
 
@@ -90,22 +90,22 @@ export default function CrmConversationsPage() {
   ].filter(Boolean) as string[] : []
 
   return (
-    <div className="flex h-screen bg-kds-bg">
+    <div className="flex h-screen bg-s-bg">
       {/* Sidebar */}
-      <div className="w-80 shrink-0 flex flex-col border-r border-kds-border bg-kds-card">
-        <div className="p-4 border-b border-kds-border">
-          <h1 className="font-black text-kds-text">CRM Conversations</h1>
-          <p className="text-xs text-kds-subtext mt-0.5">{conversations.length} active customer threads</p>
+      <div className="w-80 shrink-0 flex flex-col border-r border-s-border bg-s-surface">
+        <div className="p-4 border-b border-s-border">
+          <h1 className="font-black text-s-text">CRM Conversations</h1>
+          <p className="text-xs text-s-muted mt-0.5">{conversations.length} active customer threads</p>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {isLoading && <p className="p-4 text-sm text-kds-subtext">Loading…</p>}
+          {isLoading && <p className="p-4 text-sm text-s-muted">Loading…</p>}
           {!isLoading && conversations.length === 0 && (
             <div className="p-6 text-center">
               <p className="text-3xl mb-2">📭</p>
-              <p className="text-sm font-semibold text-kds-text">No conversations yet</p>
-              <p className="text-xs text-kds-subtext mt-1">
-                Start one from a complaint or review by tapping <span className="font-bold text-blue-400">💬 Reach out</span>.
+              <p className="text-sm font-semibold text-s-text">No conversations yet</p>
+              <p className="text-xs text-s-muted mt-1">
+                Start one from a complaint or review by tapping <span className="font-bold text-blue-700">💬 Reach out</span>.
               </p>
             </div>
           )}
@@ -122,37 +122,37 @@ export default function CrmConversationsPage() {
               <button
                 key={c.id}
                 onClick={() => setSelectedId(c.id)}
-                className={`w-full p-4 text-left border-b border-kds-border transition-colors hover:bg-kds-bg/50 ${
-                  c.id === selectedId ? 'bg-kds-bg/70' : ''
+                className={`w-full p-4 text-left border-b border-s-border transition-colors hover:bg-s-bg/50 ${
+                  c.id === selectedId ? 'bg-s-bg/70' : ''
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="font-semibold text-sm text-kds-text truncate">{c.customer.name}</p>
+                      <p className="font-semibold text-sm text-s-text truncate">{c.customer.name}</p>
                       {/* Brand chip so the centralised CRM operator can tell
                           which company this thread belongs to before they
                           reply. Hidden when the customer has no preferred
                           brand yet (one-off guest). */}
                       {c.customer.preferredConcept && (
                         <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                          style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                          style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
                           {c.customer.preferredConcept.name}
                         </span>
                       )}
-                      <span className="shrink-0 text-[10px] uppercase tracking-wider text-kds-subtext">
+                      <span className="shrink-0 text-[10px] uppercase tracking-wider text-s-muted">
                         {meta.icon} {meta.label}
                       </span>
                     </div>
-                    {c.subject && <p className="text-xs text-kds-subtext truncate mt-0.5">{c.subject}</p>}
+                    {c.subject && <p className="text-xs text-s-muted truncate mt-0.5">{c.subject}</p>}
                     {lastMsg && (
-                      <p className="text-xs text-kds-subtext mt-1 truncate">
+                      <p className="text-xs text-s-muted mt-1 truncate">
                         {lastMsg.fromStaff ? 'You: ' : `${c.customer.name.split(/\s+/)[0]}: `}
                         {lastMsg.body}
                       </p>
                     )}
                   </div>
-                  <p className="shrink-0 text-[10px] text-kds-subtext">
+                  <p className="shrink-0 text-[10px] text-s-muted">
                     {isToday
                       ? lastDate.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })
                       : lastDate.toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}
@@ -168,15 +168,15 @@ export default function CrmConversationsPage() {
       <div className="flex flex-1 flex-col">
         {selected ? (
           <>
-            <div className="flex items-center justify-between border-b border-kds-border bg-kds-card px-5 py-3">
+            <div className="flex items-center justify-between border-b border-s-border bg-s-surface px-5 py-3">
               <div className="min-w-0">
-                <h2 className="font-bold text-kds-text truncate">{selected.customer.name}</h2>
-                <p className="text-xs text-kds-subtext truncate">
+                <h2 className="font-bold text-s-text truncate">{selected.customer.name}</h2>
+                <p className="text-xs text-s-muted truncate">
                   {selected.subject ?? 'No subject'} · {SOURCE_META[selected.source]?.label ?? 'Manual'}
                 </p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {selected.customer.email && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-[10px] text-blue-400">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-[10px] text-blue-700">
                       📧 {selected.customer.email}
                     </span>
                   )}
@@ -203,11 +203,11 @@ export default function CrmConversationsPage() {
                   <div key={msg.id} className={`flex ${msg.fromStaff ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${
                       msg.fromStaff
-                        ? 'bg-kds-green text-black rounded-br-sm'
-                        : 'bg-kds-card border border-kds-border text-kds-text rounded-bl-sm'
+                        ? 'bg-primary text-primary-on rounded-br-sm'
+                        : 'bg-s-surface border border-s-border text-s-text rounded-bl-sm'
                     }`}>
                       <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
-                      <p className={`text-xs mt-1 flex items-center gap-1.5 ${msg.fromStaff ? 'text-black/60' : 'text-kds-subtext'}`}>
+                      <p className={`text-xs mt-1 flex items-center gap-1.5 ${msg.fromStaff ? 'text-primary-on/60' : 'text-s-muted'}`}>
                         <span>
                           {new Date(msg.createdAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}
                           {msg.fromStaff && msg.seenAt && ' · Seen'}
@@ -226,40 +226,40 @@ export default function CrmConversationsPage() {
               {messages.length === 0 && (
                 <div className="text-center mt-12">
                   <p className="text-3xl mb-2">📬</p>
-                  <p className="text-sm text-kds-subtext">No messages yet</p>
+                  <p className="text-sm text-s-muted">No messages yet</p>
                 </div>
               )}
             </div>
 
-            <div className="border-t border-kds-border bg-kds-card/40 px-4 py-1.5 text-[10px] text-kds-subtext">
-              On send: <span className="text-kds-text font-semibold">{willReach.join(' · ')}</span>
+            <div className="border-t border-s-border bg-s-surface/40 px-4 py-1.5 text-[10px] text-s-muted">
+              On send: <span className="text-s-text font-semibold">{willReach.join(' · ')}</span>
             </div>
 
-            <div className="border-t border-kds-border bg-kds-card p-3 flex gap-2">
+            <div className="border-t border-s-border bg-s-surface p-3 flex gap-2">
               <textarea
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && newMessage.trim()) { e.preventDefault(); sendMessage.mutate() } }}
                 placeholder="Type a message… (Enter to send)"
                 rows={2}
-                className="flex-1 resize-none rounded-xl border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none"
+                className="flex-1 resize-none rounded-xl border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none"
               />
               <button
                 onClick={() => sendMessage.mutate()}
                 disabled={!newMessage.trim() || sendMessage.isPending}
-                className="rounded-xl bg-kds-green px-4 py-2 font-bold text-black disabled:opacity-50 hover:opacity-90"
+                className="rounded-xl bg-primary px-4 py-2 font-bold text-primary-on disabled:opacity-50 hover:opacity-90"
               >
                 {sendMessage.isPending ? '…' : '➤'}
               </button>
             </div>
           </>
         ) : (
-          <div className="flex flex-1 items-center justify-center bg-kds-bg/40">
+          <div className="flex flex-1 items-center justify-center bg-s-bg/40">
             <div className="text-center max-w-sm px-6">
               <p className="text-5xl mb-3">💬</p>
-              <p className="font-bold text-kds-text">Pick a conversation to read</p>
-              <p className="text-sm text-kds-subtext mt-1">
-                Threads start from <span className="font-bold text-blue-400">💬 Reach out</span> on a complaint or review.
+              <p className="font-bold text-s-text">Pick a conversation to read</p>
+              <p className="text-sm text-s-muted mt-1">
+                Threads start from <span className="font-bold text-blue-700">💬 Reach out</span> on a complaint or review.
               </p>
             </div>
           </div>

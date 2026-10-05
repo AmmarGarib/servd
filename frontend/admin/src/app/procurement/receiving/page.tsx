@@ -153,7 +153,7 @@ export default function ReceivingPage() {
   const selectedPo = pos.find((p) => p.id === poId) ?? null
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/procurement" className="text-xs text-white/40 hover:text-white/70">← Procurement</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Receiving (dock door)</h1>
@@ -167,9 +167,9 @@ export default function ReceivingPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgba(0,212,177,0.1)',
-              color: feedback.tone === 'warn' ? '#FCD34D' : '#00D4B1',
-              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgba(0,212,177,0.3)'}`,
+              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(135 197 64 / 0.1)',
+              color: feedback.tone === 'warn' ? '#a15c00' : 'var(--erp-primary-ink)',
+              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
             }}>
             {feedback.text}
           </div>
@@ -177,7 +177,7 @@ export default function ReceivingPage() {
 
         <Section title="Step 1 — Match to a PO (or take a delivery without one)">
           {selectedPo ? (
-            <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgba(0,212,177,0.08)', border: '1px solid rgba(0,212,177,0.35)' }}>
+            <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.35)' }}>
               <div>
                 <p className="text-sm font-bold text-white/90">{poLabel(selectedPo)} · {selectedPo.supplier.name}</p>
                 <p className="text-xs text-white/45">{selectedPo.status === 'partial' ? 'Part-received — showing what is still outstanding' : 'Sent'}</p>
@@ -191,7 +191,7 @@ export default function ReceivingPage() {
                 {pos.map((po) => (
                   <button key={po.id} onClick={() => loadFromPo(po)}
                     className="rounded-lg p-3 text-left transition-colors"
-                    style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                     <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
                     <p className="text-xs text-white/45">{po.supplier.name} · {po.lines.length} lines{po.status === 'partial' ? ' · part-received' : ''}</p>
                   </button>
@@ -217,8 +217,8 @@ export default function ReceivingPage() {
             return (
               <div key={l.key} className="rounded-lg p-3 space-y-2 mt-2"
                 style={{
-                  background: flag ? 'rgba(245,158,11,0.05)' : 'rgba(255,255,255,0.025)',
-                  border: `1px solid ${flag ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.06)'}`,
+                  background: flag ? 'rgba(245,158,11,0.05)' : 'rgb(var(--fg-rgb) / 0.025)',
+                  border: `1px solid ${flag ? 'rgba(245,158,11,0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
                 }}>
                 <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
                   {l.poLineId ? (
@@ -234,7 +234,7 @@ export default function ReceivingPage() {
                     className={fieldCls + ' w-24'} placeholder="Recv" />
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-white/45 w-10">{l.unit}</span>
-                    {!poId && <button onClick={() => rmLine(l.key)} className="text-white/30 hover:text-red-400 text-sm px-2" aria-label="Remove line">×</button>}
+                    {!poId && <button onClick={() => rmLine(l.key)} className="text-white/30 hover:text-red-700 text-sm px-2" aria-label="Remove line">×</button>}
                   </div>
                 </div>
                 {!l.poLineId && (
@@ -245,7 +245,7 @@ export default function ReceivingPage() {
                   </div>
                 )}
                 {variance != null && Math.abs(variance) > 0.5 && (
-                  <p className="text-[11px] font-bold" style={{ color: flag ? '#FCD34D' : 'rgba(255,255,255,0.55)' }}>
+                  <p className="text-[11px] font-bold" style={{ color: flag ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.55)' }}>
                     {variance > 0 ? '+' : ''}{variance.toFixed(1)}% {flag ? '— will flag' : ''}
                   </p>
                 )}
@@ -255,7 +255,7 @@ export default function ReceivingPage() {
             )
           })}
           {!poId && supplierId && (
-            <button onClick={addBlankLine} className="text-xs text-kds-green hover:underline mt-2">+ Add line</button>
+            <button onClick={addBlankLine} className="text-xs text-primary-ink hover:underline mt-2">+ Add line</button>
           )}
         </Section>
 
@@ -276,7 +276,7 @@ export default function ReceivingPage() {
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={() => submit.mutate()}
             disabled={submit.isPending || lines.length === 0 || (!supplierId && !poId) || adHocInvalid || nothingArrived}
-            className="rounded-xl bg-kds-green px-6 py-3 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : 'Accept delivery →'}
           </button>
         </div>
@@ -286,9 +286,9 @@ export default function ReceivingPage() {
           <div className="space-y-1.5">
             {receipts.slice(0, 20).map((r) => (
               <div key={r.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-xs"
-                style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                 <span className="text-white/75">{new Date(r.receivedAt).toLocaleString()} · {supplierName.get(r.supplierId) ?? 'Supplier'}</span>
-                <span className="text-white/45">{r.poId ? 'PO' : 'No PO'} · {r.lines.length} lines · <span style={{ color: r.varianceFlag ? '#FCD34D' : undefined }}>{r.status}</span></span>
+                <span className="text-white/45">{r.poId ? 'PO' : 'No PO'} · {r.lines.length} lines · <span style={{ color: r.varianceFlag ? '#a15c00' : undefined }}>{r.status}</span></span>
               </div>
             ))}
           </div>
@@ -301,7 +301,7 @@ export default function ReceivingPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl p-5"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
       <div className="mt-3">{children}</div>
     </div>
@@ -309,6 +309,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function ErrorBanner({ error }: { error: unknown }) {
   const msg = error instanceof Error ? error.message : 'Something went wrong'
-  return <div className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#FCA5A5' }}><strong>Save failed:</strong> {msg}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#b42318' }}><strong>Save failed:</strong> {msg}</div>
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

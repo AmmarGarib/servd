@@ -57,7 +57,7 @@ export default function MyHrPage() {
               {me.leaveBalances.map((b) => (
                 <div key={b.leaveTypeId} className="flex justify-between text-sm py-1.5 border-t border-white/[0.05] first:border-t-0">
                   <span className="text-white/75">{b.name}</span>
-                  <span className="font-bold text-white/90">{b.paid ? `${b.balance} left` : `${b.taken} taken`}{b.pending ? <span className="text-[11px] text-amber-400"> ({b.pending} pending)</span> : null}</span>
+                  <span className="font-bold text-white/90">{b.paid ? `${b.balance} left` : `${b.taken} taken`}{b.pending ? <span className="text-[11px] text-amber-700"> ({b.pending} pending)</span> : null}</span>
                 </div>
               ))}
             </div>
@@ -107,7 +107,7 @@ function RequestForm({ section, tenantId, onClose }: { section: string; tenantId
     <Modal title={REQUEST_LABEL[section] ?? human(section)} wide onClose={onClose}>
       {fmt ? <FormRenderer fields={leaveFields(section, fmt.fields, value)} value={value}
         onChange={(x) => setValue(withLeaveDays(section, fmt.fields, value, x))} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading…</p>}
-      {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Sending…' : 'Submit'}</button>
         <button className={btnGhost} onClick={onClose}>Cancel</button>
@@ -123,11 +123,11 @@ function MySlip({ id, onClose }: { id: string; onClose: () => void }) {
     <Modal title={s ? `Payslip ${s.run.period}` : 'Payslip'} onClose={onClose}>
       {s?.lines.filter((l) => l.kind !== 'employer').map((l) => (
         <div key={l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
-          <span style={{ color: l.kind === 'deduction' ? '#fca5a5' : 'rgba(255,255,255,0.8)' }}>{l.label}</span>
+          <span style={{ color: l.kind === 'deduction' ? '#b42318' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>
           <span className="text-white/85">{l.kind === 'deduction' ? '−' : ''}{rs(l.amountCents)}</span>
         </div>
       ))}
-      {s && <div className="flex justify-between font-black pt-2"><span className="text-white/85">Net pay</span><span className="text-kds-green">{rs(s.netCents)}</span></div>}
+      {s && <div className="flex justify-between font-black pt-2"><span className="text-white/85">Net pay</span><span className="text-primary-ink">{rs(s.netCents)}</span></div>}
     </Modal>
   )
 }

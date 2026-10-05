@@ -58,7 +58,7 @@ export default function RoleModulesPage() {
 
   if (!isSuper) {
     return (
-      <div className="min-h-screen p-7" style={{ background: '#090a0e' }}>
+      <div className="min-h-screen p-7" style={{ background: 'var(--bg)' }}>
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="mt-8 max-w-md mx-auto rounded-2xl p-8 text-center"
           style={{ background: 'rgba(255,77,79,0.05)', border: '1px solid rgba(255,77,79,0.2)' }}>
@@ -91,7 +91,7 @@ export default function RoleModulesPage() {
   const focusedRoleModules = focusRole ? new Set(modulesForRole(focusRole, overrides)) : null
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
           <Link href="/configuration" className="hover:text-white/70">← Configuration Hub</Link>
@@ -120,15 +120,15 @@ export default function RoleModulesPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search modules — try 'menu', 'shift', 'crm'…"
             className="flex-1 min-w-[240px] rounded-xl px-4 py-2.5 text-sm focus:outline-none"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}
+            style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}
           />
 
           <div className="text-xs text-white/45 flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-sm" style={{ background: '#00D4B1' }} />
+            <span className="inline-block w-3 h-3 rounded-sm" style={{ background: 'var(--erp-primary)' }} />
             allowed
             <span className="inline-block w-3 h-3 rounded-sm ml-3 border border-white/15" />
             hidden
-            <span className="inline-block w-3 h-3 rounded-sm ml-3" style={{ background: '#F59E0B' }} />
+            <span className="inline-block w-3 h-3 rounded-sm ml-3" style={{ background: '#a15c00' }} />
             customised
           </div>
         </div>
@@ -140,32 +140,32 @@ export default function RoleModulesPage() {
             <button key={r.value} onClick={() => { setFocusRole(r.value); setViewAs(r.value) }}
               className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
               style={focusRole === r.value
-                ? { background: 'rgba(99,102,241,0.18)', color: '#A5B4FC', border: '1px solid rgba(99,102,241,0.35)' }
-                : { background: 'rgba(255,255,255,0.02)', color: 'rgba(255,255,255,0.45)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                ? { background: 'rgb(61 31 59 / 0.18)', color: '#6b2f68', border: '1px solid rgb(61 31 59 / 0.35)' }
+                : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.45)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {r.emoji} {r.label}
             </button>
           ))}
           {focusRole && (
             <button onClick={() => { setFocusRole(null); setViewAs(null) }}
               className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
-              style={{ background: 'rgba(255,77,79,0.08)', color: '#FF7B7D', border: '1px solid rgba(255,77,79,0.18)' }}>
+              style={{ background: 'rgba(255,77,79,0.08)', color: '#b42318', border: '1px solid rgba(255,77,79,0.18)' }}>
               Clear preview
             </button>
           )}
         </div>
 
         {/* Module grid */}
-        <div className="rounded-2xl overflow-x-auto" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-2xl overflow-x-auto" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <table className="w-full text-sm border-collapse min-w-[1200px]">
             <thead>
               <tr style={{ background: 'rgba(15,17,22,0.95)' }}>
                 <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/45 sticky left-0"
-                  style={{ background: 'rgba(15,17,22,0.95)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  style={{ background: 'rgba(15,17,22,0.95)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   Module
                 </th>
                 {editableRoles.map((r) => (
                   <th key={r.value} className="px-2 py-3 border-l border-white/[0.04]"
-                    style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                     <button onClick={() => { setFocusRole(r.value); setViewAs(r.value) }}
                       className="w-full text-center hover:opacity-100 transition-opacity"
                       style={{ opacity: focusRole === r.value ? 1 : 0.85 }}
@@ -184,14 +184,14 @@ export default function RoleModulesPage() {
                   <>
                     <tr key={`section-${sectionName}`}>
                       <td colSpan={editableRoles.length + 1} className="px-4 py-2 border-y border-white/[0.04]"
-                        style={{ background: 'rgba(255,255,255,0.015)' }}>
+                        style={{ background: 'rgb(var(--fg-rgb) / 0.015)' }}>
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/55">
                           {sectionName}
                         </p>
                       </td>
                     </tr>
                     {/* Quick-toggle row: per-role checkbox to bulk-toggle this whole section */}
-                    <tr style={{ background: 'rgba(255,255,255,0.005)' }}>
+                    <tr style={{ background: 'rgb(var(--fg-rgb) / 0.005)' }}>
                       <td className="px-4 py-1.5 text-[10px] text-white/45 italic sticky left-0"
                         style={{ background: 'rgba(9,10,14,0.95)' }}>
                         — toggle whole section —
@@ -206,10 +206,10 @@ export default function RoleModulesPage() {
                             <button onClick={() => toggleSection(r.value, modIds)}
                               className="h-4 w-4 rounded-sm mx-auto flex items-center justify-center transition-all"
                               style={allOn
-                                ? { background: '#00D4B1', color: '#000' }
+                                ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
                                 : someOn
-                                  ? { background: 'rgba(245,158,11,0.7)', color: '#000' }
-                                  : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                  ? { background: 'rgba(245,158,11,0.7)', color: 'var(--erp-on-primary)' }
+                                  : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
                               {allOn ? '✓' : someOn ? '−' : ''}
                             </button>
                           </td>
@@ -219,7 +219,7 @@ export default function RoleModulesPage() {
                     {mods.map((m) => (
                       <tr key={m.id} className="hover:bg-white/[0.015] transition-colors">
                         <td className="px-4 py-2 sticky left-0"
-                          style={{ background: 'rgba(9,10,14,0.95)', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
+                          style={{ background: 'rgba(9,10,14,0.95)', borderRight: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                           <p className="text-xs font-bold text-white/85">{m.label}</p>
                           <p className="text-[10px] text-white/30 font-mono mt-0.5">{m.id}</p>
                         </td>
@@ -233,8 +233,8 @@ export default function RoleModulesPage() {
                               <button onClick={() => toggleModule(r.value, m.id)}
                                 className="h-5 w-5 rounded-sm mx-auto flex items-center justify-center text-[10px] font-black transition-all hover:scale-110"
                                 style={enabled
-                                  ? { background: isCustom ? '#F59E0B' : '#00D4B1', color: '#000' }
-                                  : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', color: 'transparent' }}
+                                  ? { background: isCustom ? '#a15c00' : 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                                  : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'transparent' }}
                                 title={enabled ? 'Allowed — click to hide' : 'Hidden — click to allow'}>
                                 {enabled ? '✓' : ''}
                               </button>
@@ -259,8 +259,8 @@ export default function RoleModulesPage() {
               <button key={r.value} onClick={() => resetRole(r.value)} disabled={!isCustom}
                 className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-25"
                 style={isCustom
-                  ? { background: 'rgba(245,158,11,0.1)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.25)' }
-                  : { background: 'rgba(255,255,255,0.02)', color: 'rgba(255,255,255,0.35)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  ? { background: 'rgba(245,158,11,0.1)', color: '#a15c00', border: '1px solid rgba(245,158,11,0.25)' }
+                  : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.35)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                 {r.emoji} {r.label}
               </button>
             )
@@ -269,14 +269,14 @@ export default function RoleModulesPage() {
 
         {/* Helper card */}
         <div className="rounded-xl p-4 text-xs text-white/45 leading-relaxed"
-          style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)' }}>
+          style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px solid rgb(61 31 59 / 0.15)' }}>
           💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. The CEO is the only one who can change this map — non-admin sessions can&rsquo;t open this page. Amber ticks indicate a role you&rsquo;ve customised; teal ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
         </div>
 
         {focusedRoleMeta && focusedRoleModules && (
           <div className="fixed bottom-4 right-4 rounded-2xl p-4 max-w-sm shadow-2xl"
-            style={{ background: 'rgba(15,17,22,0.98)', border: '1px solid rgba(99,102,241,0.35)' }}>
-            <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: '#A5B4FC' }}>
+            style={{ background: 'rgba(15,17,22,0.98)', border: '1px solid rgb(61 31 59 / 0.35)' }}>
+            <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: '#6b2f68' }}>
               🔭 Previewing as
             </p>
             <p className="text-sm font-bold text-white/90">{focusedRoleMeta.emoji} {focusedRoleMeta.label}</p>

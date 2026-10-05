@@ -99,7 +99,7 @@ export default function PrepBatchPage() {
   const missing = prep?.inputs.filter((i) => i.missing) ?? []
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex gap-4 text-xs">
           <Link href="/inventory" className="text-white/40 hover:text-white/70">← Inventory</Link>
@@ -116,9 +116,9 @@ export default function PrepBatchPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgba(0,212,177,0.1)',
-              color: feedback.startsWith('⚠') ? '#FCD34D' : '#00D4B1',
-              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgba(0,212,177,0.3)'}`,
+              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(135 197 64 / 0.1)',
+              color: feedback.startsWith('⚠') ? '#a15c00' : 'var(--erp-primary-ink)',
+              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
             }}>{feedback}</div>
         )}
 
@@ -156,7 +156,7 @@ export default function PrepBatchPage() {
             </div>
           )}
           {missing.length > 0 && (
-            <p className="mt-2 text-xs text-amber-300">
+            <p className="mt-2 text-xs text-amber-700">
               Not in your company&rsquo;s inventory, so not deducted: {missing.map((m) => m.name).join(', ')}.
             </p>
           )}
@@ -176,9 +176,9 @@ export default function PrepBatchPage() {
           {yieldPct != null && (
             <div className="mt-3 rounded-lg p-3 text-sm font-bold"
               style={{
-                background: yieldPct < 85 ? 'rgba(245,158,11,0.08)' : 'rgba(0,212,177,0.08)',
-                color: yieldPct < 85 ? '#FCD34D' : '#00D4B1',
-                border: `1px solid ${yieldPct < 85 ? 'rgba(245,158,11,0.3)' : 'rgba(0,212,177,0.3)'}`,
+                background: yieldPct < 85 ? 'rgba(245,158,11,0.08)' : 'rgb(135 197 64 / 0.08)',
+                color: yieldPct < 85 ? '#a15c00' : 'var(--erp-primary-ink)',
+                border: `1px solid ${yieldPct < 85 ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
               }}>
               Yield: {yieldPct.toFixed(1)}% {yieldPct < 85 && '— will flag (under 85%)'}
             </div>
@@ -198,10 +198,10 @@ export default function PrepBatchPage() {
               <input type="number" step="0.001" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
               {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}
               <span className="text-xs text-white/55">{itemById.get(inp.inventoryItemId)?.unit ?? inp.unit}</span>
-              <button onClick={() => rmInput(i)} className="text-white/30 hover:text-red-400 px-2">✕</button>
+              <button onClick={() => rmInput(i)} className="text-white/30 hover:text-red-700 px-2">✕</button>
             </div>
           ))}
-          <button onClick={addInput} className="text-xs text-kds-green hover:underline mt-3">+ Add ingredient</button>
+          <button onClick={addInput} className="text-xs text-primary-ink hover:underline mt-3">+ Add ingredient</button>
         </Section>
 
         <Section title="Evidence (optional)">
@@ -209,12 +209,12 @@ export default function PrepBatchPage() {
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         </Section>
 
-        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
+        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
 
         <div className="flex justify-end pt-2">
           <button onClick={() => submit.mutate()}
             disabled={submit.isPending || !recipeId || !itemName.trim() || inputs.length === 0 || inputs.some((x) => !x.inventoryItemId) || !actualYieldQty}
-            className="rounded-xl bg-kds-green px-6 py-3 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : 'Log batch →'}
           </button>
         </div>
@@ -225,13 +225,13 @@ export default function PrepBatchPage() {
             <div className="space-y-2">
               {batches.slice(0, 10).map((b) => (
                 <div key={b.id} className="rounded-lg p-3 flex items-center justify-between"
-                  style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <div>
                     <p className="text-sm font-bold text-white/85">{b.itemName}</p>
                     <p className="text-xs text-white/45">{b.actualYieldQty} {b.unit} yielded · {new Date(b.createdAt).toLocaleString()}</p>
                   </div>
                   {b.yieldVariancePct != null && (
-                    <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? '#FCD34D' : '#00D4B1' }}>
+                    <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? '#a15c00' : 'var(--erp-primary-ink)' }}>
                       {(b.yieldVariancePct * 100).toFixed(0)}% yield
                     </span>
                   )}
@@ -246,10 +246,10 @@ export default function PrepBatchPage() {
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+  return <div className="rounded-2xl p-5" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
     <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{title}</h2>
     <div className="mt-3">{children}</div>
   </div>
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

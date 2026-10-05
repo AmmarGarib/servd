@@ -12,7 +12,7 @@ import { useTeam, isInToday } from '../../../hooks/useTeam'
 import { roleLabel } from '../../../lib/appRoles'
 import { pagesForModules } from '../../../lib/moduleCatalog'
 
-const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
+const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 
 export default function WorkspaceHomePage() {
   const params = useParams<{ id: string }>()
@@ -34,7 +34,7 @@ export default function WorkspaceHomePage() {
             ? `Your role${me?.role ? ` (${roleLabel(me.role)})` : ''} has no part of ${def.title}. Ask the CEO if you need it opened up.`
             : 'No such workspace.'}
         </p>
-        <Link href="/modules" className="inline-block mt-4 text-xs font-bold text-[#00D4B1] hover:underline">All workspaces →</Link>
+        <Link href="/modules" className="inline-block mt-4 text-xs font-bold text-primary-ink hover:underline">All workspaces →</Link>
       </Shell>
     )
   }
@@ -53,13 +53,13 @@ export default function WorkspaceHomePage() {
           <p className="text-sm text-white/45 mt-1">
             Owner: <span className="text-white/75 font-semibold">{def ? def.ownerRoles.map(roleLabel).join(' / ') : '—'}</span>
             {ws.owner && <span className="ml-2 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
-              style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }}>You own this</span>}
+              style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>You own this</span>}
           </p>
         </div>
         {ws.owner && (isCeo || canInvite) && (
           <Link href={isCeo ? '/workforce' : '/team#add-login'}
             className="rounded-lg px-3 py-2 text-xs font-black hover:opacity-90"
-            style={{ background: '#00D4B1', color: '#000' }}>
+            style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
             + Add a login
           </Link>
         )}
@@ -113,8 +113,8 @@ function TeamSummary() {
       ) : (
         <>
           <span className="text-xs text-white/55"><b className="text-white/85">{team.length}</b> {team.length === 1 ? 'person' : 'people'}</span>
-          <span className="text-xs text-white/55"><b className="text-[#34d399]">{inToday}</b> in today</span>
-          <span className="text-xs text-white/55"><b className={pending > 0 ? 'text-amber-400' : 'text-white/85'}>{pending}</b> waiting on you</span>
+          <span className="text-xs text-white/55"><b className="text-[#3f7d20]">{inToday}</b> in today</span>
+          <span className="text-xs text-white/55"><b className={pending > 0 ? 'text-amber-700' : 'text-white/85'}>{pending}</b> waiting on you</span>
         </>
       )}
       <span className="ml-auto text-xs text-white/35">Open →</span>
@@ -124,7 +124,7 @@ function TeamSummary() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <div className="max-w-6xl mx-auto px-6 py-8">{children}</div>
     </div>
   )

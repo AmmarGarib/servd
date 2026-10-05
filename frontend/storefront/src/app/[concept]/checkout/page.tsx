@@ -305,7 +305,7 @@ export default function CheckoutPage() {
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
+        style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
         See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
       </Link>
       {/* Quick switch to the other brands so an empty-cart visitor doesn't
@@ -529,7 +529,7 @@ export default function CheckoutPage() {
               BRAND_FULFILMENT at top of file. When the brand offers only
               one option (e.g. Simmer = dine-in), skip the chooser and
               just confirm the mode statically. */}
-          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(58,14,105,0.06)', border: '1px solid rgba(58,14,105,0.25)' }}>
+          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(135,197,64,0.06)', border: '1px solid rgba(135,197,64,0.25)' }}>
             {allowedFulfilment.length === 1 ? (
               <>
                 <p className="text-xs font-bold tracking-wider uppercase mb-1" style={{ color: 'var(--servd-green-dark)' }}>
@@ -626,7 +626,7 @@ export default function CheckoutPage() {
                           }}
                           className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all"
                           style={isSelected
-                            ? { background: 'rgba(58,14,105,0.1)', border: '1.5px solid var(--servd-green)' }
+                            ? { background: 'rgba(135,197,64,0.1)', border: '1.5px solid var(--servd-green)' }
                             : { background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -639,7 +639,7 @@ export default function CheckoutPage() {
                               <span className="font-bold text-xs" style={{ color: 'var(--servd-ink)' }}>{addr.label}</span>
                               {addr.isDefault && (
                                 <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full"
-                                  style={{ background: 'rgba(58,14,105,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
+                                  style={{ background: 'rgba(135,197,64,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
                               )}
                             </div>
                             <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--servd-mute)' }}>{addr.address}</p>
@@ -665,7 +665,7 @@ export default function CheckoutPage() {
                       }}
                       className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all"
                       style={showNewAddressInput
-                        ? { background: 'rgba(58,14,105,0.1)', border: '1.5px solid var(--servd-green)' }
+                        ? { background: 'rgba(135,197,64,0.1)', border: '1.5px solid var(--servd-green)' }
                         : { background: '#fff', border: '1px dashed rgba(0,0,0,0.12)' }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -702,7 +702,7 @@ export default function CheckoutPage() {
               the order is being delivered. Dine-in, pickup, and curbside
               don't involve a rider, so hide the section entirely. */}
           {fulfilmentType === 'delivery' && (
-          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(58,14,105,0.08)', border: '1px solid rgba(58,14,105,0.2)' }}>
+          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(135,197,64,0.08)', border: '1px solid rgba(135,197,64,0.2)' }}>
             <p className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-green-dark)] mb-2">Tip the rider</p>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {(['none', '5', '10', '15', '20', 'custom'] as const).map((m) => (
@@ -777,7 +777,7 @@ export default function CheckoutPage() {
               </p>
             )}
             {giftCardStatus === 'invalid' && (
-              <p className="text-xs font-semibold mt-1.5" style={{ color: '#dc2626' }}>
+              <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }}>
                 Invalid or expired card
               </p>
             )}
@@ -860,7 +860,7 @@ export default function CheckoutPage() {
                 </p>
               )}
               {promoStatus === 'invalid' && promoMessage && (
-                <p className="text-xs font-semibold mt-1.5" style={{ color: '#dc2626' }}>
+                <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }}>
                   {promoMessage}
                 </p>
               )}
@@ -872,13 +872,13 @@ export default function CheckoutPage() {
                 onClick={() => setUseWallet(v => !v)}
                 className="flex items-center justify-between w-full rounded-2xl p-4 transition-all duration-200 active:scale-[0.99]"
                 style={{
-                  background: useWallet ? 'rgba(58,14,105,0.06)' : '#fff',
-                  border: `1px solid ${useWallet ? 'rgba(58,14,105,0.28)' : 'rgba(0,0,0,0.07)'}`,
-                  boxShadow: useWallet ? '0 0 20px rgba(58,14,105,0.08)' : '0 2px 8px rgba(0,0,0,0.04)',
+                  background: useWallet ? 'rgba(135,197,64,0.06)' : '#fff',
+                  border: `1px solid ${useWallet ? 'rgba(135,197,64,0.28)' : 'rgba(0,0,0,0.07)'}`,
+                  boxShadow: useWallet ? '0 0 20px rgba(61,31,59,0.08)' : '0 2px 8px rgba(0,0,0,0.04)',
                 }}>
                 <div className="flex items-center gap-3">
                   <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
-                    style={{ background: useWallet ? 'rgba(58,14,105,0.12)' : 'var(--servd-surface)', color: useWallet ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
+                    style={{ background: useWallet ? 'rgba(135,197,64,0.12)' : 'var(--servd-surface)', color: useWallet ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M21 7H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z"/>
                       <path d="M17 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
@@ -962,7 +962,7 @@ export default function CheckoutPage() {
                     onClick={() => setPaymentMethod(opt.id)}
                     className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-all"
                     style={isSelected
-                      ? { background: 'rgba(58,14,105,0.06)', border: '1.5px solid rgba(58,14,105,0.35)' }
+                      ? { background: 'rgba(135,197,64,0.06)', border: '1.5px solid rgba(135,197,64,0.35)' }
                       : { background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.07)' }}>
                     <span className="text-lg shrink-0">{opt.icon}</span>
                     <div className="flex-1 text-left min-w-0">
@@ -973,7 +973,7 @@ export default function CheckoutPage() {
                     </div>
                     <div className="h-5 w-5 rounded-full shrink-0 flex items-center justify-center"
                       style={isSelected
-                        ? { background: 'rgba(58,14,105,0.12)', border: '1.5px solid rgba(58,14,105,0.45)' }
+                        ? { background: 'rgba(135,197,64,0.12)', border: '1.5px solid rgba(135,197,64,0.45)' }
                         : { background: 'transparent', border: '1.5px solid rgba(0,0,0,0.15)' }}>
                       {isSelected && <div className="h-2 w-2 rounded-full" style={{ background: 'var(--servd-green-dark)' }} />}
                     </div>
@@ -989,7 +989,7 @@ export default function CheckoutPage() {
                         placeholder="03xx-xxxxxxx"
                         maxLength={15}
                         className="w-full rounded-lg px-3 py-2 text-sm"
-                        style={{ background: '#fff', border: '1.5px solid rgba(58,14,105,0.3)' }}
+                        style={{ background: '#fff', border: '1.5px solid rgba(135,197,64,0.3)' }}
                       />
                       <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }}>
                         Enter your {opt.label} number to process payment
@@ -1000,7 +1000,7 @@ export default function CheckoutPage() {
                   {/* Keenu redirect note */}
                   {isSelected && opt.id === 'keenu' && (
                     <div className="mt-1.5 mx-1 rounded-lg px-3 py-2"
-                      style={{ background: 'rgba(58,14,105,0.06)', border: '1px solid rgba(58,14,105,0.2)' }}>
+                      style={{ background: 'rgba(135,197,64,0.06)', border: '1px solid rgba(135,197,64,0.2)' }}>
                       <p className="text-[11px]" style={{ color: 'var(--servd-green-dark)' }}>
                         After placing your order you&rsquo;ll be redirected to Keenu&rsquo;s secure payment page to complete payment by card.
                       </p>
@@ -1015,7 +1015,7 @@ export default function CheckoutPage() {
         {error && (
           <div role="alert" aria-live="assertive"
             className="flex items-start gap-2.5 rounded-xl px-4 py-3 text-sm font-medium"
-            style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.2)', color: '#dc2626' }}>
+            style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--servd-danger)' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
               className="shrink-0 mt-0.5">
@@ -1031,7 +1031,7 @@ export default function CheckoutPage() {
               objections ("will this work for me / what if it doesn't /
               can I get out") right before the place-order button. Each
               line is fact, not puffery. */}
-        <div className="rounded-xl p-3.5" style={{ background: 'rgba(58,14,105,0.04)', border: '1px solid rgba(58,14,105,0.12)' }}>
+        <div className="rounded-xl p-3.5" style={{ background: 'rgba(135,197,64,0.04)', border: '1px solid rgba(135,197,64,0.12)' }}>
           <ul className="space-y-1.5 text-xs" style={{ color: 'var(--servd-mute)' }}>
             <li className="flex items-start gap-2">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
@@ -1064,7 +1064,7 @@ export default function CheckoutPage() {
           style={{
             background: loading ? 'var(--servd-line)' : 'var(--servd-green)',
             color: loading ? 'var(--servd-mute)' : '#fff',
-            boxShadow: loading ? 'none' : '0 0 32px rgba(58,14,105,0.28)',
+            boxShadow: loading ? 'none' : '0 0 32px rgba(61,31,59,0.28)',
           }}>
           <span>{ctaLabel}</span>
           <span>{displayTotal != null ? fmt(displayTotal) : '…'}</span>
@@ -1126,7 +1126,7 @@ function ServdInput({ type, value, onChange, placeholder, autoFocus }: {
       style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
       onFocus={e => {
         e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(58,14,105,0.28)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(61,31,59,0.28)'
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
@@ -1148,7 +1148,7 @@ function ServdTextarea({ value, onChange, placeholder, rows }: {
       style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
       onFocus={e => {
         e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(58,14,105,0.28)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(61,31,59,0.28)'
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'

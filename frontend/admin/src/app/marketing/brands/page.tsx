@@ -134,14 +134,14 @@ export default function BrandEditorPage() {
   const selected = concepts.find((c) => c.id === selectedId) ?? null
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Marketing</p>
         <h1 className="text-2xl font-black text-white/90 mt-1">Brand Editor</h1>
         <p className="text-sm text-white/40 mt-1">
           The one place a brand is edited — identity, contact, brief, storefront copy and tax. The kitchen address and map pin
-          live on <Link href="/configuration/locations" className="text-kds-green hover:underline">Locations</Link>, delivery
-          coverage on <Link href="/configuration/delivery-zones" className="text-kds-green hover:underline">Delivery zones</Link>.
+          live on <Link href="/configuration/locations" className="text-primary-ink hover:underline">Locations</Link>, delivery
+          coverage on <Link href="/configuration/delivery-zones" className="text-primary-ink hover:underline">Delivery zones</Link>.
         </p>
       </header>
 
@@ -171,8 +171,8 @@ export default function BrandEditorPage() {
               onClick={() => setSelectedId(c.id)}
               className="w-full text-left rounded-xl p-3 transition-colors"
               style={{
-                background: c.id === selectedId ? 'rgba(0,212,177,0.08)' : 'transparent',
-                border: c.id === selectedId ? '1px solid rgba(0,212,177,0.35)' : '1px solid transparent',
+                background: c.id === selectedId ? 'rgb(135 197 64 / 0.08)' : 'transparent',
+                border: c.id === selectedId ? '1px solid rgb(135 197 64 / 0.35)' : '1px solid transparent',
               }}
             >
               <div className="flex items-center gap-3">
@@ -229,7 +229,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [name, setName] = useState(concept.name)
   const [description, setDescription] = useState(concept.description ?? '')
   const [logoUrl, setLogoUrl] = useState(concept.logoUrl ?? '')
-  const [primaryColor, setPrimaryColor] = useState(concept.primaryColor ?? '#00D4B1')
+  const [primaryColor, setPrimaryColor] = useState(concept.primaryColor ?? '#87c540')
   const [isActive, setIsActive] = useState(concept.isActive)
 
   const [phone, setPhone] = useState(concept.phone ?? '')
@@ -396,16 +396,16 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           <button
             onClick={() => save.mutate()}
             disabled={save.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2 text-xs font-black text-black hover:opacity-90 disabled:opacity-50"
+            className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-on hover:opacity-90 disabled:opacity-50"
           >
             {save.isPending ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       </div>
       {savedAt && Date.now() - savedAt < 4000 && (
-        <p className="text-xs text-kds-green">✓ Saved</p>
+        <p className="text-xs text-primary-ink">✓ Saved</p>
       )}
-      {saveError && <p className="text-xs text-kds-red">{saveError}</p>}
+      {saveError && <p className="text-xs text-s-red">{saveError}</p>}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-white/[0.05] overflow-x-auto">
@@ -414,11 +414,11 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             key={t.key}
             onClick={() => setTab(t.key)}
             className="px-4 py-2.5 text-xs font-bold transition-all relative shrink-0"
-            style={{ color: tab === t.key ? '#00D4B1' : 'rgba(255,255,255,0.45)' }}
+            style={{ color: tab === t.key ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.45)' }}
           >
             {t.emoji} {t.label}
             {tab === t.key && (
-              <span className="absolute bottom-[-1px] left-0 right-0 h-0.5" style={{ background: '#00D4B1' }} />
+              <span className="absolute bottom-[-1px] left-0 right-0 h-0.5" style={{ background: 'var(--erp-primary)' }} />
             )}
           </button>
         ))}
@@ -433,7 +433,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               <div>
                 <label className="text-xs text-white/55 block mb-2">Logo</label>
                 <div className="aspect-square rounded-xl overflow-hidden flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                   {logoUrl ? (
                     <img src={logoUrl} alt={name} className="w-full h-full object-cover" />
                   ) : (
@@ -444,7 +444,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                   {uploading ? 'Uploading…' : '📤 Upload new logo'}
                   <input type="file" accept="image/*" className="sr-only" onChange={handleLogoUpload} />
                 </label>
-                {uploadError && <p className="text-[10px] text-kds-red mt-1">{uploadError}</p>}
+                {uploadError && <p className="text-[10px] text-s-red mt-1">{uploadError}</p>}
               </div>
 
               {/* Name + description */}
@@ -466,18 +466,18 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                       <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)}
                         className="h-10 w-12 rounded-lg cursor-pointer bg-transparent border border-white/10" />
                       <input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)}
-                        className="s-input flex-1 font-mono text-xs" placeholder="#00D4B1" />
+                        className="s-input flex-1 font-mono text-xs" placeholder="#87c540" />
                     </div>
                     {palette && palette.accent.toLowerCase() !== primaryColor.toLowerCase() && (
                       <button type="button" onClick={() => setPrimaryColor(palette.accent)}
-                        className="mt-1.5 text-[10px] font-bold text-kds-green hover:underline">
+                        className="mt-1.5 text-[10px] font-bold text-primary-ink hover:underline">
                         ↳ Match storefront accent ({palette.accent})
                       </button>
                     )}
                   </Field>
                   <Field label="Status" hint="Off = retired: hidden from the POS, pickers and the storefront. History is kept.">
                     <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
-                      <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-kds-green" />
+                      <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
                       Brand is active
                     </label>
                   </Field>
@@ -489,18 +489,18 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">
             {confirmDelete ? (
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-amber-400">Delete <span className="font-bold">{concept.name}</span>?</span>
+                <span className="text-xs text-amber-700">Delete <span className="font-bold">{concept.name}</span>?</span>
                 <button onClick={() => setConfirmDelete(false)}
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55">Cancel</button>
                 <button onClick={() => del.mutate()} disabled={del.isPending}
-                  className="rounded-lg bg-kds-red px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                  className="rounded-lg bg-s-red px-3 py-1.5 text-xs font-bold text-[#fff] disabled:opacity-50">
                   {del.isPending ? 'Deleting…' : 'Yes, delete'}
                 </button>
-                {del.isError && <span className="text-xs text-kds-red">{(del.error as Error).message}</span>}
+                {del.isError && <span className="text-xs text-s-red">{(del.error as Error).message}</span>}
               </div>
             ) : (
               <button onClick={() => setConfirmDelete(true)}
-                className="rounded-lg border border-kds-red/40 px-3 py-1.5 text-xs text-kds-red hover:bg-kds-red/10">
+                className="rounded-lg border border-s-red/40 px-3 py-1.5 text-xs text-s-red hover:bg-s-red/10">
                 Delete brand
               </button>
             )}
@@ -527,7 +527,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           </div>
           <p className="text-[11px] text-white/40">
             Street address and map pin belong to the kitchen, not the brand — see the Kitchen &amp; delivery tab.
-            Social links (Instagram, TikTok, Facebook) are set on this brand&apos;s <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-kds-green hover:underline">footer page</Link> in the storefront hub.
+            Social links (Instagram, TikTok, Facebook) are set on this brand&apos;s <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink hover:underline">footer page</Link> in the storefront hub.
           </p>
         </Section>
       )}
@@ -574,8 +574,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                     onClick={() => setDaypartFocus(on ? daypartFocus.filter((x) => x !== d) : [...daypartFocus, d])}
                     className="text-xs font-semibold px-3 py-1 rounded-full"
                     style={on
-                      ? { background: 'rgba(0,212,177,0.12)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.35)' }
-                      : { background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.35)' }
+                      : { background: 'rgb(var(--fg-rgb) / 0.03)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                     {d.replace('_', ' ')}
                   </button>
                 )
@@ -599,14 +599,14 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               </Field>
               <Field label="Storefront visibility">
                 <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
-                  <input type="checkbox" checked={storefrontVisible} onChange={(e) => setStorefrontVisible(e.target.checked)} className="accent-kds-green" />
+                  <input type="checkbox" checked={storefrontVisible} onChange={(e) => setStorefrontVisible(e.target.checked)} className="accent-primary" />
                   Show on the customer ordering page
                 </label>
                 <p className="text-[10px] text-white/35 mt-1">Uncheck to hide from /browse without disabling the brand entirely.</p>
               </Field>
               <Field label="Reservations">
                 <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
-                  <input type="checkbox" checked={reservationsEnabled} onChange={(e) => setReservationsEnabled(e.target.checked)} className="accent-kds-green" />
+                  <input type="checkbox" checked={reservationsEnabled} onChange={(e) => setReservationsEnabled(e.target.checked)} className="accent-primary" />
                   Accept table reservations for this brand
                 </label>
                 <p className="text-[10px] text-white/35 mt-1">Uncheck for takeaway-only / ghost-kitchen brands. Hides the "Book a table" CTA on the storefront and brand microsite. Staff can still take phone bookings via the admin.</p>
@@ -636,7 +636,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 uploading={uploading}
                 previewBg={palette?.surfaceBg ?? '#17181d'}
               />
-              {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
+              {uploadError && <p className="text-xs text-red-700">{uploadError}</p>}
             </div>
           </Section>
           {palette && (
@@ -653,8 +653,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             </Section>
           )}
           <div className="rounded-xl p-4 text-xs text-white/55"
-            style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)' }}>
-            The brand page itself (blocks above and below the signature design, pop-ups, fonts) is built in the <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}`)}`} className="text-kds-green underline">storefront hub</Link>; footer copy and social links are on its <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-kds-green underline">footer page</Link>. Changes go live after CEO approval.
+            style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px solid rgb(61 31 59 / 0.18)' }}>
+            The brand page itself (blocks above and below the signature design, pop-ups, fonts) is built in the <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}`)}`} className="text-primary-ink underline">storefront hub</Link>; footer copy and social links are on its <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink underline">footer page</Link>. Changes go live after CEO approval.
           </div>
         </div>
       )}
@@ -721,7 +721,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               className="s-input w-full max-w-[180px] font-mono text-sm" />
           </Field>
           {(!strn || !ntn || !invoiceLegalName) && (
-            <div className="rounded-xl p-3 text-xs text-amber-400"
+            <div className="rounded-xl p-3 text-xs text-amber-700"
               style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
               ⚠ FBR submission requires STRN, NTN, and Legal name. Until those are filled, completed orders skip the invoicing worker.
             </div>
@@ -764,14 +764,14 @@ function KitchenAndDelivery({ concept }: { concept: Concept }) {
     <div className="space-y-5">
       <Section title="Kitchen" subtitle="The address and map pin customers see belong to the physical kitchen (Location). A kitchen that runs several brands has one address.">
         {locLoading ? <p className="text-xs text-white/40">Loading…</p> : mine.length === 0 ? (
-          <p className="text-xs text-amber-400">
+          <p className="text-xs text-amber-700">
             No kitchen is linked to this brand yet, so the storefront has no address or pin for it and delivery cannot be quoted.
             Link it on <Link href="/configuration/locations" className="underline">Locations</Link>.
           </p>
         ) : (
           <div className="space-y-2">
             {mine.map((l, i) => (
-              <div key={l.id} className="rounded-xl p-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div key={l.id} className="rounded-xl p-3 text-xs" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="font-bold text-white/85">{l.name}{i === 0 ? ' · primary' : ''}{!l.isActive ? ' · inactive' : ''}</p>
                 <p className="text-white/55 mt-0.5">{[l.address, l.city].filter(Boolean).join(', ') || 'No address set'}</p>
                 <p className="text-white/40 font-mono mt-0.5">
@@ -784,19 +784,19 @@ function KitchenAndDelivery({ concept }: { concept: Concept }) {
             ))}
           </div>
         )}
-        <Link href="/configuration/locations" className="inline-block text-xs font-bold text-kds-green hover:underline">
+        <Link href="/configuration/locations" className="inline-block text-xs font-bold text-primary-ink hover:underline">
           Edit on Locations →
         </Link>
       </Section>
 
       <Section title="Delivery coverage" subtitle="Delivery zones decide the fee, the minimum order and how far this brand delivers. Beyond the last zone, delivery is refused.">
         {zoneLoading ? <p className="text-xs text-white/40">Loading…</p> : myZones.length === 0 ? (
-          <p className="text-xs text-amber-400">No active delivery zone covers this brand — the storefront refuses delivery orders for it (pickup still works).</p>
+          <p className="text-xs text-amber-700">No active delivery zone covers this brand — the storefront refuses delivery orders for it (pickup still works).</p>
         ) : (
           <div className="space-y-1.5">
             {myZones.map((z) => (
               <div key={z.id} className="flex items-center justify-between gap-3 text-xs rounded-lg px-3 py-2"
-                style={{ background: 'rgba(255,255,255,0.03)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.03)' }}>
                 <span className="text-white/80 font-semibold">{z.name}{z.conceptId === null ? ' (all brands)' : ''}</span>
                 <span className="text-white/50 font-mono">
                   {z.radiusKmMin ?? 0}–{z.radiusKmMax ?? '∞'} km · {pkr(z.feeCents)}{z.minOrderCents > 0 ? ` · min ${pkr(z.minOrderCents)}` : ''}
@@ -810,7 +810,7 @@ function KitchenAndDelivery({ concept }: { concept: Concept }) {
             )}
           </div>
         )}
-        <Link href="/configuration/delivery-zones" className="inline-block text-xs font-bold text-kds-green hover:underline">
+        <Link href="/configuration/delivery-zones" className="inline-block text-xs font-bold text-primary-ink hover:underline">
           Edit delivery zones →
         </Link>
       </Section>
@@ -823,7 +823,7 @@ function KitchenAndDelivery({ concept }: { concept: Concept }) {
 function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl p-5 space-y-4"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <div>
         <h3 className="font-black text-white/90">{title}</h3>
         {subtitle && <p className="text-xs text-white/45 mt-0.5">{subtitle}</p>}
@@ -914,7 +914,7 @@ function ArtworkField({
               </button>
             )}
             {dims && (
-              <span className={`text-[10px] font-mono ${tooSmall ? 'text-amber-400' : 'text-white/35'}`}>
+              <span className={`text-[10px] font-mono ${tooSmall ? 'text-amber-700' : 'text-white/35'}`}>
                 {dims.w} × {dims.h}
                 {tooSmall && ` — under ${MIN_LONG_EDGE}px, will look soft`}
               </span>

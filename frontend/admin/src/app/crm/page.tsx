@@ -93,56 +93,56 @@ export default function CRMPage() {
   const selected = customers.find((c) => c.id === selectedId) ?? customerDetail ?? null
 
   const TIER_COLORS: Record<string, string> = {
-    bronze: 'text-orange-400 bg-orange-900/30',
-    silver: 'text-kds-subtext bg-kds-card',
-    gold:   'text-kds-amber bg-kds-amber/20',
+    bronze: 'text-orange-700 bg-orange-900/30',
+    silver: 'text-s-muted bg-s-surface',
+    gold:   'text-s-amber bg-s-amber/20',
   }
 
-  const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
+  const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none w-full'
 
   return (
-    <div className="min-h-screen bg-kds-bg">
-      <header className="border-b border-kds-border px-6 py-4">
+    <div className="min-h-screen bg-s-bg">
+      <header className="border-b border-s-border px-6 py-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-kds-text mt-0.5">Customers / CRM</h1>
-            <p className="text-sm text-kds-subtext">Customer profiles, loyalty, wallet and blocking</p>
+            <h1 className="text-2xl font-black text-s-text mt-0.5">Customers / CRM</h1>
+            <p className="text-sm text-s-muted">Customer profiles, loyalty, wallet and blocking</p>
           </div>
           <div className="flex gap-2">
-            <Link href="/crm/segments" className="rounded-xl border border-kds-border text-kds-text text-sm font-semibold px-3 py-1.5 hover:border-kds-green">Segments</Link>
-            <Link href="/crm/campaigns" className="rounded-xl border border-kds-border text-kds-text text-sm font-semibold px-3 py-1.5 hover:border-kds-green">Campaigns</Link>
-            <Link href="/crm/naughty-list" className="rounded-xl border border-kds-border text-kds-text text-sm font-semibold px-3 py-1.5 hover:border-kds-green">Naughty list</Link>
+            <Link href="/crm/segments" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Segments</Link>
+            <Link href="/crm/campaigns" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Campaigns</Link>
+            <Link href="/crm/naughty-list" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Naughty list</Link>
           </div>
         </div>
       </header>
 
       {/* Block / unblock modal — raises or lifts this company's ban */}
       {banModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-kds-card border border-kds-border rounded-2xl p-6 max-w-sm w-full space-y-4">
-            <p className="font-bold text-kds-text">
+        <div className="fixed inset-0 bg-secondary/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
+            <p className="font-bold text-s-text">
               {banModal.ban ? 'Unblock customer' : 'Block customer'}
             </p>
-            <p className="text-sm text-kds-subtext">{banModal.name}</p>
-            <p className="text-xs text-kds-subtext">
+            <p className="text-sm text-s-muted">{banModal.name}</p>
+            <p className="text-xs text-s-muted">
               {banModal.ban
                 ? `Blocked: ${banModal.ban.reason}. Unblocking lifts this company's ban; the record stays on the naughty list.`
                 : "They won't be able to order or book at this company's brands, and won't receive its campaigns. Other companies are not affected."}
             </p>
             <input value={banReason} onChange={(e) => setBanReason(e.target.value)}
               placeholder={banModal.ban ? 'Why unblock? (required)' : 'Reason (required)'} className={inp} />
-            {banError && <p className="text-xs text-kds-red">{banError}</p>}
+            {banError && <p className="text-xs text-s-red">{banError}</p>}
             <div className="flex gap-3">
               <button
                 onClick={() => toggleBan.mutate({ id: banModal.id, ban: banModal.ban, reason: banReason.trim() })}
                 disabled={toggleBan.isPending || banReason.trim().length < 3}
                 className={`flex-1 rounded-xl text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50 ${
-                  banModal.ban ? 'bg-kds-green text-black' : 'bg-kds-red text-white'
+                  banModal.ban ? 'bg-primary text-primary-on' : 'bg-s-red text-[#fff]'
                 }`}>
                 {toggleBan.isPending ? '…' : banModal.ban ? 'Unblock' : 'Block'}
               </button>
               <button onClick={() => { setBanModal(null); setBanReason(''); setBanError(null) }}
-                className="flex-1 rounded-xl border border-kds-border text-kds-subtext text-sm py-2 hover:border-kds-text">
+                className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>
             </div>
@@ -152,12 +152,12 @@ export default function CRMPage() {
 
       {/* Wallet top-up modal */}
       {walletModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-kds-card border border-kds-border rounded-2xl p-6 max-w-sm w-full space-y-4">
-            <p className="font-bold text-kds-text">Wallet top-up</p>
-            <p className="text-sm text-kds-subtext">{walletModal.name}</p>
+        <div className="fixed inset-0 bg-secondary/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
+            <p className="font-bold text-s-text">Wallet top-up</p>
+            <p className="text-sm text-s-muted">{walletModal.name}</p>
             <div>
-              <label className="text-xs text-kds-subtext mb-1 block">Amount (PKR)</label>
+              <label className="text-xs text-s-muted mb-1 block">Amount (PKR)</label>
               <input type="number" min="1" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)}
                 placeholder="500" className={inp} />
             </div>
@@ -165,11 +165,11 @@ export default function CRMPage() {
               <button
                 onClick={() => topupWallet.mutate({ id: walletModal.id, amount: Math.round(parseFloat(walletAmount) * 100) })}
                 disabled={!walletAmount || topupWallet.isPending}
-                className="flex-1 rounded-xl bg-kds-green text-black text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50">
+                className="flex-1 rounded-xl bg-primary text-primary-on text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50">
                 {topupWallet.isPending ? 'Crediting…' : 'Credit wallet'}
               </button>
               <button onClick={() => { setWalletModal(null); setWalletAmount('') }}
-                className="flex-1 rounded-xl border border-kds-border text-kds-subtext text-sm py-2 hover:border-kds-text">
+                className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>
             </div>
@@ -179,53 +179,53 @@ export default function CRMPage() {
 
       <div className="flex h-[calc(100vh-81px)]">
         {/* ── Left sidebar ── */}
-        <aside className="w-72 shrink-0 border-r border-kds-border flex flex-col">
-          <div className="p-3 border-b border-kds-border">
+        <aside className="w-72 shrink-0 border-r border-s-border flex flex-col">
+          <div className="p-3 border-b border-s-border">
             <input
               value={search}
               onChange={(e) => { setSearch(e.target.value); setSelectedId(null) }}
               placeholder="Search name, phone, email…"
-              className="w-full rounded-xl bg-kds-bg border border-kds-border px-3 py-2 text-kds-text text-sm focus:border-kds-green focus:outline-none" />
+              className="w-full rounded-xl bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none" />
           </div>
 
           <div className="flex-1 overflow-y-auto">
-              {isLoading && <p className="px-4 py-3 text-xs text-kds-subtext">Loading…</p>}
+              {isLoading && <p className="px-4 py-3 text-xs text-s-muted">Loading…</p>}
               {!isLoading && customers.length === 0 && (
-                <p className="px-4 py-6 text-center text-xs text-kds-subtext">No customers found</p>
+                <p className="px-4 py-6 text-center text-xs text-s-muted">No customers found</p>
               )}
               {customers.map((c) => (
                 <button key={c.id} onClick={() => setSelectedId(selectedId === c.id ? null : c.id)}
-                  className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-kds-border/40 transition-colors ${
-                    selectedId === c.id ? 'bg-kds-card border-l-2 border-l-kds-green' : 'hover:bg-kds-card/50'
+                  className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-s-border/40 transition-colors ${
+                    selectedId === c.id ? 'bg-s-surface border-l-2 border-l-primary' : 'hover:bg-s-elevated/50'
                   }`}>
                   <div className={`h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-xs font-black ${
-                    c.activeBan ? 'bg-kds-red/20 text-kds-red' : 'bg-kds-border text-kds-subtext'
+                    c.activeBan ? 'bg-s-red/20 text-s-red' : 'bg-s-border text-s-muted'
                   }`}>
                     {c.activeBan ? '⛔' : (c.name[0]?.toUpperCase() ?? '?')}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 mb-0.5">
-                      <p className="text-sm font-semibold text-kds-text truncate">{c.name}</p>
+                      <p className="text-sm font-semibold text-s-text truncate">{c.name}</p>
                       {/* Brand chip — so the CRM operator knows which
                           company this customer typically belongs to before
                           they pick up the conversation. Hidden when there's
                           no preferred concept yet (one-off / guest checkout). */}
                       {c.preferredConcept && (
                         <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded shrink-0"
-                          style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                          style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
                           {c.preferredConcept.name}
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-kds-subtext truncate">{c.phone ?? c.email ?? 'No contact'}</p>
-                    <p className="text-xs text-kds-subtext">{c._count.orders} orders · {fmtPkrWhole(c.totalSpentCents)}</p>
+                    <p className="text-xs text-s-muted truncate">{c.phone ?? c.email ?? 'No contact'}</p>
+                    <p className="text-xs text-s-muted">{c._count.orders} orders · {fmtPkrWhole(c.totalSpentCents)}</p>
                   </div>
                 </button>
               ))}
           </div>
 
-          <div className="border-t border-kds-border px-4 py-3">
-            <p className="text-xs text-kds-subtext">{customers.length} customer{customers.length !== 1 ? 's' : ''} shown</p>
+          <div className="border-t border-s-border px-4 py-3">
+            <p className="text-xs text-s-muted">{customers.length} customer{customers.length !== 1 ? 's' : ''} shown</p>
           </div>
         </aside>
 
@@ -236,66 +236,66 @@ export default function CRMPage() {
             <div className="p-6">
               <div className="max-w-2xl mx-auto space-y-5">
                 {/* Profile card */}
-                <div className="rounded-xl border border-kds-border bg-kds-card p-5">
+                <div className="rounded-xl border border-s-border bg-s-surface p-5">
                   <div className="flex items-start gap-4">
                     <div className={`h-14 w-14 rounded-full flex items-center justify-center text-2xl font-black shrink-0 ${
-                      customerDetail.activeBan ? 'bg-kds-red/20 text-kds-red' : 'bg-kds-border text-kds-text'
+                      customerDetail.activeBan ? 'bg-s-red/20 text-s-red' : 'bg-s-border text-s-text'
                     }`}>
                       {customerDetail.activeBan ? '⛔' : (customerDetail.name[0]?.toUpperCase() ?? '?')}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-xl font-black text-kds-text">{customerDetail.name}</p>
+                        <p className="text-xl font-black text-s-text">{customerDetail.name}</p>
                         {customerDetail.activeBan && (
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-kds-red/20 text-kds-red">Blocked</span>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-s-red/20 text-s-red">Blocked</span>
                         )}
                       </div>
                       {customerDetail.activeBan && (
-                        <p className="text-xs text-kds-red mt-0.5">Reason: {customerDetail.activeBan.reason}</p>
+                        <p className="text-xs text-s-red mt-0.5">Reason: {customerDetail.activeBan.reason}</p>
                       )}
                       <div className="flex flex-wrap gap-3 mt-1">
-                        {customerDetail.phone && <span className="text-sm text-kds-subtext">📞 {customerDetail.phone}</span>}
-                        {customerDetail.email && <span className="text-sm text-kds-subtext">✉ {customerDetail.email}</span>}
+                        {customerDetail.phone && <span className="text-sm text-s-muted">📞 {customerDetail.phone}</span>}
+                        {customerDetail.email && <span className="text-sm text-s-muted">✉ {customerDetail.email}</span>}
                       </div>
-                      <p className="text-xs text-kds-subtext mt-1">
+                      <p className="text-xs text-s-muted mt-1">
                         Member since {new Date(customerDetail.createdAt).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-kds-border">
+                  <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-s-border">
                     <div className="text-center">
-                      <p className="text-2xl font-black text-kds-text">{customerDetail.orders.length}</p>
-                      <p className="text-xs text-kds-subtext mt-0.5">Orders</p>
+                      <p className="text-2xl font-black text-s-text">{customerDetail.orders.length}</p>
+                      <p className="text-xs text-s-muted mt-0.5">Orders</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-lg font-black text-kds-green">{fmtPkrWhole(customerDetail.totalSpentCents)}</p>
-                      <p className="text-xs text-kds-subtext mt-0.5">Spent</p>
+                      <p className="text-lg font-black text-primary-ink">{fmtPkrWhole(customerDetail.totalSpentCents)}</p>
+                      <p className="text-xs text-s-muted mt-0.5">Spent</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-2xl font-black text-kds-amber">
+                      <p className="text-2xl font-black text-s-amber">
                         {customerDetail.loyaltyAccount?.pointsBalance ?? '—'}
                       </p>
-                      <p className="text-xs text-kds-subtext mt-0.5">Loyalty pts</p>
+                      <p className="text-xs text-s-muted mt-0.5">Loyalty pts</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-lg font-black text-kds-blue">{fmtPkrWhole(customerDetail.walletBalance)}</p>
-                      <p className="text-xs text-kds-subtext mt-0.5">Wallet</p>
+                      <p className="text-lg font-black text-s-blue">{fmtPkrWhole(customerDetail.walletBalance)}</p>
+                      <p className="text-xs text-s-muted mt-0.5">Wallet</p>
                     </div>
                   </div>
 
-                  <div className="flex gap-2 mt-4 pt-4 border-t border-kds-border">
+                  <div className="flex gap-2 mt-4 pt-4 border-t border-s-border">
                     <button
                       onClick={() => setWalletModal({ id: customerDetail.id, name: customerDetail.name })}
-                      className="rounded-lg bg-kds-blue/20 text-kds-blue text-xs font-bold px-3 py-1.5 hover:bg-kds-blue/30 transition-colors">
+                      className="rounded-lg bg-s-blue/20 text-s-blue text-xs font-bold px-3 py-1.5 hover:bg-s-blue/30 transition-colors">
                       + Top up wallet
                     </button>
                     <button
                       onClick={() => setBanModal({ id: customerDetail.id, name: customerDetail.name, ban: customerDetail.activeBan })}
                       className={`rounded-lg text-xs font-bold px-3 py-1.5 transition-colors ${
                         customerDetail.activeBan
-                          ? 'bg-kds-green/20 text-kds-green hover:bg-kds-green/30'
-                          : 'bg-kds-red/20 text-kds-red hover:bg-kds-red/30'
+                          ? 'bg-primary/20 text-primary-ink hover:bg-primary/30'
+                          : 'bg-s-red/20 text-s-red hover:bg-s-red/30'
                       }`}>
                       {customerDetail.activeBan ? 'Unblock' : '⛔ Block'}
                     </button>
@@ -304,12 +304,12 @@ export default function CRMPage() {
 
                 {/* Loyalty */}
                 {customerDetail.loyaltyAccount && (
-                  <div className="rounded-xl border border-kds-border bg-kds-card p-4">
-                    <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-3">Loyalty account</p>
+                  <div className="rounded-xl border border-s-border bg-s-surface p-4">
+                    <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-3">Loyalty account</p>
                     <div className="flex items-center gap-4">
                       <div>
-                        <p className="text-2xl font-black text-kds-amber">{customerDetail.loyaltyAccount.pointsBalance}</p>
-                        <p className="text-xs text-kds-subtext">points</p>
+                        <p className="text-2xl font-black text-s-amber">{customerDetail.loyaltyAccount.pointsBalance}</p>
+                        <p className="text-xs text-s-muted">points</p>
                       </div>
                       {customerDetail.loyaltyAccount.tier && (
                         <span className={`text-sm font-bold px-3 py-1 rounded-full capitalize ${TIER_COLORS[customerDetail.loyaltyAccount.tier] ?? ''}`}>
@@ -319,11 +319,11 @@ export default function CRMPage() {
                     </div>
                     {customerDetail.loyaltyAccount.transactions.length > 0 && (
                       <div className="mt-3 space-y-1">
-                        <p className="text-xs text-kds-subtext mb-1">Recent transactions</p>
+                        <p className="text-xs text-s-muted mb-1">Recent transactions</p>
                         {customerDetail.loyaltyAccount.transactions.slice(0, 5).map((tx) => (
                           <div key={tx.id} className="flex items-center justify-between text-xs">
-                            <span className="text-kds-subtext capitalize">{tx.type}</span>
-                            <span className={tx.pointsDelta >= 0 ? 'text-kds-green font-bold' : 'text-kds-red font-bold'}>
+                            <span className="text-s-muted capitalize">{tx.type}</span>
+                            <span className={tx.pointsDelta >= 0 ? 'text-primary-ink font-bold' : 'text-s-red font-bold'}>
                               {tx.pointsDelta >= 0 ? '+' : ''}{tx.pointsDelta} pts
                             </span>
                           </div>
@@ -334,30 +334,30 @@ export default function CRMPage() {
                 )}
 
                 {/* Order history */}
-                <div className="rounded-xl border border-kds-border overflow-hidden">
-                  <div className="px-4 py-3 bg-kds-card border-b border-kds-border">
-                    <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest">Order history</p>
+                <div className="rounded-xl border border-s-border overflow-hidden">
+                  <div className="px-4 py-3 bg-s-surface border-b border-s-border">
+                    <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Order history</p>
                   </div>
                   {customerDetail.orders.length === 0 ? (
-                    <p className="px-4 py-6 text-center text-sm text-kds-subtext">No orders yet</p>
+                    <p className="px-4 py-6 text-center text-sm text-s-muted">No orders yet</p>
                   ) : (
-                    <div className="divide-y divide-kds-border">
+                    <div className="divide-y divide-s-border">
                       {customerDetail.orders.map((order) => (
-                        <div key={order.id} className="px-4 py-3 hover:bg-kds-card/40 transition-colors">
+                        <div key={order.id} className="px-4 py-3 hover:bg-s-elevated/40 transition-colors">
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <div className="flex items-center gap-2">
-                                <p className="font-mono text-xs text-kds-subtext">#{order.id.slice(-6).toUpperCase()}</p>
-                                <span className="text-xs text-kds-subtext">{order.concept.name}</span>
+                                <p className="font-mono text-xs text-s-muted">#{order.id.slice(-6).toUpperCase()}</p>
+                                <span className="text-xs text-s-muted">{order.concept.name}</span>
                               </div>
-                              <p className="text-xs text-kds-subtext mt-1">
+                              <p className="text-xs text-s-muted mt-1">
                                 {order.items.slice(0, 2).map((i) => `${i.quantity}× ${i.name}`).join(', ')}
                                 {order.items.length > 2 && ` +${order.items.length - 2} more`}
                               </p>
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="text-sm font-bold text-kds-green">{fmtPkrWhole(order.totalCents)}</p>
-                              <p className="text-xs text-kds-subtext mt-0.5">
+                              <p className="text-sm font-bold text-primary-ink">{fmtPkrWhole(order.totalCents)}</p>
+                              <p className="text-xs text-s-muted mt-0.5">
                                 {formatDistanceToNowStrict(new Date(order.placedAt))} ago
                               </p>
                             </div>
@@ -372,10 +372,10 @@ export default function CRMPage() {
           )}
 
           {!selected && (
-            <div className="flex-1 flex items-center justify-center h-full text-kds-subtext">
+            <div className="flex-1 flex items-center justify-center h-full text-s-muted">
               <div className="text-center">
                 <p className="text-5xl mb-3">👥</p>
-                <p className="font-semibold text-kds-text">Select a customer</p>
+                <p className="font-semibold text-s-text">Select a customer</p>
                 <p className="text-sm mt-1">Click any name in the list to view their profile</p>
               </div>
             </div>

@@ -39,11 +39,11 @@ interface Domain {
 }
 
 const STATUS_META: Record<Domain['status'], { label: string; color: string; bg: string }> = {
-  pending:  { label: 'Pending DNS', color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-  verified: { label: 'Verified',    color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
-  active:   { label: '✓ Live',      color: '#00D4B1', bg: 'rgba(0,212,177,0.12)' },
-  failed:   { label: 'DNS not found', color: '#FF4D4F', bg: 'rgba(255,77,79,0.1)' },
-  disabled: { label: 'Disabled',    color: '#94A3B8', bg: 'rgba(255,255,255,0.05)' },
+  pending:  { label: 'Pending DNS', color: '#a15c00', bg: 'rgba(245,158,11,0.1)' },
+  verified: { label: 'Verified',    color: '#3f7d20', bg: 'rgba(34,197,94,0.1)' },
+  active:   { label: '✓ Live',      color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.12)' },
+  failed:   { label: 'DNS not found', color: '#b42318', bg: 'rgba(255,77,79,0.1)' },
+  disabled: { label: 'Disabled',    color: '#7a6178', bg: 'rgb(var(--fg-rgb) / 0.05)' },
 }
 
 export default function DomainsPage() {
@@ -61,7 +61,7 @@ export default function DomainsPage() {
   })
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
           <Link href="/configuration" className="hover:text-white/70">← Configuration Hub</Link>
@@ -76,7 +76,7 @@ export default function DomainsPage() {
             </p>
           </div>
           <button onClick={() => setAdding(true)}
-            className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
             + Add domain
           </button>
         </div>
@@ -86,13 +86,13 @@ export default function DomainsPage() {
 
         {/* Setup flow primer */}
         <div className="rounded-2xl p-5"
-          style={{ background: 'linear-gradient(135deg, rgba(0,212,177,0.06), rgba(99,102,241,0.04))', border: '1px solid rgba(0,212,177,0.18)' }}>
-          <p className="text-[10px] font-black uppercase tracking-[0.28em] text-kds-green/70 mb-2">How it works</p>
+          style={{ background: 'linear-gradient(135deg, rgb(135 197 64 / 0.06), rgb(61 31 59 / 0.04))', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+          <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary-ink/70 mb-2">How it works</p>
           <ol className="text-sm text-white/75 space-y-2 leading-relaxed">
-            <li><span className="font-bold text-kds-green">1.</span> Add your domain below — we generate a verification token.</li>
-            <li><span className="font-bold text-kds-green">2.</span> Copy the two DNS records into your registrar (Cloudflare, Namecheap, GoDaddy).</li>
-            <li><span className="font-bold text-kds-green">3.</span> Click <strong>Verify</strong>. Once we see the TXT record, status flips to <strong>Verified</strong>.</li>
-            <li><span className="font-bold text-kds-green">4.</span> SSL is auto-provisioned at the edge → status flips to <strong>Live</strong>. Customers can now visit your domain and it serves your brand storefront.</li>
+            <li><span className="font-bold text-primary-ink">1.</span> Add your domain below — we generate a verification token.</li>
+            <li><span className="font-bold text-primary-ink">2.</span> Copy the two DNS records into your registrar (Cloudflare, Namecheap, GoDaddy).</li>
+            <li><span className="font-bold text-primary-ink">3.</span> Click <strong>Verify</strong>. Once we see the TXT record, status flips to <strong>Verified</strong>.</li>
+            <li><span className="font-bold text-primary-ink">4.</span> SSL is auto-provisioned at the edge → status flips to <strong>Live</strong>. Customers can now visit your domain and it serves your brand storefront.</li>
           </ol>
         </div>
 
@@ -100,14 +100,14 @@ export default function DomainsPage() {
 
         {!isLoading && domains.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="text-4xl mb-3">🌐</p>
             <p className="font-bold text-white/85">No custom domains yet</p>
             <p className="text-sm text-white/45 mt-1 max-w-sm mx-auto">
               Out of the box, customers reach you at <code className="font-mono text-xs">servd.pk/your-brand</code>. Add a custom domain to get them on your URL.
             </p>
             <button onClick={() => setAdding(true)}
-              className="mt-4 rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black">
+              className="mt-4 rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on">
               Add your first domain →
             </button>
           </div>
@@ -159,7 +159,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
 
   return (
     <div className="rounded-2xl overflow-hidden"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <button onClick={onToggle}
         className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-white/[0.015] transition-colors text-left">
         <div className="min-w-0 flex-1">
@@ -198,7 +198,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
               <button
                 onClick={() => verify.mutate()}
                 disabled={verify.isPending}
-                className="rounded-xl bg-kds-green text-black px-4 py-2 text-xs font-black hover:opacity-90 disabled:opacity-50"
+                className="rounded-xl bg-primary text-primary-on px-4 py-2 text-xs font-black hover:opacity-90 disabled:opacity-50"
               >
                 {verify.isPending ? 'Checking DNS…' : '🔍 Verify now'}
               </button>
@@ -210,7 +210,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
             </div>
             <button
               onClick={() => { if (confirm(`Remove ${domain.hostname}?`)) remove.mutate() }}
-              className="text-xs text-white/40 hover:text-kds-red"
+              className="text-xs text-white/40 hover:text-s-red"
             >
               Remove
             </button>
@@ -232,10 +232,10 @@ function DnsRecordCard({ label, record }: { label: string; record: DnsRecord }) 
   }
   return (
     <div className="rounded-xl p-3 space-y-2"
-      style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.05)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
       <div className="flex items-center justify-between">
         <p className="text-xs font-bold text-white/85">{label}</p>
-        <span className="text-[10px] font-mono uppercase font-black tracking-wider text-amber-400 px-1.5 py-0.5 rounded bg-amber-400/10">
+        <span className="text-[10px] font-mono uppercase font-black tracking-wider text-amber-700 px-1.5 py-0.5 rounded bg-amber-400/10">
           {record.type}
         </span>
       </div>
@@ -244,13 +244,13 @@ function DnsRecordCard({ label, record }: { label: string; record: DnsRecord }) 
         <span className="text-white/40 uppercase font-bold tracking-wider">Host:</span>
         <code className="font-mono text-white/85 truncate">{record.host}</code>
         <button onClick={() => copy(record.host, 'host')}
-          className="text-[10px] font-bold text-kds-green hover:underline">
+          className="text-[10px] font-bold text-primary-ink hover:underline">
           {copied === 'host' ? '✓ Copied' : 'Copy'}
         </button>
         <span className="text-white/40 uppercase font-bold tracking-wider">Value:</span>
         <code className="font-mono text-white/85 truncate">{record.value}</code>
         <button onClick={() => copy(record.value, 'value')}
-          className="text-[10px] font-bold text-kds-green hover:underline">
+          className="text-[10px] font-bold text-primary-ink hover:underline">
           {copied === 'value' ? '✓ Copied' : 'Copy'}
         </button>
         <span className="text-white/40 uppercase font-bold tracking-wider">TTL:</span>
@@ -279,18 +279,18 @@ function ConceptAssignment({ domain, concepts, onChange }: { domain: Domain; con
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_max-content] gap-2">
         <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
           className="rounded-lg px-3 py-2 text-sm"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}>
+          style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
           <option value="">Tenant landing (no specific brand)</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <select value={purpose} onChange={(e) => setPurpose(e.target.value as Domain['purpose'])}
           className="rounded-lg px-3 py-2 text-sm"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}>
+          style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
           <option value="order">Order flow (customers place orders)</option>
           <option value="brand_microsite">Brand microsite (about / story / contact)</option>
         </select>
         <button onClick={() => save.mutate()} disabled={!dirty || save.isPending}
-          className="rounded-lg bg-kds-green text-black px-4 py-2 text-xs font-black hover:opacity-90 disabled:opacity-40">
+          className="rounded-lg bg-primary text-primary-on px-4 py-2 text-xs font-black hover:opacity-90 disabled:opacity-40">
           {save.isPending ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -319,9 +319,9 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">Add custom domain</h2>
@@ -333,7 +333,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
             <input value={hostname} onChange={(e) => setHostname(e.target.value)}
               placeholder="order.mubarakbiryani.pk"
               className="w-full rounded-lg px-3 py-2.5 text-sm font-mono"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }}
+              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.9)' }}
               autoFocus />
             <p className="text-[10px] text-white/35 mt-1">No https:// or trailing slash. Subdomain or apex both work.</p>
           </div>
@@ -342,7 +342,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
             <label className="text-xs text-white/55 block mb-1">Routes to</label>
             <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
               className="w-full rounded-lg px-3 py-2.5 text-sm"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.9)' }}>
               <option value="">No specific brand (tenant landing)</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -358,8 +358,8 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
                 <button key={opt.key} onClick={() => setPurpose(opt.key as 'order' | 'brand_microsite')}
                   className="flex-1 rounded-lg px-3 py-2 text-left transition-colors"
                   style={{
-                    background: purpose === opt.key ? 'rgba(0,212,177,0.08)' : 'rgba(255,255,255,0.03)',
-                    border: purpose === opt.key ? '1px solid rgba(0,212,177,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                    background: purpose === opt.key ? 'rgb(135 197 64 / 0.08)' : 'rgb(var(--fg-rgb) / 0.03)',
+                    border: purpose === opt.key ? '1px solid rgb(135 197 64 / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <p className="text-xs font-bold text-white/85">{opt.label}</p>
                   <p className="text-[10px] text-white/45 mt-0.5">{opt.desc}</p>
@@ -369,7 +369,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
           </div>
 
           {error && (
-            <div className="rounded-lg px-3 py-2 text-xs text-kds-red"
+            <div className="rounded-lg px-3 py-2 text-xs text-s-red"
               style={{ background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.25)' }}>
               {error}
             </div>
@@ -380,7 +380,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
             Cancel
           </button>
           <button onClick={() => create.mutate()} disabled={!hostname.trim() || create.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-40">
+            className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-40">
             {create.isPending ? 'Creating…' : 'Add domain'}
           </button>
         </div>

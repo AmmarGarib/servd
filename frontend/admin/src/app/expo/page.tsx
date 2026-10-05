@@ -148,7 +148,7 @@ export default function ExpoPage() {
   }, {})
 
   return (
-    <div className="min-h-screen" style={{ background: '#0A0B0F' }}>
+    <div className="erp-kitchen-dark min-h-screen" style={{ background: '#0A0B0F' }}>
       {/* Unrouted-items toast — fires when the order was confirmed but some
           items have no station, so the line will never see them. */}
       {unroutedToast.length > 0 && (

@@ -209,16 +209,17 @@ export function HomeClient({ concepts, heroConfig }: Props) {
         </div>
       </section>
 
-      {/* ── EXPLORE STRIP ─ Brand-purple band inviting customers to browse
-            every brand in one place. No delivery / aggregator messaging. */}
-      <section className="reveal-on-scroll" style={{ background: 'linear-gradient(135deg, #4E2A4F 0%, #2D1E2F 100%)', color: 'white', padding: '2.5rem 0', order: 4 }}>
+      {/* ── EXPLORE STRIP ─ servd-green band inviting customers to browse
+            every brand in one place. Purple text on green (never white).
+            No delivery / aggregator messaging. */}
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', padding: '2.5rem 0', order: 4 }}>
         <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
             Every kitchen, one order.<br />
             <span style={{ opacity: 0.7 }}>Explore the brands and check out once.</span>
           </p>
           <MagneticLink href="/browse" style={{
-            background: 'white', color: 'var(--servd-green)',
+            background: 'var(--servd-purple)', color: 'var(--servd-on-purple)',
             fontWeight: 800, fontSize: '0.92rem',
             padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
             display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
@@ -230,7 +231,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
 
       {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
             promise-numbers strip. Single CTA: become a member. ──── */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden', order: 1 }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-purple)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden', order: 1 }}>
         {/* Soft ambient glow so the section reads as 'premium tier' */}
         <div aria-hidden style={{
           position: 'absolute', inset: 0,
@@ -324,8 +325,8 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                   display: 'inline-flex',
                   alignItems: 'center', justifyContent: 'center',
                   width: '2.4rem', height: '2.4rem',
-                  background: p.featured ? 'white' : 'rgba(255,255,255,0.12)',
-                  color: p.featured ? 'var(--servd-green)' : 'white',
+                  background: p.featured ? 'var(--servd-green)' : 'rgba(255,255,255,0.12)',
+                  color: p.featured ? 'var(--servd-on-green)' : 'white',
                   borderRadius: '999px',
                   fontFamily: 'var(--font-display)', fontWeight: 800,
                   fontSize: '0.95rem',
@@ -382,8 +383,8 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
             </a>
             <MagneticLink href="/signup?insider=1" style={{
-              background: 'white',
-              color: 'var(--servd-green)',
+              background: 'var(--servd-green)',
+              color: 'var(--servd-on-green)',
               fontFamily: 'var(--font-display)', fontWeight: 800,
               fontSize: '1.05rem',
               padding: '1rem 1.85rem',

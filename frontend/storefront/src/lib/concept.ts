@@ -68,7 +68,7 @@ export function brandAccent(slug: string, fallback: string | null | undefined): 
 // and any full-bleed themed band). Each brand gets its OWN background + text
 // colours instead of a generic black slab, so the chrome reads as that brand:
 //   simmer → forest green + bone     stackd → red plum + cream
-//   flipd  → Flipd Blue + mustard    servd → deep purple + white
+//   flipd  → Flipd Blue + mustard    servd → purple + bone
 // The brand accent (brandAccent) still layers on top as the signal colour.
 export interface BrandSurface {
   bg: string      // section background
@@ -83,7 +83,7 @@ const BRAND_SURFACE: Record<string, BrandSurface> = {
   // flipd's dark band is Flipd Blue with mustard type — the inverse of the
   // page, which is mustard with blue type. Both halves of the brand book.
   flipd:  { bg: '#294375', text: '#FED561', muted: 'rgba(254,213,97,0.72)',  border: 'rgba(254,213,97,0.22)'  },
-  servd:  { bg: '#4E2A4F', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
+  servd:  { bg: '#3d1f3b', text: '#f3e7cd', muted: 'rgba(243,231,205,0.68)', border: 'rgba(243,231,205,0.14)' },
 }
 
 /** The dark-section surface palette for a brand (falls back to near-black). */

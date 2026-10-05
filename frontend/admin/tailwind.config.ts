@@ -5,38 +5,44 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Tailwind's `white` is the area's foreground (globals.css --fg-rgb):
+        // ink on bone, bone in the purple sidebar, white on kitchen screens.
+        white: 'rgb(var(--fg-rgb) / <alpha-value>)',
+        primary: { DEFAULT: '#87c540', hover: '#76b032', ink: '#4f7a1c', on: '#3d1f3b' },
+        secondary: { DEFAULT: '#3d1f3b', on: '#f3e7cd' },
+        bone: '#f3e7cd',
         // ─── 2030 Ops Design System ───────────────────────────────────────
         s: {
-          bg:           '#0C0D10',   // deepest surface
+          bg:           '#f3e7cd',   // deepest surface
           // `bg-s-bg-soft` is used in 83 places (card headers, list-row hover)
           // but was never defined here, so Tailwind emitted no rule and all 83
           // rendered with no background — most visibly, list rows had no hover
           // feedback at all. Set one step up from the .s-card base (#13151A),
           // which is what "soft" meant: same value as `elevated`.
-          'bg-soft':    '#1A1D24',   // card headers, row hover
-          surface:      '#13151A',   // card base
-          elevated:     '#1A1D24',   // raised panels
-          overlay:      '#20242E',   // dropdowns, modals
-          border:       '#222530',   // default border
-          'border-strong': '#2E3340',
-          text:         '#E8EAF0',   // primary text
-          muted:        '#6B7280',   // secondary text
-          dim:          '#3D4452',   // disabled / placeholder
-          teal:         '#00D4B1',   // primary action
-          'teal-dim':   '#004D42',   // teal bg tint
-          indigo:       '#6366F1',   // secondary accent
-          'indigo-dim': '#1E1F4E',
-          amber:        '#F59E0B',
-          'amber-dim':  '#3D2800',
-          red:          '#FF4D4F',
-          'red-dim':    '#3D0D0D',
-          blue:         '#4F8EF7',
-          'blue-dim':   '#0D1F3D',
-          green:        '#22C55E',
-          'green-dim':  '#0A2E18',
-          purple:       '#A855F7',
-          'purple-dim': '#220D3D',
-          pink:         '#EC4899',
+          'bg-soft':    '#ede0c2',   // card headers, row hover
+          surface:      '#faf4e6',   // card base
+          elevated:     '#ede0c2',   // raised panels
+          overlay:      '#fffaf0',   // dropdowns, modals
+          border:       '#e2d3b3',   // default border
+          'border-strong': '#cdbb95',
+          text:         '#3d1f3b',   // primary text
+          muted:        '#7a6178',   // secondary text
+          dim:          '#a8949f',   // disabled / placeholder
+          teal:         '#87c540',   // primary action
+          'teal-dim':   '#e3efcf',   // teal bg tint
+          indigo:       '#3d1f3b',   // secondary accent
+          'indigo-dim': '#e6dbe3',
+          amber:        '#a15c00',
+          'amber-dim':  '#f6e2bf',
+          red:          '#b42318',
+          'red-dim':    '#f5d6d0',
+          blue:         '#1d4ed8',
+          'blue-dim':   '#dbe6fb',
+          green:        '#3f7d20',
+          'green-dim':  '#dcebcf',
+          purple:       '#6b2f68',
+          'purple-dim': '#eadcea',
+          pink:         '#be185d',
         },
         // ─── KDS Dark (kitchen screens — keep unchanged) ──────────────────
         kds: {
@@ -55,7 +61,7 @@ const config: Config = {
         },
         // Source badge colors
         source: {
-          servd:     '#6366F1',
+          servd:     '#3d1f3b',
           pos:       '#22C55E',
           cart:      '#F59E0B',
           manual:    '#8B5CF6',
@@ -66,17 +72,17 @@ const config: Config = {
         mono: ['JetBrains Mono', 'monospace'],
       },
       backgroundImage: {
-        'gradient-brand':   'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
-        'gradient-surface': 'linear-gradient(180deg, #1A1D24 0%, #13151A 100%)',
-        'gradient-teal':    'linear-gradient(135deg, #00D4B1 0%, #00897B 100%)',
+        'gradient-brand':   'linear-gradient(135deg, #87c540 0%, #87c540 100%)',
+        'gradient-surface': 'linear-gradient(180deg, #faf4e6 0%, #f3e7cd 100%)',
+        'gradient-teal':    'linear-gradient(135deg, #87c540 0%, #76b032 100%)',
         'gradient-amber':   'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
       },
       boxShadow: {
-        'glow-teal':   '0 0 20px rgba(0,212,177,0.15)',
-        'glow-indigo': '0 0 20px rgba(99,102,241,0.15)',
-        'card':        '0 1px 3px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04)',
-        'card-hover':  '0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,212,177,0.2)',
-        'modal':       '0 24px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06)',
+        'glow-teal':   '0 0 20px rgba(135,197,64,0.18)',
+        'glow-indigo': '0 0 20px rgba(61,31,59,0.12)',
+        'card':        '0 1px 3px rgba(61,31,59,0.08), 0 0 0 1px rgba(61,31,59,0.06)',
+        'card-hover':  '0 4px 16px rgba(61,31,59,0.12), 0 0 0 1px rgba(135,197,64,0.35)',
+        'modal':       '0 24px 48px rgba(61,31,59,0.22), 0 0 0 1px rgba(61,31,59,0.08)',
       },
       animation: {
         'ticket-pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',

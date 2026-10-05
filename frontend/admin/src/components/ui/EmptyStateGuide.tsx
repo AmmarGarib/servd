@@ -38,22 +38,22 @@ export function EmptyStateGuide({
     <div className={isPage ? 'min-h-[60vh] flex items-center justify-center p-8' : 'p-6'}>
       <div className={`w-full ${isPage ? 'max-w-xl' : 'max-w-md'} text-center`}>
         <span className="text-5xl">{icon}</span>
-        <h2 className="mt-3 text-xl font-black text-kds-text">{title}</h2>
-        <p className="mt-2 text-sm text-kds-subtext leading-relaxed">{description}</p>
+        <h2 className="mt-3 text-xl font-black text-s-text">{title}</h2>
+        <p className="mt-2 text-sm text-s-muted leading-relaxed">{description}</p>
 
         {whyItMatters && (
           <div
-            className="mt-5 rounded-xl px-4 py-3 text-left text-xs text-kds-text/80"
-            style={{ background: 'rgba(0,212,177,0.06)', border: '1px solid rgba(0,212,177,0.18)' }}
+            className="mt-5 rounded-xl px-4 py-3 text-left text-xs text-s-text/80"
+            style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.18)' }}
           >
-            <span className="font-bold text-kds-green">Why it matters: </span>
+            <span className="font-bold text-primary-ink">Why it matters: </span>
             {whyItMatters}
           </div>
         )}
 
         {samples && samples.length > 0 && (
           <div className="mt-5">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-kds-subtext mb-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-s-muted mb-2">
               Examples to get you going
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -61,11 +61,11 @@ export function EmptyStateGuide({
                 <div
                   key={s.title}
                   className="rounded-xl p-3 text-left"
-                  style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
                 >
                   <p className="text-2xl mb-1">{s.emoji}</p>
-                  <p className="text-sm font-bold text-kds-text">{s.title}</p>
-                  <p className="text-xs text-kds-subtext mt-0.5 leading-tight">{s.hint}</p>
+                  <p className="text-sm font-bold text-s-text">{s.title}</p>
+                  <p className="text-xs text-s-muted mt-0.5 leading-tight">{s.hint}</p>
                 </div>
               ))}
             </div>
@@ -77,14 +77,14 @@ export function EmptyStateGuide({
             primaryAction.href ? (
               <Link
                 href={primaryAction.href}
-                className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90"
+                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90"
               >
                 {primaryAction.label} →
               </Link>
             ) : (
               <button
                 onClick={primaryAction.onClick}
-                className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90"
+                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90"
               >
                 {primaryAction.label} →
               </button>
@@ -93,7 +93,7 @@ export function EmptyStateGuide({
           {secondaryAction && (
             <Link
               href={secondaryAction.href}
-              className="rounded-xl border border-kds-border px-4 py-2.5 text-sm text-kds-subtext hover:text-kds-text"
+              className="rounded-xl border border-s-border px-4 py-2.5 text-sm text-s-muted hover:text-s-text"
             >
               {secondaryAction.label}
             </Link>

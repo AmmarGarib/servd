@@ -89,8 +89,8 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
     <section
       className="relative rounded-2xl p-5 overflow-hidden"
       style={{
-        background: 'linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(0,212,177,0.05) 100%)',
-        border: '1px solid rgba(99,102,241,0.18)',
+        background: 'linear-gradient(135deg, rgb(61 31 59 / 0.08) 0%, rgb(135 197 64 / 0.05) 100%)',
+        border: '1px solid rgb(61 31 59 / 0.18)',
         animationName: 'ops-revealUp', animationDuration: '0.5s', animationFillMode: 'both',
       }}
     >
@@ -99,7 +99,7 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
         className="absolute pointer-events-none"
         style={{
           top: '-30px', right: '-30px', width: '180px', height: '180px',
-          background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgb(61 31 59 / 0.12) 0%, transparent 70%)',
           animation: 'ops-glowPulse 9s ease-in-out infinite',
         }}
       />
@@ -123,10 +123,10 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
         </div>
 
         {/* Progress bar */}
-        <div className="h-1.5 rounded-full mb-5 overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-1.5 rounded-full mb-5 overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }}>
           <div
             className="h-full transition-all duration-500"
-            style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #00D4B1, #6366F1)' }}
+            style={{ width: `${pct}%`, background: 'var(--erp-primary)' }}
           />
         </div>
 
@@ -140,13 +140,13 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
                 item.done ? 'opacity-65 hover:opacity-100' : ''
               }`}
               style={{
-                background: item.done ? 'rgba(0,212,177,0.05)' : 'rgba(255,255,255,0.025)',
-                border: `1px solid ${item.done ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.06)'}`,
+                background: item.done ? 'rgb(135 197 64 / 0.05)' : 'rgb(var(--fg-rgb) / 0.025)',
+                border: `1px solid ${item.done ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
               }}
             >
               <span
                 className={`shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[11px] font-black ${
-                  item.done ? 'bg-kds-green text-black' : 'border border-white/20 text-white/30'
+                  item.done ? 'bg-primary text-primary-on' : 'border border-white/20 text-white/30'
                 }`}
               >
                 {item.done ? '✓' : ''}
@@ -158,7 +158,7 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
                 <p className="text-[11px] text-white/45 mt-0.5 leading-tight">{item.desc}</p>
               </div>
               {!item.done && (
-                <span className="shrink-0 text-[11px] font-bold text-kds-green">→</span>
+                <span className="shrink-0 text-[11px] font-bold text-primary-ink">→</span>
               )}
             </Link>
           ))}

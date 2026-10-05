@@ -58,7 +58,7 @@ export default function HelpPage() {
   const waSupportUrl = `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent('Hi servd team, I need help with: ')}`
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       {/* Header */}
       <header className="px-7 py-7 border-b border-white/[0.05]">
         <div className="max-w-3xl">
@@ -89,7 +89,7 @@ export default function HelpPage() {
           <a
             href="mailto:support@servd.pk"
             className="rounded-2xl p-4 transition-all hover:-translate-y-0.5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
           >
             <p className="text-2xl mb-2">✉</p>
             <p className="font-bold text-sm text-white/85">Email us</p>
@@ -100,7 +100,7 @@ export default function HelpPage() {
           <Link
             href="/configuration"
             className="rounded-2xl p-4 transition-all hover:-translate-y-0.5"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
           >
             <p className="text-2xl mb-2">🎛</p>
             <p className="font-bold text-sm text-white/85">Configuration Hub</p>
@@ -117,9 +117,9 @@ export default function HelpPage() {
             placeholder="Search FAQ — try 'voice', 'tax', 'KDS', 'supplier'…"
             className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.85)',
+              background: 'rgb(var(--fg-rgb) / 0.03)',
+              border: '1px solid rgb(var(--fg-rgb) / 0.08)',
+              color: 'rgb(var(--fg-rgb) / 0.85)',
             }}
           />
         </div>
@@ -127,7 +127,7 @@ export default function HelpPage() {
         {/* FAQ list */}
         <div className="space-y-2">
           {filtered.length === 0 && (
-            <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="rounded-xl p-6 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <p className="text-sm text-white/45">No matching FAQ. Try WhatsApp — we&apos;ll add it to the list once we answer.</p>
             </div>
           )}
@@ -135,7 +135,7 @@ export default function HelpPage() {
             <details
               key={i}
               className="rounded-xl group"
-              style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
             >
               <summary className="cursor-pointer px-4 py-3 list-none flex items-center justify-between gap-3 hover:bg-white/[0.02] rounded-xl">
                 <span className="text-sm font-semibold text-white/85 flex-1">{f.q}</span>
@@ -149,7 +149,7 @@ export default function HelpPage() {
         </div>
 
         {/* Support hours */}
-        <div className="rounded-2xl p-4 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className="rounded-2xl p-4 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <p className="text-xs text-white/40">
             Support hours: Mon–Sat, 10:00–22:00 PKT · Sun on-call only
           </p>

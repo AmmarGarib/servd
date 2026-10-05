@@ -18,7 +18,7 @@ export default function FormatsPage() {
               <p className="text-sm font-bold text-white/85">{s.title}</p>
               <span className="text-[10px] font-black text-white/30">§{s.specNo}</span>
             </div>
-            <p className="text-[11px] mt-0.5" style={{ color: s.format!.isDefault ? 'rgba(255,255,255,0.4)' : '#00D4B1' }}>
+            <p className="text-[11px] mt-0.5" style={{ color: s.format!.isDefault ? 'rgb(var(--fg-rgb) / 0.4)' : 'var(--erp-primary-ink)' }}>
               {s.format!.isDefault ? 'Default format' : `HR format v${s.format!.version}`} · {s.format!.fields.length} fields
             </p>
           </Link>

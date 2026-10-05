@@ -39,7 +39,7 @@ export default function ShiftPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-kds-bg p-6">
+    <div className="erp-kitchen-dark flex min-h-screen flex-col items-center justify-center bg-kds-bg p-6">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-black text-kds-text">Shift Management</h1>

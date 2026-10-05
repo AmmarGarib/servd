@@ -169,7 +169,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
               return (
                 <li key={w.key} className="flex items-baseline gap-2 text-xs">
                   <span className="w-4 text-white/35">{i + 1}.</span>
-                  <span className="font-bold" style={{ color: a ? (a.decision === 'approved' ? '#34d399' : '#f87171') : current ? '#f59e0b' : 'rgba(255,255,255,0.4)' }}>
+                  <span className="font-bold" style={{ color: a ? (a.decision === 'approved' ? '#3f7d20' : '#b42318') : current ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.4)' }}>
                     {w.label}
                   </span>
                   <span className="text-white/40">({ROLE_LABEL[w.role]})</span>
@@ -185,14 +185,14 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       {record.section === 'overtime' && record.status === 'approved' && (
         <p className="text-sm text-white/70">OT amount: <strong className="text-white/90">{rs(record.amountCents)}</strong> — goes into the {day(record.startDate).split(' ').slice(1).join(' ')} payroll.</p>
       )}
-      {record.appliedAt && <p className="text-xs text-kds-green">Applied to the employee record on {day(record.appliedAt)}.</p>}
+      {record.appliedAt && <p className="text-xs text-primary-ink">Applied to the employee record on {day(record.appliedAt)}.</p>}
       {record.status === 'approved' && !record.appliedAt && ['promotion', 'transfer', 'salary_revision', 'probation_review'].includes(record.section) && record.effectiveDate && (
-        <p className="text-xs text-amber-400">Takes effect on {day(record.effectiveDate)}.</p>
+        <p className="text-xs text-amber-700">Takes effect on {day(record.effectiveDate)}.</p>
       )}
 
       {pending && (
         <div className="rounded-xl p-3 space-y-2" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
-          <p className="text-xs font-bold text-amber-300">Waiting on: {step.label}</p>
+          <p className="text-xs font-bold text-amber-700">Waiting on: {step.label}</p>
           {record.section === 'overtime' && (
             <label className="block text-xs text-white/60">Approved hours
               <input type="number" step="0.25" min={0} className={`${inp} mt-1`} value={hours} onChange={(e) => setHours(e.target.value)} />
@@ -201,14 +201,14 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
           <input className={inp} placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
           <div className="flex gap-2">
             <button className={btn} disabled={decide.isPending} onClick={() => decide.mutate('approved')}>Approve</button>
-            <button className="rounded-lg px-4 py-2 text-sm font-black bg-red-500/80 text-white disabled:opacity-50" disabled={decide.isPending} onClick={() => decide.mutate('rejected')}>Reject</button>
+            <button className="rounded-lg px-4 py-2 text-sm font-black bg-s-red text-[#fff] disabled:opacity-50" disabled={decide.isPending} onClick={() => decide.mutate('rejected')}>Reject</button>
           </div>
           <p className="text-[10px] text-white/35">Only the person this step belongs to can act on it; anyone else gets a message saying who.</p>
         </div>
       )}
 
-      {err && <p className="text-xs text-red-400">{err}</p>}
-      {msg && <p className="text-xs text-kds-green">{msg}</p>}
+      {err && <p className="text-xs text-red-700">{err}</p>}
+      {msg && <p className="text-xs text-primary-ink">{msg}</p>}
 
       <div className="flex flex-wrap gap-2 pt-2 border-t border-white/[0.06]">
         {editable && !editing && <button className={btnGhost} onClick={() => { setDraft(record.data); setEditing(true) }}>Edit</button>}
@@ -223,7 +223,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
           <button key={k} className={btnGhost} disabled={letter.isPending} onClick={() => letter.mutate(k)}>Print {human(k).toLowerCase()}</button>
         ))}
         {cancellable ? (
-          <button className="ml-auto text-xs text-white/40 hover:text-red-400" disabled={cancel.isPending}
+          <button className="ml-auto text-xs text-white/40 hover:text-red-700" disabled={cancel.isPending}
             onClick={() => { if (confirm('Cancel this record?')) cancel.mutate() }}>Cancel record</button>
         ) : null}
       </div>

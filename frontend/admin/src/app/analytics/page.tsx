@@ -109,17 +109,17 @@ export default function AnalyticsPage() {
       {/* Header + filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-neutral-900">Storefront Analytics</h1>
-          <p className="text-sm text-neutral-500 mt-0.5">How customers browse, search, and convert</p>
+          <h1 className="text-xl font-semibold text-s-text">Storefront Analytics</h1>
+          <p className="text-sm text-s-muted mt-0.5">How customers browse, search, and convert</p>
         </div>
         <div className="flex items-center gap-2">
           {/* Date range */}
-          <div className="flex rounded-lg border border-neutral-200 overflow-hidden text-sm">
+          <div className="flex rounded-lg border border-s-border overflow-hidden text-sm">
             {DATE_PRESETS.map((p) => (
               <button
                 key={p.days}
                 onClick={() => setDays(p.days)}
-                className={`px-3 py-1.5 ${days === p.days ? 'bg-green-600 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}
+                className={`px-3 py-1.5 ${days === p.days ? 'bg-primary text-primary-on' : 'bg-s-surface text-s-muted hover:bg-s-elevated'}`}
               >
                 {p.label}
               </button>
@@ -129,7 +129,7 @@ export default function AnalyticsPage() {
           <select
             value={conceptId}
             onChange={(e) => setConceptId(e.target.value)}
-            className="border border-neutral-200 rounded-lg px-3 py-1.5 text-sm bg-white text-neutral-700"
+            className="border border-s-border rounded-lg px-3 py-1.5 text-sm bg-s-surface text-s-text"
           >
             <option value="">All brands</option>
             {concepts.map((c) => (
@@ -148,12 +148,12 @@ export default function AnalyticsPage() {
             { label: 'Orders placed', value: overview.ordersPlaced.toLocaleString(), icon: '✅' },
             { label: 'Checkout conversion', value: `${overview.checkoutConversion}%`, icon: '📈' },
           ].map((kpi) => (
-            <div key={kpi.label} className="bg-white rounded-xl border border-neutral-200 p-4">
-              <div className="flex items-center gap-2 text-neutral-500 text-sm mb-1">
+            <div key={kpi.label} className="bg-s-surface rounded-xl border border-s-border p-4">
+              <div className="flex items-center gap-2 text-s-muted text-sm mb-1">
                 <span>{kpi.icon}</span>
                 <span>{kpi.label}</span>
               </div>
-              <div className="text-2xl font-bold text-neutral-900">{kpi.value}</div>
+              <div className="text-2xl font-bold text-s-text">{kpi.value}</div>
             </div>
           ))}
         </div>
@@ -161,25 +161,25 @@ export default function AnalyticsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Conversion funnel */}
-        <div className="bg-white rounded-xl border border-neutral-200 p-5">
-          <h2 className="font-semibold text-neutral-900 mb-4">Conversion Funnel</h2>
+        <div className="bg-s-surface rounded-xl border border-s-border p-5">
+          <h2 className="font-semibold text-s-text mb-4">Conversion Funnel</h2>
           {funnel ? (
             <div className="space-y-3">
               {funnel.steps.map((step) => (
                 <div key={step.event}>
                   <div className="flex justify-between text-sm mb-1">
-                    <span className="text-neutral-700">{EVENT_LABELS[step.event] ?? step.event}</span>
-                    <span className="font-medium text-neutral-900 tabular-nums">{step.count.toLocaleString()}</span>
+                    <span className="text-s-text">{EVENT_LABELS[step.event] ?? step.event}</span>
+                    <span className="font-medium text-s-text tabular-nums">{step.count.toLocaleString()}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-neutral-100 rounded-full h-2 overflow-hidden">
+                    <div className="flex-1 bg-s-elevated rounded-full h-2 overflow-hidden">
                       <div
-                        className="h-full bg-green-500 rounded-full transition-all"
+                        className="h-full bg-primary rounded-full transition-all"
                         style={{ width: maxFunnelCount > 0 ? `${(step.count / maxFunnelCount) * 100}%` : '0%' }}
                       />
                     </div>
                     {step.conversionRate !== null && (
-                      <span className="text-xs text-neutral-400 w-10 text-right tabular-nums">
+                      <span className="text-xs text-s-muted w-10 text-right tabular-nums">
                         {step.conversionRate}%
                       </span>
                     )}
@@ -190,28 +190,28 @@ export default function AnalyticsPage() {
           ) : (
             <div className="space-y-3">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-8 rounded bg-neutral-100 animate-pulse" />
+                <div key={i} className="h-8 rounded bg-s-elevated animate-pulse" />
               ))}
             </div>
           )}
         </div>
 
         {/* Event breakdown */}
-        <div className="bg-white rounded-xl border border-neutral-200 p-5">
-          <h2 className="font-semibold text-neutral-900 mb-4">Event Breakdown</h2>
+        <div className="bg-s-surface rounded-xl border border-s-border p-5">
+          <h2 className="font-semibold text-s-text mb-4">Event Breakdown</h2>
           {overview ? (
             <div className="space-y-2">
               {overview.topEvents.map((e) => (
-                <div key={e.event} className="flex items-center justify-between py-1.5 border-b border-neutral-50">
-                  <span className="text-sm text-neutral-700">{EVENT_LABELS[e.event] ?? e.event}</span>
-                  <span className="text-sm font-medium text-neutral-900 tabular-nums">{e.count.toLocaleString()}</span>
+                <div key={e.event} className="flex items-center justify-between py-1.5 border-b border-s-border">
+                  <span className="text-sm text-s-text">{EVENT_LABELS[e.event] ?? e.event}</span>
+                  <span className="text-sm font-medium text-s-text tabular-nums">{e.count.toLocaleString()}</span>
                 </div>
               ))}
             </div>
           ) : (
             <div className="space-y-2">
               {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="h-8 rounded bg-neutral-100 animate-pulse" />
+                <div key={i} className="h-8 rounded bg-s-elevated animate-pulse" />
               ))}
             </div>
           )}
@@ -220,26 +220,26 @@ export default function AnalyticsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Top items by views */}
-        <div className="bg-white rounded-xl border border-neutral-200 p-5">
-          <h2 className="font-semibold text-neutral-900 mb-4">Menu Item Performance</h2>
+        <div className="bg-s-surface rounded-xl border border-s-border p-5">
+          <h2 className="font-semibold text-s-text mb-4">Menu Item Performance</h2>
           {items.length > 0 ? (
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-xs text-neutral-500 uppercase tracking-wide border-b border-neutral-100">
+                <tr className="text-xs text-s-muted uppercase tracking-wide border-b border-s-border">
                   <th className="text-left pb-2 font-medium">Item</th>
                   <th className="text-right pb-2 font-medium">Views</th>
                   <th className="text-right pb-2 font-medium">Adds</th>
                   <th className="text-right pb-2 font-medium">Rate</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-50">
+              <tbody className="divide-y divide-s-border">
                 {items.map((item) => (
                   <tr key={item.itemId ?? item.name}>
-                    <td className="py-2 text-neutral-700 truncate max-w-[160px]">{item.name || '(unnamed)'}</td>
-                    <td className="py-2 text-right text-neutral-600 tabular-nums">{item.views.toLocaleString()}</td>
-                    <td className="py-2 text-right text-neutral-600 tabular-nums">{item.adds.toLocaleString()}</td>
-                    <td className={`py-2 text-right font-medium tabular-nums ${item.addRate >= 40 ? 'text-green-600' : item.addRate >= 20 ? 'text-amber-600' : 'text-red-500'}`}>
+                    <td className="py-2 text-s-text truncate max-w-[160px]">{item.name || '(unnamed)'}</td>
+                    <td className="py-2 text-right text-s-muted tabular-nums">{item.views.toLocaleString()}</td>
+                    <td className="py-2 text-right text-s-muted tabular-nums">{item.adds.toLocaleString()}</td>
+                    <td className={`py-2 text-right font-medium tabular-nums ${item.addRate >= 40 ? 'text-primary-ink' : item.addRate >= 20 ? 'text-amber-600' : 'text-red-500'}`}>
                       {item.addRate}%
                     </td>
                   </tr>
@@ -248,29 +248,29 @@ export default function AnalyticsPage() {
             </table>
             </div>
           ) : (
-            <p className="text-sm text-neutral-400 text-center py-8">No item view data yet</p>
+            <p className="text-sm text-s-muted text-center py-8">No item view data yet</p>
           )}
         </div>
 
         {/* Top searches */}
-        <div className="bg-white rounded-xl border border-neutral-200 p-5">
-          <h2 className="font-semibold text-neutral-900 mb-4">Search Queries</h2>
+        <div className="bg-s-surface rounded-xl border border-s-border p-5">
+          <h2 className="font-semibold text-s-text mb-4">Search Queries</h2>
           {searches.length > 0 ? (
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-xs text-neutral-500 uppercase tracking-wide border-b border-neutral-100">
+                <tr className="text-xs text-s-muted uppercase tracking-wide border-b border-s-border">
                   <th className="text-left pb-2 font-medium">Query</th>
                   <th className="text-right pb-2 font-medium">Searches</th>
                   <th className="text-right pb-2 font-medium">No results</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-50">
+              <tbody className="divide-y divide-s-border">
                 {searches.map((s) => (
                   <tr key={s.query}>
-                    <td className="py-2 text-neutral-700">{s.query}</td>
-                    <td className="py-2 text-right text-neutral-600 tabular-nums">{s.count.toLocaleString()}</td>
-                    <td className={`py-2 text-right tabular-nums ${s.noResultRate > 50 ? 'text-red-500 font-medium' : 'text-neutral-500'}`}>
+                    <td className="py-2 text-s-text">{s.query}</td>
+                    <td className="py-2 text-right text-s-muted tabular-nums">{s.count.toLocaleString()}</td>
+                    <td className={`py-2 text-right tabular-nums ${s.noResultRate > 50 ? 'text-red-500 font-medium' : 'text-s-muted'}`}>
                       {s.noResults > 0 ? `${s.noResultRate}%` : '—'}
                     </td>
                   </tr>
@@ -279,7 +279,7 @@ export default function AnalyticsPage() {
             </table>
             </div>
           ) : (
-            <p className="text-sm text-neutral-400 text-center py-8">No search data yet</p>
+            <p className="text-sm text-s-muted text-center py-8">No search data yet</p>
           )}
         </div>
       </div>

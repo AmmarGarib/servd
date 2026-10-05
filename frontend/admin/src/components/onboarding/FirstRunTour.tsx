@@ -77,14 +77,14 @@ export function FirstRunTour() {
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(6px)' }}
+      style={{ background: 'rgb(61 31 59 / 0.55)', backdropFilter: 'blur(6px)' }}
       onClick={dismiss}
     >
       <div
         className="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl"
         style={{
-          background: 'linear-gradient(180deg, #14161e 0%, #0d0f15 100%)',
-          border: '1px solid rgba(0,212,177,0.22)',
+          background: 'linear-gradient(180deg, var(--surface) 0%, var(--surface) 100%)',
+          border: '1px solid rgb(135 197 64 / 0.22)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -92,7 +92,7 @@ export function FirstRunTour() {
         <div
           className="absolute pointer-events-none inset-0"
           style={{
-            background: 'radial-gradient(ellipse at top, rgba(0,212,177,0.12) 0%, transparent 60%)',
+            background: 'radial-gradient(ellipse at top, rgb(135 197 64 / 0.12) 0%, transparent 60%)',
           }}
         />
 
@@ -103,7 +103,7 @@ export function FirstRunTour() {
               <div
                 key={i}
                 className={`h-1.5 rounded-full transition-all ${
-                  i === step ? 'w-8 bg-[#00D4B1]' : i < step ? 'w-4 bg-[#00D4B1]/40' : 'w-4 bg-white/10'
+                  i === step ? 'w-8 bg-primary' : i < step ? 'w-4 bg-primary/40' : 'w-4 bg-white/10'
                 }`}
               />
             ))}
@@ -152,14 +152,14 @@ export function FirstRunTour() {
             {isLast ? (
               <button
                 onClick={dismiss}
-                className="rounded-xl bg-kds-green px-5 py-2.5 text-xs font-black text-black hover:opacity-90"
+                className="rounded-xl bg-primary px-5 py-2.5 text-xs font-black text-primary-on hover:opacity-90"
               >
                 Let's go →
               </button>
             ) : (
               <button
                 onClick={() => setStep(step + 1)}
-                className="rounded-xl bg-kds-green px-5 py-2.5 text-xs font-black text-black hover:opacity-90"
+                className="rounded-xl bg-primary px-5 py-2.5 text-xs font-black text-primary-on hover:opacity-90"
               >
                 Next →
               </button>

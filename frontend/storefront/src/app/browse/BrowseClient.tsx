@@ -253,7 +253,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
           position: 'absolute',
           top: '0.85rem',
           right: '0.85rem',
-          background: status.open ? 'rgba(58,14,105,0.95)' : 'rgba(0,0,0,0.7)',
+          background: status.open ? 'rgba(135,197,64,0.95)' : 'rgba(0,0,0,0.7)',
           color: status.open ? 'var(--servd-black)' : 'white',
           fontSize: '0.7rem',
           fontWeight: 700,
@@ -274,7 +274,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
           <span style={{
             display: 'inline-flex',
             alignItems: 'center',
-            background: 'var(--servd-green)', color: 'white',
+            background: 'var(--servd-green)', color: 'var(--servd-on-green)',
             fontWeight: 800,
             fontSize: '0.85rem',
             padding: '0.45rem 1rem',

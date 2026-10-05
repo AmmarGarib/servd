@@ -21,7 +21,7 @@ interface SectionDiscount {
 interface Concept { id: string; name: string }
 interface Category { id: string; name: string; conceptId: string }
 
-const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
+const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none w-full'
 
 export default function DiscountsPage() {
   const qc = useQueryClient()
@@ -117,94 +117,94 @@ export default function DiscountsPage() {
       onClick={() => toggleType(field, val)}
       className={`rounded-lg border px-3 py-1 text-xs font-semibold transition-colors ${
         form[field].includes(val)
-          ? 'border-kds-green bg-kds-green/20 text-kds-green'
-          : 'border-kds-border text-kds-subtext hover:border-kds-text'
+          ? 'border-primary bg-primary/20 text-primary-ink'
+          : 'border-s-border text-s-muted hover:border-s-border-strong'
       }`}>
       {label}
     </button>
   )
 
   return (
-    <div className="min-h-screen bg-kds-bg">
-      <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-s-bg">
+      <header className="border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-black text-kds-text mt-0.5">Section Discounts</h1>
-          <p className="text-sm text-kds-subtext">Time-boxed % off on menu categories</p>
+          <h1 className="text-2xl font-black text-s-text mt-0.5">Section Discounts</h1>
+          <p className="text-sm text-s-muted">Time-boxed % off on menu categories</p>
         </div>
         <button
           onClick={() => { setShowForm(true); setEditId(null); setForm(blank) }}
-          className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90">
+          className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90">
           + New discount
         </button>
       </header>
 
       <div className="p-6 max-w-5xl mx-auto">
         {showForm && (
-          <form onSubmit={submit} className="rounded-xl border border-kds-green bg-kds-card p-5 mb-6 space-y-4">
-            <p className="font-bold text-kds-text">{editId ? 'Edit discount' : 'New section discount'}</p>
+          <form onSubmit={submit} className="rounded-xl border border-primary bg-s-surface p-5 mb-6 space-y-4">
+            <p className="font-bold text-s-text">{editId ? 'Edit discount' : 'New section discount'}</p>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-kds-subtext mb-1 block">Concept</label>
+                <label className="text-xs text-s-muted mb-1 block">Concept</label>
                 <select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value, categoryId: '' })} className={inp}>
                   <option value="">All concepts</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-kds-subtext mb-1 block">Category</label>
+                <label className="text-xs text-s-muted mb-1 block">Category</label>
                 <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} className={inp} disabled={!form.conceptId}>
                   <option value="">Whole menu</option>
                   {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-kds-subtext mb-1 block">Discount % *</label>
+                <label className="text-xs text-s-muted mb-1 block">Discount % *</label>
                 <input type="number" min="0.1" max="100" step="0.1" value={form.discountPercent}
                   onChange={(e) => setForm({ ...form, discountPercent: e.target.value })}
                   placeholder="20" required className={inp} />
               </div>
               <div className="col-span-2 grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-kds-subtext mb-1 block">Start date *</label>
+                  <label className="text-xs text-s-muted mb-1 block">Start date *</label>
                   <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} required className={inp} />
                 </div>
                 <div>
-                  <label className="text-xs text-kds-subtext mb-1 block">End date *</label>
+                  <label className="text-xs text-s-muted mb-1 block">End date *</label>
                   <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} required className={inp} />
                 </div>
                 <div>
-                  <label className="text-xs text-kds-subtext mb-1 block">Start time *</label>
+                  <label className="text-xs text-s-muted mb-1 block">Start time *</label>
                   <input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} required className={inp} />
                 </div>
                 <div>
-                  <label className="text-xs text-kds-subtext mb-1 block">End time *</label>
+                  <label className="text-xs text-s-muted mb-1 block">End time *</label>
                   <input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} required className={inp} />
                 </div>
               </div>
             </div>
             <div>
-              <p className="text-xs text-kds-subtext mb-2">Delivery type</p>
+              <p className="text-xs text-s-muted mb-2">Delivery type</p>
               <div className="flex gap-2 flex-wrap">
                 {[['all','All'], ['delivery','Delivery'], ['pickup','Pickup']].map(([v, l]) => typeBtn('deliveryTypes', v!, l!))}
               </div>
             </div>
             <div>
-              <p className="text-xs text-kds-subtext mb-2">Order type</p>
+              <p className="text-xs text-s-muted mb-2">Order type</p>
               <div className="flex gap-2 flex-wrap">
                 {[['all','All'], ['dine-in','Dine-in'], ['takeaway','Takeaway'], ['online','Online']].map(([v, l]) => typeBtn('orderTypes', v!, l!))}
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm text-kds-text cursor-pointer">
-              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} className="accent-kds-green" />
+            <label className="flex items-center gap-2 text-sm text-s-text cursor-pointer">
+              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} className="accent-primary" />
               Active
             </label>
             <div className="flex gap-3">
               <button type="submit" disabled={save.isPending}
-                className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
                 {save.isPending ? 'Saving…' : editId ? 'Update' : 'Create discount'}
               </button>
               <button type="button" onClick={() => { setShowForm(false); setEditId(null) }}
-                className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-text">
+                className="rounded-xl border border-s-border text-s-muted text-sm px-4 py-2 hover:border-s-border-strong">
                 Cancel
               </button>
             </div>
@@ -212,51 +212,51 @@ export default function DiscountsPage() {
         )}
 
         {isLoading ? (
-          <p className="text-kds-subtext text-sm">Loading…</p>
+          <p className="text-s-muted text-sm">Loading…</p>
         ) : discounts.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-4xl mb-3">🏷</p>
-            <p className="font-semibold text-kds-text">No section discounts yet</p>
-            <p className="text-sm text-kds-subtext mt-1">Create time-based discounts on menu categories</p>
+            <p className="font-semibold text-s-text">No section discounts yet</p>
+            <p className="text-sm text-s-muted mt-1">Create time-based discounts on menu categories</p>
           </div>
         ) : (
-          <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="rounded-xl border border-s-border overflow-hidden">
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-kds-card border-b border-kds-border">
+              <thead className="bg-s-surface border-b border-s-border">
                 <tr>
                   {['Discount', 'Concept', 'Category', 'Date range', 'Time window', 'Types', 'Status', ''].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-xs font-bold text-kds-subtext uppercase tracking-wide">{h}</th>
+                    <th key={h} className="px-4 py-3 text-left text-xs font-bold text-s-muted uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-kds-border">
+              <tbody className="divide-y divide-s-border">
                 {discounts.map((d) => (
-                  <tr key={d.id} className="hover:bg-kds-card/40 transition-colors">
-                    <td className="px-4 py-3 font-bold text-kds-green text-lg">{d.discountPercent}%</td>
-                    <td className="px-4 py-3 text-kds-subtext text-xs">{d.concept?.name ?? 'All'}</td>
-                    <td className="px-4 py-3 text-kds-subtext text-xs">{d.category?.name ?? 'All items'}</td>
-                    <td className="px-4 py-3 text-kds-subtext text-xs">
+                  <tr key={d.id} className="hover:bg-s-elevated/40 transition-colors">
+                    <td className="px-4 py-3 font-bold text-primary-ink text-lg">{d.discountPercent}%</td>
+                    <td className="px-4 py-3 text-s-muted text-xs">{d.concept?.name ?? 'All'}</td>
+                    <td className="px-4 py-3 text-s-muted text-xs">{d.category?.name ?? 'All items'}</td>
+                    <td className="px-4 py-3 text-s-muted text-xs">
                       {new Date(d.startDate).toLocaleDateString()} – {new Date(d.endDate).toLocaleDateString()}
                     </td>
-                    <td className="px-4 py-3 text-kds-subtext text-xs font-mono">{d.startTime} – {d.endTime}</td>
+                    <td className="px-4 py-3 text-s-muted text-xs font-mono">{d.startTime} – {d.endTime}</td>
                     <td className="px-4 py-3 text-xs">
                       <div className="flex gap-1 flex-wrap">
                         {d.deliveryTypes.map((t) => (
-                          <span key={t} className="rounded bg-kds-bg border border-kds-border px-1.5 py-0.5 text-kds-subtext">{t}</span>
+                          <span key={t} className="rounded bg-s-bg border border-s-border px-1.5 py-0.5 text-s-muted">{t}</span>
                         ))}
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${d.isActive ? 'bg-kds-green/20 text-kds-green' : 'bg-kds-border text-kds-subtext'}`}>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${d.isActive ? 'bg-primary/20 text-primary-ink' : 'bg-s-border text-s-muted'}`}>
                         {d.isActive ? 'Active' : 'Off'}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
-                        <button onClick={() => openEdit(d)} className="text-xs text-kds-subtext hover:text-kds-green">Edit</button>
+                        <button onClick={() => openEdit(d)} className="text-xs text-s-muted hover:text-primary-ink">Edit</button>
                         <button onClick={() => { if (confirm('Delete this discount?')) del.mutate(d.id) }}
-                          className="text-xs text-kds-subtext hover:text-kds-red">Del</button>
+                          className="text-xs text-s-muted hover:text-s-red">Del</button>
                       </div>
                     </td>
                   </tr>

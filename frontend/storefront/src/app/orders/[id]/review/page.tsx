@@ -150,7 +150,7 @@ export default function ReviewOrderPage() {
         {done.bonusPointsAwarded > 0 && (
           <div style={{
             display: 'inline-block', padding: '0.6rem 1.1rem', marginBottom: '1.5rem',
-            background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', borderRadius: '999px',
+            background: 'rgba(135,197,64,0.1)', color: 'var(--servd-green-dark)', borderRadius: '999px',
             fontWeight: 700, fontSize: '0.9rem',
           }}>
             +{done.bonusPointsAwarded} loyalty points credited
@@ -214,7 +214,7 @@ export default function ReviewOrderPage() {
                       padding: '0.5rem 0.85rem',
                       borderRadius: '999px',
                       border: `1px solid ${active ? 'var(--servd-green)' : 'var(--servd-line)'}`,
-                      background: active ? 'rgba(58,14,105,0.1)' : 'white',
+                      background: active ? 'rgba(135,197,64,0.1)' : 'white',
                       color: active ? 'var(--servd-green-dark)' : 'var(--servd-ink)',
                       fontSize: '0.85rem',
                       fontWeight: 600,

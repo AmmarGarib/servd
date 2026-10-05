@@ -282,7 +282,7 @@ function StationsTab() {
                                     }
                                   }}
                                   disabled={deleteStation.isPending && deleteStation.variables === s.id}
-                                  className="rounded-lg border border-red-500/40 px-3 py-1 text-xs font-medium text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50">
+                                  className="rounded-lg border border-red-500/40 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-500/10 transition-colors disabled:opacity-50">
                                   Delete
                                 </button>
                               </div>
@@ -341,7 +341,7 @@ export default function KdsConfigPage() {
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between gap-3 shrink-0">
         <div>
-          <Link href="/kds" className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 mb-1 transition-colors">
+          <Link href="/kds" className="text-sm text-gray-500 hover:text-gray-600 flex items-center gap-1 mb-1 transition-colors">
             ← Back to Kitchen view
           </Link>
           <h1 className="text-2xl font-black text-kds-text">KDS Config</h1>

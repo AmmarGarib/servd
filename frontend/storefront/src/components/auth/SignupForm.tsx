@@ -13,7 +13,7 @@ import { postAuthDest } from './LoginForm'
 // arrives first. WhatsApp here is an unofficial channel that can drop; when it
 // does, the email copy carries the signup and the number is verified later
 // from /account. Shared by /signup and the `signup_form` block (mode
-// 'signup'), so there is exactly one sign-up flow. Styled for a dark plum
+// 'signup'), so there is exactly one sign-up flow. Styled for a dark purple
 // surface — callers put it on one.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -167,8 +167,8 @@ export function SignupForm({
     e.currentTarget.style.boxShadow   = 'none'
   }
   const primaryBtnStyle = (busy: boolean): React.CSSProperties => ({
-    background: busy ? 'rgba(255,255,255,0.12)' : 'white',
-    color: busy ? 'rgba(255,255,255,0.6)' : '#4E2A4F',
+    background: busy ? 'rgba(255,255,255,0.12)' : 'var(--servd-green)',
+    color: busy ? 'rgba(255,255,255,0.6)' : 'var(--servd-on-green)',
     boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
   })
 

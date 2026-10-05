@@ -96,8 +96,8 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
     <div className={`flex flex-col gap-3 ${compact ? 'text-xs' : 'text-sm'}`}>
       {/* ── Identity + lifetime ────────────────────────────────────────── */}
       <div className="rounded-xl p-4 border" style={{
-        background: 'rgba(255,255,255,0.025)',
-        borderColor: data.isBlacklisted ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.06)',
+        background: 'rgb(var(--fg-rgb) / 0.025)',
+        borderColor: data.isBlacklisted ? 'rgba(239,68,68,0.45)' : 'rgb(var(--fg-rgb) / 0.06)',
       }}>
         <div className="flex items-center justify-between gap-2">
           <div className="font-bold text-white/90 truncate">{data.name}</div>
@@ -144,7 +144,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
       {/* ── Open complaints (always front-and-center if any) ──────────── */}
       {data.recent.openComplaints.length > 0 && (
         <div className="rounded-xl p-3 border border-rose-500/30" style={{ background: 'rgba(244,63,94,0.06)' }}>
-          <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300 mb-1.5">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-rose-700 mb-1.5">
             ⚠ {data.recent.openComplaints.length} unresolved issue{data.recent.openComplaints.length === 1 ? '' : 's'}
           </div>
           {data.recent.openComplaints.map((c) => (
@@ -157,7 +157,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
       )}
 
       {/* ── Manager notes (editable inline) ────────────────────────────── */}
-      <div className="rounded-xl p-3 border border-white/[0.06]" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <div className="rounded-xl p-3 border border-white/[0.06]" style={{ background: 'rgb(var(--fg-rgb) / 0.02)' }}>
         <div className="flex items-center justify-between mb-1">
           <div className="text-[10px] font-bold uppercase tracking-wider text-white/40">Staff notes</div>
           {notesEdit === null ? (
@@ -171,7 +171,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
               <button
                 onClick={() => { saveNotes.mutate(notesEdit); setNotesEdit(null) }}
                 disabled={saveNotes.isPending}
-                className="text-[10px] font-bold text-kds-green hover:opacity-80">save</button>
+                className="text-[10px] font-bold text-primary-ink hover:opacity-80">save</button>
               <button onClick={() => setNotesEdit(null)} className="text-[10px] text-white/40 hover:text-white/70">cancel</button>
             </div>
           )}
@@ -182,7 +182,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
             onChange={(e) => setNotesEdit(e.target.value)}
             rows={3}
             placeholder='e.g. "Allergy: shellfish · always orders at the bar · big tipper"'
-            className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] p-2 text-xs text-white/85 focus:border-kds-green focus:outline-none" />
+            className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] p-2 text-xs text-white/85 focus:border-primary focus:outline-none" />
         ) : (
           <div className="text-[11px] text-white/65 italic">
             {data.staffNotes || 'No notes yet — add allergies, preferences, anything the team should know.'}
@@ -195,7 +195,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
         <div className="flex flex-wrap gap-1.5">
           {data.segments.slice(0, 6).map((s) => (
             <span key={s} className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{
-              background: 'rgba(99,102,241,0.12)', color: '#a5b4fc',
+              background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68',
             }}>{s}</span>
           ))}
         </div>
@@ -209,7 +209,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
         }}>
           <div className="flex items-center justify-between mb-2">
             <div className="text-[10px] font-bold uppercase tracking-wider"
-              style={{ color: isBanned ? '#fda4af' : '#fcd34d' }}>
+              style={{ color: isBanned ? '#b42318' : '#a15c00' }}>
               {isBanned ? 'Banned · 3 strikes hit' : `Strikes (${data.strikeCount}/3)`}
             </div>
             <a href="/crm/naughty-list"
@@ -221,7 +221,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
                 style={{ opacity: s.reversedAt ? 0.5 : 1 }}>
                 <span className="text-white/80 truncate">
                   {s.kind.replace(/_/g, ' ')}
-                  {s.severity > 1 && <span className="ml-1 text-rose-300">×{s.severity}</span>}
+                  {s.severity > 1 && <span className="ml-1 text-rose-700">×{s.severity}</span>}
                 </span>
                 <span className="text-white/40 whitespace-nowrap">{humanAgo(s.recordedAt)}</span>
               </div>
@@ -252,14 +252,14 @@ function Counter({ label, count, accent, subtitle, lastAt }: {
   lastAt?: string | null;
 }) {
   const colors = {
-    rose:  { bg: 'rgba(244,63,94,0.08)',  border: 'rgba(244,63,94,0.25)',  text: '#fda4af' },
-    amber: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', text: '#fcd34d' },
-    mute:  { bg: 'rgba(255,255,255,0.025)', border: 'rgba(255,255,255,0.06)', text: 'rgba(255,255,255,0.55)' },
+    rose:  { bg: 'rgba(244,63,94,0.08)',  border: 'rgba(244,63,94,0.25)',  text: '#b42318' },
+    amber: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', text: '#a15c00' },
+    mute:  { bg: 'rgb(var(--fg-rgb) / 0.025)', border: 'rgb(var(--fg-rgb) / 0.06)', text: 'rgb(var(--fg-rgb) / 0.55)' },
   }[accent]
   return (
     <div className="rounded-lg p-2 text-center" style={{ background: colors.bg, border: `1px solid ${colors.border}` }}>
       <div className="text-[9px] font-bold uppercase tracking-wider text-white/40">{label}</div>
-      <div className="text-base font-black mt-0.5" style={{ color: count > 0 ? colors.text : 'rgba(255,255,255,0.4)' }}>
+      <div className="text-base font-black mt-0.5" style={{ color: count > 0 ? colors.text : 'rgb(var(--fg-rgb) / 0.4)' }}>
         {count}
       </div>
       {subtitle && <div className="text-[9px] text-white/45">{subtitle}</div>}
@@ -270,10 +270,10 @@ function Counter({ label, count, accent, subtitle, lastAt }: {
 
 function Badge({ color, label }: { color: 'amber' | 'rose' | 'slate' | 'green'; label: string }) {
   const styles = {
-    amber: { bg: 'rgba(245,158,11,0.15)', text: '#fcd34d' },
-    rose:  { bg: 'rgba(244,63,94,0.15)',  text: '#fda4af' },
+    amber: { bg: 'rgba(245,158,11,0.15)', text: '#a15c00' },
+    rose:  { bg: 'rgba(244,63,94,0.15)',  text: '#b42318' },
     slate: { bg: 'rgba(100,116,139,0.15)', text: '#cbd5e1' },
-    green: { bg: 'rgba(34,197,94,0.15)',  text: '#86efac' },
+    green: { bg: 'rgba(34,197,94,0.15)',  text: '#3f7d20' },
   }[color]
   return (
     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: styles.bg, color: styles.text }}>
@@ -302,7 +302,7 @@ function RecentTimeline({ data }: { data: CustomerContext }) {
 
   if (events.length === 0) return null
   return (
-    <div className="rounded-xl p-3 border border-white/[0.06]" style={{ background: 'rgba(255,255,255,0.02)' }}>
+    <div className="rounded-xl p-3 border border-white/[0.06]" style={{ background: 'rgb(var(--fg-rgb) / 0.02)' }}>
       <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2">Recent</div>
       <div className="space-y-1.5">
         {events.map((e, i) => (

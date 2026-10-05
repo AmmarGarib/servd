@@ -20,7 +20,7 @@ export default function LanguagePage() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Language / زبان</h1>
@@ -34,7 +34,7 @@ export default function LanguagePage() {
             <button key={lang.code} onClick={() => changeLocale(lang.code)}
               className={`rounded-xl p-4 text-center border transition-colors ${
                 locale === lang.code
-                  ? 'border-kds-green bg-kds-green/15 text-kds-green'
+                  ? 'border-primary bg-primary/15 text-primary-ink'
                   : 'border-white/10 text-white/55 hover:border-white/30'
               }`}>
               <div className="font-bold text-sm">{lang.native}</div>

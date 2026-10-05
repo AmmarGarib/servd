@@ -85,7 +85,7 @@ export default function PosPage() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-kds-bg">
+    <div className="erp-kitchen-dark flex h-screen overflow-hidden bg-kds-bg">
 
       {/* Mobile cart backdrop */}
       {cartOpen && (
@@ -99,7 +99,7 @@ export default function PosPage() {
           so it takes the kds card colour via the class. */}
       <div className={`fixed inset-x-0 bottom-0 z-50 lg:hidden transition-transform duration-300 bg-kds-card ${cartOpen ? 'translate-y-0' : 'translate-y-full'}`}
         style={{ maxHeight: '85dvh', display: 'flex', flexDirection: 'column',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
+          borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)',
           borderRadius: '16px 16px 0 0' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-kds-border shrink-0">
           <span className="font-bold text-kds-text">Current Order</span>
@@ -115,7 +115,7 @@ export default function PosPage() {
         <button
           onClick={() => setCartOpen(true)}
           className="fixed bottom-5 right-5 z-40 lg:hidden flex items-center gap-2 rounded-2xl px-5 py-3 font-bold text-sm text-black shadow-lg active:scale-95 transition-transform"
-          style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', boxShadow: '0 4px 20px rgba(0,212,177,0.4)' }}>
+          style={{ background: 'var(--erp-primary)', boxShadow: '0 4px 20px rgb(135 197 64 / 0.4)' }}>
           <span>🛒</span>
           <span>{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
         </button>

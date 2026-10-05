@@ -70,12 +70,12 @@ export default function OnboardingWizardPage() {
   const stepIndex = STEP_ORDER.indexOf(step)
 
   return (
-    <div className="min-h-screen" style={{ background: '#090a0e' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       {/* Browser <option> dropdowns ignore the page's dark theme by default and
           render white-on-white. Force dark styling globally for this page. */}
       <style>{`
-        select option { background-color: #14161e; color: #f5f5f5; }
-        select option:hover, select option:checked { background-color: #1f2230; }
+        select option { background-color: var(--surface); color: #f5f5f5; }
+        select option:hover, select option:checked { background-color: var(--elevated); }
       `}</style>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center justify-between max-w-3xl mx-auto">
@@ -100,9 +100,9 @@ export default function OnboardingWizardPage() {
             return (
               <button key={s} onClick={() => setStep(s)} className="flex-1 group text-left">
                 <div className="h-1 rounded-full transition-colors"
-                  style={{ background: isActive ? '#00D4B1' : isDone ? 'rgba(0,212,177,0.4)' : 'rgba(255,255,255,0.08)' }} />
+                  style={{ background: isActive ? 'var(--erp-primary)' : isDone ? 'rgb(135 197 64 / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)' }} />
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] mt-2"
-                  style={{ color: isActive ? '#00D4B1' : isDone ? 'rgba(0,212,177,0.7)' : 'rgba(255,255,255,0.3)' }}>
+                  style={{ color: isActive ? 'var(--erp-primary-ink)' : isDone ? 'rgb(79 122 28 / 0.7)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
                   {i + 1} · {STEP_LABEL[s]}
                 </p>
               </button>
@@ -221,15 +221,15 @@ function CompanyStep({ tenants, onDone }: { tenants: Tenant[]; onDone: () => voi
         {tenants.map((t) => (
           <div key={t.id} className="flex items-center gap-3 rounded-xl p-3"
             style={{
-              background: t.isActive ? 'rgba(0,212,177,0.08)' : 'rgba(255,255,255,0.025)',
-              border: `1px solid ${t.isActive ? 'rgba(0,212,177,0.3)' : 'rgba(255,255,255,0.06)'}`,
+              background: t.isActive ? 'rgb(135 197 64 / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
+              border: `1px solid ${t.isActive ? 'rgb(135 197 64 / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
             }}>
             <span className="text-2xl shrink-0" aria-hidden="true">🏢</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="font-bold text-white/90 text-sm truncate">{t.name}</p>
                 {t.isActive && (
-                  <span className="text-[10px] font-black uppercase tracking-wider text-[#00D4B1] bg-[#00D4B1]/10 px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-primary-ink bg-primary/10 px-1.5 py-0.5 rounded">
                     Active
                   </span>
                 )}
@@ -379,7 +379,7 @@ function MergeCompaniesForm({ tenants, onDone }: { tenants: Tenant[]; onDone: ()
 
       <div className="rounded-xl px-4 py-3 mb-1"
         style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)' }}>
-        <p className="text-sm font-bold text-red-300/90 mb-1">⚠ Destructive operation</p>
+        <p className="text-sm font-bold text-red-700/90 mb-1">⚠ Destructive operation</p>
         <p className="text-xs text-white/65 leading-relaxed">
           Everything under the <span className="font-bold">source</span> company — brands, kitchens, orders, staff,
           ledger — gets reassigned to the <span className="font-bold">target</span>. The source company is then
@@ -411,7 +411,7 @@ function MergeCompaniesForm({ tenants, onDone }: { tenants: Tenant[]; onDone: ()
 
       {source && target && (
         <div className="rounded-xl p-4"
-          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <p className="text-xs text-white/55 leading-relaxed mb-3">
             All brands, staff, and historical data under <span className="font-bold text-white/90">{source.name}</span>{' '}
             will be moved into <span className="font-bold text-white/90">{target.name}</span>.
@@ -429,7 +429,7 @@ function MergeCompaniesForm({ tenants, onDone }: { tenants: Tenant[]; onDone: ()
 
       <Footer>
         <button onClick={() => merge.mutate()} disabled={!canMerge || merge.isPending}
-          className="rounded-xl bg-red-500/85 text-white font-bold px-5 py-2.5 text-sm hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+          className="rounded-xl bg-s-red text-[#fff] font-bold px-5 py-2.5 text-sm hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
           {merge.isPending ? 'Combining…' : 'Combine companies →'}
         </button>
         <button type="button" onClick={onDone}
@@ -491,8 +491,8 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
         <div className="space-y-2">
           {existingBrands.map((b) => (
             <div key={b.id} className="flex items-center gap-3 rounded-lg p-3"
-              style={{ background: 'rgba(0,212,177,0.06)', border: '1px solid rgba(0,212,177,0.18)' }}>
-              <span className="text-[#00D4B1] text-lg shrink-0" aria-hidden="true">✓</span>
+              style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+              <span className="text-primary-ink text-lg shrink-0" aria-hidden="true">✓</span>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white/90 text-sm">{b.name}</p>
                 <p className="text-xs text-white/45 font-mono truncate">{b.conceptStatement ?? `/${b.slug}`}</p>
@@ -502,7 +502,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
                 Edit
               </button>
               <button onClick={() => { if (confirm(`Delete brand "${b.name}"? You can re-create it later.`)) del.mutate(b.id) }}
-                className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-400/70 hover:text-red-300 shrink-0">
+                className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-700/70 hover:text-red-700 shrink-0">
                 Delete
               </button>
             </div>
@@ -550,7 +550,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
 
 // Pick a default colour from a small palette so each new brand looks distinct.
 function pickColor(n: number): string {
-  const palette = ['#D4581A', '#6366F1', '#22C55E', '#F59E0B', '#A855F7', '#EC4899', '#0EA5E9', '#84CC16']
+  const palette = ['#D4581A', '#3d1f3b', '#3f7d20', '#a15c00', '#6b2f68', '#be185d', '#1d4ed8', '#84CC16']
   return palette[(n - 1) % palette.length]!
 }
 
@@ -705,8 +705,8 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               <button key={d} type="button" onClick={() => toggleDaypart(d)}
                 className="text-xs font-bold px-3 py-1.5 rounded-full"
                 style={daypartFocus.includes(d)
-                  ? { background: 'rgba(0,212,177,0.15)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.4)' }
-                  : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                  : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                 {d.replace('_', ' ')}
               </button>
             ))}
@@ -726,8 +726,8 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               <button key={t.value} type="button" onClick={() => setPriceTier(t.value)}
                 className="text-xs px-3 py-2.5 rounded-lg text-left"
                 style={priceTier === t.value
-                  ? { background: 'rgba(0,212,177,0.12)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.45)' }
-                  : { background: 'rgba(255,255,255,0.025)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.45)' }
+                  : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="font-bold">{t.label}</p>
                 <p className="text-[10px] opacity-75 mt-0.5">{t.hint}</p>
               </button>
@@ -750,8 +750,8 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
           </Hint>
         </Field>
         <div className="rounded-xl px-4 py-3 text-xs"
-          style={{ background: 'rgba(0,212,177,0.05)', border: '1px solid rgba(0,212,177,0.18)', color: 'rgba(255,255,255,0.75)' }}>
-          <strong className="text-[#00D4B1]">{PROVINCES.find((p) => p.value === province)?.name}</strong>
+          style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
+          <strong className="text-primary-ink">{PROVINCES.find((p) => p.value === province)?.name}</strong>
           {' · '}{PROVINCES.find((p) => p.value === province)?.authority}{' authority · '}
           base rate <strong>{provinceRate(province)}%</strong>
           {PROVINCES.find((p) => p.value === province)?.cardRate &&
@@ -766,7 +766,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
           <div className="flex flex-wrap gap-1.5 mb-2">
             {competitors.map((c) => (
               <span key={c} className="inline-flex items-center gap-2 rounded-full px-3 py-1.5"
-                style={{ background: 'rgba(245,158,11,0.12)', color: '#FCD34D', border: '1px solid rgba(245,158,11,0.3)' }}>
+                style={{ background: 'rgba(245,158,11,0.12)', color: '#a15c00', border: '1px solid rgba(245,158,11,0.3)' }}>
                 <span className="text-xs font-bold">{c}</span>
                 <button onClick={() => setCompetitors(competitors.filter((x) => x !== c))} className="text-xs">✕</button>
               </span>
@@ -780,7 +780,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               disabled={competitors.length >= 5}
               className={fieldCls + ' flex-1'} />
             <button onClick={addCompetitor} disabled={!competitorInput.trim() || competitors.length >= 5}
-              className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-black disabled:opacity-50">+ Add</button>
+              className="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-on disabled:opacity-50">+ Add</button>
           </div>
           <Hint>Press Enter to add. Drives benchmarking + market-share dashboards later.</Hint>
         </Field>
@@ -807,7 +807,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
             <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="w-12 h-10 rounded cursor-pointer bg-transparent" />
             <input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className={fieldCls + ' font-mono flex-1'} />
             <div className="flex-1 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider"
-              style={{ background: primaryColor, color: '#000' }}>
+              style={{ background: primaryColor, color: 'var(--erp-on-primary)' }}>
               Preview
             </div>
           </div>
@@ -821,7 +821,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
       </button>
       {advancedOpen && (
         <div className="rounded-2xl p-4"
-          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <Field label="Storefront URL slug">
             <input value={slug} onChange={(e) => setSlug(slugify(e.target.value))}
               disabled={isEdit}
@@ -860,14 +860,14 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
   )
 
   return inline ? <div className="rounded-2xl p-5 space-y-5"
-    style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>{body}</div>
+    style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>{body}</div>
     : <Card title={title} hint={hint}>{body}</Card>
 }
 
 function Section({ heading, children }: { heading: string; children: React.ReactNode }) {
   return (
     <div className="space-y-3">
-      <h3 className="text-[11px] font-black uppercase tracking-[0.28em] text-[#00D4B1]/70 pt-2 border-t border-white/[0.05]">{heading}</h3>
+      <h3 className="text-[11px] font-black uppercase tracking-[0.28em] text-primary-ink/70 pt-2 border-t border-white/[0.05]">{heading}</h3>
       {children}
     </div>
   )
@@ -923,11 +923,11 @@ function LocationStep({ concepts, onDone }: { concepts: Concept[]; onDone: () =>
           {concepts.map((c) => (
             <label key={c.id} className="flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors"
               style={conceptIds.includes(c.id)
-                ? { background: 'rgba(0,212,177,0.08)', border: '1px solid rgba(0,212,177,0.35)' }
-                : { background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                ? { background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.35)' }
+                : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <input type="checkbox" checked={conceptIds.includes(c.id)}
                 onChange={() => setConceptIds((p) => p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id])}
-                className="accent-kds-green" />
+                className="accent-primary" />
               <span className="text-xs font-bold text-white/85">{c.name}</span>
             </label>
           ))}
@@ -1054,12 +1054,12 @@ function HoursStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => vo
       <div className="space-y-2">
         {days.map((d, i) => (
           <div key={i} className="rounded-lg p-3"
-            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="flex items-center justify-between gap-3 mb-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={d.isOpen}
                   onChange={(e) => patchDay(i, { isOpen: e.target.checked })}
-                  className="accent-kds-green" />
+                  className="accent-primary" />
                 <span className="text-sm font-bold text-white/85 w-10">{DAY_LABELS[i]}</span>
                 {!d.isOpen && <span className="text-xs text-white/35 italic">Closed</span>}
               </label>
@@ -1071,7 +1071,7 @@ function HoursStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => vo
                     onCopyWeekends={() => copyToWeekends(i)}
                   />
                   <button type="button" onClick={() => addShift(i)}
-                    className="text-[11px] font-bold text-kds-green hover:text-white px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
+                    className="text-[11px] font-bold text-primary-ink hover:text-white px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
                     + Add shift
                   </button>
                 </div>
@@ -1095,7 +1095,7 @@ function HoursStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => vo
                     {d.shifts.length > 1 && (
                       <button type="button" onClick={() => removeShift(i, si)}
                         title="Remove shift"
-                        className="text-white/30 hover:text-red-400 px-1.5 text-sm transition-colors">×</button>
+                        className="text-white/30 hover:text-red-700 px-1.5 text-sm transition-colors">×</button>
                     )}
                   </div>
                 ))}
@@ -1119,7 +1119,7 @@ function HoursStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => vo
 function PresetBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick}
-      className="text-[11px] font-bold text-white/65 hover:text-white border border-white/[0.08] hover:border-kds-green/40 px-2.5 py-1 rounded-full hover:bg-white/[0.04] transition-colors">
+      className="text-[11px] font-bold text-white/65 hover:text-white border border-white/[0.08] hover:border-primary/40 px-2.5 py-1 rounded-full hover:bg-white/[0.04] transition-colors">
       {children}
     </button>
   )
@@ -1139,7 +1139,7 @@ function CopyMenu({ onCopyAll, onCopyWeekdays, onCopyWeekends }: {
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-20 rounded-lg overflow-hidden min-w-[170px]"
-            style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 12px 28px rgba(0,0,0,0.5)' }}>
+            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(61 31 59 / 0.18)' }}>
             <button type="button" onClick={() => { onCopyAll(); setOpen(false) }}
               className="w-full text-left px-3 py-2 text-xs text-white/80 hover:bg-white/[0.05]">All days</button>
             <button type="button" onClick={() => { onCopyWeekdays(); setOpen(false) }}
@@ -1216,7 +1216,7 @@ function MenuStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => voi
           placeholder="Type a category and press Enter (e.g. Burgers)"
           className={fieldCls + ' flex-1'} autoFocus />
         <button type="button" onClick={addDraft} disabled={!draft.trim()}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-40">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-40">
           Add
         </button>
       </div>
@@ -1228,7 +1228,7 @@ function MenuStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => voi
           <div className="flex flex-wrap gap-1.5">
             {remainingSuggestions.map((s) => (
               <button key={s} type="button" onClick={() => addSuggestion(s)}
-                className="text-[11px] font-bold text-white/70 hover:text-white border border-white/[0.08] hover:border-kds-green/40 px-2.5 py-1 rounded-full hover:bg-white/[0.04] transition-colors">
+                className="text-[11px] font-bold text-white/70 hover:text-white border border-white/[0.08] hover:border-primary/40 px-2.5 py-1 rounded-full hover:bg-white/[0.04] transition-colors">
                 + {s}
               </button>
             ))}
@@ -1249,7 +1249,7 @@ function MenuStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => voi
           <div className="space-y-1.5">
             {categories.map((cat, i) => (
               <div key={cat} className="flex items-center gap-2 rounded-lg px-3 py-2"
-                style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <span className="text-[10px] font-mono text-white/35 w-5">{i + 1}.</span>
                 <span className="flex-1 text-sm text-white/85 font-semibold">{cat}</span>
                 <button type="button" onClick={() => move(i, -1)} disabled={i === 0}
@@ -1260,7 +1260,7 @@ function MenuStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => voi
                   className="text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed text-xs px-1">▼</button>
                 <button type="button" onClick={() => remove(i)}
                   title="Remove"
-                  className="text-white/30 hover:text-red-400 transition-colors px-1.5">×</button>
+                  className="text-white/30 hover:text-red-700 transition-colors px-1.5">×</button>
               </div>
             ))}
           </div>
@@ -1288,16 +1288,16 @@ function DoneStep({ onGo }: { onGo: () => void }) {
     <Card title="You're live."
       hint="Your dashboard now has a brand, a location, hours, and a menu. Next steps live in the Configuration Hub.">
       <div className="rounded-2xl p-5"
-        style={{ background: 'rgba(0,212,177,0.06)', border: '1px solid rgba(0,212,177,0.25)' }}>
-        <p className="text-sm font-bold text-[#00D4B1] mb-3">Recommended next steps:</p>
+        style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.25)' }}>
+        <p className="text-sm font-bold text-primary-ink mb-3">Recommended next steps:</p>
         <ul className="text-sm text-white/80 space-y-2">
-          <li>· Add staff under <Link href="/settings" className="text-[#00D4B1] hover:underline">Settings → Staff</Link></li>
-          <li>· Configure tax invoice numbering at <Link href="/configuration/tax" className="text-[#00D4B1] hover:underline">Configuration → Tax</Link></li>
-          <li>· Connect a payment gateway at <Link href="/configuration/payment-methods" className="text-[#00D4B1] hover:underline">Payment Methods</Link></li>
-          <li>· Set delivery zones at <Link href="/configuration/delivery-zones" className="text-[#00D4B1] hover:underline">Delivery Zones</Link></li>
-          <li>· Customise email/SMS at <Link href="/configuration/templates" className="text-[#00D4B1] hover:underline">Notification Templates</Link></li>
-          <li>· Add allergen + dietary tags at <Link href="/configuration/dietary-tags" className="text-[#00D4B1] hover:underline">Dietary Tags</Link></li>
-          <li>· Mark holiday closures at <Link href="/reservations/blockouts" className="text-[#00D4B1] hover:underline">Closures &amp; blockouts</Link></li>
+          <li>· Add staff under <Link href="/settings" className="text-primary-ink hover:underline">Settings → Staff</Link></li>
+          <li>· Configure tax invoice numbering at <Link href="/configuration/tax" className="text-primary-ink hover:underline">Configuration → Tax</Link></li>
+          <li>· Connect a payment gateway at <Link href="/configuration/payment-methods" className="text-primary-ink hover:underline">Payment Methods</Link></li>
+          <li>· Set delivery zones at <Link href="/configuration/delivery-zones" className="text-primary-ink hover:underline">Delivery Zones</Link></li>
+          <li>· Customise email/SMS at <Link href="/configuration/templates" className="text-primary-ink hover:underline">Notification Templates</Link></li>
+          <li>· Add allergen + dietary tags at <Link href="/configuration/dietary-tags" className="text-primary-ink hover:underline">Dietary Tags</Link></li>
+          <li>· Mark holiday closures at <Link href="/reservations/blockouts" className="text-primary-ink hover:underline">Closures &amp; blockouts</Link></li>
         </ul>
       </div>
       <Footer>
@@ -1312,7 +1312,7 @@ function DoneStep({ onGo }: { onGo: () => void }) {
 function Card({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl p-7"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <h2 className="text-2xl font-black text-white/90">{title}</h2>
       {hint && <p className="text-sm text-white/45 mt-1.5 leading-relaxed">{hint}</p>}
       <div className="mt-6 space-y-4">{children}</div>
@@ -1336,7 +1336,7 @@ function ErrorBanner({ error }: { error: unknown }) {
       : 'Something went wrong'
   return (
     <div className="rounded-xl px-4 py-3 mt-4 text-sm"
-      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#FCA5A5' }}>
+      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#b42318' }}>
       <strong className="font-bold">Save failed:</strong> {msg}
     </div>
   )
@@ -1345,8 +1345,8 @@ function slugify(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-kds-green focus:outline-none"
+const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none"
 // Same as fieldCls but with an explicit chevron — the system <select> arrow
 // disappears against our dark background. SVG chevron is embedded inline.
 const selectCls = fieldCls + " appearance-none cursor-pointer pr-9 bg-no-repeat bg-[right_0.75rem_center] bg-[length:1em] [background-image:url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20d%3D%22M2%204l4%204%204-4%22%20stroke%3D%22%23ffffff80%22%20stroke-width%3D%221.5%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E')]"
-const primaryBtn = "rounded-xl bg-kds-green px-6 py-3 text-sm font-black text-black hover:opacity-90 disabled:opacity-50 transition-opacity"
+const primaryBtn = "rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50 transition-opacity"

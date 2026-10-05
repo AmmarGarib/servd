@@ -74,22 +74,22 @@ type Tab = 'pos' | 'bills' | 'payments' | 'suppliers' | 'aging' | 'reorder' | 'a
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: 'text-zinc-400 bg-zinc-800/60',
-  pending_approval: 'text-amber-400 bg-amber-950/40',
-  approved: 'text-sky-400 bg-sky-950/40',
-  sent: 'text-blue-400 bg-blue-950/40',
-  partial: 'text-purple-400 bg-purple-950/40',
-  received: 'text-kds-green bg-green-950/40',
-  cancelled: 'text-zinc-500 bg-zinc-900/60',
-  open: 'text-amber-400 bg-amber-950/40',
-  partially_paid: 'text-purple-400 bg-purple-950/40',
-  paid: 'text-kds-green bg-green-950/40',
-  void: 'text-zinc-500 bg-zinc-900/60',
-  overdue: 'text-kds-red bg-red-950/40',
+  draft: 'text-zinc-600 bg-s-elevated',
+  pending_approval: 'text-amber-700 bg-amber-100/40',
+  approved: 'text-sky-700 bg-sky-100',
+  sent: 'text-blue-700 bg-blue-100/40',
+  partial: 'text-purple-700 bg-purple-100/40',
+  received: 'text-primary-ink bg-green-100/40',
+  cancelled: 'text-zinc-500 bg-zinc-100/60',
+  open: 'text-amber-700 bg-amber-100/40',
+  partially_paid: 'text-purple-700 bg-purple-100/40',
+  paid: 'text-primary-ink bg-green-100/40',
+  void: 'text-zinc-500 bg-zinc-100/60',
+  overdue: 'text-s-red bg-red-100/40',
 }
 
 function Badge({ status }: { status: string }) {
-  const cls = STATUS_COLORS[status] ?? 'text-zinc-400 bg-zinc-800/60'
+  const cls = STATUS_COLORS[status] ?? 'text-zinc-600 bg-s-elevated'
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${cls}`}>
       {status.replace(/_/g, ' ')}
@@ -99,12 +99,12 @@ function Badge({ status }: { status: string }) {
 
 function fmt(iso: string) { return new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: '2-digit' }) }
 
-const fi = 'w-full rounded-lg bg-kds-bg border border-kds-border px-3 py-2 text-kds-text text-sm focus:border-kds-green focus:outline-none'
+const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-xs text-kds-subtext font-medium">{label}</label>
+      <label className="text-xs text-s-muted font-medium">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
   )
@@ -128,18 +128,18 @@ export default function ProcurementPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-kds-bg flex flex-col">
-      <header className="border-b border-kds-border px-6 py-4 shrink-0">
-        <h1 className="text-2xl font-black text-kds-text">Procurement</h1>
-        <p className="text-sm text-kds-subtext mt-0.5">Purchase orders · Accounts payable · Supplier management</p>
+    <div className="min-h-screen bg-s-bg flex flex-col">
+      <header className="border-b border-s-border px-6 py-4 shrink-0">
+        <h1 className="text-2xl font-black text-s-text">Procurement</h1>
+        <p className="text-sm text-s-muted mt-0.5">Purchase orders · Accounts payable · Supplier management</p>
       </header>
 
       {/* Tab strip */}
-      <div className="flex gap-0.5 px-6 pt-4 border-b border-kds-border overflow-x-auto shrink-0 scrollbar-hide">
+      <div className="flex gap-0.5 px-6 pt-4 border-b border-s-border overflow-x-auto shrink-0 scrollbar-hide">
         {tabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg border-b-2 whitespace-nowrap transition-colors
-              ${tab === t.id ? 'border-kds-green text-kds-green bg-kds-card' : 'border-transparent text-kds-subtext hover:text-kds-text'}`}>
+              ${tab === t.id ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
             <span>{t.icon}</span>{t.label}
           </button>
         ))}
@@ -206,13 +206,13 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           {statuses.map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-                ${statusFilter === s ? 'bg-kds-green text-black' : 'bg-kds-card border border-kds-border text-kds-subtext hover:text-kds-text'}`}>
+                ${statusFilter === s ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
               {s || 'All'}
             </button>
           ))}
         </div>
         <button onClick={() => setShowCreate(true)}
-          className="ml-auto rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+          className="ml-auto rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + New PO
         </button>
       </div>
@@ -220,37 +220,37 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {showCreate && <CreatePoForm qc={qc} onClose={() => setShowCreate(false)} />}
 
       {isLoading ? (
-        <p className="text-kds-subtext text-sm py-8 text-center">Loading…</p>
+        <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : orders.length === 0 ? (
         <EmptyState icon="📋" title="No purchase orders" sub="Create your first PO to get started" />
       ) : (
-        <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-kds-border bg-kds-card/40">
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Reference</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Supplier</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Created</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Expected</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Total</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Status</th>
+              <tr className="border-b border-s-border bg-s-surface/40">
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Reference</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Created</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Expected</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Total</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Status</th>
                 <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {orders.map((po) => (
-                <tr key={po.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30 transition-colors">
+                <tr key={po.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30 transition-colors">
                   <td className="px-4 py-3">
                     <button onClick={() => setDetailId(po.id === detailId ? null : po.id)}
-                      className="font-mono text-xs text-kds-green hover:underline">
+                      className="font-mono text-xs text-primary-ink hover:underline">
                       {po.reference ?? po.id.slice(-8)}
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-kds-text font-medium">{po.supplier?.name ?? '—'}</td>
-                  <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(po.createdAt)}</td>
-                  <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{po.expectedDate ? fmt(po.expectedDate) : '—'}</td>
-                  <td className="px-4 py-3 text-kds-text font-semibold text-right">{fmtPkrWhole(po.totalCents)}</td>
+                  <td className="px-4 py-3 text-s-text font-medium">{po.supplier?.name ?? '—'}</td>
+                  <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(po.createdAt)}</td>
+                  <td className="px-4 py-3 text-s-muted hidden md:table-cell">{po.expectedDate ? fmt(po.expectedDate) : '—'}</td>
+                  <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(po.totalCents)}</td>
                   <td className="px-4 py-3"><Badge status={po.status} /></td>
                   <td className="px-4 py-3">
                     <PoActions po={po} onAction={(action, body) => {
@@ -270,59 +270,59 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
       {/* Detail panel */}
       {detail && (
-        <div className="rounded-xl border border-kds-border bg-kds-card p-4 space-y-3">
+        <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="font-bold text-kds-text">PO Detail — {detail.reference ?? detail.id.slice(-8)}</p>
-            <button onClick={() => setDetailId(null)} className="text-kds-subtext hover:text-kds-text text-xs">✕ Close</button>
+            <p className="font-bold text-s-text">PO Detail — {detail.reference ?? detail.id.slice(-8)}</p>
+            <button onClick={() => setDetailId(null)} className="text-s-muted hover:text-s-text text-xs">✕ Close</button>
           </div>
           {detail.lines && detail.lines.length > 0 && (
             <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-kds-border/50">
-                  <th className="text-left py-1.5 text-kds-subtext">Item</th>
-                  <th className="text-right py-1.5 text-kds-subtext">Ordered</th>
-                  <th className="text-right py-1.5 text-kds-subtext">Received</th>
-                  <th className="text-right py-1.5 text-kds-subtext">Unit Cost</th>
-                  <th className="text-right py-1.5 text-kds-subtext">Line Total</th>
+                <tr className="border-b border-s-border/50">
+                  <th className="text-left py-1.5 text-s-muted">Item</th>
+                  <th className="text-right py-1.5 text-s-muted">Ordered</th>
+                  <th className="text-right py-1.5 text-s-muted">Received</th>
+                  <th className="text-right py-1.5 text-s-muted">Unit Cost</th>
+                  <th className="text-right py-1.5 text-s-muted">Line Total</th>
                 </tr>
               </thead>
               <tbody>
                 {detail.lines.map((l) => (
-                  <tr key={l.id} className="border-b border-kds-border/30 last:border-0">
-                    <td className="py-1.5 text-kds-text">{l.inventoryItem?.name ?? l.inventoryItemId}</td>
-                    <td className="py-1.5 text-right text-kds-text">{l.quantityOrdered} {l.inventoryItem?.unit}</td>
-                    <td className="py-1.5 text-right text-kds-subtext">{l.quantityReceived}</td>
-                    <td className="py-1.5 text-right text-kds-subtext">{fmtPkrWhole(l.unitCostCents)}</td>
-                    <td className="py-1.5 text-right text-kds-text font-semibold">{fmtPkrWhole(l.quantityOrdered * l.unitCostCents)}</td>
+                  <tr key={l.id} className="border-b border-s-border/30 last:border-0">
+                    <td className="py-1.5 text-s-text">{l.inventoryItem?.name ?? l.inventoryItemId}</td>
+                    <td className="py-1.5 text-right text-s-text">{l.quantityOrdered} {l.inventoryItem?.unit}</td>
+                    <td className="py-1.5 text-right text-s-muted">{l.quantityReceived}</td>
+                    <td className="py-1.5 text-right text-s-muted">{fmtPkrWhole(l.unitCostCents)}</td>
+                    <td className="py-1.5 text-right text-s-text font-semibold">{fmtPkrWhole(l.quantityOrdered * l.unitCostCents)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             </div>
           )}
-          {detail.notes && <p className="text-xs text-kds-subtext">Notes: {detail.notes}</p>}
-          {detail.rejectedReason && <p className="text-xs text-kds-red">Rejected: {detail.rejectedReason}</p>}
-          {detail.cancelReason && <p className="text-xs text-kds-subtext">Cancelled: {detail.cancelReason}</p>}
+          {detail.notes && <p className="text-xs text-s-muted">Notes: {detail.notes}</p>}
+          {detail.rejectedReason && <p className="text-xs text-s-red">Rejected: {detail.rejectedReason}</p>}
+          {detail.cancelReason && <p className="text-xs text-s-muted">Cancelled: {detail.cancelReason}</p>}
         </div>
       )}
 
       {/* Reject modal */}
       {rejectId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-kds-card border border-kds-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-kds-text">Reject PO</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="font-bold text-s-text">Reject PO</p>
             <Field label="Reason (required)">
               <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
               <button disabled={!rejectReason || actionMut.isPending}
                 onClick={() => { actionMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason } }); setRejectId(null); setRejectReason('') }}
-                className="rounded-xl bg-kds-red text-white font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Reject
               </button>
               <button onClick={() => { setRejectId(null); setRejectReason('') }}
-                className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+                className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
           </div>
         </div>
@@ -330,20 +330,20 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
       {/* Cancel modal */}
       {cancelId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-kds-card border border-kds-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-kds-text">Cancel PO</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="font-bold text-s-text">Cancel PO</p>
             <Field label="Reason (required)">
               <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
               <button disabled={!cancelReason || actionMut.isPending}
                 onClick={() => { actionMut.mutate({ id: cancelId, action: 'cancel', body: { reason: cancelReason } }); setCancelId(null); setCancelReason('') }}
-                className="rounded-xl bg-kds-red text-white font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Cancel PO
               </button>
               <button onClick={() => { setCancelId(null); setCancelReason('') }}
-                className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Back</button>
+                className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Back</button>
             </div>
           </div>
         </div>
@@ -355,20 +355,20 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: string, body?: unknown) => void }) {
   const actions: { label: string; action: string; cls: string }[] = []
   if (po.status === 'draft') {
-    actions.push({ label: 'Submit', action: 'submit', cls: 'text-amber-400 hover:text-amber-300' })
+    actions.push({ label: 'Submit', action: 'submit', cls: 'text-amber-700 hover:text-amber-700' })
   }
   if (po.status === 'pending_approval') {
-    actions.push({ label: 'Approve', action: 'approve', cls: 'text-kds-green hover:opacity-80' })
-    actions.push({ label: 'Reject', action: 'reject', cls: 'text-kds-red hover:opacity-80' })
+    actions.push({ label: 'Approve', action: 'approve', cls: 'text-primary-ink hover:opacity-80' })
+    actions.push({ label: 'Reject', action: 'reject', cls: 'text-s-red hover:opacity-80' })
   }
   if (po.status === 'approved') {
-    actions.push({ label: 'Send', action: 'send', cls: 'text-sky-400 hover:opacity-80' })
+    actions.push({ label: 'Send', action: 'send', cls: 'text-sky-700 hover:opacity-80' })
   }
   if (po.status === 'sent' || po.status === 'partial') {
-    actions.push({ label: 'Receive', action: 'receive', cls: 'text-kds-green hover:opacity-80' })
+    actions.push({ label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' })
   }
   if (['draft', 'pending_approval', 'approved'].includes(po.status)) {
-    actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-zinc-500 hover:text-kds-red' })
+    actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-zinc-500 hover:text-s-red' })
   }
   if (actions.length === 0) return null
   return (
@@ -428,10 +428,10 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
   const valid = supplierId && lines.every((l) => l.inventoryItemId && l.quantityOrdered && l.unitCostCents)
 
   return (
-    <div className="rounded-xl border border-kds-green bg-kds-card p-5 space-y-4">
+    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="font-bold text-kds-text">New Purchase Order</p>
-        <button onClick={onClose} className="text-kds-subtext hover:text-kds-text text-xs">✕</button>
+        <p className="font-bold text-s-text">New Purchase Order</p>
+        <button onClick={onClose} className="text-s-muted hover:text-s-text text-xs">✕</button>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -454,7 +454,7 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
 
       {/* Lines */}
       <div className="space-y-2">
-        <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest">Line items</p>
+        <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Line items</p>
         {lines.map((line, i) => (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-5">
@@ -476,24 +476,24 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
                 onChange={(e) => updateLine(i, 'notes', e.target.value)} className={fi} />
             </div>
             <div className="col-span-1">
-              <button onClick={() => removeLine(i)} className="w-full rounded-lg border border-kds-border text-kds-red py-2 text-sm hover:bg-red-950/20">✕</button>
+              <button onClick={() => removeLine(i)} className="w-full rounded-lg border border-s-border text-s-red py-2 text-sm hover:bg-red-100/20">✕</button>
             </div>
           </div>
         ))}
-        <button onClick={addLine} className="text-xs text-kds-green hover:underline">+ Add line</button>
+        <button onClick={addLine} className="text-xs text-primary-ink hover:underline">+ Add line</button>
       </div>
 
-      <div className="flex items-center justify-between pt-2 border-t border-kds-border">
-        <p className="text-sm font-bold text-kds-text">Total: {fmtPkrWhole(totalCents)}</p>
+      <div className="flex items-center justify-between pt-2 border-t border-s-border">
+        <p className="text-sm font-bold text-s-text">Total: {fmtPkrWhole(totalCents)}</p>
         <div className="flex gap-2">
           <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
-            className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
             {mut.isPending ? 'Creating…' : 'Create PO'}
           </button>
-          <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
         </div>
       </div>
-      {mut.isError && <p className="text-xs text-kds-red">{(mut.error as Error).message}</p>}
+      {mut.isError && <p className="text-xs text-s-red">{(mut.error as Error).message}</p>}
     </div>
   )
 }
@@ -544,18 +544,18 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           {statuses.map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-                ${statusFilter === s && !overdue ? 'bg-kds-green text-black' : 'bg-kds-card border border-kds-border text-kds-subtext hover:text-kds-text'}`}>
+                ${statusFilter === s && !overdue ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
               {s || 'All'}
             </button>
           ))}
           <button onClick={() => { setOverdue(!overdue); setStatusFilter('') }}
             className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-              ${overdue ? 'bg-kds-red text-white' : 'bg-kds-card border border-kds-border text-kds-subtext hover:text-kds-text'}`}>
+              ${overdue ? 'bg-s-red text-[#fff]' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
             Overdue
           </button>
         </div>
         <button onClick={() => setShowCreate(true)}
-          className="ml-auto rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+          className="ml-auto rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + New Bill
         </button>
       </div>
@@ -563,22 +563,22 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {showCreate && <CreateBillForm qc={qc} onClose={() => setShowCreate(false)} />}
 
       {isLoading ? (
-        <p className="text-kds-subtext text-sm py-8 text-center">Loading…</p>
+        <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : bills.length === 0 ? (
         <EmptyState icon="🧾" title="No bills" sub="Record supplier invoices here" />
       ) : (
-        <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-kds-border bg-kds-card/40">
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Bill #</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Supplier</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Date</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Due</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Total</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Outstanding</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Status</th>
+              <tr className="border-b border-s-border bg-s-surface/40">
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Bill #</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Date</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Due</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Total</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Outstanding</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Status</th>
                 <th className="px-4 py-2.5" />
               </tr>
             </thead>
@@ -586,23 +586,23 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               {bills.map((b) => {
                 const isOverdue = b.status !== 'paid' && b.status !== 'void' && new Date(b.dueDate) < new Date()
                 return (
-                  <tr key={b.id} className={`border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30 transition-colors ${isOverdue ? 'bg-red-950/5' : ''}`}>
-                    <td className="px-4 py-3 font-mono text-xs text-kds-green">{b.billNumber}</td>
-                    <td className="px-4 py-3 text-kds-text font-medium">{b.supplier?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(b.billDate)}</td>
-                    <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-kds-red font-semibold' : 'text-kds-subtext'}`}>{fmt(b.dueDate)}</td>
-                    <td className="px-4 py-3 text-kds-text font-semibold text-right">{fmtPkrWhole(b.totalCents)}</td>
-                    <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-kds-red' : 'text-kds-green'}`}>
+                  <tr key={b.id} className={`border-b border-s-border/50 last:border-0 hover:bg-s-surface/30 transition-colors ${isOverdue ? 'bg-red-100/5' : ''}`}>
+                    <td className="px-4 py-3 font-mono text-xs text-primary-ink">{b.billNumber}</td>
+                    <td className="px-4 py-3 text-s-text font-medium">{b.supplier?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(b.billDate)}</td>
+                    <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-s-red font-semibold' : 'text-s-muted'}`}>{fmt(b.dueDate)}</td>
+                    <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(b.totalCents)}</td>
+                    <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-s-red' : 'text-primary-ink'}`}>
                       {fmtPkrWhole(billDue(b))}
                     </td>
                     <td className="px-4 py-3"><Badge status={isOverdue ? 'overdue' : b.status} /></td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
                         <button onClick={() => setMatchId(matchId === b.id ? null : b.id)}
-                          className="text-xs text-sky-400 hover:opacity-80 font-semibold">Match</button>
+                          className="text-xs text-sky-700 hover:opacity-80 font-semibold">Match</button>
                         {b.status !== 'void' && (
                           <button onClick={() => { setVoidId(b.id); setVoidReason('') }}
-                            className="text-xs text-kds-red hover:opacity-80 font-semibold">Void</button>
+                            className="text-xs text-s-red hover:opacity-80 font-semibold">Void</button>
                         )}
                       </div>
                     </td>
@@ -617,31 +617,31 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
       {/* 3-way match result */}
       {matchId && matchResult && (
-        <div className="rounded-xl border border-kds-border bg-kds-card p-4">
+        <div className="rounded-xl border border-s-border bg-s-surface p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="font-bold text-kds-text text-sm">3-Way Match Result</p>
-            <button onClick={() => setMatchId(null)} className="text-kds-subtext text-xs">✕</button>
+            <p className="font-bold text-s-text text-sm">3-Way Match Result</p>
+            <button onClick={() => setMatchId(null)} className="text-s-muted text-xs">✕</button>
           </div>
-          <pre className="text-xs text-kds-subtext overflow-auto max-h-48">{JSON.stringify(matchResult, null, 2)}</pre>
+          <pre className="text-xs text-s-muted overflow-auto max-h-48">{JSON.stringify(matchResult, null, 2)}</pre>
         </div>
       )}
 
       {/* Void modal */}
       {voidId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-kds-card border border-kds-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-kds-text">Void Bill</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="font-bold text-s-text">Void Bill</p>
             <Field label="Reason (required)">
               <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
               <button disabled={!voidReason || voidMut.isPending}
                 onClick={() => voidMut.mutate({ id: voidId, reason: voidReason })}
-                className="rounded-xl bg-kds-red text-white font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Void
               </button>
               <button onClick={() => { setVoidId(null); setVoidReason('') }}
-                className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+                className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
           </div>
         </div>
@@ -676,10 +676,10 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
   const valid = form.supplierId && form.billNumber && form.billDate && lines.every((l) => l.description && l.quantity && l.unitCostCents)
 
   return (
-    <div className="rounded-xl border border-kds-green bg-kds-card p-5 space-y-4">
+    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="font-bold text-kds-text">New Supplier Bill</p>
-        <button onClick={onClose} className="text-kds-subtext text-xs">✕</button>
+        <p className="font-bold text-s-text">New Supplier Bill</p>
+        <button onClick={onClose} className="text-s-muted text-xs">✕</button>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="Supplier *">
@@ -717,7 +717,7 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
       </div>
 
       <div className="space-y-2">
-        <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest">Lines</p>
+        <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Lines</p>
         {lines.map((l, i) => (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-6">
@@ -734,22 +734,22 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
             </div>
             <div className="col-span-1">
               <button onClick={() => setLines(lines.filter((_, j) => j !== i))}
-                className="w-full rounded-lg border border-kds-border text-kds-red py-2 text-sm">✕</button>
+                className="w-full rounded-lg border border-s-border text-s-red py-2 text-sm">✕</button>
             </div>
           </div>
         ))}
         <button onClick={() => setLines([...lines, { description: '', quantity: '', unitCostCents: '' }])}
-          className="text-xs text-kds-green hover:underline">+ Add line</button>
+          className="text-xs text-primary-ink hover:underline">+ Add line</button>
       </div>
 
-      <div className="flex gap-2 pt-2 border-t border-kds-border">
+      <div className="flex gap-2 pt-2 border-t border-s-border">
         <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
           {mut.isPending ? 'Saving…' : 'Save Bill'}
         </button>
-        <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
       </div>
-      {mut.isError && <p className="text-xs text-kds-red">{(mut.error as Error).message}</p>}
+      {mut.isError && <p className="text-xs text-s-red">{(mut.error as Error).message}</p>}
     </div>
   )
 }
@@ -771,7 +771,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
     <div className="p-6 space-y-4">
       <div className="flex justify-end">
         <button onClick={() => setShowCreate(true)}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + Record Payment
         </button>
       </div>
@@ -779,39 +779,39 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {showCreate && <CreatePaymentForm qc={qc} onClose={() => setShowCreate(false)} />}
 
       {isLoading ? (
-        <p className="text-kds-subtext text-sm py-8 text-center">Loading…</p>
+        <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : payments.length === 0 ? (
         <EmptyState icon="💳" title="No payments" sub="Record supplier payments here" />
       ) : (
-        <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-kds-border bg-kds-card/40">
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Date</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Supplier</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Method</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Ref</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Amount</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Unallocated</th>
+              <tr className="border-b border-s-border bg-s-surface/40">
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Date</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Method</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Ref</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Amount</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Unallocated</th>
                 <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {payments.map((p) => (
-                <tr key={p.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
-                  <td className="px-4 py-3 text-kds-subtext">{fmt(p.paymentDate)}</td>
-                  <td className="px-4 py-3 text-kds-text font-medium">{p.supplier?.name ?? '—'}</td>
-                  <td className="px-4 py-3 text-kds-subtext hidden md:table-cell capitalize">{p.method.replace(/_/g, ' ')}</td>
-                  <td className="px-4 py-3 text-kds-subtext font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
-                  <td className="px-4 py-3 text-kds-text font-semibold text-right">{fmtPkrWhole(p.amountCents)}</td>
-                  <td className={`px-4 py-3 text-right font-semibold ${p.amountCents - p.appliedCents > 0 ? 'text-amber-400' : 'text-kds-subtext'}`}>
+                <tr key={p.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
+                  <td className="px-4 py-3 text-s-muted">{fmt(p.paymentDate)}</td>
+                  <td className="px-4 py-3 text-s-text font-medium">{p.supplier?.name ?? '—'}</td>
+                  <td className="px-4 py-3 text-s-muted hidden md:table-cell capitalize">{p.method.replace(/_/g, ' ')}</td>
+                  <td className="px-4 py-3 text-s-muted font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
+                  <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(p.amountCents)}</td>
+                  <td className={`px-4 py-3 text-right font-semibold ${p.amountCents - p.appliedCents > 0 ? 'text-amber-700' : 'text-s-muted'}`}>
                     {fmtPkrWhole(p.amountCents - p.appliedCents)}
                   </td>
                   <td className="px-4 py-3">
                     {p.amountCents - p.appliedCents > 0 && (
                       <button onClick={() => setAllocateId(p.id)}
-                        className="text-xs text-kds-green hover:underline font-semibold">Allocate</button>
+                        className="text-xs text-primary-ink hover:underline font-semibold">Allocate</button>
                     )}
                   </td>
                 </tr>
@@ -845,10 +845,10 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
   const valid = form.supplierId && form.paymentDate && form.amountCents
 
   return (
-    <div className="rounded-xl border border-kds-green bg-kds-card p-5 space-y-4">
+    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="font-bold text-kds-text">Record Payment</p>
-        <button onClick={onClose} className="text-kds-subtext text-xs">✕</button>
+        <p className="font-bold text-s-text">Record Payment</p>
+        <button onClick={onClose} className="text-s-muted text-xs">✕</button>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Field label="Supplier *">
@@ -875,12 +875,12 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
-      <div className="flex gap-2 pt-2 border-t border-kds-border">
+      <div className="flex gap-2 pt-2 border-t border-s-border">
         <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
           {mut.isPending ? 'Saving…' : 'Record Payment'}
         </button>
-        <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
       </div>
     </div>
   )
@@ -909,34 +909,34 @@ function AllocateModal({ paymentId, qc, onClose }: { paymentId: string; qc: Retu
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-kds-card border border-kds-border rounded-2xl p-6 w-full max-w-lg space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+      <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-lg space-y-4">
         <div className="flex items-center justify-between">
-          <p className="font-bold text-kds-text">Allocate to Bills</p>
-          <button onClick={onClose} className="text-kds-subtext text-xs">✕</button>
+          <p className="font-bold text-s-text">Allocate to Bills</p>
+          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
         </div>
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {bills.filter((b) => billDue(b) > 0).map((b) => (
             <div key={b.id} className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-kds-text font-medium">{b.billNumber}</p>
-                <p className="text-xs text-kds-subtext">Outstanding: {fmtPkrWhole(billDue(b))}</p>
+                <p className="text-sm text-s-text font-medium">{b.billNumber}</p>
+                <p className="text-xs text-s-muted">Outstanding: {fmtPkrWhole(billDue(b))}</p>
               </div>
-              <input type="number" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-kds-bg border border-kds-border px-2 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none"
+              <input type="number" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
                 value={allocations[b.id] ?? ''}
                 onChange={(e) => setAllocations({ ...allocations, [b.id]: e.target.value })} />
             </div>
           ))}
           {bills.filter((b) => billDue(b) > 0).length === 0 && (
-            <p className="text-kds-subtext text-sm">No open bills to allocate to.</p>
+            <p className="text-s-muted text-sm">No open bills to allocate to.</p>
           )}
         </div>
         <div className="flex gap-2 pt-2">
           <button onClick={() => mut.mutate()} disabled={mut.isPending || Object.values(allocations).every((v) => !v || Number(v) <= 0)}
-            className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
             {mut.isPending ? 'Applying…' : 'Apply allocations'}
           </button>
-          <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
         </div>
       </div>
     </div>
@@ -969,7 +969,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
     <div className="p-6 space-y-4">
       <div className="flex justify-end">
         <button onClick={() => setShowCreate(true)}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + Add Supplier
         </button>
       </div>
@@ -982,41 +982,41 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       )}
 
       {isLoading ? (
-        <p className="text-kds-subtext text-sm py-8 text-center">Loading…</p>
+        <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : suppliers.length === 0 ? (
         <EmptyState icon="🏭" title="No suppliers" sub="Add your first supplier to start ordering" />
       ) : (
-        <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-kds-border bg-kds-card/40">
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Name</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Contact</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">POs</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Bills</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Terms</th>
+              <tr className="border-b border-s-border bg-s-surface/40">
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Name</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Contact</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">POs</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Bills</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Terms</th>
                 <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {suppliers.map((s) => (
-                <tr key={s.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
+                <tr key={s.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
                   <td className="px-4 py-3">
-                    <p className="text-kds-text font-semibold">{s.name}</p>
-                    {s.taxId && <p className="text-xs text-kds-subtext">TIN: {s.taxId}</p>}
+                    <p className="text-s-text font-semibold">{s.name}</p>
+                    {s.taxId && <p className="text-xs text-s-muted">TIN: {s.taxId}</p>}
                   </td>
-                  <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">
+                  <td className="px-4 py-3 text-s-muted hidden md:table-cell">
                     {s.phone && <p className="text-xs">{s.phone}</p>}
                     {s.email && <p className="text-xs">{s.email}</p>}
                   </td>
-                  <td className="px-4 py-3 text-kds-subtext text-right hidden md:table-cell">{s._count?.purchaseOrders ?? 0}</td>
-                  <td className="px-4 py-3 text-kds-subtext text-right hidden md:table-cell">{s._count?.bills ?? 0}</td>
-                  <td className="px-4 py-3 text-kds-subtext text-right">{s.paymentTermsDays}d</td>
+                  <td className="px-4 py-3 text-s-muted text-right hidden md:table-cell">{s._count?.purchaseOrders ?? 0}</td>
+                  <td className="px-4 py-3 text-s-muted text-right hidden md:table-cell">{s._count?.bills ?? 0}</td>
+                  <td className="px-4 py-3 text-s-muted text-right">{s.paymentTermsDays}d</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      <button onClick={() => setEditId(s.id)} className="text-xs text-kds-green hover:underline font-semibold">Edit</button>
-                      <button onClick={() => setStatementId(statementId === s.id ? null : s.id)} className="text-xs text-sky-400 hover:underline font-semibold">Statement</button>
+                      <button onClick={() => setEditId(s.id)} className="text-xs text-primary-ink hover:underline font-semibold">Edit</button>
+                      <button onClick={() => setStatementId(statementId === s.id ? null : s.id)} className="text-xs text-sky-700 hover:underline font-semibold">Statement</button>
                     </div>
                   </td>
                 </tr>
@@ -1029,45 +1029,45 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
       {/* Statement panel */}
       {statement && statementId && (
-        <div className="rounded-xl border border-kds-border bg-kds-card p-4 space-y-3">
+        <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="font-bold text-kds-text">{statement.supplier.name} — Statement</p>
-            <button onClick={() => setStatementId(null)} className="text-kds-subtext text-xs">✕</button>
+            <p className="font-bold text-s-text">{statement.supplier.name} — Statement</p>
+            <button onClick={() => setStatementId(null)} className="text-s-muted text-xs">✕</button>
           </div>
           <div className="flex gap-6">
             <div>
-              <p className="text-xs text-kds-subtext">Outstanding balance</p>
-              <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-kds-red' : 'text-kds-green'}`}>{fmtPkrWhole(statement.outstanding)}</p>
+              <p className="text-xs text-s-muted">Outstanding balance</p>
+              <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-s-red' : 'text-primary-ink'}`}>{fmtPkrWhole(statement.outstanding)}</p>
             </div>
             <div>
-              <p className="text-xs text-kds-subtext">Opening balance (included above)</p>
-              <p className="text-sm font-semibold text-kds-text">{fmtPkrWhole(statement.supplier.openingBalanceCents)}</p>
+              <p className="text-xs text-s-muted">Opening balance (included above)</p>
+              <p className="text-sm font-semibold text-s-text">{fmtPkrWhole(statement.supplier.openingBalanceCents)}</p>
               {(statement.openingUnpostedCents ?? 0) !== 0 && (
-                <p className="text-[11px] text-amber-400">{fmtPkrWhole(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
+                <p className="text-[11px] text-amber-700">{fmtPkrWhole(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
               )}
             </div>
           </div>
           <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">Bills</p>
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Bills</p>
               <div className="space-y-1">
                 {statement.bills.slice(0, 5).map((b) => (
                   <div key={b.id} className="flex items-center justify-between text-xs">
-                    <span className="text-kds-subtext font-mono">{b.billNumber}</span>
-                    <span className="text-kds-text">{fmtPkrWhole(b.totalCents)}</span>
+                    <span className="text-s-muted font-mono">{b.billNumber}</span>
+                    <span className="text-s-text">{fmtPkrWhole(b.totalCents)}</span>
                     <Badge status={b.status} />
                   </div>
                 ))}
               </div>
             </div>
             <div>
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">Payments</p>
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Payments</p>
               <div className="space-y-1">
                 {statement.payments.slice(0, 5).map((p) => (
                   <div key={p.id} className="flex items-center justify-between text-xs">
-                    <span className="text-kds-subtext">{fmt(p.paymentDate)}</span>
-                    <span className="text-kds-text capitalize">{p.method.replace(/_/g, ' ')}</span>
-                    <span className="text-kds-green font-semibold">{fmtPkrWhole(p.amountCents)}</span>
+                    <span className="text-s-muted">{fmt(p.paymentDate)}</span>
+                    <span className="text-s-text capitalize">{p.method.replace(/_/g, ' ')}</span>
+                    <span className="text-primary-ink font-semibold">{fmtPkrWhole(p.amountCents)}</span>
                   </div>
                 ))}
               </div>
@@ -1140,10 +1140,10 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
   }
 
   return (
-    <div className="rounded-xl border border-kds-green bg-kds-card p-5 space-y-4">
+    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="font-bold text-kds-text">{supplier ? 'Edit Supplier' : 'New Supplier'}</p>
-        <button onClick={onClose} className="text-kds-subtext text-xs">✕</button>
+        <p className="font-bold text-s-text">{supplier ? 'Edit Supplier' : 'New Supplier'}</p>
+        <button onClick={onClose} className="text-s-muted text-xs">✕</button>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Field label="Name *">
@@ -1185,13 +1185,13 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
-      {err && <p className="text-xs font-bold text-red-400 pt-1">{err}</p>}
-      <div className="flex gap-2 pt-2 border-t border-kds-border">
+      {err && <p className="text-xs font-bold text-red-700 pt-1">{err}</p>}
+      <div className="flex gap-2 pt-2 border-t border-s-border">
         <button onClick={submit} disabled={!form.name || mut.isPending}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
           {mut.isPending ? 'Saving…' : supplier ? 'Update' : 'Add Supplier'}
         </button>
-        <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
       </div>
     </div>
   )
@@ -1222,29 +1222,29 @@ function ReorderTab() {
     queryFn: () => api.get<ReorderItem[]>('/procurement/reorder'),
   })
 
-  if (isLoading) return <div className="p-6"><p className="text-kds-subtext text-sm">Loading…</p></div>
+  if (isLoading) return <div className="p-6"><p className="text-s-muted text-sm">Loading…</p></div>
   if (!data || data.length === 0) return <div className="p-6"><EmptyState icon="🔄" title="All stocked up" sub="No items below reorder threshold" /></div>
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="font-bold text-kds-text text-lg">Reorder Suggestions</p>
-          <p className="text-sm text-kds-subtext">{data.length} item{data.length !== 1 ? 's' : ''} below par level</p>
+          <p className="font-bold text-s-text text-lg">Reorder Suggestions</p>
+          <p className="text-sm text-s-muted">{data.length} item{data.length !== 1 ? 's' : ''} below par level</p>
         </div>
       </div>
 
-      <div className="rounded-xl border border-kds-border overflow-hidden">
+      <div className="rounded-xl border border-s-border overflow-hidden">
         <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-kds-border bg-kds-card/40">
-              <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Item</th>
-              <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">In stock</th>
-              <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Par level</th>
-              <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Reorder qty</th>
-              <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Est. cost</th>
-              <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Suppliers</th>
+            <tr className="border-b border-s-border bg-s-surface/40">
+              <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Item</th>
+              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">In stock</th>
+              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Par level</th>
+              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Reorder qty</th>
+              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Est. cost</th>
+              <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Suppliers</th>
             </tr>
           </thead>
           <tbody>
@@ -1252,16 +1252,16 @@ function ReorderTab() {
               const estCost = item.costPerUnit != null ? item.reorderQty * item.costPerUnit : null
               const pctBelow = ((item.parLevel - item.currentStock) / item.parLevel * 100).toFixed(0)
               return (
-                <tr key={item.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
+                <tr key={item.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
                   <td className="px-4 py-3">
-                    <p className="text-kds-text font-medium">{item.name}</p>
-                    <p className="text-xs text-kds-red">{pctBelow}% below par</p>
+                    <p className="text-s-text font-medium">{item.name}</p>
+                    <p className="text-xs text-s-red">{pctBelow}% below par</p>
                   </td>
-                  <td className="px-4 py-3 text-right text-kds-red font-bold">{item.currentStock} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-kds-subtext">{item.parLevel} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-amber-400 font-semibold">{item.reorderQty} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-kds-subtext hidden md:table-cell">{estCost != null ? fmtPkrWhole(estCost * 100) : '—'}</td>
-                  <td className="px-4 py-3 text-kds-subtext text-xs hidden md:table-cell">
+                  <td className="px-4 py-3 text-right text-s-red font-bold">{item.currentStock} {item.unit}</td>
+                  <td className="px-4 py-3 text-right text-s-muted">{item.parLevel} {item.unit}</td>
+                  <td className="px-4 py-3 text-right text-amber-700 font-semibold">{item.reorderQty} {item.unit}</td>
+                  <td className="px-4 py-3 text-right text-s-muted hidden md:table-cell">{estCost != null ? fmtPkrWhole(estCost * 100) : '—'}</td>
+                  <td className="px-4 py-3 text-s-muted text-xs hidden md:table-cell">
                     {item.suppliers?.map((s) => s.name).join(', ') ?? '—'}
                   </td>
                 </tr>
@@ -1307,26 +1307,26 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
 
-  if (isLoading) return <div className="p-6"><p className="text-kds-subtext text-sm">Loading…</p></div>
+  if (isLoading) return <div className="p-6"><p className="text-s-muted text-sm">Loading…</p></div>
 
   return (
     <div className="p-6 space-y-4">
       {/* Threshold setting */}
-      <div className="rounded-xl border border-kds-border bg-kds-card p-4 flex flex-wrap items-center gap-4">
+      <div className="rounded-xl border border-s-border bg-s-surface p-4 flex flex-wrap items-center gap-4">
         <div>
-          <p className="text-xs text-kds-subtext font-medium">Auto-approval threshold</p>
-          <p className="text-sm font-bold text-kds-text">
+          <p className="text-xs text-s-muted font-medium">Auto-approval threshold</p>
+          <p className="text-sm font-bold text-s-text">
             {thresholdData ? fmtPkrWhole(thresholdData.thresholdCents) : '…'}
           </p>
-          <p className="text-xs text-kds-subtext">POs above this value require manual approval</p>
+          <p className="text-xs text-s-muted">POs above this value require manual approval</p>
         </div>
         <div className="flex items-center gap-2 ml-auto">
           <input type="number" placeholder="New threshold (PKR)" value={newThreshold}
             onChange={(e) => setNewThreshold(e.target.value)}
-            className="w-44 rounded-lg bg-kds-bg border border-kds-border px-3 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none" />
+            className="w-44 rounded-lg bg-s-bg border border-s-border px-3 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none" />
           <button disabled={!newThreshold || thresholdMut.isPending}
             onClick={() => thresholdMut.mutate(Math.round(Number(newThreshold) * 100))}
-            className="rounded-xl bg-kds-green text-black font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50">
+            className="rounded-xl bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50">
             Update
           </button>
         </div>
@@ -1336,33 +1336,33 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <EmptyState icon="✅" title="No pending approvals" sub="All purchase orders have been reviewed" />
       ) : (
         <>
-          <p className="text-sm font-bold text-amber-400">{orders.length} PO{orders.length !== 1 ? 's' : ''} awaiting approval</p>
+          <p className="text-sm font-bold text-amber-700">{orders.length} PO{orders.length !== 1 ? 's' : ''} awaiting approval</p>
           <div className="rounded-xl border border-amber-900/40 overflow-hidden">
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-amber-900/30 bg-amber-950/10">
-                  <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Reference</th>
-                  <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Supplier</th>
-                  <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Created</th>
-                  <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">Total</th>
+                <tr className="border-b border-amber-900/30 bg-amber-100/10">
+                  <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Reference</th>
+                  <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
+                  <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Created</th>
+                  <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Total</th>
                   <th className="px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {orders.map((po) => (
-                  <tr key={po.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
-                    <td className="px-4 py-3 font-mono text-xs text-kds-green">{po.reference ?? po.id.slice(-8)}</td>
-                    <td className="px-4 py-3 text-kds-text font-medium">{po.supplier?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(po.createdAt)}</td>
-                    <td className="px-4 py-3 text-kds-text font-bold text-right">{fmtPkrWhole(po.totalCents)}</td>
+                  <tr key={po.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
+                    <td className="px-4 py-3 font-mono text-xs text-primary-ink">{po.reference ?? po.id.slice(-8)}</td>
+                    <td className="px-4 py-3 text-s-text font-medium">{po.supplier?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(po.createdAt)}</td>
+                    <td className="px-4 py-3 text-s-text font-bold text-right">{fmtPkrWhole(po.totalCents)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
                         <button onClick={() => approveRejectMut.mutate({ id: po.id, action: 'approve' })}
                           disabled={approveRejectMut.isPending}
-                          className="text-xs text-kds-green hover:opacity-80 font-semibold">Approve</button>
+                          className="text-xs text-primary-ink hover:opacity-80 font-semibold">Approve</button>
                         <button onClick={() => { setRejectId(po.id); setRejectReason('') }}
-                          className="text-xs text-kds-red hover:opacity-80 font-semibold">Reject</button>
+                          className="text-xs text-s-red hover:opacity-80 font-semibold">Reject</button>
                       </div>
                     </td>
                   </tr>
@@ -1375,19 +1375,19 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       )}
 
       {rejectId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-kds-card border border-kds-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-kds-text">Reject PO</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="font-bold text-s-text">Reject PO</p>
             <Field label="Reason (required)">
               <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
               <button disabled={!rejectReason || approveRejectMut.isPending}
                 onClick={() => { approveRejectMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason } }); setRejectId(null) }}
-                className="rounded-xl bg-kds-red text-white font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Reject
               </button>
-              <button onClick={() => setRejectId(null)} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
+              <button onClick={() => setRejectId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
           </div>
         </div>
@@ -1420,17 +1420,17 @@ function PriceHistoryTab() {
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-kds-subtext">Item:</label>
+          <label className="text-xs text-s-muted">Item:</label>
           <select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}
-            className="rounded-lg bg-kds-card border border-kds-border px-3 py-1.5 text-xs text-kds-text focus:border-kds-green focus:outline-none">
+            className="rounded-lg bg-s-surface border border-s-border px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
             <option value="">All items</option>
             {invItems.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-kds-subtext">Supplier:</label>
+          <label className="text-xs text-s-muted">Supplier:</label>
           <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}
-            className="rounded-lg bg-kds-card border border-kds-border px-3 py-1.5 text-xs text-kds-text focus:border-kds-green focus:outline-none">
+            className="rounded-lg bg-s-surface border border-s-border px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
             <option value="">All suppliers</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
@@ -1438,22 +1438,22 @@ function PriceHistoryTab() {
       </div>
 
       {isLoading ? (
-        <p className="text-kds-subtext text-sm py-8 text-center">Loading…</p>
+        <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : data.length === 0 ? (
         <EmptyState icon="📈" title="No price history" sub="Receive purchase orders to build price history" />
       ) : (
-        <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-kds-border bg-kds-card/40">
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Item</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Supplier</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Old cost</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold">New cost</th>
-                <th className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Change</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell">Source</th>
-                <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Date</th>
+              <tr className="border-b border-s-border bg-s-surface/40">
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Item</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Supplier</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Old cost</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">New cost</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Change</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Source</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Date</th>
               </tr>
             </thead>
             <tbody>
@@ -1463,20 +1463,20 @@ function PriceHistoryTab() {
                   : null
                 const up = pct && Number(pct) > 0
                 return (
-                  <tr key={row.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
-                    <td className="px-4 py-3 text-kds-text font-medium">{row.inventoryItem?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{row.supplier?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-kds-subtext hidden md:table-cell">{row.oldCostCents != null ? fmtPkrWhole(row.oldCostCents) : '—'}</td>
-                    <td className="px-4 py-3 text-right text-kds-text font-semibold">{fmtPkrWhole(row.newCostCents)}</td>
+                  <tr key={row.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
+                    <td className="px-4 py-3 text-s-text font-medium">{row.inventoryItem?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">{row.supplier?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-right text-s-muted hidden md:table-cell">{row.oldCostCents != null ? fmtPkrWhole(row.oldCostCents) : '—'}</td>
+                    <td className="px-4 py-3 text-right text-s-text font-semibold">{fmtPkrWhole(row.newCostCents)}</td>
                     <td className="px-4 py-3 text-right hidden md:table-cell">
                       {pct ? (
-                        <span className={`text-xs font-bold ${up ? 'text-kds-red' : 'text-kds-green'}`}>
+                        <span className={`text-xs font-bold ${up ? 'text-s-red' : 'text-primary-ink'}`}>
                           {up ? '▲' : '▼'} {Math.abs(Number(pct))}%
                         </span>
-                      ) : <span className="text-kds-subtext text-xs">—</span>}
+                      ) : <span className="text-s-muted text-xs">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-kds-subtext text-xs hidden md:table-cell capitalize">{row.source.replace(/_/g, ' ')}</td>
-                    <td className="px-4 py-3 text-kds-subtext text-xs">{fmt(row.recordedAt)}</td>
+                    <td className="px-4 py-3 text-s-muted text-xs hidden md:table-cell capitalize">{row.source.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-3 text-s-muted text-xs">{fmt(row.recordedAt)}</td>
                   </tr>
                 )
               })}
@@ -1493,9 +1493,9 @@ function PriceHistoryTab() {
 
 function EmptyState({ icon, title, sub }: { icon: string; title: string; sub: string }) {
   return (
-    <div className="text-center py-16 text-kds-subtext">
+    <div className="text-center py-16 text-s-muted">
       <p className="text-4xl mb-3">{icon}</p>
-      <p className="font-semibold text-kds-text">{title}</p>
+      <p className="font-semibold text-s-text">{title}</p>
       <p className="text-sm mt-1">{sub}</p>
     </div>
   )

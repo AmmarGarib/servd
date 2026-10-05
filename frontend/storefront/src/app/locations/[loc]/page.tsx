@@ -87,7 +87,7 @@ export default async function LocationPage({ params }: { params: Promise<{ loc: 
               <a href={`https://www.google.com/maps/search/?api=1&query=${mapsQuery}`}
                 target="_blank" rel="noopener noreferrer"
                 className="brand-pill"
-                style={{ background: 'var(--servd-green)', color: 'white' }}>
+                style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                 Open in Maps →
               </a>
               <a href={`tel:${brand.phone.replace(/\s/g, '')}`}

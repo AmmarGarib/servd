@@ -87,7 +87,7 @@ export default function WhatsappSettingsPage() {
               value={urlValue}
               onChange={(e) => setApiUrl(e.target.value)}
               placeholder="https://whatsapp.garibsons.app/webhook/xxxxxxxx/send"
-              className="w-full px-3 py-2 rounded border border-s-border bg-white text-s-text font-mono text-xs"
+              className="w-full px-3 py-2 rounded border border-s-border bg-s-surface text-s-text font-mono text-xs"
             />
             <p className="text-[11px] text-s-muted mt-1">
               Copy from the gateway&rsquo;s <strong>API Info</strong> tab. The app there must show
@@ -103,7 +103,7 @@ export default function WhatsappSettingsPage() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={data?.apiKeyHint ? `Saved (${data.apiKeyHint}) — leave blank to keep` : 'sk-…'}
-              className="w-full px-3 py-2 rounded border border-s-border bg-white text-s-text font-mono text-xs"
+              className="w-full px-3 py-2 rounded border border-s-border bg-s-surface text-s-text font-mono text-xs"
             />
             <p className="text-[11px] text-s-muted mt-1">
               Never shown again once saved. Leave blank to change the endpoint without re-typing it.
@@ -113,7 +113,7 @@ export default function WhatsappSettingsPage() {
           <button
             onClick={() => save.mutate()}
             disabled={save.isPending}
-            className="px-4 py-2 rounded bg-black text-white text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 rounded bg-secondary text-secondary-on text-sm font-semibold disabled:opacity-50"
           >
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
@@ -132,7 +132,7 @@ export default function WhatsappSettingsPage() {
               onChange={(e) => setTestPhone(e.target.value)}
               placeholder="03001234567"
               aria-label="Phone number to test"
-              className="flex-1 px-3 py-2 rounded border border-s-border bg-white text-s-text text-sm"
+              className="flex-1 px-3 py-2 rounded border border-s-border bg-s-surface text-s-text text-sm"
             />
             <button
               onClick={() => { setTestResult(null); test.mutate() }}

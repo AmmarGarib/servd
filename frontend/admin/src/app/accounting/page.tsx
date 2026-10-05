@@ -37,7 +37,7 @@ interface Vendor {
 }
 
 const statusColor = {
-  good:     { bar: 'bg-s-teal', text: 'text-s-teal', badge: 's-badge-teal', label: 'On Target' },
+  good:     { bar: 'bg-s-teal', text: 'text-primary-ink', badge: 's-badge-teal', label: 'On Target' },
   warning:  { bar: 'bg-s-amber', text: 'text-s-amber', badge: 's-badge-amber', label: 'Watch' },
   critical: { bar: 'bg-s-red', text: 'text-s-red', badge: 's-badge-red', label: 'Over Budget' },
 }
@@ -118,7 +118,7 @@ export default function AccountingHubPage() {
               label: 'Recipes Built',
               value: recipes?.length ?? '—',
               sub: foodCost ? `${foodCost.itemsWithoutRecipe.length} items unmapped` : undefined,
-              color: 'text-s-teal',
+              color: 'text-primary-ink',
               href: '/accounting/recipes',
             },
           ].map((kpi) => (
@@ -184,7 +184,7 @@ export default function AccountingHubPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className={`s-badge ${fcStatus?.badge}`}>{fcStatus?.label}</span>
-                <Link href="/accounting/food-cost" className="text-xs text-s-teal hover:underline">Full report →</Link>
+                <Link href="/accounting/food-cost" className="text-xs text-primary-ink hover:underline">Full report →</Link>
               </div>
             </div>
 
@@ -192,7 +192,7 @@ export default function AccountingHubPage() {
             <div className="mb-4">
               <div className="flex justify-between text-xs text-s-muted mb-1.5">
                 <span>0%</span>
-                <span className="text-s-teal">Target 30%</span>
+                <span className="text-primary-ink">Target 30%</span>
                 <span>50%+</span>
               </div>
               <div className="stat-bar-track h-3 relative">
@@ -205,7 +205,7 @@ export default function AccountingHubPage() {
               </div>
               <div className="flex justify-between items-center mt-2">
                 <span className={`text-2xl font-black ${fcStatus?.text}`}>{fc.theoreticalFoodCostPct}%</span>
-                <span className={`text-sm font-semibold ${fc.variance > 0 ? 'text-s-red' : 'text-s-teal'}`}>
+                <span className={`text-sm font-semibold ${fc.variance > 0 ? 'text-s-red' : 'text-primary-ink'}`}>
                   {fc.variance > 0 ? '+' : ''}{fc.variance}% vs target
                 </span>
               </div>
@@ -216,7 +216,7 @@ export default function AccountingHubPage() {
               {[
                 { label: 'Theoretical Cost', value: fmtPkrShort(fc.theoreticalCents), color: 'text-s-text' },
                 { label: 'Actual Purchases', value: fmtPkrShort(fc.actualPurchasesCents), color: 'text-s-amber' },
-                { label: 'Gross Revenue', value: fmtPkrShort(foodCost!.revenue.grossCents), color: 'text-s-teal' },
+                { label: 'Gross Revenue', value: fmtPkrShort(foodCost!.revenue.grossCents), color: 'text-primary-ink' },
               ].map((s) => (
                 <div key={s.label} className="text-center rounded-lg bg-s-elevated border border-s-border p-3">
                   <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
@@ -234,7 +234,7 @@ export default function AccountingHubPage() {
           <section className="s-card p-5">
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Top Cost Items (MTD)</p>
-              <Link href="/accounting/food-cost" className="text-xs text-s-teal hover:underline">Detail →</Link>
+              <Link href="/accounting/food-cost" className="text-xs text-primary-ink hover:underline">Detail →</Link>
             </div>
             {!foodCost?.byItem.length ? (
               <p className="text-sm text-s-dim text-center py-6">No data for this period</p>
@@ -248,7 +248,7 @@ export default function AccountingHubPage() {
                     </div>
                     <div className="ml-3 text-right shrink-0">
                       <p className="text-sm font-bold text-s-text">{fmtPkrShort(item.totalCost)}</p>
-                      <p className={`text-[11px] font-semibold ${item.foodCostPct > 35 ? 'text-s-red' : item.foodCostPct > 30 ? 'text-s-amber' : 'text-s-teal'}`}>
+                      <p className={`text-[11px] font-semibold ${item.foodCostPct > 35 ? 'text-s-red' : item.foodCostPct > 30 ? 'text-s-amber' : 'text-primary-ink'}`}>
                         {item.foodCostPct}% FC
                       </p>
                     </div>
@@ -262,7 +262,7 @@ export default function AccountingHubPage() {
           <section className="s-card p-5">
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Recent Purchase Orders</p>
-              <Link href="/procurement" className="text-xs text-s-teal hover:underline">All POs →</Link>
+              <Link href="/procurement" className="text-xs text-primary-ink hover:underline">All POs →</Link>
             </div>
             {!recentPOs?.length ? (
               <p className="text-sm text-s-dim text-center py-6">No purchase orders yet</p>

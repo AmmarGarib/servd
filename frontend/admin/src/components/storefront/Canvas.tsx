@@ -134,7 +134,7 @@ function DropZone({ slot, onDrop, nested, big, children }: { slot: Slot; onDrop:
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setOver(false); onDrop(slot) }}
       className={big
-        ? `rounded-xl border-2 border-dashed p-10 text-center text-sm ${over ? 'border-s-teal text-s-teal bg-s-teal-dim/30' : 'border-s-border text-s-muted'}`
+        ? `rounded-xl border-2 border-dashed p-10 text-center text-sm ${over ? 'border-s-teal text-primary-ink bg-s-teal-dim/30' : 'border-s-border text-s-muted'}`
         : `transition-all rounded ${over ? 'h-8 my-1 border-2 border-dashed border-s-teal bg-s-teal-dim/30' : nested ? 'h-2' : 'h-3'}`}
     >
       {children}
