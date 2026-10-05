@@ -8,6 +8,7 @@ import { api } from '../../lib/api'
 import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
 import { useSyncRoleModules } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
+import { useTeam } from '../../hooks/useTeam'
 import { useMyWorkspaces } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
@@ -162,10 +163,21 @@ function NavLinks({
     }).filter((g) => g.sections.length > 0)
   }, [workspaces, stations, allowedModules, pendingStaff.length, pendingLayouts.length])
 
-  const personalItems: NavItem[] = useMemo(
-    () => PERSONAL_PAGES.map((p) => ({ href: p.href, label: p.label, icon: '·' })),
-    [],
-  )
+  // The "Me" pages only show when they have something for this login: My team
+  // when people report to you (or you add logins for your workspace), My
+  // approvals when you have a team or requests waiting, My HR when your login
+  // is linked to an employee record. The CEO, unlinked, sees none of them.
+  const { data: team } = useTeam()
+  const personalItems: NavItem[] = useMemo(() => {
+    const hasTeam = (team?.team.length ?? 0) > 0
+    const addsLogins = me?.role !== 'admin' && (me?.childRoles?.length ?? 0) > 0
+    const show: Record<string, boolean> = {
+      '/team': hasTeam || addsLogins,
+      '/hr/approvals': hasTeam || (team?.pendingApprovals ?? 0) > 0,
+      '/hr/me': Boolean(team?.me),
+    }
+    return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({ href: p.href, label: p.label, icon: '·' }))
+  }, [team, me?.role, me?.childRoles])
 
   // Workspace open/closed — entries "id:1" / "id:0" once the user has chosen;
   // until then the first (own) workspace and any they own start open, and the
@@ -309,11 +321,13 @@ function NavLinks({
         </div>
       )}
 
-      {/* ── Me — open to every login; the API scopes each to the caller ── */}
-      <div>
-        {!collapsed && <SubHeader title="Me" />}
-        {renderItems(personalItems)}
-      </div>
+      {/* ── Me — only the pages that have something for this login ── */}
+      {personalItems.length > 0 && (
+        <div>
+          {!collapsed && <SubHeader title="Me" />}
+          {renderItems(personalItems)}
+        </div>
+      )}
 
       {/* ── Workspaces ─────────────────────────────────────────────────── */}
       {groups.map((g, index) => {
@@ -331,10 +345,6 @@ function NavLinks({
                     style={{ color: 'rgba(255,255,255,0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
                   <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"
                     style={{ color: open ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.4)' }}>{g.title}</span>
-                  {g.owner && (
-                    <span className="text-[8px] font-black uppercase tracking-wider px-1 rounded"
-                      style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }}>yours</span>
-                  )}
                 </button>
                 <Link href={`/w/${g.id}`} onClick={onNavigate}
                   className="text-[10px] font-bold px-1.5 py-1 rounded-md hover:bg-white/[0.05]"
