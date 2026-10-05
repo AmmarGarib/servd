@@ -63,9 +63,16 @@ rewritten, trust these corrections:
 - **Storefront visual migration is DONE**, not "in progress." The legacy
   "premium" system (`#00D4B1` teal → `#6366F1` indigo, `#18160f` ink,
   `PremiumInput`) is fully removed from `frontend/storefront/src`. The whole
-  storefront is on `--servd-*` tokens. **The servd storefront brand is
-  "obsidian plum" (`#4E2A4F` plum / `#2D1E2F` obsidian)** — note `--servd-green`
-  holds this plum value (legacy var name). The admin app is still teal→indigo.
+  storefront is on `--servd-*` tokens. **servd colours (owner, 2026-10-05):
+  bone `#f3e7cd` background, green `#87c540` primary, purple `#3d1f3b`
+  secondary + ink** — on BOTH the servd storefront and the admin/ERP. Text on
+  green is purple (never white); green as text on bone is `#4f7a1c`. Legacy
+  token names stay (`--servd-green` holds the primary). Admin: tokens in
+  `frontend/admin/src/app/globals.css`; Tailwind `white` = the area's
+  foreground (`--fg-rgb`), so `text-white/40` is ink on bone; the sidebar is
+  `.erp-on-secondary` (bone on purple); KDS, expo and the POS till stay dark
+  (`.erp-kitchen-dark` / `kds-*`). The brand microsites keep their own palettes.
+  Never hard-code a colour in a page — use the tokens.
 - **The three "404 routes" are fixed** (`/<concept>/menu`, `/<concept>/order`,
   `/reserve` all exist/redirect).
 - **Deploy reality is unsettled.** A `.github/workflows/build-and-push.yml` and
