@@ -1,4 +1,10 @@
 FROM node:22-alpine AS base
+# OpenSSL in EVERY stage, not just the runner: the Prisma CLI picks its engine
+# by detecting OpenSSL when npm installs it. Without it the builder fetched the
+# plain linux-musl schema engine, the runner (which has OpenSSL 3) wanted
+# linux-musl-openssl-3.0.x, and `prisma migrate deploy` tried to download it at
+# every boot — so the API could not start without reaching binaries.prisma.sh.
+RUN apk add --no-cache openssl
 
 # ── deps: production-only node_modules ───────────────────────────────────────
 FROM base AS deps
@@ -22,9 +28,6 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-
-# OpenSSL is required by Prisma on Alpine
-RUN apk add --no-cache openssl
 
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 servd
 
