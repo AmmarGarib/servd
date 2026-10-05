@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface PrepLine {
   ingredientId: string
@@ -30,17 +31,16 @@ interface Concept { id: string; name: string }
 
 export default function PrepListPage() {
   const [days, setDays] = useState(1)
-  const { data: concepts = [] } = useQuery<Concept[]>({
+  const globalBrand = useBrandFilter((st) => st.brandId)
+  const [pick, setPick] = useState<string | null>(null)
+  const { data: concepts = [], isLoading } = useQuery<Concept[]>({
     queryKey: ['concepts'],
     queryFn: () => api.get('/concepts'),
   })
-  const conceptId = concepts[0]?.id
-
-  const { data: prepList, isLoading: prepLoading } = useQuery<PrepResp>({
-    queryKey: ['ops-prep', conceptId, days],
-    queryFn: () => api.get(`/ops/prep-list?conceptId=${conceptId}&days=${days}`),
-    enabled: !!conceptId,
-  })
+  // Every brand by default; the sidebar's brand filter or the picker here
+  // narrows it to one.
+  const chosen = pick ?? globalBrand
+  const shown = chosen ? concepts.filter((c) => c.id === chosen) : concepts
 
   return (
     <div className="min-h-screen" style={{ background: '#090a0e' }}>
@@ -48,31 +48,60 @@ export default function PrepListPage() {
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Operations</p>
         <h1 className="text-2xl font-black text-white/90 mt-1">Prep list</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
-          What each station needs to prep or order, from the demand forecast and the recipes.
+          What each station needs to prep or order, per brand, from the demand forecast and the recipes.
         </p>
       </header>
 
       <div className="px-7 py-7 max-w-[1200px] mx-auto space-y-7">
-
-        {/* ── Prep list ──────────────────────────────────────────────────── */}
-        <section>
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-sm font-black uppercase tracking-[0.24em] text-white/60">For the next</h2>
-            <div className="flex items-center gap-2 text-xs">
-              {[1, 3, 7].map((d) => (
-                <button key={d} onClick={() => setDays(d)}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {[{ id: null as string | null, name: 'All brands' }, ...concepts].map((c) => {
+              const on = (chosen ?? null) === c.id
+              return (
+                <button key={c.id ?? 'all'} onClick={() => setPick(c.id)}
                   className="rounded-md px-2.5 py-1 font-bold transition-colors"
                   style={{
-                    background: days === d ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.04)',
-                    color: days === d ? '#00D4B1' : 'rgba(255,255,255,0.55)',
-                    border: days === d ? '1px solid rgba(0,212,177,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                    background: on ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.04)',
+                    color: on ? '#00D4B1' : 'rgba(255,255,255,0.55)',
+                    border: on ? '1px solid rgba(0,212,177,0.4)' : '1px solid rgba(255,255,255,0.06)',
                   }}>
-                  {d === 1 ? 'tomorrow' : `${d} days`}
+                  {c.name}
                 </button>
-              ))}
-            </div>
+              )
+            })}
           </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-white/40 font-bold uppercase tracking-wider text-[10px]">For the next</span>
+            {[1, 3, 7].map((d) => (
+              <button key={d} onClick={() => setDays(d)}
+                className="rounded-md px-2.5 py-1 font-bold transition-colors"
+                style={{
+                  background: days === d ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.04)',
+                  color: days === d ? '#00D4B1' : 'rgba(255,255,255,0.55)',
+                  border: days === d ? '1px solid rgba(0,212,177,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                }}>
+                {d === 1 ? 'tomorrow' : `${d} days`}
+              </button>
+            ))}
+          </div>
+        </div>
 
+        {isLoading && <p className="text-sm text-white/40">Loading brands…</p>}
+        {!isLoading && shown.length === 0 && <p className="text-sm text-white/40">No brands in this company yet.</p>}
+        {shown.map((c) => <BrandPrep key={c.id} concept={c} days={days} />)}
+      </div>
+    </div>
+  )
+}
+
+function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
+  const { data: prepList, isLoading: prepLoading } = useQuery<PrepResp>({
+    queryKey: ['ops-prep', concept.id, days],
+    queryFn: () => api.get(`/ops/prep-list?conceptId=${concept.id}&days=${days}`),
+  })
+  return (
+        <section>
+          <h2 className="text-sm font-black uppercase tracking-[0.24em] text-white/60 mb-3">{concept.name}</h2>
           {prepLoading && <p className="text-sm text-white/40">Computing forecast…</p>}
           {prepList && prepList.byStation.length === 0 && (
             <div className="rounded-2xl p-8 text-center"
@@ -142,8 +171,5 @@ export default function PrepListPage() {
             </div>
           )}
         </section>
-
-      </div>
-    </div>
   )
 }

@@ -14,6 +14,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { getDemandForecast } from '../reports/demand-forecast.js'
 import { belowParWhere, explodeRecipe, loadRecipeGraph } from '../../lib/recipeCost.js'
+import { assertConceptOwned, conceptIdsInScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 
 export async function opsReportRoutes(fastify: FastifyInstance) {
 
@@ -28,11 +29,10 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       const { conceptId } = req.query
       const days = Math.min(parseInt(req.query.days ?? '1', 10), 7)
 
-      // Tenant scope: requested concept must belong to the active tenant.
-      const concept = await prisma.concept.findFirst({
-        where: { id: conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
+      // Company scope: the brand must be one the caller can see (404 if not).
+      // Never a bare tenantFilter — undefined there is "no filter".
+      if (!conceptId) return reply.status(400).send({ error: { code: 'CONCEPT_REQUIRED', message: 'conceptId is required' } })
+      await assertConceptOwned(req, conceptId, 'read')
 
       const forecast = await getDemandForecast({ conceptId, days })
 
@@ -163,12 +163,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       // Company scoping — every probe below is restricted to the concepts
       // visible to this request (and honours ?conceptId, which was previously
       // accepted but silently ignored).
-      const tenantFilter = req.staffUser!.tenantFilter
-      const scopedConcepts = await prisma.concept.findMany({
-        where: { tenantId: tenantFilter, deletedAt: null },
-        select: { id: true },
-      })
-      let conceptIds = scopedConcepts.map((c) => c.id)
+      let conceptIds = await conceptIdsInScope(req, 'read')
       if (req.query.conceptId) {
         conceptIds = conceptIds.filter((id) => id === req.query.conceptId)
       }
@@ -258,7 +253,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       const lowStock = await prisma.inventoryItem.findMany({
         where: {
           deletedAt: null,
-          tenantId: tenantFilter ?? { in: [] },
+          ...(await scopeTenantWhere(req, 'read')),
           ...belowParWhere(),
         },
         select: { id: true, name: true, currentStock: true, parLevel: true, unit: true },
