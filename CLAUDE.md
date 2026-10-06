@@ -219,10 +219,13 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
   lozenges in cream/butter/sky, set slightly off-square. **No grid anywhere** —
   the blueprint grid was a stax hangover and is gone.
 
-  Lowercase everywhere user-visible — capital-S "Stackd" is a bug, same rule as
-  simmer. Both brands are in `LOWERCASE_BRANDS` and every user-visible name
-  must go through `formatBrandName()`; hardcoding the string bypasses the rule,
-  which is how it regressed once already. `/stax*` paths redirect permanently.
+  **Brand names use normal capitalization: Stackd, Simmer, Flipd** (owner,
+  2026-10-06 — this REVERSES the old all-lowercase rule). Every user-visible
+  brand name goes through `formatBrandName()` (storefront `lib/concept.ts`),
+  which returns the canonical capitalised name; don't hard-code a lowercase
+  name in copy. Logos/wordmarks (image assets, and lettering set in a brand
+  font) are design, not running text — leave them as designed unless the
+  owner says otherwise. `/stax*` paths redirect permanently.
   **Not renamed:** `stax-padel` (separate padel business, and it IS a burger
   concept) and the registered domain `eatstax.com` (which now maps to the
   `stackd` slug).
@@ -404,7 +407,8 @@ are switched on in `BrandFallback.tsx`. Live brands:
 
 - **simmer** — Night-mode editorial (forest green "tiber" `#06392F` + bone
   `#EDE6D3` + fiery orange `#E94E1B`).
-  Bound to the canonical `simmer-brand` SKILL.md: lowercase wordmark,
+  Bound to the canonical `simmer-brand` SKILL.md: lowercase wordmark (the
+  logo only — the name in text is "Simmer", owner 2026-10-06),
   Amarante + Times, no white, no gradients, no exclamation marks,
   no emojis, banned-word list, single orange signal per viewport,
   tagline `simmer down.` always below the wordmark, never above.
@@ -521,7 +525,7 @@ The main session runs on whatever the owner sets with `/model`.
 - **Never add a third-party delivery aggregator integration.**
 - **Never bypass the simmer-brand SKILL.md rules** on the Simmer
   microsite — see `frontend/storefront/src/components/brand/layouts/SimmerLayout.tsx`
-  for the enforced version. Capital `S` in "Simmer" anywhere user-visible
-  is a bug.
+  for the enforced version. (The old "capital S is a bug" rule is retired:
+  the name is "Simmer" in text; only the wordmark logo stays lowercase.)
 - **Never use emoji as structural icons** in storefront UI. SVG or text
   labels only.
