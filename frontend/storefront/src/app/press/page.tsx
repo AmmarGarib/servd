@@ -61,7 +61,7 @@ export default async function PressPage() {
             <p className="eyebrow" style={{ marginBottom: '0.5rem' }}>What&rsquo;s on offer</p>
             <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.65 }}>
               <li>Comp visits for verified creators with relevant audience</li>
-              <li>Chef&rsquo;s-table previews of new menu drops at simmer</li>
+              <li>Chef&rsquo;s-table previews of new menu drops at Simmer</li>
               <li>First access to seasonal items and collab nights</li>
               <li>High-res food + room photography on request</li>
               <li>Background interviews with the chefs / operator</li>

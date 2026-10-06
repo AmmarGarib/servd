@@ -17,6 +17,7 @@ import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendPhoneMessage, sendEmail } from '../lib/notify.js'
+import { formatBrandName } from '../lib/brandName.js'
 
 const QUEUE_NAME = 'review-prompts'
 const RUN_EVERY_MS = 5 * 60_000
@@ -86,7 +87,7 @@ async function runPromptSweep(): Promise<void> {
     }
 
     const reviewUrl = `${STOREFRONT_URL}/orders/${order.id}/review`
-    const brand = order.concept.name
+    const brand = formatBrandName(order.concept.name)
     const name  = order.customer.name ?? 'there'
 
     const sms  = `${brand}: how was your meal, ${name}? Rate it in 30 seconds (+50 loyalty pts): ${reviewUrl}`

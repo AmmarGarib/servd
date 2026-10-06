@@ -35,6 +35,7 @@ interface CustomerAddress {
 // STATUS_CONFIG moved to lib/orderStatus.ts so /orders + /[concept]/order/[id]
 // share the same colours and labels. statusFor handles unknown statuses.
 import { statusFor } from '../../lib/orderStatus'
+import { formatBrandName } from '../../lib/concept'
 const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700' }
 
 // Where the customer stands, from GET /loyalty/status: the balance and what it
@@ -527,7 +528,7 @@ export default function AccountPage() {
                       <div className="flex items-start justify-between gap-3 p-4 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{order.concept.name}</p>
+                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{formatBrandName(order.concept.name)}</p>
                             <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-full"
                               style={{ background: sc.bg, color: sc.text }}>
                               {sc.label}
@@ -863,7 +864,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                 }}>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-black text-sm">{r.concept.name}</span>
+                    <span className="font-black text-sm">{formatBrandName(r.concept.name)}</span>
                     {r.isVip && <span className="text-[10px] font-bold text-amber-600">★ VIP</span>}
                     <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 rounded-full"
                       style={{
@@ -918,7 +919,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
             {data.past.slice(0, 8).map((r) => (
               <div key={r.id} className="text-xs flex items-center justify-between py-1"
                 style={{ color: 'var(--servd-mute)' }}>
-                <span>{r.concept.name} · {r.partySize}px</span>
+                <span>{formatBrandName(r.concept.name)} · {r.partySize}px</span>
                 <span>{fmtDate(r.startTime)}</span>
               </div>
             ))}
@@ -962,7 +963,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
         {reviews.slice(0, 5).map((r) => (
           <div key={r.id} className="rounded-xl p-3" style={{ background: 'rgba(0,0,0,0.025)' }}>
             <div className="flex items-center justify-between gap-2">
-              <span className="font-bold text-sm">{r.concept.name}</span>
+              <span className="font-bold text-sm">{formatBrandName(r.concept.name)}</span>
               <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
             </div>
             {r.comment && (
@@ -1025,7 +1026,7 @@ function MyFavoritesSection({ token }: { token: string | null }) {
             style={{ background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.05)' }}>
             <div className="text-[10px] font-bold uppercase tracking-wider"
               style={{ color: 'var(--servd-mute)' }}>
-              {it.concept?.name ?? 'Brand'}
+              {it.concept?.name ? formatBrandName(it.concept.name) : 'Brand'}
             </div>
             <div className="font-bold text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--servd-ink)' }}>
               {it.name}
@@ -1135,7 +1136,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
               <option value="">— No specific order —</option>
               {orders.map((o) => (
                 <option key={o.id} value={o.id}>
-                  {o.concept.name} · #{o.id.slice(-8).toUpperCase()} · {fmt(o.totalCents)}
+                  {formatBrandName(o.concept.name)} · #{o.id.slice(-8).toUpperCase()} · {fmt(o.totalCents)}
                 </option>
               ))}
             </select>

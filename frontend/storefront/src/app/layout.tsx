@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   // source for the public host; override it with NEXT_PUBLIC_SITE_URL per env.
   metadataBase: new URL(SERVD_ORIGIN),
   title: { default: 'servd — order from your favourite kitchens', template: '%s · servd' },
-  description: 'One place to order from simmer, stackd, and Flipd. Explore the kitchens and join Insiders for rewards on every order.',
+  description: 'One place to order from Simmer, Stackd, and Flipd. Explore the kitchens and join Insiders for rewards on every order.',
   applicationName: 'servd',
   formatDetection: { telephone: false, email: false, address: false },
   manifest: '/manifest.webmanifest',

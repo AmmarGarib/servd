@@ -2,6 +2,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator }
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { api } from '../../src/lib/api'
+import { formatBrandName } from '../../src/lib/brandName'
 
 interface Order {
   id: string
@@ -55,7 +56,7 @@ export default function OrdersScreen() {
                 </Text>
               </View>
             </View>
-            <Text style={s.concept}>{item.concept.name}</Text>
+            <Text style={s.concept}>{formatBrandName(item.concept.name)}</Text>
             <View style={s.row}>
               <Text style={s.date}>{fmtDate(item.createdAt)}</Text>
               <Text style={s.total}>PKR {Math.round(item.totalCents / 100).toLocaleString()}</Text>

@@ -24,6 +24,7 @@ import { randomBytes } from 'crypto'
 import { prisma } from '../../lib/prisma.js'
 import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
+import { formatBrandName } from '../../lib/brandName.js'
 
 const PROMOTION_TTL_MIN = 30
 const TIME_WINDOW_MS    = 2 * 60 * 60 * 1000   // candidates must want a time within ±2h of freed slot
@@ -90,18 +91,18 @@ export async function tryPromoteWaitlist(freed: FreedSlot): Promise<{ promoted: 
   if (candidate.guestPhone) {
     void sendPhoneMessage(
       candidate.guestPhone,
-      `${candidate.concept.name}: a table just opened up for ${candidate.partySize} on ${when} PKT. Confirm in 30 min: ${claimUrl}`,
+      `${formatBrandName(candidate.concept.name)}: a table just opened up for ${candidate.partySize} on ${when} PKT. Confirm in 30 min: ${claimUrl}`,
     ).catch(() => {})
   }
   if (candidate.guestEmail) {
     const html = `<p>Hi ${candidate.guestName},</p>
-      <p>Good news — a table for <strong>${candidate.partySize}</strong> just opened up at <strong>${candidate.concept.name}</strong> on <strong>${when} PKT</strong>.</p>
+      <p>Good news — a table for <strong>${candidate.partySize}</strong> just opened up at <strong>${formatBrandName(candidate.concept.name)}</strong> on <strong>${when} PKT</strong>.</p>
       <p>You have <strong>30 minutes</strong> to grab it.</p>
       <p><a href="${claimUrl}" style="background:#22c55e;color:#000;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">Confirm my table →</a></p>
       <p style="color:#666;font-size:12px">If you can't make it, just ignore this email — we'll offer the slot to the next person on the list.</p>`
     void sendEmail(
       candidate.guestEmail,
-      `${candidate.concept.name} — a table just opened up`,
+      `${formatBrandName(candidate.concept.name)} — a table just opened up`,
       html,
     ).catch(() => {})
   }

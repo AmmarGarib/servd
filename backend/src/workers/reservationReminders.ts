@@ -26,6 +26,7 @@ import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail } from '../lib/notify.js'
 import { sendText as sendWhatsApp } from '../lib/whatsapp.js'
 import { getReservationPolicy } from '../lib/setup-config.js'
+import { formatBrandName } from '../lib/brandName.js'
 
 const QUEUE_NAME = 'reservation-reminders'
 const RUN_EVERY_MS = 5 * 60_000
@@ -165,7 +166,7 @@ async function sendReminder(
   const when = r.startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   const confirmUrl = r.confirmToken ? `${STOREFRONT_URL}/reserve/confirm/${r.confirmToken}` : null
   const lead = leadLabel(leadHours)
-  const text = `${r.concept.name}: reminder — your reservation for ${r.partySize} is ${lead} (${when} PKT).${confirmUrl ? ' Cancel: ' + confirmUrl : ''}`
+  const text = `${formatBrandName(r.concept.name)}: reminder — your reservation for ${r.partySize} is ${lead} (${when} PKT).${confirmUrl ? ' Cancel: ' + confirmUrl : ''}`
 
   const digits = (r.guestPhone ?? '').replace(/[^\d]/g, '')
   if (digits) {
@@ -175,8 +176,8 @@ async function sendReminder(
   }
   if (r.guestEmail) {
     const html = `<p>Hi ${r.guestName},</p>
-      <p>Just a reminder — your table for ${r.partySize} at <strong>${r.concept.name}</strong> is <strong>${lead}</strong> (${when} PKT).</p>
+      <p>Just a reminder — your table for ${r.partySize} at <strong>${formatBrandName(r.concept.name)}</strong> is <strong>${lead}</strong> (${when} PKT).</p>
       ${confirmUrl ? `<p><a href="${confirmUrl}">Cancel if you can't make it →</a></p>` : ''}`
-    await sendEmail(r.guestEmail, `${r.concept.name}: reservation reminder`, html).catch(() => {})
+    await sendEmail(r.guestEmail, `${formatBrandName(r.concept.name)}: reservation reminder`, html).catch(() => {})
   }
 }

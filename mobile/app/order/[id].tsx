@@ -2,6 +2,7 @@ import { View, Text, ScrollView, StyleSheet, ActivityIndicator, TouchableOpacity
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../src/lib/api'
+import { formatBrandName } from '../../src/lib/brandName'
 
 interface OrderDetail {
   id: string
@@ -54,7 +55,7 @@ export default function OrderTrackingScreen() {
         <Text style={[s.statusLabel, isCancelled && { color: '#EF4444' }]}>
           {STATUS_LABELS[order.status] ?? order.status}
         </Text>
-        <Text style={s.conceptName}>{order.concept.name}</Text>
+        <Text style={s.conceptName}>{formatBrandName(order.concept.name)}</Text>
       </View>
 
       {/* Progress steps */}

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Concept } from '../../../../lib/concept'
-import { brandStory, conceptHeroImage, heroCover } from '../../../../lib/concept'
+import { brandStory, conceptHeroImage, heroCover, formatBrandName } from '../../../../lib/concept'
 
 // force-dynamic + cache: 'no-store' so a single API outage at deploy
 // time can't poison the ISR cache and return 404s for the lifetime of
@@ -32,7 +32,7 @@ export default async function BrandAboutPage({ params }: { params: Promise<{ slu
       <section className="section" style={{ paddingTop: 'clamp(3rem, 7vw, 5rem)' }}>
         <div className="container-narrow" style={{ textAlign: 'center' }}>
           <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '1rem' }}>
-            About {concept.name}
+            About {formatBrandName(concept.name)}
           </p>
           <h1 style={{ fontSize: 'clamp(2.25rem, 6vw, 4rem)', marginBottom: '1.25rem' }}>
             {story.tagline}
@@ -50,7 +50,7 @@ export default async function BrandAboutPage({ params }: { params: Promise<{ slu
             {[
               {
                 heading: 'Made in our own kitchen',
-                body: `${concept.name} is cooked in-house, start to finish — our recipes, our team, our standards. Nothing about your meal is outsourced or white-labelled.`,
+                body: `${formatBrandName(concept.name)} is cooked in-house, start to finish — our recipes, our team, our standards. Nothing about your meal is outsourced or white-labelled.`,
               },
               {
                 heading: 'Order in seconds',
@@ -87,7 +87,7 @@ export default async function BrandAboutPage({ params }: { params: Promise<{ slu
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href={`/${concept.slug}`} className="servd-btn-primary" style={{ padding: '1rem 2.25rem' }}>
-              Order from {concept.name} →
+              Order from {formatBrandName(concept.name)} →
             </Link>
             <Link href={`/brand/${concept.slug}/menu`} className="servd-btn-secondary" style={{ padding: '1rem 2rem' }}>
               See the menu

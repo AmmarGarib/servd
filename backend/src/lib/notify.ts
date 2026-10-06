@@ -1,5 +1,6 @@
 import { AppError } from './errors.js'
 import { sendEmail as sendMail, emailConfigured } from './mailer.js'
+import { formatBrandName } from './brandName.js'
 
 const isProd = process.env['NODE_ENV'] === 'production'
 
@@ -140,6 +141,7 @@ export async function sendOrderStatusUpdate(opts: {
 }): Promise<void> {
   const copy = STATUS_COPY[opts.status]
   if (!copy) return
+  opts = { ...opts, conceptName: formatBrandName(opts.conceptName) }
 
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
   const trackUrl = `${baseUrl}/orders/${opts.orderId}`
@@ -201,6 +203,7 @@ export async function sendOrderReceipt(opts: {
   totalCents: number
   items: Array<{ name: string; quantity: number; unitPriceCents: number }>
 }): Promise<void> {
+  opts = { ...opts, conceptName: formatBrandName(opts.conceptName) }
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
   const trackUrl = `${baseUrl}/orders/${opts.orderId}`
   const fmt = (cents: number) => `Rs. ${(cents / 100).toLocaleString()}`

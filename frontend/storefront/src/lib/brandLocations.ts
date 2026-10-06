@@ -47,7 +47,7 @@ export interface BrandLocation {
 const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
   simmer: {
     slug:                'simmer',
-    name:                'simmer',
+    name:                'Simmer',
     street:              'TODO_FILL_STREET',
     area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
@@ -64,7 +64,7 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
   },
   stackd: {
     slug:                'stackd',
-    name:                'stackd',
+    name:                'Stackd',
     street:              'TODO_FILL_STREET',
     area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
@@ -159,8 +159,8 @@ export function locationFromConcept(c: Concept, kitchen?: BrandKitchen | null): 
   return {
     ...base,
     slug:                c.slug,
-    // Lowercase brands (simmer, stackd) must read lowercase everywhere the
-    // NAP name surfaces — JSON-LD, footer, /locations pages.
+    // The canonical display name (Simmer, Stackd, Flipd) everywhere the NAP
+    // name surfaces — JSON-LD, footer, /locations pages.
     name:                formatBrandName(c.name),
     street,
     area:                c.addressLocality ?? base.area,

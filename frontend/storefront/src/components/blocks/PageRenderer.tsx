@@ -21,6 +21,7 @@ import { Divider }       from './Divider'
 import { VideoBlockUi }  from './VideoBlockUi'
 import { SignupFormBlock } from './SignupFormBlock'
 import { Animate }       from './Animate'
+import { formatBrandName } from '../../lib/concept'
 
 export interface RenderContext {
   /** When rendering a brand page, the active concept slug — block defaults
@@ -156,7 +157,7 @@ async function renderBlock(block: Block, ctx?: RenderContext): Promise<ReactNode
 function interpolate(s: string, ctx?: RenderContext): string {
   if (!ctx?.brand) return s
   return s
-    .replace(/\{\{brand\.name\}\}/g,        ctx.brand.name)
+    .replace(/\{\{brand\.name\}\}/g,        formatBrandName(ctx.brand.name))
     .replace(/\{\{brand\.description\}\}/g, ctx.brand.description ?? '')
     .replace(/\{\{brand\.slug\}\}/g,        ctx.brand.slug)
 }

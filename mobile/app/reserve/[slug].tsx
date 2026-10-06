@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { View, Text, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { api } from '../../src/lib/api'
+import { formatBrandName } from '../../src/lib/brandName'
 
 interface Slot      { time: string; available: boolean; tablesAvailable?: number }
 interface Daypart   { label: string; startHour: number; endHour: number }
@@ -105,7 +106,7 @@ export default function MobileReserveScreen() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#0b0d12' }} contentContainerStyle={{ padding: 18, paddingBottom: 50 }}>
       <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginBottom: 4 }}>Book a table</Text>
-      <Text style={{ color: 'rgba(255,255,255,0.5)', marginBottom: 24 }}>{data?.concept.name ?? slug}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.5)', marginBottom: 24 }}>{data ? formatBrandName(data.concept.name) : slug}</Text>
 
       <Section label="PARTY SIZE">
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>

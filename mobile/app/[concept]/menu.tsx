@@ -7,6 +7,7 @@ import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, ScrollView }
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../src/lib/api'
+import { formatBrandName } from '../../src/lib/brandName'
 import { useCartStore } from '../../src/store/cart'
 import { ContentBlocks } from '../../src/content/BlockRenderer'
 import { hasLiveBlocks, useSiteLayout } from '../../src/content/api'
@@ -38,7 +39,7 @@ export default function ConceptMenuScreen() {
   // go above it).
   const { data: layout } = useSiteLayout(slug ? `brand:${slug}` : undefined)
   const brandCtx = useMemo(
-    () => (data ? { name: data.concept.name, description: data.concept.description ?? null, slug: data.concept.slug } : undefined),
+    () => (data ? { name: formatBrandName(data.concept.name), description: data.concept.description ?? null, slug: data.concept.slug } : undefined),
     [data],
   )
 
@@ -75,7 +76,7 @@ export default function ConceptMenuScreen() {
   const menuBody = (
     <View style={{ padding: 18 }}>
         <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 4 }}>MENU</Text>
-        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginBottom: 24 }}>{data.concept.name}</Text>
+        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginBottom: 24 }}>{formatBrandName(data.concept.name)}</Text>
 
         {categories.length === 0 && noItems && (
           <Text style={{ color: 'rgba(255,255,255,0.5)' }}>This kitchen is updating their menu — check back shortly.</Text>

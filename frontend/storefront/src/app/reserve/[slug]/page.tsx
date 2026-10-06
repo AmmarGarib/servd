@@ -14,6 +14,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useBrandSlug } from '../../../lib/host'
+import { formatBrandName } from '../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -157,9 +158,9 @@ export default function ReservePage() {
             Reservation request sent.
           </h1>
           <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
-            Check your phone — we&rsquo;ve sent a confirmation link with your booking. {data?.concept.name} will see it in their dashboard.
+            Check your phone — we&rsquo;ve sent a confirmation link with your booking. {formatBrandName(data?.concept.name)} will see it in their dashboard.
           </p>
-          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to {data?.concept.name}</MagneticLink>
+          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to {formatBrandName(data?.concept.name)}</MagneticLink>
         </div>
       </div>
     )
@@ -194,13 +195,13 @@ export default function ReservePage() {
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
           <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
-            ← {data?.concept.name ?? 'Back'}
+            ← {data ? formatBrandName(data.concept.name) : 'Back'}
           </Link>
           <h1 style={{ fontSize: 'clamp(1.75rem, 4vw, 2.5rem)', fontWeight: 800, marginTop: '0.5rem', marginBottom: '0.5rem' }}>
             Book a table
           </h1>
           <p style={{ color: 'var(--servd-mute)' }}>
-            {data ? `at ${data.concept.name}` : 'Choose a time and we&rsquo;ll save your spot.'}
+            {data ? `at ${formatBrandName(data.concept.name)}` : 'Choose a time and we&rsquo;ll save your spot.'}
           </p>
         </div>
       </section>
@@ -312,7 +313,7 @@ export default function ReservePage() {
               </div>
 
               <div style={{ marginTop: '1.25rem', padding: '0.75rem 1rem', background: 'var(--servd-green-soft)', borderRadius: '0.6rem', fontSize: '0.85rem', color: 'var(--servd-green-ink)' }}>
-                Booking <strong>{partySize}</strong> at <strong>{data?.concept.name}</strong> for <strong>{fmtSlot(selected)} on {date}</strong>
+                Booking <strong>{partySize}</strong> at <strong>{formatBrandName(data?.concept.name)}</strong> for <strong>{fmtSlot(selected)} on {date}</strong>
               </div>
 
               {error && (

@@ -90,7 +90,7 @@ export const BLOCK_CATALOG: BlockSpec[] = [
   { type: 'stat_strip',   label: 'Stats',          description: 'A row of numbers with labels',          icon: '123', group: 'Content',
     default: () => ({ type: 'stat_strip', stats: [{ value: '3', label: 'kitchens' }, { value: '1', label: 'one app' }, { value: '0%', label: 'aggregator commission' }] }) },
   { type: 'voices',       label: 'Brand voices',   description: 'Two-column tagline list',               icon: 'VO', group: 'Content',
-    default: () => ({ type: 'voices', kicker: 'The line-up', voices: [{ brand: 'simmer', line: 'Slow nights, plated softly.' }, { brand: 'flipd', line: 'A cool diner.' }] }) },
+    default: () => ({ type: 'voices', kicker: 'The line-up', voices: [{ brand: 'Simmer', line: 'Slow nights, plated softly.' }, { brand: 'Flipd', line: 'A cool diner.' }] }) },
   { type: 'image',        label: 'Image',          description: 'A single image',                        icon: 'IMG', group: 'Media',
     default: () => ({ type: 'image', url: '', alt: '', rounded: true, aspect: '16/9' }) },
   { type: 'gallery',      label: 'Gallery',        description: 'A grid of images',                      icon: 'GAL', group: 'Media',

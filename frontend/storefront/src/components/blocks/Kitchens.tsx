@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { KitchensBlock } from '../../lib/blocks'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, conceptHeroImage, heroCover } from '../../lib/concept'
+import { typeLabel, conceptHeroImage, heroCover, formatBrandName } from '../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -65,7 +65,7 @@ export async function Kitchens({ block }: { block: KitchensBlock }) {
                 </div>
               </div>
               <div style={{ padding: '1.25rem 1.4rem' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--servd-ink)' }}>{c.name}</h3>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--servd-ink)' }}>{formatBrandName(c.name)}</h3>
                 {c.description && (
                   <p style={{ color: 'var(--servd-mute)', fontSize: '0.875rem', lineHeight: 1.4, marginTop: '0.4rem' }}>
                     {c.description}

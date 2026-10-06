@@ -42,6 +42,7 @@ const STEP_INDEX: Record<string, number> = {
 // Headline + sub copy moved to lib/orderStatus.ts so all three order
 // surfaces (/orders, /account, this tracker) share the same wording.
 import { statusFor } from '../../../../lib/orderStatus'
+import { formatBrandName } from '../../../../lib/concept'
 
 export default function OrderStatusPage() {
   const { concept: slug, id } = useParams<{ concept: string; id: string }>()
@@ -159,7 +160,7 @@ export default function OrderStatusPage() {
         )}
         <span style={{ color: 'var(--servd-dim)' }}>·</span>
         <span className="font-display text-sm font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-          {order.concept.name}
+          {formatBrandName(order.concept.name)}
         </span>
         {!isDone && !isCancelled && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -260,7 +261,7 @@ export default function OrderStatusPage() {
           <div className="px-4 py-3.5"
             style={{ borderBottom: '1px solid var(--servd-line)' }}>
             <p className="font-display font-black text-sm" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-              {order.concept.name}
+              {formatBrandName(order.concept.name)}
             </p>
           </div>
 

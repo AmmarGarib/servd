@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { formatBrandName } from '../../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -94,12 +95,12 @@ export default function ClaimOfferPage() {
           Confirmed.
         </h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '0.5rem' }}>
-          Your table for <strong>{offer.partySize}</strong> at <strong>{offer.concept.name}</strong>.
+          Your table for <strong>{offer.partySize}</strong> at <strong>{formatBrandName(offer.concept.name)}</strong>.
         </p>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
           {fmtDateTime(offer.offeredStartTime)} PKT
         </p>
-        <Link href={`/brand/${offer.concept.slug}`} className="servd-btn-primary">Back to {offer.concept.name}</Link>
+        <Link href={`/brand/${offer.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(offer.concept.name)}</Link>
       </Centered>
     )
   }
@@ -109,7 +110,7 @@ export default function ClaimOfferPage() {
       <Centered>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>Already claimed.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>This offer has been confirmed already.</p>
-        <Link href={`/brand/${offer.concept.slug}`} className="servd-btn-primary">Back to {offer.concept.name}</Link>
+        <Link href={`/brand/${offer.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(offer.concept.name)}</Link>
       </Centered>
     )
   }
@@ -140,7 +141,7 @@ export default function ClaimOfferPage() {
         A table opened up
       </p>
       <h1 style={{ fontSize: 'clamp(1.75rem, 5vw, 2.75rem)', fontWeight: 800, lineHeight: 1.15, marginBottom: '0.75rem' }}>
-        {offer.concept.name}
+        {formatBrandName(offer.concept.name)}
       </h1>
       <p style={{ fontSize: '1.1rem', color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
         Table for <strong style={{ color: '#000' }}>{offer.partySize}</strong> · <strong style={{ color: '#000' }}>{fmtDateTime(offer.offeredStartTime)} PKT</strong>

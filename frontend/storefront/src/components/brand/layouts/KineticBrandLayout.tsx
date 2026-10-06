@@ -72,7 +72,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
 
           <p className="eyebrow"
             style={{ color: 'var(--brand-accent)', marginBottom: 'clamp(2rem, 4vw, 3rem)' }}>
-            on servd · {concept.name.toLowerCase()}
+            on servd · {formatBrandName(concept.name)}
           </p>
 
           {/* Brand name as the typographic hero — chunky display weight. */}
@@ -83,7 +83,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
               maxWidth: '1200px',
               marginBottom: 'clamp(1.5rem, 3vw, 2rem)',
             }}>
-            {concept.name}<span style={{ color: 'var(--brand-accent)' }}>.</span>
+            {formatBrandName(concept.name)}<span style={{ color: 'var(--brand-accent)' }}>.</span>
           </h1>
 
           <p className="display-italic"
@@ -110,7 +110,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem' }}>
             <Link href={`/${concept.slug}`} className="brand-pill">
-              Order from {concept.name} →
+              Order from {formatBrandName(concept.name)} →
             </Link>
             <Link href={`/brand/${concept.slug}/menu`} className="brand-pill-outline">
               Browse the menu
@@ -126,7 +126,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
           voice.replace(/\.$/, ''),
           `on servd`,
           `direct from the kitchen`,
-          concept.name,
+          formatBrandName(concept.name),
         ]}
         accent
         speed={28}
@@ -141,7 +141,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
               <span className="eyebrow eyebrow-accent" style={{ display: 'block', marginBottom: '0.5rem' }}>
                 What we do
               </span>
-              {formatBrandName(concept.name)} is one of three kitchens on the servd network. We focus on what we cook best — and let the other kitchens do the rest. Order from {formatBrandName(concept.name)} alone, or mix in dishes from simmer and Flipd. Same bag, same delivery.
+              {formatBrandName(concept.name)} is one of three kitchens on the servd network. We focus on what we cook best — and let the other kitchens do the rest. Order from {formatBrandName(concept.name)} alone, or mix in dishes from Simmer and Flipd. Same bag, same delivery.
             </p>
             <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)' }}>
               One kitchen.<br />
@@ -176,7 +176,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
                 <span className="display-italic">on the line.</span>
               </h2>
               <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '420px' }}>
-                Signature dishes from the {concept.name} kitchen. The full menu lives behind the order page — these are the hits.
+                Signature dishes from the {formatBrandName(concept.name)} kitchen. The full menu lives behind the order page — these are the hits.
               </p>
             </div>
           </div>
@@ -233,7 +233,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
               <span className="display-italic">One place.</span>
             </h2>
             <p style={{ marginTop: '1rem', color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '520px' }}>
-              {concept.name} is one of the kitchens on servd. Explore the brands, order what you are craving, and check out once.
+              {formatBrandName(concept.name)} is one of the kitchens on servd. Explore the brands, order what you are craving, and check out once.
             </p>
           </div>
 

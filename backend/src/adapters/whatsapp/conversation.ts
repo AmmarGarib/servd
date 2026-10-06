@@ -16,6 +16,7 @@ import {
 import { ingestOrder } from '../../modules/orders/service.js'
 import { findCustomerByPhone } from '../../lib/customer-channels.js'
 import { fmtPkr as fmtPkrShared } from '../../modules/accounting/csv.js'
+import { formatBrandName } from '../../lib/brandName.js'
 
 // The one PKR formatter (modules/accounting/csv.ts), in the bot's "PKR 1234" form.
 const fmtPkr = (cents: number) => fmtPkrShared(cents, { symbol: true, decimals: 0, group: false })
@@ -47,11 +48,11 @@ export async function handleWaMessage(phone: string, message: WaIncomingMessage)
       session.customerId = member.id
       session.customerName = member.name
       await saveSession(session)
-      return greetReturningMember(phone, session, member, concept.name)
+      return greetReturningMember(phone, session, member, formatBrandName(concept.name))
     }
 
     await saveSession(session)
-    await sendText(phone, `👋 Welcome to *${concept.name}*!\n\nI can take your order via WhatsApp. Just type naturally or tap the buttons below.`)
+    await sendText(phone, `👋 Welcome to *${formatBrandName(concept.name)}*!\n\nI can take your order via WhatsApp. Just type naturally or tap the buttons below.`)
     return sendToMenu(phone, session)
   }
 

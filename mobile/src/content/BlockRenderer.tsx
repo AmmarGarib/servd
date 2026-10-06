@@ -18,6 +18,7 @@ import {
 import * as SecureStore from 'expo-secure-store'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
+import { formatBrandName } from '../lib/brandName'
 import { getVisitorId, peekVisitorId, pickVariant, trackContent } from './api'
 import { resolveFontFamily, useLibraryFonts } from './fonts'
 import { openHref } from './links'
@@ -109,7 +110,7 @@ function interpolate(s: string | undefined, ctx: RenderCtx): string {
   if (!s) return ''
   if (!ctx.brand) return s
   return s
-    .replace(/\{\{brand\.name\}\}/g, ctx.brand.name)
+    .replace(/\{\{brand\.name\}\}/g, formatBrandName(ctx.brand.name))
     .replace(/\{\{brand\.description\}\}/g, ctx.brand.description ?? '')
     .replace(/\{\{brand\.slug\}\}/g, ctx.brand.slug)
 }
@@ -516,7 +517,7 @@ function VoicesView({ b, look }: P<VoicesBlock>) {
       <Kicker text={interpolate(b.kicker, ctx)} look={look} />
       {b.voices.map((v, i) => (
         <View key={i} style={{ paddingVertical: 14, borderTopWidth: 1, borderColor: line }}>
-          <Text style={heading(look, 24, { letterSpacing: -0.6 })}>{v.brand}.</Text>
+          <Text style={heading(look, 24, { letterSpacing: -0.6 })}>{formatBrandName(v.brand)}.</Text>
           <Text style={copy(look, 16, { fontStyle: 'italic', opacity: 0.7, marginTop: 4 })}>{v.line}</Text>
         </View>
       ))}
@@ -561,7 +562,7 @@ function KitchensView({ b, look }: P<KitchensBlock>) {
           style={{ flexDirection: 'row', borderRadius: 16, borderWidth: 1, borderColor: border, backgroundColor: card, overflow: 'hidden', marginBottom: 12 }}>
           <View style={{ width: 6, backgroundColor: c.primaryColor ?? GREEN }} />
           <View style={{ flex: 1, padding: 16 }}>
-            <Text style={heading({ ...look, fg: look.onLight ? INK : '#fff' }, 18)}>{c.name}</Text>
+            <Text style={heading({ ...look, fg: look.onLight ? INK : '#fff' }, 18)}>{formatBrandName(c.name)}</Text>
             {c.description ? (
               <Text numberOfLines={2} style={copy({ ...look, fg: look.onLight ? '#525252' : '#888' }, 13, { marginTop: 4 })}>{c.description}</Text>
             ) : null}

@@ -1,3 +1,4 @@
+import { formatBrandName } from './concept'
 // Per-brand footer configuration.
 //
 // The brand-microsite footer (BrandShell → BrandFooter) is operator-editable
@@ -8,7 +9,7 @@
 // (BrandShell already themes the footer with the concept accent).
 
 export interface BrandFooterConfig {
-  ctaEyebrow: string   // small line above the CTA, e.g. "simmer · ready when you are"
+  ctaEyebrow: string   // small line above the CTA, e.g. "Simmer · ready when you are"
   ctaHeadline: string  // big line, e.g. "Hungry?"
   ctaAccent: string    // accented continuation, e.g. "Let's eat."
   tagline: string      // the short blurb under the wordmark
@@ -24,7 +25,7 @@ export interface BrandFooterConfig {
 // it became editable, so an un-configured brand looks identical to today.
 export function defaultBrandFooter(concept: { name: string; description?: string | null }): BrandFooterConfig {
   return {
-    ctaEyebrow: `${concept.name.toLowerCase()} · ready when you are`,
+    ctaEyebrow: `${formatBrandName(concept.name)} · ready when you are`,
     ctaHeadline: 'Hungry?',
     ctaAccent: "Let's eat.",
     tagline: concept.description ?? '',

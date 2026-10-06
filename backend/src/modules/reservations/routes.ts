@@ -29,6 +29,7 @@ import { normalisePhone } from '../auth/otp.js'
 import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
+import { formatBrandName } from '../../lib/brandName.js'
 
 const DEFAULT_DURATION_MIN = 90
 
@@ -331,16 +332,16 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     // Best-effort confirmation
     const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     if (body.guestPhone) {
-      void sendPhoneMessage(body.guestPhone, `${r.concept.name}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`)
+      void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`)
         .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation SMS failed'))
     }
     if (body.guestEmail) {
       const html = `<p>Hi ${body.guestName},</p>
-        <p>Your table for ${body.partySize} at <strong>${r.concept.name}</strong> is booked for <strong>${when} PKT</strong>.</p>
+        <p>Your table for ${body.partySize} at <strong>${formatBrandName(r.concept.name)}</strong> is booked for <strong>${when} PKT</strong>.</p>
         ${body.notes ? `<p><em>Notes:</em> ${body.notes}</p>` : ''}
         <p>If you need to cancel, reply to this email or call us.</p>
-        <p>— ${r.concept.name}</p>`
-      void sendEmail(body.guestEmail, `${r.concept.name} reservation confirmed`, html)
+        <p>— ${formatBrandName(r.concept.name)}</p>`
+      void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} reservation confirmed`, html)
         .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation email failed'))
     }
 
@@ -756,7 +757,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       if (!concept.reservationsEnabled) {
         throw new AppError(
           'RESERVATIONS_DISABLED',
-          `${concept.name} isn't accepting reservations right now.`,
+          `${formatBrandName(concept.name)} isn't accepting reservations right now.`,
           403,
         )
       }
@@ -881,7 +882,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       if (!concept.reservationsEnabled) {
         throw new AppError(
           'RESERVATIONS_DISABLED',
-          `${concept.name} isn't accepting reservations right now.`,
+          `${formatBrandName(concept.name)} isn't accepting reservations right now.`,
           403,
         )
       }
@@ -1071,14 +1072,14 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const confirmUrl = `${storefrontUrl}/reserve/confirm/${confirmToken}`
       const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-      void sendPhoneMessage(body.guestPhone, `${r.concept.name}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
+      void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
         .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking SMS failed'))
       if (body.guestEmail) {
         const html = `<p>Hi ${body.guestName},</p>
-          <p>Your reservation at <strong>${r.concept.name}</strong> for <strong>${body.partySize} on ${when} PKT</strong> is pending confirmation.</p>
+          <p>Your reservation at <strong>${formatBrandName(r.concept.name)}</strong> for <strong>${body.partySize} on ${when} PKT</strong> is pending confirmation.</p>
           <p><a href="${confirmUrl}" style="background:#22c55e;color:#000;padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:bold">Confirm or cancel</a></p>
           <p>You'll get a reminder 24 hours and 2 hours before your booking.</p>`
-        void sendEmail(body.guestEmail, `${r.concept.name} — confirm your reservation`, html)
+        void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} — confirm your reservation`, html)
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking email failed'))
       }
 
@@ -1207,13 +1208,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       })
       if (updated.guestPhone) {
-        void sendPhoneMessage(updated.guestPhone, `${updated.concept.name}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`).catch(() => {})
+        void sendPhoneMessage(updated.guestPhone, `${formatBrandName(updated.concept.name)}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`).catch(() => {})
       }
       if (updated.guestEmail) {
         void sendEmail(
           updated.guestEmail,
-          `${updated.concept.name}: confirmed for ${when} PKT`,
-          `<p>Hi ${updated.guestName}, you're all set — table for ${updated.partySize} at <strong>${updated.concept.name}</strong> on <strong>${when} PKT</strong>. See you soon.</p>`,
+          `${formatBrandName(updated.concept.name)}: confirmed for ${when} PKT`,
+          `<p>Hi ${updated.guestName}, you're all set — table for ${updated.partySize} at <strong>${formatBrandName(updated.concept.name)}</strong> on <strong>${when} PKT</strong>. See you soon.</p>`,
         ).catch(() => {})
       }
 

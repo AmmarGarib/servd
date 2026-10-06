@@ -9,10 +9,9 @@ import { useOnBrandMicrosite } from '../lib/host'
 // down to match the live state on the home page. Add back when their
 // concept rows + microsites land.
 // Accents match the canonical per-brand palette (lib/concept BRAND_ACCENT_OVERRIDES).
-// "simmer" and "stackd" are lowercase per their brand rules.
 const BRANDS = [
-  { slug: 'stackd', name: 'stackd', accent: '#FCE8CE' },
-  { slug: 'simmer', name: 'simmer', accent: '#E94E1B' },
+  { slug: 'stackd', name: 'Stackd', accent: '#FCE8CE' },
+  { slug: 'simmer', name: 'Simmer', accent: '#E94E1B' },
   { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
 ]
 

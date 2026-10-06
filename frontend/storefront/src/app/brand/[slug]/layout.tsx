@@ -20,13 +20,13 @@ export const dynamic = 'force-dynamic'
 // (api 5xx, network blip, etc.) so the brand microsites keep working.
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
   simmer: {
-    id: 'fallback-simmer', name: 'simmer', slug: 'simmer', type: 'restaurant',
+    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
     description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
     logoUrl: null, primaryColor: null,
     reservationsEnabled: true,
   },
   stackd: {
-    id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant',
+    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
     description: 'Scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
     logoUrl: null, primaryColor: null,
     reservationsEnabled: false,
@@ -77,8 +77,8 @@ export async function generateMetadata({
   const concept = await getConcept(slug)
   if (!concept) return { title: 'Not found' }
   // Route the name through formatBrandName — the browser tab, search results,
-  // and link previews are user-visible surfaces, and a capital-S "Simmer"
-  // there is a brand-rule bug even though the DB stores it capitalised.
+  // and link previews are user-visible surfaces, so they get the canonical
+  // capitalised name whatever case the DB row holds.
   const displayName = formatBrandName(concept.name)
   return {
     title: displayName,

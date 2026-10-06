@@ -10,6 +10,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useCustomerAuth } from '../../../../store/customerAuth'
+import { formatBrandName } from '../../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -129,7 +130,7 @@ export default function ReviewOrderPage() {
         <div style={{ marginBottom: '0.75rem', color: 'var(--servd-green-dark)' }}><BigCheckIcon /></div>
         <h1 className="font-display" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>Already reviewed.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>Thanks for the feedback — it helps us cook better.</p>
-        <MagneticLink href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {order.concept.name}</MagneticLink>
+        <MagneticLink href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
       </Centered>
     )
   }
@@ -157,7 +158,7 @@ export default function ReviewOrderPage() {
           </div>
         )}
         <div>
-          <MagneticLink href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {order.concept.name}</MagneticLink>
+          <MagneticLink href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
         </div>
       </Centered>
     )
@@ -174,7 +175,7 @@ export default function ReviewOrderPage() {
           How was your meal?
         </h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '2rem' }}>
-          {order.concept.name} · 30 seconds · review within 24h for <strong style={{ color: 'var(--servd-ink)' }}>+50 loyalty points</strong>
+          {formatBrandName(order.concept.name)} · 30 seconds · review within 24h for <strong style={{ color: 'var(--servd-ink)' }}>+50 loyalty points</strong>
         </p>
 
         {/* Overall stars */}

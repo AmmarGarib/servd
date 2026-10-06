@@ -17,6 +17,7 @@ import { prisma } from '../../lib/prisma.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { getReceiptConfig } from '../../lib/setup-config.js'
 import { fmtPkr as fmtPkrShared } from '../accounting/csv.js'
+import { formatBrandName } from '../../lib/brandName.js'
 
 export interface ReceiptData {
   /** The number printed as "Invoice #": our TaxInvoice number, else the order reference. */
@@ -93,8 +94,8 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
     number: invoiceNumber ?? orderRef,
     invoiceNumber,
     orderRef,
-    conceptName: order.concept.name,
-    legalName: order.concept.invoiceLegalName ?? order.concept.name,
+    conceptName: formatBrandName(order.concept.name),
+    legalName: order.concept.invoiceLegalName ?? formatBrandName(order.concept.name),
     strn: order.concept.strn ?? null,
     ntn: order.concept.ntn ?? null,
     customerName: order.customer?.name ?? order.customerName ?? null,

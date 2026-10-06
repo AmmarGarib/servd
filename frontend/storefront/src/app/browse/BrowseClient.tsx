@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, conceptHeroImage, heroCover, brandStory } from '../../lib/concept'
+import { typeLabel, conceptHeroImage, heroCover, brandStory, formatBrandName } from '../../lib/concept'
 import { isOpenNow, fmtHourWindow } from '../../lib/hours'
 import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
 
@@ -153,7 +153,7 @@ export function BrowseClient({ concepts }: Props) {
                     <Link
                       key={hit.id}
                       href={`/${hit.concept.slug}`}
-                      aria-label={`${hit.name} from ${hit.concept.name}`}
+                      aria-label={`${hit.name} from ${formatBrandName(hit.concept.name)}`}
                       className="servd-card"
                       style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: '0.85rem', padding: '0.85rem', alignItems: 'center' }}
                     >
@@ -166,7 +166,7 @@ export function BrowseClient({ concepts }: Props) {
                       }} aria-hidden="true" />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--servd-green-dark)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.15rem' }}>
-                          {hit.concept.name}
+                          {formatBrandName(hit.concept.name)}
                         </p>
                         <p style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {hit.name}
@@ -218,7 +218,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
   return (
     <Link
       href={`/brand/${concept.slug}`}
-      aria-label={`Visit ${concept.name}${status.open ? ' — open now' : ' — closed'}`}
+      aria-label={`Visit ${formatBrandName(concept.name)}${status.open ? ' — open now' : ' — closed'}`}
       className="servd-card"
       style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', position: 'relative' }}
       onClick={() => track('concept_switched', { slug: concept.slug })}
@@ -266,7 +266,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
         </span>
       </div>
       <div style={{ padding: '1.25rem 1.4rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        <h3 style={{ fontSize: '1.2rem' }}>{concept.name}</h3>
+        <h3 style={{ fontSize: '1.2rem' }}>{formatBrandName(concept.name)}</h3>
         <p style={{ color: 'var(--servd-mute)', fontSize: '0.9rem', lineHeight: 1.45, flex: 1 }}>
           {concept.description || story.oneLiner}
         </p>

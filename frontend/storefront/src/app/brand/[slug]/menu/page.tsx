@@ -17,12 +17,12 @@ export const dynamic = 'force-dynamic'
 // would see the storefront 404 instead of the placeholder menu.
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
   simmer: {
-    id: 'fallback-simmer', name: 'simmer', slug: 'simmer', type: 'restaurant',
+    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
     description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
     logoUrl: null, primaryColor: null, reservationsEnabled: true,
   },
   stackd: {
-    id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant',
+    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
     description: 'Scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
     logoUrl: null, primaryColor: null, reservationsEnabled: false,
   },
@@ -96,7 +96,7 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
   // page drops through to the generic table-style layout below so
   // pricing and availability stay accurate.
   if (slug === 'simmer' && !hasAnyItems) {
-    return <SimmerMenu slug={concept.slug} conceptName={concept.name} />
+    return <SimmerMenu slug={concept.slug} conceptName={formatBrandName(concept.name)} />
   }
 
   // flipd renders its menu in its own brand chrome whether or not anything is
@@ -122,7 +122,7 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
             Menu
           </p>
           <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', marginBottom: '0.5rem' }}>
-            Everything {concept.name} serves.
+            Everything {formatBrandName(concept.name)} serves.
           </h1>
           <p style={{ color: 'var(--servd-mute)', fontSize: '1rem', maxWidth: '36rem' }}>
             Browse the full menu. Tap Order to start a basket — your selection follows you into checkout.

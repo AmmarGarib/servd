@@ -1,4 +1,5 @@
 import type { VoicesBlock } from '../../lib/blocks'
+import { formatBrandName } from '../../lib/concept'
 
 export function Voices(block: VoicesBlock) {
   return (
@@ -18,7 +19,7 @@ export function Voices(block: VoicesBlock) {
             borderTop: '1px solid var(--servd-line)',
           }}>
             <h3 style={{ fontSize: 'clamp(1.5rem, 3vw, 2.25rem)', fontWeight: 800, letterSpacing: '-0.03em', color: 'inherit' }}>
-              {v.brand}.
+              {formatBrandName(v.brand)}.
             </h3>
             <p style={{ fontSize: 'clamp(1rem, 2vw, 1.4rem)', color: 'var(--servd-mute)', fontStyle: 'italic', lineHeight: 1.4 }}>
               {v.line}

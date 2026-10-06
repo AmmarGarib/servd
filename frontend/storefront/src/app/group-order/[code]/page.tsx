@@ -8,6 +8,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useCustomerAuth } from '../../../store/customerAuth'
+import { formatBrandName } from '../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -128,7 +129,7 @@ export default function GroupOrderRoom() {
     <div className="container section">
       <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
         <div>
-          <p className="text-xs uppercase tracking-widest text-[color:var(--servd-green-dark)] font-bold">{go.concept.name}</p>
+          <p className="text-xs uppercase tracking-widest text-[color:var(--servd-green-dark)] font-bold">{formatBrandName(go.concept.name)}</p>
           <h1 className="text-2xl font-extrabold">Group order</h1>
         </div>
         <div className="text-right">

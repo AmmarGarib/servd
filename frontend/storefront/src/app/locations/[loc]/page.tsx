@@ -95,7 +95,7 @@ export default async function LocationPage({ params }: { params: Promise<{ loc: 
                 style={{ background: 'var(--servd-surface)', color: 'var(--servd-ink)', border: '1px solid var(--servd-line)' }}>
                 Call
               </a>
-              <a href={whatsappLink(brand, `hi ${brand.name.toLowerCase()}`)}
+              <a href={whatsappLink(brand, `hi ${brand.name}`)}
                 target="_blank" rel="noopener noreferrer"
                 className="brand-pill"
                 style={{ background: '#25D366', color: 'white' }}>

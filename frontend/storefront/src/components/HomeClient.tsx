@@ -5,7 +5,7 @@ import { LandingScrollHero } from './LandingScrollHero'
 import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
-import { brandAccent, brandStory, conceptHeroImage, heroCover } from '../lib/concept'
+import { brandAccent, brandStory, conceptHeroImage, heroCover, formatBrandName } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
@@ -29,8 +29,8 @@ interface Props {
 // Fallback brand cards — used when the live concepts API returns nothing
 // (api warmup, network blip, etc.). Order matches the live brand grid.
 const FALLBACK_BRANDS = [
-  { id: 'fallback-stackd', name: 'stackd', slug: 'stackd', primaryColor: null },
-  { id: 'fallback-simmer', name: 'simmer', slug: 'simmer', primaryColor: null },
+  { id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', primaryColor: null },
+  { id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', primaryColor: null },
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
@@ -44,7 +44,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
     .sort((a, b) => ['stackd', 'simmer', 'flipd'].indexOf(a.slug) - ['stackd', 'simmer', 'flipd'].indexOf(b.slug))
     .map((c) => ({
       id: c.id,
-      name: c.name,
+      name: formatBrandName(c.name),
       slug: c.slug,
       accent: brandAccent(c.slug, c.primaryColor),
       story:  brandStory(c.slug),
@@ -195,7 +195,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                         Order →
                       </Link>
                       <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
-                      <a href={whatsappLink(loc, `hi ${b.name.toLowerCase()}`)}
+                      <a href={whatsappLink(loc, `hi ${b.name}`)}
                         target="_blank" rel="noopener noreferrer"
                         style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
                         WhatsApp
@@ -289,7 +289,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               {
                 slug: 'simmer',
                 accent: 'rgba(233,78,27,0.95)',
-                badge: '◇', tag: 'simmer · regulars',
+                badge: '◇', tag: 'Simmer · regulars',
                 head: 'The regulars’ list',
                 body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
                 featured: false,
@@ -297,9 +297,9 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               {
                 slug: 'stackd',
                 accent: 'rgba(255,255,255,0.18)',
-                badge: '★', tag: 'stackd · counter club',
+                badge: '★', tag: 'Stackd · counter club',
                 head: 'Five coffees in, the sixth is on us',
-                body: 'Buy five drinks at stackd and the sixth is on the house. Insiders also get first look at the pastry case before the morning bake goes out to the floor.',
+                body: 'Buy five drinks at Stackd and the sixth is on the house. Insiders also get first look at the pastry case before the morning bake goes out to the floor.',
                 featured: true,
               },
               {

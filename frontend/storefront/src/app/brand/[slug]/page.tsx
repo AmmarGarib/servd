@@ -23,12 +23,12 @@ export const dynamic = 'force-dynamic'
 // reached (api warmup / network blip).
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
   simmer: {
-    id: 'fallback-simmer', name: 'simmer', slug: 'simmer', type: 'restaurant',
+    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
     description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
     logoUrl: null, primaryColor: null, reservationsEnabled: true,
   },
   stackd: {
-    id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant',
+    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
     description: 'Scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
     logoUrl: null, primaryColor: null, reservationsEnabled: false,
   },

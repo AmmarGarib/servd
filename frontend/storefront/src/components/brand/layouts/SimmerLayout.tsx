@@ -311,7 +311,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
           fridge door. The web entrance is the same. Pure scroll, no
           clicks. */}
       <SpeakeasyFridgeHero
-        brandName="simmer"
+        brandName="Simmer"
         accent="var(--simmer-orange)"
         ink="var(--simmer-green)"
         wood="var(--simmer-walnut)"
@@ -412,7 +412,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
             opacity: 0.7,
             letterSpacing: '0.02em',
           }}>
-            — the simmer team
+            — the Simmer team
           </p>
         </div>
       </section>
@@ -458,7 +458,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
               const loc = locationFromConcept(concept)
               const mapsHref = loc.mapsUrl
                 ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`
-              const waHref = whatsappLink(loc, 'hi simmer')
+              const waHref = whatsappLink(loc, 'hi Simmer')
               return (
                 <>
                   <ElsewhereButton ariaLabel="instagram" href={social.instagram ?? FALLBACK_SOCIAL.instagram} icon={<InstagramIcon />} />

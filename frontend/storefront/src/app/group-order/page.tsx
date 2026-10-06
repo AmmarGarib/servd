@@ -8,7 +8,7 @@
 
 import Link from 'next/link'
 import type { Concept } from '../../lib/concept'
-import { brandAccent, conceptHeroImage } from '../../lib/concept'
+import { brandAccent, conceptHeroImage, formatBrandName } from '../../lib/concept'
 import { GroupOrderEntryClient } from './GroupOrderEntryClient'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -35,7 +35,7 @@ export default async function GroupOrderEntryPage() {
   // re-fetching.
   const brandCards = concepts.map((c) => ({
     id: c.id,
-    name: c.name,
+    name: formatBrandName(c.name),
     slug: c.slug,
     accent: brandAccent(c.slug, c.primaryColor),
     heroImage: conceptHeroImage(c),

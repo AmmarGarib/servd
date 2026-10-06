@@ -15,7 +15,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useCart } from '../../store/cart'
-import { conceptHeroImage, heroCover } from '../../lib/concept'
+import { conceptHeroImage, heroCover, formatBrandName } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { encodeCartToken } from '../../lib/cartHandoff'
 
@@ -258,15 +258,14 @@ export default function ConceptOrderPage() {
         <div className="container" style={{ position: 'relative', zIndex: 1, paddingTop: '5rem', paddingBottom: '2rem' }}>
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             <Link href={`/brand/${concept.slug}`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
-              ← {concept.name}
+              ← {formatBrandName(concept.name)}
             </Link>
             <Link href="/browse" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               Other brands →
             </Link>
           </div>
           <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', fontWeight: 900, letterSpacing: '-0.04em', marginBottom: '0.5rem' }}>
-            {/* simmer brand rule: the wordmark is always lowercase. */}
-            {slug === 'simmer' ? concept.name.toLowerCase() : concept.name}
+            {formatBrandName(concept.name)}
           </h1>
           {concept.description && (
             <p style={{ color: 'rgba(255,255,255,0.85)', maxWidth: '36rem', fontSize: '1rem' }}>
@@ -329,7 +328,7 @@ export default function ConceptOrderPage() {
         {categories.length === 0 && (
           <div className="text-center py-12">
             <h3 className="text-lg font-semibold mb-2">No menu yet</h3>
-            <p className="text-s-muted">{concept.name} hasn&rsquo;t published a menu. Check back soon.</p>
+            <p className="text-s-muted">{formatBrandName(concept.name)} hasn&rsquo;t published a menu. Check back soon.</p>
           </div>
         )}
 

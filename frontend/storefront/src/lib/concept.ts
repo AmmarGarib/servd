@@ -103,17 +103,25 @@ export function brandWordmark(slug: string): { font: string; color: string; weig
   }
 }
 
-/** Brands whose wordmark is ALWAYS lowercase per their brand guidelines — a
- *  capital first letter anywhere user-visible is a bug. Keyed on the lowercased
- *  stored name so an operator typing "Stackd" in admin still renders correctly. */
-const LOWERCASE_BRANDS = new Set(['simmer', 'stackd'])
+/** Canonical display names for the GS Foods brands — written in normal
+ *  capitalisation everywhere user-visible (owner decision, 2026-10-06; this
+ *  reverses the earlier all-lowercase rule). Keyed on the lowercased stored
+ *  name so a row saved as "simmer" or "STACKD" still renders correctly.
+ *  Text-rendered logotypes (a wordmark set in the brand font) are not routed
+ *  through here. */
+const CANONICAL_BRAND_NAMES: Record<string, string> = {
+  simmer: 'Simmer',
+  stackd: 'Stackd',
+  flipd:  'Flipd',
+}
 
-/** Other brands render as stored. Wrap any user-visible brand/concept name
- *  with this. */
+/** The single place brand/concept names are normalised for display. The three
+ *  GS Foods brands map to their canonical capitalised name (case-insensitive,
+ *  trimmed); any other name renders as stored. Wrap any user-visible
+ *  brand/concept name with this. */
 export function formatBrandName(name: string | null | undefined): string {
   const n = (name ?? '').trim()
-  const lower = n.toLowerCase()
-  return LOWERCASE_BRANDS.has(lower) ? lower : n
+  return CANONICAL_BRAND_NAMES[n.toLowerCase()] ?? n
 }
 
 export function typeLabel(t: string): string {
@@ -153,14 +161,14 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
   'simmer': {
     tagline: 'Slow nights, plated softly.',
     oneLiner: 'Fine-casual mocktail bar and small-plates kitchen — intimate room, seasonal menu.',
-    long: 'simmer is GS Foods’ flagship plated-service concept. The menu rotates with the season — small plates built to share, hand-crafted mocktails, and a room that knows when to fade and when to glow. We cook because we care about the table. Every dish is plated as if it’s going to someone we know.',
+    long: 'Simmer is GS Foods’ flagship plated-service concept. The menu rotates with the season — small plates built to share, hand-crafted mocktails, and a room that knows when to fade and when to glow. We cook because we care about the table. Every dish is plated as if it’s going to someone we know.',
     highlights: ['Plated table service', 'Hand-built mocktails', 'Seasonal small plates', 'Mains & desserts', 'Reservations welcome'],
     hours: 'Dinner 7:00 PM – 10:30 PM · Late Night 10:30 PM – 2:30 AM',
   },
   'stackd': {
     tagline: 'Cooked here. Wrapped, not plated.',
     oneLiner: 'A twenty-seat scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
-    long: 'stackd is a scratch cooking café: sandwiches, pastries, light bites and craft mocktails, made here rather than assembled. Service is a deliberate choice — the food comes in packaging, not on plates. Not throwaway pieces, but a vessel built for the dish it carries and branded like everything else we make. Twenty seats, and a small market folded into the cashier and barista bar: a chiller for grab-and-go and drinks, and a case for the morning’s pastries.',
+    long: 'Stackd is a scratch cooking café: sandwiches, pastries, light bites and craft mocktails, made here rather than assembled. Service is a deliberate choice — the food comes in packaging, not on plates. Not throwaway pieces, but a vessel built for the dish it carries and branded like everything else we make. Twenty seats, and a small market folded into the cashier and barista bar: a chiller for grab-and-go and drinks, and a case for the morning’s pastries.',
     highlights: ['Scratch cooking', 'Sandwiches & pastries', 'Craft mocktails', 'Grab-and-go market'],
     hours: 'Daily 8:00 AM – 11:00 PM',
   },

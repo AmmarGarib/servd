@@ -95,7 +95,7 @@ export function StackdLayout({ concept, concepts }: Props) {
   // to naming its role instead of describing a picture that may not be there.
   const mascotAlt = concept.mascotUrl
     ? `${formatBrandName(concept.name)} brand character`
-    : 'The stackd character — a stack of bread slices carried on a plum tray, striped trousers below'
+    : 'The Stackd character — a stack of bread slices carried on a plum tray, striped trousers below'
 
   // The counter cycler's timer used to live here. Its markup went with the
   // standing mascot band, so it was left ticking every 2.6s to set state
@@ -191,7 +191,7 @@ export function StackdLayout({ concept, concepts }: Props) {
                   clip: 'rect(0 0 0 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
                 }}
               >
-                stackd — stackd &amp; servd
+                Stackd — Stackd &amp; servd
               </span>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -226,7 +226,7 @@ export function StackdLayout({ concept, concepts }: Props) {
             </p>
 
             <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <Link href={`/${concept.slug}`} className="stackd-btn">Order stackd</Link>
+              <Link href={`/${concept.slug}`} className="stackd-btn">Order Stackd</Link>
               <Link href={`/brand/${concept.slug}/menu`} className="stackd-btn stackd-btn-ghost">View menu</Link>
             </div>
           </div>
@@ -380,7 +380,7 @@ export function StackdLayout({ concept, concepts }: Props) {
                   clip: 'rect(0 0 0 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
                 }}
               >
-                stackd &amp; servd
+                Stackd &amp; servd
               </span>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img

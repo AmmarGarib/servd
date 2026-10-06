@@ -5,6 +5,7 @@ import { sendEmail, sendPhoneMessage } from '../lib/notify.js'
 import { reachableCustomer, reachableAtCompany } from '../lib/marketingAudience.js'
 import { calculatePointsValue } from '../lib/loyaltySettings.js'
 import { creditPoints, creditPointsTx, bookEarn, loyaltyCompanyOf, loyaltyProgram } from '../modules/loyalty/service.js'
+import { formatBrandName } from '../lib/brandName.js'
 
 // Automated customer messages and point bonuses.
 //
@@ -261,15 +262,15 @@ async function runComplaintFollowUpTrigger() {
 
     if (contact && (contact.email || contact.phone)) {
       const name = contact.name ?? 'there'
-      const sms = `Hi ${name}, this is ${c.concept.name}. We resolved your earlier issue — did we make it right? Reply with your honest take, we read every word.`
+      const sms = `Hi ${name}, this is ${formatBrandName(c.concept.name)}. We resolved your earlier issue — did we make it right? Reply with your honest take, we read every word.`
       const html = `<p>Hi ${name},</p>
-        <p>It's the team at <strong>${c.concept.name}</strong>. A few days ago you raised something with us, and we tried to put it right.</p>
+        <p>It's the team at <strong>${formatBrandName(c.concept.name)}</strong>. A few days ago you raised something with us, and we tried to put it right.</p>
         <p>Did we?</p>
         <p>If yes, we'd love to hear it. If not — we want to know more than anything. Reply to this email and the manager will personally read it.</p>
-        <p>— ${c.concept.name}</p>`
+        <p>— ${formatBrandName(c.concept.name)}</p>`
 
       // A service follow-up on the customer's own complaint, not marketing.
-      await reach(contact, `${c.concept.name}: did we make it right?`, html, sms).catch(() => {})
+      await reach(contact, `${formatBrandName(c.concept.name)}: did we make it right?`, html, sms).catch(() => {})
     }
 
     await prisma.orderComplaint.update({

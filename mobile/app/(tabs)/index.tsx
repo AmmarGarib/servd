@@ -2,6 +2,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { api } from '../../src/lib/api'
+import { formatBrandName } from '../../src/lib/brandName'
 import { ContentBlocks } from '../../src/content/BlockRenderer'
 import { hasLiveBlocks, useSiteLayout } from '../../src/content/api'
 import { reportScroll } from '../../src/content/scroll'
@@ -45,7 +46,7 @@ export default function BrowseScreen() {
           <View key={item.id} style={[s.card, { borderColor: item.primaryColor ?? '#00D4B1' }]}>
             <View style={[s.brandColor, { backgroundColor: item.primaryColor ?? '#00D4B1' }]} />
             <View style={s.cardBody}>
-              <Text style={s.brandName}>{item.name}</Text>
+              <Text style={s.brandName}>{formatBrandName(item.name)}</Text>
               {item.description && <Text style={s.brandDesc} numberOfLines={2}>{item.description}</Text>}
               <View style={s.actionRow}>
                 <TouchableOpacity onPress={() => router.push(`/${item.slug}/menu`)} style={s.primaryBtn}>

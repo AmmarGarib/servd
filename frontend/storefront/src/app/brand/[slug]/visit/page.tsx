@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Concept, ServiceHourSlot } from '../../../../lib/concept'
-import { typeLabel } from '../../../../lib/concept'
+import { typeLabel, formatBrandName } from '../../../../lib/concept'
 import { faqSchema, jsonLdScript } from '../../../../lib/jsonLd'
 import { locationFromConcept, fetchBrandKitchens, mapsLinkFor } from '../../../../lib/brandLocations'
 
@@ -79,20 +79,20 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
   const loc = locationFromConcept(concept, primary)
   const placeKnown = !loc.area.startsWith('TODO')
   const faq = [
-    { question: `Where is ${concept.name} located?`,
-      answer:    placeKnown ? `${concept.name} is at ${loc.area}, ${loc.city}.` : `${concept.name} is in ${loc.city}.` },
-    { question: `Does ${concept.name} take reservations?`,
+    { question: `Where is ${formatBrandName(concept.name)} located?`,
+      answer:    placeKnown ? `${formatBrandName(concept.name)} is at ${loc.area}, ${loc.city}.` : `${formatBrandName(concept.name)} is in ${loc.city}.` },
+    { question: `Does ${formatBrandName(concept.name)} take reservations?`,
       answer:    loc.acceptsReservations
         ? `Yes — book a table at /reserve/${slug}, or message us on WhatsApp.`
-        : `${concept.name} is walk-in friendly. For delivery and pickup, order at /${slug}.` },
+        : `${formatBrandName(concept.name)} is walk-in friendly. For delivery and pickup, order at /${slug}.` },
     { question: `Is the food halal?`,
-      answer:    `All ${concept.name} kitchens serve halal-only meat. No pork, no alcohol on the cooking line.` },
-    { question: `Does ${concept.name} deliver?`,
+      answer:    `All ${formatBrandName(concept.name)} kitchens serve halal-only meat. No pork, no alcohol on the cooking line.` },
+    { question: `Does ${formatBrandName(concept.name)} deliver?`,
       answer:    loc.acceptsReservations === false
         ? `Yes — order at /${slug} for delivery, pickup, or curbside.`
-        : `${concept.name} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
+        : `${formatBrandName(concept.name)} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
     { question: `What's the dress code?`,
-      answer:    `Smart casual works everywhere. ${concept.name === 'Simmer' ? 'Simmer is a dimly-lit room; the dressier you are the more it suits the space.' : 'No formal requirement.'}` },
+      answer:    `Smart casual works everywhere. ${formatBrandName(concept.name) === 'Simmer' ? 'Simmer is a dimly-lit room; the dressier you are the more it suits the space.' : 'No formal requirement.'}` },
     { question: `Is there parking?`,
       answer:    `Street parking is available around the venue. We recommend arriving 10 minutes early on weekends.` },
   ]
@@ -106,7 +106,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
             Visit
           </p>
           <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3rem)', marginBottom: '0.5rem' }}>
-            Find {concept.name}.
+            Find {formatBrandName(concept.name)}.
           </h1>
           <p style={{ color: 'var(--servd-mute)', maxWidth: '32rem' }}>
             We&rsquo;re a {typeLabel(concept.type).toLowerCase()} kitchen — order in, walk in, or grab to go.
@@ -153,7 +153,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
                   style={{ border: 0, borderRadius: '1rem', display: 'block' }}
                   allowFullScreen
                   loading="lazy"
-                  title={`${concept.name} location`}
+                  title={`${formatBrandName(concept.name)} location`}
                 />
               ) : address ? (
                 <div style={{

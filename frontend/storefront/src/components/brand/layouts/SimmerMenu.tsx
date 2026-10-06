@@ -210,7 +210,7 @@ export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: s
           </p>
           <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href={`/reserve/${slug}`} className="action action--signal">reserve a table</Link>
-            <Link href={`/brand/${slug}`} className="action">{conceptName.toLowerCase()} home</Link>
+            <Link href={`/brand/${slug}`} className="action">{conceptName} home</Link>
           </div>
         </div>
       </section>

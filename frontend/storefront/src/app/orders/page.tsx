@@ -107,6 +107,7 @@ function ReorderButton({ orderId, conceptSlug, token, onError }: {
 // — "Ready" had a purple bg + green text here, the inverse of the brand
 // palette). statusFor handles unknown statuses with a sensible default.
 import { statusFor } from '../../lib/orderStatus'
+import { formatBrandName } from '../../lib/concept'
 
 export default function OrdersPage() {
   const router = useRouter()
@@ -180,7 +181,7 @@ export default function OrdersPage() {
                   >
                     <div>
                       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>{o.concept.name}</h2>
+                        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>{formatBrandName(o.concept.name)}</h2>
                         <span style={{
                           background: badge.bg, color: badge.text,
                           fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em',

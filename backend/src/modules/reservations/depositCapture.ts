@@ -12,6 +12,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
+import { formatBrandName } from '../../lib/brandName.js'
 
 export type DepositCaptureResult =
   | { captured: false; reason: 'no-deposit' | 'already-no-show' }
@@ -39,7 +40,7 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
     tenantId: r.concept.tenantId,
     sourceType: 'reservation.deposit_capture',
     sourceId: r.id,
-    description: `No-show fee · ${r.concept.name} · ${r.guestName}`,
+    description: `No-show fee · ${formatBrandName(r.concept.name)} · ${r.guestName}`,
     postedBy: args.postedBy,
     lines: [
       { accountCode: ACCT.BANK,                   type: 'debit',  amountCents: r.depositCents },

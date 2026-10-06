@@ -13,10 +13,9 @@ import { SERVD_ORIGIN } from '../../../../lib/brandDomains'
 // so it follows the canonical origin rather than a tunnel hostname.
 const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? SERVD_ORIGIN
 
-// simmer and stackd are lowercase per their brand rules.
 const BRAND_NAMES: Record<string, string> = {
-  simmer: 'simmer',
-  stackd: 'stackd',
+  simmer: 'Simmer',
+  stackd: 'Stackd',
   flipd:  'Flipd',
 }
 
