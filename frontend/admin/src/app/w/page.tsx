@@ -10,15 +10,17 @@ import { usePermissions } from '../../hooks/useCan'
 
 export default function WorkspaceLanding() {
   const router = useRouter()
-  const { isError } = usePermissions()
+  const { data: me, isError } = usePermissions()
   const { workspaces, isLoading } = useMyWorkspaces()
 
   useEffect(() => {
     if (isError) { router.replace('/modules'); return }
-    if (isLoading) return
+    if (isLoading || !me) return
+    // The CEO lands on the CEO home; everyone else on their own workspace.
+    if (me.modules.includes('ceo_overview')) { router.replace('/home'); return }
     const first = workspaces[0]
     router.replace(first ? `/w/${first.id}` : '/modules')
-  }, [isError, isLoading, workspaces, router])
+  }, [isError, isLoading, me, workspaces, router])
 
   return <div className="min-h-screen p-8 text-sm text-white/40" style={{ background: 'var(--bg)' }}>Opening your workspace…</div>
 }

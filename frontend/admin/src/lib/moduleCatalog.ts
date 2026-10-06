@@ -29,8 +29,8 @@ export interface ModulePage {
   icon?: string
   /** Rendered as a child of the module's first page in the sidebar. */
   sub?: boolean
-  /** The workspace's dashboard: shown first in its workspace, ahead of every
-   *  section (the sidebar and the workspace home both hoist it). */
+  /** A dashboard page: listed in the sidebar's "Dashboards" section, above
+   *  and outside the workspaces (owner, 2026-10-06). */
   lead?: boolean
 }
 
@@ -44,6 +44,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Add a company or brand', href: '/onboarding' },
     { label: 'Domains', href: '/configuration/domains', sub: true },
   ],
+  // CEO home: a top-down view of every department, first in the Dashboards section.
+  ceo_overview:   [{ label: 'Home', href: '/home', icon: '⌂', lead: true }],
   role_management: [{ label: 'Pending logins', href: '/workforce?status=pending', hint: 'The CEO approves every login' }],
   role_modules:   [{ label: 'Module access', href: '/configuration/role-modules', icon: '🗂' }],
   configuration:  [{ label: 'Configuration hub', href: '/configuration', icon: '⚙️' }],

@@ -147,8 +147,8 @@ function NavLinks({
   const groups: NavGroup[] = useMemo(() => {
     return workspaces.map((w) => {
       const seen = new Set<string>()
-      // The workspace's dashboard goes first, ahead of every section.
-      const lead = itemsForModules(w.sections.flatMap((sec) => sec.modules), seen, true)
+      // Dashboards live in their own section above the workspaces, not here.
+      itemsForModules(w.sections.flatMap((sec) => sec.modules), seen, true)
       const sections = w.sections.map((sec) => {
         const items = itemsForModules(sec.modules, seen).map((item) => {
           if (item.href === '/kds' && allowedModules.has('kds_all')) {
@@ -161,10 +161,18 @@ function NavLinks({
         })
         return { key: sec.key, title: sec.title, items }
       }).filter((s) => s.items.length > 0)
-      if (lead.length) sections.unshift({ key: 'dashboard', title: 'Dashboard', items: lead })
       return { id: w.id, title: w.title, owner: w.owner, sections }
     }).filter((g) => g.sections.length > 0)
   }, [workspaces, stations, allowedModules, pendingStaff.length, pendingLayouts.length])
+
+  // Dashboards — outside the workspaces: the CEO home, then one per
+  // department. Each shows only to those with its module (the CEO sees all).
+  const DASH_ORDER = ['/home', '/dashboard/operations', '/dashboard/marketing', '/dashboard/finance', '/dashboard/hr']
+  const dashboardItems: NavItem[] = useMemo(() => {
+    const seen = new Set<string>()
+    const all = workspaces.flatMap((w) => itemsForModules(w.sections.flatMap((sec) => sec.modules), seen, true))
+    return all.sort((a, b) => DASH_ORDER.indexOf(a.href) - DASH_ORDER.indexOf(b.href))
+  }, [workspaces])
 
   // The "Me" pages only show when they have something for this login: My team
   // when people report to you (or you add logins for your workspace), My
@@ -325,6 +333,13 @@ function NavLinks({
       )}
 
       {/* ── Me — only the pages that have something for this login ── */}
+      {dashboardItems.length > 0 && (
+        <div>
+          {!collapsed && <SubHeader title="Dashboards" />}
+          {renderItems(dashboardItems)}
+        </div>
+      )}
+
       {personalItems.length > 0 && (
         <div>
           {!collapsed && <SubHeader title="Me" />}

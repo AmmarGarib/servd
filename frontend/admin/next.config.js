@@ -34,8 +34,9 @@ const nextConfig = {
   async redirects() {
     const to = (destination) => ({ destination, permanent: false })
     return [
-      { source: '/dashboard', ...to('/dashboard/operations') },
-      { source: '/dashboard/:old(ceo|fnb|boh|foh)', ...to('/dashboard/operations') },
+      { source: '/dashboard', ...to('/home') },
+      { source: '/dashboard/ceo', ...to('/home') },
+      { source: '/dashboard/:old(fnb|boh|foh)', ...to('/dashboard/operations') },
       { source: '/dashboard/brand', ...to('/dashboard/marketing') },
       { source: '/ops', ...to('/dashboard/operations') },
       { source: '/chain', ...to('/dashboard/operations') },
