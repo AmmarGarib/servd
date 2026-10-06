@@ -64,8 +64,9 @@ rewritten, trust these corrections:
   "premium" system (`#00D4B1` teal → `#6366F1` indigo, `#18160f` ink,
   `PremiumInput`) is fully removed from `frontend/storefront/src`. The whole
   storefront is on `--servd-*` tokens. **servd colours (owner, 2026-10-05):
-  bone `#f3e7cd` background, green `#87c540` primary, purple `#3d1f3b`
-  secondary + ink** — on BOTH the servd storefront and the admin/ERP. Text on
+  bone `#f3e7cd` background, green `#87c540` primary, purple `#5a2156`
+  secondary (sidebar, bands, purple buttons; deep shade `#3f1640`) and
+  `#3d1f3b` as the ink/text colour** — on BOTH the servd storefront and the admin/ERP. Text on
   green is purple (never white); green as text on bone is `#4f7a1c`. Legacy
   token names stay (`--servd-green` holds the primary). Admin: tokens in
   `frontend/admin/src/app/globals.css`; Tailwind `white` = the area's

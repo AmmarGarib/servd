@@ -5,10 +5,10 @@
 
 import React from 'react'
 
-// servd purple → green ramp (the storefront brand: purple #3d1f3b, green
+// servd purple → green ramp (the storefront brand: purple #5a2156, green
 // #87c540 on bone). Simmer = single orange signal (their rules ban
 // gradients); Stackd = navy-grey.
-export const SERVD_CELLS = ['#3d1f3b', '#55304f', '#6e4566', '#4f7a1c', '#6a9f2e', '#87c540', '#a3d46c', '#bfe298', '#d6eab5']
+export const SERVD_CELLS = ['#5a2156', '#6e3569', '#844a7e', '#4f7a1c', '#6a9f2e', '#87c540', '#a3d46c', '#bfe298', '#d6eab5']
 export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
 export const STACKD_CELLS = ['#142834', '#1E3340', '#293B47', '#384A56', '#45505C', '#5C6470', '#737A85', '#8D8F97', '#B0B2B8']
 

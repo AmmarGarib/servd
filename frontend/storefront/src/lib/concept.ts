@@ -83,7 +83,7 @@ const BRAND_SURFACE: Record<string, BrandSurface> = {
   // flipd's dark band is Flipd Blue with mustard type — the inverse of the
   // page, which is mustard with blue type. Both halves of the brand book.
   flipd:  { bg: '#294375', text: '#FED561', muted: 'rgba(254,213,97,0.72)',  border: 'rgba(254,213,97,0.22)'  },
-  servd:  { bg: '#3d1f3b', text: '#f3e7cd', muted: 'rgba(243,231,205,0.68)', border: 'rgba(243,231,205,0.14)' },
+  servd:  { bg: '#5a2156', text: '#f3e7cd', muted: 'rgba(243,231,205,0.68)', border: 'rgba(243,231,205,0.14)' },
 }
 
 /** The dark-section surface palette for a brand (falls back to near-black). */

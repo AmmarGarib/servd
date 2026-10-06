@@ -9,7 +9,7 @@ const config: Config = {
         // ink on bone, bone in the purple sidebar, white on kitchen screens.
         white: 'rgb(var(--fg-rgb) / <alpha-value>)',
         primary: { DEFAULT: '#87c540', hover: '#76b032', ink: '#4f7a1c', on: '#3d1f3b' },
-        secondary: { DEFAULT: '#3d1f3b', on: '#f3e7cd' },
+        secondary: { DEFAULT: '#5a2156', on: '#f3e7cd' },
         bone: '#f3e7cd',
         // ─── 2030 Ops Design System ───────────────────────────────────────
         s: {
@@ -30,7 +30,7 @@ const config: Config = {
           dim:          '#a8949f',   // disabled / placeholder
           teal:         '#87c540',   // primary action
           'teal-dim':   '#e3efcf',   // teal bg tint
-          indigo:       '#3d1f3b',   // secondary accent
+          indigo:       '#5a2156',   // secondary accent
           'indigo-dim': '#e6dbe3',
           amber:        '#a15c00',
           'amber-dim':  '#f6e2bf',
@@ -61,7 +61,7 @@ const config: Config = {
         },
         // Source badge colors
         source: {
-          servd:     '#3d1f3b',
+          servd:     '#5a2156',
           pos:       '#22C55E',
           cart:      '#F59E0B',
           manual:    '#8B5CF6',

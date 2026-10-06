@@ -380,7 +380,7 @@ export const BLOCK_CATALOG: BlockSpec[] = [
       type: 'banner',
       title: 'Banner headline',
       subtitle: 'Optional supporting line.',
-      backgroundColor: '#3d1f3b', textColor: '#f3e7cd',
+      backgroundColor: '#5a2156', textColor: '#f3e7cd',
       align: 'center', height: 'md',
     }),
   },

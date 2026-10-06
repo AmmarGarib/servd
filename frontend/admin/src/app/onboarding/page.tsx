@@ -550,7 +550,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
 
 // Pick a default colour from a small palette so each new brand looks distinct.
 function pickColor(n: number): string {
-  const palette = ['#D4581A', '#3d1f3b', '#3f7d20', '#a15c00', '#6b2f68', '#be185d', '#1d4ed8', '#84CC16']
+  const palette = ['#D4581A', '#5a2156', '#3f7d20', '#a15c00', '#6b2f68', '#be185d', '#1d4ed8', '#84CC16']
   return palette[(n - 1) % palette.length]!
 }
 

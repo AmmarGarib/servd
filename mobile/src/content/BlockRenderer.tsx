@@ -38,7 +38,7 @@ const GREEN_INK = '#3a5c12'
 // Mirrors the storefront's :root --servd-* tokens (bone / green / purple, 2026-10-05).
 const CSS_VARS: Record<string, string> = {
   '--servd-green': GREEN, '--servd-green-dark': '#4f7a1c', '--servd-green-soft': GREEN_SOFT,
-  '--servd-green-ink': GREEN_INK, '--servd-on-green': INK, '--servd-black': '#2a1428', '--servd-ink': INK,
+  '--servd-green-ink': GREEN_INK, '--servd-on-green': INK, '--servd-black': '#3f1640', '--servd-purple': '#5a2156', '--servd-on-purple': '#f3e7cd', '--servd-ink': INK,
   '--servd-mute': '#705764', '--servd-dim': '#a3909e', '--servd-line': 'rgba(61,31,59,0.14)',
   '--servd-bg': '#f3e7cd', '--servd-surface': '#ece0c3',
   '--simmer-green': '#06392F', '--simmer-bone': '#EDE6D3', '--simmer-walnut': '#3D2817',

@@ -17,7 +17,7 @@
        --servd-on-green    text/icons ON --servd-green — purple, NEVER white
        --servd-green-dark  green used as TEXT on bone (#4f7a1c) — the light
                            green fails contrast as text; also focus rings
-       --servd-purple      secondary (#3d1f3b) — secondary buttons, dark bands
+       --servd-purple      secondary (#5a2156) — secondary buttons, dark bands
        --servd-on-purple   text ON purple — bone
        --servd-ink         body text — purple
      Contrast rules: text on green is purple; green text on bone is the dark
@@ -30,9 +30,9 @@
   --servd-green-soft:   #e2edc8;  /* soft green tint for chips, success cards */
   --servd-green-ink:    #3a5c12;  /* deep green, text on --servd-green-soft */
   --servd-on-green:     #3d1f3b;  /* text on --servd-green (purple, never white) */
-  --servd-purple:       #3d1f3b;  /* secondary — secondary buttons, dark bands */
+  --servd-purple:       #5a2156;  /* secondary — secondary buttons, dark bands (A, owner 2026-10-06) */
   --servd-on-purple:    #f3e7cd;  /* text on purple (bone) */
-  --servd-black:        #2a1428;  /* deepest purple — dark surfaces, purple hover */
+  --servd-black:        #3f1640;  /* deepest purple — dark surfaces, purple hover */
   --servd-ink:          #3d1f3b;  /* body text — purple */
   --servd-mute:         #705764;  /* secondary text — purple over bone, ~5:1 */
   --servd-dim:          #a3909e;  /* placeholders, separators */

@@ -52,7 +52,7 @@
     --erp-primary-hover: #76b032;
     --erp-primary-ink: #4f7a1c;       /* green as TEXT on bone (contrast) */
     --erp-on-primary:  #3d1f3b;       /* text on a green fill */
-    --erp-secondary:   #3d1f3b;       /* purple — secondary buttons, sidebar */
+    --erp-secondary:   #5a2156;       /* purple — sidebar, secondary buttons, purple fills (A, owner 2026-10-06) */
     --erp-on-secondary:#f3e7cd;
     --erp-danger:      #b42318;
     --erp-warning:     #a15c00;
@@ -262,7 +262,7 @@
   }
 
   .ops-shimmer-text {
-    background: linear-gradient(120deg, #87c540 0%, #3d1f3b 30%, #87c540 60%, #3d1f3b 90%, #87c540 100%);
+    background: linear-gradient(120deg, #87c540 0%, #5a2156 30%, #87c540 60%, #5a2156 90%, #87c540 100%);
     background-size: 300% auto;
     background-clip: text;
     -webkit-background-clip: text;
