@@ -6,6 +6,7 @@ import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage, heroCover, formatBrandName } from '../lib/concept'
+import { FALLBACK_CONCEPTS } from '../lib/fallbackBrands'
 import { useScrollReveal } from './kinetic/motionHooks'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
@@ -27,12 +28,8 @@ interface Props {
 }
 
 // Fallback brand cards — used when the live concepts API returns nothing
-// (api warmup, network blip, etc.). Order matches the live brand grid.
-const FALLBACK_BRANDS = [
-  { id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', primaryColor: null },
-  { id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', primaryColor: null },
-  { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
-] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
+// (api warmup, network blip, etc.). One shared record set: lib/fallbackBrands.
+const FALLBACK_BRANDS: Concept[] = Object.values(FALLBACK_CONCEPTS)
 
 export function HomeClient({ concepts, heroConfig }: Props) {
   const source = concepts.filter((c) => ['simmer', 'stackd', 'flipd'].includes(c.slug))

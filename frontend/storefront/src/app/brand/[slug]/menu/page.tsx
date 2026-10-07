@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { formatBrandName, type Concept } from '../../../../lib/concept'
+import { FALLBACK_CONCEPTS } from '../../../../lib/fallbackBrands'
 import { SimmerMenu } from '../../../../components/brand/layouts/SimmerMenu'
 import { FlipdMenuPage } from '../../../../components/brand/layouts/FlipdMenuPage'
 
@@ -9,32 +10,6 @@ const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL
 // Force-dynamic + no-store so a single bad fetch at first request
 // doesn't get baked into the ISR cache for the next 60s.
 export const dynamic = 'force-dynamic'
-
-// Mirrors the FALLBACK_CONCEPTS map in brand/[slug]/{layout,page}.tsx —
-// keeps the microsites usable when /storefront/concepts is unreachable
-// (api warmup, network blip). Without this, a single failed fetch would
-// fire notFound() and the customer scanning the QR in the dining room
-// would see the storefront 404 instead of the placeholder menu.
-const FALLBACK_CONCEPTS: Record<string, Concept> = {
-  simmer: {
-    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
-    description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
-    email: 'simmer@gsfoods.pk',
-    logoUrl: null, primaryColor: null, reservationsEnabled: true,
-  },
-  stackd: {
-    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
-    description: 'Scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
-    email: 'stackd@gsfoods.pk',
-    logoUrl: null, primaryColor: null, reservationsEnabled: false,
-  },
-  flipd: {
-    id: 'fallback-flipd', name: 'Flipd', slug: 'flipd', type: 'restaurant',
-    description: 'Gourmet smash and grilled burgers, built to a fixed spec. Same burger, every time.',
-    email: 'flipd@gsfoods.pk',
-    logoUrl: null, primaryColor: null, reservationsEnabled: false,
-  },
-}
 
 interface ModifierGroup {
   id: string

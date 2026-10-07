@@ -6,6 +6,7 @@
 
 import { notFound } from 'next/navigation'
 import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
+import { FALLBACK_CONCEPTS } from '../../../lib/fallbackBrands'
 import { fetchSiteLayout } from '../../../lib/blocks'
 import { SiteLayoutView } from '../../../components/blocks/SiteLayoutView'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
@@ -17,30 +18,6 @@ import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/j
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'
-
-// Same fallback record set as brand/[slug]/layout.tsx — keeps the
-// microsites usable when the live /storefront/concepts can't be
-// reached (api warmup / network blip).
-const FALLBACK_CONCEPTS: Record<string, Concept> = {
-  simmer: {
-    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
-    description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
-    email: 'simmer@gsfoods.pk',
-    logoUrl: null, primaryColor: null, reservationsEnabled: true,
-  },
-  stackd: {
-    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
-    description: 'Scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
-    email: 'stackd@gsfoods.pk',
-    logoUrl: null, primaryColor: null, reservationsEnabled: false,
-  },
-  flipd: {
-    id: 'fallback-flipd', name: 'Flipd', slug: 'flipd', type: 'restaurant',
-    description: 'Gourmet smash and grilled burgers, built to a fixed spec. Same burger, every time.',
-    email: 'flipd@gsfoods.pk',
-    logoUrl: null, primaryColor: null, reservationsEnabled: false,
-  },
-}
 
 async function getConcepts(): Promise<Concept[]> {
   try {
