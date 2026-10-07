@@ -15,13 +15,12 @@ export type BlockType =
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
   // content module additions
-  | 'columns' | 'video' | 'signature' | 'signup_form'
+  | 'columns' | 'video' | 'signup_form'
   // the servd new-brand waitlist opt-in form (contract 2026-10-07)
   | 'waitlist_form'
-  // single-block "kinds": the servd:hero scroll hero and brand footers
-  | 'scrollHero' | 'brandFooter'
-  // servd:header — the logo in the servd nav
-  | 'siteLogo'
+  // a designed section of a storefront page (variant + fields; the catalogue
+  // comes from the storefront — see lib/sections.ts)
+  | 'section'
 
 export interface BaseBlock {
   id: string
@@ -73,8 +72,6 @@ export interface BlockSpec {
 }
 
 export const BLOCK_CATALOG: BlockSpec[] = [
-  { type: 'signature',    label: 'Built-in design', description: 'The page\'s own designed layout. Add elements above or below it.', icon: 'SIG', group: 'Layout',
-    default: () => ({ type: 'signature' }) },
   { type: 'columns',      label: 'Columns',        description: '2 to 4 side-by-side columns; drag elements into them', icon: 'COL', group: 'Layout',
     default: () => ({ type: 'columns', columns: [[], []], gap: 'md', stackOnMobile: true }) },
   { type: 'spacer',       label: 'Spacer',         description: 'Vertical breathing room',               icon: 'SP', group: 'Layout',
@@ -111,12 +108,6 @@ export const BLOCK_CATALOG: BlockSpec[] = [
     default: () => ({ type: 'signup_form', mode: 'signup', title: 'Join servd', subtitle: 'One code to your phone. No passwords.' }) },
   { type: 'waitlist_form', label: 'Waitlist form', description: 'Join the new-brand waitlist (WhatsApp-verified opt-in)', icon: 'WL', group: 'Forms',
     default: () => ({ type: 'waitlist_form', title: 'Be first in line.', subtitle: 'We\'ll message you when servd opens a new brand.', buttonText: 'Join the waitlist' }) },
-  { type: 'scrollHero',   label: 'Scroll hero',    description: 'The expanding hero at the top of the servd home page', icon: 'SH', group: 'Special',
-    default: () => ({ type: 'scrollHero', mediaType: 'image', bgImageSrc: '', mediaSrc: '', posterSrc: '', title: '', date: '', scrollToExpand: 'Scroll to explore', textBlend: true, overview: '', conclusion: '' }) },
-  { type: 'brandFooter',  label: 'Brand footer',   description: 'Footer copy and social links for a brand microsite', icon: 'FT', group: 'Special',
-    default: () => ({ type: 'brandFooter', ctaEyebrow: '', ctaHeadline: '', ctaAccent: '', tagline: '', social: { instagram: '', tiktok: '', facebook: '', whatsapp: '' } }) },
-  { type: 'siteLogo',     label: 'Logo',           description: 'The servd logo at the top left of every servd page', icon: 'LG', group: 'Special',
-    default: () => ({ type: 'siteLogo', url: '', alt: 'servd', height: 28 }) },
 ]
 
 export function blockSpec(type: string): BlockSpec | undefined {
@@ -135,7 +126,7 @@ export function newBlock(type: BlockType): Block {
 
 /** Types that may sit inside a columns element. */
 export function canNest(type: string): boolean {
-  return type !== 'columns' && type !== 'signature' && type !== 'scrollHero' && type !== 'brandFooter' && type !== 'siteLogo'
+  return type !== 'columns' && type !== 'section' && !type.startsWith('section:')
 }
 
 /** The children of a columns element (gallery also has a numeric `columns`). */
@@ -177,12 +168,8 @@ export function blockSummary(block: Block): string {
     case 'divider':       return 'hairline rule'
     case 'columns':       return `${columnsOf(block)?.length ?? 0} columns`
     case 'video':         return s(block.url, '(no video)')
-    case 'signature':     return 'The page\'s built-in design renders here'
     case 'signup_form':   return `${block.mode === 'login' ? 'Log in' : 'Sign up'}${block.title ? `: ${s(block.title)}` : ''}`
     case 'waitlist_form': return s(block.title, 'New-brand waitlist')
-    case 'scrollHero':    return s(block.title, '(food placeholders)')
-    case 'brandFooter':   return s(block.tagline, s(block.ctaHeadline, '(brand defaults)'))
-    case 'siteLogo':      return block.url ? 'Logo image' : '(text wordmark until a logo is picked)'
     default:              return ''
   }
 }

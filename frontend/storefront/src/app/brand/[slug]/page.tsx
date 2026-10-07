@@ -1,15 +1,11 @@
-// Brand microsite home — mirrors the servd home pattern: read the live
-// SiteLayout `brand:<slug>` and render it if one is published, otherwise
-// render the rich BrandFallback (the bespoke per-brand layout). A `signature`
-// block inside a live layout renders that same BrandFallback, so the owner can
-// add elements above/below the built-in design.
+// Brand microsite home — the SiteLayout `brand:<slug>`, edited in Admin →
+// Storefront. Nothing published → the brand's default sections (its bespoke
+// design with today's content, from src/sections/<brand>).
 
 import { notFound } from 'next/navigation'
 import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
 import { FALLBACK_CONCEPTS } from '../../../lib/fallbackBrands'
-import { fetchSiteLayout } from '../../../lib/blocks'
-import { SiteLayoutView } from '../../../components/blocks/SiteLayoutView'
-import { BrandFallback } from '../../../components/brand/BrandFallback'
+import { ManagedPage } from '../../../sections/ManagedPage'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
 import { SERVD_ORIGIN, brandCanonical } from '../../../lib/brandDomains'
@@ -40,10 +36,7 @@ export default async function BrandHome({
 }) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
 
-  const [concepts, layout] = await Promise.all([
-    getConcepts(),
-    fetchSiteLayout(`brand:${slug}`),
-  ])
+  const concepts = await getConcepts()
 
   const found = concepts.find((c) => c.slug === slug) ?? null
   if (!found) notFound()
@@ -69,35 +62,11 @@ export default async function BrandHome({
     ]),
   ]
 
-  const signature = <BrandFallback concept={concept} concepts={concepts} />
-
-  if (!layout?.blocks?.length) {
-    return (
-      <>
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
-        <ConceptViewTracker conceptId={concept.id} slug={slug} />
-        {signature}
-      </>
-    )
-  }
-
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
       <ConceptViewTracker conceptId={concept.id} slug={slug} />
-      <SiteLayoutView
-        layout={layout}
-        context={{
-          signature,
-          conceptSlug: slug,
-          brand: {
-            name: formatBrandName(concept.name),
-            description: concept.description,
-            primaryColor: concept.primaryColor,
-            slug,
-          },
-        }}
-      />
+      <ManagedPage slug={`brand:${slug}`} concepts={concepts} />
     </>
   )
 }

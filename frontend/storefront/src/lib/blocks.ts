@@ -161,10 +161,13 @@ export interface VideoBlock extends BlockBase {
   aspectRatio?: '16:9' | '9:16' | '1:1' | '4:5'
 }
 
-/** The page's built-in design (brand page → BrandFallback, servd:home →
- *  HomeClient), so the owner can add elements above/below it. */
-export interface SignatureBlock extends BlockBase {
-  type: 'signature'
+/** A designed section of a storefront page (src/sections): `variant` picks
+ *  the renderer, `fields` hold its content (merged over the variant's
+ *  defaults). Every bespoke page is a list of these. */
+export interface SectionBlock extends BlockBase {
+  type: 'section'
+  variant: string
+  fields?: Record<string, unknown>
 }
 
 /** The storefront's existing sign-in / one-code sign-up forms. */
@@ -187,14 +190,13 @@ export type BlockType =
   | 'hero' | 'cta_button' | 'banner' | 'text' | 'image' | 'gallery'
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
-  | 'columns' | 'video' | 'signature' | 'signup_form' | 'waitlist_form'
-  | 'siteLogo'   // servd:header only — read by lib/siteLogo, never rendered as a block
+  | 'columns' | 'video' | 'section' | 'signup_form' | 'waitlist_form'
 
 export type Block =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock
   | StatStripBlock | VoicesBlock | KitchensBlock | FeaturedMenuBlock | ReviewsBlock
   | QuoteBlock | SpacerBlock | DividerBlock
-  | ColumnsBlock | VideoBlock | SignatureBlock | SignupFormBlock | WaitlistFormBlock
+  | ColumnsBlock | VideoBlock | SectionBlock | SignupFormBlock | WaitlistFormBlock
 
 // ── Page settings, pop-up rules, public read shape ─────────────────────────
 

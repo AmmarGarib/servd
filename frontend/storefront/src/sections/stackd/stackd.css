@@ -1,0 +1,7 @@
+/* Stackd sections. Each section renders its own .stackd-page frame with the
+   fixed plum field inside it (see shared.tsx). The field is a fixed overlay
+   with translucent light pools, so a second copy would double them: keep only
+   the first one on the page. Two rules, not one list, so a browser without
+   :has() still applies the first. */
+.stackd-page ~ .stackd-page > .stackd-bg-fixed { display: none; }
+:has(.stackd-bg-fixed) ~ * .stackd-bg-fixed { display: none; }

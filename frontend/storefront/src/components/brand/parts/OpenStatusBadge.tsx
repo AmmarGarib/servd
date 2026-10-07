@@ -41,7 +41,7 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 /** Given a day + current minutes, find today's windows and determine open status.
  *  Returns { open, opensAt, closesAt } where opensAt/closesAt are formatted strings. */
-function computeStatus(hours: ServiceHourRow[], day: number, mins: number) {
+function computeStatus(hours: ServiceHourRow[], day: number, mins: number, words: { today: string; tomorrow: string } = DEFAULT_OPEN_STATUS_LABELS) {
   const todayWindows = hours
     .filter((h) => h.dayOfWeek === day)
     .sort((a, b) => a.openMin - b.openMin)
@@ -54,7 +54,7 @@ function computeStatus(hours: ServiceHourRow[], day: number, mins: number) {
         .filter((h) => h.dayOfWeek === nextDay)
         .sort((a, b) => a.openMin - b.openMin)
       if (nextWindows.length > 0) {
-        const label = offset === 1 ? 'tomorrow' : DAY_LABELS[nextDay]!
+        const label = offset === 1 ? words.tomorrow : DAY_LABELS[nextDay]!
         return { open: false, closesAt: null, opensAt: `${label} ${formatMins(nextWindows[0]!.openMin)}` }
       }
     }
@@ -71,7 +71,7 @@ function computeStatus(hours: ServiceHourRow[], day: number, mins: number) {
   // Find next open window today
   const nextToday = todayWindows.find((w) => w.openMin > mins)
   if (nextToday) {
-    return { open: false, closesAt: null, opensAt: `today ${formatMins(nextToday.openMin)}` }
+    return { open: false, closesAt: null, opensAt: `${words.today} ${formatMins(nextToday.openMin)}` }
   }
 
   // Find next day with hours
@@ -81,7 +81,7 @@ function computeStatus(hours: ServiceHourRow[], day: number, mins: number) {
       .filter((h) => h.dayOfWeek === nextDay)
       .sort((a, b) => a.openMin - b.openMin)
     if (nextWindows.length > 0) {
-      const label = offset === 1 ? 'tomorrow' : DAY_LABELS[nextDay]!
+      const label = offset === 1 ? words.tomorrow : DAY_LABELS[nextDay]!
       return { open: false, closesAt: null, opensAt: `${label} ${formatMins(nextWindows[0]!.openMin)}` }
     }
   }
@@ -94,13 +94,46 @@ function computeStatus(hours: ServiceHourRow[], day: number, mins: number) {
 // When hoursData is null (still fetching), renders nothing to avoid flash.
 // When isActive=false on the concept, shows "Temporarily Closed" regardless.
 
+/** The badge's words — every one optional; editable as section fields. */
+export interface OpenStatusLabels {
+  open: string               // "Open Now"
+  closes: string             // "Closes" (· Closes 11:00 PM)
+  closed: string             // "Closed"
+  opens: string              // "Opens"  (· Opens tomorrow 12:00 PM)
+  today: string              // "today"
+  tomorrow: string           // "tomorrow"
+  temporarilyClosed: string  // "Temporarily Closed"
+}
+
+export const DEFAULT_OPEN_STATUS_LABELS: OpenStatusLabels = {
+  open: 'Open Now',
+  closes: 'Closes',
+  closed: 'Closed',
+  opens: 'Opens',
+  today: 'today',
+  tomorrow: 'tomorrow',
+  temporarilyClosed: 'Temporarily Closed',
+}
+
+/** Defaults with any non-empty overrides on top. */
+function withLabels(labels?: Partial<OpenStatusLabels>): OpenStatusLabels {
+  const out = { ...DEFAULT_OPEN_STATUS_LABELS }
+  for (const [k, v] of Object.entries(labels ?? {})) {
+    if (typeof v === 'string' && v.trim()) out[k as keyof OpenStatusLabels] = v
+  }
+  return out
+}
+
 interface BadgeProps {
   hoursData: HoursData | null
   accentColor?: string
   size?: 'sm' | 'md'
+  /** Override any of the badge's words (empty = default). */
+  labels?: Partial<OpenStatusLabels>
 }
 
-export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgeProps) {
+export function OpenStatusBadge({ hoursData, accentColor, size = 'md', labels }: BadgeProps) {
+  const words = withLabels(labels)
   const [status, setStatus] = useState<{ open: boolean; closesAt: string | null; opensAt: string | null } | null>(null)
 
   useEffect(() => {
@@ -117,13 +150,14 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
         return
       }
       const { day, mins } = pktNow()
-      setStatus(computeStatus(hoursData.hours, day, mins))
+      setStatus(computeStatus(hoursData.hours, day, mins, words))
     }
     tick()
     // Re-evaluate every 60 seconds in case the window crosses open/close time
     const id = setInterval(tick, 60_000)
     return () => clearInterval(id)
-  }, [hoursData])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoursData, words.today, words.tomorrow])
 
   if (status === null) return null
 
@@ -141,7 +175,7 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
         border: '1px solid rgba(239,68,68,0.25)',
       }}>
         <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
-        Temporarily Closed
+        {words.temporarilyClosed}
       </span>
     )
   }
@@ -161,7 +195,7 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
           boxShadow: `0 0 5px ${green}`,
           animation: 'openPulse 2s ease-in-out infinite',
         }} />
-        Open Now{status.closesAt ? ` · Closes ${status.closesAt}` : ''}
+        {words.open}{status.closesAt ? ` · ${words.closes} ${status.closesAt}` : ''}
         <style>{`@keyframes openPulse { 0%,100%{opacity:1} 50%{opacity:0.45} }`}</style>
       </span>
     )
@@ -176,7 +210,7 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
       border: '1px solid rgba(239,68,68,0.22)',
     }}>
       <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
-      Closed{status.opensAt ? ` · Opens ${status.opensAt}` : ''}
+      {words.closed}{status.opensAt ? ` · ${words.opens} ${status.opensAt}` : ''}
     </span>
   )
 }
@@ -188,9 +222,11 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
 interface GridProps {
   hoursData: HoursData
   accentColor?: string
+  /** A day with no service windows (default "Closed"). */
+  closedLabel?: string
 }
 
-export function HoursGrid({ hoursData, accentColor }: GridProps) {
+export function HoursGrid({ hoursData, accentColor, closedLabel }: GridProps) {
   const [todayDay, setTodayDay] = useState<number | null>(null)
 
   useEffect(() => {
@@ -236,7 +272,7 @@ export function HoursGrid({ hoursData, accentColor }: GridProps) {
               {label}
             </span>
             {isClosed ? (
-              <span style={{ fontSize: '0.52rem', color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Closed</span>
+              <span style={{ fontSize: '0.52rem', color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>{closedLabel?.trim() || 'Closed'}</span>
             ) : (
               windows.map((w, i) => (
                 <span key={i} style={{

@@ -1,13 +1,14 @@
 'use client'
-import Link from 'next/link'
+import type { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
-import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
-import { SearchSheet, openSearch } from './SearchSheet'
-import type { SiteLogo } from '../lib/siteLogo'
+import { SearchSheet } from './SearchSheet'
 
-// The servd global nav — Apple-style glass bar: wordmark, section links
-// (desktop), then search, account and Order. Search opens the SearchSheet.
+// The gate for the servd global header. The header itself is content — the
+// `servd:header` page (section `servd.nav`), rendered on the server by
+// app/layout.tsx and passed in as children — so the owner edits it in
+// Admin → Storefront. This decides, on every navigation, whether it shows,
+// and mounts the search sheet with it.
 
 // Pages that manage their own header (full-screen splashes, brand
 // microsites with their own nav, the per-concept ordering experience).
@@ -19,13 +20,11 @@ interface Props {
    * domain. Only correct for the document that was hard-loaded — see below.
    */
   initialBrandSlug?: string | null
-  /** The operator's logo (servd:header); null → the text wordmark. */
-  logo?: SiteLogo | null
+  children: ReactNode
 }
 
-export function StorefrontNav({ initialBrandSlug = null, logo = null }: Props) {
+export function StorefrontNav({ initialBrandSlug = null, children }: Props) {
   const pathname = usePathname() ?? '/'
-  const token = useCustomerAuth((s) => s.token)
 
   // Stands down on a brand microsite; see useOnBrandMicrosite for why this
   // cannot be answered by the path alone, or once in a layout.
@@ -43,35 +42,10 @@ export function StorefrontNav({ initialBrandSlug = null, logo = null }: Props) {
 
   return (
     <>
-      <nav aria-label="Primary" className="sv-nav">
-        <div className="sv-nav-inner">
-          <Link href="/home" aria-label="servd home" className="sv-nav-mark">
-            {logo
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={logo.url} alt={logo.alt} style={{ height: logo.height, width: 'auto', display: 'block' }} />
-              : <>servd<span>.</span></>}
-          </Link>
-
-          <div className="sv-nav-links">
-            <Link href="/home#kitchens">Kitchens</Link>
-            <Link href="/home#insiders">Insiders</Link>
-            <Link href="/home#visit">Visit</Link>
-            {token && <Link href="/orders">Orders</Link>}
-          </div>
-
-          <button type="button" className="sv-icon-btn" aria-label="Search" onClick={() => openSearch('')}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden>
-              <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
-            </svg>
-          </button>
-          <Link href={token ? '/account' : '/login'} className="sv-icon-btn" aria-label={token ? 'Your account' : 'Sign in'}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" />
-            </svg>
-          </Link>
-          <Link href="/home#kitchens" className="sv-nav-cta">Order</Link>
-        </div>
-      </nav>
+      {/* The header is sticky as a whole: a published layout wraps its blocks
+          in a tracking <div>, which would otherwise pin .sv-nav's own sticky
+          to that wrapper's height. */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 50 }}>{children}</div>
       <SearchSheet />
     </>
   )

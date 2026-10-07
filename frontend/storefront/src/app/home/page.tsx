@@ -1,18 +1,17 @@
-// servd home page (/home — `/` and `/browse` redirect here) — content can be overridden from the storefront content
-// module (SiteLayout `servd:home`, approved drafts only). When nothing is live
-// the page renders the conversion-focused HomeClient marketing layout directly;
-// when a layout is live, a `signature` block in it renders that same HomeClient
-// so the owner can add elements above/below the built-in design.
+// servd home page (/home — `/` and `/browse` redirect here). Every section on it
+// is content (SiteLayout `servd:home`, Admin → Storefront, CEO-approved): the
+// scroll-expansion hero, the kitchen tiles, how it works, Insiders, Visit and
+// the waitlist strip. Nothing published → the catalogue's default sections,
+// which are the page as designed. Anchors #kitchens / #insiders / #visit live
+// on those sections.
 
-import { SiteLayoutView } from '../../components/blocks/SiteLayoutView'
 import { SERVD_ORIGIN } from '../../lib/brandDomains'
-import { HomeClient } from '../../components/HomeClient'
-import { fetchSiteLayout } from '../../lib/blocks'
 import type { Concept } from '../../lib/concept'
 import { fetchBrandLocations } from '../../lib/brandLocations'
 import { organizationSchema, websiteSchema, restaurantSchema, jsonLdScript } from '../../lib/jsonLd'
 import { brandStory } from '../../lib/concept'
-import { parseHeroBlock } from '../../lib/heroConfig'
+import { ManagedPage } from '../../sections/ManagedPage'
+import { HomeSearchParam } from '../../sections/servd/HomeSearchParam'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -20,14 +19,6 @@ export const dynamic = 'force-dynamic'
 
 export const metadata = {
   alternates: { canonical: '/home' },
-}
-
-// Operator-editable landing hero (background image + the expanding photo/video),
-// stored as a `scrollHero` block under the SiteLayout slug `servd:hero`.
-// Nothing live → defaults.
-async function getHeroConfig() {
-  const layout = await fetchSiteLayout('servd:hero')
-  return parseHeroBlock(layout?.blocks)
 }
 
 async function getConcepts(): Promise<Concept[]> {
@@ -39,11 +30,9 @@ async function getConcepts(): Promise<Concept[]> {
 }
 
 export default async function HomePage() {
-  const [layout, concepts, brandLocations, heroConfig] = await Promise.all([
-    fetchSiteLayout('servd:home'),
+  const [concepts, brandLocations] = await Promise.all([
     getConcepts(),
     fetchBrandLocations(API_URL),
-    getHeroConfig(),
   ])
 
   // JSON-LD: Organization (servd) + WebSite (search-box) + one Restaurant
@@ -65,14 +54,14 @@ export default async function HomePage() {
     ),
   ]
 
-  const home = <HomeClient concepts={concepts} heroConfig={heroConfig} />
-
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
-      {layout?.blocks?.length
-        ? <SiteLayoutView layout={layout} context={{ signature: home }} />
-        : home}
+      {/* /home?q=… (the sitelinks search box above) opens the search sheet. */}
+      <HomeSearchParam />
+      <div className="sv-home">
+        <ManagedPage slug="servd:home" concepts={concepts} />
+      </div>
     </>
   )
 }

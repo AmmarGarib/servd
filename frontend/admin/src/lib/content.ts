@@ -5,13 +5,14 @@
 // content-module-contract.md the backend and renderers are built against.
 
 import { api } from './api'
-import { newBlock, newId, type Block } from './blocks'
+import { newBlock, type Block } from './blocks'
+import { pageDefaultBlocks } from './sections'
 
 export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'https://servd.pk'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export type LayoutKind = 'page' | 'hero' | 'header' | 'footer' | 'popup'
+export type LayoutKind = 'page' | 'header' | 'footer' | 'popup'
 export type DraftStatus = 'draft' | 'pending' | 'scheduled'
 export type Variant = 'a' | 'b'
 
@@ -127,24 +128,34 @@ export const previewUrl = (token: string) => `${STOREFRONT_URL}/preview/${token}
 // ─── Slug helpers ──────────────────────────────────────────────────────────
 
 export function kindForSlug(slug: string): LayoutKind {
-  if (slug === 'servd:hero') return 'hero'
-  if (slug === 'servd:header') return 'header'
   if (slug.startsWith('popup:')) return 'popup'
-  if (slug.startsWith('brand:') && slug.endsWith(':footer')) return 'footer'
+  const last = slug.split(':').pop()
+  if ((slug.startsWith('servd:') || slug.startsWith('brand:')) && last === 'header' && slug.split(':').length >= 2) return 'header'
+  if ((slug.startsWith('servd:') || slug.startsWith('brand:')) && last === 'footer' && slug.split(':').length >= 2) return 'footer'
   return 'page'
 }
 
-/** Where the live page is on the storefront (null for pop-ups / fragments). */
-export function storefrontPath(slug: string): string | null {
-  if (slug === 'servd:home' || slug === 'servd:hero' || slug === 'servd:header' || slug === 'servd:home-experience') return '/home'
-  if (slug.startsWith('page:')) return `/pages/${slug.slice(5)}`
-  if (slug.startsWith('brand:')) return `/brand/${slug.slice(6).replace(/:footer$/, '')}`
-  return null
+/** Built-in brand sub-pages (anything else under brand:<slug>: is the
+    owner's own page, served at /brand/<slug>/pages/<page>). */
+export const BRAND_BUILTIN_PAGES = ['header', 'footer', 'about', 'visit', 'menu'] as const
+const BRAND_RESERVED = new Set<string>([...BRAND_BUILTIN_PAGES, 'qr', 'pages', 'home'])
+export const isReservedBrandPage = (p: string) => BRAND_RESERVED.has(p)
+
+const SERVD_PATHS: Record<string, string> = {
+  home: '/home', header: '/home', footer: '/home', waitlist: '/waitlist', press: '/press', reserve: '/reserve',
 }
 
-/** Pages whose storefront route has a bespoke built-in design. */
-export function hasSignature(slug: string): boolean {
-  return slug === 'servd:home' || (slug.startsWith('brand:') && !slug.endsWith(':footer'))
+/** Where the live page is on the storefront (null for pop-ups / templates). */
+export function storefrontPath(slug: string): string | null {
+  const [prefix, a, b] = slug.split(':')
+  if (prefix === 'servd' && a) return SERVD_PATHS[a] ?? null
+  if (prefix === 'page' && a) return `/pages/${a}`
+  if (prefix === 'brand' && a) {
+    if (!b || b === 'header' || b === 'footer') return `/brand/${a}`
+    if (b === 'about' || b === 'visit' || b === 'menu') return `/brand/${a}/${b}`
+    return `/brand/${a}/pages/${b}`
+  }
+  return null
 }
 
 export function newPopupKey(): string {
@@ -162,21 +173,18 @@ export const DEFAULT_POPUP_RULES = (popupKind: PopupRules['popupKind'] = 'offer'
   frequency: 'once',
 })
 
-/** Starting blocks for a slug with nothing live and no draft. */
+/** Starting blocks for a slug with nothing live and no draft: the page's
+    design from the storefront's section catalogue (load it first with
+    useSectionCatalog), a pop-up template, or a plain hero for a new page. */
 export function seedBlocks(slug: string, popupKind?: PopupRules['popupKind']): Block[] {
-  const kind = kindForSlug(slug)
-  if (kind === 'hero') return [{ ...newBlock('scrollHero'), id: 'hero' }]
-  if (kind === 'header') return [{ ...newBlock('siteLogo'), id: 'logo' }]
-  if (kind === 'footer') return [{ ...newBlock('brandFooter'), id: 'footer' }]
-  if (kind === 'popup') {
+  if (kindForSlug(slug) === 'popup') {
     if (popupKind === 'signup' || popupKind === 'login') {
       return [{ ...newBlock('signup_form'), mode: popupKind, title: popupKind === 'login' ? 'Welcome back' : 'Join servd' }]
     }
     return [{ ...newBlock('text'), body: 'Your offer or announcement.', align: 'center', size: 'lg' }, newBlock('cta_button')]
   }
-  if (hasSignature(slug)) return [{ id: newId(), type: 'signature' }]
-  if (slug === 'servd:home-experience') return [newBlock('gallery')]
-  return [newBlock('hero')]
+  const designed = pageDefaultBlocks(slug)
+  return designed.length ? designed : [newBlock('hero')]
 }
 
 // ─── Status display ────────────────────────────────────────────────────────

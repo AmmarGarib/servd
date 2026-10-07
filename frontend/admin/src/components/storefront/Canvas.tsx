@@ -6,12 +6,13 @@
 
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Copy, CornerLeftUp, Eye, EyeOff, GripVertical, Trash2 } from 'lucide-react'
-import { BLOCK_CATALOG, blockSpec, blockSummary, canNest, columnsOf, newBlock, type Block, type BlockType } from '../../lib/blocks'
+import { blockSpec, blockSummary, canNest, columnsOf, type Block } from '../../lib/blocks'
+import { makeBlock, sectionSpec, sectionSummary, type PaletteItem } from '../../lib/sections'
 import { duplicate, findBlock, insertAt, moveOut, moveTo, nudge, removeBlock, updateBlock, type Slot } from './tree'
 
 // ─── Drag payload (one drag at a time; dataTransfer is unreadable on dragover) ──
 
-type DragPayload = { source: 'palette'; type: BlockType } | { source: 'canvas'; id: string; type: string }
+type DragPayload = { source: 'palette'; type: string } | { source: 'canvas'; id: string; type: string }
 let drag: DragPayload | null = null
 export function startDrag(e: React.DragEvent, payload: DragPayload) {
   e.stopPropagation()
@@ -23,8 +24,8 @@ export function endDrag() { drag = null }
 
 // ─── Palette ───────────────────────────────────────────────────────────────
 
-export function Palette({ types, onAdd }: { types: BlockType[]; onAdd: (t: BlockType) => void }) {
-  const specs = BLOCK_CATALOG.filter((s) => types.includes(s.type))
+export function Palette({ items, onAdd }: { items: PaletteItem[]; onAdd: (key: string) => void }) {
+  const specs = items
   const groups = Array.from(new Set(specs.map((s) => s.group)))
   return (
     <div className="space-y-4">
@@ -34,9 +35,9 @@ export function Palette({ types, onAdd }: { types: BlockType[]; onAdd: (t: Block
           <p className="text-[11px] uppercase tracking-wider text-s-muted font-bold mb-1.5">{g}</p>
           <div className="space-y-1">
             {specs.filter((s) => s.group === g).map((s) => (
-              <button key={s.type} type="button" draggable
-                onDragStart={(e) => startDrag(e, { source: 'palette', type: s.type })} onDragEnd={endDrag}
-                onClick={() => onAdd(s.type)} title={s.description}
+              <button key={s.key} type="button" draggable
+                onDragStart={(e) => startDrag(e, { source: 'palette', type: s.key })} onDragEnd={endDrag}
+                onClick={() => onAdd(s.key)} title={s.description}
                 className="w-full flex items-center gap-2 rounded-lg border border-s-border bg-s-surface px-2 py-1.5 text-left hover:border-s-teal cursor-grab active:cursor-grabbing">
                 <span className="w-9 shrink-0 text-center rounded bg-s-bg-soft text-[10px] font-bold text-s-muted py-0.5">{s.icon}</span>
                 <span className="text-xs text-s-text truncate">{s.label}</span>
@@ -56,16 +57,16 @@ interface CanvasProps {
   onChange: (next: Block[]) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
-  allowedTypes: BlockType[]
+  items: PaletteItem[]
 }
 
-export function Canvas({ blocks, onChange, selectedId, onSelect, allowedTypes }: CanvasProps) {
+export function Canvas({ blocks, onChange, selectedId, onSelect, items }: CanvasProps) {
   const drop = (slot: Slot) => {
     const p = drag
     drag = null
     if (!p) return
     if (p.source === 'palette') {
-      const b = newBlock(p.type)
+      const b = makeBlock(p.type)
       const next = insertAt(blocks, slot, b)
       if (next !== blocks) { onChange(next); onSelect(b.id) }
     } else {
@@ -87,10 +88,10 @@ export function Canvas({ blocks, onChange, selectedId, onSelect, allowedTypes }:
       onChange(removeBlock(blocks, id))
       if (selectedId === id) onSelect(null)
     },
-    addInto: (parentId: string, col: number, t: BlockType) => {
+    addInto: (parentId: string, col: number, key: string) => {
       const parent = blocks.find((b) => b.id === parentId)
       const len = parent ? columnsOf(parent)?.[col]?.length ?? 0 : 0
-      const b = newBlock(t)
+      const b = makeBlock(key)
       onChange(insertAt(blocks, { parentId, col, index: len }, b))
       onSelect(b.id)
     },
@@ -110,7 +111,7 @@ export function Canvas({ blocks, onChange, selectedId, onSelect, allowedTypes }:
         <div key={b.id}>
           <DropZone slot={{ parentId: null, col: 0, index: i }} onDrop={drop} nested={false} />
           <ElementCard block={b} first={i === 0} last={i === blocks.length - 1} nested={false}
-            selectedId={selectedId} ops={ops} onDrop={drop} allowedTypes={allowedTypes} />
+            selectedId={selectedId} ops={ops} onDrop={drop} items={items} />
         </div>
       ))}
       <DropZone slot={{ parentId: null, col: 0, index: blocks.length }} onDrop={drop} nested={false} />
@@ -122,7 +123,7 @@ type Ops = {
   select: (id: string) => void
   up: (id: string) => void; down: (id: string) => void; out: (id: string) => void
   dup: (id: string) => void; toggle: (id: string) => void; del: (id: string) => void
-  addInto: (parentId: string, col: number, t: BlockType) => void
+  addInto: (parentId: string, col: number, key: string) => void
 }
 
 function DropZone({ slot, onDrop, nested, big, children }: { slot: Slot; onDrop: (s: Slot) => void; nested: boolean; big?: boolean; children?: React.ReactNode }) {
@@ -142,11 +143,14 @@ function DropZone({ slot, onDrop, nested, big, children }: { slot: Slot; onDrop:
   )
 }
 
-function ElementCard({ block, first, last, nested, selectedId, ops, onDrop, allowedTypes }: {
+function ElementCard({ block, first, last, nested, selectedId, ops, onDrop, items }: {
   block: Block; first: boolean; last: boolean; nested: boolean
-  selectedId: string | null; ops: Ops; onDrop: (s: Slot) => void; allowedTypes: BlockType[]
+  selectedId: string | null; ops: Ops; onDrop: (s: Slot) => void; items: PaletteItem[]
 }) {
-  const spec = blockSpec(block.type)
+  const section = block.type === 'section' ? sectionSpec(block.variant as string | undefined) : undefined
+  const spec = section
+    ? { label: section.label, icon: (section.icon ?? section.label.slice(0, 2)).slice(0, 3).toUpperCase() }
+    : block.type === 'section' ? { label: 'Section', icon: 'SEC' } : blockSpec(block.type)
   const selected = selectedId === block.id
   const cols = columnsOf(block)
   const btn = 'p-1 rounded text-s-muted hover:text-s-text hover:bg-s-bg-soft disabled:opacity-30 disabled:hover:bg-transparent'
@@ -167,7 +171,7 @@ function ElementCard({ block, first, last, nested, selectedId, ops, onDrop, allo
             {block.hidden && <span className="ml-2 text-[10px] font-normal text-s-muted">hidden</span>}
             {block.animation && block.animation !== 'none' && <span className="ml-2 text-[10px] font-normal text-s-muted">{block.animation}</span>}
           </p>
-          {!nested && <p className="text-[11px] text-s-muted truncate">{blockSummary(block)}</p>}
+          {!nested && <p className="text-[11px] text-s-muted truncate">{block.type === 'section' ? sectionSummary(block) : blockSummary(block)}</p>}
         </div>
         <div className="flex items-center shrink-0" onClick={(e) => e.stopPropagation()}>
           <button type="button" onClick={() => ops.up(block.id)} disabled={first} aria-label="Move up" title="Move up" className={btn}><ChevronUp size={14} /></button>
@@ -188,16 +192,16 @@ function ElementCard({ block, first, last, nested, selectedId, ops, onDrop, allo
                 <div key={child.id}>
                   <DropZone slot={{ parentId: block.id, col: c, index: j }} onDrop={onDrop} nested />
                   <ElementCard block={child} first={j === 0} last={j === col.length - 1} nested
-                    selectedId={selectedId} ops={ops} onDrop={onDrop} allowedTypes={allowedTypes} />
+                    selectedId={selectedId} ops={ops} onDrop={onDrop} items={items} />
                 </div>
               ))}
               <DropZone slot={{ parentId: block.id, col: c, index: col.length }} onDrop={onDrop} nested />
               <select value="" onClick={(e) => e.stopPropagation()}
-                onChange={(e) => { if (e.target.value) ops.addInto(block.id, c, e.target.value as BlockType) }}
+                onChange={(e) => { if (e.target.value) ops.addInto(block.id, c, e.target.value) }}
                 className="s-select text-[11px] py-1 mt-1" aria-label={`Add element to column ${c + 1}`}>
                 <option value="">+ Add element</option>
-                {BLOCK_CATALOG.filter((s) => canNest(s.type) && allowedTypes.includes(s.type)).map((s) => (
-                  <option key={s.type} value={s.type}>{s.label}</option>
+                {items.filter((s) => canNest(s.key)).map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
                 ))}
               </select>
             </div>

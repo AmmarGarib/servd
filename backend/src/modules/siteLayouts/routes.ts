@@ -1,8 +1,10 @@
 // Storefront content module API (owner decision 41).
 //
 // One row per page / pop-up, keyed by slug (see service.ts parseSlug):
-//   servd:home, servd:hero        shared servd pages          tenantId null
-//   brand:<slug>[:footer]         a brand's page / footer     the brand's company
+//   servd:<page>                  shared servd pages (incl.   tenantId null
+//                                 servd:header / servd:footer)
+//   brand:<slug>[:<page>]         a brand's pages, top bar,   the brand's company
+//                                 footer and the owner's own pages
 //   page:<slug>                   custom page (/pages/<slug>) tenantId null
 //   popup:<key>                   pop-up                      null, or the one company its brands belong to
 //

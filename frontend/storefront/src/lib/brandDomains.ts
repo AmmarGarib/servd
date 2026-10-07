@@ -122,6 +122,12 @@ export const BRAND_HOST_HEADER = 'x-servd-brand-host'
  */
 export const BRAND_REWRITE_PATHS = new Set(['/', '/menu', '/about', '/visit'])
 
+/** True for a path that is the brand microsite on a brand host: the fixed set
+ *  above, plus the owner's own brand pages at /pages/<page>. */
+export function isBrandRewritePath(pathname: string): boolean {
+  return BRAND_REWRITE_PATHS.has(pathname) || /^\/pages\/[a-z0-9][a-z0-9_-]{0,79}$/i.test(pathname)
+}
+
 // ─── Canonical origins ────────────────────────────────────────────────────────
 //
 // Which URL each surface calls home. This is what tells Google that the flipd

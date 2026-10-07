@@ -11,9 +11,22 @@ interface Props {
   kicker?: string
   /** Override the heading line. */
   heading?: string
+  /** Override the line under the heading ('' hides it). */
+  subtitle?: string
+  /** Override the "See all kitchens →" button label ('' hides the button). */
+  allLabel?: string
+  /** Override the button's link (default /home#kitchens). */
+  allHref?: string
+  /** Each card's call to action; `{name}` = that brand (default 'Visit {name} →'). */
+  cardCta?: string
 }
 
-export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: Props) {
+const DEFAULT_SUBTITLE = 'Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.'
+
+export function CrossBrandStrip({ current, concepts, accent, kicker, heading, subtitle, allLabel, allHref, cardCta }: Props) {
+  const sub = subtitle ?? DEFAULT_SUBTITLE
+  const all = allLabel ?? 'See all kitchens →'
+  const cta = cardCta ?? 'Visit {name} →'
   // Only siblings from the SAME operating company. The storefront's concept
   // list spans every company on servd, and this strip claims "same operator,
   // same standards" and that you can pair the brands in one cart — both false
@@ -37,13 +50,17 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
             <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.5rem)', letterSpacing: '-0.02em' }}>
               {heading ?? `Liked ${formatBrandName(current.name)}? Try one of these.`}
             </h2>
-            <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', marginTop: '0.4rem', maxWidth: '32rem' }}>
-              Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.
-            </p>
+            {sub && (
+              <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', marginTop: '0.4rem', maxWidth: '32rem' }}>
+                {sub}
+              </p>
+            )}
           </div>
-          <Link href="/home#kitchens" className="servd-btn-secondary" style={{ padding: '0.7rem 1.25rem', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
-            See all kitchens →
-          </Link>
+          {all && (
+            <Link href={allHref || '/home#kitchens'} className="servd-btn-secondary" style={{ padding: '0.7rem 1.25rem', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
+              {all}
+            </Link>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
@@ -85,7 +102,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
                   </p>
                 )}
                 <span style={{ marginTop: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: c.primaryColor ?? 'var(--servd-green-dark)' }}>
-                  Visit {formatBrandName(c.name)} →
+                  {cta.replace(/\{name\}/g, formatBrandName(c.name))}
                 </span>
               </div>
             </Link>

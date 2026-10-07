@@ -174,11 +174,29 @@ read), the Content editor (`/content`), `/storefront-hero`,
 (page builder, drag-and-drop elements incl. columns/video), Pop-ups (a page +
 display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
 
-- Everything is a `SiteLayout` row keyed by slug: `servd:home`, `servd:hero`,
-  `servd:header` (the nav logo: one `siteLogo` block; empty → text wordmark),
-  `brand:<slug>`, `brand:<slug>:footer`, `page:<slug>` (served at
-  `/pages/<slug>`), `popup:<key>`. `blocks`/`settings` are LIVE;
-  `draftBlocks`/`draftSettings` are the working copy.
+- Everything is a `SiteLayout` row keyed by slug: `servd:<page>` (`home`,
+  `header` = top bar, `footer`, `waitlist`, `press`, `reserve`, `location` =
+  the template for every /locations page), `brand:<slug>` (home),
+  `brand:<slug>:header|footer|about|visit|menu`, `brand:<slug>:<page>` (the
+  owner's own brand pages — /brand/<slug>/pages/<page>, and `/pages/<page>` on
+  the brand's domain), `page:<slug>` (servd custom pages, `/pages/<slug>`),
+  `popup:<key>`. `blocks`/`settings` are LIVE; `draftBlocks`/`draftSettings`
+  are the working copy.
+- **Every storefront page is editable (owner, 2026-10-07): "every element in
+  the storefront module, all pages, and I can add elements and pages".**
+  Bespoke designs are broken into SECTIONS: one block type `section` with a
+  `variant` (`stackd.hero`, `servd.nav`, `brand.footer`, …) and `fields`
+  (every word, image, link, colour, list). The storefront owns them in
+  `frontend/storefront/src/sections/<group>/` (catalog.ts = specs + each
+  page's default sections; renderers.tsx = components; README.md = the
+  contract) and serves the catalogue at `/api/storefront-sections`; the admin
+  builds its palette and forms from it (`frontend/admin/src/lib/sections.ts`
+  — no second copy). Routes render pages through `ManagedPage` (live layout,
+  else the page's default sections = its design with today's content). **A new
+  page or design element on the storefront is a section, never hard-coded
+  copy.** Fields go through `sections/safe.ts` (safeHref/safeSrc/color). The
+  old one-off types (`signature`, `scrollHero`, `brandFooter`, `siteLogo`) and
+  the `servd:hero` slug are retired.
 - **Nothing publishes without the CEO (role `admin`).** Draft → submit →
   approve (now, or "publish at" → `scheduled`, published by the
   `sitePublish` worker or lazily on the next public read) / reject with a
@@ -188,8 +206,6 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
 - A/B: `settings.ab = { splitPct, blocks }`; the visitor's variant is a hash of
   the `sv_vid` cookie + slug + version; `SiteLayoutStat` counts views and
   conversions (first click inside the page / pop-up submit).
-- The `signature` element renders the page's built-in design (the bespoke
-  brand layout, or HomeClient on home), so the owner can build around it.
 - The mobile app renders the same block JSON natively
   (`mobile/src/content/`). Keep the block schema in step across
   `frontend/storefront/src/lib/blocks.ts`, `frontend/admin/src/lib/blocks.ts`
@@ -206,7 +222,7 @@ hero (`LandingScrollHero` → `ui/scroll-expansion-hero.tsx`) — keep it; a jum
 far down the page (an `Order` link to `#kitchens`) finishes the expansion
 instead of snapping back to the top. Search is the nav's `SearchSheet`
 (`openSearch()`), not a page. Link to `/home` or `/home#kitchens`, never
-`/browse`. The hero copy/media still come from `servd:hero`.
+`/browse`. The hero is the `servd.scrollHero` section on `servd:home`.
 
 ## Recent additions (2026-09-09)
 

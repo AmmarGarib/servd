@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { resolveBrandHost, BRAND_HOST_HEADER, BRAND_REWRITE_PATHS } from './lib/brandDomains'
+import { resolveBrandHost, BRAND_HOST_HEADER, isBrandRewritePath } from './lib/brandDomains'
 import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
 
 // Host-based brand routing.
@@ -85,7 +85,7 @@ export async function middleware(req: NextRequest) {
   }
 
   const { pathname } = req.nextUrl
-  if (!BRAND_REWRITE_PATHS.has(pathname)) return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  if (!isBrandRewritePath(pathname)) return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
 
   const url = req.nextUrl.clone()
   url.pathname = pathname === '/' ? `/brand/${slug}` : `/brand/${slug}${pathname}`

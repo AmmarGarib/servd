@@ -200,24 +200,38 @@ describe('draft → submit → approve', () => {
   })
 })
 
-describe('single-block kinds (hero, footer, header logo)', () => {
-  it('saves the special blocks the editor produces', async () => {
-    for (const type of ['brandFooter', 'waitlist_form']) {
-      const r = await call('PUT', `/${enc(`brand:${slugA}:footer`)}/draft`, auth(marketer), { blocks: [{ id: 'b', type }] })
-      expect(r.statusCode, type).toBe(200)
-    }
-    expect(blocksSchema.safeParse([{ id: 'h', type: 'scrollHero', title: 'x' }]).success).toBe(true)
+describe('sections and page kinds', () => {
+  it('saves section blocks (and the waitlist form) on a brand page', async () => {
+    const blocksIn = [
+      { id: 's1', type: 'section', variant: 'stackd.hero', fields: { headline: 'Cooked here.', cta: { text: 'Order', href: '/stackd' } } },
+      { id: 's2', type: 'section', variant: 'brand.footer' },
+      { id: 'w', type: 'waitlist_form' },
+    ]
+    const r = await call('PUT', `/${enc(`brand:${slugA}:footer`)}/draft`, auth(marketer), { blocks: blocksIn })
+    expect(r.statusCode).toBe(200)
+    expect(r.json().draftBlocks).toEqual(blocksIn)
   })
 
-  it('servd:header is the logo slot; the logo url must be https or a site path', () => {
+  it('rejects a section without a well-formed variant, and the retired one-off types', () => {
+    const ok = (b: Record<string, unknown>) => blocksSchema.safeParse([{ id: 'x', ...b }]).success
+    expect(ok({ type: 'section', variant: 'servd.nav', fields: {} })).toBe(true)
+    expect(ok({ type: 'section' })).toBe(false)
+    expect(ok({ type: 'section', variant: 'no-group' })).toBe(false)
+    expect(ok({ type: 'section', variant: 'x.y', fields: 'nope' })).toBe(false)
+    for (const type of ['scrollHero', 'brandFooter', 'siteLogo', 'signature']) expect(ok({ type }), type).toBe(false)
+  })
+
+  it('header/footer slugs are the chrome kinds; other brand sub-pages are pages', () => {
     expect(parseSlug('servd:header')).toEqual({ owner: 'shared', kind: 'header' })
-    const ok = (url: string) => blocksSchema.safeParse([{ id: 'l', type: 'siteLogo', url }]).success
-    expect(ok('https://cdn.servd.pk/logo.png')).toBe(true)
-    expect(ok('/brand/servd-logo.png')).toBe(true)
-    expect(ok('')).toBe(true)
-    expect(ok('javascript:alert(1)')).toBe(false)
-    expect(ok('//evil.example/logo.png')).toBe(false)
-    expect(ok('http://insecure.example/logo.png')).toBe(false)
+    expect(parseSlug('servd:footer')).toEqual({ owner: 'shared', kind: 'footer' })
+    expect(parseSlug('brand:stackd:header')).toEqual({ owner: 'brand', kind: 'header', conceptSlug: 'stackd' })
+    expect(parseSlug('brand:stackd:about')).toEqual({ owner: 'brand', kind: 'page', conceptSlug: 'stackd' })
+    expect(parseSlug('brand:stackd:ramadan')).toEqual({ owner: 'brand', kind: 'page', conceptSlug: 'stackd' })
+  })
+
+  it("a custom page on another company's brand is 404 for the editor", async () => {
+    const r = await call('PUT', `/${enc(`brand:${slugA}:ramadan`)}/draft`, auth(marketerB), { blocks: [{ id: 's', type: 'section', variant: 'brand.header' }] })
+    expect(r.statusCode).toBe(404)
   })
 })
 

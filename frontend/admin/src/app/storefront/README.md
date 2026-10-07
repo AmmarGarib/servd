@@ -8,7 +8,7 @@ Admin route: **/storefront** — the one place storefront content is edited
 
 - `page.tsx` — hub with tabs via `?tab=`: `pages` | `popups` | `library` | `approvals`
 - `pages/[slug]/page.tsx` — page builder for a SiteLayout slug (URL-encoded):
-  `servd:home`, `servd:hero`, `brand:<slug>`, `brand:<slug>:footer`, `page:<slug>`
+  `servd:<page>`, `brand:<slug>[:<page>]`, `page:<slug>`
 - `popups/[key]/page.tsx` — pop-up editor for `popup:<key>`
 
 UI lives in `components/storefront/` (Builder, Canvas, BlockInspector, panels,

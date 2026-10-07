@@ -8,6 +8,8 @@ import { useState } from 'react'
 import { ANIMATIONS, blockLabel, columnsOf, type Animation, type Block, type ButtonSize, type ButtonStyle, type SectionPad } from '../../lib/blocks'
 import type { MediaAssetLite } from '../../lib/content'
 import { setColumnCount } from './tree'
+import { SectionFields } from './SectionFields'
+import { sectionSpec } from '../../lib/sections'
 import { AlignSelect, Check, ColorInput, CopyInput, Field, FontSelect, MediaInput, NumberInput, Section } from './fields'
 
 interface Props {
@@ -20,7 +22,7 @@ interface Props {
 type Loose = Record<string, any>
 type FP = { block: Loose; set: (p: Partial<Block>) => void }
 
-const NO_STYLE = new Set(['signature', 'scrollHero', 'brandFooter', 'siteLogo'])
+const NO_STYLE = new Set<string>()
 
 export function BlockInspector({ block, onChange, fonts }: Props) {
   const set = (patch: Partial<Block>) => onChange({ ...block, ...patch })
@@ -29,7 +31,7 @@ export function BlockInspector({ block, onChange, fonts }: Props) {
   return (
     <div>
       <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft">
-        <p className="text-xs text-s-muted uppercase tracking-wider font-bold">{blockLabel(block.type)}</p>
+        <p className="text-xs text-s-muted uppercase tracking-wider font-bold">{block.type === 'section' ? sectionSpec(block.variant as string | undefined)?.label ?? 'Section' : blockLabel(block.type)}</p>
       </div>
       <div className="p-4 max-h-[calc(100vh-14rem)] overflow-y-auto">
         <Section title="Content">
@@ -51,15 +53,7 @@ export function BlockInspector({ block, onChange, fonts }: Props) {
           {block.type === 'video'         && <VideoFields block={b} set={set} />}
           {block.type === 'signup_form'   && <SignupFields block={b} set={set} />}
           {block.type === 'waitlist_form' && <WaitlistFields block={b} set={set} />}
-          {block.type === 'scrollHero'    && <ScrollHeroFields block={b} set={set} />}
-          {block.type === 'siteLogo'      && <SiteLogoFields block={b} set={set} />}
-          {block.type === 'brandFooter'   && <BrandFooterFields block={b} set={set} />}
-          {block.type === 'signature'     && (
-            <p className="text-xs text-s-muted">
-              The page&apos;s own designed layout renders here, exactly as it does today. Add elements above or
-              below it, or hide it to build the page from scratch.
-            </p>
-          )}
+          {block.type === 'section'       && <SectionFields block={block} onChange={onChange} />}
         </Section>
 
         {!NO_STYLE.has(block.type) && (
@@ -423,76 +417,6 @@ function WaitlistFields({ block, set }: FP) {
         The servd new-brand waitlist: name, WhatsApp number (verified by code), optional email, area and wish, and the
         consent line. A join counts as a conversion; sign-ups show on CRM, Waitlist.
       </p>
-    </>
-  )
-}
-
-function ScrollHeroFields({ block, set }: FP) {
-  const video = block.mediaType === 'video'
-  return (
-    <>
-      <Field label="Hero media">
-        <select value={video ? 'video' : 'image'} onChange={(e) => set({ mediaType: e.target.value })} className="s-select">
-          <option value="image">Image</option><option value="video">Video</option>
-        </select>
-      </Field>
-      <Field label={video ? 'Video' : 'Foreground image'} hint="The element that expands as the visitor scrolls.">
-        <MediaInput kind={video ? 'video' : 'image'} value={block.mediaSrc} onChange={(v) => set({ mediaSrc: v })} />
-      </Field>
-      {video && <Field label="Video poster (optional)"><MediaInput kind="image" value={block.posterSrc} onChange={(v) => set({ posterSrc: v })} /></Field>}
-      <Field label="Background image" hint="Full-bleed image behind the hero; fades out as the media expands.">
-        <MediaInput kind="image" value={block.bgImageSrc} onChange={(v) => set({ bgImageSrc: v })} />
-      </Field>
-      <Field label="Title" hint="Blank uses food placeholders."><CopyInput value={block.title} onChange={(v) => set({ title: v })} /></Field>
-      <Field label="Eyebrow label"><CopyInput value={block.date} onChange={(v) => set({ date: v })} /></Field>
-      <Field label="Scroll hint"><input value={block.scrollToExpand ?? ''} onChange={(e) => set({ scrollToExpand: e.target.value })} className="s-input" /></Field>
-      <Field label="Intro (after the hero expands)"><CopyInput rows={3} value={block.overview} onChange={(v) => set({ overview: v })} /></Field>
-      <Field label="Sub-intro"><CopyInput rows={2} value={block.conclusion} onChange={(v) => set({ conclusion: v })} /></Field>
-      <Check checked={block.textBlend !== false} onChange={(v) => set({ textBlend: v })}>Blend the title against the background</Check>
-    </>
-  )
-}
-
-function SiteLogoFields({ block, set }: FP) {
-  return (
-    <>
-      <Field label="Logo image" hint="A PNG or SVG from the Library, ideally on a transparent background. Leave empty to show the servd text wordmark.">
-        <MediaInput kind="image" value={block.url} onChange={(v) => set({ url: v })} />
-      </Field>
-      <Field label="Height (px)" hint="How tall the logo sits in the top bar. 28 suits most logos; the bar is 52px.">
-        <input type="number" min={16} max={44} value={block.height ?? 28}
-          onChange={(e) => set({ height: Math.min(44, Math.max(16, Number(e.target.value) || 28)) })} className="s-input" />
-      </Field>
-      <Field label="Alt text" hint="Read out by screen readers.">
-        <input value={block.alt ?? 'servd'} onChange={(e) => set({ alt: e.target.value })} className="s-input" maxLength={120} />
-      </Field>
-      {block.url && (
-        <Field label="Preview" hint="As it sits in the storefront's top bar.">
-          <div className="flex h-[52px] items-center rounded-lg border border-s-border px-4" style={{ background: 'var(--bg)' }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={block.url} alt="" style={{ height: block.height ?? 28, width: 'auto' }} />
-          </div>
-        </Field>
-      )}
-    </>
-  )
-}
-
-function BrandFooterFields({ block, set }: FP) {
-  const social = (block.social ?? {}) as Record<string, string>
-  const setSocial = (k: string, v: string) => set({ social: { ...social, [k]: v } })
-  return (
-    <>
-      <p className="text-[11px] text-s-dim">Blank fields fall back to the brand&apos;s defaults. The footer takes the brand colour automatically.</p>
-      <Field label="Eyebrow"><CopyInput value={block.ctaEyebrow} onChange={(v) => set({ ctaEyebrow: v })} /></Field>
-      <Field label="Headline"><CopyInput value={block.ctaHeadline} onChange={(v) => set({ ctaHeadline: v })} /></Field>
-      <Field label="Headline accent" hint="Shown in the brand colour."><CopyInput value={block.ctaAccent} onChange={(v) => set({ ctaAccent: v })} /></Field>
-      <Field label="Tagline"><CopyInput rows={2} value={block.tagline} onChange={(v) => set({ tagline: v })} /></Field>
-      {(['instagram', 'tiktok', 'facebook', 'whatsapp'] as const).map((k) => (
-        <Field key={k} label={k}>
-          <input value={social[k] ?? ''} onChange={(e) => setSocial(k, e.target.value)} placeholder="https://..." className="s-input" />
-        </Field>
-      ))}
     </>
   )
 }

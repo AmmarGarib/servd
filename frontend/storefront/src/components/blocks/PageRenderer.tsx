@@ -23,6 +23,9 @@ import { SignupFormBlock } from './SignupFormBlock'
 import { WaitlistForm }  from '../waitlist/WaitlistForm'
 import { Animate }       from './Animate'
 import { formatBrandName } from '../../lib/concept'
+import { SECTION_RENDERERS } from '../../sections/renderers'
+import { mergeFields } from '../../sections/catalog'
+import type { SectionContext, SectionProps } from '../../sections/types'
 
 export interface RenderContext {
   /** When rendering a brand page, the active concept slug — block defaults
@@ -31,9 +34,8 @@ export interface RenderContext {
   /** When rendering a brand page, the brand metadata used for {{brand.name}}
       placeholder substitution. */
   brand?: { name: string; description: string | null; primaryColor: string | null; slug: string }
-  /** The page's built-in design, rendered where a `signature` block sits:
-      brand page → BrandFallback, servd:home → HomeClient. Absent → nothing. */
-  signature?: ReactNode
+  /** What `section` blocks render against (page, brand, live brands). */
+  section?: SectionContext
 }
 
 export async function PageRenderer({ blocks, context }: { blocks: Block[]; context?: RenderContext }) {
@@ -53,8 +55,18 @@ async function renderSlots(blocks: Block[], ctx: RenderContext | undefined, nest
 // Wraps every block with a section that applies background / textColor /
 // padding / font / entrance-animation controls uniformly.
 function BlockSlot({ block, nested, children }: { block: Block; nested: boolean; children: ReactNode }) {
-  // The built-in design paints its own surface edge to edge.
-  if (block.type === 'signature') return <>{children}</>
+  // A designed section paints its own surface edge to edge; only the
+  // overrides the editor actually set wrap it.
+  if (block.type === 'section' && !block.background && !block.textColor && !block.paddingY && !block.fontFamily) {
+    if (!block.animation || block.animation === 'none') return <>{children}</>
+    return (
+      <Animate animation={block.animation}
+        {...(block.animationDelayMs !== undefined && { delayMs: block.animationDelayMs })}
+        {...(block.animationDurationMs !== undefined && { durationMs: block.animationDurationMs })}>
+        {children}
+      </Animate>
+    )
+  }
   const padY = block.paddingY ?? defaultPad(block, nested)
   const font = cssFontFamily(block.fontFamily)
   const style: CSSProperties = {
@@ -86,6 +98,7 @@ function defaultPad(block: Block, nested: boolean): NonNullable<Block['paddingY'
     case 'spacer':  return block.size
     case 'divider': return 'none'
     case 'hero':    return 'none'   // hero owns its own height
+    case 'section': return 'none'   // sections own their spacing
     default:        return nested ? 'none' : 'lg'
   }
 }
@@ -144,7 +157,14 @@ async function renderBlock(block: Block, ctx?: RenderContext): Promise<ReactNode
     case 'divider':      return <Divider />
     case 'columns':      return await Columns({ block, ...(ctx !== undefined && { ctx }) })
     case 'video':        return <VideoBlockUi {...block} />
-    case 'signature':    return ctx?.signature ?? null
+    case 'section': {
+      // Rendered as an element (not called) so client-component sections work;
+      // async server sections are awaited by React.
+      const Comp = SECTION_RENDERERS[block.variant] as unknown as ((p: SectionProps) => JSX.Element) | undefined
+      if (!Comp) return null
+      const sctx: SectionContext = ctx?.section ?? { pageSlug: '', concepts: [] }
+      return <Comp fields={mergeFields(block.variant, block.fields)} ctx={sctx} id={block.id} />
+    }
     case 'signup_form': {
       const title    = subOpt(block.title)
       const subtitle = subOpt(block.subtitle)

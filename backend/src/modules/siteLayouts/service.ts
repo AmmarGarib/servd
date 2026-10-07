@@ -15,7 +15,7 @@ import { fontFamiliesUsed } from './schemas.js'
 
 const db = serviceClient
 
-export type LayoutKind = 'page' | 'hero' | 'header' | 'footer' | 'popup'
+export type LayoutKind = 'page' | 'header' | 'footer' | 'popup'
 
 export type ParsedSlug =
   | { owner: 'shared'; kind: LayoutKind }
@@ -25,21 +25,27 @@ export type ParsedSlug =
 const PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 
 /**
- * servd:<page>                 → shared (servd:hero is the scroll hero,
- *                                servd:header the nav logo)
- * brand:<conceptSlug>[:footer] → the brand's company
+ * servd:<page>                 → shared (servd:header / servd:footer are the
+ *                                site chrome)
+ * brand:<conceptSlug>[:<page>] → the brand's company (:header / :footer are
+ *                                its chrome; about, visit, menu built-in pages;
+ *                                anything else is a page the owner added)
  * page:<slug>                  → shared custom page
  * popup:<key>                  → shared, or the company of the brands it targets
  */
+function chromeKind(part: string): LayoutKind {
+  return part === 'header' ? 'header' : part === 'footer' ? 'footer' : 'page'
+}
+
 export function parseSlug(slug: string): ParsedSlug | null {
   const [prefix, a, b, ...rest] = slug.split(':')
   if (rest.length > 0 || !a || !PART.test(a)) return null
-  if (prefix === 'servd' && b === undefined) return { owner: 'shared', kind: a === 'hero' ? 'hero' : a === 'header' ? 'header' : 'page' }
+  if (prefix === 'servd' && b === undefined) return { owner: 'shared', kind: chromeKind(a) }
   if (prefix === 'page' && b === undefined) return { owner: 'shared', kind: 'page' }
   if (prefix === 'popup' && b === undefined) return { owner: 'popup', kind: 'popup' }
   if (prefix === 'brand') {
     if (b === undefined) return { owner: 'brand', kind: 'page', conceptSlug: a }
-    if (PART.test(b)) return { owner: 'brand', kind: b === 'footer' ? 'footer' : 'page', conceptSlug: a }
+    if (PART.test(b)) return { owner: 'brand', kind: chromeKind(b), conceptSlug: a }
   }
   return null
 }
@@ -48,7 +54,7 @@ export function parseSlugOrThrow(slug: string): ParsedSlug {
   const p = parseSlug(slug)
   if (!p) {
     throw new AppError('LAYOUT_SLUG_INVALID',
-      'Slug must be servd:<page>, brand:<brand>[:footer], page:<slug> or popup:<key>', 422)
+      'Slug must be servd:<page>, brand:<brand>[:<page>], page:<slug> or popup:<key>', 422)
   }
   return p
 }

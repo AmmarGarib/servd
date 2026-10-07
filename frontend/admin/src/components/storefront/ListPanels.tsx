@@ -8,10 +8,11 @@ import { useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import {
-  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, newPopupKey, seedBlocks, storefrontPath, STOREFRONT_URL,
+  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, isReservedBrandPage, newPopupKey, seedBlocks, storefrontPath, STOREFRONT_URL,
   type ConceptLite, type LayoutSummary, type PopupRules,
 } from '../../lib/content'
 import { StatusBadge } from './panels'
+import { useSectionCatalog } from '../../lib/sections'
 
 const pageHref = (slug: string) => `/storefront/pages/${encodeURIComponent(slug)}`
 const popupHref = (slug: string) => `/storefront/popups/${encodeURIComponent(slug.slice('popup:'.length))}`
@@ -58,6 +59,9 @@ export function PagesPanel() {
   const [creating, setCreating] = useState(false)
   const [newSlug, setNewSlug] = useState('')
   const [newTitle, setNewTitle] = useState('')
+  const [owner, setOwner] = useState('servd')
+  // New pages start from the catalogue's starter sections when there are any.
+  useSectionCatalog()
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -65,25 +69,39 @@ export function PagesPanel() {
   const bySlug = new Map(rows.map((r) => [r.slug, r]))
 
   const servd: Entry[] = [
-    { slug: 'servd:header', label: 'servd logo', hint: 'top left of every servd page' },
-    { slug: 'servd:home', label: 'servd home' },
-    { slug: 'servd:hero', label: 'servd home: scroll hero', hint: 'the expanding hero at the top' },
-    { slug: 'servd:home-experience', label: 'servd home: food imagery', hint: 'photos for the 3D scroll band' },
+    { slug: 'servd:header', label: 'Top bar', hint: 'logo, links and the Order button on every servd page' },
+    { slug: 'servd:home', label: 'Home', hint: '/home' },
+    { slug: 'servd:footer', label: 'Footer', hint: 'every servd page' },
+    { slug: 'servd:waitlist', label: 'Waitlist', hint: '/waitlist' },
+    { slug: 'servd:press', label: 'Press', hint: '/press' },
+    { slug: 'servd:reserve', label: 'Reserve', hint: '/reserve' },
+    { slug: 'servd:location', label: 'Location pages', hint: 'the template for every /locations page' },
   ]
-  const brands: Entry[] = (concepts.data ?? []).flatMap((c) => [
-    { slug: `brand:${c.slug}`, label: c.name },
-    { slug: `brand:${c.slug}:footer`, label: `${c.name} footer` },
-  ])
-  const known = new Set([...servd, ...brands].map((e) => e.slug))
+  const brandPages = (c: ConceptLite): Entry[] => [
+    { slug: `brand:${c.slug}:header`, label: 'Top bar' },
+    { slug: `brand:${c.slug}`, label: 'Home' },
+    { slug: `brand:${c.slug}:about`, label: 'About' },
+    { slug: `brand:${c.slug}:visit`, label: 'Visit' },
+    { slug: `brand:${c.slug}:menu`, label: 'Menu' },
+    { slug: `brand:${c.slug}:footer`, label: 'Footer' },
+    ...rows
+      .filter((r) => r.slug.startsWith(`brand:${c.slug}:`) && !isReservedBrandPage(r.slug.split(':')[2] ?? ''))
+      .map((r) => ({ slug: r.slug, label: r.title || r.slug.split(':')[2]!, hint: `/pages/${r.slug.split(':')[2]}` })),
+  ]
+  const brandList = concepts.data ?? []
+  const known = new Set([...servd, ...brandList.flatMap(brandPages)].map((e) => e.slug))
   const custom: Entry[] = rows.filter((r) => r.slug.startsWith('page:')).map((r) => ({ slug: r.slug, label: r.title || r.slug.slice(5), hint: `/pages/${r.slug.slice(5)}` }))
   const other: Entry[] = rows
     .filter((r) => r.kind !== 'popup' && !r.slug.startsWith('popup:') && !r.slug.startsWith('page:') && !known.has(r.slug))
     .map((r) => ({ slug: r.slug, label: r.title || r.slug }))
 
+  // New page: a servd page (page:<x>, at servd.pk/pages/<x>) or a brand page
+  // (brand:<brand>:<x>, at <brand domain>/pages/<x>).
   const create = async () => {
     const s = newSlug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
     if (!s) { setErr('Give the page an address, e.g. ramadan'); return }
-    const slug = `page:${s}`
+    if (owner !== 'servd' && isReservedBrandPage(s)) { setErr(`"${s}" is one of the brand's built-in pages. Pick another address.`); return }
+    const slug = owner === 'servd' ? `page:${s}` : `brand:${owner}:${s}`
     if (bySlug.has(slug)) { setErr('A page with that address already exists.'); return }
     setBusy(true); setErr(null)
     try {
@@ -97,43 +115,55 @@ export function PagesPanel() {
     }
   }
 
+  const newPageForm = (
+    <div className="s-card p-4 flex flex-wrap items-end gap-3">
+      <label className="min-w-[160px]">
+        <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Site</span>
+        <select value={owner} onChange={(e) => setOwner(e.target.value)} className="s-select">
+          <option value="servd">servd.pk</option>
+          {brandList.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
+        </select>
+      </label>
+      <label className="flex-1 min-w-[180px]">
+        <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Address</span>
+        <div className="flex items-center gap-1 text-sm text-s-muted">/pages/<input value={newSlug} onChange={(e) => setNewSlug(e.target.value)} placeholder="ramadan" className="s-input" /></div>
+      </label>
+      <label className="flex-1 min-w-[180px]">
+        <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Title</span>
+        <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Ramadan menu" className="s-input" />
+      </label>
+      <button type="button" onClick={create} disabled={busy} className="s-btn-primary text-xs">{busy ? 'Creating...' : 'Create draft'}</button>
+      {err && <p className="w-full text-xs text-s-red">{err}</p>}
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       {layouts.isError && <p className="text-sm text-s-red">Could not load pages: {(layouts.error as Error).message}</p>}
 
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-s-muted">Every page on servd.pk and the brand sites. A page with nothing published shows its built-in design; edit it to change anything on it.</p>
+        <button type="button" onClick={() => setCreating((v) => !v)} className="s-btn-primary text-xs shrink-0">New page</button>
+      </div>
+      {creating && newPageForm}
+
       <section className="space-y-2">
-        <h2 className="text-sm font-bold text-s-text">servd</h2>
+        <h2 className="text-sm font-bold text-s-text">servd.pk</h2>
         <Table>{servd.map((e) => <Row key={e.slug} entry={e} row={bySlug.get(e.slug)} href={pageHref(e.slug)} />)}</Table>
       </section>
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-bold text-s-text">Brands</h2>
-        {concepts.isLoading ? <p className="text-xs text-s-muted">Loading...</p> : (
-          <Table>{brands.map((e) => <Row key={e.slug} entry={e} row={bySlug.get(e.slug)} href={pageHref(e.slug)} />)}</Table>
-        )}
-      </section>
+      {concepts.isLoading && <p className="text-xs text-s-muted">Loading brands...</p>}
+      {brandList.map((c) => (
+        <section key={c.slug} className="space-y-2">
+          <h2 className="text-sm font-bold text-s-text">{c.name}</h2>
+          <Table>{brandPages(c).map((e) => <Row key={e.slug} entry={e} row={bySlug.get(e.slug)} href={pageHref(e.slug)} />)}</Table>
+        </section>
+      ))}
 
       <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-s-text">Custom pages</h2>
-          <button type="button" onClick={() => setCreating((v) => !v)} className="s-btn-primary text-xs">New page</button>
-        </div>
-        {creating && (
-          <div className="s-card p-4 flex flex-wrap items-end gap-3">
-            <label className="flex-1 min-w-[180px]">
-              <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Address</span>
-              <div className="flex items-center gap-1 text-sm text-s-muted">/pages/<input value={newSlug} onChange={(e) => setNewSlug(e.target.value)} placeholder="ramadan" className="s-input" /></div>
-            </label>
-            <label className="flex-1 min-w-[180px]">
-              <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Title</span>
-              <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Ramadan menu" className="s-input" />
-            </label>
-            <button type="button" onClick={create} disabled={busy} className="s-btn-primary text-xs">{busy ? 'Creating...' : 'Create draft'}</button>
-            {err && <p className="w-full text-xs text-s-red">{err}</p>}
-          </div>
-        )}
+        <h2 className="text-sm font-bold text-s-text">servd.pk custom pages</h2>
         {custom.length === 0
-          ? <p className="text-xs text-s-muted">No custom pages yet.</p>
+          ? <p className="text-xs text-s-muted">None yet. Use New page.</p>
           : <Table>{custom.map((e) => <Row key={e.slug} entry={e} row={bySlug.get(e.slug)} href={pageHref(e.slug)} />)}</Table>}
       </section>
 

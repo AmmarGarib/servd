@@ -6,7 +6,7 @@ import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { PopupHost } from '../components/popups/PopupHost'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
-import { fetchSiteLogo } from '../lib/siteLogo'
+import { ManagedPage } from '../sections/ManagedPage'
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
@@ -58,8 +58,10 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // app: it is a live ordering storefront, and the brand pages already opt out
   // of static rendering anyway (see the fetch-caching note in CLAUDE.md).
   const initialBrandSlug = headers().get(BRAND_HOST_HEADER)
-  // The servd logo (Admin → Storefront → servd logo); null → text wordmark.
-  const logo = await fetchSiteLogo()
+  // The servd header and footer are content pages (`servd:header`,
+  // `servd:footer` — Admin → Storefront), rendered here on the server and
+  // handed to the client gates that hide them on brand microsites and the
+  // pages that carry their own chrome.
   return (
     <html lang="en">
       <body>
@@ -72,9 +74,13 @@ export default async function StorefrontLayout({ children }: { children: React.R
         {/* Storefront pop-ups. Mounted above the header so a 'bar' pop-up sits
             in flow at the very top; modal / corner are fixed. */}
         <PopupHost initialBrandSlug={initialBrandSlug} />
-        <StorefrontNav initialBrandSlug={initialBrandSlug} logo={logo} />
+        <StorefrontNav initialBrandSlug={initialBrandSlug}>
+          <ManagedPage slug="servd:header" />
+        </StorefrontNav>
         <main id="main">{children}</main>
-        <StorefrontFooter initialBrandSlug={initialBrandSlug} />
+        <StorefrontFooter initialBrandSlug={initialBrandSlug}>
+          <ManagedPage slug="servd:footer" />
+        </StorefrontFooter>
         <FeedbackWidget />
       </body>
     </html>

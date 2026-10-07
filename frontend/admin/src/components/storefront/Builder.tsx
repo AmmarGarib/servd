@@ -7,7 +7,8 @@
 // Every edit is a DRAFT (PUT /site-layouts/:slug/draft). Nothing reaches the
 // storefront until the CEO (role `admin`) approves it, optionally at a
 // scheduled "publish at" time. A page with no draft starts from the live
-// blocks, or from the page's built-in design ([{ type: 'signature' }]).
+// blocks, or from the page's design: its default sections from the
+// storefront's section catalogue (lib/sections.ts), i.e. what it shows today.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -15,9 +16,10 @@ import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
-import { BLOCK_CATALOG, canNest, newBlock, type Block, type BlockType } from '../../lib/blocks'
+import { BLOCK_CATALOG, canNest, type Block } from '../../lib/blocks'
+import { makeBlock, sectionPaletteItems, useSectionCatalog, type PaletteItem } from '../../lib/sections'
 import {
-  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fromLocalInput, hasSignature, kindForSlug, previewUrl, seedBlocks, storefrontPath, STOREFRONT_URL,
+  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fromLocalInput, kindForSlug, previewUrl, seedBlocks, storefrontPath, STOREFRONT_URL,
   type ConceptLite, type LayoutEdit, type PageSettings, type Variant,
 } from '../../lib/content'
 import { Canvas, Palette } from './Canvas'
@@ -31,10 +33,9 @@ interface Doc { title: string; blocks: Block[]; settings: PageSettings }
 type RightTab = 'element' | 'page' | 'rules'
 
 function defaultTitle(slug: string): string {
-  if (slug === 'servd:home') return 'servd home'
-  if (slug === 'servd:hero') return 'servd home: scroll hero'
-  if (slug === 'servd:header') return 'servd logo'
-  if (slug.startsWith('brand:')) return slug.endsWith(':footer') ? `${slug.slice(6, -7)} footer` : slug.slice(6)
+  const [prefix, a, b] = slug.split(':')
+  if (prefix === 'servd') return `servd ${a === 'header' ? 'top bar' : a}`
+  if (prefix === 'brand') return b ? `${a} ${b === 'header' ? 'top bar' : b}` : `${a} home`
   if (slug.startsWith('page:')) return slug.slice(5)
   if (slug.startsWith('popup:')) return 'Pop-up'
   return slug
@@ -58,6 +59,8 @@ export function Builder({ slug }: { slug: string }) {
   const backHref = `/storefront?tab=${isPopup ? 'popups' : 'pages'}`
 
   const edit = useQuery<LayoutEdit>({ queryKey: ['site-layout-edit', slug], queryFn: () => contentApi.edit(slug) })
+  // The storefront's section catalogue: palette, forms and the page's design.
+  const catalog = useSectionCatalog()
   const fonts = useLibraryFonts().data ?? []
   const concepts = useQuery<ConceptLite[]>({ queryKey: ['concepts'], queryFn: () => api.get<ConceptLite[]>('/concepts'), enabled: isPopup })
 
@@ -80,11 +83,12 @@ export function Builder({ slug }: { slug: string }) {
     return { title: row.title ?? defaultTitle(slug), blocks, settings }
   }
 
-  // Load once per slug; later refetches must not clobber local edits.
+  // Load once per slug (after the catalogue, which seeds a page with nothing
+  // saved); later refetches must not clobber local edits.
   useEffect(() => {
-    if (edit.data && !doc) setDoc(docFrom(edit.data, true))
+    if (edit.data && catalog.data && !doc) setDoc(docFrom(edit.data, true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit.data])
+  }, [edit.data, catalog.data])
 
   useEffect(() => {
     if (!dirty) return
@@ -108,17 +112,20 @@ export function Builder({ slug }: { slug: string }) {
   const select = (id: string | null) => { setSelectedId(id); if (id) setTab('element') }
   const selected = selectedId ? findBlock(activeBlocks, selectedId) : null
 
-  const allowedTypes = useMemo<BlockType[]>(() => {
-    if (kind === 'hero') return ['scrollHero']
-    if (kind === 'header') return ['siteLogo']
-    if (kind === 'footer') return ['brandFooter']
-    return BLOCK_CATALOG
-      .filter((s) => s.group !== 'Special' && (s.type !== 'signature' || hasSignature(slug)))
-      .map((s) => s.type)
-  }, [kind, slug])
+  // Palette: this page's sections first (its design), then the general
+  // elements. A top bar takes sections only; pop-ups take elements only.
+  const paletteItems = useMemo<PaletteItem[]>(() => {
+    const sections = isPopup ? [] : sectionPaletteItems(slug)
+    const general = kind === 'header' ? [] : BLOCK_CATALOG
+      .filter((s) => s.group !== 'Special')
+      .map((s) => ({ key: s.type, label: s.label, description: s.description, icon: s.icon, group: s.group }))
+    return [...sections, ...general]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, slug, isPopup, catalog.data])
 
-  const addFromPalette = (t: BlockType) => {
-    const b = newBlock(t)
+  const addFromPalette = (key: string) => {
+    const b = makeBlock(key)
+    const t = key
     let slot: Slot = { parentId: null, col: 0, index: activeBlocks.length }
     const loc = selectedId ? locate(activeBlocks, selectedId) : null
     if (loc) {
@@ -282,13 +289,14 @@ export function Builder({ slug }: { slug: string }) {
         </div>
       )}
 
-      {edit.isLoading && <p className="p-6 text-sm text-s-muted">Loading...</p>}
+      {(edit.isLoading || catalog.isLoading) && <p className="p-6 text-sm text-s-muted">Loading...</p>}
+      {catalog.isError && <p className="p-6 text-sm text-s-red">Could not load the storefront's sections from {STOREFRONT_URL}: {(catalog.error as Error).message}</p>}
       {edit.isError && <p className="p-6 text-sm text-s-red">Could not load this {isPopup ? 'pop-up' : 'page'}: {(edit.error as Error).message}</p>}
 
       {doc && (
         <div className={`grid grid-cols-1 gap-4 p-4 ${isPopup ? 'lg:grid-cols-[200px_minmax(0,1fr)_380px]' : 'lg:grid-cols-[200px_minmax(0,1fr)_400px]'}`}>
           <aside className="lg:sticky lg:top-24 self-start lg:max-h-[calc(100vh-7rem)] overflow-y-auto">
-            <Palette types={allowedTypes} onAdd={addFromPalette} />
+            <Palette items={paletteItems} onAdd={addFromPalette} />
           </aside>
 
           <main className="min-w-0" onClick={() => select(null)}>
@@ -309,7 +317,7 @@ export function Builder({ slug }: { slug: string }) {
                   {rules.display === 'bar' ? 'Bar' : rules.display === 'corner' ? 'Corner card' : 'Modal'} pop-up. Keep it short: a heading, a line and one action.
                 </p>
               )}
-              <Canvas blocks={activeBlocks} onChange={setActive} selectedId={selectedId} onSelect={select} allowedTypes={allowedTypes} />
+              <Canvas blocks={activeBlocks} onChange={setActive} selectedId={selectedId} onSelect={select} items={paletteItems} />
             </div>
           </main>
 

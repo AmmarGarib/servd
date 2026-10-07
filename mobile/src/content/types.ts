@@ -156,6 +156,12 @@ export interface SignatureBlock extends BlockBase {
   type: 'signature'
 }
 
+export interface SectionBlock extends BlockBase {
+  type: 'section'
+  variant: string
+  fields?: Record<string, unknown>
+}
+
 export interface SignupFormBlock extends BlockBase {
   type: 'signup_form'
   mode: 'signup' | 'login'
@@ -176,13 +182,15 @@ export type BlockType =
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
   | 'columns' | 'video' | 'signature' | 'signup_form' | 'waitlist_form'
-  | 'siteLogo'   // servd:header (the web nav logo) — not rendered in the app
+  // a designed web section (frontend/storefront/src/sections) — the app has no
+  // renderer for these yet and skips them; its own screens show their design
+  | 'section'
 
 export type LeafBlock =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock
   | StatStripBlock | VoicesBlock | KitchensBlock | FeaturedMenuBlock | ReviewsBlock
   | QuoteBlock | SpacerBlock | DividerBlock
-  | VideoBlock | SignatureBlock | SignupFormBlock | WaitlistFormBlock
+  | VideoBlock | SignatureBlock | SectionBlock | SignupFormBlock | WaitlistFormBlock
 
 export type Block = LeafBlock | ColumnsBlock
 

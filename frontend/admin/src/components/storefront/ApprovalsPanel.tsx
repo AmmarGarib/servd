@@ -38,14 +38,12 @@ export function builderHref(slug: string): string {
 }
 
 function describeSlug(slug: string): string {
-  if (slug === 'servd:home') return 'servd home page'
-  if (slug === 'servd:hero') return 'Landing hero'
-  if (slug === 'servd:header') return 'servd logo'
-  const footer = slug.match(/^brand:(.+):footer$/)
-  if (footer) return `${footer[1]} footer`
-  if (slug.startsWith('brand:')) return `${slug.slice(6)} brand page`
-  if (slug.startsWith('page:')) return `Page /pages/${slug.slice(5)}`
-  if (slug.startsWith('popup:')) return `Pop-up ${slug.slice(6)}`
+  const [prefix, a, b] = slug.split(':')
+  const part = (p: string) => (p === 'header' ? 'top bar' : p)
+  if (prefix === 'servd') return `servd ${part(a ?? '')}`
+  if (prefix === 'brand') return b ? `${a} ${part(b)}` : `${a} home`
+  if (prefix === 'page') return `Page /pages/${a}`
+  if (prefix === 'popup') return 'Pop-up'
   return slug
 }
 
