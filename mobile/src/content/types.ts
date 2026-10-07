@@ -163,17 +163,25 @@ export interface SignupFormBlock extends BlockBase {
   subtitle?: string
 }
 
+/** The servd new-brand waitlist form. The app shows a card that opens the web /waitlist. */
+export interface WaitlistFormBlock extends BlockBase {
+  type: 'waitlist_form'
+  title?: string
+  subtitle?: string
+  buttonText?: string
+}
+
 export type BlockType =
   | 'hero' | 'cta_button' | 'banner' | 'text' | 'image' | 'gallery'
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
-  | 'columns' | 'video' | 'signature' | 'signup_form'
+  | 'columns' | 'video' | 'signature' | 'signup_form' | 'waitlist_form'
 
 export type LeafBlock =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock
   | StatStripBlock | VoicesBlock | KitchensBlock | FeaturedMenuBlock | ReviewsBlock
   | QuoteBlock | SpacerBlock | DividerBlock
-  | VideoBlock | SignatureBlock | SignupFormBlock
+  | VideoBlock | SignatureBlock | SignupFormBlock | WaitlistFormBlock
 
 export type Block = LeafBlock | ColumnsBlock
 

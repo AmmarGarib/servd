@@ -20,6 +20,7 @@ import { Spacer }        from './Spacer'
 import { Divider }       from './Divider'
 import { VideoBlockUi }  from './VideoBlockUi'
 import { SignupFormBlock } from './SignupFormBlock'
+import { WaitlistForm }  from '../waitlist/WaitlistForm'
 import { Animate }       from './Animate'
 import { formatBrandName } from '../../lib/concept'
 
@@ -148,6 +149,16 @@ async function renderBlock(block: Block, ctx?: RenderContext): Promise<ReactNode
       const title    = subOpt(block.title)
       const subtitle = subOpt(block.subtitle)
       return <SignupFormBlock block={{ ...block, ...(title !== undefined && { title }), ...(subtitle !== undefined && { subtitle }) }} />
+    }
+    case 'waitlist_form': {
+      const title      = subOpt(block.title?.trim() || undefined)
+      const subtitle   = subOpt(block.subtitle?.trim() || undefined)
+      const buttonText = block.buttonText?.trim()
+      return (
+        <div className="container">
+          <WaitlistForm {...(title && { title })} {...(subtitle && { subtitle })} {...(buttonText && { buttonText })} />
+        </div>
+      )
     }
     default:             return null
   }

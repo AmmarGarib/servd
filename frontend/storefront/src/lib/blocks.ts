@@ -175,17 +175,25 @@ export interface SignupFormBlock extends BlockBase {
   subtitle?: string
 }
 
+/** The servd new-brand waitlist form (details + consent → WhatsApp code → joined). */
+export interface WaitlistFormBlock extends BlockBase {
+  type: 'waitlist_form'
+  title?: string
+  subtitle?: string
+  buttonText?: string
+}
+
 export type BlockType =
   | 'hero' | 'cta_button' | 'banner' | 'text' | 'image' | 'gallery'
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
-  | 'columns' | 'video' | 'signature' | 'signup_form'
+  | 'columns' | 'video' | 'signature' | 'signup_form' | 'waitlist_form'
 
 export type Block =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock
   | StatStripBlock | VoicesBlock | KitchensBlock | FeaturedMenuBlock | ReviewsBlock
   | QuoteBlock | SpacerBlock | DividerBlock
-  | ColumnsBlock | VideoBlock | SignatureBlock | SignupFormBlock
+  | ColumnsBlock | VideoBlock | SignatureBlock | SignupFormBlock | WaitlistFormBlock
 
 // ── Page settings, pop-up rules, public read shape ─────────────────────────
 

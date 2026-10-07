@@ -11,7 +11,7 @@ export const STOREFRONT_URL =
 // Top-level web routes that are NOT a brand slug.
 const WEB_ROOTS = new Set([
   'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'locations', 'login',
-  'order', 'orders', 'pages', 'press', 'preview', 'reserve', 'signup',
+  'order', 'orders', 'pages', 'press', 'preview', 'reserve', 'signup', 'waitlist',
 ])
 
 export type Target = { kind: 'route'; path: string } | { kind: 'url'; url: string }

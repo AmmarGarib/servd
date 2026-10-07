@@ -1,12 +1,14 @@
 'use client'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { trackLayout } from '../../lib/blocks'
 import type { Variant } from '../../lib/abVariant'
+import { ConversionContext, isManualConvertTarget } from './conversion'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? ''
 
 // View + conversion beacon for a published SiteLayout page. One `view` per page
-// view, one `convert` on the first click on a link or button inside the page.
+// view, one `convert` on the first click on a link or button inside the page —
+// except inside blocks that fire their own conversion (see ./conversion).
 // Sent for every page (variant 'a' when there is no test) so the owner gets
 // numbers either way.
 export function TrackedLayout({ slug, version, variant, children }: {
@@ -24,13 +26,21 @@ export function TrackedLayout({ slug, version, variant, children }: {
     trackLayout(API_URL, slug, version, variant, 'view')
   }, [slug, version, variant])
 
-  const onClickCapture = (e: React.MouseEvent) => {
+  const convert = useCallback(() => {
     if (converted.current) return
-    const target = e.target as Element | null
-    if (!target?.closest?.('a, button')) return
     converted.current = true
     trackLayout(API_URL, slug, version, variant, 'convert')
+  }, [slug, version, variant])
+
+  const onClickCapture = (e: React.MouseEvent) => {
+    const target = e.target as Element | null
+    if (!target?.closest?.('a, button') || isManualConvertTarget(target)) return
+    convert()
   }
 
-  return <div onClickCapture={onClickCapture}>{children}</div>
+  return (
+    <ConversionContext.Provider value={convert}>
+      <div onClickCapture={onClickCapture}>{children}</div>
+    </ConversionContext.Provider>
+  )
 }

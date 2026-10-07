@@ -25,7 +25,7 @@ import { openHref } from './links'
 import type {
   Align, Block, BannerBlock, ButtonSize, ButtonStyle, ColumnsBlock, CtaButtonBlock, FeaturedMenuBlock,
   GalleryBlock, HeroBlock, ImageBlock, KitchensBlock, LibraryFont, PageSettings, QuoteBlock, ReviewsBlock,
-  SectionPad, SignupFormBlock, StatStripBlock, TextBlock, Variant, VideoBlock, VoicesBlock,
+  SectionPad, SignupFormBlock, StatStripBlock, TextBlock, Variant, VideoBlock, VoicesBlock, WaitlistFormBlock,
 } from './types'
 
 // ── Palette (root storefront tokens; the app has no CSS variables) ─────────
@@ -265,6 +265,7 @@ function renderBlock(b: Block, look: Look, ctx: RenderCtx): ReactNode {
     case 'video':         return b.url ? <VideoView b={b} look={look} /> : null
     case 'signature':     return ctx.signature ?? null
     case 'signup_form':   return <SignupFormView b={b} look={look} />
+    case 'waitlist_form': return <WaitlistFormView b={b} look={look} />
     default:              return null
   }
 }
@@ -755,6 +756,25 @@ function useSignedIn(): boolean | null {
 }
 
 // The app signs in on its own login screen; the form hands off to it.
+// The web form verifies by WhatsApp code; the app just opens it (?src=app).
+function WaitlistFormView({ b, look }: P<WaitlistFormBlock>) {
+  const ctx = useContext(Ctx)
+  const cardFg: Look = { ...look, fg: '#f3e7cd', onLight: false }
+  return (
+    <Container full={b.fullBleed}>
+      <View style={{ backgroundColor: '#5a2156', borderRadius: 18, padding: 20 }}>
+        <Text style={heading(cardFg, 22)}>{interpolate(b.title?.trim() || 'Be first in line.', ctx)}</Text>
+        <Text style={copy(cardFg, 14, { opacity: 0.8, marginTop: 6 })}>
+          {interpolate(b.subtitle?.trim() || 'Join the servd waitlist and we will message you on WhatsApp when a new brand opens.', ctx)}
+        </Text>
+        <View style={{ marginTop: 18 }}>
+          <Button text={b.buttonText?.trim() || 'Join the waitlist'} href="/waitlist?src=app" kind="primary" size="md" look={cardFg} fullWidth />
+        </View>
+      </View>
+    </Container>
+  )
+}
+
 function SignupFormView({ b, look }: P<SignupFormBlock>) {
   const { onAction } = useContext(Ctx)
   const signedIn = useSignedIn()

@@ -10,6 +10,7 @@ import { Spacer } from '../blocks/Spacer'
 import { Divider } from '../blocks/Divider'
 import { VideoBlockUi } from '../blocks/VideoBlockUi'
 import { SignupFormBlock } from '../blocks/SignupFormBlock'
+import { WaitlistForm } from '../waitlist/WaitlistForm'
 import { Animate } from '../blocks/Animate'
 
 // Client-safe block renderer for pop-ups. Pop-ups mount in the browser, so the
@@ -24,6 +25,10 @@ function renderBlock(block: Block, compact: boolean): ReactNode {
     case 'banner':      return <Banner {...block} />
     case 'video':       return <VideoBlockUi {...block} />
     case 'signup_form': return <SignupFormBlock block={block} />
+    case 'waitlist_form': {
+      const title = block.title?.trim(), subtitle = block.subtitle?.trim(), buttonText = block.buttonText?.trim()
+      return <WaitlistForm {...(title && { title })} {...(subtitle && { subtitle })} {...(buttonText && { buttonText })} />
+    }
     case 'spacer':      return <Spacer {...block} />
     case 'divider':     return <Divider />
     case 'columns': {

@@ -5,6 +5,7 @@ import type { LivePopup, PopupRules, SiteLayoutRead } from '../../lib/blocks'
 import { fetchLivePopups, fontFaceCss, trackLayout } from '../../lib/blocks'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { PopupBlocks } from './PopupBlocks'
+import { ConversionContext, isManualConvertTarget } from '../blocks/conversion'
 
 // Storefront pop-ups (SiteLayout kind 'popup'), mounted once in the root
 // layout. Fetches the live pop-ups, evaluates each one's PopupRules against the
@@ -17,7 +18,7 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? ''
 // First path segments that are servd routes, not a brand's /<concept>/… pages.
 const RESERVED = new Set([
   'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'locations', 'login', 'order',
-  'orders', 'press', 'reserve', 'signup', 'pages', 'preview', 'checkout', 'api',
+  'orders', 'press', 'reserve', 'signup', 'pages', 'preview', 'checkout', 'api', 'waitlist',
 ])
 
 type OrderState = 'unknown' | 'loading' | 'none' | 'some' | 'error'
@@ -197,25 +198,30 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
     }
   }, [display, onClose])
 
-  const convert = () => {
+  const convert = useCallback(() => {
     if (!track || converted.current) return
     converted.current = true
     trackLayout(API_URL, popup.slug, popup.version, 'a', 'convert')
-  }
+  }, [track, popup.slug, popup.version])
   const onClickCapture = (e: React.MouseEvent) => {
     const t = e.target as Element | null
-    if (!t?.closest?.('a, button') || t.closest('[data-sv-close]')) return
+    if (!t?.closest?.('a, button') || t.closest('[data-sv-close]') || isManualConvertTarget(t)) return
     convert()
   }
+  const onSubmitCapture = (e: React.FormEvent) => {
+    if (!isManualConvertTarget(e.target)) convert()
+  }
+  // Blocks that fire their own conversion (the waitlist form) reach `convert` here.
+  const wrap = (node: ReactNode) => <ConversionContext.Provider value={convert}>{node}</ConversionContext.Provider>
 
   const faces = fontFaceCss(popup.fonts ?? [])
   const blocks = Array.isArray(popup.blocks) ? popup.blocks : []
   const label = popup.title ?? 'Announcement'
-  const common = { onClickCapture, onSubmitCapture: convert }
+  const common = { onClickCapture, onSubmitCapture }
   const fontStyle = faces ? <style dangerouslySetInnerHTML={{ __html: faces }} /> : null
 
   if (display === 'bar') {
-    return (
+    return wrap(
       <div role="region" aria-label={label} className="sv-popup" {...common}
         style={{ position: 'relative', background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', paddingRight: '3rem' }}>
         {fontStyle}
@@ -226,7 +232,7 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
   }
 
   if (display === 'corner') {
-    return (
+    return wrap(
       <div role="dialog" aria-label={label} className="sv-popup sv-popup-card" {...common}
         style={{
           position: 'fixed', zIndex: 1000, right: 'max(1rem, env(safe-area-inset-right))', bottom: 'max(1rem, env(safe-area-inset-bottom))',
@@ -241,7 +247,7 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
     )
   }
 
-  return (
+  return wrap(
     <div className="sv-popup-backdrop" onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(10,10,10,0.6)',
