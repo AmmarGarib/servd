@@ -92,6 +92,12 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
   // microsite footer and every "message us" WhatsApp link.
   phone:           z.string().max(40).nullable().optional(),
   whatsapp:        z.string().max(40).nullable().optional(),
+  // Guest-facing contact email (owner, 2026-10-07: <brand>@gsfoods.pk). Stored
+  // trimmed + lowercase; a blank field clears it.
+  email: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+    z.string().trim().toLowerCase().email().max(120).nullable().optional(),
+  ),
   // The neighbourhood label on the storefront pill. Location has no locality
   // column yet, so this one address-ish label is still brand-level.
   addressLocality: z.string().max(200).nullable().optional(),

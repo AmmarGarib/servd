@@ -144,7 +144,7 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
               <li><span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>GS Foods Pvt. Ltd.</span></li>
               <li><span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>Karachi · Pakistan</span></li>
-              <li><a href="mailto:hello@servd.pk" style={footerLinkStyle}>hello@servd.pk</a></li>
+              <li><a href="mailto:servd@gsfoods.pk" style={footerLinkStyle}>servd@gsfoods.pk</a></li>
             </ul>
           </div>
         </div>

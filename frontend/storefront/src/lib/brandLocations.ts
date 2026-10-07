@@ -1,6 +1,6 @@
 // Canonical name + address + phone per brand, built from the live data:
 //
-//   • name, phone, WhatsApp, cuisine, price tier — the brand's Concept row
+//   • name, phone, WhatsApp, email, cuisine, price tier — the brand's Concept row
 //     (admin → Storefront → Brands). Per brand, owner decision 18.
 //   • street address + map pin — the brand's KITCHEN (Location, admin →
 //     Storefront → Locations). A kitchen running several brands has one
@@ -33,6 +33,7 @@ export interface BrandLocation {
   country:             string                // "Pakistan"
   phone:               string                // E.164, with +
   whatsapp:            string                // digits only, no +
+  email:               string                // guest-facing contact email ('' = none)
   geo:                 { lat: number; lng: number }
   cuisine:             string
   priceRange:          string                // $ / $$ / $$$ / $$$$ for schema.org
@@ -54,6 +55,7 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     country:             'Pakistan',
     phone:               '',
     whatsapp:            '',
+    email:               'simmer@gsfoods.pk',
     // Pinned from the operator's Google Maps link (maps.app.goo.gl/gJQMwRKsZdEEfoKV6).
     geo:                 { lat: 24.8014954, lng: 67.0735636 },
     cuisine:             'Small plates',
@@ -71,6 +73,7 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     country:             'Pakistan',
     phone:               '',
     whatsapp:            '',
+    email:               'stackd@gsfoods.pk',
     // Pinned from the operator's Google Maps link (maps.app.goo.gl/wa3fEKMevo1CZhkS8).
     geo:                 { lat: 24.8015505, lng: 67.0735747 },
     // A scratch-cooking café and small market — not a burger brand.
@@ -89,6 +92,7 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     country:             'Pakistan',
     phone:               '',
     whatsapp:            '',
+    email:               'flipd@gsfoods.pk',
     geo:                 { lat: 24.8054, lng: 67.0517 },
     cuisine:             'Burgers',
     priceRange:          '$$',
@@ -136,6 +140,7 @@ export function locationFromConcept(c: Concept, kitchen?: BrandKitchen | null): 
     country:             'Pakistan',
     phone:               '',
     whatsapp:            '',
+    email:               '',
     geo:                 { lat: 24.8607, lng: 67.0011 },  // Karachi centroid
     cuisine:             'Restaurant',
     priceRange:          '$$',
@@ -166,6 +171,7 @@ export function locationFromConcept(c: Concept, kitchen?: BrandKitchen | null): 
     area:                c.addressLocality ?? base.area,
     phone:               c.phone ?? base.phone,
     whatsapp:            whatsappDigits || base.whatsapp,
+    email:               c.email?.trim() || base.email,
     geo:                 liveGeo ?? base.geo,
     // A live pin beats the fallback share link: the share link points at
     // wherever the kitchen was when it was pasted into code.

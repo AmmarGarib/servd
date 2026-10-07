@@ -101,6 +101,13 @@ export default async function LocationPage({ params }: { params: Promise<{ loc: 
                 style={{ background: '#25D366', color: 'white' }}>
                 WhatsApp
               </a>
+              {brand.email && (
+                <a href={`mailto:${brand.email}`}
+                  className="brand-pill"
+                  style={{ background: 'var(--servd-surface)', color: 'var(--servd-ink)', border: '1px solid var(--servd-line)' }}>
+                  Email
+                </a>
+              )}
             </div>
           </div>
 

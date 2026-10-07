@@ -38,6 +38,7 @@
 import { useEffect, useRef } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
+import { locationFromConcept } from '../../../lib/brandLocations'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory, formatBrandName } from '../../../lib/concept'
@@ -339,6 +340,21 @@ export function StackdLayout({ concept, concepts }: Props) {
                   </a>
                 </p>
               )}
+              {(() => {
+                // The brand's guest email (admin → Brands → Contact); the bundled
+                // default only fills in when the API is down.
+                const email = locationFromConcept(concept).email
+                return email ? (
+                  <p className="stackd-mono" style={{ fontSize: '0.95rem', margin: '0.5rem 0 0' }}>
+                    <a
+                      href={`mailto:${email}`}
+                      style={{ color: 'var(--stackd-cream)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}
+                    >
+                      {email}
+                    </a>
+                  </p>
+                ) : null
+              })()}
               {reservations && (
                 <div style={{ marginTop: '2rem' }}>
                   <Link href={`/reserve/${concept.slug}`} className="stackd-btn stackd-btn-ghost">Reserve a table</Link>

@@ -31,6 +31,7 @@
 
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
+import { locationFromConcept } from '../../../lib/brandLocations'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory, formatBrandName } from '../../../lib/concept'
@@ -193,6 +194,21 @@ export function FlipdLayout({ concept, concepts }: Props) {
                 </a>
               </p>
             )}
+            {(() => {
+              // The brand's guest email (admin → Brands → Contact); the bundled
+              // default only fills in when the API is down.
+              const email = locationFromConcept(concept).email
+              return email ? (
+                <p style={{ fontSize: '0.92rem', margin: '0.5rem 0 0' }}>
+                  <a
+                    href={`mailto:${email}`}
+                    style={{ color: 'var(--flipd-blue)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}
+                  >
+                    {email}
+                  </a>
+                </p>
+              ) : null
+            })()}
             {reservations && (
               <div style={{ marginTop: '2rem' }}>
                 <Link href={`/reserve/${concept.slug}`} className="flipd-btn flipd-btn-ghost">Book a table</Link>

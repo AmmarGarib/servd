@@ -26,7 +26,7 @@ export interface Concept {
   // — used for the brand-page promo strip and hero subhead respectively.
   heroTagline?: string | null
   // Physical presence — included in /storefront/concepts response.
-  //   phone / whatsapp / addressLocality / cuisine / priceTier — per brand,
+  //   phone / whatsapp / email / addressLocality / cuisine / priceTier — per brand,
   //     edited in admin → Storefront → Brands.
   //   address / latitude / longitude — the brand's primary KITCHEN
   //     (Location, admin → Storefront → Locations), mirrored onto the brand
@@ -34,6 +34,7 @@ export interface Concept {
   // brandLocations.ts lets these win over its bundled API-down fallback.
   phone?:           string | null
   whatsapp?:        string | null
+  email?:           string | null   // guest-facing (owner, 2026-10-07: <brand>@gsfoods.pk)
   address?:         string | null
   addressLocality?: string | null
   cuisine?:         string | null

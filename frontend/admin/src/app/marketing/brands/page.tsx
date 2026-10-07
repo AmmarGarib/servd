@@ -29,6 +29,7 @@ interface Concept {
   // Contact — per brand (owner decision 18).
   phone: string | null
   whatsapp: string | null
+  email: string | null
   addressLocality: string | null
   // Read-only mirror of the brand's primary Location (decision 18). Edited
   // on Storefront → Locations, never here.
@@ -234,6 +235,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
 
   const [phone, setPhone] = useState(concept.phone ?? '')
   const [whatsapp, setWhatsapp] = useState(concept.whatsapp ?? '')
+  const [email, setEmail] = useState(concept.email ?? '')
   const [addressLocality, setAddressLocality] = useState(concept.addressLocality ?? '')
 
   const [conceptStatement, setConceptStatement] = useState(concept.conceptStatement ?? '')
@@ -283,6 +285,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       phone: phone.trim() || null,
       // wa.me wants digits only — strip what people paste (+, spaces, dashes).
       whatsapp: whatsapp.replace(/[^\d]/g, '') || null,
+      email: email.trim().toLowerCase() || null,
       addressLocality: addressLocality.trim() || null,
       conceptStatement: conceptStatement || null,
       cuisine: cuisine || null,
@@ -519,6 +522,10 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             <Field label="WhatsApp" hint="The brand's one WhatsApp number — every WhatsApp button on its microsite uses it. Digits only; blank falls back to the phone.">
               <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)}
                 placeholder="923001234567" className="s-input w-full font-mono text-sm" />
+            </Field>
+            <Field label="Email" hint="The brand's guest-facing email — shown on its microsite, visit page and the app.">
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                placeholder="brand@gsfoods.pk" className="s-input w-full font-mono text-sm" />
             </Field>
             <Field label="Area label" hint="The neighbourhood shown in the storefront pill, e.g. “Ittehad Commercial, DHA Phase 6”.">
               <input value={addressLocality} onChange={(e) => setAddressLocality(e.target.value)}

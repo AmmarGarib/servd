@@ -99,6 +99,7 @@ export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknow
     menu:         `${SITE_URL}/${r.loc.slug}`,
   }
   if (!isPlaceholder(r.loc.phone)) node['telephone'] = r.loc.phone
+  if (r.loc.email) node['email'] = r.loc.email
   if (!isPlaceholder(r.loc.street) || !isPlaceholder(r.loc.area)) {
     node['address'] = {
       '@type':         'PostalAddress',

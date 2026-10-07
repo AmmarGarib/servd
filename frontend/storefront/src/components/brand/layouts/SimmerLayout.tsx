@@ -466,7 +466,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
                   <ElsewhereButton ariaLabel="facebook"  href={social.facebook ?? FALLBACK_SOCIAL.facebook}   icon={<FacebookIcon />} />
                   {loc.whatsapp && <ElsewhereButton ariaLabel="whatsapp" href={waHref} icon={<WhatsAppIcon />} />}
                   <ElsewhereButton ariaLabel="maps"      href={mapsHref}                          icon={<MapsIcon />} />
-                  <ElsewhereButton ariaLabel="email"     href="mailto:contact@gsfoods.pk"        icon={<MailIcon />} />
+                  <ElsewhereButton ariaLabel="email"     href={`mailto:${loc.email || 'simmer@gsfoods.pk'}`} icon={<MailIcon />} />
                 </>
               )
             })()}

@@ -143,6 +143,15 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
               </p>
             )}
 
+            {loc.email && (
+              <p style={{ marginBottom: '0.5rem' }}>
+                <a href={`mailto:${loc.email}`}
+                  style={{ color: 'var(--servd-green-dark)', fontWeight: 600, fontSize: '0.95rem' }}>
+                  {loc.email}
+                </a>
+              </p>
+            )}
+
             {/* Map — real embed when geo is set, address text otherwise */}
             <div style={{ marginTop: '1.5rem' }}>
               {hasGeo ? (

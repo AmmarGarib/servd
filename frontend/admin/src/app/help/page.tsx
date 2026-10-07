@@ -87,13 +87,13 @@ export default function HelpPage() {
           </a>
 
           <a
-            href="mailto:support@servd.pk"
+            href="mailto:servd@gsfoods.pk"
             className="rounded-2xl p-4 transition-all hover:-translate-y-0.5"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
           >
             <p className="text-2xl mb-2">✉</p>
             <p className="font-bold text-sm text-white/85">Email us</p>
-            <p className="text-xs text-white/45 mt-0.5">support@servd.pk</p>
+            <p className="text-xs text-white/45 mt-0.5">servd@gsfoods.pk</p>
             <p className="text-[11px] text-white/45 font-bold mt-2">Reply within 24h →</p>
           </a>
 

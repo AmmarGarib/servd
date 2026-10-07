@@ -200,6 +200,15 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                         style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
                         WhatsApp
                       </a>
+                      {loc.email && (
+                        <>
+                          <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
+                          <a href={`mailto:${loc.email}`}
+                            style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
+                            Email
+                          </a>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

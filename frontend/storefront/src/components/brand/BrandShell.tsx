@@ -485,13 +485,15 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
 
   // Social links come from the footer config; the WhatsApp number is the
   // brand's own (Concept.whatsapp, admin → Brands → Contact) — the ONE place
-  // it is kept, so this icon and every "message us" link agree.
+  // it is kept, so this icon and every "message us" link agree. The email is
+  // the brand's own too (Concept.email, same tab).
   const loc = useMemo(() => locationFromConcept(concept), [concept])
   const socials = [
     { key: 'instagram', label: 'Instagram', href: cfg.social.instagram },
     { key: 'tiktok',    label: 'TikTok',    href: cfg.social.tiktok },
     { key: 'facebook',  label: 'Facebook',  href: cfg.social.facebook },
     { key: 'whatsapp',  label: 'WhatsApp',  href: loc.whatsapp ? whatsappLink(loc) : undefined },
+    { key: 'email',     label: 'Email',     href: loc.email ? `mailto:${loc.email}` : undefined },
   ].filter((s) => s.href)
 
   const surface = brandSurface(concept.slug)
@@ -551,7 +553,8 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             {socials.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '1.1rem' }}>
                 {socials.map((s) => (
-                  <a key={s.key} href={s.href} target="_blank" rel="noreferrer"
+                  <a key={s.key} href={s.href}
+                    {...(s.key === 'email' ? { title: loc.email } : { target: '_blank', rel: 'noreferrer' })}
                     style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: surface.muted, textDecoration: 'none' }}>
                     {s.label}
                   </a>

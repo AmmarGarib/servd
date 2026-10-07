@@ -452,7 +452,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         wordmarkUrl: true, mascotUrl: true,
         latitude: true, longitude: true, deliveryRadiusKm: true,
         reservationsEnabled: true,
-        phone: true, whatsapp: true,
+        phone: true, whatsapp: true, email: true,
         address: true, addressLocality: true,
         cuisine: true, priceTier: true,
         serviceHours: {

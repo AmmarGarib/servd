@@ -132,6 +132,20 @@ describe('PATCH /concepts/:id is the one brand writer', () => {
     expect(row.brandVoice).toBe('plain, warm')
   })
 
+  it('saves the brand email trimmed + lowercase, clears it on blank, rejects a bad one', async () => {
+    const r = await app.inject({ method: 'PATCH', url: `/concepts/${conceptA}`, headers: auth, payload: { email: '  Brand@GSFoods.PK ' } })
+    expect(r.statusCode).toBe(200)
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA } })).email).toBe('brand@gsfoods.pk')
+
+    const bad = await app.inject({ method: 'PATCH', url: `/concepts/${conceptA}`, headers: auth, payload: { email: 'not-an-email' } })
+    expect(bad.statusCode).toBe(400)
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA } })).email).toBe('brand@gsfoods.pk')
+
+    const clear = await app.inject({ method: 'PATCH', url: `/concepts/${conceptA}`, headers: auth, payload: { email: '' } })
+    expect(clear.statusCode).toBe(200)
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA } })).email).toBeNull()
+  })
+
   it.each([
     ['latitude', { latitude: 24.8 }],
     ['address', { address: '1 Main St' }],
