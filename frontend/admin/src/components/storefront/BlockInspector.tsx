@@ -50,6 +50,7 @@ export function BlockInspector({ block, onChange, fonts }: Props) {
           {block.type === 'columns'       && <ColumnsFields block={block} onChange={onChange} />}
           {block.type === 'video'         && <VideoFields block={b} set={set} />}
           {block.type === 'signup_form'   && <SignupFields block={b} set={set} />}
+          {block.type === 'waitlist_form' && <WaitlistFields block={b} set={set} />}
           {block.type === 'scrollHero'    && <ScrollHeroFields block={b} set={set} />}
           {block.type === 'brandFooter'   && <BrandFooterFields block={b} set={set} />}
           {block.type === 'signature'     && (
@@ -407,6 +408,20 @@ function SignupFields({ block, set }: FP) {
       <Field label="Title"><CopyInput value={block.title} onChange={(v) => set({ title: v || undefined })} /></Field>
       <Field label="Subtitle"><CopyInput rows={2} value={block.subtitle} onChange={(v) => set({ subtitle: v || undefined })} /></Field>
       <p className="text-[11px] text-s-dim">Uses the storefront&apos;s one-code (OTP) sign-in. A submit counts as a conversion.</p>
+    </>
+  )
+}
+
+function WaitlistFields({ block, set }: FP) {
+  return (
+    <>
+      <Field label="Title"><CopyInput value={block.title} onChange={(v) => set({ title: v || undefined })} /></Field>
+      <Field label="Subtitle"><CopyInput rows={2} value={block.subtitle} onChange={(v) => set({ subtitle: v || undefined })} /></Field>
+      <Field label="Button text"><CopyInput value={block.buttonText} onChange={(v) => set({ buttonText: v || undefined })} /></Field>
+      <p className="text-[11px] text-s-dim">
+        The servd new-brand waitlist: name, WhatsApp number (verified by code), optional email, area and wish, and the
+        consent line. A join counts as a conversion; sign-ups show on CRM, Waitlist.
+      </p>
     </>
   )
 }

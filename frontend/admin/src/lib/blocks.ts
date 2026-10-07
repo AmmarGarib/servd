@@ -16,6 +16,8 @@ export type BlockType =
   | 'quote' | 'spacer' | 'divider'
   // content module additions
   | 'columns' | 'video' | 'signature' | 'signup_form'
+  // the servd new-brand waitlist opt-in form (contract 2026-10-07)
+  | 'waitlist_form'
   // single-block "kinds": the servd:hero scroll hero and brand footers
   | 'scrollHero' | 'brandFooter'
 
@@ -105,6 +107,8 @@ export const BLOCK_CATALOG: BlockSpec[] = [
     default: () => ({ type: 'reviews', max: 6, showRating: true }) },
   { type: 'signup_form',  label: 'Sign-up form',   description: 'The storefront\'s one-code sign-in / sign-up', icon: 'OTP', group: 'Forms',
     default: () => ({ type: 'signup_form', mode: 'signup', title: 'Join servd', subtitle: 'One code to your phone. No passwords.' }) },
+  { type: 'waitlist_form', label: 'Waitlist form', description: 'Join the new-brand waitlist (WhatsApp-verified opt-in)', icon: 'WL', group: 'Forms',
+    default: () => ({ type: 'waitlist_form', title: 'Be first in line.', subtitle: 'We\'ll message you when servd opens a new brand.', buttonText: 'Join the waitlist' }) },
   { type: 'scrollHero',   label: 'Scroll hero',    description: 'The expanding hero at the top of the servd home page', icon: 'SH', group: 'Special',
     default: () => ({ type: 'scrollHero', mediaType: 'image', bgImageSrc: '', mediaSrc: '', posterSrc: '', title: '', date: '', scrollToExpand: 'Scroll to explore', textBlend: true, overview: '', conclusion: '' }) },
   { type: 'brandFooter',  label: 'Brand footer',   description: 'Footer copy and social links for a brand microsite', icon: 'FT', group: 'Special',
@@ -171,6 +175,7 @@ export function blockSummary(block: Block): string {
     case 'video':         return s(block.url, '(no video)')
     case 'signature':     return 'The page\'s built-in design renders here'
     case 'signup_form':   return `${block.mode === 'login' ? 'Log in' : 'Sign up'}${block.title ? `: ${s(block.title)}` : ''}`
+    case 'waitlist_form': return s(block.title, 'New-brand waitlist')
     case 'scrollHero':    return s(block.title, '(food placeholders)')
     case 'brandFooter':   return s(block.tagline, s(block.ctaHeadline, '(brand defaults)'))
     default:              return ''

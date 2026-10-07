@@ -7,6 +7,11 @@
 // company's banned customers excluded) ∩ the brands picked ∩ the segment
 // picked. The number shown comes from the same server-side filter the send
 // uses. Channels are email and WhatsApp (owner decision 17 — no SMS).
+//
+// The one exception is the `waitlist` audience: the servd-wide new-brand
+// waitlist (/crm/waitlist). It is not limited to this company's customers, so
+// the brand picker does not apply; the server counts and sends it as
+// segment=waitlist (opted-out and unsubscribed members excluded).
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
@@ -40,6 +45,10 @@ const STATUS_COLORS: Record<string, string> = {
   sending: 'bg-s-blue/20 text-s-blue',
   sent: 'bg-primary/20 text-primary-ink',
 }
+
+// Special audience: the servd-level new-brand waitlist (not a nightly segment).
+const WAITLIST = 'waitlist'
+const WAITLIST_LABEL = 'New-brand waitlist'
 
 const CHANNEL_LABEL: Record<string, string> = { email: 'Email', whatsapp: 'WhatsApp', sms: 'WhatsApp' }
 
@@ -78,11 +87,14 @@ export default function CampaignsPage() {
   const [brandIds, setBrandIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Deep link from /crm/segments: /crm/campaigns?segment=<slug>
+  // Deep links: /crm/campaigns?segment=<slug> (from /crm/segments) and
+  // /crm/campaigns?audience=waitlist (from /crm/waitlist).
   useEffect(() => {
-    const seg = new URLSearchParams(window.location.search).get('segment')
+    const qs = new URLSearchParams(window.location.search)
+    const seg = qs.get('audience') === WAITLIST ? WAITLIST : qs.get('segment')
     if (seg) { setForm((f) => ({ ...f, segment: seg })); setShowForm(true) }
   }, [])
+  const isWaitlist = form.segment === WAITLIST
 
   const { data: campaigns = [], isLoading } = useQuery({
     queryKey: ['campaigns'],
@@ -102,12 +114,19 @@ export default function CampaignsPage() {
 
   // The number shown is the number the send will use — same filter server-side.
   const { data: audience } = useQuery({
-    queryKey: ['campaign-audience', brandIds.join(','), form.segment, form.channel],
+    queryKey: ['campaign-audience', isWaitlist ? '' : brandIds.join(','), form.segment, form.channel],
     queryFn: () => api.get<{ total: number; optedOut: number }>(
       `/crm/campaigns/audience?channel=${form.channel}` +
-      (brandIds.length ? `&conceptIds=${brandIds.join(',')}` : '') +
+      (brandIds.length && !isWaitlist ? `&conceptIds=${brandIds.join(',')}` : '') +
       (form.segment ? `&segment=${encodeURIComponent(form.segment)}` : ''),
     ),
+    enabled: showForm,
+  })
+
+  // Live size of the waitlist audience for the option label, same endpoint.
+  const { data: waitlistAudience } = useQuery({
+    queryKey: ['campaign-audience', '', WAITLIST, form.channel],
+    queryFn: () => api.get<{ total: number; optedOut: number }>(`/crm/campaigns/audience?channel=${form.channel}&segment=${WAITLIST}`),
     enabled: showForm,
   })
 
@@ -126,7 +145,7 @@ export default function CampaignsPage() {
         subject: form.channel === 'email' ? form.subject : undefined,
         body: form.body,
         segment: form.segment || null,
-        conceptIds: brandIds,
+        conceptIds: isWaitlist ? [] : brandIds,
       })
       if (sendNow) await api.post(`/crm/campaigns/${c.id}/send`, {})
       return c
@@ -142,7 +161,7 @@ export default function CampaignsPage() {
   })
 
   const canSave = !!form.name && !!form.body && (form.channel !== 'email' || !!form.subject)
-  const segName = (slug: string) => segments.find((s) => s.slug === slug)?.name ?? slug
+  const segName = (slug: string) => slug === WAITLIST ? WAITLIST_LABEL : segments.find((s) => s.slug === slug)?.name ?? slug
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -202,12 +221,18 @@ export default function CampaignsPage() {
                     {segments.map((s) => (
                       <option key={s.slug} value={s.slug}>{s.name} — {s.memberCount.toLocaleString()}</option>
                     ))}
+                    <option value={WAITLIST}>
+                      {WAITLIST_LABEL} (all of servd){waitlistAudience ? ` — ${waitlistAudience.total.toLocaleString()}` : ''}
+                    </option>
                   </select>
                   <p className="text-xs text-s-muted mt-1">
-                    Segments are computed nightly per company — see <Link href="/crm/segments" className="underline">Segments</Link>.
+                    {isWaitlist
+                      ? <>Everyone who joined the <Link href="/crm/waitlist" className="underline">new-brand waitlist</Link> and hasn&apos;t unsubscribed — across all of servd, not only this company&apos;s customers.</>
+                      : <>Segments are computed nightly per company — see <Link href="/crm/segments" className="underline">Segments</Link>.</>}
                   </p>
                 </div>
                 <div className="col-span-2">
+                  {!isWaitlist && <>
                   <label className="text-xs text-s-muted mb-1 block">Brands</label>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => setBrandIds([])}
@@ -225,9 +250,10 @@ export default function CampaignsPage() {
                       )
                     })}
                   </div>
+                  </>}
                   <p className="text-xs text-s-muted mt-2">
                     {audience
-                      ? <>Reaches <strong className="text-s-text">{audience.total.toLocaleString()}</strong> customer{audience.total === 1 ? '' : 's'} with {form.channel === 'email' ? 'an email' : 'a phone number'}
+                      ? <>Reaches <strong className="text-s-text">{audience.total.toLocaleString()}</strong> {isWaitlist ? 'waitlist member' : 'customer'}{audience.total === 1 ? '' : 's'} with {form.channel === 'email' ? 'an email' : 'a phone number'}
                           {audience.optedOut > 0 && <> · {audience.optedOut.toLocaleString()} unsubscribed and excluded</>}</>
                       : 'Counting…'}
                     {' '}Every message carries an unsubscribe link.
@@ -279,7 +305,7 @@ export default function CampaignsPage() {
                         {c.status}
                       </span>
                       <span className="rounded bg-s-bg border border-s-border px-2 py-0.5 text-xs text-s-muted">
-                        {c.conceptIds && c.conceptIds.length > 0 ? c.conceptIds.map(conceptName).join(', ') : 'All brands'}
+                        {c.segment?.slug === WAITLIST ? 'All of servd' : c.conceptIds && c.conceptIds.length > 0 ? c.conceptIds.map(conceptName).join(', ') : 'All brands'}
                       </span>
                       {c.segment && (
                         <span className="rounded bg-s-bg border border-s-border px-2 py-0.5 text-xs text-s-muted">

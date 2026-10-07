@@ -163,6 +163,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Conversations', href: '/crm/conversations', sub: true },
     { label: 'Segments', href: '/crm/segments', sub: true },
     { label: 'Naughty list', href: '/crm/naughty-list', sub: true },
+    { label: 'Waitlist', href: '/crm/waitlist', sub: true },
     { label: 'Loyalty', href: '/configuration/loyalty', sub: true },
   ],
   campaigns:      [{ label: 'Campaigns', href: '/crm/campaigns', icon: '✉️' }],
