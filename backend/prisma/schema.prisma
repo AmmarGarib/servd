@@ -1142,8 +1142,9 @@ model Customer {
   referredBy Customer?  @relation("Referrals", fields: [referredById], references: [id])
   referrals  Customer[] @relation("Referrals")
 
-  strikes CustomerStrike[]
-  bans    CustomerBan[]
+  strikes         CustomerStrike[]
+  bans            CustomerBan[]
+  waitlistSignups WaitlistSignup[]
 
   @@map("customers")
 }
@@ -5798,4 +5799,46 @@ model HrLetterTemplate {
 
   @@unique([tenantId, key])
   @@map("hr_letter_templates")
+}
+
+// ─── Waitlist (owner, 2026-10-07) ────────────────────────────────────────────
+// "Tell me when servd opens a new brand." A general servd list, not one
+// company's: tenantId is deliberately absent — the person signed up to servd,
+// and the brand they'll hear about can be any company's. Each row points at
+// the ONE customer master record (matched on the verified phone), carries the
+// consent they gave, and where they came from. `list` leaves room for more
+// lists later without a new table.
+model WaitlistSignup {
+  id             String    @id @default(uuid())
+  list           String    @default("servd_new_brand")
+  customerId     String
+  source         String? // ?src= tag on the link: instagram, flyer, …
+  area           String?
+  interest       String? // "what would you like to see"
+  consentText    String // the exact wording they ticked
+  consentAt      DateTime
+  verifiedAt     DateTime // WhatsApp code confirmed — no unverified rows
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([list, customerId])
+  @@index([list, createdAt])
+  @@map("waitlist_signups")
+}
+
+// Anonymous visits to the waitlist page, for conversion by source. No name,
+// phone, email or IP is stored — only where the click came from.
+model WaitlistVisit {
+  id        String   @id @default(uuid())
+  list      String   @default("servd_new_brand")
+  source    String?
+  device    String? // mobile | tablet | desktop
+  country   String? // from the CDN country header, if present
+  createdAt DateTime @default(now())
+
+  @@index([list, createdAt])
+  @@map("waitlist_visits")
 }
