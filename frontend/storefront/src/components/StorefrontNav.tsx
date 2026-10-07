@@ -1,17 +1,16 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
 import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
+import { SearchSheet, openSearch } from './SearchSheet'
+
+// The servd global nav — Apple-style glass bar: wordmark, section links
+// (desktop), then search, account and Order. Search opens the SearchSheet.
 
 // Pages that manage their own header (full-screen splashes, brand
 // microsites with their own nav, the per-concept ordering experience).
 const HIDDEN_PREFIXES = ['/auth', '/login', '/signup', '/brand/']
-
-// Hero pages keep the nav transparent so the kinetic floating shapes
-// behind it stay readable; everywhere else uses the blurred-glass look.
-const TRANSPARENT_PATHS = new Set(['/'])
 
 interface Props {
   /**
@@ -29,160 +28,45 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   // cannot be answered by the path alone, or once in a layout.
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
 
-  // On dark-hero pages, the sticky nav is transparent and renders white
-  // text. Once the user scrolls past the hero into the white sections,
-  // the white text becomes invisible — so flip to the blurred-glass look
-  // (white bg + ink text) after the first 60vh of scroll.
-  const [scrolledPastHero, setScrolledPastHero] = useState(false)
-  useEffect(() => {
-    if (!TRANSPARENT_PATHS.has(pathname)) return
-    const threshold = window.innerHeight * 0.6
-    const onScroll = () => setScrolledPastHero(window.scrollY > threshold)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [pathname])
-
   if (onBrandMicrosite) return null
   if (HIDDEN_PREFIXES.some((p) => pathname.startsWith(p))) return null
 
   // Hide nav on the per-concept ordering screen; that page has its own
   // brand-themed header.
   const segments = pathname.split('/').filter(Boolean)
-  if (segments.length === 1 && !['order', 'browse', 'account', 'orders', 'login', 'signup'].includes(segments[0]!)) {
+  if (segments.length === 1 && !['order', 'home', 'account', 'orders', 'login', 'signup'].includes(segments[0]!)) {
     return null
   }
 
-  const transparent = TRANSPARENT_PATHS.has(pathname) && !scrolledPastHero
-  const onDarkHero  = transparent     // home page is ink-on-dark, nav goes white
-
   return (
-    <nav
-      aria-label="Primary"
-      style={{
-        // Not sticky — the header lives at the top of the page and scrolls away
-        // with the content. On the home it's ABSOLUTE so the hero's full-bleed
-        // background image sits behind it (the servd mark is immersed in the
-        // image, video expands in front); elsewhere a normal top-of-page header.
-        position: pathname === '/' ? 'absolute' : 'relative',
-        top: 0, left: 0, right: 0,
-        zIndex: 50,
-        padding: '0.95rem clamp(1rem, 4vw, 2rem)',
-        background: transparent ? 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.12) 60%, rgba(0,0,0,0) 100%)' : 'rgba(255,255,255,0.88)',
-        backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
-        WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
-        borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',
-        transition: 'background 220ms ease',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          maxWidth: 1200,
-          margin: '0 auto',
-          width: '100%',
-        }}
-      >
-      {/* Brand-mark — circular logo placeholder + name (new system, matches the
-          brand microsites). Name goes white over the dark hero, purple elsewhere. */}
-      <Link
-        href="/"
-        aria-label="servd home"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', textDecoration: 'none' }}
-      >
-        <span aria-hidden="true" style={{
-          width: '2.3rem', height: '2.3rem', borderRadius: '50%', flexShrink: 0,
-          background: 'var(--servd-green)', color: 'var(--servd-on-green)',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem',
-          letterSpacing: '-0.02em', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
-        }}>s</span>
-        <span style={{
-          fontFamily: 'var(--font-wordmark)',
-          fontSize: '1.5rem',
-          fontWeight: 800,
-          letterSpacing: '-0.03em',
-          lineHeight: 1,
-          color: onDarkHero ? 'white' : 'var(--servd-black)',
-        }}>
-          servd<span style={{ color: onDarkHero ? 'var(--servd-green)' : 'var(--servd-green-dark)' }}>.</span>
-        </span>
-      </Link>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <Link
-          href="/browse"
-          style={{
-            color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
-            fontWeight: 600,
-            fontSize: '0.92rem',
-            padding: '0.7rem 0.95rem',
-            textDecoration: 'none',
-            borderRadius: '0.6rem',
-            transition: 'color 160ms ease',
-            display: 'inline-flex',
-            alignItems: 'center',
-            minHeight: '44px',
-          }}
-        >
-          Browse
-        </Link>
-
-        {token ? (
-          <Link
-            href="/account"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.6rem 1rem',
-              minHeight: '44px',
-              borderRadius: '999px',
-              background: onDarkHero ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.04)',
-              border: onDarkHero ? '1px solid rgba(255,255,255,0.18)' : '1px solid var(--servd-line)',
-              color: onDarkHero ? 'white' : 'var(--servd-ink)',
-              fontWeight: 600,
-              fontSize: '0.88rem',
-              textDecoration: 'none',
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                width: '1.4rem',
-                height: '1.4rem',
-                borderRadius: '50%',
-                background: 'var(--servd-green)', color: 'var(--servd-on-green)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '0.7rem',
-                fontWeight: 900,
-              }}
-            >A</span>
-            Account
+    <>
+      <nav aria-label="Primary" className="sv-nav">
+        <div className="sv-nav-inner">
+          <Link href="/home" aria-label="servd home" className="sv-nav-mark">
+            servd<span>.</span>
           </Link>
-        ) : (
-          /* Single Sign in button — the login page already has a "create
-             account" path, so a separate Sign up CTA is redundant. */
-          <Link
-            href="/login"
-            className="brand-pill"
-            style={{
-              ['--brand-accent' as string]: 'var(--servd-green)',
-              ['--brand-ink' as string]:    'var(--servd-on-green)',
-              padding: '0.7rem 1.3rem',
-              fontSize: '0.92rem',
-              minHeight: '44px',
-            }}
-          >
-            Sign in
+
+          <div className="sv-nav-links">
+            <Link href="/home#kitchens">Kitchens</Link>
+            <Link href="/home#insiders">Insiders</Link>
+            <Link href="/home#visit">Visit</Link>
+            {token && <Link href="/orders">Orders</Link>}
+          </div>
+
+          <button type="button" className="sv-icon-btn" aria-label="Search" onClick={() => openSearch('')}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+            </svg>
+          </button>
+          <Link href={token ? '/account' : '/login'} className="sv-icon-btn" aria-label={token ? 'Your account' : 'Sign in'}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" />
+            </svg>
           </Link>
-        )}
-      </div>
-      </div>
-    </nav>
+          <Link href="/home#kitchens" className="sv-nav-cta">Order</Link>
+        </div>
+      </nav>
+      <SearchSheet />
+    </>
   )
 }

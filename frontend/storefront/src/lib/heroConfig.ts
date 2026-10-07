@@ -27,14 +27,13 @@ export const FOOD_HERO_DEFAULTS: HeroConfig = {
   mediaSrc:
     'https://videos.pexels.com/video-files/854565/854565-hd_1920_1080_25fps.mp4',
   bgImageSrc: '',
-  title: 'Every kitchen, one place',
+  title: 'Every kitchen. One order.',
   date: 'order · explore · insiders',
   scrollToExpand: 'Scroll to explore',
   // mix-blend-difference turns the title muddy over a busy video; solid white +
   // drop-shadow reads far better. Operators can re-enable blend in the editor.
   textBlend: false,
-  overview:
-    'Order from any of our kitchens in one place. Pick what you are craving, add something from another brand if you like, and check out once.',
+  overview: 'Simmer, Stackd and Flipd. Order from one kitchen or all three, and check out once.',
   conclusion:
     'Simmer, Stackd, Flipd — explore the brands, then join Insiders for rewards on every order.',
 };

@@ -1,213 +1,141 @@
 'use client'
 import Link from 'next/link'
-import { MagneticLink } from './ui/MagneticButton'
-import { LandingScrollHero } from './LandingScrollHero'
+import { useEffect, useRef } from 'react'
 import type { HeroConfig } from '../lib/heroConfig'
-
 import type { Concept } from '../lib/concept'
-import { brandAccent, brandStory, conceptHeroImage, heroCover, formatBrandName } from '../lib/concept'
+import { brandStory, formatBrandName } from '../lib/concept'
 import { FALLBACK_CONCEPTS } from '../lib/fallbackBrands'
 import { useScrollReveal } from './kinetic/motionHooks'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
+import { openSearch } from './SearchSheet'
 
-// servd home — the FOOD hub.
+// servd home — the one consumer landing page, at /home (`/` and `/browse`
+// redirect here). Apple-style: big centred type, lots of air, a full-bleed
+// media panel, then one rounded tile per kitchen in that kitchen's own palette
+// with two actions ("Order" and "Learn more"). Search lives in the nav sheet.
 //
-// The visual hierarchy here is FOOD FIRST. Royal blue is the chrome —
-// the wordmark, the CTAs, the marquee — but the hero, the brand cards,
-// the section dividers all lead with full-bleed food photography.
-//
-// Graceful degradation: if the api hiccups and concepts comes back
-// empty, we render the three live brands from hardcoded data so the
-// home page never goes blank. The data is kept in sync with
-// BRAND_STORIES + conceptHeroImage in lib/concept.ts.
+// The hero text + media are operator-editable (Admin → Storefront, SiteLayout
+// `servd:hero`); the whole page can be wrapped by a live `servd:home` layout,
+// whose `signature` block renders this component.
 
 interface Props {
   concepts: Concept[]
   heroConfig: HeroConfig
 }
 
-// Fallback brand cards — used when the live concepts API returns nothing
-// (api warmup, network blip, etc.). One shared record set: lib/fallbackBrands.
-const FALLBACK_BRANDS: Concept[] = Object.values(FALLBACK_CONCEPTS)
+const ORDER = ['stackd', 'simmer', 'flipd']
 
 export function HomeClient({ concepts, heroConfig }: Props) {
-  const source = concepts.filter((c) => ['simmer', 'stackd', 'flipd'].includes(c.slug))
-  // If the live concept list came back empty (api blip), fall through
-  // to the hardcoded fallback so the home page never looks blank.
-  const usable = source.length > 0 ? source : FALLBACK_BRANDS
-
-  const brands = usable
-    .sort((a, b) => ['stackd', 'simmer', 'flipd'].indexOf(a.slug) - ['stackd', 'simmer', 'flipd'].indexOf(b.slug))
-    .map((c) => ({
-      id: c.id,
-      name: formatBrandName(c.name),
-      slug: c.slug,
-      accent: brandAccent(c.slug, c.primaryColor),
-      story:  brandStory(c.slug),
-      img:    conceptHeroImage({ ...c, type: 'restaurant', description: null, logoUrl: null } as Concept),
-    }))
-
   const pageRef = useScrollReveal<HTMLDivElement>()
 
+  // Live brands in the fixed order; API down → the shared fallback records.
+  const live = concepts.filter((c) => ORDER.includes(c.slug))
+  const bySlug = new Map((live.length > 0 ? live : Object.values(FALLBACK_CONCEPTS)).map((c) => [c.slug, c]))
+  const brands = ORDER.map((s) => bySlug.get(s)).filter((c): c is Concept => !!c)
+
+  // /home?q=… (the sitelinks search box in JSON-LD) opens the search sheet.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q')
+    if (q) openSearch(q)
+  }, [])
+
   return (
-    <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
+    <div ref={pageRef} className="sv-home">
+      <Hero config={heroConfig} />
 
-      {/* ── HERO ─ the scroll-expansion media hero. Background image + the
-            expanding photo/video are operator-editable via Admin → Marketing
-            → Landing Hero (SiteLayout slug `servd:hero`); food placeholders
-            until the operator sets them. */}
-      <LandingScrollHero config={heroConfig} />
-
-      {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
-            into the order flow. */}
-      <section id="brands" className="reveal-on-scroll" style={{ background: 'var(--servd-bg)', order: 2 }}>
-        <div className="container" style={{ paddingTop: 'clamp(4rem, 8vw, 6rem)', paddingBottom: '2rem' }}>
-          <p className="eyebrow eyebrow-accent">The kitchens</p>
-          <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px', margin: '0.5rem 0 1rem', letterSpacing: '-0.04em' }}>
-            Pick one. Pick two.<br />
-            <span className="display-italic">Pick all of them.</span>
-          </h2>
-          <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
-            One bag, one delivery. We hold the slowest dish so the salad stays cold and the burger stays hot.
-          </p>
+      {/* ── The kitchens ─────────────────────────────────────────────── */}
+      <section id="kitchens" className="sv-section" style={{ scrollMarginTop: 52 }}>
+        <div className="sv-wrap sv-section-head reveal-on-scroll">
+          <h2 className="sv-section-title">Three kitchens. Pick one, or all of them.</h2>
         </div>
+        <div className="sv-tiles">
+          {brands.map((c) => <BrandTile key={c.slug} concept={c} />)}
+        </div>
+      </section>
 
-        <div className="container" style={{ paddingBottom: 'clamp(4rem, 8vw, 6rem)' }}>
-          <div style={{ display: 'grid', gap: '1.25rem' }}>
-            {brands.map((b) => (
-              // Card wrapper — used to be a single Link to /${slug} (the
-              // order page), which meant tapping anywhere on a Stackd /
-              // Simmer / Flipd card dropped customers straight onto the
-              // ordering surface and skipped the brand's own landing
-              // page entirely. CEO wants the card body to go to the
-              // brand microsite at /brand/${slug}; the "Order from X"
-              // pill stays as its own click target into the ordering
-              // flow. Two stacked Links so each surface has its own
-              // navigation intent.
-              <div key={b.id}
-                style={{
-                  display: 'block',
-                  position: 'relative', overflow: 'hidden',
-                  borderRadius: '1.5rem',
-                  minHeight: 'clamp(320px, 42vw, 460px)',
-                  background: `${b.accent}${heroCover(b.img)}`,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                }}>
-                {/* Full-card hit-area Link to the brand landing page */}
-                <Link href={`/brand/${b.slug}`}
-                  aria-label={`Visit ${b.name}'s landing page`}
-                  style={{
-                    position: 'absolute', inset: 0, zIndex: 1,
-                    borderRadius: 'inherit',
-                  }}
-                />
-                <div aria-hidden style={{
-                  position: 'absolute', inset: 0,
-                  background: 'linear-gradient(135deg, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.15) 55%, rgba(0,0,0,0.65) 100%)',
-                  pointerEvents: 'none',
-                }} />
-                <div aria-hidden style={{
-                  position: 'absolute', top: 0, left: 0, right: 0, height: '6px',
-                  background: b.accent,
-                  pointerEvents: 'none',
-                }} />
-                <div style={{
-                  position: 'relative', zIndex: 2, height: '100%',
-                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                  padding: 'clamp(1.5rem, 4vw, 2.5rem)', color: 'white',
-                  minHeight: 'clamp(320px, 42vw, 460px)',
-                  pointerEvents: 'none',
-                }}>
-                  <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                    /{b.slug}
-                  </p>
-                  <div>
-                    <h3 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', color: 'white', lineHeight: 0.98, letterSpacing: '-0.04em', textShadow: '0 2px 10px rgba(0,0,0,0.4)' }}>
-                      {b.name}
-                    </h3>
-                    <p style={{ marginTop: '0.75rem', fontSize: 'clamp(1rem, 1.4vw, 1.2rem)', color: 'rgba(255,255,255,0.92)', maxWidth: '28rem', lineHeight: 1.4, textShadow: '0 1px 6px rgba(0,0,0,0.45)' }}>
-                      {b.story.tagline}
-                    </p>
-                    {/* "Order from X" pill — independent Link to the
-                        ordering surface. pointer-events: auto so it
-                        beats the inherited none on the wrapper, and a
-                        higher z-index so it sits above the full-card
-                        cover Link. */}
-                    <Link href={`/${b.slug}`}
-                      aria-label={`Order from ${b.name}`}
-                      style={{
-                        marginTop: '1.5rem',
-                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                        background: 'white', color: 'var(--servd-ink)',
-                        fontFamily: 'var(--font-display)', fontWeight: 800,
-                        fontSize: '0.95rem',
-                        padding: '0.7rem 1.3rem', borderRadius: '999px',
-                        textDecoration: 'none',
-                        position: 'relative', zIndex: 3,
-                        pointerEvents: 'auto',
-                      }}
-                    >
-                      Order from {b.name} <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            ))}
+      {/* ── How it works ─────────────────────────────────────────────── */}
+      <section className="sv-section">
+        <div className="sv-wrap">
+          <div className="sv-section-head reveal-on-scroll">
+            <h2 className="sv-section-title">One order. Every kitchen.</h2>
+          </div>
+          <div className="sv-trio reveal-on-scroll">
+            <div>
+              <div className="sv-trio-icon" aria-hidden><IconStack /></div>
+              <h3>Mix kitchens.</h3>
+              <p>Add a Stackd pastry to a Flipd order. One cart, one checkout.</p>
+            </div>
+            <div>
+              <div className="sv-trio-icon" aria-hidden><IconClock /></div>
+              <h3>Timed together.</h3>
+              <p>We hold the quickest dish for the slowest, so everything lands as it should.</p>
+            </div>
+            <div>
+              <div className="sv-trio-icon" aria-hidden><IconStar /></div>
+              <h3>Rewarded everywhere.</h3>
+              <p>Insiders earn on every order, at every kitchen.</p>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ── OPEN NOW STRIP ─ Live status + address per brand. Hours wrong
-            on Google is the #1 Karachi mistake; surface them on the
-            home so the customer never has to wonder which one's open. */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)', order: 3 }}>
-        <div className="container" style={{ paddingTop: '2rem', paddingBottom: '2rem' }}>
-          <p className="eyebrow eyebrow-accent" style={{ marginBottom: '1rem' }}>Right now</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-            {brands.map((b) => {
-              const loc = locationFor(b.slug)
+      {/* ── Insiders ─────────────────────────────────────────────────── */}
+      <section id="insiders" className="sv-band" style={{ scrollMarginTop: 64 }}>
+        <div className="sv-wrap">
+          <div className="sv-section-head reveal-on-scroll" style={{ marginBottom: 0 }}>
+            <h2 className="sv-section-title">The best stuff doesn&rsquo;t get listed.</h2>
+            <p className="sv-sub">Limited drops, off-menu plates and points on every order. Insiders hear first. Free to join.</p>
+            <div className="sv-ctas">
+              <Link href="/signup?insider=1" className="sv-btn sv-btn-primary">Join Insiders</Link>
+              <a href={whatsappLink(BRAND_LOCATIONS['simmer']!, 'add me to servd insiders')}
+                target="_blank" rel="noopener noreferrer" className="sv-link">
+                Join on WhatsApp <Chevron />
+              </a>
+            </div>
+          </div>
+          <div className="sv-perks reveal-on-scroll">
+            {PERKS.map((p) => (
+              <div key={p.tag} className="sv-perk">
+                <p className="sv-perk-tag">{p.tag}</p>
+                <h3>{p.head}</h3>
+                <p>{p.body}</p>
+              </div>
+            ))}
+          </div>
+          <p style={{ textAlign: 'center', marginTop: 28 }}>
+            <Link href="/login" className="sv-link">Already a member? Sign in <Chevron /></Link>
+          </p>
+        </div>
+      </section>
+
+      {/* ── Visit ────────────────────────────────────────────────────── */}
+      <section id="visit" className="sv-section" style={{ scrollMarginTop: 52 }}>
+        <div className="sv-wrap">
+          <div className="sv-section-head reveal-on-scroll">
+            <h2 className="sv-section-title">Come by.</h2>
+          </div>
+          <div className="sv-visit reveal-on-scroll">
+            {brands.map((c) => {
+              const name = formatBrandName(c.name)
+              const loc = locationFor(c.slug)
+              const email = c.email || loc?.email
               return (
-                <div key={b.id} style={{
-                  background: 'white', padding: '1rem 1.1rem',
-                  borderRadius: '0.85rem', border: '1px solid var(--servd-line)',
-                  display: 'flex', flexDirection: 'column', gap: '0.45rem',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.05rem', color: 'var(--servd-ink)' }}>
-                      {b.name}
-                    </span>
-                    <span style={{ marginLeft: 'auto' }}>
-                      <OpenNowPill slug={b.slug} fallback="Today" />
-                    </span>
+                <div key={c.slug} className="sv-visit-card">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <h3>{name}</h3>
+                    <span style={{ marginLeft: 'auto' }}><OpenNowPill slug={c.slug} fallback="Karachi" /></span>
                   </div>
-                  {loc && !loc.area.startsWith('TODO') && (
-                    <p style={{ color: 'var(--servd-mute)', fontSize: '0.82rem', lineHeight: 1.4, margin: 0 }}>
-                      {loc.area}
-                    </p>
-                  )}
-                  {loc && (
-                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
-                      <Link href={`/${b.slug}`} style={{ color: b.accent, fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
-                        Order →
-                      </Link>
-                      <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
-                      <a href={whatsappLink(loc, `hi ${b.name}`)}
-                        target="_blank" rel="noopener noreferrer"
-                        style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
-                        WhatsApp
+                  {loc && !loc.area.startsWith('TODO') && <p>{loc.area}, {loc.city}</p>}
+                  <div className="sv-visit-links">
+                    <Link href={`/${c.slug}`} className="sv-link">Order <Chevron /></Link>
+                    {loc && (
+                      <a href={whatsappLink(loc, `hi ${name}`)} target="_blank" rel="noopener noreferrer" className="sv-link">
+                        WhatsApp <Chevron />
                       </a>
-                      {loc.email && (
-                        <>
-                          <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
-                          <a href={`mailto:${loc.email}`}
-                            style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
-                            Email
-                          </a>
-                        </>
-                      )}
-                    </div>
-                  )}
+                    )}
+                    {email && <a href={`mailto:${email}`} className="sv-link">Email <Chevron /></a>}
+                  </div>
                 </div>
               )
             })}
@@ -215,211 +143,182 @@ export function HomeClient({ concepts, heroConfig }: Props) {
         </div>
       </section>
 
-      {/* ── EXPLORE STRIP ─ servd-green band inviting customers to browse
-            every brand in one place. Purple text on green (never white).
-            No delivery / aggregator messaging. */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', padding: '2.5rem 0', order: 4 }}>
-        <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
-          <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
-            Every kitchen, one order.<br />
-            <span style={{ opacity: 0.7 }}>Explore the brands and check out once.</span>
-          </p>
-          <MagneticLink href="/browse" style={{
-            background: 'var(--servd-purple)', color: 'var(--servd-on-purple)',
-            fontWeight: 800, fontSize: '0.92rem',
-            padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-          }}>
-            Explore the brands <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-          </MagneticLink>
-        </div>
-      </section>
-
-      {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
-            promise-numbers strip. Single CTA: become a member. ──── */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-purple)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden', order: 1 }}>
-        {/* Soft ambient glow so the section reads as 'premium tier' */}
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0,
-          background: 'radial-gradient(ellipse 60% 50% at 50% 0%, rgba(255,255,255,0.08) 0%, transparent 60%)',
-          pointerEvents: 'none',
-        }} />
-
-        <div className="container" style={{ position: 'relative', zIndex: 1 }}>
-          {/* Header — eyebrow + bricolage display + sub */}
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-            gap: 'clamp(2rem, 5vw, 4rem)',
-            marginBottom: 'clamp(2.5rem, 5vw, 3.5rem)',
-            alignItems: 'baseline',
-          }}>
-            <div>
-              <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '1rem' }}>
-                Insiders · free to join
-              </p>
-              <h2 className="display" style={{
-                fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
-                color: 'white',
-                margin: 0,
-                lineHeight: 0.95,
-                letterSpacing: '-0.04em',
-              }}>
-                The best stuff<br />
-                <span className="display-italic" style={{ color: 'rgba(255,255,255,0.7)' }}>doesn&rsquo;t get listed.</span>
-              </h2>
-            </div>
-            <p style={{
-              color: 'rgba(255,255,255,0.82)',
-              fontSize: '1.05rem',
-              lineHeight: 1.55,
-              maxWidth: '32rem',
-            }}>
-              Limited drops. Off-menu plates. Weekday lunch perks. Points on every order. Insiders get first.
-            </p>
-          </div>
-
-          {/* Per-brand Insiders perks. Per the loyalty-program skill:
-              simmer (premium) gets exclusive recognition framing — no
-              points, no "buy N get 1," no coupony language; stackd + flipd
-              (casual, higher-frequency) get a clean generous points
-              mechanic. Same brand-keyed card pattern as the brand grid
-              above so the section reads as "Insiders at each kitchen,
-              tuned to the kitchen." */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-            gap: '1rem',
-            alignItems: 'stretch',
-          }}>
-            {[
-              {
-                slug: 'simmer',
-                accent: 'rgba(233,78,27,0.95)',
-                badge: '◇', tag: 'Simmer · regulars',
-                head: 'The regulars’ list',
-                body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
-                featured: false,
-              },
-              {
-                slug: 'stackd',
-                accent: 'rgba(255,255,255,0.18)',
-                badge: '★', tag: 'Stackd · counter club',
-                head: 'Five coffees in, the sixth is on us',
-                body: 'Buy five drinks at Stackd and the sixth is on the house. Insiders also get first look at the pastry case before the morning bake goes out to the floor.',
-                featured: true,
-              },
-              {
-                slug: 'flipd',
-                accent: 'rgba(58,168,255,0.95)',
-                badge: '+', tag: 'Flipd · points',
-                head: 'Points on every box',
-                body: 'Earn 1 point per Rs. 10 spent at Flipd. Free weekday lunch delivery for members. Redeem points for a meal at 2,000.',
-                featured: false,
-              },
-            ].map((p) => (
-              <div key={p.head} style={{
-                background: p.featured ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)',
-                border: p.featured ? '1px solid rgba(255,255,255,0.35)' : '1px solid rgba(255,255,255,0.18)',
-                borderRadius: '1.25rem',
-                padding: '1.5rem 1.4rem',
-                color: 'white',
-                transform: p.featured ? 'translateY(-12px)' : 'none',
-                transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
-                backdropFilter: 'blur(8px)',
-              }}>
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center', justifyContent: 'center',
-                  width: '2.4rem', height: '2.4rem',
-                  background: p.featured ? 'var(--servd-green)' : 'rgba(255,255,255,0.12)',
-                  color: p.featured ? 'var(--servd-on-green)' : 'white',
-                  borderRadius: '999px',
-                  fontFamily: 'var(--font-display)', fontWeight: 800,
-                  fontSize: '0.95rem',
-                  marginBottom: '1rem',
-                }}>{p.badge}</div>
-                <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '0.5rem' }}>
-                  {p.tag}
-                </p>
-                <h3 className="display" style={{
-                  fontSize: 'clamp(1.35rem, 2.3vw, 1.65rem)',
-                  color: 'white',
-                  margin: '0 0 0.6rem',
-                  lineHeight: 1.05,
-                  letterSpacing: '-0.02em',
-                }}>
-                  {p.head}
-                </h3>
-                <p style={{
-                  color: 'rgba(255,255,255,0.78)',
-                  fontSize: '0.92rem',
-                  lineHeight: 1.55,
-                  margin: 0,
-                }}>
-                  {p.body}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          {/* Insiders CTAs — two routes per the WhatsApp-marketing skill:
-              the regulars' list is a WhatsApp-first asset (the dominant
-              channel in PK; broadcasts beat email open rates 4-5x). The
-              web signup stays as the backup route so guests who don't
-              want WhatsApp aren't shut out. */}
-          <div style={{
-            marginTop: 'clamp(2.5rem, 5vw, 3.5rem)',
-            display: 'flex', flexWrap: 'wrap',
-            alignItems: 'center', gap: '1rem',
-          }}>
-            <a
-              href={whatsappLink(BRAND_LOCATIONS['simmer']!, 'add me to servd insiders')}
-              target="_blank" rel="noopener noreferrer"
-              style={{
-                background: '#25D366',
-                color: 'white',
-                fontFamily: 'var(--font-display)', fontWeight: 800,
-                fontSize: '1.05rem',
-                padding: '1rem 1.85rem',
-                borderRadius: '999px',
-                textDecoration: 'none',
-                display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-                boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
-              }}>
-              Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
-            </a>
-            <MagneticLink href="/signup?insider=1" style={{
-              background: 'var(--servd-green)',
-              color: 'var(--servd-on-green)',
-              fontFamily: 'var(--font-display)', fontWeight: 800,
-              fontSize: '1.05rem',
-              padding: '1rem 1.85rem',
-              borderRadius: '999px',
-              textDecoration: 'none',
-              display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-            }}>
-              Or sign up with email
-            </MagneticLink>
-            <Link href="/login" style={{
-              color: 'rgba(255,255,255,0.85)',
-              fontWeight: 700, fontSize: '0.95rem',
-              textDecoration: 'underline',
-              textUnderlineOffset: '4px',
-              textDecorationColor: 'rgba(255,255,255,0.4)',
-              padding: '0.6rem 0.4rem',  // 44pt min touch height
-              display: 'inline-block', lineHeight: 1,
-            }}>
-              Already a member? Sign in
-            </Link>
-            <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem' }}>
-              · free forever · cancel anytime
-            </span>
+      {/* ── What's next (waitlist) ───────────────────────────────────── */}
+      <section className="sv-next">
+        <div className="sv-wrap reveal-on-scroll">
+          <h2 className="sv-section-title">There&rsquo;s another kitchen coming.</h2>
+          <p>Be the first to know when it opens.</p>
+          <div className="sv-ctas" style={{ marginTop: 20 }}>
+            <Link href="/waitlist" className="sv-link">Join the waitlist <Chevron /></Link>
           </div>
         </div>
       </section>
-
-      {/* Global StorefrontFooter has its own "Hungry now? Let's go"
-          plus order CTA — we don't double up here. */}
     </div>
+  )
+}
+
+function Hero({ config }: { config: HeroConfig }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  // Respect reduced motion: show the poster frame instead of playing.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) v.pause()
+    else v.play().catch(() => { /* autoplay blocked — the poster stays */ })
+  }, [])
+
+  return (
+    <>
+      <section className="sv-hero sv-wrap">
+        <h1 className="sv-headline">{config.title}</h1>
+        {config.overview && <p className="sv-sub">{config.overview}</p>}
+        <div className="sv-ctas">
+          <a href="#kitchens" className="sv-btn sv-btn-primary">Order now</a>
+          <button type="button" className="sv-link" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0 }}
+            onClick={() => openSearch('')}>
+            Search the menus <Chevron />
+          </button>
+        </div>
+      </section>
+      {config.mediaSrc && (
+        <div className="sv-media">
+          <div className="sv-media-frame">
+            {config.mediaType === 'video' ? (
+              <video ref={videoRef} src={config.mediaSrc} poster={config.posterSrc}
+                muted loop playsInline preload="metadata" aria-hidden />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={config.mediaSrc} alt="" />
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── Brand tiles — each kitchen in its own palette ─────────────────────────
+
+function BrandTile({ concept }: { concept: Concept }) {
+  const slug = concept.slug
+  const name = formatBrandName(concept.name)
+  const story = brandStory(slug)
+  const t = TILE[slug] ?? TILE.default!
+  return (
+    <article className={`sv-tile reveal-on-scroll${slug === 'stackd' ? ' sv-tile-wide' : ''}`}
+      style={{ background: t.bg, color: t.fg }} aria-label={name}>
+      <h3 className="sv-tile-name">{t.mark(name)}</h3>
+      <p className="sv-tile-tag" style={{ fontFamily: t.tagFont, color: t.muted }}>
+        {story.tagline}
+      </p>
+      <div className="sv-tile-ctas">
+        <Link href={`/${slug}`} className="sv-btn" style={{ background: t.btnBg, color: t.btnFg }}
+          aria-label={`Order from ${name}`}>
+          Order
+        </Link>
+        <Link href={`/brand/${slug}`} className="sv-link" style={{ color: t.fg }}
+          aria-label={`Learn more about ${name}`}>
+          Learn more <Chevron />
+        </Link>
+      </div>
+      <div className="sv-tile-art" aria-hidden>{t.art}</div>
+    </article>
+  )
+}
+
+interface TileStyle {
+  bg: string; fg: string; muted: string; btnBg: string; btnFg: string
+  tagFont?: string
+  mark: (name: string) => React.ReactNode
+  art: React.ReactNode
+}
+
+const TILE: Record<string, TileStyle> = {
+  // Stackd — Pantone 9180 cream field, Red Plum ink; the cream wordmark asset
+  // is tinted plum with a mask, and the mascot gets the tile at full size.
+  stackd: {
+    bg: 'var(--stackd-cream)', fg: 'var(--stackd-plum)', muted: 'color-mix(in srgb, var(--stackd-plum) 78%, transparent)',
+    btnBg: 'var(--stackd-plum)', btnFg: 'var(--stackd-cream)',
+    mark: (name) => (
+      <span role="img" aria-label={name} style={{
+        display: 'block', width: 'min(340px, 70vw)', aspectRatio: '600 / 144', background: 'var(--stackd-plum)',
+        WebkitMask: 'url(/brand/stackd-wordmark.png) center / contain no-repeat',
+        mask: 'url(/brand/stackd-wordmark.png) center / contain no-repeat',
+      }} />
+    ),
+    // eslint-disable-next-line @next/next/no-img-element
+    art: <img src="/brand/stackd-mascot.png" alt="" style={{ maxHeight: 340, marginBottom: 32 }} />,
+  },
+  // Simmer — night mode: tiber green + bone, Amarante, the wordmark lowercase
+  // with "simmer down." below it. One orange signal: the low sun.
+  simmer: {
+    bg: 'var(--simmer-green)', fg: 'var(--simmer-bone)', muted: 'color-mix(in srgb, var(--simmer-bone) 72%, transparent)',
+    btnBg: 'var(--simmer-bone)', btnFg: 'var(--simmer-green)', tagFont: 'var(--simmer-display)',
+    mark: (name) => (
+      <span role="img" aria-label={name} style={{ display: 'block', fontFamily: 'var(--simmer-display)', fontWeight: 400 }}>
+        <span style={{ display: 'block', fontSize: 'clamp(3.2rem, 7vw, 4.6rem)', letterSpacing: '0.01em' }}>simmer</span>
+        <span style={{ display: 'block', fontSize: '1.05rem', marginTop: 6, opacity: 0.75 }}>simmer down.</span>
+      </span>
+    ),
+    art: <span style={{ display: 'block', width: 'min(360px, 80%)', aspectRatio: '2 / 1', background: 'var(--simmer-orange)', borderRadius: '999px 999px 0 0' }} />,
+  },
+  // Flipd — Smash Mustard field, Flipd Blue type; the badge is its own sticker.
+  flipd: {
+    bg: 'var(--flipd-mustard)', fg: 'var(--flipd-blue)', muted: 'var(--flipd-blue-dim)',
+    btnBg: 'var(--flipd-blue)', btnFg: 'var(--flipd-mustard)',
+    mark: (name) => (
+      <span style={{ display: 'block', fontFamily: 'var(--flipd-display)', fontSize: 'clamp(3rem, 7vw, 4.4rem)', letterSpacing: '0.01em' }}>{name}</span>
+    ),
+    // eslint-disable-next-line @next/next/no-img-element
+    art: <img src="/brand/flipd-badge.png" alt="" style={{ maxHeight: 300, marginBottom: 28 }} />,
+  },
+  default: {
+    bg: 'var(--servd-purple)', fg: 'var(--servd-on-purple)', muted: 'color-mix(in srgb, var(--servd-on-purple) 72%, transparent)',
+    btnBg: 'var(--servd-green)', btnFg: 'var(--servd-on-green)',
+    mark: (name) => <span className="sv-section-title" style={{ color: 'inherit' }}>{name}</span>,
+    art: null,
+  },
+}
+
+// Per-brand Insiders perks — Simmer gets recognition (no points, no coupon
+// language); Stackd and Flipd get a plain points mechanic.
+const PERKS = [
+  { tag: 'Simmer · regulars', head: 'The regulars’ list',
+    body: 'First word on the next menu. A held table when the room is full. Now and then the kitchen sends something out.' },
+  { tag: 'Stackd · counter club', head: 'Five coffees in, the sixth is ours.',
+    body: 'Buy five drinks and the sixth is on the house. First look at the pastry case before the morning bake goes out.' },
+  { tag: 'Flipd · points', head: 'Points on every box.',
+    body: '1 point per Rs. 10. Free weekday lunch delivery for members. Redeem 2,000 points for a meal.' },
+]
+
+// ── Icons (SVG, never emoji) ──────────────────────────────────────────────
+
+function Chevron() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ marginTop: 1 }}>
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  )
+}
+function IconStack() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" />
+    </svg>
+  )
+}
+function IconClock() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+    </svg>
+  )
+}
+function IconStar() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3z" />
+    </svg>
   )
 }

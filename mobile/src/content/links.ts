@@ -10,7 +10,7 @@ export const STOREFRONT_URL =
 
 // Top-level web routes that are NOT a brand slug.
 const WEB_ROOTS = new Set([
-  'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'locations', 'login',
+  'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'home', 'locations', 'login',
   'order', 'orders', 'pages', 'press', 'preview', 'reserve', 'signup', 'waitlist',
 ])
 
@@ -34,6 +34,7 @@ export function mapHref(rawHref: string | undefined): Target | null {
 
   if (!a) return { kind: 'route', path: '/' }
   switch (a) {
+    case 'home':
     case 'browse':
     case 'brands':  return segs.length === 1 ? { kind: 'route', path: '/' } : web
     case 'login':

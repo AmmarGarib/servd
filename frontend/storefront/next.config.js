@@ -25,6 +25,9 @@ const nextConfig = {
       { source: '/brand/stax/:path*', destination: '/brand/stackd/:path*', permanent: true },
       { source: '/brands/stax',       destination: '/brands/stackd',       permanent: true },
       { source: '/reserve/stax',      destination: '/reserve/stackd',      permanent: true },
+      // The brand picker merged into /home (owner, 2026-10-07).
+      { source: '/browse',            destination: '/home',                permanent: false },
+      { source: '/order',             destination: '/home',                permanent: false },
     ]
   },
 

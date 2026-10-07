@@ -139,7 +139,7 @@ function CtaPair({ label, value, onChange, onRemove }: { label: string; value: {
     <fieldset className="border border-s-border rounded-lg p-2 space-y-2">
       <legend className="text-[11px] text-s-muted px-1">{label}</legend>
       <Field label="Text"><CopyInput value={v.text} onChange={(t) => onChange({ ...v, text: t })} /></Field>
-      <Field label="Link"><input value={v.href} onChange={(e) => onChange({ ...v, href: e.target.value })} placeholder="/browse" className="s-input" /></Field>
+      <Field label="Link"><input value={v.href} onChange={(e) => onChange({ ...v, href: e.target.value })} placeholder="/home" className="s-input" /></Field>
       {value && <button type="button" onClick={onRemove} className="text-[11px] text-s-red hover:underline">Remove</button>}
     </fieldset>
   )
@@ -169,7 +169,7 @@ function CtaFields({ block, set }: FP) {
   return (
     <>
       <Field label="Button text"><CopyInput value={block.text} onChange={(v) => set({ text: v })} /></Field>
-      <Field label="Link"><input value={block.href ?? ''} onChange={(e) => set({ href: e.target.value })} placeholder="/browse" className="s-input" /></Field>
+      <Field label="Link"><input value={block.href ?? ''} onChange={(e) => set({ href: e.target.value })} placeholder="/home" className="s-input" /></Field>
       <Field label="Style">
         <select value={block.style ?? 'primary'} onChange={(e) => set({ style: e.target.value as ButtonStyle })} className="s-select">
           <option value="primary">Primary</option><option value="secondary">Secondary (outlined)</option>

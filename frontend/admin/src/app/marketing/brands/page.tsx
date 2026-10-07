@@ -609,7 +609,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                   <input type="checkbox" checked={storefrontVisible} onChange={(e) => setStorefrontVisible(e.target.checked)} className="accent-primary" />
                   Show on the customer ordering page
                 </label>
-                <p className="text-[10px] text-white/35 mt-1">Uncheck to hide from /browse without disabling the brand entirely.</p>
+                <p className="text-[10px] text-white/35 mt-1">Uncheck to hide from the servd home page without disabling the brand entirely.</p>
               </Field>
               <Field label="Reservations">
                 <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">

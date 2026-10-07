@@ -547,7 +547,7 @@ function KitchensView({ b, look }: P<KitchensBlock>) {
           {b.title ? <Text style={heading(look, 26, { letterSpacing: -0.6 })}>{b.title}</Text> : null}
         </View>
         {b.showAllLink ? (
-          <TouchableOpacity onPress={() => onAction('/browse')} accessibilityRole="link">
+          <TouchableOpacity onPress={() => onAction('/home')} accessibilityRole="link">
             <Text style={copy(look, 14, { fontWeight: '700' })}>See all →</Text>
           </TouchableOpacity>
         ) : null}

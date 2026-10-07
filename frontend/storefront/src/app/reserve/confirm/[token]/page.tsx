@@ -73,7 +73,7 @@ export default function ReserveConfirmPage() {
             <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
               Sorry to miss you. Book again any time.
             </p>
-            <MagneticLink href="/browse" className="servd-btn-primary">Browse brands</MagneticLink>
+            <MagneticLink href="/home#kitchens" className="servd-btn-primary">See the kitchens</MagneticLink>
           </>
         )}
 

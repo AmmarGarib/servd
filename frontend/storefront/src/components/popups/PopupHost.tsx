@@ -17,7 +17,7 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? ''
 
 // First path segments that are servd routes, not a brand's /<concept>/… pages.
 const RESERVED = new Set([
-  'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'locations', 'login', 'order',
+  'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'home', 'locations', 'login', 'order',
   'orders', 'press', 'reserve', 'signup', 'pages', 'preview', 'checkout', 'api', 'waitlist',
 ])
 

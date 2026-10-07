@@ -41,7 +41,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
               Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.
             </p>
           </div>
-          <Link href="/browse" className="servd-btn-secondary" style={{ padding: '0.7rem 1.25rem', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
+          <Link href="/home#kitchens" className="servd-btn-secondary" style={{ padding: '0.7rem 1.25rem', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
             See all kitchens →
           </Link>
         </div>

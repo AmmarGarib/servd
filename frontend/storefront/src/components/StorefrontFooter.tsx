@@ -57,7 +57,7 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
             Hungry now?
             <span className="display-italic" style={{ color: 'var(--brand-accent)' }}> Let's go.</span>
           </h2>
-          <Link href="/browse" className="brand-pill">
+          <Link href="/home#kitchens" className="brand-pill">
             Order now <span style={{ opacity: 0.6 }}>→</span>
           </Link>
         </div>
@@ -130,7 +130,7 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
               Customer
             </h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
-              <li><Link href="/browse"  style={footerLinkStyle}>Browse all brands</Link></li>
+              <li><Link href="/home#kitchens" style={footerLinkStyle}>All kitchens</Link></li>
               <li><Link href="/account" style={footerLinkStyle}>My account</Link></li>
               <li><Link href="/orders"  style={footerLinkStyle}>Order history</Link></li>
               <li><Link href="/login"   style={footerLinkStyle}>Sign in</Link></li>

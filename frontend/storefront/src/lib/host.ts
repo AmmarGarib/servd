@@ -42,7 +42,7 @@ export function useBrandSlug(initial: string | null = null): string | null {
  *             served by an internal rewrite, so the browser's URL says nothing
  *             about it — and only the client knows after any navigation.
  *   the PATH  changes on every client-side navigation, and only SOME paths on
- *             a brand host are the microsite: /browse and /login on flipd.pk
+ *             a brand host are the microsite: /home and /login on flipd.pk
  *             are ordinary servd pages that keep their servd chrome.
  *
  * Testing `pathname.startsWith('/brand/')` — which is what the nav and the

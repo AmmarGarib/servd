@@ -260,7 +260,7 @@ export default function ConceptOrderPage() {
             <Link href={`/brand/${concept.slug}`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               ← {formatBrandName(concept.name)}
             </Link>
-            <Link href="/browse" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
+            <Link href="/home#kitchens" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               Other brands →
             </Link>
           </div>

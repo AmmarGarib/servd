@@ -463,8 +463,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 }
 
 function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBrandHost: boolean; accent: string }) {
-  const servdHome   = servdHref('/',       onBrandHost)
-  const servdBrowse = servdHref('/browse', onBrandHost)
+  const servdHome   = servdHref('/home',   onBrandHost)
+  const servdBrowse = servdHref('/home#kitchens', onBrandHost)
 
   // Operator-editable footer copy + socials (Admin → Storefront → Brand
   // Footers), stored as a SiteLayout `brand:<slug>:footer`. Defaults derive

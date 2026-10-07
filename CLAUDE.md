@@ -194,6 +194,16 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
   `frontend/storefront/src/lib/blocks.ts`, `frontend/admin/src/lib/blocks.ts`
   and `mobile/src/content/types.ts`.
 
+## servd home is /home (owner, 2026-10-07)
+
+The landing page and the old `/browse` brand picker were merged into ONE
+Apple-style page at **`servd.pk/home`** (`app/home/page.tsx` +
+`components/HomeClient.tsx`). `/` redirects there in the middleware (servd
+host only — brand hosts still rewrite `/` to their microsite); `/browse` and
+`/order` redirect in `next.config.js`. Search is the nav's `SearchSheet`
+(`openSearch()`), not a page. Link to `/home` or `/home#kitchens`, never
+`/browse`. The hero copy/media still come from `servd:hero`.
+
 ## Recent additions (2026-09-09)
 
 - **`stackd` (formerly `stax`) is a café and market, NOT a burger brand.**

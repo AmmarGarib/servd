@@ -90,7 +90,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
     { question: `Does ${formatBrandName(concept.name)} deliver?`,
       answer:    loc.acceptsReservations === false
         ? `Yes — order at /${slug} for delivery, pickup, or curbside.`
-        : `${formatBrandName(concept.name)} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
+        : `${formatBrandName(concept.name)} is primarily dine-in. For delivery from our sister kitchens, see servd.pk.` },
     { question: `What's the dress code?`,
       answer:    `Smart casual works everywhere. ${formatBrandName(concept.name) === 'Simmer' ? 'Simmer is a dimly-lit room; the dressier you are the more it suits the space.' : 'No formal requirement.'}` },
     { question: `Is there parking?`,

@@ -72,7 +72,17 @@ export async function middleware(req: NextRequest) {
 
   const host = req.headers.get('host') ?? ''
   const slug = await resolveBrandHost(host)
-  if (!slug) return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  if (!slug) {
+    // servd.pk → servd.pk/home, the one consumer landing page (owner,
+    // 2026-10-07). Done here, not in app/page.tsx: the root loading boundary
+    // streams the page, so a redirect() there arrives as a 200 + client hop.
+    if (req.nextUrl.pathname === '/') {
+      const home = req.nextUrl.clone()
+      home.pathname = '/home'
+      return setVisitorCookie(NextResponse.redirect(home, 307), newVisitorId)
+    }
+    return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  }
 
   const { pathname } = req.nextUrl
   if (!BRAND_REWRITE_PATHS.has(pathname)) return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
@@ -86,7 +96,7 @@ export async function middleware(req: NextRequest) {
   // header's own "hide on /brand/" rule saw "/" and rendered anyway — the page
   // came out with two stacked headers, the servd disc and wordmark sitting on
   // top of the brand's. Only the server knows a rewrite happened, so it has to
-  // say so. Set on the REWRITE branch only: /browse and /login on a brand host
+  // say so. Set on the REWRITE branch only: /home and /login on a brand host
   // are ordinary servd pages and still want the servd header.
   const headers = new Headers(req.headers)
   headers.set(BRAND_HOST_HEADER, slug)

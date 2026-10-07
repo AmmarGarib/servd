@@ -155,7 +155,7 @@ export default function AccountPage() {
       style={{ background: 'transparent' }}>
       <div className="text-5xl">⚠</div>
       <p className="text-sm" style={{ color: 'var(--servd-danger)' }}>{error || 'Account not found'}</p>
-      <Link href="/browse"
+      <Link href="/home#kitchens"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 4px 20px rgba(61,31,59,0.3)' }}>
         Browse brands
@@ -186,7 +186,7 @@ export default function AccountPage() {
       {/* Header */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center justify-between"
         style={{ borderBottom: '1px solid rgba(22,163,74,0.12)', background: 'rgba(240,253,244,0.96)', backdropFilter: 'blur(20px)' }}>
-        <Link href="/browse"
+        <Link href="/home#kitchens"
           className="flex items-center gap-1.5 text-sm font-semibold transition-colors"
           style={{ color: 'var(--servd-mute)' }}
           onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
@@ -196,7 +196,7 @@ export default function AccountPage() {
           </svg>
           Browse brands
         </Link>
-        <button onClick={() => { clearAuth(); router.replace('/browse') }}
+        <button onClick={() => { clearAuth(); router.replace('/home') }}
           className="text-xs font-bold transition-colors px-3 py-1.5 rounded-xl"
           style={{ color: 'var(--servd-mute)', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}
           onMouseEnter={e => { e.currentTarget.style.color = 'var(--servd-danger)'; e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
@@ -502,7 +502,7 @@ export default function AccountPage() {
                 <path d="M3 20h18"/>
               </svg>
               <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>No orders yet</p>
-              <Link href="/browse"
+              <Link href="/home#kitchens"
                 className="inline-block mt-3 text-sm font-bold transition-colors"
                 style={{ color: 'var(--servd-green-dark)' }}>
                 Browse brands →
@@ -1021,7 +1021,7 @@ function MyFavoritesSection({ token }: { token: string | null }) {
         {items.slice(0, 6).map((it) => (
           <Link
             key={it.menuItemId}
-            href={it.concept ? `/${it.concept.slug}` : '/browse'}
+            href={it.concept ? `/${it.concept.slug}` : '/home#kitchens'}
             className="rounded-xl p-3 text-left transition-all hover:scale-[1.01]"
             style={{ background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.05)' }}>
             <div className="text-[10px] font-bold uppercase tracking-wider"
