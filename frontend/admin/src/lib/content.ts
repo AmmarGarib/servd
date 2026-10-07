@@ -7,7 +7,7 @@
 import { api } from './api'
 import { newBlock, newId, type Block } from './blocks'
 
-export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http://localhost:3002'
+export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'https://servd.pk'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 

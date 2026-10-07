@@ -322,7 +322,7 @@ Karachi-based multi-brand F&B operator running three live consumer brands
 (Simmer, Stax, Flipd). The repo is a monorepo with:
 
 - `backend/` — Fastify + Prisma API
-- `frontend/storefront/` — Next.js consumer ordering site (`servd-app.garibsons.app`)
+- `frontend/storefront/` — Next.js consumer ordering site (`servd.pk`; brand sites `simmer.pk`, `stackd.pk`, `flipd.pk`)
 - `frontend/admin/` — Next.js operator UI (`servd-admin.garibsons.app`)
 - `tablet/` — Expo tablet app for in-restaurant ops
 - `mobile/` — Expo customer mobile app (not yet shipped to stores)
@@ -388,7 +388,8 @@ curl -X POST 'https://servd-deploy.garibsons.app/deploy?secret=...'
 
 | Surface | URL |
 |---|---|
-| Consumer storefront | https://servd-app.garibsons.app |
+| Consumer storefront (live, owner 2026-10-07) | https://servd.pk — brands at https://simmer.pk, https://stackd.pk, https://flipd.pk |
+| Old storefront tunnel host (do not hand out) | https://servd-app.garibsons.app |
 | Operator admin | https://servd-admin.garibsons.app |
 | API | https://servd-api.garibsons.app |
 | Deploy webhook | https://servd-deploy.garibsons.app/deploy?secret=... |

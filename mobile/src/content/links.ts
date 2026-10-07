@@ -6,7 +6,7 @@ import Constants from 'expo-constants'
 import { router, type Href } from 'expo-router'
 
 export const STOREFRONT_URL =
-  ((Constants.expoConfig?.extra?.storefrontUrl as string | undefined) ?? 'https://servd-app.garibsons.app').replace(/\/+$/, '')
+  ((Constants.expoConfig?.extra?.storefrontUrl as string | undefined) ?? 'https://servd.pk').replace(/\/+$/, '')
 
 // Top-level web routes that are NOT a brand slug.
 const WEB_ROOTS = new Set([

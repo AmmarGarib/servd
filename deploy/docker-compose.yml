@@ -34,7 +34,7 @@ services:
       ENABLE_WORKERS: "true"
       API_URL: "https://api.servd.garibsons.app"
       WEB_URL: "https://admin.servd.garibsons.app"
-      STOREFRONT_URL: "https://app.servd.garibsons.app"
+      STOREFRONT_URL: "https://servd.pk"
       # Row-level security enforcement. When "1", the Prisma extension at
       # src/lib/prisma.ts injects SET LOCAL app.tenant_ids / app.customer_id
       # on every request-scoped query, and the policies created by the

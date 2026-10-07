@@ -13,7 +13,8 @@ import { api } from '../../../lib/api'
 
 // The public link people are sent to. Production storefront on purpose: this
 // is what gets shared, so a dev STOREFRONT_URL (localhost) must never leak in.
-const WAITLIST_URL = 'https://servd-app.garibsons.app/waitlist'
+// The public servd domain (owner, 2026-10-07) — never a tunnel host.
+const WAITLIST_URL = 'https://servd.pk/waitlist'
 const PRESET_SOURCES = ['instagram', 'whatsapp', 'tiktok', 'facebook', 'flyer', 'qr', 'email', 'in_store']
 
 /** Same rule the API applies to ?src=: [a-z0-9_-]{1,40}. */

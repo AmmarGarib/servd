@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useAuthStore } from '../store/auth'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { STOREFRONT_URL } from '../lib/content'
 
 const FEATURES = [
   { icon: '🖥', title: 'Kitchen Display', desc: 'Real-time order routing to every station. No tickets, no misses.' },
@@ -13,7 +14,6 @@ const FEATURES = [
   { icon: '🏭', title: 'Inventory & Recipes', desc: 'Purchase orders, recipe costing, and stock alerts.' },
 ]
 
-const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http://localhost:3002'
 
 export default function LandingPage() {
   const user = useAuthStore((s) => s.user)

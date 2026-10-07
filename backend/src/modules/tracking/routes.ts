@@ -14,7 +14,7 @@
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 
-const SAFE_DEFAULT = process.env['STOREFRONT_URL'] ?? 'https://servd-app.garibsons.app'
+const SAFE_DEFAULT = process.env['STOREFRONT_URL'] ?? 'https://servd.pk'
 // servd.pk is the live storefront; links to it were being bounced to the
 // fallback because only garibsons.app was listed.
 const ALLOWED_SUFFIXES = ['garibsons.app', 'servd.pk', 'gsfoods.pk']

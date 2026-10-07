@@ -9,8 +9,8 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
+import { STOREFRONT_URL } from '../../lib/content'
 
-const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http://localhost:3002'
 
 export interface SiteLayoutListRow {
   id: string

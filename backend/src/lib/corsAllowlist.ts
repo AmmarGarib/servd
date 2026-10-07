@@ -42,6 +42,12 @@ const STATIC_FROM_ENV = [
 const CANONICAL_HOSTS = [
   'servd-admin.garibsons.app',
   'servd-app.garibsons.app',
+  // The live public domains (owner, 2026-10-07): servd.pk is the servd site
+  // and ordering system; each brand has its own .pk. www. is added below.
+  'servd.pk',
+  'simmer.pk',
+  'stackd.pk',
+  'flipd.pk',
 ]
 
 const BRAND_HOSTS = (process.env['BRAND_HOSTS'] ?? '')
