@@ -26,7 +26,7 @@
 //
 // Credentials come from the environment. Never put them in this file.
 
-const API = process.env.SERVD_API_URL ?? 'https://servd-api.garibsons.app'
+const API = process.env.SERVD_API_URL ?? 'https://api.servd.pk'
 const EMAIL = process.env.SERVD_EMAIL
 const PASSWORD = process.env.SERVD_PASSWORD
 const APPLY = process.argv.includes('--apply')

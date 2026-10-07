@@ -42,7 +42,7 @@ const TTL_MS = 30 * 60_000
 
 /** Where the reset form lives. Configurable because the admin host differs per environment. */
 function adminOrigin(): string {
-  return (process.env['ADMIN_ORIGIN'] ?? 'https://servd-admin.garibsons.app').replace(/\/+$/, '')
+  return (process.env['ADMIN_ORIGIN'] ?? 'https://admin.servd.pk').replace(/\/+$/, '')
 }
 
 export function hashToken(token: string): string {

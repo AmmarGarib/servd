@@ -14,10 +14,10 @@ Internet (HTTPS)
      ▼
 Cloudflare Tunnel  (cloudflared container, auto TLS)
      │
-     ├── api.garibsons.app    → api container  (Fastify, port 3001)
-     ├── admin.garibsons.app  → admin container (Next.js admin panel)
-     ├── app.garibsons.app    → storefront container (Next.js customer app)
-     └── deploy.garibsons.app → webhook server  (auto-redeploy from GitHub)
+     ├── api.servd.pk    → api container  (Fastify, port 3001)
+     ├── admin.servd.pk  → admin container (Next.js admin panel)
+     ├── servd.pk    → storefront container (Next.js customer app)
+     └── servd-deploy.garibsons.app → webhook server  (auto-redeploy from GitHub)
 
 Windows Docker Desktop
   ├── postgres  (local database)
@@ -71,7 +71,7 @@ Fill in:
 | Variable | What to put |
 |----------|-------------|
 | `DB_PASSWORD` | Any strong password, e.g. `Str0ng!Pass#2024` |
-| `PUBLIC_API_URL` | `https://api.garibsons.app` — your real domain |
+| `PUBLIC_API_URL` | `https://api.servd.pk` — your real domain |
 | `PUBLIC_WS_URL` | Same as `PUBLIC_API_URL` |
 | `CF_TUNNEL_TOKEN` | Get this in Step 3 |
 | `WEBHOOK_SECRET` | Any random string — keep it secret. Generate one: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
@@ -89,9 +89,9 @@ Minimum required fields (others are optional):
 |----------|---------------|
 | `JWT_SECRET` | Generate: `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"` |
 | `JWT_REFRESH_SECRET` | Generate another one the same way |
-| `API_URL` | `https://api.garibsons.app` |
-| `WEB_URL` | `https://admin.garibsons.app` |
-| `STOREFRONT_URL` | `https://app.garibsons.app` |
+| `API_URL` | `https://api.servd.pk` |
+| `WEB_URL` | `https://admin.servd.pk` |
+| `STOREFRONT_URL` | `https://servd.pk` |
 
 Payment/SMS/email fields can be left blank initially — those features just
 won't work until you fill them in. The server starts fine without them.
@@ -116,9 +116,9 @@ In the tunnel configuration, add these routes one by one:
 
 | Subdomain | Domain | Service type | URL |
 |-----------|--------|--------------|-----|
-| `api` | `garibsons.app` | HTTP | `api:3001` |
-| `admin` | `garibsons.app` | HTTP | `admin:3000` |
-| `app` | `garibsons.app` | HTTP | `storefront:3000` |
+| `api` | `servd.pk` | HTTP | `api:3001` |
+| `admin` | `servd.pk` | HTTP | `admin:3000` |
+| *(apex)* `servd.pk`, `simmer.pk`, `stackd.pk`, `flipd.pk` (+ `www.`) | | HTTP | `storefront:3000` |
 | `deploy` | `garibsons.app` | HTTP | `host.docker.internal:9000` |
 
 > The `deploy` route uses `host.docker.internal` because the webhook server
@@ -155,7 +155,7 @@ Server listening at http://0.0.0.0:3001
 
 ```powershell
 # API health (once CF tunnel is up)
-curl https://api.garibsons.app/health
+curl https://api.servd.pk/health
 
 # Or locally (API port is not exposed by default, but you can test directly)
 docker compose -f deploy\docker-compose.yml exec api wget -qO- http://localhost:3001/health
@@ -172,7 +172,7 @@ it runs `git pull` + `docker compose up --build` automatically.
 
 **Your deploy URL:**
 ```
-POST https://deploy.garibsons.app/deploy?secret=<your_WEBHOOK_SECRET>
+POST https://servd-deploy.garibsons.app/deploy?secret=<your_WEBHOOK_SECRET>
 ```
 
 Test it from PowerShell:

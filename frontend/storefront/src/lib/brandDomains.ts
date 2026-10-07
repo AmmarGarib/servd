@@ -15,12 +15,12 @@
 // The list is cached in memory for a minute (stale-while-revalidate), and a
 // failed refresh keeps the last good list — an API blip must not unbrand
 // every brand domain. Dev and preview hosts (<slug>.localhost,
-// <slug>.servd.app / .pk) resolve by pattern with no lookup at all.
+// <slug>.servd.pk) resolve by pattern with no lookup at all.
 
 export const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'admin', 'api', 'cdn', 'media'])
 
 // Hostnames that mean "this is the servd canonical domain, not a brand".
-export const SERVD_HOSTS = new Set(['servd.app', 'servd.pk', 'localhost'])
+export const SERVD_HOSTS = new Set(['servd.pk', 'localhost'])
 
 const HOSTS_TTL_MS = 60_000
 const HOSTS_TIMEOUT_MS = 2_500
@@ -129,7 +129,7 @@ export const BRAND_REWRITE_PATHS = new Set(['/', '/menu', '/about', '/visit'])
 // whole reason each brand owns a domain in the first place.
 //
 // Every canonical URL, the sitemap, robots.txt, the JSON-LD and the printed-QR
-// generator used to hardcode the tunnel host `servd-app.garibsons.app`, in nine
+// generator used to hardcode the tunnel host `servd.pk`, in nine
 // separate files. A brand page therefore told search engines it lived on
 // servd's domain, which is the opposite of the intent.
 

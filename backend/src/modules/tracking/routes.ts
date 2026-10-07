@@ -16,8 +16,8 @@ import { prisma } from '../../lib/prisma.js'
 
 const SAFE_DEFAULT = process.env['STOREFRONT_URL'] ?? 'https://servd.pk'
 // servd.pk is the live storefront; links to it were being bounced to the
-// fallback because only garibsons.app was listed.
-const ALLOWED_SUFFIXES = ['garibsons.app', 'servd.pk', 'gsfoods.pk']
+// fallback because only the old tunnel domain was listed.
+const ALLOWED_SUFFIXES = ['servd.pk', 'simmer.pk', 'stackd.pk', 'flipd.pk', 'gsfoods.pk']
 
 function safeTarget(u: string | undefined): string {
   if (!u) return SAFE_DEFAULT

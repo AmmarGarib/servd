@@ -323,7 +323,7 @@ Karachi-based multi-brand F&B operator running three live consumer brands
 
 - `backend/` — Fastify + Prisma API
 - `frontend/storefront/` — Next.js consumer ordering site (`servd.pk`; brand sites `simmer.pk`, `stackd.pk`, `flipd.pk`)
-- `frontend/admin/` — Next.js operator UI (`servd-admin.garibsons.app`)
+- `frontend/admin/` — Next.js operator UI (`admin.servd.pk`)
 - `tablet/` — Expo tablet app for in-restaurant ops
 - `mobile/` — Expo customer mobile app (not yet shipped to stores)
 - `packages/types/` — shared TypeScript types
@@ -363,8 +363,8 @@ Settings → Secrets and variables → Actions:
 | `DOCKERHUB_USERNAME` | Docker Hub username | `ammargarib` |
 | `DOCKERHUB_TOKEN` | Personal access token (NOT password) — generate at https://app.docker.com/settings/personal-access-tokens with Read/Write scope | `dckr_pat_xxxxx` |
 | `DEPLOY_WEBHOOK_URL` | Full deploy webhook URL including `?secret=` | `https://servd-deploy.garibsons.app/deploy?secret=23f4...` |
-| `PUBLIC_API_URL` | Public API hostname baked into client bundles | `https://servd-api.garibsons.app` |
-| `PUBLIC_WS_URL` | Public WebSocket URL | `wss://servd-api.garibsons.app` |
+| `PUBLIC_API_URL` | Public API hostname baked into client bundles | `https://api.servd.pk` |
+| `PUBLIC_WS_URL` | Public WebSocket URL | `wss://api.servd.pk` |
 | `SENTRY_DSN_STOREFRONT` | (optional) Sentry DSN for storefront | |
 | `SENTRY_DSN_ADMIN` | (optional) Sentry DSN for admin | |
 | `GOOGLE_MAPS_API_KEY` | (optional) Maps JavaScript API key — switches the admin location pin picker from OpenStreetMap to Google tiles. Public/build-time: restrict it to the admin origin in Google Cloud. Without it the picker still works (OSM tiles + paste-a-Maps-link resolver). | `AIza…` |
@@ -376,8 +376,8 @@ If CI is broken or you need to push out of band:
 ```bash
 docker login -u <username>                            # use a PAT, not password
 docker build -t ammargarib/servd:storefront \
-  --build-arg NEXT_PUBLIC_API_URL=https://servd-api.garibsons.app \
-  --build-arg NEXT_PUBLIC_WS_URL=wss://servd-api.garibsons.app \
+  --build-arg NEXT_PUBLIC_API_URL=https://api.servd.pk \
+  --build-arg NEXT_PUBLIC_WS_URL=wss://api.servd.pk \
   frontend/storefront/
 docker push ammargarib/servd:storefront
 # Then trigger the box to pull:
@@ -389,10 +389,9 @@ curl -X POST 'https://servd-deploy.garibsons.app/deploy?secret=...'
 | Surface | URL |
 |---|---|
 | Consumer storefront (live, owner 2026-10-07) | https://servd.pk — brands at https://simmer.pk, https://stackd.pk, https://flipd.pk |
-| Old storefront tunnel host (do not hand out) | https://servd-app.garibsons.app |
-| Operator admin | https://servd-admin.garibsons.app |
-| API | https://servd-api.garibsons.app |
-| Deploy webhook | https://servd-deploy.garibsons.app/deploy?secret=... |
+| Operator admin | https://admin.servd.pk |
+| API | https://api.servd.pk |
+| Deploy webhook (the only host still on the old domain) | https://servd-deploy.garibsons.app/deploy?secret=... |
 | Deploy health | https://servd-deploy.garibsons.app/health |
 
 ## Key conventions

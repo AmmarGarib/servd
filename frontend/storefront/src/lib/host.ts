@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import { resolveBrandHost, BRAND_REWRITE_PATHS } from './brandDomains'
 
 // Canonical servd host URL (no trailing slash). Used when navigating from a
-// brand-domain cart into the servd checkout. Set to e.g. https://servd.app in
+// brand-domain cart into the servd checkout. Set to e.g. https://servd.pk in
 // prod, http://localhost:3002 in dev. Empty when unset → callers fall back to
 // same-host navigation (the brand and servd code paths are otherwise identical
 // while running on a single host).

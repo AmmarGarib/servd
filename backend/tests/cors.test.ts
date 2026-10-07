@@ -18,7 +18,7 @@ import { describe, expect, test } from 'vitest'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 
-const ORIGIN = 'https://servd-admin.garibsons.app'
+const ORIGIN = 'https://admin.servd.pk'
 
 async function buildApp() {
   const app = Fastify()

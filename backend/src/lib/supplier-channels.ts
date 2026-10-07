@@ -282,7 +282,7 @@ async function sendEmailWithReplyTo(to: string, subject: string, html: string, r
     auth: { user: process.env['SMTP_USER'] ?? '', pass: process.env['SMTP_PASS'] ?? '' },
   })
   await transporter.sendMail({
-    from: `servd <${process.env['SMTP_FROM'] ?? 'noreply@servd.app'}>`,
+    from: `servd <${process.env['SMTP_FROM'] ?? 'contact@gsfoods.pk'}>`,
     to,
     subject,
     html,

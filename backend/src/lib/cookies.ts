@@ -8,7 +8,7 @@
 //
 // Scope: the cookie is set by, and sent to, the API host only (the admin never
 // reads it). So it's host-only — no Domain attribute, no cross-subdomain setup.
-// admin.garibsons.app → api.garibsons.app is SAME-SITE (same registrable
+// admin.servd.pk → api.servd.pk is SAME-SITE (same registrable
 // domain), so SameSite=Lax cookies are sent on those requests while still
 // blocking cross-site (CSRF) POSTs from other origins.
 

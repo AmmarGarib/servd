@@ -18,7 +18,7 @@ import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
 // Local development:
 //   * Browsers natively route *.localhost to 127.0.0.1 — no /etc/hosts edits.
 //   * Visit http://stackd.localhost:3002, http://flipd.localhost:3002, etc.
-//   * The wildcard rule auto-resolves any <slug>.localhost / <slug>.servd.app
+//   * The wildcard rule auto-resolves any <slug>.localhost / <slug>.servd.pk
 //     hostname without a code change.
 
 // Paths that, on a brand host, get rewritten under /brand/<slug>, live in

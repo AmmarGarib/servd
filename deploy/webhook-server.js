@@ -6,11 +6,11 @@
  * Start it with:  start-webhook.bat
  *
  * Trigger a redeploy (same as running deploy.bat):
- *   POST https://deploy.servd.garibsons.app/deploy?secret=<WEBHOOK_SECRET>
- *   POST https://deploy.servd.garibsons.app/deploy  + header X-Deploy-Secret: <secret>
+ *   POST https://servd-deploy.garibsons.app/deploy?secret=<WEBHOOK_SECRET>
+ *   POST https://servd-deploy.garibsons.app/deploy  + header X-Deploy-Secret: <secret>
  *
  * Check status:
- *   GET https://deploy.servd.garibsons.app/health
+ *   GET https://servd-deploy.garibsons.app/health
  */
 
 const http  = require('http');

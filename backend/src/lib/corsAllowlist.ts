@@ -3,7 +3,7 @@ import { isDomainOriginAllowed, describeDomainOrigins } from '../modules/domains
 //
 // Background:
 //   The storefront is a single Next.js app served at multiple hostnames:
-//   - The canonical servd domain (servd.pk / servd.app) → STOREFRONT_URL
+//   - The canonical servd domain (servd.pk) → STOREFRONT_URL
 //   - Each brand's custom domain (eatstax.com, bukharirice.com, etc.) — set up
 //     so the brand can build its own SEO authority and read as an independent
 //     restaurant. Middleware in storefront/src/middleware.ts rewrites a few
@@ -40,8 +40,8 @@ const STATIC_FROM_ENV = [
 // and are not going to change, so list them. The env vars still work and still
 // take effect; this is a floor, not a replacement.
 const CANONICAL_HOSTS = [
-  'servd-admin.garibsons.app',
-  'servd-app.garibsons.app',
+  'admin.servd.pk',
+  'servd.pk',
   // The live public domains (owner, 2026-10-07): servd.pk is the servd site
   // and ordering system; each brand has its own .pk. www. is added below.
   'servd.pk',
@@ -61,7 +61,7 @@ const RESOLVED_BRAND_HOSTS = BRAND_HOSTS
 
 // An Origin header is scheme + host + optional port, never a path and never a
 // trailing slash. WEB_URL, though, is written by hand into a .env file and is
-// routinely set to "https://servd-admin.garibsons.app/" — which would never
+// routinely set to "https://admin.servd.pk/" — which would never
 // match an incoming Origin. Normalise both sides so it does.
 function normaliseOrigin(value: string): string {
   return value.trim().replace(/\/+$/, '').toLowerCase()
@@ -77,11 +77,10 @@ const STATIC_ALLOWED = new Set<string>(
 
 // Catch-alls for dev and brand subdomains.
 //   *.localhost           → dev: stax.localhost:3002, simmer.localhost:3002
-//   *.servd.app           → prod subdomain pattern: stax.servd.app
 //   *.servd.pk            → same on the .pk apex
 const WILDCARD_PATTERNS: RegExp[] = [
   /^https?:\/\/[a-z0-9-]+\.localhost(:\d+)?$/i,
-  /^https:\/\/[a-z0-9-]+\.servd\.(app|pk)$/i,
+  /^https:\/\/[a-z0-9-]+\.servd\.pk$/i,
 ]
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
