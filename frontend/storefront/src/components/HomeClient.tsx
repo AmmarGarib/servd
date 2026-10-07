@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import type { HeroConfig } from '../lib/heroConfig'
 import type { Concept } from '../lib/concept'
 import { brandStory, formatBrandName } from '../lib/concept'
@@ -9,10 +9,11 @@ import { useScrollReveal } from './kinetic/motionHooks'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
 import { openSearch } from './SearchSheet'
+import { LandingScrollHero } from './LandingScrollHero'
 
 // servd home — the one consumer landing page, at /home (`/` and `/browse`
-// redirect here). Apple-style: big centred type, lots of air, a full-bleed
-// media panel, then one rounded tile per kitchen in that kitchen's own palette
+// redirect here). Apple-style: the scroll-expansion hero, big centred type,
+// lots of air, then one rounded tile per kitchen in that kitchen's own palette
 // with two actions ("Order" and "Learn more"). Search lives in the nav sheet.
 //
 // The hero text + media are operator-editable (Admin → Storefront, SiteLayout
@@ -42,7 +43,9 @@ export function HomeClient({ concepts, heroConfig }: Props) {
 
   return (
     <div ref={pageRef} className="sv-home">
-      <Hero config={heroConfig} />
+      {/* The scroll-expansion hero: the media grows to fill the screen as you
+          scroll, then the page releases (operator-editable: `servd:hero`). */}
+      <LandingScrollHero config={heroConfig} />
 
       {/* ── The kitchens ─────────────────────────────────────────────── */}
       <section id="kitchens" className="sv-section" style={{ scrollMarginTop: 52 }}>
@@ -154,46 +157,6 @@ export function HomeClient({ concepts, heroConfig }: Props) {
         </div>
       </section>
     </div>
-  )
-}
-
-function Hero({ config }: { config: HeroConfig }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  // Respect reduced motion: show the poster frame instead of playing.
-  useEffect(() => {
-    const v = videoRef.current
-    if (!v) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) v.pause()
-    else v.play().catch(() => { /* autoplay blocked — the poster stays */ })
-  }, [])
-
-  return (
-    <>
-      <section className="sv-hero sv-wrap">
-        <h1 className="sv-headline">{config.title}</h1>
-        {config.overview && <p className="sv-sub">{config.overview}</p>}
-        <div className="sv-ctas">
-          <a href="#kitchens" className="sv-btn sv-btn-primary">Order now</a>
-          <button type="button" className="sv-link" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0 }}
-            onClick={() => openSearch('')}>
-            Search the menus <Chevron />
-          </button>
-        </div>
-      </section>
-      {config.mediaSrc && (
-        <div className="sv-media">
-          <div className="sv-media-frame">
-            {config.mediaType === 'video' ? (
-              <video ref={videoRef} src={config.mediaSrc} poster={config.posterSrc}
-                muted loop playsInline preload="metadata" aria-hidden />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={config.mediaSrc} alt="" />
-            )}
-          </div>
-        </div>
-      )}
-    </>
   )
 }
 

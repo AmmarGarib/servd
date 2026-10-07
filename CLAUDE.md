@@ -200,7 +200,10 @@ The landing page and the old `/browse` brand picker were merged into ONE
 Apple-style page at **`servd.pk/home`** (`app/home/page.tsx` +
 `components/HomeClient.tsx`). `/` redirects there in the middleware (servd
 host only — brand hosts still rewrite `/` to their microsite); `/browse` and
-`/order` redirect in `next.config.js`. Search is the nav's `SearchSheet`
+`/order` redirect in `next.config.js`. The hero is the scroll-expansion
+hero (`LandingScrollHero` → `ui/scroll-expansion-hero.tsx`) — keep it; a jump
+far down the page (an `Order` link to `#kitchens`) finishes the expansion
+instead of snapping back to the top. Search is the nav's `SearchSheet`
 (`openSearch()`), not a page. Link to `/home` or `/home#kitchens`, never
 `/browse`. The hero copy/media still come from `servd:hero`.
 

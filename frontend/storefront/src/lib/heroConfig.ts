@@ -35,7 +35,7 @@ export const FOOD_HERO_DEFAULTS: HeroConfig = {
   textBlend: false,
   overview: 'Simmer, Stackd and Flipd. Order from one kitchen or all three, and check out once.',
   conclusion:
-    'Simmer, Stackd, Flipd — explore the brands, then join Insiders for rewards on every order.',
+    'Join Insiders for rewards on every order.',
 };
 
 interface RawBlock {
