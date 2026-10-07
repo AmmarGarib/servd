@@ -58,6 +58,7 @@ import { managementRoutes } from './modules/management/routes.js'
 import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
+import { waitlistRoutes } from './modules/waitlist/routes.js'
 import { fixedAssetRoutes } from './modules/fixedAssets/routes.js'
 import { receivableRoutes } from './modules/receivables/routes.js'
 import { foodSafetyRoutes } from './modules/foodSafety/routes.js'
@@ -325,6 +326,7 @@ async function build() {
       await api.register(foodSafetyRoutes, { prefix: '/food-safety' })
       await api.register(hrRoutes, { prefix: '/hr' })
       await api.register(crmRoutes, { prefix: '/crm' })
+      await api.register(waitlistRoutes, { prefix: '/waitlist' })
       await api.register(loyaltyRoutes, { prefix: '/loyalty' })
       await api.register(storefrontRoutes, { prefix: '/storefront' })
       await api.register(reviewRoutes, { prefix: '/reviews' })

@@ -56,6 +56,7 @@ export type OtpPurpose =
   | 'staff_login'      // the ONLY factor for floor staff, who have no password
   | 'staff_2fa'        // second factor on a staff sign-in
   | 'staff_2fa_enrol'  // proving a number before 2FA is switched on for it
+  | 'waitlist'         // joining the servd new-brand waitlist (modules/waitlist)
 
 /** Normalise a Pakistani-style phone number to digits-only (E.164 minus the +). */
 export function normalisePhone(raw: string): string {
@@ -101,6 +102,8 @@ function messageFor(purpose: OtpPurpose, code: string): string {
       return `${code} is your servd sign-in code. ${tail} If you did not just try to sign in, your password is known to someone else — change it now.`
     case 'staff_2fa_enrol':
       return `${code} is your servd code to turn on two-factor sign-in for this number. ${tail}`
+    case 'waitlist':
+      return `${code} is your servd code to join the new-brand waitlist. ${tail} If you did not ask to join, ignore this message.`
     default:
       return `Your servd verification code is ${code}. ${tail}`
   }

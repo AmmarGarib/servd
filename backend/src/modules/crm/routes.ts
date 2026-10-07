@@ -1,12 +1,13 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { sendEmail, whatsappNumber } from '../../lib/notify.js'
 import { sendText } from '../../lib/whatsapp.js'
 import { reachableAtCompany, companyAudience, unsubscribeUrl } from '../../lib/marketingAudience.js'
+import { WAITLIST_AUDIENCE, WAITLIST_AUDIENCE_NAME, waitlistMemberWhere, staffModules } from '../waitlist/service.js'
 import {
   computeAllSegments, getSegmentsWithMembers, companySegments, segmentMemberIds, isSegmentSlug, SEGMENT_DEFS,
 } from './segmentComputation.js'
@@ -45,6 +46,22 @@ function trackedText(body: string, sendId: string, apiBase: string): string {
   return body.replace(URL_RX, (m) => trackUrl(m, sendId, apiBase))
 }
 
+// A campaign's segment is a computed customer segment OR the servd-level
+// new-brand waitlist (modules/waitlist). Anything else is refused — an unknown
+// slug must never widen to "everyone".
+const isCampaignSegment = (slug: string): boolean => isSegmentSlug(slug) || slug === WAITLIST_AUDIENCE
+
+/**
+ * The waitlist is a servd-level list, not one company's customers, so sending
+ * to it (or creating a campaign for it) needs the CEO or the campaigns module.
+ */
+async function assertCanUseWaitlist(req: FastifyRequest): Promise<void> {
+  if (req.staffUser!.role === 'admin') return
+  if (!(await staffModules(req)).has('campaigns')) {
+    throw new ForbiddenError('Sending to the new-brand waitlist needs the Campaigns module. Ask the CEO to enable it.')
+  }
+}
+
 // Channels: email and WhatsApp only (owner decision 17 — Twilio SMS is gone).
 // A campaign targets one customer segment (./segmentComputation.ts) or, with
 // none, everyone reachable in the chosen brands.
@@ -63,7 +80,7 @@ const createCampaignSchema = z
     message: 'subject is required for email campaigns',
     path: ['subject'],
   })
-  .refine((d) => !d.segment || isSegmentSlug(d.segment), { message: 'unknown segment', path: ['segment'] })
+  .refine((d) => !d.segment || isCampaignSegment(d.segment), { message: 'unknown segment', path: ['segment'] })
 
 const safeCustomerSelect = {
   id: true, name: true, email: true, phone: true,
@@ -128,11 +145,12 @@ async function segmentPointerId(tenantId: string, slug: string): Promise<string>
 function campaignSegmentOf(segment: { filters: unknown } | null | undefined): string | null | 'legacy' {
   if (!segment) return null
   const f = segment.filters as { customerSegment?: unknown } | null
-  return typeof f?.customerSegment === 'string' && isSegmentSlug(f.customerSegment) ? f.customerSegment : 'legacy'
+  return typeof f?.customerSegment === 'string' && isCampaignSegment(f.customerSegment) ? f.customerSegment : 'legacy'
 }
 
 const segmentName = (slug: string | null | 'legacy'): string | null =>
-  slug === null ? null : slug === 'legacy' ? 'Old saved filter (retarget before sending)' : (SEGMENT_DEFS.find((d) => d.slug === slug)?.name ?? slug)
+  slug === null ? null : slug === 'legacy' ? 'Old saved filter (retarget before sending)'
+    : slug === WAITLIST_AUDIENCE ? WAITLIST_AUDIENCE_NAME : (SEGMENT_DEFS.find((d) => d.slug === slug)?.name ?? slug)
 
 /**
  * The recipient filter for a campaign — reachable at the owning company
@@ -149,10 +167,14 @@ async function campaignAudienceWhere(c: {
   segment?: string | null
   channel?: string | null
 }): Promise<Prisma.CustomerWhereInput> {
-  const and: Prisma.CustomerWhereInput[] = [await reachableAtCompany(c.tenantId), companyAudience(c.companyConcepts, c.conceptIds)]
+  // The waitlist audience is ONLY the list's members (servd-level, not limited
+  // to this company's customers), still under the sending company's
+  // reachability rules: marketing opt-out and that company's bans.
+  const audience = c.segment === WAITLIST_AUDIENCE ? waitlistMemberWhere() : companyAudience(c.companyConcepts, c.conceptIds)
+  const and: Prisma.CustomerWhereInput[] = [await reachableAtCompany(c.tenantId), audience]
   if (c.channel === 'email') and.push({ email: { not: null } })
   if (c.channel === 'sms' || c.channel === 'whatsapp') and.push({ phone: { not: null } })
-  if (c.segment) and.push({ id: { in: await segmentMemberIds(c.segment, [c.tenantId]) } })
+  if (c.segment && c.segment !== WAITLIST_AUDIENCE) and.push({ id: { in: await segmentMemberIds(c.segment, [c.tenantId]) } })
   return { AND: and }
 }
 
@@ -463,6 +485,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
     const conceptIds = [...new Set(body.conceptIds ?? [])]
     for (const id of conceptIds) await assertConceptOwned(req, id, 'create')
     const { segment, ...fields } = body
+    if (segment === WAITLIST_AUDIENCE) await assertCanUseWaitlist(req)
     const campaign = await prisma.campaign.create({
       data: {
         ...fields,
@@ -497,6 +520,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
       if (seg === 'legacy') {
         throw new AppError('LEGACY_SEGMENT', 'This campaign targets an old saved filter. Create it again with a segment from /crm/segments.', 422)
       }
+      if (seg === WAITLIST_AUDIENCE) await assertCanUseWaitlist(req)
       const where = await campaignAudienceWhere({
         tenantId: campaign.tenantId,
         companyConcepts: await companyConceptIds(campaign.tenantId),
@@ -584,13 +608,14 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const conceptIds = [...new Set((req.query.conceptIds ?? '').split(',').filter(Boolean))]
       for (const id of conceptIds) await assertConceptOwned(req, id, 'create')
       const segment = req.query.segment || null
-      if (segment && !isSegmentSlug(segment)) throw new NotFoundError('Segment', segment)
+      if (segment && !isCampaignSegment(segment)) throw new NotFoundError('Segment', segment)
       const companyConcepts = await companyConceptIds(own.tenantId)
       const where = await campaignAudienceWhere({ tenantId: own.tenantId, companyConcepts, conceptIds, segment, channel: req.query.channel ?? null })
+      const base = segment === WAITLIST_AUDIENCE ? waitlistMemberWhere() : companyAudience(companyConcepts, conceptIds)
       const [total, optedOut] = await Promise.all([
         prisma.customer.count({ where }),
         prisma.customer.count({
-          where: { AND: [{ deletedAt: null, marketingOptOutAt: { not: null } }, companyAudience(companyConcepts, conceptIds)] },
+          where: { AND: [{ deletedAt: null, marketingOptOutAt: { not: null } }, base] },
         }),
       ])
       return { total, optedOut }
