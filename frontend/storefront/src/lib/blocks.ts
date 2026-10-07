@@ -188,6 +188,7 @@ export type BlockType =
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
   | 'columns' | 'video' | 'signature' | 'signup_form' | 'waitlist_form'
+  | 'siteLogo'   // servd:header only — read by lib/siteLogo, never rendered as a block
 
 export type Block =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock

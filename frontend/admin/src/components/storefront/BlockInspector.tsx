@@ -20,7 +20,7 @@ interface Props {
 type Loose = Record<string, any>
 type FP = { block: Loose; set: (p: Partial<Block>) => void }
 
-const NO_STYLE = new Set(['signature', 'scrollHero', 'brandFooter'])
+const NO_STYLE = new Set(['signature', 'scrollHero', 'brandFooter', 'siteLogo'])
 
 export function BlockInspector({ block, onChange, fonts }: Props) {
   const set = (patch: Partial<Block>) => onChange({ ...block, ...patch })
@@ -52,6 +52,7 @@ export function BlockInspector({ block, onChange, fonts }: Props) {
           {block.type === 'signup_form'   && <SignupFields block={b} set={set} />}
           {block.type === 'waitlist_form' && <WaitlistFields block={b} set={set} />}
           {block.type === 'scrollHero'    && <ScrollHeroFields block={b} set={set} />}
+          {block.type === 'siteLogo'      && <SiteLogoFields block={b} set={set} />}
           {block.type === 'brandFooter'   && <BrandFooterFields block={b} set={set} />}
           {block.type === 'signature'     && (
             <p className="text-xs text-s-muted">
@@ -448,6 +449,31 @@ function ScrollHeroFields({ block, set }: FP) {
       <Field label="Intro (after the hero expands)"><CopyInput rows={3} value={block.overview} onChange={(v) => set({ overview: v })} /></Field>
       <Field label="Sub-intro"><CopyInput rows={2} value={block.conclusion} onChange={(v) => set({ conclusion: v })} /></Field>
       <Check checked={block.textBlend !== false} onChange={(v) => set({ textBlend: v })}>Blend the title against the background</Check>
+    </>
+  )
+}
+
+function SiteLogoFields({ block, set }: FP) {
+  return (
+    <>
+      <Field label="Logo image" hint="A PNG or SVG from the Library, ideally on a transparent background. Leave empty to show the servd text wordmark.">
+        <MediaInput kind="image" value={block.url} onChange={(v) => set({ url: v })} />
+      </Field>
+      <Field label="Height (px)" hint="How tall the logo sits in the top bar. 28 suits most logos; the bar is 52px.">
+        <input type="number" min={16} max={44} value={block.height ?? 28}
+          onChange={(e) => set({ height: Math.min(44, Math.max(16, Number(e.target.value) || 28)) })} className="s-input" />
+      </Field>
+      <Field label="Alt text" hint="Read out by screen readers.">
+        <input value={block.alt ?? 'servd'} onChange={(e) => set({ alt: e.target.value })} className="s-input" maxLength={120} />
+      </Field>
+      {block.url && (
+        <Field label="Preview" hint="As it sits in the storefront's top bar.">
+          <div className="flex h-[52px] items-center rounded-lg border border-s-border px-4" style={{ background: 'var(--bg)' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={block.url} alt="" style={{ height: block.height ?? 28, width: 'auto' }} />
+          </div>
+        </Field>
+      )}
     </>
   )
 }

@@ -33,6 +33,7 @@ type RightTab = 'element' | 'page' | 'rules'
 function defaultTitle(slug: string): string {
   if (slug === 'servd:home') return 'servd home'
   if (slug === 'servd:hero') return 'servd home: scroll hero'
+  if (slug === 'servd:header') return 'servd logo'
   if (slug.startsWith('brand:')) return slug.endsWith(':footer') ? `${slug.slice(6, -7)} footer` : slug.slice(6)
   if (slug.startsWith('page:')) return slug.slice(5)
   if (slug.startsWith('popup:')) return 'Pop-up'
@@ -109,6 +110,7 @@ export function Builder({ slug }: { slug: string }) {
 
   const allowedTypes = useMemo<BlockType[]>(() => {
     if (kind === 'hero') return ['scrollHero']
+    if (kind === 'header') return ['siteLogo']
     if (kind === 'footer') return ['brandFooter']
     return BLOCK_CATALOG
       .filter((s) => s.group !== 'Special' && (s.type !== 'signature' || hasSignature(slug)))

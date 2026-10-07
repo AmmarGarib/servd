@@ -6,6 +6,7 @@ import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { PopupHost } from '../components/popups/PopupHost'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
+import { fetchSiteLogo } from '../lib/siteLogo'
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
@@ -37,7 +38,7 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 }
 
-export default function StorefrontLayout({ children }: { children: React.ReactNode }) {
+export default async function StorefrontLayout({ children }: { children: React.ReactNode }) {
   // Which brand domain this request came in on, if any.
   //
   // A brand microsite carries its own header — the badge and its nav pill —
@@ -57,6 +58,8 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
   // app: it is a live ordering storefront, and the brand pages already opt out
   // of static rendering anyway (see the fetch-caching note in CLAUDE.md).
   const initialBrandSlug = headers().get(BRAND_HOST_HEADER)
+  // The servd logo (Admin → Storefront → servd logo); null → text wordmark.
+  const logo = await fetchSiteLogo()
   return (
     <html lang="en">
       <body>
@@ -69,7 +72,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         {/* Storefront pop-ups. Mounted above the header so a 'bar' pop-up sits
             in flow at the very top; modal / corner are fixed. */}
         <PopupHost initialBrandSlug={initialBrandSlug} />
-        <StorefrontNav initialBrandSlug={initialBrandSlug} />
+        <StorefrontNav initialBrandSlug={initialBrandSlug} logo={logo} />
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />

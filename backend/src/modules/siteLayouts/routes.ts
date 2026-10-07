@@ -223,7 +223,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     async (req) => {
       const q = z.object({
         status: z.enum(['pending', 'draft', 'scheduled', 'all']).default('all'),
-        kind:   z.enum(['page', 'hero', 'footer', 'popup']).optional(),
+        kind:   z.enum(['page', 'hero', 'header', 'footer', 'popup']).optional(),
       }).parse(req.query)
       const rows = await prisma.siteLayout.findMany({
         where: {
@@ -278,7 +278,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     const parsed = parseSlugOrThrow(slug)
     const body = z.object({
       title:    z.string().max(120).nullish(),
-      kind:     z.enum(['page', 'hero', 'footer', 'popup']).optional(), // derived from the slug; accepted for the contract
+      kind:     z.enum(['page', 'hero', 'header', 'footer', 'popup']).optional(), // derived from the slug; accepted for the contract
       blocks:   blocksSchema,
       settings: pageSettingsSchema.nullish(),
     }).parse(req.body)

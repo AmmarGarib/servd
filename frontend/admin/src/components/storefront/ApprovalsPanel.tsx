@@ -15,7 +15,7 @@ import { STOREFRONT_URL } from '../../lib/content'
 export interface SiteLayoutListRow {
   id: string
   slug: string
-  kind: 'page' | 'hero' | 'footer' | 'popup'
+  kind: 'page' | 'hero' | 'header' | 'footer' | 'popup'
   title: string | null
   tenantId: string | null
   draftStatus: 'none' | 'draft' | 'pending' | 'scheduled'
@@ -40,6 +40,7 @@ export function builderHref(slug: string): string {
 function describeSlug(slug: string): string {
   if (slug === 'servd:home') return 'servd home page'
   if (slug === 'servd:hero') return 'Landing hero'
+  if (slug === 'servd:header') return 'servd logo'
   const footer = slug.match(/^brand:(.+):footer$/)
   if (footer) return `${footer[1]} footer`
   if (slug.startsWith('brand:')) return `${slug.slice(6)} brand page`

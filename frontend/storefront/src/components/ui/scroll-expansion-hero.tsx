@@ -229,7 +229,9 @@ const ScrollExpandMedia = ({
             ) : (
               <div aria-hidden='true' className='w-screen h-screen' style={{ background: 'var(--servd-purple)' }} />
             )}
-            <div className='absolute inset-0 bg-black/10' />
+            {/* The dimming film is for photo backgrounds only — over the plain
+                token purple it turned #5a2156 into a muddier #511e4d. */}
+            {bgImageSrc && <div className='absolute inset-0 bg-black/10' />}
           </motion.div>
 
           <div className='container mx-auto flex flex-col items-center justify-start relative z-10'>

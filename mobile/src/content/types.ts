@@ -176,6 +176,7 @@ export type BlockType =
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
   | 'columns' | 'video' | 'signature' | 'signup_form' | 'waitlist_form'
+  | 'siteLogo'   // servd:header (the web nav logo) — not rendered in the app
 
 export type LeafBlock =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock

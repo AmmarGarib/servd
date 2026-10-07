@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
 import { SearchSheet, openSearch } from './SearchSheet'
+import type { SiteLogo } from '../lib/siteLogo'
 
 // The servd global nav — Apple-style glass bar: wordmark, section links
 // (desktop), then search, account and Order. Search opens the SearchSheet.
@@ -18,9 +19,11 @@ interface Props {
    * domain. Only correct for the document that was hard-loaded — see below.
    */
   initialBrandSlug?: string | null
+  /** The operator's logo (servd:header); null → the text wordmark. */
+  logo?: SiteLogo | null
 }
 
-export function StorefrontNav({ initialBrandSlug = null }: Props) {
+export function StorefrontNav({ initialBrandSlug = null, logo = null }: Props) {
   const pathname = usePathname() ?? '/'
   const token = useCustomerAuth((s) => s.token)
 
@@ -43,7 +46,10 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
       <nav aria-label="Primary" className="sv-nav">
         <div className="sv-nav-inner">
           <Link href="/home" aria-label="servd home" className="sv-nav-mark">
-            servd<span>.</span>
+            {logo
+              // eslint-disable-next-line @next/next/no-img-element
+              ? <img src={logo.url} alt={logo.alt} style={{ height: logo.height, width: 'auto', display: 'block' }} />
+              : <>servd<span>.</span></>}
           </Link>
 
           <div className="sv-nav-links">

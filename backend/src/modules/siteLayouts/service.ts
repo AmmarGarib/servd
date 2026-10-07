@@ -15,7 +15,7 @@ import { fontFamiliesUsed } from './schemas.js'
 
 const db = serviceClient
 
-export type LayoutKind = 'page' | 'hero' | 'footer' | 'popup'
+export type LayoutKind = 'page' | 'hero' | 'header' | 'footer' | 'popup'
 
 export type ParsedSlug =
   | { owner: 'shared'; kind: LayoutKind }
@@ -25,7 +25,8 @@ export type ParsedSlug =
 const PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 
 /**
- * servd:<page>                 → shared (servd:hero is the scroll hero)
+ * servd:<page>                 → shared (servd:hero is the scroll hero,
+ *                                servd:header the nav logo)
  * brand:<conceptSlug>[:footer] → the brand's company
  * page:<slug>                  → shared custom page
  * popup:<key>                  → shared, or the company of the brands it targets
@@ -33,7 +34,7 @@ const PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 export function parseSlug(slug: string): ParsedSlug | null {
   const [prefix, a, b, ...rest] = slug.split(':')
   if (rest.length > 0 || !a || !PART.test(a)) return null
-  if (prefix === 'servd' && b === undefined) return { owner: 'shared', kind: a === 'hero' ? 'hero' : 'page' }
+  if (prefix === 'servd' && b === undefined) return { owner: 'shared', kind: a === 'hero' ? 'hero' : a === 'header' ? 'header' : 'page' }
   if (prefix === 'page' && b === undefined) return { owner: 'shared', kind: 'page' }
   if (prefix === 'popup' && b === undefined) return { owner: 'popup', kind: 'popup' }
   if (prefix === 'brand') {

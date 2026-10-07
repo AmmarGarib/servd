@@ -14,7 +14,9 @@ import { z } from 'zod'
 export const BLOCK_TYPES = [
   'hero', 'cta_button', 'banner', 'text', 'image', 'gallery', 'stat_strip', 'voices',
   'kitchens', 'featured_menu', 'reviews', 'quote', 'spacer', 'divider',
-  'columns', 'video', 'signature', 'signup_form',
+  'columns', 'video', 'signature', 'signup_form', 'waitlist_form',
+  // single-block "kinds": servd:hero, brand:<slug>:footer, servd:header
+  'scrollHero', 'brandFooter', 'siteLogo',
 ] as const
 
 export const ANIMATIONS = ['none', 'fade-up', 'fade-in', 'slide-left', 'slide-right', 'zoom-in'] as const
@@ -46,6 +48,14 @@ const signupFields = z.object({
   subtitle: z.string().max(500).optional(),
 }).passthrough()
 
+// servd:header — the logo in the servd nav. Empty url → the text wordmark.
+// Only https or site-relative image URLs (a Library upload or /public file).
+const siteLogoFields = z.object({
+  url:    z.string().max(2000).regex(/^(https:\/\/|\/(?!\/))/, 'Logo must be an https:// or /path URL').or(z.literal('')).optional(),
+  alt:    z.string().max(120).optional(),
+  height: z.number().int().min(16).max(64).optional(),
+}).passthrough()
+
 function forward(ctx: z.RefinementCtx, r: z.SafeParseReturnType<unknown, unknown>) {
   if (r.success) return
   for (const issue of r.error.issues) {
@@ -56,6 +66,7 @@ function forward(ctx: z.RefinementCtx, r: z.SafeParseReturnType<unknown, unknown
 function checkLeaf(b: { type: string }, ctx: z.RefinementCtx) {
   if (b.type === 'video') forward(ctx, videoFields.safeParse(b))
   else if (b.type === 'signup_form') forward(ctx, signupFields.safeParse(b))
+  else if (b.type === 'siteLogo') forward(ctx, siteLogoFields.safeParse(b))
 }
 
 /** A block that may sit inside a column: anything but another `columns`. */

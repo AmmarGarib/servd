@@ -12,7 +12,8 @@ const { serviceClient: prisma } = await import('../src/lib/prisma.js')
 const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
 const { siteLayoutRoutes } = await import('../src/modules/siteLayouts/routes.js')
-const { publishDueLayouts } = await import('../src/modules/siteLayouts/service.js')
+const { publishDueLayouts, parseSlug } = await import('../src/modules/siteLayouts/service.js')
+const { blocksSchema } = await import('../src/modules/siteLayouts/schemas.js')
 
 const PREFIX = 'sfc'
 const STAMP = Date.now()
@@ -196,6 +197,27 @@ describe('draft → submit → approve', () => {
     expect(prev.json().blocks).toEqual(blocks('preview'))
     // The same token must not authenticate a staff route.
     expect((await call('GET', '/', { authorization: `Bearer ${token}` })).statusCode).toBe(401)
+  })
+})
+
+describe('single-block kinds (hero, footer, header logo)', () => {
+  it('saves the special blocks the editor produces', async () => {
+    for (const type of ['brandFooter', 'waitlist_form']) {
+      const r = await call('PUT', `/${enc(`brand:${slugA}:footer`)}/draft`, auth(marketer), { blocks: [{ id: 'b', type }] })
+      expect(r.statusCode, type).toBe(200)
+    }
+    expect(blocksSchema.safeParse([{ id: 'h', type: 'scrollHero', title: 'x' }]).success).toBe(true)
+  })
+
+  it('servd:header is the logo slot; the logo url must be https or a site path', () => {
+    expect(parseSlug('servd:header')).toEqual({ owner: 'shared', kind: 'header' })
+    const ok = (url: string) => blocksSchema.safeParse([{ id: 'l', type: 'siteLogo', url }]).success
+    expect(ok('https://cdn.servd.pk/logo.png')).toBe(true)
+    expect(ok('/brand/servd-logo.png')).toBe(true)
+    expect(ok('')).toBe(true)
+    expect(ok('javascript:alert(1)')).toBe(false)
+    expect(ok('//evil.example/logo.png')).toBe(false)
+    expect(ok('http://insecure.example/logo.png')).toBe(false)
   })
 })
 

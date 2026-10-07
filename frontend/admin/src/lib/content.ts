@@ -11,7 +11,7 @@ export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export type LayoutKind = 'page' | 'hero' | 'footer' | 'popup'
+export type LayoutKind = 'page' | 'hero' | 'header' | 'footer' | 'popup'
 export type DraftStatus = 'draft' | 'pending' | 'scheduled'
 export type Variant = 'a' | 'b'
 
@@ -128,6 +128,7 @@ export const previewUrl = (token: string) => `${STOREFRONT_URL}/preview/${token}
 
 export function kindForSlug(slug: string): LayoutKind {
   if (slug === 'servd:hero') return 'hero'
+  if (slug === 'servd:header') return 'header'
   if (slug.startsWith('popup:')) return 'popup'
   if (slug.startsWith('brand:') && slug.endsWith(':footer')) return 'footer'
   return 'page'
@@ -135,7 +136,7 @@ export function kindForSlug(slug: string): LayoutKind {
 
 /** Where the live page is on the storefront (null for pop-ups / fragments). */
 export function storefrontPath(slug: string): string | null {
-  if (slug === 'servd:home' || slug === 'servd:hero' || slug === 'servd:home-experience') return '/'
+  if (slug === 'servd:home' || slug === 'servd:hero' || slug === 'servd:header' || slug === 'servd:home-experience') return '/home'
   if (slug.startsWith('page:')) return `/pages/${slug.slice(5)}`
   if (slug.startsWith('brand:')) return `/brand/${slug.slice(6).replace(/:footer$/, '')}`
   return null
@@ -165,6 +166,7 @@ export const DEFAULT_POPUP_RULES = (popupKind: PopupRules['popupKind'] = 'offer'
 export function seedBlocks(slug: string, popupKind?: PopupRules['popupKind']): Block[] {
   const kind = kindForSlug(slug)
   if (kind === 'hero') return [{ ...newBlock('scrollHero'), id: 'hero' }]
+  if (kind === 'header') return [{ ...newBlock('siteLogo'), id: 'logo' }]
   if (kind === 'footer') return [{ ...newBlock('brandFooter'), id: 'footer' }]
   if (kind === 'popup') {
     if (popupKind === 'signup' || popupKind === 'login') {

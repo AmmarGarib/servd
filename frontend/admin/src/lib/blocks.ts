@@ -20,6 +20,8 @@ export type BlockType =
   | 'waitlist_form'
   // single-block "kinds": the servd:hero scroll hero and brand footers
   | 'scrollHero' | 'brandFooter'
+  // servd:header — the logo in the servd nav
+  | 'siteLogo'
 
 export interface BaseBlock {
   id: string
@@ -113,6 +115,8 @@ export const BLOCK_CATALOG: BlockSpec[] = [
     default: () => ({ type: 'scrollHero', mediaType: 'image', bgImageSrc: '', mediaSrc: '', posterSrc: '', title: '', date: '', scrollToExpand: 'Scroll to explore', textBlend: true, overview: '', conclusion: '' }) },
   { type: 'brandFooter',  label: 'Brand footer',   description: 'Footer copy and social links for a brand microsite', icon: 'FT', group: 'Special',
     default: () => ({ type: 'brandFooter', ctaEyebrow: '', ctaHeadline: '', ctaAccent: '', tagline: '', social: { instagram: '', tiktok: '', facebook: '', whatsapp: '' } }) },
+  { type: 'siteLogo',     label: 'Logo',           description: 'The servd logo at the top left of every servd page', icon: 'LG', group: 'Special',
+    default: () => ({ type: 'siteLogo', url: '', alt: 'servd', height: 28 }) },
 ]
 
 export function blockSpec(type: string): BlockSpec | undefined {
@@ -131,7 +135,7 @@ export function newBlock(type: BlockType): Block {
 
 /** Types that may sit inside a columns element. */
 export function canNest(type: string): boolean {
-  return type !== 'columns' && type !== 'signature' && type !== 'scrollHero' && type !== 'brandFooter'
+  return type !== 'columns' && type !== 'signature' && type !== 'scrollHero' && type !== 'brandFooter' && type !== 'siteLogo'
 }
 
 /** The children of a columns element (gallery also has a numeric `columns`). */
@@ -178,6 +182,7 @@ export function blockSummary(block: Block): string {
     case 'waitlist_form': return s(block.title, 'New-brand waitlist')
     case 'scrollHero':    return s(block.title, '(food placeholders)')
     case 'brandFooter':   return s(block.tagline, s(block.ctaHeadline, '(brand defaults)'))
+    case 'siteLogo':      return block.url ? 'Logo image' : '(text wordmark until a logo is picked)'
     default:              return ''
   }
 }

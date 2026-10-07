@@ -65,6 +65,7 @@ export function PagesPanel() {
   const bySlug = new Map(rows.map((r) => [r.slug, r]))
 
   const servd: Entry[] = [
+    { slug: 'servd:header', label: 'servd logo', hint: 'top left of every servd page' },
     { slug: 'servd:home', label: 'servd home' },
     { slug: 'servd:hero', label: 'servd home: scroll hero', hint: 'the expanding hero at the top' },
     { slug: 'servd:home-experience', label: 'servd home: food imagery', hint: 'photos for the 3D scroll band' },

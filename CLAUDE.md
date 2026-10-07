@@ -175,6 +175,7 @@ read), the Content editor (`/content`), `/storefront-hero`,
 display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
 
 - Everything is a `SiteLayout` row keyed by slug: `servd:home`, `servd:hero`,
+  `servd:header` (the nav logo: one `siteLogo` block; empty → text wordmark),
   `brand:<slug>`, `brand:<slug>:footer`, `page:<slug>` (served at
   `/pages/<slug>`), `popup:<key>`. `blocks`/`settings` are LIVE;
   `draftBlocks`/`draftSettings` are the working copy.
