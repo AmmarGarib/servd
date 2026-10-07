@@ -15,8 +15,8 @@ const nextConfig = {
   // codes, table tents, old posts and anything already shared point at the old
   // paths, and those keep working — permanently, because the printed ones can't
   // be reissued. Ordering, the microsite, the menu and reservations are all
-  // covered. Note eatstax.com is untouched: it is a real registered domain and
-  // still resolves to this brand.
+  // covered. (The old eatstax.com domain was retired 2026-10-07; Stackd lives
+  // at stackd.pk.)
   async redirects() {
     return [
       { source: '/stax',              destination: '/stackd',              permanent: true },

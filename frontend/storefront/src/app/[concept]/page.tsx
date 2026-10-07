@@ -375,7 +375,7 @@ export default function ConceptOrderPage() {
           accent={accent}
           fmt={fmt}
           onCheckout={() => {
-            // On a brand custom domain (eatstax.com, stackd.localhost:3002…),
+            // On a brand custom domain (stackd.pk, stackd.localhost:3002…),
             // hand the cart off to the canonical servd checkout via a URL
             // token so the user can be cross-sold items from other GS Foods
             // brands. On the servd host itself, fall through to the local

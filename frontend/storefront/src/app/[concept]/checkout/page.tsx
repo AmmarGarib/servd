@@ -114,7 +114,7 @@ export default function CheckoutPage() {
   }, [token, slug, router])
 
   // Cross-domain handoff: when a user builds a cart on a brand custom domain
-  // (eatstax.com, stackd.localhost:3002…) and clicks checkout, the brand site
+  // (stackd.pk, stackd.localhost:3002…) and clicks checkout, the brand site
   // appends the cart as a base64url-encoded token. Hydrate on mount, then
   // strip the param so a refresh doesn't re-hydrate stale data.
   useEffect(() => {

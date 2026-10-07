@@ -52,7 +52,7 @@ A 4-part hospitality OS:
           Cloudflare R2 (cloud, free tier)
 ```
 
-**Brand custom domains** (`eatstax.com`, `eatsimmer.com`, etc.) are also routed through the storefront container — same Next.js app, middleware rewrites a few paths under `/brand/<slug>/*`. CORS allowlist already includes them.
+**Brand custom domains** (`stackd.pk`, `simmer.pk`, `flipd.pk`) are also routed through the storefront container — same Next.js app, middleware rewrites a few paths under `/brand/<slug>/*`. CORS allowlist already includes them.
 
 ---
 

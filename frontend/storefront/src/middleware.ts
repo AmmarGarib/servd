@@ -4,7 +4,7 @@ import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
 
 // Host-based brand routing.
 //
-// Each GS Foods brand owns a custom domain (eatstax.com, eatflipd.com, …) so
+// Each GS Foods brand owns a custom domain (stackd.pk, simmer.pk, flipd.pk) so
 // the brand can build its own SEO authority and read as a real independent
 // restaurant in an Instagram bio. The whole storefront is one Next.js app —
 // this middleware reads the Host header and internally rewrites brand-host

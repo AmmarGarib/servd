@@ -194,7 +194,7 @@ async function build() {
   })
 
   // CORS allowlist lives in lib/corsAllowlist.ts — handles the canonical
-  // servd hosts AND each brand's custom domain (eatstax.com, bukharirice.com,
+  // servd hosts AND each brand's custom domain (stackd.pk, simmer.pk,
   // etc.) AND the *.localhost / *.servd.{app,pk} wildcard patterns. New brand
   // domains: edit BRAND_HOSTS env (comma-separated), no code change needed.
   // Global brand filter — must be registered before the routes it applies to.

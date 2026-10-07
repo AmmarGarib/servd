@@ -227,8 +227,9 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
   font) are design, not running text — leave them as designed unless the
   owner says otherwise. `/stax*` paths redirect permanently.
   **Not renamed:** `stax-padel` (separate padel business, and it IS a burger
-  concept) and the registered domain `eatstax.com` (which now maps to the
-  `stackd` slug).
+  concept). The old `eatstax.com` / `eatsimmer.com` / `eatflipd.com` domains
+  are retired (owner, 2026-10-07; migration `20261007120000`) — the brands
+  live on `stackd.pk`, `simmer.pk`, `flipd.pk`.
 
 - **Staff 2FA over WhatsApp OTP.** `POST /auth/login` returns
   `{ twoFactorRequired, challengeToken, phoneHint }` instead of a session when

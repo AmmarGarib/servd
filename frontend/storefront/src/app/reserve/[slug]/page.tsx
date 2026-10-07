@@ -56,7 +56,7 @@ export default function ReservePage() {
   const { slug } = useParams<{ slug: string }>()
   const router = useRouter()
   const brandHost = useBrandSlug()
-  // On a brand custom domain (e.g. eatstax.com), middleware rewrites `/` to
+  // On a brand custom domain (e.g. stackd.pk), middleware rewrites `/` to
   // `/brand/<slug>` — so "back to brand" should send the user to `/`. On the
   // canonical servd host, we want them on the explicit `/brand/<slug>` page.
   // brandHost is null until the client mounts; SSR pass treats it as servd.

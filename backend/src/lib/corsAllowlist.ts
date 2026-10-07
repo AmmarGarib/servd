@@ -4,7 +4,7 @@ import { isDomainOriginAllowed, describeDomainOrigins } from '../modules/domains
 // Background:
 //   The storefront is a single Next.js app served at multiple hostnames:
 //   - The canonical servd domain (servd.pk) → STOREFRONT_URL
-//   - Each brand's custom domain (eatstax.com, bukharirice.com, etc.) — set up
+//   - Each brand's custom domain (stackd.pk, simmer.pk, flipd.pk) — set up
 //     so the brand can build its own SEO authority and read as an independent
 //     restaurant. Middleware in storefront/src/middleware.ts rewrites a few
 //     paths into /brand/<slug> on those hosts; everything else passes through.
@@ -17,7 +17,7 @@ import { isDomainOriginAllowed, describeDomainOrigins } from '../modules/domains
 // Configure brand hosts via env so adding a new brand domain is one env-var
 // edit, no redeploy of the allowlist code needed:
 //
-//   BRAND_HOSTS=eatstax.com,eatflipd.com,bukharirice.com,...
+//   BRAND_HOSTS=stackd.localhost,simmer.localhost,...
 //
 // We also accept any *.localhost (dev) and any *.servd.{app,pk} (per-brand
 // subdomain pattern) without listing each one — wildcard regexes catch them.
