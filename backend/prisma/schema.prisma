@@ -266,6 +266,7 @@ model Concept {
   // doesn't need a code change to fix a wrong number on Google.
   phone           String? // public dial number, E.164 preferred (+923001234567)
   whatsapp        String? // guest-facing WhatsApp number, digits only (923001234567)
+  email           String? // guest-facing contact email (owner, 2026-10-07: <brand>@gsfoods.pk)
   address         String? // street address line
   addressLocality String? // neighbourhood / area ("Bukhari Commercial, DHA Phase 6")
 
