@@ -21,7 +21,7 @@ import { addressLine, filled, isPublishableLocation, type BrandLocation } from '
 import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../../lib/blocks'
-import { asSentence, fitSentences } from '../../../lib/liveConcepts'
+import { asSentence, fetchLiveConcepts, fitSentences, isServdCompanyBrand } from '../../../lib/liveConcepts'
 import { ManagedPage } from '../../../sections/ManagedPage'
 import { fillLocation, findLocation } from '../../../sections/servd/location'
 
@@ -65,7 +65,7 @@ export default async function LocationPage({ params }: Params) {
   const { loc: locSlug } = await Promise.resolve(params as Promise<{ loc: string }>)
   // locationSlug first, then the concept slug, then a retired slug's brand
   // (see findLocation) — the same lookup the page's sections make.
-  const brand = await findLocation(locSlug)
+  const [brand, live] = await Promise.all([findLocation(locSlug), fetchLiveConcepts()])
   if (!brand) notFound()
   // An alias is the same page: send it (308) to the one canonical URL.
   if (locSlug !== brand.locationSlug) permanentRedirect(`/locations/${brand.locationSlug}`)
@@ -73,7 +73,7 @@ export default async function LocationPage({ params }: Params) {
   const schemaGraph = [
     // The brand's own description and hours (restaurantSchema's defaults),
     // so this node matches the one on the brand's domain and /home.
-    restaurantSchema({ loc: brand }),
+    restaurantSchema({ loc: brand, ownedByServd: isServdCompanyBrand(brand.slug, live) }),
     breadcrumbSchema([
       { name: 'servd',                            url: `${SERVD_ORIGIN}/home` },
       { name: brand.name,                         url: brandCanonical(brand.slug) },

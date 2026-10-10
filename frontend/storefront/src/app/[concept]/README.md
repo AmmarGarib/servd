@@ -28,6 +28,7 @@ Storefront route: **/[concept]** — the per-brand ordering screen (`/stackd`,
 Neither has a slug gate: a basket or an open tracker link keeps working when
 the API blinks or the owner hides the brand mid-service.
 
-`/<concept>/menu` and `/<concept>/order` are no longer pages. For the three
-GS brands (`stackd`, `simmer`, `flipd`) `next.config.js` 308s them to
-`/<concept>`; for any other slug they return 404.
+`/<concept>/menu` and `/<concept>/order` are no longer pages: they 308 to
+`/<concept>` for every brand (the middleware; `next.config.js` does the three
+GS brands and the legacy `/stax` paths in the same single hop, www included).
+An unknown slug lands on `/<slug>`, which 404s.

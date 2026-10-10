@@ -19,7 +19,8 @@ import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
 //      its canonical origin in BRAND_ORIGIN there.
 //   3. Add the domain in the hosting provider / tunnel so SSL is issued.
 //
-// Redirects done here: servd.pk/ → /home; on a brand domain,
+// Redirects done here: servd.pk/ → /home; /<brand>/menu and /<brand>/order →
+// /<brand> for any brand; on a brand domain,
 // /brand/<own-slug>[/menu|…] → the brand-domain path (/, /menu, …); and
 // www.<domain>/brand/… → <domain>, settled the same way. All 308 (permanent),
 // but only for a host positively placed — servd's own, or a brand by the
@@ -94,6 +95,25 @@ function brandSelfPath(pathname: string, slug: string): string | null {
   return isBrandRewritePath(tail) ? tail : null
 }
 
+/** The app's own top-level routes: /<one of these>/menu is not a brand's. */
+const TOP_LEVEL_ROUTES = new Set([
+  'account', 'api', 'auth', 'brand', 'group-order', 'home', 'locations', 'login',
+  'orders', 'pages', 'press', 'preview', 'reserve', 'signup', 'waitlist',
+])
+
+/**
+ * /<brand>/menu and /<brand>/order → /<brand>: the menu IS the ordering
+ * screen, and those two were only ever hops to it. For EVERY brand — another
+ * company's, or one added in admin tomorrow — not just the bundled three
+ * (next.config.js sends those, and the legacy /stax ones, in the same single
+ * hop, www included). An unknown slug lands on /<slug>, which 404s.
+ */
+function orderingHop(pathname: string): string | null {
+  const m = /^\/([a-z0-9-]+)\/(?:menu|order)\/?$/i.exec(pathname)
+  if (!m?.[1] || TOP_LEVEL_ROUTES.has(m[1].toLowerCase())) return null
+  return `/${m[1]}`
+}
+
 /** A Host header without port, trailing dot or case: "stackd.pk". */
 function bareHost(host: string): string {
   return (host.split(':')[0] ?? '').trim().toLowerCase().replace(/\.$/, '')
@@ -125,6 +145,8 @@ function isServdHost(bare: string): boolean {
  * failure must never be able to do that to a brand domain's home page.
  */
 function settle(pathname: string, slug: string | null, servd: boolean): { path: string; status: 307 | 308 } {
+  const hop = orderingHop(pathname)
+  if (hop) return { path: hop, status: 308 }
   if (slug) return { path: brandSelfPath(pathname, slug) ?? pathname, status: 308 }
   if (pathname === '/') return { path: '/home', status: servd ? 308 : 307 }
   return { path: pathname, status: 308 }

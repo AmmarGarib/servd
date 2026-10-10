@@ -2,8 +2,9 @@ import type { MetadataRoute } from 'next'
 import { headers } from 'next/headers'
 
 import { BRAND_ORIGIN, SERVD_ORIGIN, brandCanonical, hostBrand } from '../lib/brandDomains'
-import { fetchBrandLocations, isPublishableLocation, type BrandLocation } from '../lib/brandLocations'
+import { isPublishableLocation, locationFromConcept, type BrandLocation } from '../lib/brandLocations'
 import { fetchLivePages } from '../lib/blocks'
+import { conceptsOrFallback, fetchConceptList } from '../lib/liveConcepts'
 
 // sitemap.xml, per host. A sitemap may only list URLs on its own host — a
 // stackd.pk Search Console property rejects anything else as "URL not
@@ -20,16 +21,18 @@ import { fetchLivePages } from '../lib/blocks'
 //
 // Brands come from the live Concept rows and pages from the published
 // SiteLayouts, so a brand or page added in admin is in the sitemap on the next
-// request. Never listed: redirects (servd.pk/ → /home), placeholder locations,
-// drafts, and the account / checkout / order-tracker URLs.
+// request — and a brand hidden or deactivated in admin drops out of it, the
+// same answer the ordering and booking routes give (they 404 it; see
+// lookupConcept in lib/liveConcepts). Only when the API doesn't answer do the
+// bundled brands stand in. Never listed: redirects (servd.pk/ → /home),
+// placeholder locations, drafts, and the account / checkout / order-tracker
+// URLs.
 //
 // lastModified is the page's real publish time (SiteLayout.publishedAt), and
 // is left out when a page has never been published — a made-up date (the old
 // "now at boot", identical on every URL) teaches Google to ignore the field.
 // changeFrequency and priority are hints Google ignores; kept for other
 // crawlers.
-
-const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'
 
@@ -114,11 +117,12 @@ function servdEntries(brands: BrandLocation[], published: Map<string, string>, l
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const host = headers().get('host') ?? ''
-  const [hostSlug, brandMap, pages] = await Promise.all([
+  const [hostSlug, list, pages] = await Promise.all([
     hostBrand(host),
-    fetchBrandLocations(API_URL),
+    fetchConceptList(),
     fetchLivePages(),
   ])
+  const brands = conceptsOrFallback(list ?? []).map((c) => locationFromConcept(c))
 
   const published = new Map<string, string>()
   for (const p of pages) if (p.publishedAt) published.set(p.slug, p.publishedAt)
@@ -129,7 +133,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // on servd, so it gets servd's sitemap.)
   const entries = hostSlug && hasOwnDomain(hostSlug)
     ? brandEntries(hostSlug, published, livePages)
-    : servdEntries(Object.values(brandMap), published, livePages)
+    : servdEntries(brands, published, livePages)
 
   // One entry per URL.
   const seen = new Set<string>()

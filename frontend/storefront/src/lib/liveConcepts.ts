@@ -61,6 +61,20 @@ export function findConcept(slug: string, live: Concept[]): Concept | null {
   return live.find((c) => c.slug === slug) ?? fallbackConcept(slug)
 }
 
+/**
+ * True when the brand belongs to the company that runs servd (GS Foods): a
+ * bundled brand, or a live brand of the same company (tenantId) as one. The
+ * storefront lists every company's brands, so anything that CLAIMS a relation
+ * to servd — the JSON-LD parentOrganization / publisher — asks this first
+ * (CLAUDE.md: claims that brands are related must filter on tenantId).
+ */
+export function isServdCompanyBrand(slug: string, live: Concept[]): boolean {
+  if (fallbackConcept(slug)) return true
+  const tenantId = live.find((c) => c.slug === slug)?.tenantId
+  if (!tenantId) return false
+  return live.some((c) => c.tenantId === tenantId && fallbackConcept(c.slug) !== null)
+}
+
 /** fetchLiveConcepts + findConcept in one call (layouts, generateMetadata). */
 export async function resolveConcept(slug: string): Promise<Concept | null> {
   return findConcept(slug, await fetchLiveConcepts())

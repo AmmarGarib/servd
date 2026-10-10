@@ -2,7 +2,7 @@
   "name": "servd",
   "short_name": "servd",
   "description": "One app, every GS Foods kitchen.",
-  "start_url": "/home",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

@@ -15,7 +15,7 @@
 //     @order                     the brand's ordering page
 //     @book                      the reservation page — hidden when the brand
 //                                does not take reservations
-//     @location                  the brand's servd location page
+//     @location                  the brand's servd location page (once it has a real address)
 //     @whatsapp @email @phone    the brand's contact (Admin → Brands) —
 //                                hidden when not set
 //
@@ -26,7 +26,7 @@
 // microsite pages are /brand/<slug>/….
 
 import { formatBrandName, typeLabel } from '../../lib/concept'
-import { filled, locationFromConcept, whatsappLink } from '../../lib/brandLocations'
+import { filled, isPublishableLocation, locationFromConcept, whatsappLink } from '../../lib/brandLocations'
 import { BRAND_ORIGIN, SERVD_LINK_ORIGIN, brandCanonical, isBrandRewritePath } from '../../lib/brandDomains'
 import type { SectionContext } from '../types'
 import { safeHref, str } from '../safe'
@@ -126,8 +126,11 @@ export function brandHref(
       case '@visitpage': return page('visit')
       case '@order':     return servd(`/${c.slug}`)
       case '@book':      return c.reservationsEnabled !== false ? servd(`/reserve/${c.slug}`) : null
-      case '@location':  return servd(`/locations/${loc.locationSlug}`)
-      case '@whatsapp':  return loc.whatsapp ? { href: whatsappLink(loc), external: true } : null
+      // Only once the kitchen has a real address: until then its /locations
+      // page is a noindexed placeholder (app/locations/[loc]).
+      case '@location':  return isPublishableLocation(loc) ? servd(`/locations/${loc.locationSlug}`) : null
+      // Never the placeholder number: wa.me to it messages a stranger.
+      case '@whatsapp':  return filled(loc.whatsapp) ? { href: whatsappLink(loc), external: true } : null
       case '@email':     return loc.email ? { href: `mailto:${loc.email}`, external: false } : null
       case '@phone':     return c.phone ? { href: `tel:${c.phone}`, external: false } : null
       default:           return null

@@ -9,7 +9,7 @@ import type { Metadata } from 'next'
 import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo, type Block, type SiteLayoutRead } from '../../lib/blocks'
 import { formatBrandName } from '../../lib/concept'
-import { organizationSchema, websiteSchema, restaurantId, jsonLdScript } from '../../lib/jsonLd'
+import { organizationSchema, websiteSchema, jsonLdScript } from '../../lib/jsonLd'
 import { conceptsOrFallback, fetchLiveConcepts, inBrandOrder, joinNames } from '../../lib/liveConcepts'
 import { mergeFields } from '../../sections/catalog'
 import { ManagedPage } from '../../sections/ManagedPage'
@@ -73,9 +73,9 @@ export default async function HomePage() {
   const brands = inBrandOrder(conceptsOrFallback(live))
 
   // JSON-LD: Organization (servd / GS Foods) + WebSite (search box) + the
-  // kitchens as an ItemList of Restaurant REFERENCES. Each brand's full
-  // Restaurant node lives on its own domain (same @id); repeating it here
-  // only let two copies of one entity drift apart.
+  // kitchens as an ItemList of links to their own sites. Each brand's full
+  // Restaurant node lives on its own domain; repeating it here only let two
+  // copies of one entity drift apart.
   const schema = [
     organizationSchema({
       name:    'servd',
@@ -91,15 +91,14 @@ export default async function HomePage() {
       '@context': 'https://schema.org',
       '@type':    'ItemList',
       name:       'Kitchens on servd',
+      // The summary-page form: each entry is the brand's own site, where its
+      // full Restaurant node lives. A typed Restaurant item here would be
+      // validated as a restaurant listing in its own right (address and all).
       itemListElement: brands.map((c, i) => ({
         '@type':  'ListItem',
         position: i + 1,
-        item: {
-          '@type': 'Restaurant',
-          '@id':   restaurantId(c.slug),
-          name:    formatBrandName(c.name),
-          url:     brandCanonical(c.slug),
-        },
+        name:     formatBrandName(c.name),
+        url:      brandCanonical(c.slug),
       })),
     },
   ]

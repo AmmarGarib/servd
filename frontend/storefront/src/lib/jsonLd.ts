@@ -63,7 +63,7 @@ export function organizationSchema(o: OrgGraphInput): Record<string, unknown> {
  * Google sitelinks search box; /home?q= opens the search sheet). A brand site
  * passes its own name + url and gets no SearchAction — it has no site search.
  */
-export function websiteSchema(opts: { name?: string; url?: string } = {}): Record<string, unknown> {
+export function websiteSchema(opts: { name?: string; url?: string; ownedByServd?: boolean } = {}): Record<string, unknown> {
   const isServd = !opts.url
   const url = opts.url ?? `${SERVD_ORIGIN}/home`
   const origin = url.replace(/\/home$/, '').replace(/\/+$/, '')
@@ -74,7 +74,9 @@ export function websiteSchema(opts: { name?: string; url?: string } = {}): Recor
     name:       opts.name ?? 'servd',
     url,
     inLanguage: 'en',
-    publisher:  { '@id': ORG_ID },
+    // A brand site names servd's company as publisher only when it is one of
+    // its brands (isServdCompanyBrand) — never another company's.
+    ...((isServd || opts.ownedByServd) && { publisher: { '@id': ORG_ID } }),
     ...(isServd && {
       potentialAction: {
         '@type':       'SearchAction',
@@ -103,6 +105,9 @@ interface RestaurantGraphInput {
   hours?: Array<{ dayOfWeek: number; openMin: number; closeMin: number }>
   /** Emit hasMenu → the Menu node's @id (only when a menu is published). */
   hasMenu?: boolean
+  /** The brand belongs to the company that runs servd (isServdCompanyBrand in
+   *  lib/liveConcepts): only then is servd's Organization its parent. */
+  ownedByServd?: boolean
 }
 
 const DOW_NAME = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
@@ -136,7 +141,7 @@ export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknow
     acceptsReservations: r.loc.acceptsReservations ? `${SERVD_ORIGIN}/reserve/${slug}` : false,
     menu:         brandCanonical(slug, 'menu'),
     ...(r.hasMenu && { hasMenu: { '@id': menuId(slug) } }),
-    parentOrganization: { '@id': ORG_ID },
+    ...(r.ownedByServd && { parentOrganization: { '@id': ORG_ID } }),
     potentialAction: {
       '@type': 'OrderAction',
       target:  `${SERVD_ORIGIN}/${slug}`,
@@ -154,8 +159,12 @@ export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknow
   }
   if (phone) node['telephone'] = phone
   if (email) node['email'] = email
-  if (r.loc.mapsUrl) node['hasMap'] = r.loc.mapsUrl
-  if (typeof r.loc.geo?.lat === 'number' && typeof r.loc.geo?.lng === 'number') {
+  // Only a sourced pin (the LocationDetails rule): mapsUrl is set exactly when
+  // there is one. Flipd's bundled default and the Karachi-centroid default for
+  // a new brand carry none, and must not reach Google as a real location.
+  const mapsUrl = filled(r.loc.mapsUrl)
+  if (mapsUrl) node['hasMap'] = mapsUrl
+  if (mapsUrl && typeof r.loc.geo?.lat === 'number' && typeof r.loc.geo?.lng === 'number') {
     node['geo'] = { '@type': 'GeoCoordinates', latitude: r.loc.geo.lat, longitude: r.loc.geo.lng }
   }
   if (hours && hours.length > 0) {

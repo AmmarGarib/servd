@@ -36,7 +36,8 @@ const LEGACY_REDIRECTS = [
   { source: '/brands/stax',                        destination: '/brand/stackd', permanent: true },
   { source: '/brands/:slug(stackd|simmer|flipd)',  destination: '/brand/:slug',  permanent: true },
   // The menu IS the ordering screen: /<brand>/menu and the /<brand>/order
-  // index were only ever hops to /<brand>.
+  // index were only ever hops to /<brand>. These three here (so www is one
+  // hop too); the middleware does the same for every other brand.
   { source: '/:concept(stackd|simmer|flipd)/menu',  destination: '/:concept', permanent: true },
   { source: '/:concept(stackd|simmer|flipd)/order', destination: '/:concept', permanent: true },
   // The brand picker merged into /home, the one landing page (owner,

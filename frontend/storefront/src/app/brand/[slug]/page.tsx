@@ -10,7 +10,7 @@ import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
 import { brandCanonical } from '../../../lib/brandDomains'
 import { restaurantSchema, websiteSchema, jsonLdScript } from '../../../lib/jsonLd'
-import { conceptsOrFallback, fetchLiveConcepts, findConcept } from '../../../lib/liveConcepts'
+import { conceptsOrFallback, fetchLiveConcepts, findConcept, isServdCompanyBrand } from '../../../lib/liveConcepts'
 import { fetchBrandMenu, hasMenuItems } from '../../../sections/data'
 import type { Params } from './meta'
 
@@ -33,9 +33,10 @@ export default async function BrandHome({ params }: Params) {
   // for stackd.pk / simmer.pk / flipd.pk. The Restaurant points at its Menu
   // node only when a menu is published (the menu page emits that node). No
   // breadcrumb here: a one-level trail says nothing.
+  const ours = isServdCompanyBrand(slug, live)
   const ld = [
-    restaurantSchema({ loc: locationFromConcept(concept), hasMenu: hasMenuItems(menu) }),
-    websiteSchema({ name: formatBrandName(concept.name), url: brandCanonical(slug) }),
+    restaurantSchema({ loc: locationFromConcept(concept), hasMenu: hasMenuItems(menu), ownedByServd: ours }),
+    websiteSchema({ name: formatBrandName(concept.name), url: brandCanonical(slug), ownedByServd: ours }),
   ]
 
   return (
