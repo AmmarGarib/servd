@@ -134,7 +134,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close()
   const tenants = [tenantA, tenantB]
-  await prisma.recipe.deleteMany({ where: { OR: [{ name: { startsWith: PREFIX } }, { menuItem: { conceptId: { in: [conceptA, conceptB] } } }] } })
+  const ownRecipes = { OR: [{ name: { startsWith: PREFIX } }, { menuItem: { conceptId: { in: [conceptA, conceptB] } } }] }
+  // Lines that use one of these as a prep recipe go first: deleting the prep
+  // recipe would null them, which the one-source check rejects.
+  await prisma.recipeIngredient.deleteMany({ where: { prepRecipe: ownRecipes } })
+  await prisma.recipe.deleteMany({ where: ownRecipes })
   await prisma.menuItem.deleteMany({ where: { conceptId: { in: [conceptA, conceptB] } } })
   await prisma.giftCardRedemption.deleteMany({ where: { giftCard: { tenantId: { in: tenants } } } })
   await prisma.giftCard.deleteMany({ where: { tenantId: { in: tenants } } })
@@ -430,6 +434,13 @@ describe('recipes', () => {
     expect((await call('DELETE', `/recipes/${componentA}`, auth(userB))).statusCode).toBe(404)
     expect(await prisma.recipe.findUnique({ where: { id: componentA } })).not.toBeNull()
     expect((await call('GET', `/recipes/${componentA}`, auth(userA))).statusCode).toBe(200)
+  })
+
+  it('a prep recipe still used by another recipe cannot be deleted (409, not a 500)', async () => {
+    const r = await call('DELETE', `/recipes/${componentA}`, auth(userA))
+    expect(r.statusCode).toBe(409)
+    expect(r.json().error.code).toBe('RECIPE_IN_USE')
+    expect(await prisma.recipe.findUnique({ where: { id: componentA } })).not.toBeNull()
   })
 
   it("A's sub-recipes and pending approvals are not listed for B", async () => {

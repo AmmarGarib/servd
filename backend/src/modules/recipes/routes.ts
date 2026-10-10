@@ -1080,6 +1080,19 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       await assertRecipeInScope(req, req.params.id)
+      // A prep recipe another recipe still uses can't go: deleting it would
+      // null that ingredient line, which the recipe_ingredients_one_source
+      // check rejects (a 500), and silently dropping the line would change
+      // the other recipe's cost anyway. Say which recipes use it instead.
+      const usedBy = await prisma.recipeIngredient.findMany({
+        where: { prepRecipeId: req.params.id, recipeId: { not: req.params.id } },
+        select: { recipe: { select: { name: true, menuItem: { select: { name: true } } } } },
+        take: 5,
+      })
+      if (usedBy.length > 0) {
+        const names = [...new Set(usedBy.map((u) => u.recipe.name ?? u.recipe.menuItem?.name ?? 'a recipe'))]
+        throw new AppError('RECIPE_IN_USE', `This prep recipe is used in ${names.join(', ')}. Remove it from ${names.length === 1 ? 'that recipe' : 'those recipes'} first.`, 409)
+      }
       // deleteMany for idempotency — repeated DELETEs (React Query refetch
       // race, browser preflight oddities) on an already-gone row would throw
       // Prisma P2025 → 500. deleteMany silently no-ops.
