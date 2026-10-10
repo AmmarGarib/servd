@@ -75,9 +75,34 @@ export function isServdCompanyBrand(slug: string, live: Concept[]): boolean {
   return live.some((c) => c.tenantId === tenantId && fallbackConcept(c.slug) !== null)
 }
 
-/** fetchLiveConcepts + findConcept in one call (layouts, generateMetadata). */
+/**
+ * Thrown when a route can't tell whether a slug is a brand: the API didn't
+ * answer (an empty list counts, as in conceptsOrFallback) and the slug isn't
+ * a bundled brand. It renders app/error.tsx with a 500, which search engines
+ * retry, instead of a 404, which they act on — another company's brand pages
+ * must not drop out of Google because the API blinked.
+ */
+export class BrandListUnavailableError extends Error {
+  constructor(slug: string) {
+    super(`The brand list is unavailable; cannot resolve "${slug}"`)
+    this.name = 'BrandListUnavailableError'
+  }
+}
+
+/** findConcept for a list from fetchLiveConcepts(): null only when the API
+ *  answered without the slug (the caller 404s); throws
+ *  BrandListUnavailableError when it can't tell. */
+export function findConceptOrThrow(slug: string, live: Concept[]): Concept | null {
+  const found = findConcept(slug, live)
+  if (!found && live.length === 0) throw new BrandListUnavailableError(slug)
+  return found
+}
+
+/** fetchLiveConcepts + findConceptOrThrow in one call (layouts,
+ *  generateMetadata): null = not a brand (404); throws when the API is down
+ *  and the slug isn't bundled. */
 export async function resolveConcept(slug: string): Promise<Concept | null> {
-  return findConcept(slug, await fetchLiveConcepts())
+  return findConceptOrThrow(slug, await fetchLiveConcepts())
 }
 
 /**

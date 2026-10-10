@@ -14,7 +14,7 @@ import { fetchSiteLayout, pageSeo } from '../../../../lib/blocks'
 import { locationFromConcept } from '../../../../lib/brandLocations'
 import { formatBrandName } from '../../../../lib/concept'
 import { jsonLdScript, menuSchema } from '../../../../lib/jsonLd'
-import { asSentence, fetchLiveConcepts, findConcept, fitSentences, joinNames, resolveConcept } from '../../../../lib/liveConcepts'
+import { asSentence, fetchLiveConcepts, findConceptOrThrow, fitSentences, joinNames, resolveConcept } from '../../../../lib/liveConcepts'
 import { fetchBrandMenu, hasMenuItems } from '../../../../sections/data'
 import { ManagedPage } from '../../../../sections/ManagedPage'
 import { SUBPAGE_TITLE, brandBreadcrumb, brandCtx, brandPageMetadata, leadText, pageBlocks, brandDescriptor, type Params } from '../meta'
@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function BrandMenuPage({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const [concepts, menu] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug)])
-  const concept = findConcept(slug, concepts)
+  const concept = findConceptOrThrow(slug, concepts)
   if (!concept) notFound()
 
   const ld: Record<string, unknown>[] = [brandBreadcrumb(concept, SUBPAGE_TITLE.menu, 'menu')]

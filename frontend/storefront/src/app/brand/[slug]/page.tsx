@@ -10,7 +10,7 @@ import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
 import { brandCanonical } from '../../../lib/brandDomains'
 import { restaurantSchema, websiteSchema, jsonLdScript } from '../../../lib/jsonLd'
-import { conceptsOrFallback, fetchLiveConcepts, findConcept, isServdCompanyBrand } from '../../../lib/liveConcepts'
+import { conceptsOrFallback, fetchLiveConcepts, findConceptOrThrow, isServdCompanyBrand } from '../../../lib/liveConcepts'
 import { fetchBrandMenu, hasMenuItems } from '../../../sections/data'
 import type { Params } from './meta'
 
@@ -20,7 +20,7 @@ export default async function BrandHome({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
 
   const [live, menu] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug)])
-  const found = findConcept(slug, live)
+  const found = findConceptOrThrow(slug, live)
   if (!found) notFound()
   // API empty/down → the bundled brand records, so the cross-brand sections
   // still have a list to draw from.

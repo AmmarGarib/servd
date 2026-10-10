@@ -16,6 +16,7 @@ import { fetchBrandMenu, pkr } from '../data'
 import type { SectionProps } from '../types'
 import { str, link } from '../safe'
 import { FlipdLink, flipdHref } from './links'
+import { fill } from '../brand/util'
 
 function Checker() {
   return <div aria-hidden className="flipd-checker" />
@@ -24,6 +25,9 @@ function Checker() {
 export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
   const slug = ctx.concept?.slug ?? 'flipd'
   const brandName = formatBrandName(ctx.concept?.name ?? slug)
+  // An unfilled placeholder (no brand in context) is dropped, never read out.
+  const lead = fill(fields.headingLead, ctx, brandName).trim()
+  const headingLead = lead.includes('{{') ? '' : lead
   const categories = await fetchBrandMenu(slug)
   // A category with no items is a draft as far as a customer is concerned —
   // don't print an empty heading at them.
@@ -54,6 +58,9 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
         <div style={{ maxWidth: '62rem', margin: '0 auto' }}>
           {str(fields.eyebrow) && <span className="flipd-eyebrow">{str(fields.eyebrow)}</span>}
           <h1 className="flipd-display" style={{ fontSize: 'clamp(2rem, 5.5vw, 3.4rem)', margin: '0.6rem 0 0' }}>
+            {/* The heading names the brand for search engines and screen
+                readers; the design shows only the line. */}
+            {headingLead && <span className="sr-only">{headingLead} </span>}
             {str(fields.headline)}
           </h1>
           {str(fields.intro) && (

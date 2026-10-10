@@ -14,6 +14,8 @@ import { brandHref, brandNameOf, fill, servdHref } from './util'
 
 /** Flipd's die-cut badge as bundled in this build (760×760). */
 const BUNDLED_BADGE = '/brand/flipd-badge.png'
+/** The carded pill's type: 0.92rem from ~375px up, down to 0.8rem at 320px. */
+const PILL_FONT = 'clamp(0.8rem, 3.9vw, 0.92rem)'
 
 export function BrandHeader({ fields, ctx }: SectionProps) {
   const concept = ctx.concept
@@ -241,10 +243,13 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
                 href={l.href}
                 {...extra}
                 style={{
-                  padding: pillNav ? '0.45rem clamp(0.45rem, 2.2vw, 0.9rem)' : '0.45rem 0.9rem',
+                  padding: pillNav ? '0.45rem clamp(0.35rem, 2vw, 0.9rem)' : '0.45rem 0.9rem',
                   color: diner ? 'var(--flipd-blue)' : (active ? surface.text : surface.muted),
                   fontWeight: active ? 700 : (pillNav ? 600 : 500),
-                  fontSize: '0.92rem',
+                  // The carded pill is the bar's full width on a phone: below
+                  // ~375px the type steps down so Menu · Book · Visit · Order
+                  // still fit a 320px screen without the page scrolling sideways.
+                  fontSize: pillNav ? PILL_FONT : '0.92rem',
                   textDecoration: 'none',
                   borderRadius: pillNav ? '999px' : '0.6rem',
                   background: pillNav && active ? activeFill : 'transparent',
@@ -263,10 +268,10 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
               href={orderTo.href}
               aria-label={`Order from ${name}`}
               style={{
-                padding: '0.45rem clamp(0.5rem, 2.4vw, 0.95rem)',
+                padding: '0.45rem clamp(0.4rem, 2.2vw, 0.95rem)',
                 color: diner ? 'var(--flipd-blue)' : surface.text,
                 fontWeight: 800,
-                fontSize: '0.92rem',
+                fontSize: PILL_FONT,
                 textDecoration: 'none',
                 borderRadius: '999px',
                 whiteSpace: 'nowrap',

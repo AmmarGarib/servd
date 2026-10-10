@@ -3,6 +3,7 @@
 
 import { addressLine, fetchBrandLocations, filled, LEGACY_LOCATION_SLUGS, type BrandLocation } from '../../lib/brandLocations'
 import { brandStory, formatBrandName } from '../../lib/concept'
+import { BrandListUnavailableError, fetchConceptList } from '../../lib/liveConcepts'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -14,9 +15,14 @@ const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL
  */
 export async function findLocation(loc: string | undefined): Promise<BrandLocation | undefined> {
   if (!loc) return undefined
-  const brands = await fetchBrandLocations(API_URL)
+  // The same GET twice — Next memoises it within the request.
+  const [brands, list] = await Promise.all([fetchBrandLocations(API_URL), fetchConceptList()])
   const want = LEGACY_LOCATION_SLUGS[loc] ?? loc
-  return Object.values(brands).find((b) => b.locationSlug === want || b.slug === want)
+  const found = Object.values(brands).find((b) => b.locationSlug === want || b.slug === want)
+  // Not a bundled brand's, and the API didn't answer: a 500 search engines
+  // retry, not a 404 that drops another company's location page from Google.
+  if (!found && !list?.length) throw new BrandListUnavailableError(loc)
+  return found
 }
 
 const PLACEHOLDER = /\{(name|area|district|city|address|street|tagline)\}/g

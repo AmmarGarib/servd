@@ -14,7 +14,7 @@ import { fetchSiteLayout, pageSeo, type Block } from '../../../../lib/blocks'
 import { fetchBrandKitchens, filled, locationFromConcept, type BrandLocation } from '../../../../lib/brandLocations'
 import { brandAccent, formatBrandName, type Concept } from '../../../../lib/concept'
 import { faqSchema, jsonLdScript } from '../../../../lib/jsonLd'
-import { fetchLiveConcepts, findConcept, fitSentences, resolveConcept } from '../../../../lib/liveConcepts'
+import { fetchLiveConcepts, findConceptOrThrow, fitSentences, resolveConcept } from '../../../../lib/liveConcepts'
 import { mergeFields } from '../../../../sections/catalog'
 import { ManagedPage } from '../../../../sections/ManagedPage'
 import { faqSchemaEntries } from '../../../../sections/brand/faq'
@@ -73,7 +73,7 @@ export default async function BrandVisitPage({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const pageSlug = `brand:${slug}:visit`
   const [concepts, layout] = await Promise.all([fetchLiveConcepts(), fetchSiteLayout(pageSlug)])
-  const found = findConcept(slug, concepts)
+  const found = findConceptOrThrow(slug, concepts)
   if (!found) notFound()
   const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
 

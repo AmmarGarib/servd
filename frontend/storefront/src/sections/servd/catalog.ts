@@ -52,7 +52,7 @@ export const specs: SectionSpec[] = [
     ],
     defaults: {
       mediaType: 'video',
-      mediaSrc: 'https://videos.pexels.com/video-files/854565/854565-hd_1920_1080_25fps.mp4',
+      mediaSrc: 'https://videos.pexels.com/video-files/854565/854565-hd_1280_720_25fps.mp4',
       mediaImage: '',
       posterSrc: '',
       mediaAlt: '',

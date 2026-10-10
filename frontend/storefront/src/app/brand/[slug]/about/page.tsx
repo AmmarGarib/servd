@@ -12,7 +12,7 @@ import { brandCanonical } from '../../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../../../lib/blocks'
 import { brandStory, formatBrandName } from '../../../../lib/concept'
 import { jsonLdScript, restaurantId } from '../../../../lib/jsonLd'
-import { fetchLiveConcepts, findConcept, resolveConcept } from '../../../../lib/liveConcepts'
+import { fetchLiveConcepts, findConceptOrThrow, resolveConcept } from '../../../../lib/liveConcepts'
 import { ManagedPage } from '../../../../sections/ManagedPage'
 import { SUBPAGE_TITLE, brandBreadcrumb, brandCtx, brandPageMetadata, leadText, pageBlocks, type Params } from '../meta'
 
@@ -44,7 +44,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function BrandAboutPage({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const concepts = await fetchLiveConcepts()
-  const concept = findConcept(slug, concepts)
+  const concept = findConceptOrThrow(slug, concepts)
   if (!concept) notFound()
 
   const url = brandCanonical(slug, 'about')

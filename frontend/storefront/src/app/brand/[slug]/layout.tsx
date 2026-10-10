@@ -8,9 +8,10 @@
 //
 // Resilient against api hiccups: if the live concepts fetch fails (api
 // warmup, network blip), the known live brands fall back to their bundled
-// records (lib/liveConcepts) so customers don't get a 404 wall. A slug that
-// is not a brand is a real 404 (status and all — there is no loading
-// boundary above this layout to send a 200 first).
+// records (lib/liveConcepts) so customers don't get a 404 wall; any other
+// brand gets the error page (a 500, which search engines retry) until the API
+// answers. A slug that is not a brand is a real 404 (status and all — there
+// is no loading boundary above this layout to send a 200 first).
 //
 // Metadata: this layout's is the brand HOME's — its title, description,
 // canonical (the brand's own domain) and share card in the brand's name —
@@ -24,7 +25,7 @@ import { BrandShell } from '../../../components/brand/BrandShell'
 import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
 import { fetchSiteLayout, pageSeo } from '../../../lib/blocks'
 import { locationFromConcept } from '../../../lib/brandLocations'
-import { fetchLiveConcepts, findConcept, resolveConcept } from '../../../lib/liveConcepts'
+import { fetchLiveConcepts, findConceptOrThrow, resolveConcept } from '../../../lib/liveConcepts'
 import { ManagedPage } from '../../../sections/ManagedPage'
 import { brandHomeTitle, brandPageMetadata, type Params } from './meta'
 
@@ -36,7 +37,7 @@ export default async function BrandLayout({
 }: Params & { children: React.ReactNode }) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const live = await fetchLiveConcepts()
-  const concept = findConcept(slug, live)
+  const concept = findConceptOrThrow(slug, live)
   if (!concept) notFound()
 
   const themed: Concept = { ...concept, primaryColor: brandAccent(concept.slug, concept.primaryColor) }

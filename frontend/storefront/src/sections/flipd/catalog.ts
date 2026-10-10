@@ -239,6 +239,7 @@ export const specs: SectionSpec[] = [
     fields: [
       { key: 'eyebrow', label: 'Eyebrow', kind: 'text' },
       { key: 'headline', label: 'Headline', kind: 'text' },
+      { key: 'headingLead', label: 'Heading lead (hidden text)', kind: 'text', hint: 'Read before the headline by search engines and screen readers, not shown, so the page heading names the brand ("Flipd menu: Built to spec."). {{brand.name}} = the brand name. Empty = none.' },
       { key: 'intro', label: 'Intro', kind: 'textarea', rows: 3 },
       { key: 'primary', label: 'Order button', kind: 'link', hint: 'Empty link = @order. ' + LINK_HINT },
       { key: 'back', label: 'Back button', kind: 'link', hint: 'Empty text = "Back to <brand name>". Empty link = @home. ' + LINK_HINT },
@@ -253,6 +254,7 @@ export const specs: SectionSpec[] = [
     defaults: {
       eyebrow: 'The menu',
       headline: 'Built to spec.',
+      headingLead: '{{brand.name}} menu:',
       intro: 'Every burger on a fixed build. Prices and what’s on today come straight from the kitchen’s own list.',
       primary: { text: 'Order now', href: '@order' },
       back: { text: '', href: '@home' },
