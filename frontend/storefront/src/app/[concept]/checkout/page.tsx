@@ -7,6 +7,7 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
+import DeliveryPin, { type LatLng } from '../../../components/checkout/DeliveryPin'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -72,11 +73,27 @@ const PAYMENT_OPTIONS: Array<{
   sub: string
   phoneRequired: boolean
 }> = [
-  { id: 'cash',      icon: 'Cash', label: 'Cash on Delivery',  sub: 'Pay when you receive your order', phoneRequired: false },
+  // label/sub for cash are replaced per fulfilment by cashCopy() below.
+  { id: 'cash',      icon: 'Cash', label: 'Cash',              sub: 'Pay in cash', phoneRequired: false },
   { id: 'jazzcash',  icon: 'JC', label: 'JazzCash Wallet',   sub: 'Enter your JazzCash number',      phoneRequired: true  },
   { id: 'easypaisa', icon: 'EP', label: 'EasyPaisa',         sub: 'Enter your EasyPaisa number',     phoneRequired: true  },
   { id: 'keenu',     icon: 'Card', label: 'Keenu (Card)',       sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
 ]
+
+// The cash option is named for how the order reaches the customer — only a
+// delivery is "cash on delivery". Copy only; the gateway is 'cash' either way.
+function cashCopy(f: FulfilmentOption): { label: string; sub: string } {
+  switch (f) {
+    case 'delivery': return { label: 'Cash on delivery',   sub: 'Pay the rider when your order arrives' }
+    case 'pickup':   return { label: 'Pay cash at pickup', sub: 'Pay at the counter when you collect' }
+    case 'curbside': return { label: 'Pay cash at pickup', sub: 'Pay when we bring your order to your car' }
+    case 'dine-in':  return { label: 'Pay at the counter', sub: 'Settle up in cash at the counter' }
+  }
+}
+
+// Quote errors that are about WHERE the order is going — shown by the map,
+// not just in the totals box.
+const DELIVERY_AREA_ERRORS = new Set(['DELIVERY_UNAVAILABLE', 'OUTSIDE_DELIVERY_AREA', 'BELOW_ZONE_MINIMUM'])
 
 export default function CheckoutPage() {
   const { concept: slug } = useParams<{ concept: string }>()
@@ -173,8 +190,9 @@ export default function CheckoutPage() {
   const [selectedAddressId,   setSelectedAddressId]   = useState<string | null>(null)
   const [showNewAddressInput, setShowNewAddressInput] = useState(false)
 
-  // Tip the rider — preset chips + custom amount. Cents.
-  const [tipMode,   setTipMode]   = useState<'none' | '5' | '10' | '15' | '20' | 'custom'>('10')
+  // Tip the rider — preset chips + custom amount. Cents. Starts at "No tip":
+  // a tip is the customer's choice, never pre-selected for them.
+  const [tipMode,   setTipMode]   = useState<'none' | '5' | '10' | '15' | '20' | 'custom'>('none')
   const [customTip, setCustomTip] = useState('')
   const [giftCard,  setGiftCard]  = useState('')
   const _orderPlaced = useRef(false)
@@ -209,15 +227,79 @@ export default function CheckoutPage() {
     }).catch(() => {})
   }, [token])
 
-  // Delivery drop point: the chosen saved address's pin. The server needs
-  // it for the zone fee (and refuses delivery without it).
+  // Delivery drop point. The server needs coordinates for the zone fee and
+  // the rider, and refuses delivery without them (DELIVERY_LOCATION_REQUIRED).
+  // They come from the map pin the customer sets in THIS checkout (keyed
+  // 'new' for a typed address, or by saved-address id), else from the chosen
+  // saved address's stored pin. A saved address without a pin shows the map,
+  // and the pin is saved back to it.
   const selectedAddress = savedAddresses.find((a) => a.id === selectedAddressId && !showNewAddressInput) ?? null
-  const deliveryLat = selectedAddress?.lat ?? null
-  const deliveryLng = selectedAddress?.lng ?? null
+  const usingNewAddress = showNewAddressInput || savedAddresses.length === 0
+  const pinKey = usingNewAddress ? 'new' : selectedAddress?.id ?? null
+  const [pins, setPins] = useState<Record<string, LatLng>>({})
+  const sessionPin = pinKey ? pins[pinKey] ?? null : null
+  const savedPin: LatLng | null = !usingNewAddress && selectedAddress?.lat != null && selectedAddress?.lng != null
+    ? { lat: selectedAddress.lat, lng: selectedAddress.lng }
+    : null
+  const deliveryPin = sessionPin ?? savedPin
+  const deliveryLat = deliveryPin?.lat ?? null
+  const deliveryLng = deliveryPin?.lng ?? null
+  // The map shows for a typed address, for a saved address with no pin, and
+  // for one whose pin the customer chose to move (it then stays open).
+  const showPinMap = fulfilmentType === 'delivery' && pinKey != null && (usingNewAddress || !savedPin || sessionPin != null)
+  // Set when "Place order" was pressed with no pin — the map then says why.
+  const [pinPrompt, setPinPrompt] = useState(false)
+  const pinBlockRef = useRef<HTMLDivElement | null>(null)
+  const setPin = (v: LatLng) => {
+    if (!pinKey) return
+    setPins((p) => ({ ...p, [pinKey]: v }))
+    setPinPrompt(false)
+  }
+
+  // Open the map on the kitchen when we know where it is (else Karachi).
+  const [kitchen, setKitchen] = useState<LatLng | null>(null)
+  const kitchenLoaded = useRef(false)
+  useEffect(() => {
+    if (fulfilmentType !== 'delivery' || kitchenLoaded.current) return
+    kitchenLoaded.current = true
+    fetch(`${API_URL}/api/v1/storefront/concepts`)
+      .then((r) => (r.ok ? r.json() as Promise<Array<{ slug: string; latitude?: number | null; longitude?: number | null }>> : null))
+      .then((all) => {
+        const c = Array.isArray(all) ? all.find((x) => x.slug === slug) : undefined
+        if (c?.latitude != null && c?.longitude != null) setKitchen({ lat: c.latitude, lng: c.longitude })
+      })
+      .catch(() => {})
+  }, [fulfilmentType, slug])
+
+  // A pin dropped for a SAVED address is saved back to it (debounced, so
+  // dragging the pin around doesn't fire a request per move).
+  const [pinSavedFor, setPinSavedFor] = useState<string | null>(null)
+  const savePinFor = !usingNewAddress && selectedAddress && sessionPin ? selectedAddress.id : null
+  useEffect(() => {
+    if (!token || !savePinFor || !sessionPin) return
+    const addr = savedAddresses.find((a) => a.id === savePinFor)
+    if (addr && addr.lat === sessionPin.lat && addr.lng === sessionPin.lng) return
+    const t = setTimeout(() => {
+      fetch(`${API_URL}/api/v1/storefront/addresses/${encodeURIComponent(savePinFor)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ lat: sessionPin.lat, lng: sessionPin.lng }),
+      })
+        .then((r) => {
+          if (!r.ok) return
+          setSavedAddresses((list) => list.map((a) => (a.id === savePinFor ? { ...a, lat: sessionPin.lat, lng: sessionPin.lng } : a)))
+          setPinSavedFor(savePinFor)
+        })
+        .catch(() => {})
+    }, 800)
+    return () => clearTimeout(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, savePinFor, sessionPin?.lat, sessionPin?.lng])
 
   // Server quote — refreshed whenever anything that changes the bill does.
   const [quote,      setQuote]      = useState<Quote | null>(null)
   const [quoteError, setQuoteError] = useState('')
+  const [quoteErrorCode, setQuoteErrorCode] = useState('')
   const basketKey = JSON.stringify(items.map((i) => [i.menuItemId, i.quantity, (i.modifiers ?? []).map((m) => m.modifierId ?? '')]))
   const tipParams: Record<string, string> = fulfilmentType !== 'delivery' || tipMode === 'none'
     ? {}
@@ -254,13 +336,16 @@ export default function CheckoutPage() {
         .then(async (res) => {
           const data = await res.json()
           if (!res.ok) {
+            const err = (data as { error?: { code?: string; message?: string } })?.error
             setQuote(null)
-            setQuoteError((data as { error?: { message?: string } })?.error?.message ?? 'Could not price your order')
+            setQuoteError(err?.message ?? 'Could not price your order')
+            setQuoteErrorCode(err?.code ?? '')
             return
           }
           const q = data as Quote
           setQuote(q)
           setQuoteError('')
+          setQuoteErrorCode('')
           if (appliedPromo) {
             if (q.promo) { setPromoStatus('valid'); setPromoMessage(q.promo.description) }
             else { setPromoStatus('invalid'); setPromoMessage(q.promoError?.message ?? 'Promo code is invalid') }
@@ -269,6 +354,7 @@ export default function CheckoutPage() {
         .catch((e: unknown) => {
           if ((e as { name?: string })?.name === 'AbortError') return
           setQuoteError('Could not price your order. Check your connection.')
+          setQuoteErrorCode('')
         })
     }, 250)
     return () => { clearTimeout(t); ctrl.abort() }
@@ -342,6 +428,16 @@ export default function CheckoutPage() {
   const giftCardDeduction = quote?.giftCardCents ?? 0
   const displayTotal      = quote?.totalCents ?? null
 
+  // Delivery: no pin yet, or the pin is somewhere we can't deliver to.
+  const needsPin = fulfilmentType === 'delivery' && (deliveryLat == null || deliveryLng == null)
+  const deliveryAreaError = fulfilmentType === 'delivery' && !needsPin && DELIVERY_AREA_ERRORS.has(quoteErrorCode)
+    ? quoteError
+    : ''
+  const pinMessage = needsPin && pinPrompt
+    ? 'Drop a pin on the map, or tap “Use my current location”, so your rider can find you.'
+    : deliveryAreaError || null
+  const cash = cashCopy(fulfilmentType)
+
   // Apply = ask the quote to price the code (same evaluation as checkout).
   const applyPromo = () => {
     const code = promoCode.trim().toUpperCase()
@@ -382,6 +478,18 @@ export default function CheckoutPage() {
     setError('')
     if (fulfilmentType === 'delivery' && !deliveryAddress.trim()) {
       setError('Please enter your delivery address')
+      return
+    }
+    // No pin → the server can't price or dispatch the delivery. Say so by
+    // the map (and bring it into view) instead of letting the order bounce.
+    if (fulfilmentType === 'delivery' && (deliveryLat == null || deliveryLng == null)) {
+      setPinPrompt(true)
+      pinBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+    if (fulfilmentType === 'delivery' && deliveryAreaError) {
+      setError(deliveryAreaError)
+      pinBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
     if (fulfilmentType === 'dine-in' && !tableLabel.trim()) {
@@ -463,11 +571,14 @@ export default function CheckoutPage() {
   }
 
   // CTA label that reflects payment method
+  // (Delivery without a pin can't be placed yet — the button says what's missing.)
   const ctaLabel = loading
     ? 'Placing order…'
-    : paymentMethod === 'keenu'
-      ? 'Continue to Keenu'
-      : 'Place Order'
+    : needsPin
+      ? 'Set your delivery pin'
+      : paymentMethod === 'keenu'
+        ? 'Continue to Keenu'
+        : 'Place Order'
 
   return (
     <div
@@ -679,14 +790,59 @@ export default function CheckoutPage() {
                 )}
 
                 {/* Show text input when "new address" is selected or no saved addresses exist. */}
-                {(showNewAddressInput || savedAddresses.length === 0) && (
+                {usingNewAddress && (
                   <input
                     value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
                     placeholder="Full delivery address"
+                    aria-label="Delivery address"
                     maxLength={200}
                     className="w-full rounded-lg px-3 py-2 text-sm"
                     style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
                 )}
+
+                {/* The drop point. The address text tells the rider which
+                    door; the pin tells the kitchen which zone and the rider
+                    where to drive — the order can't go without it. */}
+                <div ref={pinBlockRef} className="scroll-mt-24">
+                  {showPinMap ? (
+                    <>
+                      {!usingNewAddress && selectedAddress && !savedPin && (
+                        <p className="text-[11px] mb-1.5" style={{ color: 'var(--servd-mute)' }}>
+                          &ldquo;{selectedAddress.label}&rdquo; has no map pin yet. Set it once and we&rsquo;ll remember it.
+                        </p>
+                      )}
+                      <DeliveryPin
+                        key={pinKey ?? 'none'}
+                        value={deliveryPin}
+                        onChange={setPin}
+                        center={kitchen}
+                        label={usingNewAddress ? 'Delivery location' : `Delivery location for ${selectedAddress?.label ?? 'this address'}`}
+                        message={pinMessage}
+                      />
+                      {!usingNewAddress && selectedAddress && pinSavedFor === selectedAddress.id && (
+                        <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }} aria-live="polite">
+                          Saved to &ldquo;{selectedAddress.label}&rdquo; for next time.
+                        </p>
+                      )}
+                    </>
+                  ) : savedPin && selectedAddress ? (
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
+                        Delivering to the pin saved for &ldquo;{selectedAddress.label}&rdquo;.
+                      </p>
+                      <button type="button" onClick={() => setPin(savedPin)}
+                        className="text-[11px] font-bold underline underline-offset-2"
+                        style={{ color: 'var(--servd-green-dark)' }}>
+                        Move pin
+                      </button>
+                      {deliveryAreaError && (
+                        <p role="alert" className="w-full text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>
+                          {deliveryAreaError}
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
 
                 <input
                   value={deliveryNotes} onChange={(e) => setDeliveryNotes(e.target.value)}
@@ -814,7 +970,13 @@ export default function CheckoutPage() {
               <span className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }}>{displayTotal != null ? fmt(displayTotal) : '…'}</span>
             </div>
             {quoteError && (
-              <p className="text-xs pt-1" style={{ color: 'var(--servd-mute)' }} role="status">{quoteError}</p>
+              <p className="text-xs pt-1" style={{ color: 'var(--servd-mute)' }} role="status">
+                {needsPin && quoteErrorCode === 'DELIVERY_LOCATION_REQUIRED'
+                  ? 'Set your delivery pin above to see the delivery fee and total.'
+                  : deliveryAreaError
+                    ? 'Delivery isn’t available for this order yet — see the delivery details above.'
+                    : quoteError}
+              </p>
             )}
           </div>
         </Panel>
@@ -953,7 +1115,8 @@ export default function CheckoutPage() {
         {/* ── Payment Method ── */}
         <Panel icon="" label="Payment Method">
           <div className="space-y-2">
-            {PAYMENT_OPTIONS.map((opt) => {
+            {PAYMENT_OPTIONS.map((base) => {
+              const opt = base.id === 'cash' ? { ...base, ...cash } : base
               const isSelected = paymentMethod === opt.id
               return (
                 <div key={opt.id}>
@@ -1049,7 +1212,7 @@ export default function CheckoutPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
-              <span><strong style={{ color: 'var(--servd-ink)' }}>Cash on delivery</strong> if you prefer.</span>
+              <span><strong style={{ color: 'var(--servd-ink)' }}>{cash.label}</strong> if you prefer.</span>
             </li>
           </ul>
         </div>
@@ -1063,7 +1226,7 @@ export default function CheckoutPage() {
           className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
           style={{
             background: loading ? 'var(--servd-line)' : 'var(--servd-green)',
-            color: loading ? 'var(--servd-mute)' : '#fff',
+            color: loading ? 'var(--servd-mute)' : 'var(--servd-on-green)',
             boxShadow: loading ? 'none' : '0 0 32px rgba(61,31,59,0.28)',
           }}>
           <span>{ctaLabel}</span>

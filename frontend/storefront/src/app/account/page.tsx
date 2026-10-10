@@ -1,10 +1,11 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { LoadingScreen } from '../../components/ui/Loader'
 import { fmt } from '../../lib/ui'
+import DeliveryPin, { type LatLng } from '../../components/checkout/DeliveryPin'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -31,6 +32,8 @@ interface CustomerProfile {
 interface CustomerAddress {
   id: string; label: string; address: string; lat?: number | null; lng?: number | null; isDefault: boolean
 }
+interface AddressForm { label: string; address: string; isDefault: boolean; pin: LatLng | null }
+const EMPTY_ADDR: AddressForm = { label: '', address: '', isDefault: false, pin: null }
 
 // STATUS_CONFIG moved to lib/orderStatus.ts so /orders + /[concept]/order/[id]
 // share the same colours and labels. statusFor handles unknown statuses.
@@ -61,8 +64,14 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
   const [showAddAddr, setShowAddAddr] = useState(false)
-  const [addrForm, setAddrForm] = useState({ label: '', address: '', isDefault: false })
+  // The add/edit address form. `pin` is the map drop point — delivery is
+  // priced by zone and the rider drives to it, so an address is only saved
+  // with one. `editingAddrId` null = adding a new address.
+  const [addrForm, setAddrForm] = useState<AddressForm>(EMPTY_ADDR)
+  const [editingAddrId, setEditingAddrId] = useState<string | null>(null)
+  const [addrError, setAddrError] = useState('')
   const [addrSaving, setAddrSaving] = useState(false)
+  const addrFormRef = useRef<HTMLDivElement | null>(null)
   const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null)
 
   const fetchAddresses = useCallback(() => {
@@ -109,20 +118,68 @@ export default function AccountPage() {
     return () => window.removeEventListener('focus', handleFocus)
   }, [fetchAccount])
 
+  function openAddAddress() {
+    setEditingAddrId(null)
+    setAddrForm(EMPTY_ADDR)
+    setAddrError('')
+    setShowAddAddr(true)
+  }
+
+  function openEditAddress(addr: CustomerAddress) {
+    setEditingAddrId(addr.id)
+    setAddrForm({
+      label: addr.label,
+      address: addr.address,
+      isDefault: addr.isDefault,
+      pin: addr.lat != null && addr.lng != null ? { lat: addr.lat, lng: addr.lng } : null,
+    })
+    setAddrError('')
+    setShowAddAddr(true)
+    // The form sits above the list; bring it to the customer.
+    requestAnimationFrame(() => addrFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
+
+  function closeAddressForm() {
+    setShowAddAddr(false)
+    setEditingAddrId(null)
+    setAddrForm(EMPTY_ADDR)
+    setAddrError('')
+  }
+
   async function saveAddress() {
     if (!token || !addrForm.label || !addrForm.address) return
+    if (!addrForm.pin) {
+      setAddrError('Drop a pin on the map, or use your current location, so riders can find you.')
+      return
+    }
     setAddrSaving(true)
+    setAddrError('')
     try {
-      const res = await fetch(`${API_URL}/api/v1/storefront/addresses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(addrForm),
-      })
-      if (res.ok) {
-        setShowAddAddr(false)
-        setAddrForm({ label: '', address: '', isDefault: false })
-        fetchAddresses()
+      const body = {
+        label: addrForm.label,
+        address: addrForm.address,
+        isDefault: addrForm.isDefault,
+        lat: addrForm.pin.lat,
+        lng: addrForm.pin.lng,
       }
+      const res = await fetch(
+        editingAddrId
+          ? `${API_URL}/api/v1/storefront/addresses/${encodeURIComponent(editingAddrId)}`
+          : `${API_URL}/api/v1/storefront/addresses`,
+        {
+          method: editingAddrId ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        },
+      )
+      if (res.ok) {
+        closeAddressForm()
+        fetchAddresses()
+      } else {
+        setAddrError("We couldn't save that address. Please try again.")
+      }
+    } catch {
+      setAddrError("We couldn't save that address. Check your connection and try again.")
     } finally { setAddrSaving(false) }
   }
 
@@ -329,7 +386,7 @@ export default function AccountPage() {
             <p className="text-[9px] font-black uppercase tracking-[0.28em]"
               style={{ color: 'rgba(15,26,15,0.38)' }}>Saved Locations</p>
             <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
-            <button onClick={() => setShowAddAddr(!showAddAddr)}
+            <button onClick={() => (showAddAddr && !editingAddrId ? closeAddressForm() : openAddAddress())}
               className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
               style={{ background: 'rgba(135,197,64,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(135,197,64,0.2)' }}>
               + Add
@@ -337,8 +394,11 @@ export default function AccountPage() {
           </div>
 
           {showAddAddr && (
-            <div className="rounded-2xl p-4 mb-3 space-y-3"
+            <div ref={addrFormRef} className="rounded-2xl p-4 mb-3 space-y-3 scroll-mt-20"
               style={{ background: '#fff', border: '1px solid rgba(135,197,64,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+              <p className="text-xs font-black" style={{ color: 'var(--servd-ink)' }}>
+                {editingAddrId ? 'Edit address' : 'New address'}
+              </p>
               <div>
                 <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Label (e.g. Home, Work, Gym)</label>
                 <input value={addrForm.label} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
@@ -351,6 +411,19 @@ export default function AccountPage() {
                   placeholder="House #5, Street 12, DHA Phase 2…" className="mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
               </div>
+              {/* The drop point — required, so this address works for delivery
+                  (the kitchen prices delivery by zone and the rider drives
+                  to the pin). */}
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wide mb-1" style={{ color: 'var(--servd-mute)' }}>Map pin</p>
+                <DeliveryPin
+                  key={editingAddrId ?? 'new'}
+                  value={addrForm.pin}
+                  onChange={(pin) => { setAddrForm((f) => ({ ...f, pin })); setAddrError('') }}
+                  label={addrForm.label ? `Map pin for ${addrForm.label}` : 'Map pin for this address'}
+                  message={addrError || null}
+                />
+              </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={addrForm.isDefault} onChange={(e) => setAddrForm({ ...addrForm, isDefault: e.target.checked })}
                   className="rounded" />
@@ -362,7 +435,7 @@ export default function AccountPage() {
                   style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                   {addrSaving ? 'Saving…' : 'Save address'}
                 </button>
-                <button onClick={() => setShowAddAddr(false)}
+                <button onClick={closeAddressForm}
                   className="px-4 rounded-xl text-sm transition-all"
                   style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.08)' }}>
                   Cancel
@@ -402,8 +475,18 @@ export default function AccountPage() {
                       )}
                     </div>
                     <p className="text-xs line-clamp-1 mt-0.5" style={{ color: 'rgba(15,26,15,0.45)' }}>{addr.address}</p>
+                    {(addr.lat == null || addr.lng == null) && (
+                      <p className="text-[10px] font-semibold mt-0.5" style={{ color: 'var(--servd-danger)' }}>
+                        No map pin yet — edit to add one for delivery
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1 shrink-0">
+                    <button onClick={() => openEditAddress(addr)}
+                      className="text-[10px] font-bold transition-colors"
+                      style={{ color: 'var(--servd-ink)' }}>
+                      Edit
+                    </button>
                     {!addr.isDefault && (
                       <button onClick={() => void setDefault(addr.id)}
                         className="text-[10px] font-bold transition-colors"
