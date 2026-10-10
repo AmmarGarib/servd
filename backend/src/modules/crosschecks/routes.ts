@@ -4,7 +4,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM } from '../auth/middleware.js'
 import { flagException, acknowledgeException, resolveException, type ExceptionKind } from '../../lib/exceptions.js'
 import { receiveGoods } from '../procurement/receiving.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
@@ -271,21 +271,31 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       if (!it || (it.tenantId && it.tenantId !== tenantId)) throw new NotFoundError('InventoryItem', id)
       if (!it.tenantId) throw new AppError('ITEM_UNASSIGNED', `${it.name} belongs to no company yet — assign it on the Sourcing sheet first`, 422)
     }
-    const stockMap = new Map(items.map((i) => [i.id, i]))
-
-    const linesData = body.lines.map((l) => {
-      const sysQty = stockMap.get(l.inventoryItemId)?.currentStock ?? 0
-      const variancePct = sysQty > 0 ? (l.physicalQty - sysQty) / sysQty : 0
-      return {
-        inventoryItemId: l.inventoryItemId,
-        systemQty: sysQty,
-        physicalQty: l.physicalQty,
-        variancePct,
-        reason: l.reason ?? null,
-      }
-    })
+    const nameOf = new Map(items.map((i) => [i.id, i.name]))
 
     const count = await prisma.$transaction(async (tx) => {
+      // The "system said" snapshot is taken under a row lock, in the same
+      // transaction that overwrites stock: a sale deducting between the
+      // snapshot and the overwrite would otherwise be counted as shrinkage
+      // too, and the ledger adjustment below is valued from this snapshot.
+      // Locked in id order so two overlapping counts can't deadlock.
+      for (const id of [...ids].sort()) {
+        await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${id} FOR UPDATE`
+      }
+      const current = await tx.inventoryItem.findMany({ where: { id: { in: ids } }, select: { id: true, currentStock: true } })
+      const stockNow = new Map(current.map((i) => [i.id, i.currentStock]))
+      const linesData = body.lines.map((l) => {
+        const sysQty = stockNow.get(l.inventoryItemId) ?? 0
+        const variancePct = sysQty > 0 ? (l.physicalQty - sysQty) / sysQty : 0
+        return {
+          inventoryItemId: l.inventoryItemId,
+          systemQty: sysQty,
+          physicalQty: l.physicalQty,
+          variancePct,
+          reason: l.reason ?? null,
+        }
+      })
+
       const created = await tx.physicalCount.create({
         data: {
           tenantId,
@@ -304,10 +314,24 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       return created
     })
 
+    // The value of what the count found short / over goes to the ledger in the
+    // count's company (countPosting.ts), so the inventory account follows the
+    // stock. Idempotent on the count id. A posting failure must not undo a
+    // count the kitchen has already made — it is logged with the count id
+    // (postStockCount(id) can be re-run) and reported in the response.
+    let ledger: { posted: boolean; entryId: string | null; reason?: string }
+    try {
+      const { postStockCount } = await import('./countPosting.js')
+      ledger = await postStockCount(count.id)
+    } catch (err) {
+      req.log.error({ err: (err as Error).message, physicalCountId: count.id }, 'postStockCount failed')
+      ledger = { posted: false, entryId: null, reason: (err as { code?: string }).code ?? 'posting_failed' }
+    }
+
     // Flag significant variances once the count is committed.
-    for (const l of body.lines) {
-      const sysQty = stockMap.get(l.inventoryItemId)?.currentStock ?? 0
-      const itemName = stockMap.get(l.inventoryItemId)?.name ?? 'unknown'
+    for (const l of count.lines) {
+      const sysQty = l.systemQty
+      const itemName = nameOf.get(l.inventoryItemId) ?? 'unknown'
       const variancePct = sysQty > 0 ? (l.physicalQty - sysQty) / sysQty : 0
       if (Math.abs(variancePct) > SHRINKAGE_THRESHOLD && sysQty > 0) {
         await flagException({
@@ -324,7 +348,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       }
     }
 
-    return reply.status(201).send(count)
+    return reply.status(201).send({ ...count, ledger })
   })
 
   // ════════════════════════════════════════════════════════════════════════
@@ -336,8 +360,14 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // flag of any other company is 404 on acknowledge / resolve / dismiss
   // ('write' — every company the operator belongs to). Company-less flags
   // (legacy rows nothing could attribute) are shown to nobody.
+  //
+  // Who: the manager tiers plus finance (FINANCE_TEAM). Finance holds the
+  // `exceptions` module by default (lib/moduleAccess.ts) and the inbox is in
+  // the Finance workspace — cash variances, refunds, manual journals land
+  // here — yet the routes refused it with 403 (2026-10-10 audit, BOOKS-02).
+  // Finance can read, acknowledge and resolve; dismissing stays CEO-only.
 
-  fastify.get('/exceptions', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/exceptions', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const { status, severity, kind } = req.query as { status?: string; severity?: string; kind?: string }
     return prisma.exceptionFlag.findMany({
       where: {
@@ -351,7 +381,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.get('/exceptions/stats', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/exceptions/stats', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const scope = await scopeTenantWhere(req, 'read')
     const [open, ack, last24h, byKind] = await Promise.all([
       prisma.exceptionFlag.count({ where: { ...scope, status: 'open' } }),
@@ -365,7 +395,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   })
 
   fastify.patch<{ Params: { id: string } }>('/exceptions/:id/acknowledge',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCE_TEAM) },
     async (req, reply) => {
       const ok = await acknowledgeException(req.params.id, req.staffUser!.id, await scopeTenantWhere(req, 'write'))
       if (!ok) throw new NotFoundError('ExceptionFlag', req.params.id)
@@ -374,7 +404,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   )
 
   fastify.patch<{ Params: { id: string } }>('/exceptions/:id/resolve',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCE_TEAM) },
     async (req, reply) => {
       const body = z.object({ resolution: z.string().min(1).max(500) }).parse(req.body)
       const ok = await resolveException(req.params.id, req.staffUser!.id, body.resolution, await scopeTenantWhere(req, 'write'))

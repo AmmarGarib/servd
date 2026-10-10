@@ -85,11 +85,16 @@ async function assertSupplierFits(supplierId: string, tenantId: string) {
 const STOCK_NEEDS_RECORD =
   'Stock on hand can only change through a stock count, a waste log or a delivery. Use Inventory → Stock count.'
 
+// No cost field: what wasted stock cost is the server's figure (the item's
+// moving-average cost × quantity), never the client's. A typed
+// `estimatedCostCents` used to win — PKR 1 typed for 5 kg of beef dodged the
+// photo rule and booked PKR 1 to the ledger (2026-10-10 audit, BOH-07). An old
+// client that still sends one has it ignored; the response carries the real
+// figure.
 const wasteSchema = z.object({
   quantity: z.number().positive(),
   unit: z.string().min(1),
   reason: z.enum(['spoilage', 'over_prep', 'expired', 'damaged', 'other']),
-  estimatedCostCents: z.number().int().min(0).optional(),
   photoUrl: z.string().url().nullable().optional(),
   notes: z.string().optional(),
 })
@@ -449,7 +454,11 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         throw new AppError('UNIT_MISMATCH', `Log waste of ${item.name} in ${item.unit}, the unit its stock is kept in.`, 422)
       }
 
-      const cost = body.estimatedCostCents ?? (item.unitCostCents ? Math.round(item.unitCostCents * body.quantity) : undefined)
+      // The one cost: the item's moving-average cost × the quantity wasted.
+      // It drives the photo rule, the waste report and the ledger posting
+      // (postWasteLog books estimatedCostCents), so all three agree. Null when
+      // the item has no cost on file — nothing to value, nothing to post.
+      const cost = item.unitCostCents ? Math.round(item.unitCostCents * body.quantity) : null
 
       // Photo enforcement — above the threshold a photo is REQUIRED. Inflated
       // waste logs are a classic theft cover-up; making the photo mandatory
@@ -457,10 +466,11 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const { getOperationsConfig } = await import('../../lib/setup-config.js')
       const ops = await getOperationsConfig(item.tenantId ?? req.staffUser!.tenantId)
       const threshold = ops?.photoRequiredAboveCents ?? 50000
-      if (cost && cost >= threshold && !body.photoUrl) {
+      if (cost != null && cost >= threshold && !body.photoUrl) {
         throw new AppError(
           'PHOTO_REQUIRED',
-          `Waste above PKR ${(threshold / 100).toFixed(0)} requires a photo. Snap the wasted product before logging.`,
+          `Waste of ${body.quantity} ${item.unit} of ${item.name} is worth PKR ${Math.round(cost / 100).toLocaleString('en-PK')}. `
+            + `Waste above PKR ${(threshold / 100).toFixed(0)} requires a photo. Snap the wasted product before logging.`,
           400,
         )
       }

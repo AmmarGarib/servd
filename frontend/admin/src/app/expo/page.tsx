@@ -100,10 +100,10 @@ export default function ExpoPage() {
     staleTime: 2_000,
   })
 
-  // Toast for items that fired but have no station assignment. Surfaces the
-  // 'I clicked Fire and nothing happened at the line' confusion — the order
-  // DID fire, those specific items just aren't routed because their menu
-  // item has no station. Stays up for 8s so the operator can read the names.
+  // Toast for items that fired but have no live station (none assigned, or
+  // the station was retired). Surfaces the 'I clicked Fire and nothing
+  // happened at the line' confusion — the order DID fire, those specific
+  // items just aren't routed. Stays up for 8s so the operator can read the names.
   const [unroutedToast, setUnroutedToast] = useState<Array<{ id: string; name: string }>>([])
   useEffect(() => {
     if (unroutedToast.length === 0) return
@@ -111,14 +111,26 @@ export default function ExpoPage() {
     return () => clearTimeout(t)
   }, [unroutedToast])
 
+  // Fire sends the first course only; later courses wait to be fired from
+  // the order's Courses page. Tell expo which courses are still held.
+  const [heldNotice, setHeldNotice] = useState<{ orderId: string; courses: number[] } | null>(null)
+  useEffect(() => {
+    if (!heldNotice) return
+    const t = setTimeout(() => setHeldNotice(null), 8_000)
+    return () => clearTimeout(t)
+  }, [heldNotice])
+
   const fire = useMutation({
     mutationFn: (orderId: string) =>
-      api.post<{ ok: true; fired: number; unroutedItems: Array<{ id: string; name: string }> }>(
+      api.post<{ ok: true; fired: number; course: number | null; heldCourses?: number[]; unroutedItems: Array<{ id: string; name: string }> }>(
         `/expo/orders/${orderId}/fire`, {},
       ),
-    onSuccess: (resp) => {
+    onSuccess: (resp, orderId) => {
       if (resp?.unroutedItems && resp.unroutedItems.length > 0) {
         setUnroutedToast(resp.unroutedItems)
+      }
+      if (resp?.heldCourses && resp.heldCourses.length > 0) {
+        setHeldNotice({ orderId, courses: resp.heldCourses })
       }
       void qc.invalidateQueries({ queryKey: ['expo'] })
     },
@@ -154,9 +166,9 @@ export default function ExpoPage() {
       {unroutedToast.length > 0 && (
         <div className="fixed top-4 right-4 z-50 max-w-sm rounded-xl p-4 shadow-2xl"
           style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.45)' }}>
-          <p className="text-sm font-black text-amber-300">⚠ Fired, but {unroutedToast.length} item{unroutedToast.length === 1 ? '' : 's'} have no station</p>
+          <p className="text-sm font-black text-amber-300">⚠ Fired, but {unroutedToast.length} item{unroutedToast.length === 1 ? '' : 's'} have no live station</p>
           <p className="text-[11px] text-amber-200/70 mt-1">
-            The line won't see these because their menu item has no station assigned. Open Menu Editor → Edit item → pick a station.
+            The line won't see these because their menu item has no station, or its station was retired. Open Menu Editor → Edit item → pick a station.
           </p>
           <ul className="mt-2 space-y-0.5">
             {unroutedToast.slice(0, 6).map((it) => (
@@ -168,6 +180,19 @@ export default function ExpoPage() {
           </ul>
           <button onClick={() => setUnroutedToast([])}
             className="absolute top-2 right-2 text-amber-200/60 hover:text-amber-200 text-sm">✕</button>
+        </div>
+      )}
+      {heldNotice && (
+        <div className={`fixed right-4 z-50 max-w-sm rounded-xl p-4 shadow-2xl bg-kds-card border border-kds-blue ${unroutedToast.length > 0 ? 'top-48' : 'top-4'}`}>
+          <p className="text-sm font-black text-kds-text">
+            First course fired. Course{heldNotice.courses.length === 1 ? '' : 's'} {heldNotice.courses.join(', ')} held
+          </p>
+          <p className="text-[11px] text-kds-subtext mt-1">
+            Fire the next course when the table is ready, from the order&apos;s{' '}
+            <Link href={`/orders/${heldNotice.orderId}/courses`} className="underline text-kds-blue">Courses</Link> page.
+          </p>
+          <button onClick={() => setHeldNotice(null)}
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
         </div>
       )}
       <header className="px-6 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>

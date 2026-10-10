@@ -14,7 +14,6 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { getIOSafe } from '../../lib/ws.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
 
@@ -139,16 +138,23 @@ export async function expoRoutes(fastify: FastifyInstance) {
   )
 
   // POST /expo/orders/:id/fire — expo confirms an incoming order. Moves the
-  // order from `received` → `preparing`, fires the first step of each item's
-  // recipe to its station. If an item has no recipe steps configured (legacy
-  // menu items), it lands on the item's `stationId` directly — same as the
-  // pre-step behaviour.
-  fastify.post<{ Params: { id: string }; Body: { note?: string } }>(
+  // order from `received` → `preparing` and fires its FIRST course: the
+  // lowest course that still has unfinished lines (no course number = course
+  // 1). Later courses stay `pending` until someone fires them (the order's
+  // Courses page → POST /orders/:id/fire-course). The body may name a course
+  // to fire instead of the first one. Only pending lines that were never
+  // voided are fired — see fire.ts. Each fired line goes through its recipe
+  // steps (first steps to their stations), or, with no steps, straight onto
+  // the menu item's station.
+  fastify.post<{ Params: { id: string }; Body: { note?: string; course?: number } }>(
     '/orders/:id/fire',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const tenantId = (await scopeTenantWhere(req, 'write')).tenantId
-      const body = z.object({ note: z.string().max(280).optional() }).parse(req.body ?? {})
+      const body = z.object({
+        note:   z.string().max(280).optional(),
+        course: z.number().int().min(1).max(20).optional(),
+      }).parse(req.body ?? {})
 
       const order = await prisma.order.findFirst({
         where: {
@@ -157,13 +163,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
           deletedAt: null,
         },
         include: {
-          items: {
-            include: {
-              menuItem: {
-                include: { recipe: { include: { recipeSteps: true } } },
-              },
-            },
-          },
+          items: { select: { id: true, name: true, status: true, voidedAt: true, course: true } },
         },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
@@ -175,89 +175,42 @@ export async function expoRoutes(fastify: FastifyInstance) {
         )
       }
 
+      const { courseOf, isLiveLine, isFireable, firstOpenCourse, fireOrderItems } = await import('./fire.js')
+      if (!order.items.some(isLiveLine)) {
+        throw new AppError('NOTHING_TO_FIRE', 'Every line on this order is voided — reject the order instead of firing it.', 409)
+      }
+      const course = body.course ?? firstOpenCourse(order.items)
+      const toFire = order.items.filter((i) => isFireable(i) && courseOf(i) === course)
+      if (body.course !== undefined && toFire.length === 0) {
+        throw new AppError('NO_ITEMS', `No pending items at course ${body.course}`, 409)
+      }
+
       // Use the existing state machine path so audit + WS events fire correctly.
       // updateOrderStatus enforces the legal transition.
       const { updateOrderStatus } = await import('../orders/service.js')
       await updateOrderStatus(req.params.id, 'preparing')
 
-      // Per-item: two flows.
-      //
-      //   Step flow (item has recipe steps)
-      //     Instantiate OrderItemStep rows; deps-clear ones start preparing,
-      //     the rest sit waiting until cascade fires them. Each preparing
-      //     step's station gets a socket event.
-      //
-      //   Legacy flow (item has no recipe steps yet)
-      //     Flip the item to `preparing`, set firedAt, and ping its station
-      //     so the line cook sees it land. Without this the item stayed at
-      //     `pending` and nothing rendered on the per-station KDS — looked
-      //     like fire was broken even though the order header advanced.
-      //
-      // Items with neither recipe steps NOR a stationId (menu item never got
-      // routed in /menu) end up tracked but unrouted — surfaced back to the
-      // operator below so they know why "nothing happened".
-      const ws = getIOSafe()
-      const now = new Date()
-      const unroutedItems: Array<{ id: string; name: string }> = []
-      for (const item of order.items) {
-        const steps = item.menuItem?.recipe?.recipeSteps ?? []
-        const serviceSteps = steps.filter((s) => s.phase === 'service_cook' || s.phase === 'service_assemble')
+      const { fired, unroutedItems } = await fireOrderItems(order.id, toFire.map((i) => i.id))
 
-        if (serviceSteps.length > 0) {
-          // ─── Step flow ────────────────────────────────────────────────
-          await prisma.orderItem.update({
-            where: { id: item.id },
-            data: { status: 'preparing', firedAt: now },
-          })
-          await prisma.orderItemStep.createMany({
-            data: serviceSteps.map((s) => ({
-              orderItemId:      item.id,
-              recipeStepId:     s.id,
-              stationId:        s.stationId,
-              dependsOnStepIds: s.dependsOnIds,
-              status:           s.dependsOnIds.length === 0 ? 'preparing' : 'waiting',
-              firedAt:          s.dependsOnIds.length === 0 ? now : null,
-            })),
-          })
-          const firstSteps = serviceSteps.filter((s) => s.dependsOnIds.length === 0)
-          for (const step of firstSteps) {
-            if (!step.stationId || !ws) continue
-            ws.to(`station:${step.stationId}`).emit('expo:fire', {
-              orderId:    order.id,
-              itemId:     item.id,
-              stepId:     step.id,
-              stationId:  step.stationId,
-              instruction: step.instruction,
-              estimatedSeconds: step.estimatedSeconds,
-            })
-          }
-        } else {
-          // ─── Legacy flow ──────────────────────────────────────────────
-          await prisma.orderItem.update({
-            where: { id: item.id },
-            data: { status: 'preparing', firedAt: now },
-          })
-          if (item.stationId && ws) {
-            ws.to(`station:${item.stationId}`).emit('expo:fire', {
-              orderId:    order.id,
-              itemId:     item.id,
-              stepId:     null,
-              stationId:  item.stationId,
-              instruction: item.name,
-              estimatedSeconds: null,
-            })
-          } else if (!item.stationId) {
-            unroutedItems.push({ id: item.id, name: item.name })
-          }
-        }
+      // Courses still waiting to be fired — expo's cue that this order isn't
+      // done when the first course is.
+      const firedIds = new Set(fired.map((f) => f.id))
+      const heldCourses = [...new Set(
+        order.items.filter((i) => isFireable(i) && !firedIds.has(i.id)).map(courseOf),
+      )].sort((a, b) => a - b)
+
+      // Nothing left to cook (every live line was bumped before expo
+      // confirmed): hand the order straight to the ready column instead of
+      // leaving it in `preparing` with no bump left to move it.
+      if (fired.length === 0 && heldCourses.length === 0 && order.items.every((i) => !isLiveLine(i) || i.status === 'bumped')) {
+        await updateOrderStatus(req.params.id, 'ready')
       }
 
-      // Soft warning back to the caller. The order DID fire (status flipped,
-      // legacy items are now preparing), but these specific items have no
-      // station so the line will never see them. Operator should fix the
-      // menu items' station assignment.
+      // Soft warning back to the caller. The order DID fire, but these lines
+      // have no live station (none assigned, or it was retired) so the line
+      // will never see them. Operator should fix the station assignment.
       if (unroutedItems.length > 0) {
-        req.log.warn({ orderId: order.id, unroutedItems }, 'expo.fire: items have no station — fix in /menu')
+        req.log.warn({ orderId: order.id, unroutedItems }, 'expo.fire: items have no live station — fix in /menu')
       }
 
       // Audit trail picks up `expo.fire` events with the note for context.
@@ -269,7 +222,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
             entity:   'Order',
             entityId: order.id,
             action:   'expo.fire',
-            metadata: { note: body.note },
+            metadata: { note: body.note, course },
           })
         } catch {
           // Audit failures are non-fatal — we'd rather lose the breadcrumb than
@@ -279,8 +232,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
 
       return reply.status(200).send({
         ok: true,
-        fired: order.items.length,
-        unroutedItems,   // empty array unless some items had no station
+        fired: fired.length,   // lines actually sent to the kitchen
+        course,                // the course that fired (null: nothing open)
+        heldCourses,           // later courses still pending, in order
+        unroutedItems,         // empty unless some fired lines have no live station
       })
     },
   )

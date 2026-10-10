@@ -173,12 +173,18 @@ export async function foodSafetyRoutes(fastify: FastifyInstance) {
       },
     })
     if (!ok) {
+      // The flag belongs to the company that owns the unit — without it the
+      // flag was written company-less and showed in nobody's inbox
+      // (2026-10-10 audit, BOH-08).
       const { flagException } = await import('../../lib/exceptions.js')
       await flagException({
+        tenantId: unit.tenantId,
         kind: 'food_safety_temperature',
         severity: 'high',
         title: `${unit.name} read ${body.readingC}°C`,
         description: `Outside the limit (${unit.minC ?? '—'} to ${unit.maxC ?? '—'}°C). Action taken: ${log.correctiveAction}`,
+        entityType: 'TemperatureLog',
+        entityId: log.id,
         actorId: req.staffUser!.id,
         metadata: { unitId: unit.id, logId: log.id, readingC: body.readingC },
       }).catch(() => { /* a flag failing must not lose the reading */ })

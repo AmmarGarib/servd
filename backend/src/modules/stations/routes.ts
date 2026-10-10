@@ -102,13 +102,52 @@ export async function stationRoutes(fastify: FastifyInstance) {
     return prisma.station.update({ where: { id: owned.id }, data: body })
   })
 
-  // DELETE /stations/:id — the station must belong to a company the operator is in
+  // DELETE /stations/:id — the station must belong to a company the operator is in.
+  //
+  // Refused (409 STATION_IN_USE, with the counts) while anything still routes
+  // work to it: a live menu item, a recipe step of a live dish (or of an
+  // active sub-recipe), or an open ticket. A retired station is on no screen,
+  // so deleting one that menu items still pointed at sent every new ticket
+  // for those dishes into a queue nobody could see (2026-10-10 audit,
+  // BOH-03). Refusing is the safe choice over silently un-routing: the
+  // operator moves each dish to the station that will really cook it, and
+  // open tickets finish where the cooks can see them, before it goes.
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const owned = await prisma.station.findFirst({
       where: await ownedStationWhere(req, req.params.id, 'write'),
-      select: { id: true },
+      select: { id: true, name: true },
     })
     if (!owned) throw new NotFoundError('Station', req.params.id)
+
+    const [menuItems, recipeSteps, openItems, openSteps] = await Promise.all([
+      prisma.menuItem.count({ where: { stationId: owned.id, deletedAt: null } }),
+      prisma.recipeStep.count({
+        where: {
+          stationId: owned.id,
+          recipe: { OR: [{ menuItem: { is: { deletedAt: null } } }, { menuItemId: null, isActive: true }] },
+        },
+      }),
+      prisma.orderItem.count({
+        where: { stationId: owned.id, status: { in: ['pending', 'preparing', 'held', 'recalled'] }, steps: { none: {} } },
+      }),
+      prisma.orderItemStep.count({ where: { stationId: owned.id, status: { in: ['pending', 'waiting', 'preparing'] } } }),
+    ])
+    const tickets = openItems + openSteps
+    if (menuItems + recipeSteps + tickets > 0) {
+      const parts = [
+        menuItems   ? `${menuItems} menu item${menuItems === 1 ? '' : 's'}` : null,
+        recipeSteps ? `${recipeSteps} recipe step${recipeSteps === 1 ? '' : 's'}` : null,
+        tickets     ? `${tickets} open ticket${tickets === 1 ? '' : 's'}` : null,
+      ].filter(Boolean).join(', ')
+      throw new AppError(
+        'STATION_IN_USE',
+        `${owned.name} still has ${parts}. Move the dishes to another station (Menu → item → Station, and the recipe's steps), `
+          + 'let open tickets finish, then delete it.',
+        409,
+        { menuItems, recipeSteps, openTickets: tickets },
+      )
+    }
+
     await prisma.station.update({
       where: { id: owned.id },
       data: { deletedAt: new Date(), isActive: false },
