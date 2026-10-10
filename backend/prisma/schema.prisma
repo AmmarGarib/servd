@@ -2561,8 +2561,11 @@ model BankStatementImport {
   source              String // "bank:hbl", "keenu", …
   accountCode         String // CoA code the statement is reconciling against (e.g. 1020 Bank)
   statementDate       DateTime
-  openingBalanceCents Int      @default(0)
-  closingBalanceCents Int      @default(0)
+  // BigInt: an operating account holds more than PKR 21.47M (2^31 paisa) —
+  // INT4 made those imports 500 (BOOKS-06). The API reads them back as
+  // numbers (paisa stay far inside 2^53).
+  openingBalanceCents BigInt   @default(0)
+  closingBalanceCents BigInt   @default(0)
   filename            String?
   importedById        String?
   importedAt          DateTime @default(now())

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, APPROVERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, FINANCE_TEAM, APPROVERS, ADMIN_ONLY } from '../auth/middleware.js'
 import {
   importBankStatement,
   adjustStatementLine,
@@ -10,6 +10,19 @@ import { drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBa
 import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE, resolveTenantScope } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { reportDateRange } from '../reports/service.js'
+
+// Who works the reconciliation module (BOOKS-02): every manager tier plus the
+// finance role, which holds the `reconciliation` module by default
+// (lib/moduleAccess.ts) — the auth middleware's module gate on the
+// /reconciliation prefix is what narrows it per role or per person. Booking an
+// adjustment journal stays with the APPROVERS (CEO and co-owners); the
+// backfill stays CEO-only.
+const RECONCILERS = FINANCE_TEAM
+
+// Statement balances are BigInt columns (BOOKS-06); JSON carries them as
+// numbers. Paisa stay far inside 2^53, and the schema refuses anything bigger.
+const balanceCents = z.number().int().refine(Number.isSafeInteger, 'Balance is out of range')
 
 const importBankSchema = z.object({
   // The bank the statement is for (Configuration → Bank accounts): the ledger
@@ -18,17 +31,28 @@ const importBankSchema = z.object({
   bankAccountId: z.string().min(1).optional(),
   source: z.string().min(1).optional(),
   accountCode: z.string().min(1).optional(),
-  statementDate: z.string(),
-  openingBalanceCents: z.number().int(),
-  closingBalanceCents: z.number().int(),
+  statementDate: z.string().refine((v) => !isNaN(new Date(v).getTime()), 'statementDate must be a date (YYYY-MM-DD)'),
+  openingBalanceCents: balanceCents,
+  closingBalanceCents: balanceCents,
   filename: z.string().min(1, 'Statement file name is required — upload the bank statement before reconciling'),
   fileUrl:  z.string().url('Statement file URL required — uploaded statement must be reachable for audit'),
   csv: z.string().min(1, 'Bank statement contents required — paste or upload the CSV'),
 })
 
+// The other side of an unmatched statement line: one contra account for the
+// whole amount, or a balanced split (BOOKS-11 — a card settlement net of its
+// MDR clears 1030 in full and books the fee to 6080).
 const adjustLineSchema = z.object({
-  contraAccountCode: z.string().min(1),
-  memo: z.string().min(1),
+  memo: z.string().trim().min(1),
+  contraAccountCode: z.string().trim().min(1).optional(),
+  lines: z.array(z.object({
+    accountCode: z.string().trim().min(1),
+    type: z.enum(['debit', 'credit']),
+    amountCents: z.number().int().positive().refine(Number.isSafeInteger),
+    memo: z.string().trim().max(500).optional(),
+  })).min(1).max(20).optional(),
+}).refine((b) => !!b.contraAccountCode !== !!b.lines, {
+  message: 'Give either contraAccountCode or lines (a split), not both',
 })
 
 export async function reconciliationRoutes(fastify: FastifyInstance) {
@@ -38,18 +62,23 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
   // view-aware; acting on a line (adjust / ignore) needs write scope, and an
   // adjustment posts to the IMPORT's company, never the operator's active one.
 
-  fastify.get('/bank/imports', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.bankStatementImport.findMany({
+  fastify.get('/bank/imports', { preHandler: requireAuth(...RECONCILERS) }, async (req) => {
+    const rows = await prisma.bankStatementImport.findMany({
       where: await scopeTenantWhere(req, 'read'),
       orderBy: { statementDate: 'desc' },
       take: 100,
       include: { _count: { select: { lines: true } } },
     })
+    return rows.map((r) => ({
+      ...r,
+      openingBalanceCents: Number(r.openingBalanceCents),
+      closingBalanceCents: Number(r.closingBalanceCents),
+    }))
   })
 
   fastify.get<{ Params: { id: string }; Querystring: { status?: string } }>(
     '/bank/imports/:id/lines',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...RECONCILERS) },
     async (req) => {
       const imp = await prisma.bankStatementImport.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
@@ -66,7 +95,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/bank/imports', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/bank/imports', { preHandler: requireAuth(...RECONCILERS) }, async (req, reply) => {
     const body = importBankSchema.parse(req.body)
     // The ledger is per company: the statement reconciles against the
     // company the operator is working in.
@@ -119,6 +148,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       return adjustStatementLine({
         lineId: line.id,
         contraAccountCode: body.contraAccountCode,
+        lines: body.lines,
         memo: body.memo,
         postedById: req.staffUser!.id,
       })
@@ -127,7 +157,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/bank/lines/:id/ignore',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...RECONCILERS) },
     async (req) => {
       const line = await prisma.bankStatementLine.findFirst({
         where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
@@ -156,15 +186,15 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
   // Last 30 days (or a custom range) of POS shifts, one row per shift, with
   // expected cash from the ONE drawer formula (lib/drawer.ts) and the verdict
   // against each drawer company's own tolerance. Feeds the /reconciliation
-  // shift list and the CEO dashboard's "Cash balanced" card.
+  // shift list and the CEO dashboard's "Cash balanced" card. Dates are PKT
+  // business days (YYYY-MM-DD), the shifts OPENED on them — as /accounting and
+  // /reports read them (BOOKS-12: a date-only range used to be parsed as one
+  // UTC instant and returned nothing).
   fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string } }>(
     '/summary',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...RECONCILERS) },
     async (req) => {
-      const dateFrom = req.query.dateFrom
-        ? new Date(req.query.dateFrom)
-        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      const dateTo = req.query.dateTo ? new Date(req.query.dateTo) : new Date()
+      const { from: dateFrom, to: dateTo } = reportDateRange(req.query.dateFrom, req.query.dateTo, 30)
 
       const shifts = await prisma.shift.findMany({
         where: {

@@ -12,15 +12,15 @@
 // each: sales KPIs from reports/service.ts (the same functions /reports
 // uses), P&L from the ledger (accounting/reports.ts).
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
 import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
 import { outputTaxCollectedCents } from '../accounting/salesTaxReturn.js'
 import { labourPctReport } from '../../lib/labour.js'
 import { isBelowPar } from '../../lib/recipeCost.js'
-import { resolveTenantScope, scopeTenantWhere, type TenantIdWhere } from '../../lib/tenantScope.js'
-import { salesTotals, dailySeries, topItems, stationTimes } from '../reports/service.js'
+import { resolveTenantScope, scopeTenantWhere, assertConceptOwned, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { salesTotals, dailySeries, topItems, stationTimes, reportDateRange, soldOrderWhere } from '../reports/service.js'
 
 // ── Per-brand P&L, from the ledger only ──────────────────────────────────────
 // Every figure is the journal's. Brand revenue, COGS, discounts and opex are
@@ -31,7 +31,7 @@ import { salesTotals, dailySeries, topItems, stationTimes } from '../reports/ser
 // instead stay an unallocated head-office line is an open owner question; the
 // revenue-share split is today's behaviour, kept).
 //
-// Brand revenue used to come from the sales register (FinancialEntry: GST-
+// Brand revenue used to come from the old sales register (FinancialEntry: GST-
 // inclusive and already net of discount) while its costs and discounts came
 // from the ledger, so brand margins took the discount off twice and never
 // matched the company margin beside them; and company revenue silently fell
@@ -123,11 +123,16 @@ async function computeBrandPl(
   }
 }
 
-// ── date helpers ─────────────────────────────────────────────────────────────
-function dateRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date } {
-  const to = dateTo ? new Date(dateTo) : new Date()
-  const from = dateFrom ? new Date(dateFrom) : new Date(to.getTime() - 30 * 86_400_000)
-  return { from, to }
+// ── period + brand ───────────────────────────────────────────────────────────
+// PKT business days, as /reports and /accounting (reports/service.ts
+// reportDateRange); 30 days back by default. A brand id from the client is
+// resolved to the caller's companies first — a foreign one is a 404.
+async function dashboardQuery(req: FastifyRequest, q: { conceptId?: string; dateFrom?: string; dateTo?: string }) {
+  const { from, to } = reportDateRange(q.dateFrom, q.dateTo, 30)
+  const company = await scopeTenantWhere(req, 'read')
+  const conceptId = q.conceptId || undefined
+  if (conceptId) await assertConceptOwned(req, conceptId, 'read')
+  return { company, conceptId, from, to }
 }
 
 export async function managementRoutes(fastify: FastifyInstance) {
@@ -139,27 +144,20 @@ export async function managementRoutes(fastify: FastifyInstance) {
     '/brand-metrics',
     { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
-      const { conceptId, dateFrom, dateTo } = req.query
-      const { from, to } = dateRange(dateFrom, dateTo)
-      const company = await scopeTenantWhere(req, 'read')
+      const q = await dashboardQuery(req, req.query)
+      const { company, conceptId, from, to } = q
       const concept = { ...company, deletedAt: null }
 
-      // Register sales + order count — the same function /reports/sales uses.
-      const sales = await salesTotals({ company, conceptId, from, to })
+      // Sales + order count — the same function /reports/sales uses.
+      const sales = await salesTotals(q)
       const gross  = sales.gross
       const net    = sales.net
       const orders = sales.orders
 
-      // Distinct + new customers in the period (completed orders only).
+      // Distinct + new customers in the period — over the same orders.
       const grouped = await prisma.order.groupBy({
         by: ['customerId'],
-        where: {
-          status: 'completed',
-          customerId: { not: null },
-          ...(conceptId ? { conceptId } : {}),
-          concept,
-          placedAt: { gte: from, lte: to },
-        },
+        where: { AND: [soldOrderWhere(q), { customerId: { not: null } }] },
       })
       const customerIds = grouped.map((g) => g.customerId).filter((x): x is string => !!x)
       const distinctCustomers = customerIds.length
@@ -202,8 +200,8 @@ export async function managementRoutes(fastify: FastifyInstance) {
       return {
         period: { from: from.toISOString(), to: to.toISOString() },
         conceptId: conceptId ?? null,
-        // Sales register: what customers paid, incl. GST (not ledger revenue).
-        revenue: { grossCents: gross, netCents: net, orders, basis: 'sales_register' as const },
+        // Completed orders: gross incl. GST; net = the P&L's net revenue for them.
+        revenue: { grossCents: gross, netCents: net, refundsCents: sales.refunds, orders, basis: 'completed_orders' as const },
         customers: { distinct: distinctCustomers, new: newCustomers, returning: returningCustomers },
         kpis: {
           aovCents:  aov,            // average order value
@@ -225,13 +223,11 @@ export async function managementRoutes(fastify: FastifyInstance) {
     '/fnb-metrics',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
-      const { conceptId, dateFrom, dateTo } = req.query
-      const { from, to } = dateRange(dateFrom, dateTo)
-      const company = await scopeTenantWhere(req, 'read')
+      const q = await dashboardQuery(req, req.query)
+      const { company, conceptId, from, to } = q
       const concept = { ...company, deletedAt: null }
-      const q = { company, conceptId, from, to }
 
-      // Register sales, best sellers and station times — the same functions
+      // Sales, best sellers and station times — the same functions
       // /reports uses (top-item revenue is Σ price × qty per price point).
       const [sales, top, kitchen] = await Promise.all([salesTotals(q), topItems(q, 8), stationTimes(q)])
       const aov = sales.orders > 0 ? Math.round(sales.gross / sales.orders) : null
@@ -278,8 +274,8 @@ export async function managementRoutes(fastify: FastifyInstance) {
       return {
         period: { from: from.toISOString(), to: to.toISOString() },
         conceptId: conceptId ?? null,
-        // Sales register: what customers paid, incl. GST (not ledger revenue).
-        sales: { grossCents: sales.gross, orders: sales.orders, aovCents: aov, basis: 'sales_register' as const },
+        // Completed orders: gross incl. GST; net = the P&L's net revenue for them.
+        sales: { grossCents: sales.gross, netCents: sales.net, orders: sales.orders, aovCents: aov, basis: 'completed_orders' as const },
         topItems: top.map((t) => ({ rank: t.rank, name: t.name, quantity: t.quantity, revenueCents: t.revenueCents })),
         kitchen,
         quality: {
@@ -303,18 +299,16 @@ export async function managementRoutes(fastify: FastifyInstance) {
   //
   //   pl, netRevenueCents, taxCollectedCents, cashFlowNetCents — the LEDGER
   //     (the same books as /accounting/pl-ledger and the sales-tax return).
-  //   sales, series — the sales REGISTER (orders, what customers paid incl.
-  //     GST), for order count, average ticket and the sparkline; labelled as
-  //     such on the page.
+  //   sales, series — completed ORDERS (reports/service.ts): order count,
+  //     gross incl. GST, refunds, and net = the P&L's net revenue for them —
+  //     for the order count, average ticket and the sparkline.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/executive-overview',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
-      const { conceptId, dateFrom, dateTo } = req.query
-      const { from, to } = dateRange(dateFrom, dateTo)
-      const company = await scopeTenantWhere(req, 'read')
+      const q = await dashboardQuery(req, req.query)
+      const { company, conceptId, from, to } = q
       const tenantIds = (await resolveTenantScope(req)).tenantIds
-      const q = { company, conceptId, from, to }
 
       const [pl, cf, totals, series, taxCollectedCents] = await Promise.all([
         computeBrandPl(conceptId, from, to, tenantIds, company),
@@ -328,7 +322,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
       return {
         period: { from: from.toISOString(), to: to.toISOString() },
         conceptId: conceptId ?? null,
-        sales: { totals: { gross: totals.gross, net: totals.net, tax: totals.tax, orders: totals.orders }, basis: 'sales_register' as const },
+        sales: { totals: { gross: totals.gross, net: totals.net, refunds: totals.refunds, tax: totals.tax, orders: totals.orders }, basis: 'completed_orders' as const },
         pl,
         // Ledger revenue after discounts / refunds, ex-GST — for the brand when
         // one is picked, else the company.
@@ -337,7 +331,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
         // return is filed per company, never per brand).
         taxCollectedCents,
         cashFlowNetCents: cf.totals.netCents,
-        series: series.map((d) => ({ date: d.date, gross: d.gross, orders: d.orders })),
+        series: series.map((d) => ({ date: d.date, gross: d.gross, net: d.net, orders: d.orders })),
       }
     },
   )

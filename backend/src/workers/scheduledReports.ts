@@ -129,10 +129,12 @@ function matchField(field: string, value: number, min: number, max: number): boo
  * dailyDigest worker, mailed every company's orders blended into one email
  * to an env-var address; it is gone, and its top items and channel breakdown
  * live here now.) Yesterday in PKT, for one brand or every brand of one
- * company, from the same sales-register functions as /reports/sales — so the
- * email matches the dashboard: completed orders; "sales" is what customers
- * paid, incl. GST and service charge, after discounts. (Both old emails
- * showed "Net = total − discount", taking the discount off twice.)
+ * company, from the same functions as /reports/sales — so the email matches
+ * the dashboard: the orders completed that day; "sales" is the order value
+ * incl. GST and service charge, after discounts; net sales is the P&L's net
+ * revenue for them (ex-GST, after discounts, comps and refunds). It read the
+ * FinancialEntry register until BOOKS-01, which nothing has written since
+ * decision 39, so it mailed PKR 0 every morning.
  */
 export async function buildDailySalesReport(conceptId: string | null, tenantId: string, now = new Date()): Promise<{ subject: string; html: string }> {
   const pktToday = fmtPktDate(now)
@@ -163,7 +165,9 @@ export async function buildDailySalesReport(conceptId: string | null, tenantId: 
       <h2>Daily sales — ${dateLabel}</h2>
       <p><strong>${totals.orders}</strong> completed orders</p>
       <ul>
-        <li><strong>Sales: ${fmt(totals.gross)}</strong> <small>(what customers paid, incl. GST and service charge, after discounts)</small></li>
+        <li><strong>Sales: ${fmt(totals.gross)}</strong> <small>(order value incl. GST and service charge, after discounts)</small></li>
+        <li>Refunds: ${fmt(totals.refunds)}</li>
+        <li><strong>Net sales (ex-GST): ${fmt(totals.net)}</strong> <small>(the P&amp;L's revenue for these orders, after discounts, comps and refunds)</small></li>
         <li>Discounts given: ${fmt(totals.discount)}</li>
         <li>Sales tax on these orders: ${fmt(totals.tax)}</li>
       </ul>
@@ -171,7 +175,7 @@ export async function buildDailySalesReport(conceptId: string | null, tenantId: 
       <table cellpadding="6" border="1" style="border-collapse:collapse">${topRows}</table>
       <h3>By channel</h3>
       <table cellpadding="6" border="1" style="border-collapse:collapse">${channelRows}</table>
-      <p><small>Sales-register figures. The books (P&amp;L, sales-tax return) are in Accounting.</small></p>`,
+      <p><small>From the day's orders. Till sales reach the books when their drawer is closed; the P&amp;L and the sales-tax return are in Accounting.</small></p>`,
   }
 }
 

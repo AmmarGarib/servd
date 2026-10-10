@@ -5,15 +5,18 @@
 //   - ONE P&L, from the ledger: GET /accounting/pl (the FinancialEntry "P&L")
 //     is gone, /accounting/pl-ledger/brands gives the by-brand view, and the
 //     CEO executive overview takes brand AND company revenue from the ledger
-//     (no silent fallback to register gross), net revenue = revenue − contra,
+//     (no silent fallback to order gross), net revenue = revenue − contra,
 //     and "tax collected" = ledger output tax (what the return files).
 //   - ONE transaction feed: GET /accounting/ledger with ?id= and a cursor that
 //     pages in (date, id) order; the activity feed only shows the books' own
 //     trail, of the companies in view, to the roles allowed to read it.
 //   - ONE implementation of each sales KPI (reports/service.ts) behind /reports
-//     and /management: top-item revenue is Σ price × qty, not SUM × SUM.
+//     and /management: top-item revenue is Σ price × qty, not SUM × SUM. Sales
+//     are the completed ORDERS (the FinancialEntry register has had no writer
+//     since decision 39 — BOOKS-01; tests/auditReports.test.ts ties them to
+//     the ledger P&L).
 //   - ONE daily sales email (the scheduled report): per company, PKT day,
-//     same register figures as /reports/sales, with top items and channels.
+//     same figures as /reports/sales, with top items and channels.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -54,12 +57,9 @@ const AT = new Date(`${DAY}T12:00:00+05:00`)
 const RANGE = `dateFrom=${DAY}&dateTo=${DAY}`
 const ISO_RANGE = `dateFrom=${DAY}T00:00:00%2B05:00&dateTo=${DAY}T23:59:59%2B05:00`
 
-async function registerSale(conceptId: string, grossCents: number, taxCents: number, discountCents: number, entryDate = AT, channel = 'pos') {
-  const o = await prisma.order.create({ data: { conceptId, source: channel as never, status: 'completed', totalCents: grossCents, taxCents, discountCents, placedAt: entryDate, completedAt: entryDate } })
-  await prisma.financialEntry.create({
-    data: { orderId: o.id, conceptId, channel, grossCents, discountCents, taxCents, netCents: grossCents - discountCents, entryDate },
-  })
-  return o
+// A completed order — what every sales figure reads (BOOKS-01).
+async function sale(conceptId: string, grossCents: number, taxCents: number, discountCents: number, completedAt = AT, channel: 'pos' | 'servd' = 'pos') {
+  return prisma.order.create({ data: { conceptId, source: channel, status: 'completed', totalCents: grossCents, taxCents, discountCents, placedAt: completedAt, completedAt } })
 }
 
 beforeAll(async () => {
@@ -111,10 +111,10 @@ beforeAll(async () => {
     ],
   })
 
-  // Sales register for A on DAY (deliberately NOT the ledger's figures).
-  await registerSale(conceptA, 50_000, 6_000, 2_000)
-  await registerSale(conceptA2, 20_000, 2_000, 0, AT, 'servd')
-  await registerSale(conceptB, 70_000, 9_000, 0)
+  // Orders for A on DAY (deliberately NOT the ledger's figures).
+  await sale(conceptA, 50_000, 6_000, 2_000)
+  await sale(conceptA2, 20_000, 2_000, 0, AT, 'servd')
+  await sale(conceptB, 70_000, 9_000, 0)
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -160,7 +160,7 @@ describe('one P&L, from the ledger', () => {
     await expect(enforceModuleAccess('/api/v1/accounting/trial-balance', plOnly)).rejects.toThrow()
   })
 
-  it('the CEO overview takes revenue, net revenue and tax from the ledger; sales stay register and say so', async () => {
+  it('the CEO overview takes revenue, net revenue and tax from the ledger; sales come from the orders and say so', async () => {
     const res = await get('ceo', `/management/executive-overview?${ISO_RANGE}`)
     expect(res.statusCode).toBe(200)
     const ov = res.json() as {
@@ -172,12 +172,12 @@ describe('one P&L, from the ledger', () => {
     expect(ov.netRevenueCents).toBe(15_000 - 1_000)
     expect(ov.taxCollectedCents).toBe(1_500)
     const simmer = ov.pl.brands.find((b) => b.conceptId === conceptA)!
-    // Ledger revenue, not register gross (50,000); discount taken once.
+    // Ledger revenue, not order gross (50,000); discount taken once.
     expect(simmer.revenueCents).toBe(10_000)
     expect(simmer.grossProfitCents).toBe(10_000 - 1_000 - 3_000)
     // Shared rent is spread by LEDGER revenue share: 10,000 / 15,000.
     expect(simmer.opexCents).toBe(Math.round(2_000 * (10_000 / 15_000)))
-    expect(ov.sales).toMatchObject({ basis: 'sales_register', totals: { gross: 70_000, orders: 2 } })
+    expect(ov.sales).toMatchObject({ basis: 'completed_orders', totals: { gross: 70_000, orders: 2 } })
   })
 
   it('a brand view reports that brand\'s ledger net revenue', async () => {
@@ -185,7 +185,7 @@ describe('one P&L, from the ledger', () => {
     expect((res.json() as { netRevenueCents: number }).netRevenueCents).toBe(9_000)
   })
 
-  it('no ledger revenue means zero revenue — never the register\'s gross', async () => {
+  it('no ledger revenue means zero revenue — never the orders\' gross', async () => {
     const res = await get('ceo', '/management/executive-overview?dateFrom=2026-01-01T00:00:00Z&dateTo=2026-01-02T00:00:00Z')
     const ov = res.json() as { pl: { company: { revenueCents: number } } }
     expect(ov.pl.company.revenueCents).toBe(0)
@@ -276,11 +276,13 @@ describe('sales KPIs — one implementation behind /reports and /management', ()
     expect((await get('ceo', `/reports/series?${ISO_RANGE}`)).statusCode).toBe(404)
   })
 
-  it('/reports/sales and the brand dashboard read the same register totals, company-scoped', async () => {
+  it('/reports/sales and the brand dashboard read the same totals, company-scoped', async () => {
     const sales = (await get('ceo', `/reports/sales?${ISO_RANGE}`)).json() as { totals: { gross: number; orders: number } }
     const brand = (await get('ceo', `/management/brand-metrics?${ISO_RANGE}`)).json() as { revenue: { grossCents: number; orders: number } }
-    expect(sales.totals).toMatchObject({ gross: 70_000, orders: 2 })
-    expect(brand.revenue).toMatchObject({ grossCents: 70_000, orders: 2 })
+    // Every completed order of A's on DAY: the two sales (70,000), the three
+    // lattes (150,000) and the station ticket (1,000) — never B's 70,000.
+    expect(sales.totals).toMatchObject({ gross: 221_000, orders: 6 })
+    expect(brand.revenue).toMatchObject({ grossCents: 221_000, orders: 6 })
   })
 })
 
@@ -288,15 +290,16 @@ describe('sales KPIs — one implementation behind /reports and /management', ()
 
 describe('the daily sales email is the scheduled report', () => {
   it('covers yesterday in PKT for one company, with top items and channels', async () => {
-    // "Now" is 00:05 PKT on the 11th, so yesterday is DAY. A register row at
-    // 23:30 PKT on DAY is in; one at 00:30 PKT on the 11th is not.
+    // "Now" is 00:05 PKT on the 11th, so yesterday is DAY. An order completed
+    // at 23:30 PKT on DAY is in; one at 00:30 PKT on the 11th is not.
     const now = new Date('2026-06-11T00:05:00+05:00')
-    await registerSale(conceptA, 1_234_500, 0, 0, new Date(`${DAY}T23:30:00+05:00`))
-    await registerSale(conceptA, 9_999_900, 0, 0, new Date('2026-06-11T00:30:00+05:00'))
+    await sale(conceptA, 1_234_500, 0, 0, new Date(`${DAY}T23:30:00+05:00`))
+    await sale(conceptA, 9_999_900, 0, 0, new Date('2026-06-11T00:30:00+05:00'))
     const { subject, html } = await buildDailySalesReport(null, tenantA, now)
     expect(subject).toContain('10 June')
-    expect(html).toContain('<strong>3</strong> completed orders')   // 2 from setup + the 23:30 one
-    expect(html).toContain('PKR 13,045')                             // 50,000 + 20,000 + 1,234,500 paisa
+    // 2 from setup + 3 lattes + the station ticket + the 23:30 one
+    expect(html).toContain('<strong>7</strong> completed orders')
+    expect(html).toContain('PKR 14,555')                             // 70,000 + 150,000 + 1,000 + 1,234,500 paisa
     expect(html).not.toContain('Net:')
     expect(html).toContain('Rep Latte')                              // top items
     expect(html).toMatch(/servd<\/td><td>1 orders/)                  // channel breakdown

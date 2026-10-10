@@ -2,10 +2,13 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { fmtPkrWhole } from '../../lib/money'
+import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 
+// Completed orders (GET /reports/sales): gross = order value incl. GST, before
+// refunds; net = the P&L's net revenue for them (ex-GST, after discounts,
+// comps and refunds).
 interface SalesData {
-  totals: { gross: number; net: number; tax: number; orders: number }
+  totals: { gross: number; net: number; tax: number; refunds: number; orders: number }
   byHour?: Record<string, { orders: number; gross: number }>
 }
 interface TopItem   { menuItemId: string; name: string; quantity: number; revenueCents: number }
@@ -23,13 +26,19 @@ const PRESETS = [
   { label: '90 days', days: 90 },
 ]
 
+// Report periods are PKT business days, sent as plain YYYY-MM-DD dates — the
+// API reads each as 00:00–23:59 PKT (BOOKS-12). Building them from the
+// browser's local midnight via toISOString() made "Today" start on the
+// previous UTC date, and sending T00:00:00Z bounds cut the day at 05:00 PKT.
+function shiftDays(isoDate: string, days: number): string {
+  return new Date(new Date(`${isoDate}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10)
+}
+
 function buildRange(days: number) {
-  const to = new Date()
-  const from = new Date()
-  if (days === 0) { from.setHours(0, 0, 0, 0) }
-  else if (days === 1) { from.setDate(from.getDate() - 1); from.setHours(0, 0, 0, 0); to.setDate(to.getDate() - 1); to.setHours(23, 59, 59, 999) }
-  else { from.setDate(from.getDate() - days) }
-  return { from: from.toISOString().split('T')[0]!, to: to.toISOString().split('T')[0]! }
+  const today = todayPktIso()
+  if (days === 0) return { from: today, to: today }
+  if (days === 1) { const y = shiftDays(today, -1); return { from: y, to: y } }
+  return { from: shiftDays(today, -days), to: today }
 }
 
 // Shift a date range back by `periodDays` days to produce a comparison window
@@ -104,13 +113,14 @@ export default function ReportsPage() {
     setDateFrom(r.from); setDateTo(r.to)
   }
 
-  const fromISO = `${dateFrom}T00:00:00Z`
-  const toISO   = `${dateTo}T23:59:59Z`
+  // Plain dates: the API reads them as whole PKT days.
+  const fromISO = dateFrom
+  const toISO   = dateTo
 
   // Compute previous period dates
   const prevRange = buildPrevRange(dateFrom, dateTo)
-  const prevFromISO = `${prevRange.from}T00:00:00Z`
-  const prevToISO   = `${prevRange.to}T23:59:59Z`
+  const prevFromISO = prevRange.from
+  const prevToISO   = prevRange.to
 
   // ── Current period queries ──────────────────────────────────────────────────
   const { data: sales,    isLoading: salesLoading }    = useQuery<SalesData>({
@@ -235,9 +245,10 @@ export default function ReportsPage() {
               <button
                 onClick={() => {
                   const rows: Record<string, unknown>[] = [
-                    { metric: 'Sales incl. GST (register)', value: Math.round(sales.totals.gross / 100) },
-                    { metric: 'Register net (sales − discounts)', value: Math.round(sales.totals.net / 100) },
-                    { metric: 'Tax on these orders (register)', value: Math.round(sales.totals.tax / 100) },
+                    { metric: 'Sales incl. GST (completed orders, before refunds)', value: Math.round(sales.totals.gross / 100) },
+                    { metric: 'Refunds (incl. GST)', value: Math.round(sales.totals.refunds / 100) },
+                    { metric: 'Net sales ex-GST (P&L net revenue)', value: Math.round(sales.totals.net / 100) },
+                    { metric: 'GST on these orders, less refunds', value: Math.round(sales.totals.tax / 100) },
                     { metric: 'Total Orders', value: sales.totals.orders },
                   ]
                   exportToCsv(rows, `sales_${slug}.csv`)
@@ -248,29 +259,37 @@ export default function ReportsPage() {
             </div>
 
             {/* KPI cards with delta arrows */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {[
                 {
-                  // Sales-register figures: what customers paid, incl. GST
-                  // and service charge. The books' revenue is the ledger P&L.
+                  // The period's completed orders: order value incl. GST and
+                  // service charge, after discounts, before refunds.
                   label: 'Sales (incl. GST)',
                   value: fmtPkrWhole(sales.totals.gross),
                   color: 'text-primary-ink',
-                  sub: 'sales register — not the P&L',
+                  sub: 'completed orders, before refunds',
                   delta: compare && prevSales ? computeDelta(sales.totals.gross, prevSales.totals.gross) : null,
                 },
                 {
-                  label: 'Register net',
+                  label: 'Net sales',
                   value: fmtPkrWhole(sales.totals.net),
                   color: 'text-primary-ink',
-                  sub: 'register: sales − discounts',
+                  sub: 'ex-GST, after discounts, comps & refunds — the P&L figure',
                   delta: compare && prevSales ? computeDelta(sales.totals.net, prevSales.totals.net) : null,
                 },
                 {
-                  label: 'Tax on orders',
+                  label: 'Refunds',
+                  value: fmtPkrWhole(sales.totals.refunds),
+                  color: 'text-s-red',
+                  sub: 'handed back in the period, incl. GST',
+                  delta: compare && prevSales ? computeDelta(sales.totals.refunds, prevSales.totals.refunds) : null,
+                  invert: true,   // more refunds is worse
+                },
+                {
+                  label: 'GST on orders',
                   value: fmtPkrWhole(sales.totals.tax),
                   color: 'text-s-amber',
-                  sub: 'register — the filed figure is the tax return',
+                  sub: 'less refunds — the filed figure is the tax return',
                   delta: compare && prevSales ? computeDelta(sales.totals.tax, prevSales.totals.tax) : null,
                 },
                 {
@@ -287,7 +306,7 @@ export default function ReportsPage() {
                   {s.sub && <p className="text-[11px] text-s-dim mt-1">{s.sub}</p>}
                   {s.delta && (
                     <div className="flex items-center gap-1 mt-1.5">
-                      <DeltaBadge delta={s.delta} />
+                      <DeltaBadge delta={s.delta} invert={s.invert} />
                       <span className="text-[10px] text-s-dim">vs prev</span>
                     </div>
                   )}
@@ -509,7 +528,7 @@ export default function ReportsPage() {
                         <th>Channel</th>
                         <th className="text-right">Orders</th>
                         <th className="text-right">Sales (incl. GST)</th>
-                        <th className="text-right">Register net</th>
+                        <th className="text-right">Net sales</th>
                         {compare && <th className="text-right">vs Prev</th>}
                       </tr>
                     </thead>

@@ -278,7 +278,8 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
     mutationFn: () => api.post('/reconciliation/bank/imports', {
       ...(picked === GATEWAY ? { source: 'keenu', accountCode: '1030' } : { bankAccountId: picked }),
       statementDate,
-      openingBalanceCents: opening * 100, closingBalanceCents: closing * 100,
+      // Whole paisa: 100.10 * 100 is 10009.999…, which the API refuses.
+      openingBalanceCents: Math.round(opening * 100), closingBalanceCents: Math.round(closing * 100),
       csv,
       filename: `${label}-${statementDate}.csv`,
       fileUrl: `data:text/csv;base64,${btoa(csv)}`,
@@ -309,54 +310,137 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
 }
 
 // ─── Statement lines — clear what didn't auto-match ───────────────────────────
+// "Book adjustment" posts the line against one account for the whole amount,
+// or SPLIT across several (BOOKS-11): a Keenu settlement that lands net of its
+// MDR books Dr bank (the line) + Dr 6080 fee / Cr 1030 gross, so the card
+// receivable clears in full. The split must balance against the line; the
+// API refuses it otherwise. Booking is for the CEO and co-owners.
+
+interface SplitRow { code: string; type: 'debit' | 'credit'; amount: string }
+
+const toCents = (pkr: string) => Math.round((parseFloat(pkr) || 0) * 100)
+
+function AdjustForm({ line, onDone, onCancel }: { line: StatementLine; onDone: () => void; onCancel: () => void }) {
+  const inflow = line.amountCents > 0
+  const abs = Math.abs(line.amountCents)
+  const bankSide: 'debit' | 'credit' = inflow ? 'debit' : 'credit'
+  const otherSide: 'debit' | 'credit' = inflow ? 'credit' : 'debit'
+  const [split, setSplit] = useState(false)
+  const [contra, setContra] = useState('')
+  const [memo, setMemo] = useState('')
+  const [rows, setRows] = useState<SplitRow[]>([
+    { code: '', type: otherSide, amount: (abs / 100).toFixed(2) },
+    { code: '6080', type: bankSide, amount: '' },
+  ])
+
+  const debits  = (bankSide === 'debit'  ? abs : 0) + rows.filter((r) => r.type === 'debit').reduce((t, r) => t + toCents(r.amount), 0)
+  const credits = (bankSide === 'credit' ? abs : 0) + rows.filter((r) => r.type === 'credit').reduce((t, r) => t + toCents(r.amount), 0)
+  const off = debits - credits
+  const splitReady = rows.every((r) => r.code.trim() && toCents(r.amount) > 0) && off === 0
+
+  const adjust = useMutation({
+    mutationFn: () => api.post(`/reconciliation/bank/lines/${line.id}/adjust`, split
+      ? { memo: memo.trim(), lines: rows.map((r) => ({ accountCode: r.code.trim(), type: r.type, amountCents: toCents(r.amount) })) }
+      : { memo: memo.trim(), contraAccountCode: contra.trim() }),
+    onSuccess: onDone,
+  })
+  const setRow = (i: number, patch: Partial<SplitRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+  const inp = 'bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text'
+
+  return (
+    <div className="px-4 py-3 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={!split} onChange={() => setSplit(false)} /> One account</label>
+        <label className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={split} onChange={() => setSplit(true)} /> Split (e.g. card settlement less fee)</label>
+      </div>
+      {!split ? (
+        <div className="flex flex-wrap gap-2">
+          <input value={contra} onChange={(e) => setContra(e.target.value)} placeholder="account code (6080)" className={`${inp} w-36`} />
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-s-muted">
+            This line: <span className="font-mono">{bankSide === 'debit' ? 'Dr' : 'Cr'} {fmtPkr(abs)}</span> to the statement&rsquo;s account. Other side:
+          </p>
+          {rows.map((r, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <input value={r.code} onChange={(e) => setRow(i, { code: e.target.value })} placeholder="code" className={`${inp} w-20 font-mono`} />
+              <select value={r.type} onChange={(e) => setRow(i, { type: e.target.value as 'debit' | 'credit' })} className={inp}>
+                <option value="debit">Dr</option>
+                <option value="credit">Cr</option>
+              </select>
+              <input type="number" min="0" step="0.01" value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} placeholder="PKR" className={`${inp} w-28 text-right`} />
+              {rows.length > 1 && <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-s-muted hover:text-s-text">Remove</button>}
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => setRows((rs) => [...rs, { code: '', type: otherSide, amount: '' }])} className="text-primary-ink">+ Add line</button>
+            <span className={off === 0 ? 'text-green-700' : 'text-s-red'}>
+              {off === 0 ? 'Balanced' : `Off by ${fmtPkr(Math.abs(off))} (${off > 0 ? 'more debits' : 'more credits'})`}
+            </span>
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="memo (what this is)" className={`${inp} flex-1 min-w-[10rem]`} />
+        <button
+          onClick={() => adjust.mutate()}
+          disabled={!memo.trim() || adjust.isPending || (split ? !splitReady : !contra.trim())}
+          className="text-primary-ink font-semibold disabled:opacity-40">
+          {adjust.isPending ? 'Booking…' : 'Book'}
+        </button>
+        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+      </div>
+      {adjust.error && <p className="text-s-red">{(adjust.error as Error).message}</p>}
+    </div>
+  )
+}
 
 function StatementLines({ importId }: { importId: string }) {
   const qc = useQueryClient()
   const [adjusting, setAdjusting] = useState<string | null>(null)
-  const [contra, setContra] = useState('')
-  const [memo, setMemo] = useState('')
   const { data: lines = [], isLoading } = useQuery<StatementLine[]>({
     queryKey: ['bank-lines', importId],
     queryFn: () => api.get(`/reconciliation/bank/imports/${importId}/lines`),
   })
   const refresh = () => void qc.invalidateQueries({ queryKey: ['bank-lines', importId] })
   const ignore = useMutation({ mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/ignore`, {}), onSuccess: refresh })
-  const adjust = useMutation({
-    mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/adjust`, { contraAccountCode: contra.trim(), memo: memo.trim() }),
-    onSuccess: () => { setAdjusting(null); setContra(''); setMemo(''); refresh() },
-  })
 
   if (isLoading) return <p className="px-4 py-3 text-xs text-s-muted">Loading lines…</p>
   return (
-    <div className="bg-s-bg-soft/40">
-      {(ignore.error || adjust.error) && (
-        <p className="px-4 pt-2 text-xs text-s-red">{((ignore.error ?? adjust.error) as Error).message}</p>
+    <div className="bg-s-bg-soft/40 overflow-x-auto">
+      {ignore.error && (
+        <p className="px-4 pt-2 text-xs text-s-red">{(ignore.error as Error).message}</p>
       )}
       <table className="w-full text-xs">
         <tbody>
           {lines.map((l) => (
-            <tr key={l.id} className="border-t border-s-border align-top">
-              <td className="px-4 py-2 text-s-muted whitespace-nowrap">{l.postedDate.slice(0, 10)}</td>
-              <td className="px-4 py-2 text-s-text">{l.description}{l.reference && <span className="text-s-muted"> · {l.reference}</span>}</td>
-              <td className={`px-4 py-2 text-right font-mono ${l.amountCents < 0 ? 'text-s-red' : 'text-s-text'}`}>{fmtPkr(l.amountCents)}</td>
-              <td className="px-4 py-2 text-right whitespace-nowrap">
-                {l.matchStatus !== 'unmatched' ? (
-                  <span className="text-s-muted">{l.matchStatus}</span>
-                ) : adjusting === l.id ? (
-                  <span className="inline-flex gap-1">
-                    <input value={contra} onChange={(e) => setContra(e.target.value)} placeholder="code (6080)" className="w-20 bg-s-card border border-s-border rounded px-1 py-0.5 text-s-text" />
-                    <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="memo" className="w-28 bg-s-card border border-s-border rounded px-1 py-0.5 text-s-text" />
-                    <button onClick={() => adjust.mutate(l.id)} disabled={!contra.trim() || !memo.trim() || adjust.isPending} className="text-primary-ink disabled:opacity-40">Book</button>
-                    <button onClick={() => setAdjusting(null)} className="text-s-muted">Cancel</button>
-                  </span>
-                ) : (
-                  <span className="inline-flex gap-3">
-                    <button onClick={() => setAdjusting(l.id)} className="text-primary-ink">Book adjustment</button>
-                    <button onClick={() => ignore.mutate(l.id)} className="text-s-muted hover:text-s-text">Ignore</button>
-                  </span>
-                )}
-              </td>
-            </tr>
+            <Fragment key={l.id}>
+              <tr className="border-t border-s-border align-top">
+                <td className="px-4 py-2 text-s-muted whitespace-nowrap">{l.postedDate.slice(0, 10)}</td>
+                <td className="px-4 py-2 text-s-text">{l.description}{l.reference && <span className="text-s-muted"> · {l.reference}</span>}</td>
+                <td className={`px-4 py-2 text-right font-mono ${l.amountCents < 0 ? 'text-s-red' : 'text-s-text'}`}>{fmtPkr(l.amountCents)}</td>
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  {l.matchStatus !== 'unmatched' ? (
+                    <span className="text-s-muted">{l.matchStatus}</span>
+                  ) : adjusting === l.id ? (
+                    <span className="text-s-muted">booking…</span>
+                  ) : (
+                    <span className="inline-flex gap-3">
+                      <button onClick={() => setAdjusting(l.id)} className="text-primary-ink">Book adjustment</button>
+                      <button onClick={() => ignore.mutate(l.id)} className="text-s-muted hover:text-s-text">Ignore</button>
+                    </span>
+                  )}
+                </td>
+              </tr>
+              {adjusting === l.id && l.matchStatus === 'unmatched' && (
+                <tr className="border-t border-s-border/50">
+                  <td colSpan={4} className="p-0">
+                    <AdjustForm line={l} onCancel={() => setAdjusting(null)} onDone={() => { setAdjusting(null); refresh() }} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
           {lines.length === 0 && <tr><td className="px-4 py-3 text-s-muted">No lines</td></tr>}
         </tbody>
