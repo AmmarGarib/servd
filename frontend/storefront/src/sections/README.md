@@ -27,7 +27,8 @@ src/sections/
   <group>/*.tsx          the section components
 ```
 
-Groups: `servd` (servd.pk pages + nav + footer), `brand` (brand chrome —
+Groups: `servd` (servd.pk pages + nav + footer + the floating feedback button,
+`servd:feedback`), `brand` (brand chrome —
 header/footer — plus About/Visit/Menu and the generic layout for brands without
 a bespoke design), `stackd`, `simmer`, `flipd`.
 

@@ -12,7 +12,9 @@ export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export type LayoutKind = 'page' | 'header' | 'footer' | 'popup'
+// widget = servd chrome that floats over every page (servd:feedback, the
+// feedback button): sections only, no SEO or A/B, never in the sitemap.
+export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup'
 export type DraftStatus = 'draft' | 'pending' | 'scheduled'
 export type Variant = 'a' | 'b'
 
@@ -158,6 +160,7 @@ export const previewUrl = (token: string) => `${STOREFRONT_URL}/preview/${token}
 
 export function kindForSlug(slug: string): LayoutKind {
   if (slug.startsWith('popup:')) return 'popup'
+  if (slug === 'servd:feedback') return 'widget'
   const last = slug.split(':').pop()
   if ((slug.startsWith('servd:') || slug.startsWith('brand:')) && last === 'header' && slug.split(':').length >= 2) return 'header'
   if ((slug.startsWith('servd:') || slug.startsWith('brand:')) && last === 'footer' && slug.split(':').length >= 2) return 'footer'
@@ -171,7 +174,7 @@ const BRAND_RESERVED = new Set<string>([...BRAND_BUILTIN_PAGES, 'qr', 'pages', '
 export const isReservedBrandPage = (p: string) => BRAND_RESERVED.has(p)
 
 const SERVD_PATHS: Record<string, string> = {
-  home: '/home', header: '/home', footer: '/home', waitlist: '/waitlist', press: '/press', reserve: '/reserve',
+  home: '/home', header: '/home', footer: '/home', feedback: '/home', waitlist: '/waitlist', press: '/press', reserve: '/reserve',
 }
 
 /** Where the live page is on the storefront (null for pop-ups / templates). */

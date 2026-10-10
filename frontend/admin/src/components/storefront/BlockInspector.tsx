@@ -16,6 +16,13 @@ interface Props {
   block: Block
   onChange: (next: Block) => void
   fonts: MediaAssetLite[]
+  /**
+   * Hide the generic Style and Animation controls — set for a widget layout
+   * (servd:feedback, lib/content.ts kindForSlug). The feedback button is fixed
+   * over every page: an entrance animation wraps it in an opacity:0 box until
+   * it scrolls into view, i.e. never, and a band/padding would sit around it.
+   */
+  noStyle?: boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,9 +31,20 @@ type FP = { block: Loose; set: (p: Partial<Block>) => void }
 
 const NO_STYLE = new Set<string>()
 
-export function BlockInspector({ block, onChange, fonts }: Props) {
+/** What the Style and Animation sections write onto a block. */
+const STYLE_KEYS = ['background', 'textColor', 'paddingY', 'fontFamily', 'fullBleed', 'animation', 'animationDelayMs', 'animationDurationMs'] as const
+
+export function BlockInspector({ block, onChange, fonts, noStyle = false }: Props) {
   const set = (patch: Partial<Block>) => onChange({ ...block, ...patch })
   const b = block as Loose
+  const showStyle = !noStyle && !NO_STYLE.has(block.type)
+  // Style or animation saved before the controls were hidden: offer to clear it.
+  const leftoverStyle = noStyle && STYLE_KEYS.some((k) => b[k] !== undefined)
+  const clearStyle = () => {
+    const next: Loose = { ...block }
+    for (const k of STYLE_KEYS) delete next[k]
+    onChange(next as Block)
+  }
 
   return (
     <div>
@@ -56,7 +74,17 @@ export function BlockInspector({ block, onChange, fonts }: Props) {
           {block.type === 'section'       && <SectionFields block={block} onChange={onChange} />}
         </Section>
 
-        {!NO_STYLE.has(block.type) && (
+        {leftoverStyle && (
+          <Section title="Style">
+            <p className="text-xs text-s-muted">
+              This floats over every page in its own design, so it takes no style or entrance animation. It still carries
+              some from before, which can hide it on the site.
+            </p>
+            <button type="button" onClick={clearStyle} className="text-xs text-s-red hover:underline">Remove the style and animation</button>
+          </Section>
+        )}
+
+        {showStyle && (
           <>
             <Section title="Style">
               <Field label="Background"><ColorInput value={block.background} onChange={(v) => set({ background: v })} placeholder="#ffffff or var(--servd-ink)" /></Field>

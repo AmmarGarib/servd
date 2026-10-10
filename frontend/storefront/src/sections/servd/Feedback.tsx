@@ -1,16 +1,27 @@
 'use client'
 
-// Global feedback widget. Floating bottom-right button that opens a sheet
-// with three modes:
+// servd.feedback — the floating feedback button and its sheet (SiteLayout
+// `servd:feedback`, Admin → Storefront → Feedback button). app/layout.tsx
+// renders it on every page through components/feedback/FeedbackSlot.tsx.
+// Three modes:
 //   1. NPS — "How likely to recommend?" 0..10 grid
-//   2. CSAT — "How was your most recent experience?" 1..5 emoji
+//   2. CSAT — "How was your most recent experience?" five ratings, worst to best
 //   3. Open — "Got an idea?" freeform comment
+//
+// Every word is a field. No emoji (owner, 2026-10-10: "Make sections right
+// now with words and I'll have marketing design icons for us to use"): each
+// place that had one has an optional image field, shown beside its word when
+// set; empty = the word alone. The images are decorative (alt="") because the
+// word is always there.
 //
 // Submits to POST /api/v1/feedback. Anonymous submissions are allowed; the
 // auth token is included if available (so feedback links to the customer).
+// The CSAT score is the rating's position (1–5) — the API requires 1–5 — so
+// a ratings list cut short is padded from the defaults.
 //
-// Local-storage gate: if a user submits within the last 14 days, we hide
-// the widget so we're not nagging — they can re-open it via /account.
+// Local-storage gate: if a user submits within the last `cooldownDays` days
+// (default 14), we hide the widget so we're not nagging — they can re-open it
+// via /account.
 //
 // The trigger must never sit on top of the page's own actions. It is a 44px
 // icon button on phones (the labelled pill from 640px — styles are
@@ -18,13 +29,23 @@
 // ordering screens (ROUTES_HIDDEN_ON), and it steps aside while a form field
 // has focus or any footer is on screen — the brand footers' "back to servd."
 // link and form submit buttons sit exactly where it floats.
+//
+// On /preview (the draft of this section, opened from the editor) it always
+// shows, the footer does not push it aside, and Send goes straight to the
+// thank-you screen: nothing is posted and no cooldown is stored.
 
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
+import type { SectionProps } from '../types'
+import { list, safeSrc, str } from '../safe'
+import { FEEDBACK_DEFAULTS } from './feedbackDefaults'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
-const COOLDOWN_DAYS = 14
 const STORAGE_KEY = 'servd-feedback-cooldown'
+
+type Mode = 'nps' | 'csat' | 'open'
+const MODES: readonly Mode[] = ['nps', 'csat', 'open']
+const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode)
 
 // Each entry hides the widget on that route and everything under it. The
 // waitlist / reservation forms and the brand ordering screens (/stackd,
@@ -34,6 +55,7 @@ const ROUTES_HIDDEN_ON = [
   '/login', '/signup', '/auth', '/waitlist', '/reserve',
   '/stackd', '/simmer', '/flipd',
   '/orders/[id]/review',
+  '/rider',
 ]
 // '[id]' matches one path segment; a route matches itself or any sub-path.
 const HIDDEN_ROUTE_PATTERNS = ROUTES_HIDDEN_ON.map(
@@ -43,6 +65,8 @@ const HIDDEN_ROUTE_PATTERNS = ROUTES_HIDDEN_ON.map(
 function hiddenOnRoute(pathname: string): boolean {
   return HIDDEN_ROUTE_PATTERNS.some((re) => re.test(pathname))
 }
+
+const isPreviewPath = (pathname: string) => pathname === '/preview' || pathname.startsWith('/preview/')
 
 // Inputs that are buttons/toggles rather than somewhere to type.
 const NON_TEXT_INPUTS = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'hidden'])
@@ -129,10 +153,75 @@ function useFooterInView(enabled: boolean): boolean | null {
   return inView
 }
 
-export function FeedbackWidget() {
+// ─── Fields ────────────────────────────────────────────────────────────────
+
+/** A label that must not be blank (a button or heading with no name): the
+ *  field, else today's copy. */
+function required(v: unknown, fallback: string): string {
+  return str(v).trim() || fallback
+}
+
+interface ModeItem { mode: Mode; label: string; sub: string; icon: string }
+
+/** The menu's choices: known kinds only, each once, in the editor's order.
+ *  None usable (all removed, or none given a kind yet) = the defaults. */
+function modeItems(v: unknown): ModeItem[] {
+  const seen = new Set<Mode>()
+  const out: ModeItem[] = []
+  for (const it of list<{ mode?: unknown; label?: unknown; sub?: unknown; icon?: unknown }>(v)) {
+    if (!isMode(it.mode) || seen.has(it.mode)) continue
+    seen.add(it.mode)
+    const d = FEEDBACK_DEFAULTS.modes.find((m) => m.mode === it.mode)!
+    out.push({ mode: it.mode, label: required(it.label, d.label), sub: str(it.sub), icon: safeSrc(it.icon) })
+  }
+  return out.length
+    ? out
+    : FEEDBACK_DEFAULTS.modes.map((m) => ({ mode: m.mode as Mode, label: m.label, sub: m.sub, icon: '' }))
+}
+
+interface Rating { n: number; label: string; icon: string }
+
+/** Always five, worst to best: the score is the position. A shorter list is
+ *  padded from the defaults; anything past five is ignored. */
+function ratingItems(v: unknown): Rating[] {
+  const given = list<{ label?: unknown; icon?: unknown }>(v)
+  return FEEDBACK_DEFAULTS.csatRatings.map((d, i) => ({
+    n: i + 1,
+    label: required(given[i]?.label, d.label),
+    icon: safeSrc(given[i]?.icon),
+  }))
+}
+
+function cooldownDaysOf(v: unknown): number {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
+  return Number.isFinite(n) && n >= 0 ? Math.min(365, n) : FEEDBACK_DEFAULTS.cooldownDays
+}
+
+// ─── Widget ────────────────────────────────────────────────────────────────
+
+export function Feedback({ fields }: SectionProps) {
+  const D = FEEDBACK_DEFAULTS
+  const triggerLabel = required(fields.triggerLabel, D.triggerLabel)
+  const triggerName = str(fields.triggerAriaLabel).trim() || triggerLabel
+  const modes = modeItems(fields.modes)
+  const ratings = ratingItems(fields.csatRatings)
+  const doneIcon = safeSrc(fields.doneIcon)
+  const menuSub = str(fields.menuSub)
+  const npsLow = str(fields.npsLow)
+  const npsHigh = str(fields.npsHigh)
+  const openSub = str(fields.openSub)
+  const doneBody = str(fields.doneBody)
+  const labels = {
+    back: required(fields.backLabel, D.backLabel),
+    send: required(fields.sendLabel, D.sendLabel),
+    sending: required(fields.sendingLabel, D.sendingLabel),
+  }
+  const cooldownDays = cooldownDaysOf(fields.cooldownDays)
+
   const pathname = usePathname() ?? ''
+  const previewing = isPreviewPath(pathname)
   const [open, setOpen]     = useState(false)
-  const [mode, setMode]     = useState<'nps' | 'csat' | 'open' | 'menu'>('menu')
+  const [mode, setMode]     = useState<Mode | 'menu'>('menu')
   const [score, setScore]   = useState<number | null>(null)
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -140,6 +229,10 @@ export function FeedbackWidget() {
   const [hidden, setHidden] = useState(true)  // SSR-safe — render nothing until client mount
 
   useEffect(() => {
+    if (isPreviewPath(pathname)) {
+      setHidden(false)
+      return
+    }
     let cooldown: string | null = null
     try { cooldown = localStorage.getItem(STORAGE_KEY) } catch { /* storage blocked */ }
     if (cooldown && parseInt(cooldown, 10) > Date.now()) {
@@ -155,7 +248,7 @@ export function FeedbackWidget() {
 
   const watching = !hidden && !open
   const typing = useTyping(watching)
-  const footerInView = useFooterInView(watching)
+  const footerInView = useFooterInView(watching && !previewing)
 
   if (hidden) return null
 
@@ -167,9 +260,13 @@ export function FeedbackWidget() {
   //    after the footer in the DOM, and focus on a footer link scrolls the
   //    footer into view, so visibility:hidden here would drop it from the tab
   //    order exactly when it is next. It shows again while it has focus.
-  const concealed = typing ? 'typing' : footerInView !== false ? 'footer' : undefined
+  //    Never on /preview, where the short preview page always has the footer
+  //    on screen and the button is the thing being reviewed.
+  const concealed = typing ? 'typing' : !previewing && footerInView !== false ? 'footer' : undefined
 
   async function submit() {
+    if (mode === 'menu') return
+    if (previewing) { setDone(true); return }
     setSubmitting(true)
     try {
       const token = typeof window !== 'undefined'
@@ -190,8 +287,8 @@ export function FeedbackWidget() {
       })
       if (res.ok) {
         setDone(true)
-        // Hide widget for COOLDOWN_DAYS so we don't keep prompting.
-        localStorage.setItem(STORAGE_KEY, String(Date.now() + COOLDOWN_DAYS * 86_400_000))
+        // Hide widget for cooldownDays so we don't keep prompting.
+        localStorage.setItem(STORAGE_KEY, String(Date.now() + cooldownDays * 86_400_000))
       }
     } catch { /* swallow — non-blocking feedback */ }
     finally { setSubmitting(false) }
@@ -201,6 +298,15 @@ export function FeedbackWidget() {
     setOpen(false); setMode('menu'); setScore(null); setComment(''); setDone(false)
   }
 
+  // Back clears the score too: an NPS 9 carried into the 1–5 rating would be
+  // sent as a rating the visitor never picked (or refused by the API).
+  const back = () => { setMode('menu'); setScore(null) }
+  const textareaStyle = { width: '100%', border: '1px solid var(--servd-line)', borderRadius: '0.5rem', fontSize: '0.9rem', fontFamily: 'inherit', resize: 'vertical', marginBottom: '1rem' } as const
+  const placeholderOf = (v: unknown) => {
+    const p = str(v)
+    return p ? { placeholder: p } : {}
+  }
+
   return (
     <>
       {/* Floating trigger */}
@@ -208,14 +314,14 @@ export function FeedbackWidget() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          aria-label="Feedback"
+          aria-label={triggerName}
           className="sv-feedback"
           data-concealed={concealed}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
           </svg>
-          <span className="sv-feedback-label">Feedback</span>
+          <span className="sv-feedback-label">{triggerLabel}</span>
         </button>
       )}
 
@@ -242,36 +348,40 @@ export function FeedbackWidget() {
 
             {done ? (
               <div style={{ textAlign: 'center', padding: '1rem 0' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🙏</div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem' }}>Thanks for telling us.</h3>
-                <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                  Every word lands somewhere real. We&rsquo;ll do better.
-                </p>
-                <button onClick={reset} className="servd-btn-primary" style={{ minWidth: '10rem' }}>Done</button>
+                {doneIcon && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={doneIcon} alt="" width={40} height={40}
+                    style={{ display: 'block', width: 40, height: 40, objectFit: 'contain', margin: '0 auto 0.5rem' }} />
+                )}
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem' }}>{required(fields.doneTitle, D.doneTitle)}</h3>
+                {doneBody && (
+                  <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>{doneBody}</p>
+                )}
+                <button onClick={reset} className="servd-btn-primary" style={{ minWidth: '10rem' }}>{required(fields.doneLabel, D.doneLabel)}</button>
               </div>
             ) : mode === 'menu' ? (
               <>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '0.25rem' }}>Tell us anything.</h3>
-                <p style={{ color: 'var(--servd-mute)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                  Quick honest feedback &mdash; we read every word.
-                </p>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '0.25rem' }}>{required(fields.menuTitle, D.menuTitle)}</h3>
+                {menuSub && (
+                  <p style={{ color: 'var(--servd-mute)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>{menuSub}</p>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <ModeButton emoji="🌟" label="Would you recommend us?" sub="30 sec · NPS" onClick={() => setMode('nps')} />
-                  <ModeButton emoji="😊" label="How was your experience?"  sub="10 sec · CSAT" onClick={() => setMode('csat')} />
-                  <ModeButton emoji="💡" label="Got an idea?"              sub="freeform"      onClick={() => setMode('open')} />
+                  {modes.map((m) => (
+                    <ModeButton key={m.mode} icon={m.icon} label={m.label} sub={m.sub} onClick={() => setMode(m.mode)} />
+                  ))}
                 </div>
               </>
             ) : mode === 'nps' ? (
               <>
                 <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: '1rem' }}>
-                  How likely are you to recommend servd to a friend?
+                  {required(fields.npsQuestion, D.npsQuestion)}
                 </h3>
                 <div style={{
                   display: 'grid', gridTemplateColumns: 'repeat(11, 1fr)', gap: '0.25rem',
                   marginBottom: '0.5rem',
                 }}>
                   {Array.from({ length: 11 }, (_, n) => (
-                    <button key={n} onClick={() => setScore(n)} type="button"
+                    <button key={n} onClick={() => setScore(n)} type="button" aria-pressed={score === n}
                       style={{
                         aspectRatio: '1', minWidth: 0,
                         border: `1.5px solid ${score === n ? '#000' : 'var(--servd-line)'}`,
@@ -284,59 +394,72 @@ export function FeedbackWidget() {
                     </button>
                   ))}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--servd-mute)', marginBottom: '1rem' }}>
-                  <span>Not at all</span>
-                  <span>Very likely</span>
-                </div>
+                {(npsLow || npsHigh) && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--servd-mute)', marginBottom: '1rem' }}>
+                    <span>{npsLow}</span>
+                    <span>{npsHigh}</span>
+                  </div>
+                )}
                 <textarea
                   value={comment} onChange={(e) => setComment(e.target.value)}
                   rows={2} maxLength={1000}
-                  placeholder={score != null && score <= 6 ? 'What would have made it a 9 or 10?' : 'Tell us why (optional)'}
-                  style={{ width: '100%', padding: '0.6rem', border: '1px solid var(--servd-line)', borderRadius: '0.5rem', fontSize: '0.9rem', fontFamily: 'inherit', resize: 'vertical', marginBottom: '1rem' }} />
-                <SubmitRow onBack={() => setMode('menu')} canSubmit={score != null} submit={submit} submitting={submitting} />
+                  {...placeholderOf(score != null && score <= 6 ? fields.npsPlaceholderLow : fields.npsPlaceholder)}
+                  style={{ ...textareaStyle, padding: '0.6rem' }} />
+                <SubmitRow onBack={back} canSubmit={score != null} submit={submit} submitting={submitting} labels={labels} />
               </>
             ) : mode === 'csat' ? (
               <>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: '1rem' }}>How was your most recent experience?</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
-                  {[
-                    { n: 1, emoji: '😡', label: 'Bad' },
-                    { n: 2, emoji: '🙁', label: 'Meh' },
-                    { n: 3, emoji: '😐', label: 'OK'  },
-                    { n: 4, emoji: '🙂', label: 'Good' },
-                    { n: 5, emoji: '😍', label: 'Loved it' },
-                  ].map((o) => (
-                    <button key={o.n} onClick={() => setScore(o.n)} type="button"
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: '1rem' }}>{required(fields.csatQuestion, D.csatQuestion)}</h3>
+                {/* minmax(0, 1fr): five equal columns that never grow past the
+                    sheet, so a long word wraps instead of pushing the row wide
+                    (five fit on a 320px phone). */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '0.375rem', marginBottom: '1rem' }}>
+                  {ratings.map((o) => (
+                    <button key={o.n} onClick={() => setScore(o.n)} type="button" aria-pressed={score === o.n}
                       style={{
-                        padding: '0.85rem 0.5rem',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        minWidth: 0, minHeight: '3.5rem',
+                        padding: o.icon ? '0.85rem 0.25rem' : '0.6rem 0.25rem',
                         border: `1.5px solid ${score === o.n ? '#000' : 'var(--servd-line)'}`,
                         background: score === o.n ? '#fef3c7' : '#fff',
                         borderRadius: '0.75rem', textAlign: 'center', cursor: 'pointer',
                       }}>
-                      <div style={{ fontSize: '1.5rem' }}>{o.emoji}</div>
-                      <div style={{ fontSize: '0.7rem', fontWeight: 600, marginTop: '0.25rem', color: '#374151' }}>{o.label}</div>
+                      {o.icon && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={o.icon} alt="" width={32} height={32}
+                          style={{ display: 'block', width: 32, height: 32, objectFit: 'contain' }} />
+                      )}
+                      <span style={{
+                        display: 'block', maxWidth: '100%', color: '#374151', lineHeight: 1.15,
+                        overflowWrap: 'anywhere', hyphens: 'auto',
+                        ...(o.icon
+                          ? { fontSize: '0.7rem', fontWeight: 600, marginTop: '0.25rem' }
+                          : { fontSize: 'clamp(0.72rem, 3.2vw, 0.85rem)', fontWeight: 700 }),
+                      }}>
+                        {o.label}
+                      </span>
                     </button>
                   ))}
                 </div>
                 <textarea
                   value={comment} onChange={(e) => setComment(e.target.value)}
                   rows={2} maxLength={1000}
-                  placeholder="Anything we should know? (optional)"
-                  style={{ width: '100%', padding: '0.6rem', border: '1px solid var(--servd-line)', borderRadius: '0.5rem', fontSize: '0.9rem', fontFamily: 'inherit', resize: 'vertical', marginBottom: '1rem' }} />
-                <SubmitRow onBack={() => setMode('menu')} canSubmit={score != null} submit={submit} submitting={submitting} />
+                  {...placeholderOf(fields.csatPlaceholder)}
+                  style={{ ...textareaStyle, padding: '0.6rem' }} />
+                <SubmitRow onBack={back} canSubmit={score != null} submit={submit} submitting={submitting} labels={labels} />
               </>
             ) : (
               <>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: '0.25rem' }}>What&rsquo;s on your mind?</h3>
-                <p style={{ color: 'var(--servd-mute)', marginBottom: '1rem', fontSize: '0.8rem' }}>
-                  An idea, a complaint, a wish — anything. Anonymous if you want.
-                </p>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: '0.25rem' }}>{required(fields.openTitle, D.openTitle)}</h3>
+                {openSub && (
+                  <p style={{ color: 'var(--servd-mute)', marginBottom: '1rem', fontSize: '0.8rem' }}>{openSub}</p>
+                )}
                 <textarea
                   value={comment} onChange={(e) => setComment(e.target.value)}
                   rows={5} maxLength={2000}
-                  placeholder="Type away…"
-                  style={{ width: '100%', padding: '0.75rem', border: '1px solid var(--servd-line)', borderRadius: '0.5rem', fontSize: '0.9rem', fontFamily: 'inherit', resize: 'vertical', marginBottom: '1rem' }} />
-                <SubmitRow onBack={() => setMode('menu')} canSubmit={comment.trim().length > 0} submit={submit} submitting={submitting} />
+                  {...placeholderOf(fields.openPlaceholder)}
+                  style={{ ...textareaStyle, padding: '0.75rem' }} />
+                <SubmitRow onBack={back} canSubmit={comment.trim().length > 0} submit={submit} submitting={submitting} labels={labels} />
               </>
             )}
           </div>
@@ -346,7 +469,7 @@ export function FeedbackWidget() {
   )
 }
 
-function ModeButton({ emoji, label, sub, onClick }: { emoji: string; label: string; sub: string; onClick: () => void }) {
+function ModeButton({ icon, label, sub, onClick }: { icon: string; label: string; sub: string; onClick: () => void }) {
   return (
     <button onClick={onClick} type="button" style={{
       display: 'flex', alignItems: 'center', gap: '0.85rem', textAlign: 'left',
@@ -354,18 +477,23 @@ function ModeButton({ emoji, label, sub, onClick }: { emoji: string; label: stri
       background: '#f9fafb', border: '1px solid var(--servd-line)', borderRadius: '0.85rem',
       cursor: 'pointer', width: '100%',
     }}>
-      <span style={{ fontSize: '1.5rem' }}>{emoji}</span>
+      {icon && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={icon} alt="" width={28} height={28}
+          style={{ display: 'block', width: 28, height: 28, objectFit: 'contain', flexShrink: 0 }} />
+      )}
       <span style={{ flex: 1 }}>
-        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#111827' }}>{label}</div>
-        <div style={{ fontSize: '0.7rem', color: 'var(--servd-mute)', marginTop: '0.1rem' }}>{sub}</div>
+        <span style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, color: '#111827' }}>{label}</span>
+        {sub && <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--servd-mute)', marginTop: '0.1rem' }}>{sub}</span>}
       </span>
-      <span style={{ color: 'var(--servd-mute)' }}>→</span>
+      <span aria-hidden="true" style={{ color: 'var(--servd-mute)' }}>→</span>
     </button>
   )
 }
 
-function SubmitRow({ onBack, canSubmit, submit, submitting }: {
+function SubmitRow({ onBack, canSubmit, submit, submitting, labels }: {
   onBack: () => void; canSubmit: boolean; submit: () => void; submitting: boolean
+  labels: { back: string; send: string; sending: string }
 }) {
   return (
     <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -375,12 +503,12 @@ function SubmitRow({ onBack, canSubmit, submit, submitting }: {
           border: '1px solid var(--servd-line)', background: '#fff', color: '#374151',
           fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
         }}>
-        Back
+        {labels.back}
       </button>
       <button onClick={submit} disabled={!canSubmit || submitting} type="button"
         className="servd-btn-primary"
         style={{ flex: 1, opacity: !canSubmit || submitting ? 0.5 : 1 }}>
-        {submitting ? 'Sending…' : 'Send'}
+        {submitting ? labels.sending : labels.send}
       </button>
     </div>
   )

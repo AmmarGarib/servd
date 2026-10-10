@@ -6,7 +6,7 @@ import {
 import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
-import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
+import { FeedbackSlot } from '../components/feedback/FeedbackSlot'
 import { PopupHost } from '../components/popups/PopupHost'
 import { SERVD_ORIGIN, SERVD_OG_IMAGE, BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { ManagedPage } from '../sections/ManagedPage'
@@ -164,7 +164,9 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // The servd header and footer are content pages (`servd:header`,
   // `servd:footer` — Admin → Storefront), rendered here on the server and
   // handed to the client gates that hide them on brand microsites and the
-  // pages that carry their own chrome.
+  // pages that carry their own chrome. So is the floating feedback button
+  // (`servd:feedback`); its gate only keeps it off /preview, which renders
+  // the draft itself.
   return (
     <html lang="en" className={fontVariables}>
       <body>
@@ -184,7 +186,9 @@ export default async function StorefrontLayout({ children }: { children: React.R
         <StorefrontFooter initialBrandSlug={initialBrandSlug}>
           <ManagedPage slug="servd:footer" />
         </StorefrontFooter>
-        <FeedbackWidget />
+        <FeedbackSlot>
+          <ManagedPage slug="servd:feedback" />
+        </FeedbackSlot>
       </body>
     </html>
   )

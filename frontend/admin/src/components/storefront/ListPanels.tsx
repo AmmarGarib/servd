@@ -72,6 +72,7 @@ export function PagesPanel() {
     { slug: 'servd:header', label: 'Top bar', hint: 'logo, links and the Order button on every servd page' },
     { slug: 'servd:home', label: 'Home', hint: '/home' },
     { slug: 'servd:footer', label: 'Footer', hint: 'every servd page' },
+    { slug: 'servd:feedback', label: 'Feedback button', hint: 'the floating feedback button and sheet on every servd page' },
     { slug: 'servd:waitlist', label: 'Waitlist', hint: '/waitlist' },
     { slug: 'servd:press', label: 'Press', hint: '/press' },
     { slug: 'servd:reserve', label: 'Reserve', hint: '/reserve' },

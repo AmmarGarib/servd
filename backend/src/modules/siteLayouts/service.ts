@@ -15,7 +15,7 @@ import { fontFamiliesUsed } from './schemas.js'
 
 const db = serviceClient
 
-export type LayoutKind = 'page' | 'header' | 'footer' | 'popup'
+export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup'
 
 export type ParsedSlug =
   | { owner: 'shared'; kind: LayoutKind }
@@ -24,14 +24,24 @@ export type ParsedSlug =
 
 const PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 
+/** servd site widgets: chrome that floats over every page rather than being
+ *  one (servd:feedback = the feedback button and its sheet). Not pages, so
+ *  never in the sitemap list and no SEO / A-B in the editor. servd only —
+ *  brand:<b>:feedback is an ordinary page the owner added. */
+const SERVD_WIDGETS = new Set(['feedback'])
+
 /**
  * servd:<page>                 → shared (servd:header / servd:footer are the
- *                                site chrome)
+ *                                site chrome; servd:feedback is a widget —
+ *                                the floating feedback button)
  * brand:<conceptSlug>[:<page>] → the brand's company (:header / :footer are
  *                                its chrome; about, visit, menu built-in pages;
  *                                anything else is a page the owner added)
  * page:<slug>                  → shared custom page
  * popup:<key>                  → shared, or the company of the brands it targets
+ *
+ * Shared = tenantId null on purpose: the servd:* chrome, widgets and pages are
+ * platform data shown across every company's brands.
  */
 function chromeKind(part: string): LayoutKind {
   return part === 'header' ? 'header' : part === 'footer' ? 'footer' : 'page'
@@ -40,7 +50,9 @@ function chromeKind(part: string): LayoutKind {
 export function parseSlug(slug: string): ParsedSlug | null {
   const [prefix, a, b, ...rest] = slug.split(':')
   if (rest.length > 0 || !a || !PART.test(a)) return null
-  if (prefix === 'servd' && b === undefined) return { owner: 'shared', kind: chromeKind(a) }
+  if (prefix === 'servd' && b === undefined) {
+    return { owner: 'shared', kind: SERVD_WIDGETS.has(a) ? 'widget' : chromeKind(a) }
+  }
   if (prefix === 'page' && b === undefined) return { owner: 'shared', kind: 'page' }
   if (prefix === 'popup' && b === undefined) return { owner: 'popup', kind: 'popup' }
   if (prefix === 'brand') {

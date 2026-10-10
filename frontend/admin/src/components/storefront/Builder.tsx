@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
 import { BLOCK_CATALOG, canNest, type Block } from '../../lib/blocks'
-import { makeBlock, sectionPaletteItems, useSectionCatalog, type PaletteItem } from '../../lib/sections'
+import { makeBlock, SECTION_KEY, sectionPaletteItems, sectionSpec, useSectionCatalog, type PaletteItem } from '../../lib/sections'
 import {
   contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fromLocalInput, kindForSlug, previewUrl, seedBlocks, storefrontPath, STOREFRONT_URL,
   type ConceptLite, type LayoutEdit, type PageSettings, type Variant,
@@ -34,7 +34,7 @@ type RightTab = 'element' | 'page' | 'rules'
 
 function defaultTitle(slug: string): string {
   const [prefix, a, b] = slug.split(':')
-  if (prefix === 'servd') return `servd ${a === 'header' ? 'top bar' : a}`
+  if (prefix === 'servd') return `servd ${a === 'header' ? 'top bar' : a === 'feedback' ? 'feedback button' : a}`
   if (prefix === 'brand') return b ? `${a} ${b === 'header' ? 'top bar' : b}` : `${a} home`
   if (slug.startsWith('page:')) return slug.slice(5)
   if (slug.startsWith('popup:')) return 'Pop-up'
@@ -118,10 +118,18 @@ export function Builder({ slug }: { slug: string }) {
   const selected = selectedId ? findBlock(activeBlocks, selectedId) : null
 
   // Palette: this page's sections first (its design), then the general
-  // elements. A top bar takes sections only; pop-ups take elements only.
+  // elements. A top bar takes sections only; pop-ups take elements only. A
+  // widget (servd:feedback, the floating feedback button) takes only the
+  // sections made for it: it is mounted after the footer on every page, so
+  // anything else would show up there site-wide. Its elements get no Style or
+  // Animation controls either (BlockInspector noStyle): an entrance animation
+  // keeps the fixed button invisible until it "scrolls into view".
   const paletteItems = useMemo<PaletteItem[]>(() => {
-    const sections = isPopup ? [] : sectionPaletteItems(slug)
-    const general = kind === 'header' ? [] : BLOCK_CATALOG
+    const offered = isPopup ? [] : sectionPaletteItems(slug)
+    const sections = kind === 'widget'
+      ? offered.filter((i) => sectionSpec(i.key.slice(SECTION_KEY.length))?.pages.includes(slug))
+      : offered
+    const general = kind === 'header' || kind === 'widget' ? [] : BLOCK_CATALOG
       .filter((s) => s.group !== 'Special')
       .map((s) => ({ key: s.type, label: s.label, description: s.description, icon: s.icon, group: s.group }))
     return [...sections, ...general]
@@ -337,7 +345,8 @@ export function Builder({ slug }: { slug: string }) {
                 ))}
               </div>
               {tab === 'element' && (selected
-                ? <BlockInspector key={selected.id} block={selected} fonts={fonts} onChange={(next) => setActive(updateBlock(activeBlocks, next))} />
+                ? <BlockInspector key={selected.id} block={selected} fonts={fonts} noStyle={kind === 'widget'}
+                    onChange={(next) => setActive(updateBlock(activeBlocks, next))} />
                 : <p className="p-6 text-center text-sm text-s-muted">Select an element on the canvas to edit it.</p>)}
               {tab === 'page' && (
                 <PageSettingsPanel slug={slug} kind={kind} title={doc.title} onTitle={(t) => change((d) => ({ ...d, title: t }))}

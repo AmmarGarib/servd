@@ -2388,7 +2388,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 }
 .sv-search-field input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 
-/* Feedback trigger (components/feedback/FeedbackWidget.tsx). On phones a
+/* Feedback trigger (sections/servd/Feedback.tsx). On phones a
    44px round icon button — the 125x48 pill sat on top of pages' own buttons
    and the brand footers' links — and the labelled pill from 640px. Secondary
    purple, lifted clear of the iOS home indicator and, in landscape, the

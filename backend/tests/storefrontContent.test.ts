@@ -225,9 +225,12 @@ describe('sections and page kinds', () => {
     for (const type of ['scrollHero', 'brandFooter', 'siteLogo', 'signature']) expect(ok({ type }), type).toBe(false)
   })
 
-  it('header/footer slugs are the chrome kinds; other brand sub-pages are pages', () => {
+  it('header/footer slugs are the chrome kinds; servd:feedback is a widget; other brand sub-pages are pages', () => {
     expect(parseSlug('servd:header')).toEqual({ owner: 'shared', kind: 'header' })
     expect(parseSlug('servd:footer')).toEqual({ owner: 'shared', kind: 'footer' })
+    expect(parseSlug('servd:feedback')).toEqual({ owner: 'shared', kind: 'widget' })
+    // Only servd's: a brand page called "feedback" is a page the owner added.
+    expect(parseSlug('brand:stackd:feedback')).toEqual({ owner: 'brand', kind: 'page', conceptSlug: 'stackd' })
     expect(parseSlug('brand:stackd:header')).toEqual({ owner: 'brand', kind: 'header', conceptSlug: 'stackd' })
     expect(parseSlug('brand:stackd:about')).toEqual({ owner: 'brand', kind: 'page', conceptSlug: 'stackd' })
     expect(parseSlug('brand:stackd:ramadan')).toEqual({ owner: 'brand', kind: 'page', conceptSlug: 'stackd' })
@@ -344,6 +347,11 @@ describe('pages/live (the sitemap list)', () => {
   // chrome, and the storefront has no URL for it.
   const casedAboutA = () => `brand:${slugA}:About`
   const casedHeaderA = () => `brand:${slugA}:Header`
+  // The feedback button is a widget, not a page. servd:feedback is one global
+  // row (no company, no test prefix), so it is only written when the test
+  // database has none, and removed again below.
+  const widget = 'servd:feedback'
+  let widgetCreated = false
 
   const draft = async (slug: string, who: U, settings?: Record<string, unknown>, content: unknown[] = body) => {
     const r = await call('PUT', `/${enc(slug)}/draft`, auth(who), { blocks: content, ...(settings ? { settings } : {}) })
@@ -406,6 +414,15 @@ describe('pages/live (the sitemap list)', () => {
       await draft(slug, marketer)
       await approve(slug)
     }
+    if (!(await prisma.siteLayout.findUnique({ where: { slug: widget } }))) {
+      widgetCreated = true
+      await draft(widget, marketer, undefined, [{ id: 'f', type: 'section', variant: 'servd.feedback' }])
+      await approve(widget)
+    }
+  })
+
+  afterAll(async () => {
+    if (widgetCreated) await prisma.siteLayout.deleteMany({ where: { slug: widget } })
   })
 
   it('lists published pages — servd custom pages and every company\'s brand pages — with no auth', async () => {
@@ -436,6 +453,18 @@ describe('pages/live (the sitemap list)', () => {
     expect(slugs).not.toContain(legacyHeaderA())
     expect(slugs).not.toContain(popup)
     expect(slugs).not.toContain(hiddenBrandPage())
+  })
+
+  it('leaves out the feedback widget (servd:feedback), even when live', async () => {
+    if (widgetCreated) {
+      expect(await prisma.siteLayout.findUniqueOrThrow({ where: { slug: widget } })).toMatchObject({ kind: 'widget', tenantId: null, liveVersion: 1 })
+      const edit = await call('GET', `/${enc(widget)}/edit`, auth(marketer))
+      expect(edit.json()).toMatchObject({ kind: 'widget' })
+      const widgets = await call('GET', '/?kind=widget', auth(marketer))
+      expect(widgets.statusCode).toBe(200)
+      expect((widgets.json() as Array<{ slug: string }>).map((r) => r.slug)).toContain(widget)
+    }
+    expect((await list()).map((p) => p.slug)).not.toContain(widget)
   })
 
   it('leaves out an owner page whose live copy is empty, but keeps an empty built-in page', async () => {

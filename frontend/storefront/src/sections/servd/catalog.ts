@@ -2,12 +2,14 @@
 // See ../README.md for the contract.
 //
 // Pages: servd:home (/home), servd:header (global nav), servd:footer (global
-// footer), servd:waitlist, servd:press, servd:reserve (/reserve index) and
+// footer), servd:feedback (the floating feedback button and its sheet),
+// servd:waitlist, servd:press, servd:reserve (/reserve index) and
 // servd:location (the /locations/[loc] template — sections read ctx.params.loc).
 // The old `servd:hero` layout (one `scrollHero` block) and the `siteLogo` block
 // on `servd:header` are retired: their content lives in servd.scrollHero and
 // servd.nav.
 import type { FieldSpec, PageDefault, SectionSpec } from '../types'
+import { FEEDBACK_DEFAULTS } from './feedbackDefaults'
 
 const BRAND_HINT = 'Brand slug, e.g. stackd, simmer, flipd'
 
@@ -330,6 +332,64 @@ export const specs: SectionSpec[] = [
     },
   },
 
+  // ─── servd:feedback ──────────────────────────────────────────────────────
+  // Words only until marketing's icons arrive (owner, 2026-10-10): every icon
+  // is an optional image beside its word. No emoji.
+  {
+    variant: 'servd.feedback',
+    label: 'servd feedback button',
+    group: 'servd',
+    description: 'The floating Feedback button and its sheet: recommend (NPS), rate (CSAT) or an open note. Shows on every page except sign-in, forms and ordering screens, and hides for a while after someone sends feedback.',
+    icon: 'FB',
+    pages: ['servd:feedback'],
+    summaryKey: 'menuTitle',
+    fields: [
+      { key: 'triggerLabel', label: 'Button label', kind: 'text', hint: 'Shown on the button from tablet width; phones show the speech-bubble icon only.' },
+      { key: 'triggerAriaLabel', label: 'Button name for screen readers', kind: 'text', hint: 'Empty = the button label.' },
+      { key: 'menuTitle', label: 'Sheet title', kind: 'text' },
+      { key: 'menuSub', label: 'Sheet sub-title', kind: 'textarea', hint: 'Empty = none.' },
+      { key: 'modes', label: 'Choices', kind: 'list', itemLabel: 'Choice', max: 3,
+        hint: 'The three kinds of feedback, in the order shown. Each kind once; leave one out to stop asking it.',
+        item: [
+          { key: 'mode', label: 'Kind', kind: 'select', options: [
+            { value: 'nps', label: 'Recommend (0–10)' },
+            { value: 'csat', label: 'Rate the experience (five ratings)' },
+            { value: 'open', label: 'Open note' },
+          ] },
+          { key: 'label', label: 'Title', kind: 'text' },
+          { key: 'sub', label: 'Small line', kind: 'text', hint: 'Empty = none.' },
+          { key: 'icon', label: 'Icon', kind: 'image', hint: 'Optional, shown left of the title at 28px. Empty = words only.' },
+        ] },
+      { key: 'npsQuestion', label: 'Recommend: question', kind: 'text' },
+      { key: 'npsLow', label: 'Recommend: word under 0', kind: 'text', hint: 'Empty = none.' },
+      { key: 'npsHigh', label: 'Recommend: word under 10', kind: 'text', hint: 'Empty = none.' },
+      { key: 'npsPlaceholder', label: 'Recommend: comment placeholder', kind: 'text', hint: 'Before a score, and after 7–10. Empty = none.' },
+      { key: 'npsPlaceholderLow', label: 'Recommend: comment placeholder after 0–6', kind: 'text', hint: 'Empty = none.' },
+      { key: 'csatQuestion', label: 'Rate: question', kind: 'text' },
+      { key: 'csatRatings', label: 'Rate: ratings', kind: 'list', itemLabel: 'Rating', max: 5,
+        hint: 'Always five, worst to best — the score is the position',
+        item: [
+          { key: 'label', label: 'Word', kind: 'text' },
+          { key: 'icon', label: 'Icon', kind: 'image', hint: 'Optional, shown above the word at 32px. Empty = the word only.' },
+        ] },
+      { key: 'csatPlaceholder', label: 'Rate: comment placeholder', kind: 'text', hint: 'Empty = none.' },
+      { key: 'openTitle', label: 'Open note: title', kind: 'text' },
+      { key: 'openSub', label: 'Open note: sub-title', kind: 'textarea', hint: 'Empty = none.' },
+      { key: 'openPlaceholder', label: 'Open note: placeholder', kind: 'text', hint: 'Empty = none.' },
+      { key: 'backLabel', label: 'Back button', kind: 'text' },
+      { key: 'sendLabel', label: 'Send button', kind: 'text' },
+      { key: 'sendingLabel', label: 'Send button while sending', kind: 'text' },
+      { key: 'doneIcon', label: 'Thank-you icon', kind: 'image', hint: 'Optional, shown above the title at 40px. Empty = none.' },
+      { key: 'doneTitle', label: 'Thank-you title', kind: 'text' },
+      { key: 'doneBody', label: 'Thank-you text', kind: 'textarea', hint: 'Empty = none.' },
+      { key: 'doneLabel', label: 'Thank-you button', kind: 'text' },
+      { key: 'cooldownDays', label: 'Days hidden after someone sends feedback', kind: 'number', min: 0, max: 365, step: 1,
+        hint: 'On that visitor’s device, so they are not asked again straight away. 0 = never hidden.' },
+    ],
+    // Today's copy, verbatim — in feedbackDefaults.ts (see there for why).
+    defaults: FEEDBACK_DEFAULTS,
+  },
+
   // ─── Shared page header (press, reserve, custom pages) ────────────────────
   {
     variant: 'servd.pageHeader',
@@ -533,6 +593,7 @@ export const pages: PageDefault[] = [
   },
   { slug: 'servd:header', sections: [{ variant: 'servd.nav' }] },
   { slug: 'servd:footer', sections: [{ variant: 'servd.footer' }] },
+  { slug: 'servd:feedback', sections: [{ variant: 'servd.feedback' }] },
   { slug: 'servd:waitlist', sections: [{ variant: 'servd.waitlistSignup' }] },
   {
     slug: 'servd:press',

@@ -90,14 +90,19 @@ function FieldInput({ spec, value, onChange }: { spec: FieldSpec; value: unknown
             {...(spec.min !== undefined && { min: spec.min })} {...(spec.max !== undefined && { max: spec.max })} {...(spec.step !== undefined && { step: spec.step })} />
         </Field>
       )
-    case 'select':
+    case 'select': {
+      // A blank stored value would otherwise SHOW the first option while
+      // storing '' (which the storefront ignores), so say it is unset.
+      const unset = text === '' && !spec.options.some((o) => o.value === '')
       return (
         <Field label={spec.label} {...(spec.hint && { hint: spec.hint })}>
           <select value={text} onChange={(e) => onChange(e.target.value)} className="s-select">
+            {unset && <option value="" disabled>Choose…</option>}
             {spec.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
       )
+    }
     case 'list':
       return <ListInput spec={spec} value={value} onChange={onChange} />
   }
@@ -117,9 +122,18 @@ function ListInput({ spec, value, onChange }: { spec: Extract<FieldSpec, { kind:
     setOpen(j)
   }
   const add = () => {
-    // A new item starts as a copy of the first one's shape, with text cleared.
+    // A new item starts empty: text cleared, toggles off, and a select on its
+    // first option — the one the dropdown shows. (A blank '' there looked
+    // chosen in the editor but was dropped on the site, e.g. a feedback
+    // 'choice'.)
     const blank: Obj = {}
-    for (const f of spec.item) blank[f.key] = f.kind === 'toggle' ? false : f.kind === 'list' ? [] : f.kind === 'link' ? { text: '', href: '' } : ''
+    for (const f of spec.item) {
+      blank[f.key] = f.kind === 'toggle' ? false
+        : f.kind === 'list' ? []
+        : f.kind === 'link' ? { text: '', href: '' }
+        : f.kind === 'select' ? f.options[0]?.value ?? ''
+        : ''
+    }
     set([...items, blank])
     setOpen(items.length)
   }

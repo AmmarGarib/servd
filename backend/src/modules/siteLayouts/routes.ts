@@ -2,7 +2,9 @@
 //
 // One row per page / pop-up, keyed by slug (see service.ts parseSlug):
 //   servd:<page>                  shared servd pages (incl.   tenantId null
-//                                 servd:header / servd:footer)
+//                                 servd:header / servd:footer
+//                                 chrome and the servd:feedback
+//                                 widget — the feedback button)
 //   brand:<slug>[:<page>]         a brand's pages, top bar,   the brand's company
 //                                 footer and the owner's own pages
 //   page:<slug>                   custom page (/pages/<slug>) tenantId null
@@ -147,12 +149,13 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
 
   // Every page with a live copy, for the storefront's sitemap: the slug and
   // when it was published — never blocks, settings or anything from a draft.
-  // Pages only (servd:<page>, page:<slug>, brand:<slug>[:<page>]); pop-ups
-  // and the header/footer chrome are not pages. A draft, a draft waiting for
-  // the CEO or a scheduled one whose time hasn't come has no live copy, so it
-  // is not listed; a scheduled draft that has come due is published first,
-  // as on the live read. Like popups/live this spans companies on purpose:
-  // the public storefront lists every company's brands (/storefront/concepts).
+  // Pages only (servd:<page>, page:<slug>, brand:<slug>[:<page>]); pop-ups,
+  // the header/footer chrome and widgets (servd:feedback) are not pages. A
+  // draft, a draft waiting for the CEO or a scheduled one whose time hasn't
+  // come has no live copy, so it is not listed; a scheduled draft that has
+  // come due is published first, as on the live read. Like popups/live this
+  // spans companies on purpose: the public storefront lists every company's
+  // brands (/storefront/concepts).
   // A brand's pages are listed only while that brand is on the storefront.
   // A page the owner added (page:<slug>, brand:<slug>:<page>) whose live copy
   // is empty is a 404 on the storefront, so it is not listed; a built-in page
@@ -280,7 +283,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     async (req) => {
       const q = z.object({
         status: z.enum(['pending', 'draft', 'scheduled', 'all']).default('all'),
-        kind:   z.enum(['page', 'hero', 'header', 'footer', 'popup']).optional(),
+        kind:   z.enum(['page', 'hero', 'header', 'footer', 'widget', 'popup']).optional(),
       }).parse(req.query)
       const rows = await prisma.siteLayout.findMany({
         where: {
@@ -335,7 +338,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     const parsed = parseSlugOrThrow(slug)
     const body = z.object({
       title:    z.string().max(120).nullish(),
-      kind:     z.enum(['page', 'hero', 'header', 'footer', 'popup']).optional(), // derived from the slug; accepted for the contract
+      kind:     z.enum(['page', 'hero', 'header', 'footer', 'widget', 'popup']).optional(), // derived from the slug; accepted for the contract
       blocks:   blocksSchema,
       settings: pageSettingsSchema.nullish(),
     }).parse(req.body)
