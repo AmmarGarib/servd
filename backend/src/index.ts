@@ -9,6 +9,7 @@ import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
+import { isInternalRequest } from './lib/internalRequest.js'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 
@@ -185,6 +186,16 @@ async function build() {
 
   await fastify.register(helmet, { contentSecurityPolicy: false })
 
+  // Nothing the API serves belongs in a search index — JSON, CSV exports,
+  // the HTML receipts/invoices/tracking pages, errors. A header rather than a
+  // robots.txt Disallow on purpose: Googlebot's renderer has to FETCH this
+  // JSON to render the client-side storefront pages (a brand's menu,
+  // /reserve/<brand>), and a Disallow would leave those pages empty for it.
+  fastify.addHook('onSend', (_req, reply, payload, done) => {
+    reply.header('X-Robots-Tag', 'noindex')
+    done(null, payload)
+  })
+
   // RLS context bootstrap — every request runs inside an AsyncLocalStorage
   // bubble so auth middleware can stash tenant_id / customer_id once the
   // JWT clears, and the Prisma extension picks those up to scope queries.
@@ -233,6 +244,9 @@ async function build() {
   await fastify.register(rateLimit, {
     max: 200,
     timeWindow: '1 minute',
+    // The storefront's server-side renders (private network, no forwarding
+    // headers) are not visitors; see lib/internalRequest.ts.
+    allowList: (req) => isInternalRequest(req),
     keyGenerator: (req) => {
       const staffId = req.staffUser?.id
       const customerId = req.customer?.id

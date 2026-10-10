@@ -34,6 +34,35 @@ export interface PageSettings {
   fonts?: { heading?: string; body?: string }
   ab?: { splitPct: number; blocks: Block[] }
   popup?: PopupRules
+  /** Search/share overrides (Page tab): the storefront's <title> and meta
+   *  description for this page. Empty = the page's built-in ones. */
+  seo?: { title?: string; description?: string }
+}
+
+/** Upper bounds the API enforces on settings.seo, and the lengths Google
+    shows before it cuts the text off. */
+export const SEO_LIMITS = {
+  title: { max: 120, shown: 60 },
+  description: { max: 300, shown: 155 },
+} as const
+
+/** Hints for a page's search title and description. A template — one page
+    behind many URLs (servd:location → every /locations/<loc>) — shares them
+    across every page it renders, filled in per page from the same
+    placeholders its elements take, so a plain title would repeat on all. */
+export function seoHints(slug: string | undefined): { title: string; description: string; template: boolean } {
+  if (slug === 'servd:location') {
+    return {
+      template: true,
+      title: 'Used on every location page. Use {name}, {area}, {city} so each one gets its own title. Empty = each location\'s built-in title.',
+      description: 'Used on every location page. Placeholders: {name} {area} {district} {city} {address} {street} {tagline}. Empty = each location\'s built-in description.',
+    }
+  }
+  return {
+    template: false,
+    title: 'Shown in Google and when the link is shared. Empty = the page\'s built-in title.',
+    description: 'Shown in Google and when the link is shared. Empty = the page\'s built-in description.',
+  }
 }
 
 export interface UserRef { id: string; name: string }

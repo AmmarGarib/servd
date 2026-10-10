@@ -33,10 +33,12 @@ export function StorefrontNav({ initialBrandSlug = null, children }: Props) {
   if (onBrandMicrosite) return null
   if (HIDDEN_PREFIXES.some((p) => pathname.startsWith(p))) return null
 
-  // Hide nav on the per-concept ordering screen; that page has its own
-  // brand-themed header.
+  // Hide nav on the per-concept ordering screen (/<brand>); that page has its
+  // own brand-themed header. Every other one-segment servd page keeps it —
+  // /press, /reserve, /waitlist and /group-order used to lose it by accident.
   const segments = pathname.split('/').filter(Boolean)
-  if (segments.length === 1 && !['order', 'home', 'account', 'orders', 'login', 'signup'].includes(segments[0]!)) {
+  const SERVD_PAGES = ['home', 'account', 'orders', 'login', 'signup', 'press', 'reserve', 'waitlist', 'group-order']
+  if (segments.length === 1 && !SERVD_PAGES.includes(segments[0]!)) {
     return null
   }
 

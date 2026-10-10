@@ -1,12 +1,109 @@
 import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
+import {
+  Inter, Bricolage_Grotesque, Syne, Amarante, Playfair_Display, JetBrains_Mono, Alfa_Slab_One, Poppins,
+} from 'next/font/google'
 import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { PopupHost } from '../components/popups/PopupHost'
-import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
+import { SERVD_ORIGIN, SERVD_OG_IMAGE, BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { ManagedPage } from '../sections/ManagedPage'
+// The share card's own alt and type (app/opengraph-image.tsx), restated below:
+// an explicit openGraph.images replaces the file-based image metadata, which
+// is what used to emit og:image:alt / og:image:type.
+import { alt as servdOgImageAlt, contentType as servdOgImageType } from './opengraph-image'
+
+// ── Fonts ────────────────────────────────────────────────────────────────────
+// Self-hosted through next/font (downloaded from Google at BUILD time and
+// served from /_next/static/media). This replaced a render-blocking Google
+// Fonts @import in globals.css: HTML -> CSS -> fonts.googleapis.com -> gstatic,
+// about 0.6 s of FCP/LCP on mobile.
+//
+// Same families, weights and styles as that import, so the same font files:
+// each family is exposed as a CSS variable on <html>, and every font token in
+// globals.css (--font-display, --simmer-display, --stackd-*, --flipd-* …)
+// points at one. Use the tokens, never a family name.
+//
+// - Only servd's own UI fonts are preloaded (latin subset): Inter (body),
+//   Bricolage Grotesque (display), Syne (the servd. wordmark). The brand-only
+//   families load when a brand page actually uses them.
+// - adjustFontFallback is off: its size-adjusted local('Arial') fallback would
+//   sit in front of each token's own fallbacks, so characters a font does not
+//   cover (→, ★ …) would draw in Arial instead of the token's next family.
+// - Bricolage loads as its variable font, because next/font only takes the
+//   opsz axis (the optical sizes the display headlines rely on) with the
+//   variable weight range. See the note at --font-display in globals.css.
+const inter = Inter({
+  weight: ['400', '500', '600', '700', '800', '900'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-inter',
+  adjustFontFallback: false,
+})
+const bricolage = Bricolage_Grotesque({
+  weight: 'variable',
+  axes: ['opsz'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-bricolage',
+  adjustFontFallback: false,
+})
+const syne = Syne({
+  weight: ['400', '600', '700', '800'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-syne',
+  adjustFontFallback: false,
+})
+// Brand-only families (Simmer, Stackd, Flipd) — not preloaded.
+const amarante = Amarante({
+  weight: '400',
+  display: 'swap',
+  variable: '--font-amarante',
+  preload: false,
+  adjustFontFallback: false,
+})
+const playfair = Playfair_Display({
+  weight: ['500', '600', '700', '800', '900'],
+  style: ['normal', 'italic'],
+  display: 'swap',
+  variable: '--font-playfair',
+  preload: false,
+  adjustFontFallback: false,
+})
+const jetbrainsMono = JetBrains_Mono({
+  weight: ['400', '500', '700'],
+  display: 'swap',
+  variable: '--font-jetbrains-mono',
+  preload: false,
+  adjustFontFallback: false,
+})
+const alfaSlab = Alfa_Slab_One({
+  weight: '400',
+  display: 'swap',
+  variable: '--font-alfa-slab',
+  preload: false,
+  adjustFontFallback: false,
+})
+const poppins = Poppins({
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-poppins',
+  preload: false,
+  adjustFontFallback: false,
+})
+const fontVariables = [inter, bricolage, syne, amarante, playfair, jetbrainsMono, alfaSlab, poppins]
+  .map((f) => f.variable)
+  .join(' ')
+
+// Search Console meta-tag verification — optional (a DNS TXT record is the
+// preferred way to verify). A server-side env var, read when the server starts
+// rather than baked in at build (every page here renders dynamically), so
+// setting GOOGLE_SITE_VERIFICATION in the storefront container's environment
+// and restarting it is enough — no image rebuild. Unset: no tag.
+const googleSiteVerification = process.env['GOOGLE_SITE_VERIFICATION']?.trim()
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
@@ -18,14 +115,20 @@ export const metadata: Metadata = {
   formatDetection: { telephone: false, email: false, address: false },
   manifest: '/manifest.webmanifest',
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'servd' },
+  // The share-card base. No title or description here on purpose: Next fills
+  // og:title / og:description (and twitter:*) from each page's own title and
+  // description only when openGraph does not set them, so a hard-coded 'servd'
+  // here made every page — brand domains included — preview as 'servd'.
+  // No `robots` either: indexing is the default, and a forced 'index, follow'
+  // was inherited by private/token pages and doubled up with noindex on 404s.
   openGraph: {
     type: 'website',
     siteName: 'servd',
-    title: 'servd',
-    description: 'Order from your favourite kitchens, explore the brands, and join Insiders.',
+    locale: 'en_PK',
+    images: [{ url: SERVD_OG_IMAGE, width: 1200, height: 630, alt: servdOgImageAlt, type: servdOgImageType }],
   },
   twitter: { card: 'summary_large_image' },
-  robots: { index: true, follow: true },
+  ...(googleSiteVerification ? { verification: { google: googleSiteVerification } } : {}),
 }
 
 export const viewport: Viewport = {
@@ -63,7 +166,7 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // handed to the client gates that hide them on brand microsites and the
   // pages that carry their own chrome.
   return (
-    <html lang="en">
+    <html lang="en" className={fontVariables}>
       <body>
         <a
           href="#main"

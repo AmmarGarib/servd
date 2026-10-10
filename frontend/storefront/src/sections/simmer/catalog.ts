@@ -13,6 +13,13 @@ const HOME = ['brand:simmer']
 
 const RULES_HINT = 'Simmer rules: lowercase, no exclamation marks or emoji (removed automatically); avoid elevated, curated, experience, journey, passionate, crafted, artisanal, fusion, twist on a classic.'
 
+// Links take the shared brand tokens (resolved by ../brand/util brandHref):
+// @menu, @book … follow the host — /menu on simmer.pk and /brand/simmer/menu
+// on servd, and servd pages (ordering, booking, /home) absolute on servd's
+// origin from simmer.pk — so the brand domain never links to a second copy of
+// a page. A link written out in full (/brand/simmer/menu) is rewritten too.
+const LINK_HINT = 'Link tokens: @home @menu @about @visitpage @order @book @location.'
+
 const surfaceField = (fallback: 'green' | 'bone'): FieldSpec => ({
   key: 'surface', label: 'Surface', kind: 'select',
   hint: `Simmer's two surfaces only (no white). Default: ${fallback === 'green' ? 'tiber green' : 'bone'}.`,
@@ -38,13 +45,21 @@ export const specs: SectionSpec[] = [
     pages: HOME,
     summaryKey: 'headline',
     fields: [
+      {
+        key: 'headingText', label: 'Page heading (hidden text)', kind: 'text',
+        hint: "The page's one h1 — say what and where. Read by search engines and screen readers; the drawing shows instead. Empty = the brand name. {{brand.name}} = the live brand name.",
+      },
       { key: 'headline', label: 'Back-wall headline', kind: 'text', hint: RULES_HINT },
       { key: 'headlineAccent', label: 'Headline accent (orange italic)', kind: 'text' },
       { key: 'tagline', label: 'Tagline', kind: 'text', hint: 'Fades in under the headline. Empty hides it.' },
-      { key: 'reserve', label: 'Reserve button', kind: 'link', hint: 'Empty text hides it.' },
-      { key: 'menu', label: 'Menu button', kind: 'link', hint: 'Empty text hides it.' },
+      { key: 'reserve', label: 'Reserve button', kind: 'link', hint: `Empty text hides it. Empty link = @book (hidden when the brand takes no reservations). ${LINK_HINT}` },
+      { key: 'menu', label: 'Menu button', kind: 'link', hint: `Empty text hides it. Empty link = @menu. ${LINK_HINT}` },
       { key: 'hours', label: 'Hours sticker (cooler floor)', kind: 'text', hint: 'Empty hides it.' },
       { key: 'coolerImage', label: 'Cooler interior photo', kind: 'image', hint: 'A real photo of the walk-in (1600px wide). Empty = the blueprint interior drawing.' },
+      {
+        key: 'drawingAlt', label: 'Door drawing description (alt text)', kind: 'text',
+        hint: 'Empty = the drawing is decoration and screen readers skip it (the page heading already says what this is).',
+      },
       { key: 'projectEyebrow', label: 'Title block: eyebrow', kind: 'text' },
       { key: 'projectName', label: 'Title block: project name', kind: 'text', hint: 'Empty = the brand name (live).' },
       { key: 'projectNote', label: 'Title block: after the name', kind: 'text' },
@@ -79,13 +94,15 @@ export const specs: SectionSpec[] = [
       { key: 'floorLabel', label: 'Interior: floor dimension', kind: 'text' },
     ],
     defaults: {
+      headingText: 'Simmer — small plates and mocktails in DHA Phase 6, Karachi',
       headline: 'RESERVATIONS',
       headlineAccent: 'only.',
       tagline: 'simmer down.',
-      reserve: { text: 'Reserve a table →', href: '/reserve/simmer' },
-      menu: { text: 'See the menu', href: '/brand/simmer/menu' },
+      reserve: { text: 'Reserve a table →', href: '@book' },
+      menu: { text: 'See the menu', href: '@menu' },
       hours: 'open 7pm — late · tue–sun',
       coolerImage: '',
+      drawingAlt: '',
       projectEyebrow: '· PROJECT',
       projectName: '',
       projectNote: 'BELOW STACKD',
@@ -129,7 +146,7 @@ export const specs: SectionSpec[] = [
     pages: HOME,
     summaryKey: 'eyebrow',
     fields: [
-      { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: RULES_HINT },
+      { key: 'eyebrow', label: 'Eyebrow (section heading)', kind: 'text', hint: RULES_HINT },
       stampField,
       surfaceField('bone'),
       {
@@ -169,7 +186,7 @@ export const specs: SectionSpec[] = [
     pages: HOME,
     summaryKey: 'body',
     fields: [
-      { key: 'eyebrow', label: 'Eyebrow', kind: 'text' },
+      { key: 'eyebrow', label: 'Eyebrow (section heading)', kind: 'text' },
       stampField,
       { key: 'body', label: 'Note', kind: 'textarea', rows: 4, hint: RULES_HINT },
       { key: 'signature', label: 'Signed', kind: 'text' },
@@ -202,7 +219,7 @@ export const specs: SectionSpec[] = [
     pages: HOME,
     summaryKey: 'handle',
     fields: [
-      { key: 'eyebrow', label: 'Eyebrow', kind: 'text' },
+      { key: 'eyebrow', label: 'Eyebrow (section heading)', kind: 'text' },
       { key: 'handle', label: 'Handle (orange)', kind: 'text' },
       {
         key: 'buttons', label: 'Buttons', kind: 'list', itemLabel: 'Button', max: 8,
@@ -218,7 +235,7 @@ export const specs: SectionSpec[] = [
               { value: 'email', label: 'Email' },
             ],
           },
-          { key: 'href', label: 'Link', kind: 'url', hint: "Empty = Simmer's own account for socials, or the kitchen's WhatsApp / map pin / email from the brand record. A WhatsApp button with no number on file is hidden." },
+          { key: 'href', label: 'Link', kind: 'url', hint: "Empty = Simmer's own account for socials, or the kitchen's WhatsApp / map pin / email from the brand record. A WhatsApp button with no number on file is hidden. Tokens @whatsapp @email @phone @visit work here too." },
           { key: 'label', label: 'Screen-reader label', kind: 'text' },
         ],
       },
@@ -294,7 +311,7 @@ export const specs: SectionSpec[] = [
       { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: RULES_HINT },
       stampField,
       { key: 'kicker', label: 'Kicker above the wordmark', kind: 'text' },
-      { key: 'wordmark', label: 'Masthead line', kind: 'text' },
+      { key: 'wordmark', label: 'Masthead line (the page heading)', kind: 'text' },
       { key: 'mark', label: 'Orange mark after it', kind: 'text' },
       { key: 'draftNote', label: 'Draft note', kind: 'text', hint: 'Shown only while no menu is published.' },
       {
@@ -318,9 +335,9 @@ export const specs: SectionSpec[] = [
       { key: 'closingHeadline', label: 'Closing: headline', kind: 'text' },
       { key: 'closingBody', label: 'Closing: body (draft menu)', kind: 'textarea', rows: 3 },
       { key: 'liveClosingBody', label: 'Closing: body (live menu)', kind: 'textarea', rows: 3 },
-      { key: 'order', label: 'Order button (live menu)', kind: 'link', hint: 'Empty link = the brand’s ordering page. Empty text hides it.' },
-      { key: 'reserve', label: 'Reserve button', kind: 'link', hint: 'Empty link = /reserve/<brand>. Empty text hides it.' },
-      { key: 'home', label: 'Home button', kind: 'link', hint: 'Empty text = "<brand> home"; empty link = the brand home.' },
+      { key: 'order', label: 'Order button (live menu)', kind: 'link', hint: `Empty link = @order (the brand’s ordering page). Empty text hides it. ${LINK_HINT}` },
+      { key: 'reserve', label: 'Reserve button', kind: 'link', hint: `Empty link = @book (hidden when the brand takes no reservations). Empty text hides it. ${LINK_HINT}` },
+      { key: 'home', label: 'Home button', kind: 'link', hint: `Empty text = "<brand> home"; empty link = @home (the brand home). ${LINK_HINT}` },
     ],
     defaults: {
       eyebrow: "tonight's service",

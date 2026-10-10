@@ -11,11 +11,11 @@
 // the ingredient, skips the adjective", so the item's description is printed
 // as-is and nothing is written around it.
 
-import Link from 'next/link'
 import { formatBrandName } from '../../lib/concept'
 import { fetchBrandMenu, pkr } from '../data'
 import type { SectionProps } from '../types'
-import { safeHref, str, link } from '../safe'
+import { str, link } from '../safe'
+import { FlipdLink, flipdHref } from './links'
 
 function Checker() {
   return <div aria-hidden className="flipd-checker" />
@@ -29,11 +29,18 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
   // don't print an empty heading at them.
   const shown = categories.filter((c) => (c.items?.length ?? 0) > 0)
 
+  // Links follow the host (./links): Flipd's home is / on flipd.pk and
+  // /brand/flipd on servd.pk; ordering is always servd's page. An empty href
+  // falls back to the token; an unusable one hides the button.
   const primary = link(fields.primary)
+  const primaryTo = primary.text ? flipdHref(primary.href, ctx, '@order') : null
   const back = link(fields.back)
   const backText = back.text.trim() || `Back to ${brandName}`
+  const backTo = flipdHref(back.href, ctx, '@home')
   const emptyCta = link(fields.emptyCta)
+  const emptyTo = emptyCta.text ? flipdHref(emptyCta.href, ctx, '@order') : null
   const closingCta = link(fields.closingCta)
+  const closingTo = closingCta.text ? flipdHref(closingCta.href, ctx, '@order') : null
   const soldOutLabel = str(fields.soldOut)
   const jumpNav = fields.jumpNav !== false
 
@@ -65,8 +72,8 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
           )}
 
           <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {primary.text && <Link href={safeHref(primary.href, `/${slug}`)} className="flipd-btn">{primary.text}</Link>}
-            <Link href={safeHref(back.href, `/brand/${slug}`)} className="flipd-btn flipd-btn-ghost">{backText}</Link>
+            {primaryTo && <FlipdLink to={primaryTo} className="flipd-btn">{primary.text}</FlipdLink>}
+            {backTo && <FlipdLink to={backTo} className="flipd-btn flipd-btn-ghost">{backText}</FlipdLink>}
           </div>
         </div>
       </section>
@@ -108,7 +115,7 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
                 {str(fields.emptyBody)}
               </p>
             )}
-            {emptyCta.text && <Link href={safeHref(emptyCta.href, `/${slug}`)} className="flipd-btn">{emptyCta.text}</Link>}
+            {emptyTo && <FlipdLink to={emptyTo} className="flipd-btn">{emptyCta.text}</FlipdLink>}
           </div>
         </section>
       ) : (
@@ -141,7 +148,13 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
                         style={{ padding: '0.95rem 0', opacity: soldOut ? 0.45 : 1 }}
                       >
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: '1rem', justifyContent: 'space-between' }}>
-                          <p className="flipd-item-name" style={{ margin: 0 }}>
+                          {/* The item is a heading under its category's h2
+                              (page outline: h1 title → h2 category → h3
+                              item). Weight and tracking are inherited as the
+                              <p> it replaced had them: the global h1–h4 rule
+                              would set 800 (a faux bold on the one-weight
+                              display face) and tighten the letters. */}
+                          <h3 className="flipd-item-name" style={{ margin: 0, fontWeight: 'inherit', letterSpacing: 'inherit' }}>
                             {item.name}
                             {soldOut && soldOutLabel && (
                               <span
@@ -157,7 +170,7 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
                                 {soldOutLabel}
                               </span>
                             )}
-                          </p>
+                          </h3>
                           <p
                             style={{
                               margin: 0,
@@ -201,7 +214,7 @@ export async function FlipdMenuSection({ fields, ctx }: SectionProps) {
         <h2 className="flipd-display" style={{ fontSize: 'clamp(1.5rem, 3.5vw, 2.25rem)', margin: '0 0 1.5rem' }}>
           {str(fields.closingHeadline)}
         </h2>
-        {closingCta.text && <Link href={safeHref(closingCta.href, `/${slug}`)} className="flipd-btn">{closingCta.text}</Link>}
+        {closingTo && <FlipdLink to={closingTo} className="flipd-btn">{closingCta.text}</FlipdLink>}
       </section>
 
       <Checker />

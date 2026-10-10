@@ -109,8 +109,16 @@ Exact slugs win over patterns (`brand:*:about`).
 - **Safety:** every href through `safeHref`, every src through `safeSrc`,
   every colour through `color()`. Never `dangerouslySetInnerHTML` with a field.
 - **Links that leave a brand domain** (servd pages like /login, /orders,
-  /home) must be absolute when `ctx.onBrandHost` — reuse the `servdHref`
-  pattern from `components/brand/BrandShell.tsx`.
+  /home) must be absolute when `ctx.onBrandHost` — use `servdHref` /
+  `brandHref` from `sections/brand/util.ts` (brand links: tokens `@home`
+  `@menu` `@about` `@visit` `@visitpage` `@order` `@book`, resolved for the
+  current host).
+- **SEO**: one `<h1>` per page (a section that leads a page renders it; use a
+  hidden `headingText` field when the design shows the name as art), headings
+  in order, every meaningful `<img>` with an alt field, below-the-fold images
+  `loading="lazy"`. Page titles/descriptions/canonicals come from the route's
+  `generateMetadata` via `pageMetadata()` (lib/brandDomains.ts) with the
+  page's `settings.seo` (`pageSeo()`) first.
 - **Brand rules still apply**: brand names through `formatBrandName()`;
   Simmer per its SKILL rules (lowercase wordmark only as a logo, `simmer
   down.` below the wordmark, single orange signal, no white, no gradients, no

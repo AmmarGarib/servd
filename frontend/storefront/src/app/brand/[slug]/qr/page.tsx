@@ -2,30 +2,39 @@
 // directly on the brand's menu. Operator opens this page, prints,
 // and clips it to the table card.
 //
-// The QR points at the absolute menu URL on prod so a scan from the
-// dining room loads the menu without any base-URL ambiguity.
+// The QR encodes the menu's CANONICAL URL — the brand's own domain
+// (https://stackd.pk/menu), not servd.pk/brand/stackd/menu, which is a
+// duplicate that only redirects or canonicalises there. Cards already printed
+// with the old URL keep working.
+//
+// An operator tool, not a landing page: kept out of the index.
 
+import type { Metadata } from 'next'
+import { notFound } from 'next/navigation'
 import { QRCard } from './QRCard'
 
-import { SERVD_ORIGIN } from '../../../../lib/brandDomains'
+import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../../../lib/brandDomains'
+import { formatBrandName } from '../../../../lib/concept'
+import { resolveConcept } from '../../../../lib/liveConcepts'
 
-// QR codes get PRINTED. Whatever host is baked in here outlives every deploy,
-// so it follows the canonical origin rather than a tunnel hostname.
-const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? SERVD_ORIGIN
+type Params = { params: Promise<{ slug: string }> | { slug: string } }
 
-const BRAND_NAMES: Record<string, string> = {
-  simmer: 'Simmer',
-  stackd: 'Stackd',
-  flipd:  'Flipd',
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const concept = await resolveConcept(slug)
+  if (!concept) notFound()
+  return pageMetadata({
+    title:     'Table QR card',
+    canonical: `${SERVD_ORIGIN}/brand/${slug}/qr`,
+    siteName:  formatBrandName(concept.name),
+    noindex:   true,
+  })
 }
 
-export default async function BrandQRPage({
-  params,
-}: {
-  params: Promise<{ slug: string }> | { slug: string }
-}) {
+export default async function BrandQRPage({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
-  const brand = BRAND_NAMES[slug] ?? slug
-  const url   = `${PUBLIC_HOST}/brand/${slug}/menu`
-  return <QRCard slug={slug} brand={brand} url={url} />
+  const concept = await resolveConcept(slug)
+  if (!concept) notFound()
+  const url = brandCanonical(slug, 'menu')
+  return <QRCard slug={slug} brand={formatBrandName(concept.name)} url={url} />
 }

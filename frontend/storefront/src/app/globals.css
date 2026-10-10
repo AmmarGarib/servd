@@ -1,7 +1,9 @@
-/* Inter for body text, Bricolage Grotesque for the kinetic display headlines
-   that drive the new asymmetric / chunky look. Falls back to Inter Black if
-   the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;0,900;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500;700&family=Alfa+Slab+One&family=Poppins:wght@400;500;600;700&family=Syne:wght@400;600;700;800&display=swap');
+/* Fonts are self-hosted by next/font in app/layout.tsx (no Google Fonts
+   @import: it was render-blocking). Each family is a CSS variable on <html> —
+   --font-inter, --font-bricolage, --font-syne, --font-amarante,
+   --font-playfair, --font-jetbrains-mono, --font-alfa-slab, --font-poppins —
+   and the tokens below (--font-display, --simmer-display, --stackd-*,
+   --flipd-* …) are built on them. Use the tokens, never a family name. */
 
 @tailwind base;
 @tailwind components;
@@ -50,9 +52,14 @@
      purple. BrandShell overrides this per brand using a luminance check. */
   --brand-ink:          var(--servd-on-green);
   /* Display font for the kinetic look — used on hero headlines, eyebrow
-     labels, marquee text, anywhere we want the "agency-modern" feel. */
-  --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
-  --font-wordmark:      'Syne', 'Bricolage Grotesque', system-ui, sans-serif;
+     labels, marquee text, anywhere we want the "agency-modern" feel.
+     Weights: Bricolage Grotesque now loads as its variable font (opsz 12–96,
+     wght 200–800), so any weight draws exactly as written. The old Google
+     import only carried 400, 600 and 800, so a 700 drew as 800 and a 500 as
+     400 — the rules below that pair this font with 700 now say 800, which is
+     what they always looked like. Stay on 400 / 600 / 800 with this font. */
+  --font-display:       var(--font-bricolage), var(--font-inter), system-ui, sans-serif;
+  --font-wordmark:      var(--font-syne), var(--font-bricolage), system-ui, sans-serif;
 
   /* ── Simmer brand tokens (per simmer-brand SKILL.md) ─────────────────────
      Forest green surface ("tiber" #06392F), bone ink, fiery orange signal.
@@ -62,7 +69,7 @@
   --simmer-walnut:      #3D2817;
   --simmer-black:       #0E0E0E;
   --simmer-orange:      #E94E1B;
-  --simmer-display:     'Amarante', serif;
+  --simmer-display:     var(--font-amarante), serif;
   --simmer-body:        'Times New Roman', Times, serif;
 
   /* ── stackd brand tokens ────────────────────────────────────────────────
@@ -90,9 +97,9 @@
   /* Warm concrete/micro-cement, for panels that lift off the plum. */
   --stackd-cement:           #2E1922;
 
-  --stackd-display:          'Playfair Display', 'Bodoni Moda', Georgia, serif;
-  --stackd-body:             'Inter', system-ui, sans-serif;
-  --stackd-mono:             'JetBrains Mono', 'Courier New', monospace;
+  --stackd-display:          var(--font-playfair), 'Bodoni Moda', Georgia, serif;
+  --stackd-body:             var(--font-inter), system-ui, sans-serif;
+  --stackd-mono:             var(--font-jetbrains-mono), 'Courier New', monospace;
 
   /* ── Per-brand microsite component classes (moved out of <style jsx>
         because Next.js standalone build doesn't transpile styled-jsx in
@@ -315,8 +322,8 @@ summary:focus-visible {
 .stackd-ordering .fixed.bottom-0 button {
   color: var(--stackd-plum-dark) !important;
 }
-/* The H1 "Checkout" defaults to text-lg + font-black; on Space Grotesk
-   it still feels thin against the dark blueprint. Bump to cream so it
+/* The H1 "Checkout" defaults to text-lg + font-black; it still feels
+   thin against the dark blueprint. Bump to cream so it
    reads as the page label, matching the brand's headline accent. */
 .stackd-ordering h1 {
   color: var(--stackd-cream) !important;
@@ -375,7 +382,7 @@ summary:focus-visible {
 .flipd-ordering h1,
 .flipd-ordering h2,
 .flipd-ordering h3 {
-  font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
+  font-family: var(--font-bricolage), var(--font-inter), sans-serif;
   font-weight: 800;
   letter-spacing: -0.035em;
 }
@@ -1507,8 +1514,8 @@ html:has(.simmer-page) {
      wordmark itself is the supplied badge image, so the one place the real
      face matters is unaffected. Swap this the day we license Bronto Burger.
      Body is Poppins, which IS the book's choice and is freely available. */
-  --flipd-display:      'Alfa Slab One', 'Bevan', Georgia, serif;
-  --flipd-body:         'Poppins', system-ui, sans-serif;
+  --flipd-display:      var(--font-alfa-slab), 'Bevan', Georgia, serif;
+  --flipd-body:         var(--font-poppins), system-ui, sans-serif;
 }
 
 html {
@@ -1517,7 +1524,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
   background-color: var(--servd-bg);
   color: var(--servd-ink);
   -webkit-font-smoothing: antialiased;
@@ -1770,7 +1777,7 @@ a { color: inherit; }
 .eyebrow {
   font-family: var(--font-display);
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 800; /* drew as 800 under the old 400/600/800 load — see --font-display */
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--servd-mute);
@@ -2144,6 +2151,13 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 /* Heading font from PageSettings.fonts.heading or a block's fontFamily.
    !important so it wins over the inline display fonts the blocks carry. */
 [data-sv-font] :is(h1, h2, h3, h4, h5, h6) { font-family: var(--sv-heading-font) !important; }
+/* .eyebrow and the home-section headings (.sv-headline, .sv-section-title,
+   .sv-trio / .sv-perk / .sv-visit-card h3) say 800 only to keep Bricolage
+   looking as it did (see --font-display); they were written as 700. An
+   editor-chosen heading font (the rule above: a built-in stack or a library
+   font) is not that Bricolage, so headings set in one keep their 700. */
+[data-sv-font] :is(h1, h2, h3, h4, h5, h6):is(.sv-headline, .sv-section-title, .eyebrow),
+[data-sv-font] :is(.sv-trio, .sv-perk, .sv-visit-card) h3 { font-weight: 700; }
 
 /* Columns block: a responsive grid that stacks on mobile unless told not to. */
 .sv-cols {
@@ -2256,12 +2270,13 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 @keyframes sv-fade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes sv-drop { from { transform: translateY(-24px); opacity: 0 } to { transform: none; opacity: 1 } }
 
-/* Home sections */
+/* Home sections. The display-font headings here are 800: they were written
+   as 700, which drew as 800 under the old font load (see --font-display). */
 .sv-home { background: var(--servd-bg); color: var(--servd-ink); overflow-x: clip; }
 .sv-wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 .sv-hero { text-align: center; padding: clamp(56px, 11vw, 120px) 0 clamp(36px, 6vw, 64px); }
 .sv-headline {
-  font-family: var(--font-display); font-weight: 700; color: var(--servd-ink);
+  font-family: var(--font-display); font-weight: 800; color: var(--servd-ink);
   font-size: clamp(2.75rem, 8.5vw, 6rem); line-height: 1.02; letter-spacing: -0.045em;
   margin: 0 auto; max-width: 14ch; text-wrap: balance;
 }
@@ -2298,7 +2313,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 .sv-section { padding: clamp(72px, 11vw, 140px) 0 0; }
 .sv-section-head { text-align: center; margin-bottom: clamp(32px, 5vw, 56px); }
 .sv-section-title {
-  font-family: var(--font-display); font-weight: 700; letter-spacing: -0.04em; line-height: 1.04;
+  font-family: var(--font-display); font-weight: 800; letter-spacing: -0.04em; line-height: 1.04;
   font-size: clamp(2.2rem, 6vw, 4rem); margin: 0 auto; max-width: 18ch; text-wrap: balance;
 }
 
@@ -2327,7 +2342,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   display: flex; align-items: center; justify-content: center;
   background: var(--servd-green-soft); color: var(--servd-green-ink);
 }
-.sv-trio h3 { font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+.sv-trio h3 { font-family: var(--font-display); font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 8px; }
 .sv-trio p { color: var(--servd-mute); font-size: 1rem; line-height: 1.5; margin: 0 auto; max-width: 20rem; }
 
 /* Insiders band */
@@ -2347,7 +2362,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   border-radius: 20px; padding: 28px 24px; text-align: left;
 }
 .sv-perk-tag { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.65; margin: 0 0 10px; }
-.sv-perk h3 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 10px; color: var(--servd-on-purple); }
+.sv-perk h3 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 10px; color: var(--servd-on-purple); }
 .sv-perk p { font-size: 0.95rem; line-height: 1.55; margin: 0; opacity: 0.78; }
 .sv-band .sv-link { color: var(--servd-on-purple); }
 
@@ -2358,7 +2373,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   background: var(--servd-surface); border-radius: 20px; padding: 24px;
   display: flex; flex-direction: column; gap: 10px; min-height: 180px;
 }
-.sv-visit-card h3 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 700; letter-spacing: -0.03em; margin: 0; }
+.sv-visit-card h3 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; margin: 0; }
 .sv-visit-card p { color: var(--servd-mute); font-size: 0.95rem; line-height: 1.45; margin: 0; }
 .sv-visit-links { display: flex; flex-wrap: wrap; gap: 0 18px; margin-top: auto; }
 .sv-visit-links a { font-size: 0.95rem; }
@@ -2372,3 +2387,48 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   .sv-tile-art img { transition: none; }
 }
 .sv-search-field input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* Feedback trigger (components/feedback/FeedbackWidget.tsx). On phones a
+   44px round icon button — the 125x48 pill sat on top of pages' own buttons
+   and the brand footers' links — and the labelled pill from 640px. Secondary
+   purple, lifted clear of the iOS home indicator and, in landscape, the
+   notch side. It also steps aside (data-concealed) while a form field has
+   focus ("typing") or a footer is on screen ("footer"). */
+.sv-feedback {
+  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 50;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+  width: 44px; height: 44px; padding: 0;
+  border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--servd-purple); color: var(--servd-on-purple);
+  font-size: 0.85rem; font-weight: 700;
+  box-shadow: 0 4px 16px rgba(61,31,59,0.24);
+  transition: opacity 160ms ease, transform 160ms ease, background 160ms ease, visibility 0s linear 0s;
+}
+.sv-feedback:hover { background: var(--servd-black); }
+/* Stay round under the global focus ring (button:focus-visible sets 6px). */
+.sv-feedback:focus-visible { border-radius: 999px; }
+.sv-feedback svg { width: 18px; height: 18px; flex-shrink: 0; }
+.sv-feedback-label { display: none; }
+@media (min-width: 640px) {
+  .sv-feedback { width: auto; height: auto; padding: 0.85rem 1.25rem; }
+  .sv-feedback svg { width: 14px; height: 14px; }
+  .sv-feedback-label { display: inline; }
+}
+.sv-feedback[data-concealed] {
+  opacity: 0; transform: translateY(8px); pointer-events: none;
+}
+/* Typing: also out of the tab order and the accessibility tree (visibility
+   flips after the fade). */
+.sv-feedback[data-concealed="typing"] {
+  visibility: hidden;
+  transition: opacity 160ms ease, transform 160ms ease, background 160ms ease, visibility 0s linear 160ms;
+}
+/* Footer: only faded, so it stays reachable — it sits after the footer in the
+   DOM, and tabbing through the footer's links is what brings the footer into
+   view. A keyboard / screen-reader user who lands on it sees it. */
+.sv-feedback[data-concealed="footer"]:focus {
+  opacity: 1; transform: none; pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sv-feedback, .sv-feedback[data-concealed] { transition: none; }
+}

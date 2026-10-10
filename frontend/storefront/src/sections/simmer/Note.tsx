@@ -4,12 +4,13 @@
 
 import { Fragment } from 'react'
 import type { SectionProps } from '../types'
-import { simmerLines, simmerText, stampOr, surface } from './shared'
+import { HEADING_RESET, simmerLines, simmerText, stampOr, surface } from './shared'
 
 export function Note({ fields: f }: SectionProps) {
   const s = surface(f['surface'], 'green')
   const body = simmerLines(f['body'])
   const signature = simmerText(f['signature'])
+  const eyebrow = simmerText(f['eyebrow'])
   return (
     <div className="simmer-page">
       <section style={{ background: s.background, color: s.color, padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)' }}>
@@ -22,7 +23,10 @@ export function Note({ fields: f }: SectionProps) {
             marginBottom: '2rem',
             borderBottom: `1px solid ${s.line}`,
           }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>{simmerText(f['eyebrow'])}</span>
+            {/* The section's heading, set as the eyebrow it always was. */}
+            {eyebrow.trim()
+              ? <h2 className="utility" style={{ ...HEADING_RESET, fontSize: '0.78rem' }}>{eyebrow}</h2>
+              : <span />}
             <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{stampOr(f['stamp'])}</span>
           </div>
           {body.some((l) => l.trim()) && (

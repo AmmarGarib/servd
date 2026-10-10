@@ -1,11 +1,12 @@
 // servd.pressCards — the /press cards: what's on offer, what we don't do, and
 // how to get in touch. A button linked to #whatsapp messages the press
-// contact's live WhatsApp number.
+// contact's live WhatsApp number — and is hidden while there is none (wa.me
+// without a number opens the share sheet, not a chat with us).
 
 import Link from 'next/link'
 import type { SectionProps } from '../types'
 import { lines, link, list, safeHref, str } from '../safe'
-import { fetchBrandLocations, locationFor, whatsappLink } from '../../lib/brandLocations'
+import { fetchBrandLocations, filled, locationFor, whatsappLink } from '../../lib/brandLocations'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -21,7 +22,7 @@ export async function PressCards({ fields }: SectionProps) {
     const slug = str(fields.whatsappBrand).trim() || 'simmer'
     const brands = await fetchBrandLocations(API_URL)
     const contact = brands[slug] ?? locationFor(slug)
-    if (contact) whatsappHref = whatsappLink(contact, str(fields.whatsappMessage) || undefined)
+    if (contact && filled(contact.whatsapp)) whatsappHref = whatsappLink(contact, str(fields.whatsappMessage) || undefined)
   }
 
   return (

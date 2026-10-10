@@ -4,7 +4,8 @@ import { ImageResponse } from 'next/og'
 // route tree). Branded servd purple + green — fixes blank previews when links are
 // shared on WhatsApp/social. No static asset needed; rendered at build/request.
 
-export const alt = 'servd — order from your favourite kitchens'
+// The alt describes the card itself (its wordmark and line), not a page title.
+export const alt = 'servd. — every kitchen, one place'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 

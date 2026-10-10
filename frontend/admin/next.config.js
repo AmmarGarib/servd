@@ -15,6 +15,10 @@ const nextConfig = {
   },
   // Baseline security headers. The operator console must never be frameable
   // (clickjacking on refund/void/payroll buttons is a real attack here).
+  // X-Robots-Tag keeps every response (pages, JSON, files) out of search
+  // engines; it is a header, not a robots.txt Disallow, so a crawler can still
+  // fetch a page and see it is noindex. HSTS: no includeSubDomains until
+  // every servd.pk subdomain is confirmed https-only.
   async headers() {
     return [
       {
@@ -24,6 +28,8 @@ const nextConfig = {
           { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+          { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
         ],
       },
     ]

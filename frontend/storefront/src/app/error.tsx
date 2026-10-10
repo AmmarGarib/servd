@@ -6,6 +6,7 @@
 
 import { useEffect } from 'react'
 import Link from 'next/link'
+import { SERVD_LINK_ORIGIN } from '../lib/brandDomains'
 
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
@@ -58,7 +59,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
           Try again
         </button>
         <Link
-          href="/order"
+          href={`${SERVD_LINK_ORIGIN}/home#kitchens`}
           style={{
             background: 'var(--servd-purple)',
             color: 'var(--servd-on-purple)',

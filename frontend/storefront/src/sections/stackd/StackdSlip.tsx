@@ -23,10 +23,10 @@
 
 import Link from 'next/link'
 import type { SectionProps } from '../types'
-import { safeHref, safeSrc, str, link, list } from '../safe'
+import { safeSrc, str, link, list } from '../safe'
 import { useScrollProgress } from '../../components/kinetic/motionHooks'
 import { STACKD_DIE } from '../../lib/stackdDie'
-import { StackdFrame, stackdConcept, brandName, fill } from './shared'
+import { StackdFrame, stackdConcept, brandName, fill, stackdHref } from './shared'
 
 const BUNDLED_BREAD = '/brand/stackd/bread.png'
 const BUNDLED_GUY = '/brand/stackd/guy.png'
@@ -76,6 +76,8 @@ export function StackdSlip({ fields, ctx }: SectionProps) {
   const subLead = str(fields.subLead).trim()
   const order = link(fields.orderCta)
   const menu = link(fields.menuCta)
+  const orderTo = stackdHref(order.href, ctx, concept)
+  const menuTo = stackdHref(menu.href, ctx, concept)
 
   // Matches the payoff's own fade-in point, so its links become reachable and
   // visible at the same instant.
@@ -126,10 +128,13 @@ export function StackdSlip({ fields, ctx }: SectionProps) {
               ))}
             </div>
 
+            {/* The first screen. He is the page's largest paint (the measured
+                LCP), so his image is fetched at high priority; everything below
+                the slip loads lazily and stays out of his way. */}
             {customMascot ? (
               <div className="stackd-slip-custom">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={customMascot} alt={mascotAlt} />
+                <img src={customMascot} alt={mascotAlt} fetchPriority="high" />
               </div>
             ) : (
               <>
@@ -143,7 +148,7 @@ export function StackdSlip({ fields, ctx }: SectionProps) {
                 {/* Him. Heels forward, over he goes. */}
                 <div className="stackd-slip-guy" style={{ ['--t' as string]: slip, ['--impact' as string]: impact }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={guySrc} alt={mascotAlt} {...(guySrc === BUNDLED_GUY && { width: 326, height: 274 })} />
+                  <img src={guySrc} alt={mascotAlt} fetchPriority="high" {...(guySrc === BUNDLED_GUY && { width: 326, height: 274 })} />
                 </div>
               </>
             )}
@@ -163,10 +168,10 @@ export function StackdSlip({ fields, ctx }: SectionProps) {
                 {counter.length > 0 && <>{subLead ? ' ' : ''}{counter.map((l) => l.replace(/\.$/, '')).join(', ').toLowerCase()}.</>}
               </p>
             )}
-            {(order.text || menu.text) && (
+            {((order.text && orderTo) || (menu.text && menuTo)) && (
               <div className="stackd-slip-cta">
-                {order.text && <Link href={safeHref(order.href)} className="stackd-btn">{fill(order.text, concept)}</Link>}
-                {menu.text && <Link href={safeHref(menu.href)} className="stackd-btn stackd-btn-ghost">{fill(menu.text, concept)}</Link>}
+                {order.text && orderTo && <Link href={orderTo} className="stackd-btn">{fill(order.text, concept)}</Link>}
+                {menu.text && menuTo && <Link href={menuTo} className="stackd-btn stackd-btn-ghost">{fill(menu.text, concept)}</Link>}
               </div>
             )}
           </div>

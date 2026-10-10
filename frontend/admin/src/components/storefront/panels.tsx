@@ -1,12 +1,12 @@
 'use client'
 
-// Builder side panels: draft status badge, page settings (fonts, A/B test)
-// and pop-up rules.
+// Builder side panels: draft status badge, page settings (search title and
+// description, fonts, A/B test) and pop-up rules.
 
 import { useState } from 'react'
 import { cloneBlocks, type Block } from '../../lib/blocks'
 import {
-  draftStatusInfo, fromLocalInput, toLocalInput,
+  draftStatusInfo, fromLocalInput, seoHints, toLocalInput, SEO_LIMITS,
   type ConceptLite, type DraftStatus, type LayoutKind, type MediaAssetLite, type PageSettings, type PopupRules, type Variant,
 } from '../../lib/content'
 import { Check, Field, FontSelect, NumberInput, Section } from './fields'
@@ -27,7 +27,35 @@ export function StatusBadge({ row, showNote }: { row: { draftStatus: DraftStatus
 
 // ─── Page settings ─────────────────────────────────────────────────────────
 
-export function PageSettingsPanel({ kind, title, onTitle, settings, onChange, fonts, variant, onVariant, blocksA }: {
+/** A search title/description input with a live count against the length
+    Google shows (the API's own limit is the hard cap). On a template the
+    count is of the text as typed: each page's placeholders change it. */
+function SeoField({ label, hint, value, onChange, limit, multiline, template }: {
+  label: string
+  hint: string
+  value: string
+  onChange: (v: string) => void
+  limit: { max: number; shown: number }
+  multiline?: boolean
+  template?: boolean
+}) {
+  const n = value.trim().length
+  const over = n > limit.shown
+  return (
+    <Field label={label} hint={hint}>
+      {multiline
+        ? <textarea rows={3} maxLength={limit.max} value={value} onChange={(e) => onChange(e.target.value)} className="s-input" />
+        : <input maxLength={limit.max} value={value} onChange={(e) => onChange(e.target.value)} className="s-input" />}
+      <p className={`text-[11px] mt-1 tabular-nums ${over ? 'text-s-amber' : 'text-s-dim'}`} aria-live="polite">
+        {n} / {limit.shown} characters{template ? ' before the placeholders are filled in' : ''}{over ? '. Google may cut off the rest.' : ''}
+      </p>
+    </Field>
+  )
+}
+
+export function PageSettingsPanel({ slug, kind, title, onTitle, settings, onChange, fonts, variant, onVariant, blocksA }: {
+  /** The page's slug: a template (servd:location) gets its own search hints. */
+  slug?: string
   kind: LayoutKind
   title: string
   onTitle: (t: string) => void
@@ -40,11 +68,21 @@ export function PageSettingsPanel({ kind, title, onTitle, settings, onChange, fo
 }) {
   const ab = settings.ab
   const abAllowed = kind === 'page' || kind === 'popup'
+  // Only a page has its own address to show in search; pop-ups and the
+  // header/footer chrome sit on other pages.
+  const seoAllowed = kind === 'page'
+  const seoHint = seoHints(slug)
   const setFonts = (patch: { heading?: string; body?: string }) => {
     const next = { ...settings.fonts, ...patch }
     if (!next.heading) delete next.heading
     if (!next.body) delete next.body
     onChange({ ...settings, fonts: Object.keys(next).length ? next : undefined })
+  }
+  const setSeo = (patch: { title?: string; description?: string }) => {
+    const next = { ...settings.seo, ...patch }
+    if (!next.title) delete next.title
+    if (!next.description) delete next.description
+    onChange({ ...settings, seo: Object.keys(next).length ? next : undefined })
   }
   const toggleAb = (on: boolean) => {
     if (on) {
@@ -62,6 +100,14 @@ export function PageSettingsPanel({ kind, title, onTitle, settings, onChange, fo
     <div className="p-4 space-y-3 max-h-[calc(100vh-14rem)] overflow-y-auto">
       <Section title="Page">
         <Field label="Title (admin only)"><input value={title} onChange={(e) => onTitle(e.target.value)} className="s-input" /></Field>
+        {seoAllowed && (
+          <>
+            <SeoField label="Search title" value={settings.seo?.title ?? ''} onChange={(v) => setSeo({ title: v })}
+              limit={SEO_LIMITS.title} hint={seoHint.title} template={seoHint.template} />
+            <SeoField label="Search description" multiline value={settings.seo?.description ?? ''} onChange={(v) => setSeo({ description: v })}
+              limit={SEO_LIMITS.description} hint={seoHint.description} template={seoHint.template} />
+          </>
+        )}
       </Section>
 
       {kind !== 'footer' && (

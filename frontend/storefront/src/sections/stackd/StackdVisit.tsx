@@ -5,10 +5,10 @@
 
 import Link from 'next/link'
 import type { SectionProps } from '../types'
-import { safeHref, str, link } from '../safe'
+import { str, link } from '../safe'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../../components/brand/parts/OpenStatusBadge'
 import { locationFromConcept } from '../../lib/brandLocations'
-import { StackdFrame, stackdConcept, fill } from './shared'
+import { StackdFrame, stackdConcept, fill, stackdHref } from './shared'
 
 const CONTACT_LINK = { color: 'var(--stackd-cream)', textDecoration: 'none', borderBottom: '1px solid currentColor' } as const
 
@@ -17,6 +17,8 @@ export function StackdVisit({ fields, ctx }: SectionProps) {
   const hoursData = useHoursData(concept.slug)
   const reservations = concept.reservationsEnabled !== false
   const reserve = link(fields.reserveCta)
+  // Booking is a servd page: absolute on servd's origin from stackd.pk.
+  const reserveTo = stackdHref(reserve.href, ctx, concept)
 
   const address = str(fields.address).trim() || concept.address || str(fields.addressMissing)
   const phone = fields.showPhone !== false ? concept.phone : null
@@ -70,9 +72,9 @@ export function StackdVisit({ fields, ctx }: SectionProps) {
                 <a href={`mailto:${email}`} style={CONTACT_LINK}>{email}</a>
               </p>
             )}
-            {reservations && reserve.text && (
+            {reservations && reserve.text && reserveTo && (
               <div style={{ marginTop: '2rem' }}>
-                <Link href={safeHref(reserve.href)} className="stackd-btn stackd-btn-ghost">{fill(reserve.text, concept)}</Link>
+                <Link href={reserveTo} className="stackd-btn stackd-btn-ghost">{fill(reserve.text, concept)}</Link>
               </div>
             )}
           </div>

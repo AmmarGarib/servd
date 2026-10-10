@@ -1,15 +1,17 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { resolveBrandHost, isBrandRewritePath } from './brandDomains'
+import { resolveBrandHost, isBrandRewritePath, SERVD_LINK_ORIGIN } from './brandDomains'
 
 // Canonical servd host URL (no trailing slash). Used when navigating from a
-// brand-domain cart into the servd checkout. Set to e.g. https://servd.pk in
-// prod, http://localhost:3002 in dev. Empty when unset → callers fall back to
-// same-host navigation (the brand and servd code paths are otherwise identical
-// while running on a single host).
+// brand-domain cart into the servd checkout. The servd link origin
+// (NEXT_PUBLIC_SITE_URL, e.g. https://servd.pk) wins — the same origin every
+// other servd link on a brand domain uses — then the older
+// NEXT_PUBLIC_SERVD_HOST. Empty when neither is set (local dev) → callers fall
+// back to same-host navigation (the brand and servd code paths are otherwise
+// identical while running on a single host).
 export function getServdHost(): string {
-  return (process.env['NEXT_PUBLIC_SERVD_HOST'] ?? '').replace(/\/$/, '')
+  return SERVD_LINK_ORIGIN || (process.env['NEXT_PUBLIC_SERVD_HOST'] ?? '').replace(/\/+$/, '')
 }
 
 // Resolve the current browser's brand slug, or null if we're on the servd
@@ -20,12 +22,21 @@ export function getServdHost(): string {
 // be visible. Without it this returns null on the first render and the real
 // value only after mount, which is fine for behaviour but shows as a flash for
 // anything that decides whether to render at all.
+//
+// The client lookup can only ADD a slug, never take the server's away. The
+// host cannot change during a document's life, and the middleware's answer is
+// authoritative for the document; the client's comes from GET /domains/hosts,
+// which can fail (API blip, CORS, the 2.5s timeout) — and on a failure a
+// brand domain resolves to null. Letting that null win put the servd nav and
+// footer back on every brand microsite after hydration and swapped the brand's
+// own links for /brand/<slug>/… ones, which is what Google renders. So a null
+// answer keeps `initial`; only a positively resolved slug replaces it.
 export function useBrandSlug(initial: string | null = null): string | null {
   const [slug, setSlug] = useState<string | null>(initial)
   useEffect(() => {
     if (typeof window === 'undefined') return
     let alive = true
-    void resolveBrandHost(window.location.host).then((s) => { if (alive) setSlug(s) })
+    void resolveBrandHost(window.location.host).then((s) => { if (alive && s !== null) setSlug(s) })
     return () => { alive = false }
   }, [])
   return slug

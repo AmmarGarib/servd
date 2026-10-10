@@ -1,10 +1,12 @@
 // servd.reservePicker — the /reserve index: one card per brand that takes
 // reservations (live: reservationsEnabled !== false, dine-in), each linking to
 // its /reserve/<slug> booking page. Labels are fields; the brands are live.
+// Card art is the card-sized crop as a lazy <img> (a CSS background cannot be
+// lazy, and the full hero is 1600x2400 for a ~300px card).
 
 import Link from 'next/link'
 import type { Concept } from '../../lib/concept'
-import { conceptHeroImage, heroCover, brandStory, brandAccent, formatBrandName } from '../../lib/concept'
+import { conceptHeroImage, brandStory, brandAccent, formatBrandName } from '../../lib/concept'
 import { OpenNowPill } from '../../components/brand/parts/OpenNowPill'
 import type { SectionProps } from '../types'
 import { link, safeHref, str } from '../safe'
@@ -46,6 +48,7 @@ export async function ReservePicker({ fields }: SectionProps) {
               const story = brandStory(c.slug)
               const accent = brandAccent(c.slug, c.primaryColor)
               const name = formatBrandName(c.name)
+              const art = conceptHeroImage(c, 'card')
               return (
                 <Link
                   key={c.id}
@@ -58,9 +61,14 @@ export async function ReservePicker({ fields }: SectionProps) {
                   }}>
                   <div style={{
                     aspectRatio: '4/3',
-                    background: `${accent}${heroCover(conceptHeroImage(c))}`,
+                    background: accent,
                     position: 'relative',
                   }}>
+                    {art && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={art} alt="" loading="lazy" decoding="async" width={640} height={480}
+                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+                    )}
                     <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%)' }} />
                     <div style={{ position: 'absolute', top: '0.85rem', left: '0.85rem' }}>
                       <OpenNowPill slug={c.slug} fallback={pillFallback} />

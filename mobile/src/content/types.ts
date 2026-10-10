@@ -220,6 +220,9 @@ export interface PageSettings {
   fonts?: { heading?: string; body?: string }
   ab?: { splitPct: number; blocks: Block[] }
   popup?: PopupRules
+  /** Search/share overrides set in the editor (web <title>/meta only; the
+   *  app does not render them). Kept here so the schema stays in step. */
+  seo?: { title?: string; description?: string }
 }
 
 // ── Public API shapes ───────────────────────────────────────────────────────

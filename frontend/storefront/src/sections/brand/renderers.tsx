@@ -3,7 +3,7 @@ import type { SectionComponent } from '../types'
 import { BrandHeader } from './BrandHeader'
 import { BrandFooter } from './BrandFooter'
 import { AboutHero, Pillars, ImageBreak, CtaBand } from './AboutSections'
-import { PageHeader, VisitInfo } from './VisitSections'
+import { PageHeader, VisitInfo, Faq } from './VisitSections'
 import { BrandMenu } from './BrandMenu'
 import { GenericHero } from './GenericHero'
 import { Signatures, Story, Reviews, CrossBrand, BottomCta } from './GenericSections'
@@ -17,6 +17,7 @@ export const renderers: Record<string, SectionComponent> = {
   'brand.ctaBand': CtaBand,
   'brand.pageHeader': PageHeader,
   'brand.visitInfo': VisitInfo,
+  'brand.faq': Faq,
   'brand.menu': BrandMenu,
   'brand.genericHero': GenericHero,
   'brand.signatures': Signatures,

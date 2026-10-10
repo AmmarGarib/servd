@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { formatBrandName } from '../../../../lib/concept'
+import { brandCanonical } from '../../../../lib/brandDomains'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -82,7 +83,7 @@ export default function ClaimOfferPage() {
       <Centered>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>Offer not found</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>{error ?? 'This offer link is no longer active.'}</p>
-        <Link href="/" className="servd-btn-primary">servd home</Link>
+        <Link href="/home" className="servd-btn-primary">servd home</Link>
       </Centered>
     )
   }
@@ -100,7 +101,7 @@ export default function ClaimOfferPage() {
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
           {fmtDateTime(offer.offeredStartTime)} PKT
         </p>
-        <Link href={`/brand/${offer.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(offer.concept.name)}</Link>
+        <Link href={brandCanonical(offer.concept.slug)} className="servd-btn-primary">Back to {formatBrandName(offer.concept.name)}</Link>
       </Centered>
     )
   }
@@ -110,7 +111,7 @@ export default function ClaimOfferPage() {
       <Centered>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>Already claimed.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>This offer has been confirmed already.</p>
-        <Link href={`/brand/${offer.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(offer.concept.name)}</Link>
+        <Link href={brandCanonical(offer.concept.slug)} className="servd-btn-primary">Back to {formatBrandName(offer.concept.name)}</Link>
       </Centered>
     )
   }

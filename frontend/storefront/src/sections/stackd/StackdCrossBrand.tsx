@@ -4,14 +4,15 @@
 // the cards themselves are the company's other brands (live).
 
 import type { SectionProps } from '../types'
-import { str, color, link, safeHref } from '../safe'
+import { str, color, link } from '../safe'
 import { CrossBrandStrip } from '../../components/brand/parts/CrossBrandStrip'
-import { StackdFrame, stackdConcept, fill } from './shared'
+import { StackdFrame, stackdConcept, fill, stackdHref } from './shared'
 
 export function StackdCrossBrand({ fields, ctx }: SectionProps) {
   const concept = stackdConcept(ctx)
   const kicker = str(fields.kicker)
   const heading = str(fields.heading)
+  const all = link(fields.allLink)
   return (
     <StackdFrame>
       <CrossBrandStrip
@@ -21,9 +22,10 @@ export function StackdCrossBrand({ fields, ctx }: SectionProps) {
         {...(kicker && { kicker: fill(kicker, concept) })}
         {...(heading && { heading: fill(heading, concept) })}
         subtitle={str(fields.subtitle)}
-        allLabel={link(fields.allLink).text}
-        allHref={safeHref(link(fields.allLink).href, '/home#kitchens')}
+        allLabel={all.text}
+        allHref={stackdHref(all.href, ctx, concept) ?? '/home#kitchens'}
         {...(str(fields.cardCta).trim() && { cardCta: str(fields.cardCta) })}
+        onBrandHost={!!ctx.onBrandHost}
       />
     </StackdFrame>
   )

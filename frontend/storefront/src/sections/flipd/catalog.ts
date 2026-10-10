@@ -7,11 +7,17 @@
 // book's own words (core values, the build sheet's spec lines), which must not
 // be paraphrased. Brand book: "Not about padel: we happen to be there, we
 // never borrow the court's identity."
+//
+// Links use the brand tokens (@home @menu @order @book …), which follow the
+// host: /menu on flipd.pk and /brand/flipd/menu on servd.pk, and the ordering
+// and booking pages always on servd. A path written out in full
+// (/brand/flipd/menu) is rewritten the same way.
 import type { PageDefault, SectionSpec } from '../types'
 
 const GROUP = 'Flipd'
 const HOME = ['brand:flipd']
 const MENU = ['brand:flipd:menu']
+const LINK_HINT = 'Link tokens: @home @menu @about @visitpage @order @book @location. They follow the host — /menu on flipd.pk, /brand/flipd/menu on servd.pk.'
 
 export const specs: SectionSpec[] = [
   {
@@ -38,9 +44,10 @@ export const specs: SectionSpec[] = [
       { key: 'titleLeft', label: 'Title block — left', kind: 'text' },
       { key: 'titleRight', label: 'Title block — right', kind: 'text' },
       { key: 'mark', label: 'Wordmark text', kind: 'text', hint: 'Shown in the middle of the sheet before the build starts. Empty = the brand\'s live name.' },
+      { key: 'headingText', label: 'Page heading (hidden text)', kind: 'text', hint: 'The page\'s main heading (h1) — read by search engines and screen readers, not shown. Say what Flipd is. Empty = the wordmark text.' },
       { key: 'tagline', label: 'Tagline (after the burger lands)', kind: 'text' },
-      { key: 'primary', label: 'Order button', kind: 'link' },
-      { key: 'secondary', label: 'Menu button', kind: 'link' },
+      { key: 'primary', label: 'Order button', kind: 'link', hint: LINK_HINT },
+      { key: 'secondary', label: 'Menu button', kind: 'link', hint: LINK_HINT },
       { key: 'hint', label: 'Scroll hint', kind: 'text' },
       { key: 'ariaLabel', label: 'Screen-reader label', kind: 'text', hint: 'Empty = "<brand> — how it is built".' },
       {
@@ -60,9 +67,10 @@ export const specs: SectionSpec[] = [
       titleLeft: 'Build sheet',
       titleRight: 'Same, every time',
       mark: '',
+      headingText: 'Flipd — smash and grilled burgers in Karachi',
       tagline: 'A gourmet burger joint that happens to be at a padel court.',
-      primary: { text: 'Order now', href: '/flipd' },
-      secondary: { text: 'See the menu', href: '/brand/flipd/menu' },
+      primary: { text: 'Order now', href: '@order' },
+      secondary: { text: 'See the menu', href: '@menu' },
       hint: 'Scroll to build it',
       ariaLabel: '',
       parts: [
@@ -157,7 +165,7 @@ export const specs: SectionSpec[] = [
       { key: 'addressMissing', label: 'Address when none is set', kind: 'text' },
       { key: 'phone', label: 'Phone', kind: 'text', hint: 'Empty = the brand\'s live phone.' },
       { key: 'email', label: 'Email', kind: 'text', hint: 'Empty = the brand\'s live guest email.' },
-      { key: 'book', label: 'Booking button', kind: 'link', hint: 'Shown only while reservations are on for the brand. Empty text = hidden.' },
+      { key: 'book', label: 'Booking button', kind: 'link', hint: 'Shown only while reservations are on for the brand. Empty text = hidden. ' + LINK_HINT },
     ],
     defaults: {
       hoursEyebrow: 'Hours',
@@ -169,7 +177,7 @@ export const specs: SectionSpec[] = [
       addressMissing: 'Karachi · address TBA',
       phone: '',
       email: '',
-      book: { text: 'Book a table', href: '/reserve/flipd' },
+      book: { text: 'Book a table', href: '@book' },
     },
   },
   {
@@ -207,12 +215,14 @@ export const specs: SectionSpec[] = [
     summaryKey: 'caption',
     fields: [
       { key: 'badge', label: 'Badge', kind: 'image', hint: 'Empty = the brand\'s uploaded wordmark, else the bundled badge. Never recolour it.' },
+      { key: 'badgeAlt', label: 'Badge description (alt text)', kind: 'text', hint: 'Read by search engines and screen readers. Empty = the brand\'s live name.' },
       { key: 'caption', label: 'Caption', kind: 'text', hint: 'Empty = the brand\'s live address.' },
       { key: 'captionMissing', label: 'Caption when no address is set', kind: 'text' },
       { key: 'bg', label: 'Band colour', kind: 'color', hint: 'Empty = Flipd Blue.' },
     ],
     defaults: {
       badge: '',
+      badgeAlt: '',
       caption: '',
       captionMissing: 'Karachi',
       bg: '',
@@ -230,29 +240,29 @@ export const specs: SectionSpec[] = [
       { key: 'eyebrow', label: 'Eyebrow', kind: 'text' },
       { key: 'headline', label: 'Headline', kind: 'text' },
       { key: 'intro', label: 'Intro', kind: 'textarea', rows: 3 },
-      { key: 'primary', label: 'Order button', kind: 'link' },
-      { key: 'back', label: 'Back button', kind: 'link', hint: 'Empty text = "Back to <brand name>".' },
+      { key: 'primary', label: 'Order button', kind: 'link', hint: 'Empty link = @order. ' + LINK_HINT },
+      { key: 'back', label: 'Back button', kind: 'link', hint: 'Empty text = "Back to <brand name>". Empty link = @home. ' + LINK_HINT },
       { key: 'jumpNav', label: 'Section jump-list', kind: 'toggle', hint: 'Shown only when there is more than one category.' },
       { key: 'soldOut', label: 'Sold-out label', kind: 'text' },
       { key: 'emptyHeadline', label: 'No menu yet — headline', kind: 'text' },
       { key: 'emptyBody', label: 'No menu yet — body', kind: 'text' },
-      { key: 'emptyCta', label: 'No menu yet — button', kind: 'link' },
+      { key: 'emptyCta', label: 'No menu yet — button', kind: 'link', hint: 'Empty link = @order. ' + LINK_HINT },
       { key: 'closingHeadline', label: 'Closing headline', kind: 'text' },
-      { key: 'closingCta', label: 'Closing button', kind: 'link' },
+      { key: 'closingCta', label: 'Closing button', kind: 'link', hint: 'Empty link = @order. ' + LINK_HINT },
     ],
     defaults: {
       eyebrow: 'The menu',
       headline: 'Built to spec.',
       intro: 'Every burger on a fixed build. Prices and what’s on today come straight from the kitchen’s own list.',
-      primary: { text: 'Order now', href: '/flipd' },
-      back: { text: '', href: '/brand/flipd' },
+      primary: { text: 'Order now', href: '@order' },
+      back: { text: '', href: '@home' },
       jumpNav: true,
       soldOut: 'Sold out',
       emptyHeadline: 'The menu isn’t up yet.',
       emptyBody: 'Call the counter and we’ll tell you what’s on.',
-      emptyCta: { text: 'Go to ordering', href: '/flipd' },
+      emptyCta: { text: 'Go to ordering', href: '@order' },
       closingHeadline: 'Same burger, every time.',
-      closingCta: { text: 'Order now', href: '/flipd' },
+      closingCta: { text: 'Order now', href: '@order' },
     },
   },
 ]

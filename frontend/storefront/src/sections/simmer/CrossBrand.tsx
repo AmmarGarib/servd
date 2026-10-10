@@ -23,6 +23,9 @@ export function CrossBrand({ fields: f, ctx }: SectionProps) {
           allLabel={link(f.allLink).text}
           allHref={safeHref(link(f.allLink).href, '/home#kitchens')}
           {...(str(f.cardCta).trim() && { cardCta: str(f.cardCta) })}
+          // On simmer.pk the "all kitchens" link (a servd page) is made
+          // absolute on servd's origin, so it never lands on a copy of it.
+          onBrandHost={!!ctx.onBrandHost}
         />
       </div>
     </div>

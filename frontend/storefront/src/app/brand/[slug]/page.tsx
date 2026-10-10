@@ -1,65 +1,41 @@
 // Brand microsite home — the SiteLayout `brand:<slug>`, edited in Admin →
 // Storefront. Nothing published → the brand's default sections (its bespoke
-// design with today's content, from src/sections/<brand>).
+// design with today's content, from src/sections/<brand>). Title, canonical
+// and share card come from the brand layout (./layout.tsx).
 
 import { notFound } from 'next/navigation'
-import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
-import { FALLBACK_CONCEPTS } from '../../../lib/fallbackBrands'
+import { brandAccent, formatBrandName, type Concept } from '../../../lib/concept'
 import { ManagedPage } from '../../../sections/ManagedPage'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
-import { SERVD_ORIGIN, brandCanonical } from '../../../lib/brandDomains'
-import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
-
-const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+import { brandCanonical } from '../../../lib/brandDomains'
+import { restaurantSchema, websiteSchema, jsonLdScript } from '../../../lib/jsonLd'
+import { conceptsOrFallback, fetchLiveConcepts, findConcept } from '../../../lib/liveConcepts'
+import { fetchBrandMenu, hasMenuItems } from '../../../sections/data'
+import type { Params } from './meta'
 
 export const dynamic = 'force-dynamic'
 
-async function getConcepts(): Promise<Concept[]> {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
-    if (res.ok) {
-      const live: Concept[] = await res.json()
-      if (live.length > 0) return live
-    }
-    // res.ok was false (api 4xx/5xx) — fall through to fallback below
-  } catch { /* api unreachable — fall through */ }
-  // API empty/down → return the hardcoded fallback set so the
-  // brand-page render still finds the slug and never notFound()s.
-  return Object.values(FALLBACK_CONCEPTS)
-}
-
-export default async function BrandHome({
-  params,
-}: {
-  params: Promise<{ slug: string }> | { slug: string }
-}) {
+export default async function BrandHome({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
 
-  const concepts = await getConcepts()
-
-  const found = concepts.find((c) => c.slug === slug) ?? null
+  const [live, menu] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug)])
+  const found = findConcept(slug, live)
   if (!found) notFound()
+  // API empty/down → the bundled brand records, so the cross-brand sections
+  // still have a list to draw from.
+  const concepts = conceptsOrFallback(live)
   const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
 
-  // JSON-LD: Restaurant + breadcrumb. Drives Google rich results (rating
-  // stars, Knowledge Panel, Maps prominence) and AI search citations.
-  // BrandLocation is built from the live Concept row (admin-edited NAP)
-  // merged over the hardcoded fallback, so a partially-filled concept
-  // still renders a sensible schema.
-  const loc = locationFromConcept(concept)
+  // JSON-LD: the brand's Restaurant (its own description, hours and address
+  // from the live Concept row — the same node /home and /locations emit, by
+  // @id) and the brand site's WebSite node, which gives Google the site name
+  // for stackd.pk / simmer.pk / flipd.pk. The Restaurant points at its Menu
+  // node only when a menu is published (the menu page emits that node). No
+  // breadcrumb here: a one-level trail says nothing.
   const ld = [
-    restaurantSchema({
-      loc,
-      description: concept.description ?? brandStory(slug).tagline,
-      hours:       concept.serviceHours ?? undefined,
-    }),
-    // Rooted at servd (the ordering system) then the brand on its own domain,
-    // which is where the microsite actually lives.
-    breadcrumbSchema([
-      { name: 'servd', url: `${SERVD_ORIGIN}/` },
-      { name: formatBrandName(concept.name), url: brandCanonical(slug) },
-    ]),
+    restaurantSchema({ loc: locationFromConcept(concept), hasMenu: hasMenuItems(menu) }),
+    websiteSchema({ name: formatBrandName(concept.name), url: brandCanonical(slug) }),
   ]
 
   return (

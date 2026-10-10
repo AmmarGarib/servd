@@ -218,6 +218,17 @@ export interface PageSettings {
   fonts?: { heading?: string; body?: string }
   ab?: { splitPct: number; blocks: Block[] }
   popup?: PopupRules
+  /** Search/share overrides set in the editor (Page tab). Empty = the page's
+   *  built-in title/description. */
+  seo?: { title?: string; description?: string }
+}
+
+/** A published page's own SEO title/description (settings.seo), trimmed. */
+export function pageSeo(layout: SiteLayoutRead | null | undefined): { title?: string; description?: string } {
+  const seo = layout?.settings?.seo
+  const title = seo?.title?.trim()
+  const description = seo?.description?.trim()
+  return { ...(title && { title }), ...(description && { description }) }
 }
 
 export interface LibraryFont { family: string; url: string }
@@ -289,6 +300,21 @@ export function fetchSiteLayout(slug: string): Promise<SiteLayoutRead | null> {
 /** The DRAFT behind a preview token. */
 export function fetchSiteLayoutPreview(token: string): Promise<SiteLayoutRead | null> {
   return readLayout(`preview/${encodeURIComponent(token)}`)
+}
+
+/** Every published page (not pop-ups/chrome), for the sitemap:
+ *  GET /site-layouts/pages/live → [{ slug, publishedAt }]. [] on failure. */
+export async function fetchLivePages(): Promise<Array<{ slug: string; publishedAt: string | null }>> {
+  try {
+    const res = await fetch(`${LAYOUT_API}/api/v1/site-layouts/pages/live`, { cache: 'no-store' })
+    if (!res.ok) return []
+    const body = await res.json() as unknown
+    return Array.isArray(body)
+      ? body.filter((r): r is { slug: string; publishedAt: string | null } => !!r && typeof (r as { slug?: unknown }).slug === 'string')
+      : []
+  } catch {
+    return []
+  }
 }
 
 /** Live pop-ups. Used client-side by PopupHost. */

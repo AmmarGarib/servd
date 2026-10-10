@@ -21,7 +21,26 @@
 // +92 300 1234567… numbers were live on the site) and the cuisines are the
 // current ones.
 
-import { formatBrandName, type Concept } from './concept'
+import { formatBrandName, type Concept, type ServiceHourSlot } from './concept'
+
+/**
+ * A NAP value that is really there: '' for empty strings and the unfilled
+ * placeholders this fallback carries (TODO_FILL_STREET / TODO_FILL_AREA) and
+ * the old fake +92 300 1234567x numbers. Everything public — titles, H1s,
+ * JSON-LD, the sitemap, map queries, contact links — reads NAP through this,
+ * so a placeholder can never reach a customer or Google.
+ */
+export function filled(v: string | null | undefined): string {
+  const s = (v ?? '').trim()
+  if (!s || /^TODO_FILL/i.test(s) || /placeholder/i.test(s) || /^\+?92\s?300\s?123\s?456/.test(s)) return ''
+  return s
+}
+
+/** True when a location has a real area — the bar for being indexed
+ *  (sitemap entry, indexable /locations page). */
+export function isPublishableLocation(loc: BrandLocation): boolean {
+  return filled(loc.area) !== ''
+}
 
 export interface BrandLocation {
   slug:                string
@@ -43,6 +62,11 @@ export interface BrandLocation {
   // goes straight here (new tab) instead of the internal /visit page —
   // one tap to directions is what a visitor actually wants from that word.
   mapsUrl?:            string
+  // The brand's own description and service hours (Concept row), carried here
+  // so every Restaurant node for the brand — on the brand site, /home and
+  // /locations — describes the same entity identically.
+  description?:        string
+  hours?:              ServiceHourSlot[]
 }
 
 const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
@@ -179,6 +203,8 @@ export function locationFromConcept(c: Concept, kitchen?: BrandKitchen | null): 
     cuisine:             c.cuisine ?? base.cuisine,
     priceRange:          (c.priceTier && PRICE_TIER_TO_RANGE[c.priceTier]) || base.priceRange,
     acceptsReservations: c.reservationsEnabled !== false,
+    ...(c.description?.trim() && { description: c.description.trim() }),
+    ...(c.serviceHours?.length && { hours: c.serviceHours }),
   }
 }
 
@@ -235,7 +261,7 @@ export const BRAND_LOCATIONS = DEFAULT_BRAND_LOCATIONS
 
 /** "Ittehad Commercial, DHA Phase 6 · Karachi" — skips TODO_FILL parts. */
 export function addressLine(loc: BrandLocation): string {
-  const parts = [loc.area, loc.city].filter((p) => !p.startsWith('TODO_FILL'))
+  const parts = [filled(loc.area), filled(loc.city)].filter(Boolean)
   return parts.join(' · ')
 }
 

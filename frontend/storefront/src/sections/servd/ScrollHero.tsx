@@ -3,6 +3,8 @@
 // servd.scrollHero — the home-page scroll-expansion hero (background fades out
 // as the foreground photo/video expands to fill the screen). Every word and
 // media URL is a field; the scroll behaviour lives in ui/scroll-expansion-hero.
+// The title is the page's h1 by default (one heading, both sliding halves);
+// headingLevel drops it to h2 on a page that has its own h1.
 // The post-expand reveal carries the intro + the primary "Order now" CTA
 // (jumps to the kitchens) so the hero still converts.
 
@@ -29,6 +31,8 @@ export function ScrollHero({ fields }: SectionProps) {
       {...(poster && { posterSrc: poster })}
       bgImageSrc={safeSrc(fields.bgImageSrc)}
       title={str(fields.title)}
+      headingLevel={fields.headingLevel === 'h2' ? 'h2' : 'h1'}
+      mediaAlt={str(fields.mediaAlt).trim()}
       {...(date && { date })}
       scrollToExpand={str(fields.scrollToExpand)}
       textBlend={fields.textBlend === true}
@@ -38,7 +42,7 @@ export function ScrollHero({ fields }: SectionProps) {
           <p style={{
             fontFamily: 'var(--font-display)',
             fontSize: 'clamp(1.4rem, 3vw, 2.2rem)',
-            fontWeight: 700,
+            fontWeight: 800,
             color: 'var(--servd-ink)',
             lineHeight: 1.2,
             letterSpacing: '-0.02em',

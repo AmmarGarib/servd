@@ -102,7 +102,7 @@ export default function OrderStatusPage() {
   }, [id, token, router, pathname, slug])
 
   if (notFound) return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
       <SearchIcon size={48} stroke="var(--servd-mute)" />
       <div className="text-center space-y-2">
         <p className="font-display font-black text-2xl tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>Order not found</p>
@@ -115,13 +115,13 @@ export default function OrderStatusPage() {
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
         Back to menu
       </Link>
-    </main>
+    </div>
   )
 
   if (!order) return (
-    <main className="flex min-h-dvh items-center justify-center" style={{ background: 'var(--servd-bg)' }}>
+    <div className="flex min-h-dvh items-center justify-center" style={{ background: 'var(--servd-bg)' }}>
       <LoadingScreen label="Loading your order…" minHeight="auto" />
-    </main>
+    </div>
   )
 
   // Brand accent for the per-brand color wash on the hero ring + total. Use
@@ -139,7 +139,7 @@ export default function OrderStatusPage() {
   const heroBorder = isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
 
   return (
-    <main className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
+    <div className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
 
       {flash && (
         <div className="fixed inset-0 z-50 pointer-events-none"
@@ -362,7 +362,7 @@ export default function OrderStatusPage() {
           Order something else →
         </Link>
       </div>
-    </main>
+    </div>
   )
 }
 

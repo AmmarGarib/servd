@@ -1,0 +1,136 @@
+/* Simmer sections — the styles an inline style can't hold (media queries).
+   Imported from FridgeHero.tsx. Colours stay in the components (the SKILL.md
+   palette tokens); nothing here adds a colour. */
+
+/* ── simmer.fridgeHero ─────────────────────────────────────────────────── */
+
+/* Title row (project block top-left, scale block top-right) and the bottom
+   annotation row, laid over the drawing. One flex row for the two title
+   blocks so a long line wraps inside its block instead of running into the
+   other one. */
+.simmer-fridge-titles {
+  position: absolute;
+  top: 3vh; left: 4vw; right: 4vw;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  z-index: 6;
+}
+.simmer-fridge-title {
+  font-size: 0.62rem;
+  letter-spacing: 0.32em;
+  line-height: 1.55;
+}
+.simmer-fridge-title > .simmer-fridge-title-gap { margin-top: 0.6rem; }
+.simmer-fridge-foot {
+  position: absolute;
+  bottom: 3vh; left: 4vw; right: 4vw;
+  font-size: 0.6rem;
+  letter-spacing: 0.32em;
+}
+
+/* The door, centred on the stage. Its slot takes no box here; on phones it
+   is the space between the two rows (below). */
+.simmer-fridge-slot { display: contents; }
+.simmer-fridge-door { width: min(680px, 90vw); }
+
+/* The back-wall headline ("RESERVATIONS" + the orange "only.") and the hours
+   sticker on the cooler floor. The sticker is never under 12px. */
+.simmer-fridge-headline { font-size: clamp(2rem, 4.8vw, 3.6rem); }
+.simmer-fridge-headline-accent { font-size: clamp(1.7rem, 4.2vw, 3rem); }
+.simmer-fridge-hours {
+  font-size: clamp(0.75rem, 1.2vw, 0.85rem);
+  letter-spacing: 0.42em;
+  white-space: nowrap;
+}
+
+/* The thermometer above the door frame. */
+.simmer-fridge-thermo { display: flex; }
+
+/* Callouts that hang outside the door (hinge to the left; view pane and kick
+   plate to the right). Below 1024px the door leaves too little margin for
+   them and the screen edge would cut them mid-word, so they are not drawn. */
+@media (max-width: 1023px) {
+  .simmer-fridge-callout { display: none; }
+}
+/* The door-height dimension, just left of the door: same, below 820px. */
+@media (max-width: 819px) {
+  .simmer-fridge-dim-h { display: none; }
+}
+
+/* Phones. The stage becomes a column — title row, door, bottom row — so the
+   rows sit in flow and the door is sized to the space left between them: it
+   never runs under the title text or the bottom row, however the owner's
+   copy wraps, and on a short phone it starts below the pinned brand header.
+   Title and bottom-row text is 12px; the title tracking is tight enough that
+   both blocks fit side by side on a 360px phone in three lines each. The
+   thermometer would sit on the title row, so it is not shown (decoration;
+   by default the bottom row carries the same reading). */
+@media (max-width: 480px) {
+  .simmer-fridge-stage { flex-direction: column; }
+
+  .simmer-fridge-titles {
+    position: relative;
+    top: auto; left: auto; right: auto;
+    align-self: stretch;
+    margin: 3vh 4vw 0;
+    gap: 0.75rem;
+  }
+  .simmer-fridge-title {
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+  }
+  .simmer-fridge-title > p { line-height: 1.3; }
+  .simmer-fridge-title > .simmer-fridge-title-gap { margin-top: 0.4rem; }
+
+  /* The slot is a size container; the door fills its height less 1.25rem
+     each side (the 12px steel frame plus a gap), and never more than 90vw.
+     The first width is for browsers without container units: the same fit,
+     worked out from the viewport with three-line rows. */
+  .simmer-fridge-slot {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+    container-type: size;
+  }
+  .simmer-fridge-door {
+    width: min(90vw, calc((94vh - 9rem) * 3 / 4.6));
+    width: min(90vw, calc((100cqh - 2.5rem) * 3 / 4.6));
+  }
+
+  /* The headline is one unbroken line; at its desktop minimum (32px) the
+     default "RESERVATIONS only." is wider than a phone's door and both ends
+     were cut. On phones it scales with the door instead: 7.9% of the door's
+     width (the door width above, worked through), up to the old 2rem, which
+     fits the default line with room each side; the accent keeps its 0.85
+     ratio. Without container units it keeps the desktop size. */
+  .simmer-fridge-headline {
+    font-size: min(2rem, 7.1vw, calc((100cqh - 2.5rem) * 0.0515));
+  }
+  .simmer-fridge-headline-accent {
+    font-size: min(1.7rem, 6.04vw, calc((100cqh - 2.5rem) * 0.0438));
+  }
+  /* Hours: 12px, tracked tighter so the default line fits the door, and
+     free to wrap onto a second line on the narrowest phones. */
+  .simmer-fridge-hours {
+    letter-spacing: 0.2em;
+    white-space: normal;
+    width: 90%;
+    text-align: center;
+  }
+
+  .simmer-fridge-foot {
+    position: relative;
+    bottom: auto; left: auto; right: auto;
+    align-self: stretch;
+    margin: 0 4vw 3vh;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    line-height: 1.3;
+    gap: 0.75rem;
+  }
+  .simmer-fridge-thermo { display: none; }
+}

@@ -6,14 +6,21 @@
 //
 // Conventions (resolved in ./util.ts):
 //   {{brand.name}} {{brand.slug}} {{brand.type}} in text → the live brand.
-//   Link tokens @home @menu @about @visit @order @book @whatsapp @email @phone
-//   → the live brand's pages / contact; a link whose target is missing (no
-//   reservations, no WhatsApp set) is hidden.
+//   Link tokens @home @menu @about @visit @visitpage @order @book @location
+//   @whatsapp @email @phone → the live brand's pages / contact; a link whose
+//   target is missing (no reservations, no WhatsApp set) is hidden. Links
+//   follow the host: /menu on the brand's own domain, /brand/<slug>/menu on
+//   servd, and servd pages (ordering, booking) absolute on a brand domain.
 //   A text field defaulting to '' means "use the live value" (see its hint).
 import type { FieldSpec, PageDefault, SectionSpec } from '../types'
 
 const GROUP = 'Brand pages'
-const TOKENS = 'Tokens: @home @menu @about @visit @order @book @whatsapp @email @phone. {{brand.name}} works in text.'
+const TOKENS = 'Tokens: @home @menu @about @visit (Maps pin) @visitpage (Visit page) @order @book @location @whatsapp @email @phone. {{brand.name}} works in text.'
+/** Alt text: what a photo shows. Empty = the image is decoration only. */
+const ALT_HINT = 'Describe the photo for Google and screen readers. Empty = decoration only (drawn as a background)'
+/** Text sections paint servd bone unless a colour is picked (the brand pages
+ *  sit on the brand's dark field, where servd's ink would not read). */
+const BONE_HINT = 'Empty = servd bone. Pick a light colour: the text is servd ink'
 /** Content sections: any brand page (home, about, visit, menu, added pages). */
 const BRAND_PAGES = ['brand:*', 'brand:*:*']
 
@@ -52,7 +59,7 @@ const header: SectionSpec = {
       { text: 'Visit', href: '@visit' },
     ],
     order: { text: 'Order', href: '@order' },
-    servdLink: { text: 'on servd', href: '/' },
+    servdLink: { text: 'on servd', href: '/home' },
   },
 }
 
@@ -105,7 +112,10 @@ const footer: SectionSpec = {
     links: [
       { text: 'Menu', href: '@menu' },
       { text: 'Our story', href: '@about' },
-      { text: 'Find us', href: '@visit' },
+      // The site's own Visit page (the header's "Visit" goes to the Maps pin).
+      { text: 'Find us', href: '@visitpage' },
+      // Hidden when the brand takes no reservations.
+      { text: 'Book a table', href: '@book' },
       { text: 'Order online', href: '@order' },
     ],
     poweredHeading: 'Powered by',
@@ -132,8 +142,9 @@ const aboutHero: SectionSpec = {
     { key: 'headline', label: 'Headline', kind: 'text', hint: 'Empty = the brand’s tagline' },
     { key: 'body', label: 'Story', kind: 'textarea', rows: 5, hint: 'Empty = the brand’s long story' },
     { key: 'eyebrowColor', label: 'Eyebrow colour', kind: 'color', hint: 'Empty = servd green' },
+    { key: 'bg', label: 'Background', kind: 'color', hint: BONE_HINT },
   ],
-  defaults: { eyebrow: 'About {{brand.name}}', headline: '', body: '', eyebrowColor: '' },
+  defaults: { eyebrow: 'About {{brand.name}}', headline: '', body: '', eyebrowColor: '', bg: '' },
 }
 
 const pillars: SectionSpec = {
@@ -170,9 +181,10 @@ const imageBreak: SectionSpec = {
   summaryKey: 'image',
   fields: [
     { key: 'image', label: 'Image', kind: 'image', hint: 'Empty = the brand’s own hero image, if it has one' },
+    { key: 'alt', label: 'Image description (alt text)', kind: 'text', hint: ALT_HINT },
     { key: 'bg', label: 'Colour', kind: 'color', hint: 'Empty = the brand colour' },
   ],
-  defaults: { image: '', bg: '' },
+  defaults: { image: '', alt: '', bg: '' },
 }
 
 const ctaBand: SectionSpec = {
@@ -188,7 +200,7 @@ const ctaBand: SectionSpec = {
     { key: 'body', label: 'Line', kind: 'text' },
     { key: 'primary', label: 'Main button', kind: 'link', hint: TOKENS },
     { key: 'secondary', label: 'Second button', kind: 'link', hint: 'Empty label hides it' },
-    { key: 'bg', label: 'Background', kind: 'color', hint: 'Empty = none' },
+    { key: 'bg', label: 'Background', kind: 'color', hint: BONE_HINT },
   ],
   defaults: {
     headline: 'Want to taste it?',
@@ -214,7 +226,7 @@ const pageHeader: SectionSpec = {
     { key: 'headline', label: 'Headline', kind: 'text' },
     { key: 'body', label: 'Line', kind: 'textarea', hint: 'Empty = “We’re a <service type> kitchen — order in, walk in, or grab to go.”' },
     { key: 'cta', label: 'Button', kind: 'link', hint: 'Empty label hides it. ' + TOKENS },
-    { key: 'bg', label: 'Background', kind: 'color', hint: 'Empty = none' },
+    { key: 'bg', label: 'Background', kind: 'color', hint: BONE_HINT },
   ],
   defaults: {
     eyebrow: 'Visit',
@@ -241,8 +253,10 @@ const visitInfo: SectionSpec = {
     { key: 'hoursHeading', label: 'Hours heading', kind: 'text' },
     { key: 'hoursNote', label: 'Hours note', kind: 'textarea' },
     { key: 'noHours', label: 'No-hours text', kind: 'text' },
+    { key: 'locationLink', label: 'Location page link', kind: 'link', hint: 'Shown under the contact details. Empty label hides it. ' + TOKENS },
     { key: 'cta', label: 'Button', kind: 'link', hint: 'Empty label hides it. ' + TOKENS },
     { key: 'linkColor', label: 'Link colour', kind: 'color', hint: 'Empty = servd green' },
+    { key: 'bg', label: 'Background', kind: 'color', hint: BONE_HINT },
   ],
   defaults: {
     addressHeading: 'Our address',
@@ -252,8 +266,65 @@ const visitInfo: SectionSpec = {
     hoursHeading: 'Opening hours',
     hoursNote: 'Times shown for delivery and pickup; dine-in may differ. We’ll show live availability when you start an order.',
     noHours: 'Hours not configured yet — start an order to see live availability.',
+    locationLink: { text: 'Location page', href: '@location' },
     cta: { text: 'Order Now →', href: '@order' },
     linkColor: '',
+    bg: '',
+  },
+}
+
+// ─── FAQ ───────────────────────────────────────────────────────────────────
+//
+// Questions and answers shown on the page. The Visit page's FAQPage
+// structured data is built from these same fields (app/brand/[slug]/visit),
+// so search engines are only ever told what a visitor can read.
+
+const FAQ_ALWAYS = 'always'
+
+/** Today's questions, every brand. {{brand.place}} = the live area and city. */
+const FAQ_ITEMS = [
+  { question: 'Where is {{brand.name}} located?', answer: '{{brand.name}} is in {{brand.place}}.', link: { text: '', href: '' }, show: FAQ_ALWAYS },
+  { question: 'Does {{brand.name}} take reservations?', answer: 'Yes — tables can be booked online.', link: { text: 'Book a table', href: '@book' }, show: 'reservations' },
+  { question: 'Does {{brand.name}} take reservations?', answer: '{{brand.name}} is walk-in friendly — no booking needed. For delivery and pickup, order ahead.', link: { text: 'Start an order', href: '@order' }, show: 'no-reservations' },
+  { question: 'Is the food halal?', answer: 'All {{brand.name}} kitchens serve halal-only meat. No pork, no alcohol on the cooking line.', link: { text: '', href: '' }, show: FAQ_ALWAYS },
+  { question: 'Does {{brand.name}} deliver?', answer: 'You can order online for delivery or pickup, where available.', link: { text: 'Start an order', href: '@order' }, show: FAQ_ALWAYS },
+  { question: 'What’s the dress code?', answer: 'Smart casual works everywhere. No formal requirement.', link: { text: '', href: '' }, show: FAQ_ALWAYS },
+  { question: 'Is there parking?', answer: 'Street parking is available around the venue. We recommend arriving 10 minutes early on weekends.', link: { text: '', href: '' }, show: FAQ_ALWAYS },
+]
+
+/** Simmer's dress-code answer is its own (a dimly-lit room). */
+const SIMMER_FAQ_ITEMS = FAQ_ITEMS.map((it) => it.question === 'What’s the dress code?'
+  ? { ...it, answer: 'Smart casual works everywhere. {{brand.name}} is a dimly-lit room; the dressier you are the more it suits the space.' }
+  : it)
+
+const faq: SectionSpec = {
+  variant: 'brand.faq',
+  label: 'Questions & answers',
+  group: GROUP,
+  description: 'A heading and a list of questions with their answers. On the Visit page they are also given to search engines as the page’s FAQ.',
+  icon: 'QA',
+  pages: BRAND_PAGES,
+  summaryKey: 'heading',
+  fields: [
+    { key: 'eyebrow', label: 'Eyebrow', kind: 'text' },
+    { key: 'heading', label: 'Heading', kind: 'text' },
+    { key: 'items', label: 'Questions', kind: 'list', itemLabel: 'Question', max: 16, item: [
+      { key: 'question', label: 'Question', kind: 'text' },
+      { key: 'answer', label: 'Answer', kind: 'textarea', rows: 3 },
+      { key: 'link', label: 'Link after the answer', kind: 'link', hint: 'Empty label hides it. ' + TOKENS },
+      { key: 'show', label: 'Show', kind: 'select', options: [
+        { value: 'always', label: 'Always' },
+        { value: 'reservations', label: 'Only when the brand takes reservations' },
+        { value: 'no-reservations', label: 'Only when it does not' },
+      ] },
+    ] },
+    { key: 'bg', label: 'Background', kind: 'color', hint: BONE_HINT },
+  ],
+  defaults: {
+    eyebrow: 'Good to know',
+    heading: 'Before you come.',
+    items: FAQ_ITEMS,
+    bg: '',
   },
 }
 
@@ -317,6 +388,7 @@ const genericHero: SectionSpec = {
     { key: 'highlights', label: 'Highlights', kind: 'list', itemLabel: 'Highlight', max: 8,
       item: [{ key: 'text', label: 'Text', kind: 'text' }], },
     { key: 'image', label: 'Background image', kind: 'image', hint: 'Empty = the brand’s own hero image, if it has one' },
+    { key: 'imageAlt', label: 'Background image description (alt text)', kind: 'text', hint: ALT_HINT },
     { key: 'accent', label: 'Brand colour', kind: 'color', hint: 'Empty = the brand colour' },
     { key: 'showStatus', label: 'Show open/closed badge', kind: 'toggle' },
     { key: 'statusColor', label: 'Open colour', kind: 'color', hint: 'Empty = servd green' },
@@ -335,6 +407,7 @@ const genericHero: SectionSpec = {
     secondary: { text: 'See full menu', href: '@menu' },
     highlights: [],
     image: '',
+    imageAlt: '',
     accent: '',
     showStatus: true,
     statusColor: '',
@@ -362,6 +435,7 @@ const signatures: SectionSpec = {
       { key: 'price', label: 'Price', kind: 'text' },
       { key: 'note', label: 'Note', kind: 'text' },
       { key: 'image', label: 'Photo', kind: 'image', hint: 'Empty = the brand colour with the dish’s initial' },
+      { key: 'alt', label: 'Photo description (alt text)', kind: 'text', hint: 'E.g. the dish’s name and what is on the plate. ' + ALT_HINT },
     ] },
     { key: 'accent', label: 'Accent', kind: 'color', hint: 'Empty = the brand colour' },
     { key: 'bg', label: 'Background', kind: 'color', hint: 'Empty = white' },
@@ -370,9 +444,9 @@ const signatures: SectionSpec = {
     eyebrow: 'What we’re known for',
     heading: 'Signature dishes',
     items: [
-      { name: 'House Favourite', price: '—', note: 'Our most-ordered dish.', image: '' },
-      { name: 'Chef’s Pick', price: '—', note: 'Try what the team eats.', image: '' },
-      { name: 'Crowd Pleaser', price: '—', note: 'Safe bet, big portions.', image: '' },
+      { name: 'House Favourite', price: '—', note: 'Our most-ordered dish.', image: '', alt: '' },
+      { name: 'Chef’s Pick', price: '—', note: 'Try what the team eats.', image: '', alt: '' },
+      { name: 'Crowd Pleaser', price: '—', note: 'Safe bet, big portions.', image: '', alt: '' },
     ],
     accent: '',
     bg: '',
@@ -504,7 +578,7 @@ const bottomCta: SectionSpec = {
 export const specs: SectionSpec[] = [
   header, footer,
   aboutHero, pillars, imageBreak, ctaBand,
-  pageHeader, visitInfo,
+  pageHeader, visitInfo, faq,
   menu,
   genericHero, signatures, story, reviews, crossBrand, bottomCta,
 ]
@@ -526,6 +600,12 @@ export const pages: PageDefault[] = [
   { slug: 'brand:*:visit', sections: [
     { variant: 'brand.pageHeader' },
     { variant: 'brand.visitInfo' },
+    { variant: 'brand.faq' },
+  ] },
+  { slug: 'brand:simmer:visit', sections: [
+    { variant: 'brand.pageHeader' },
+    { variant: 'brand.visitInfo' },
+    { variant: 'brand.faq', fields: { items: SIMMER_FAQ_ITEMS } },
   ] },
   { slug: 'brand:*:menu', sections: [{ variant: 'brand.menu' }] },
   { slug: 'brand:*', sections: [

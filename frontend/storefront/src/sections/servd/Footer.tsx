@@ -1,14 +1,44 @@
 // servd.footer — the servd global footer (SiteLayout `servd:footer`): the
 // "Hungry now? Let's go." band, link columns and the copyright line. Where it
 // shows (not on brand microsites) is decided by StorefrontFooter.
+//
+// Outline: the slogan is a paragraph (same look), not a heading — it closed
+// every page with an h2 "Hungry now? Let's go." — and the column labels are
+// h2 so a page whose last heading is its h1 does not jump to h3.
+//
+// Links: '/' (a 307 to /home) goes straight to /home, and a kitchen's
+// /brand/<slug>[/page] goes to the brand's own domain (stackd.pk[/page]),
+// the canonical home of the microsite — stored and published layouts too.
 
 import Link from 'next/link'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { formatBrandName } from '../../lib/concept'
+import { brandCanonical, brandOrigin, SERVD_ORIGIN } from '../../lib/brandDomains'
 import type { SectionProps } from '../types'
 import { color, link, list, safeHref, str } from '../safe'
 
 interface LinkItem { text?: unknown; href?: unknown }
+
+/** A footer link target: safe, with the redirecting / and the canonicalised
+ *  /brand/<slug> paths replaced by where they end up. */
+function footerHref(v: unknown, fallback = '#'): string {
+  const href = safeHref(v, fallback)
+  if (href === '/') return '/home'
+  const m = /^\/brand\/([a-z0-9-]+)(?:\/([^?#]*?))?\/?$/i.exec(href)
+  if (m) {
+    const slug = m[1]!.toLowerCase()
+    // A brand with no domain of its own really lives under /brand/<slug>.
+    if (brandOrigin(slug) !== SERVD_ORIGIN) return brandCanonical(slug, m[2] ?? '')
+  }
+  return href
+}
+
+/** next/link for servd paths; a plain <a> for another origin (brand domains). */
+function FooterLink({ href, style, className, children }: { href: string; style?: CSSProperties; className?: string; children: ReactNode }) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href)
+    ? <a href={href} style={style} className={className}>{children}</a>
+    : <Link href={href} style={style} className={className}>{children}</Link>
+}
 
 export function Footer({ fields }: SectionProps) {
   const eyebrow = str(fields.eyebrow)
@@ -46,19 +76,23 @@ export function Footer({ fields }: SectionProps) {
             </p>
           )}
           {(headline || accentText) && (
-            <h2 className="display" style={{
+            // A slogan, not a section heading: <p>, with the heading font a
+            // published layout's heading-font setting gave the old <h2>.
+            // .display sets the weight, tracking and line-height either way.
+            <p className="display" style={{
+              fontFamily: 'var(--sv-heading-font, var(--font-display))',
               fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
               color: 'white',
               marginBottom: '1.5rem',
             }}>
               {headline}
               {accentText && <span className="display-italic" style={{ color: 'var(--brand-accent)' }}> {accentText}</span>}
-            </h2>
+            </p>
           )}
           {cta.text && (
-            <Link href={safeHref(cta.href)} className="brand-pill">
+            <FooterLink href={footerHref(cta.href)} className="brand-pill">
               {cta.text} <span style={{ opacity: 0.6 }}>→</span>
-            </Link>
+            </FooterLink>
           )}
         </div>
 
@@ -71,8 +105,8 @@ export function Footer({ fields }: SectionProps) {
           borderTop: '1px solid rgba(255,255,255,0.08)',
         }}>
           <div>
-            <Link
-              href={safeHref(fields.wordmarkHref, '/')}
+            <FooterLink
+              href={footerHref(fields.wordmarkHref, '/home')}
               style={{
                 fontFamily: 'var(--font-display)',
                 fontSize: '2rem',
@@ -87,7 +121,7 @@ export function Footer({ fields }: SectionProps) {
               }}
             >
               {str(fields.wordmark)}<span style={{ color: 'var(--brand-accent)' }}>.</span>
-            </Link>
+            </FooterLink>
             {blurb && (
               <p style={{ fontSize: '0.92rem', maxWidth: '20rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.55 }}>
                 {blurb}
@@ -101,8 +135,8 @@ export function Footer({ fields }: SectionProps) {
               <ul style={listStyle}>
                 {kitchens.map((b, i) => (
                   <li key={i}>
-                    <Link
-                      href={safeHref(b.href)}
+                    <FooterLink
+                      href={footerHref(b.href)}
                       className="kinetic-caret"
                       style={{
                         color: 'rgba(255,255,255,0.85)',
@@ -120,7 +154,7 @@ export function Footer({ fields }: SectionProps) {
                         display: 'inline-block',
                       }} />
                       {formatBrandName(str(b.name))}
-                    </Link>
+                    </FooterLink>
                   </li>
                 ))}
               </ul>
@@ -132,7 +166,7 @@ export function Footer({ fields }: SectionProps) {
               <FooterHeading text={str(fields.customerHeading)} />
               <ul style={listStyle}>
                 {customer.map((l, i) => (
-                  <li key={i}><Link href={safeHref(l.href)} style={footerLinkStyle}>{str(l.text)}</Link></li>
+                  <li key={i}><FooterLink href={footerHref(l.href)} style={footerLinkStyle}>{str(l.text)}</FooterLink></li>
                 ))}
               </ul>
             </div>
@@ -147,7 +181,7 @@ export function Footer({ fields }: SectionProps) {
                   return (
                     <li key={i}>
                       {href
-                        ? <a href={safeHref(href)} style={footerLinkStyle}>{str(l.text)}</a>
+                        ? <FooterLink href={footerHref(href)} style={footerLinkStyle}>{str(l.text)}</FooterLink>
                         : <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>{str(l.text)}</span>}
                     </li>
                   )
@@ -181,9 +215,9 @@ export function Footer({ fields }: SectionProps) {
 function FooterHeading({ text }: { text: string }) {
   if (!text) return null
   return (
-    <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
+    <h2 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
       {text}
-    </h3>
+    </h2>
   )
 }
 

@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import { useScrollReveal } from '../../components/kinetic/motionHooks'
-import { locationFor, locationFromConcept, whatsappLink } from '../../lib/brandLocations'
+import { filled, locationFor, locationFromConcept, whatsappLink } from '../../lib/brandLocations'
 import type { SectionProps } from '../types'
 import { color, link, list, safeHref, str } from '../safe'
 import { Chevron } from './icons'
@@ -21,6 +21,8 @@ export function Insiders({ fields, ctx }: SectionProps) {
   const bg = color(fields.bg)
 
   // Empty link → WhatsApp the chosen brand's number (live, else the fallback).
+  // No number on file → no link: wa.me without one opens the share sheet and
+  // the message goes to whichever contact the visitor picks.
   let secondaryHref = ''
   let secondaryExternal = false
   if (secondary.text) {
@@ -30,7 +32,7 @@ export function Insiders({ fields, ctx }: SectionProps) {
       const slug = str(fields.whatsappBrand, 'simmer').trim() || 'simmer'
       const concept = ctx.concepts.find((c) => c.slug === slug)
       const loc = concept ? locationFromConcept(concept) : locationFor(slug)
-      if (loc) { secondaryHref = whatsappLink(loc, str(fields.whatsappMessage) || undefined); secondaryExternal = true }
+      if (loc && filled(loc.whatsapp)) { secondaryHref = whatsappLink(loc, str(fields.whatsappMessage) || undefined); secondaryExternal = true }
     }
   }
 

@@ -5,14 +5,16 @@
 
 import Link from 'next/link'
 import type { SectionProps } from '../types'
-import { safeHref, str, link, color } from '../safe'
-import { StackdFrame, stackdConcept, fill, wordmark, SR_ONLY } from './shared'
+import { str, link, color } from '../safe'
+import { StackdFrame, stackdConcept, fill, wordmark, stackdHref, SR_ONLY } from './shared'
 
 export function StackdHero({ fields, ctx }: SectionProps) {
   const concept = stackdConcept(ctx)
   const mark = wordmark(fields.wordmark, concept)
   const primary = link(fields.primaryCta)
   const secondary = link(fields.secondaryCta)
+  const primaryTo = stackdHref(primary.href, ctx, concept)
+  const secondaryTo = stackdHref(secondary.href, ctx, concept)
   const specLeft = str(fields.specLeft)
   const specRight = str(fields.specRight)
 
@@ -28,8 +30,10 @@ export function StackdHero({ fields, ctx }: SectionProps) {
           )}
 
           {/* The supplied wordmark asset, not a webfont approximation. The <h1>
-              stays real text for search and screen readers; the image is
-              decorative on top of it. */}
+              stays real text for search and screen readers (what and where:
+              the page's one h1); the image is decorative on top of it. It
+              sits below the slip, well past the first screen, so it loads
+              lazily rather than being preloaded against the slip artwork. */}
           <h1 style={{ margin: '0 0 2.75rem', position: 'relative', display: 'block', maxWidth: 'min(34rem, 78vw)' }}>
             <span style={SR_ONLY}>{fill(fields.headingText, concept)}</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -37,6 +41,8 @@ export function StackdHero({ fields, ctx }: SectionProps) {
               src={mark.src}
               alt=""
               aria-hidden="true"
+              loading="lazy"
+              decoding="async"
               {...mark.dims}
               style={{ display: 'block', width: '100%', height: 'auto' }}
             />
@@ -69,10 +75,10 @@ export function StackdHero({ fields, ctx }: SectionProps) {
             </p>
           )}
 
-          {(primary.text || secondary.text) && (
+          {((primary.text && primaryTo) || (secondary.text && secondaryTo)) && (
             <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              {primary.text && <Link href={safeHref(primary.href)} className="stackd-btn">{fill(primary.text, concept)}</Link>}
-              {secondary.text && <Link href={safeHref(secondary.href)} className="stackd-btn stackd-btn-ghost">{fill(secondary.text, concept)}</Link>}
+              {primary.text && primaryTo && <Link href={primaryTo} className="stackd-btn">{fill(primary.text, concept)}</Link>}
+              {secondary.text && secondaryTo && <Link href={secondaryTo} className="stackd-btn stackd-btn-ghost">{fill(secondary.text, concept)}</Link>}
             </div>
           )}
         </div>

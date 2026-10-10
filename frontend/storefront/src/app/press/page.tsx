@@ -10,32 +10,40 @@
 // is professional creators — they read through hype instantly.
 //
 // The page is content (SiteLayout `servd:press`, Admin → Storefront); nothing
-// published → the default sections (header + the three cards).
+// published → the default sections (header + the three cards). Its search
+// title/description come from the page's own SEO settings in the editor, else
+// the defaults below.
 
+import type { Metadata } from 'next'
 import { breadcrumbSchema, jsonLdScript } from '../../lib/jsonLd'
-import { SERVD_ORIGIN } from '../../lib/brandDomains'
+import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
+import { fetchSiteLayout, pageSeo } from '../../lib/blocks'
 import { ManagedPage } from '../../sections/ManagedPage'
 
-const SITE = SERVD_ORIGIN
+const CANONICAL = `${SERVD_ORIGIN}/press`
 
 export const dynamic = 'force-dynamic'
 
-export const metadata = {
-  title:       'Press & creators · servd',
-  description: 'For Karachi food bloggers, journalists, and creators: how to visit, who to contact, what we offer.',
-  alternates:  { canonical: `${SITE}/press` },
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = pageSeo(await fetchSiteLayout('servd:press'))
+  return pageMetadata({
+    // The root template adds ' · servd' — never put it in the title itself.
+    title:       seo.title ?? 'Press & creators — Karachi food writers',
+    description: seo.description ?? 'For Karachi food bloggers, journalists, and creators: how to visit, who to contact, what we offer.',
+    canonical:   CANONICAL,
+  })
 }
 
 export default async function PressPage() {
   const schema = breadcrumbSchema([
-    { name: 'servd', url: `${SITE}/` },
-    { name: 'Press', url: `${SITE}/press` },
+    { name: 'servd', url: `${SERVD_ORIGIN}/home` },
+    { name: 'Press', url: CANONICAL },
   ])
 
   return (
-    <main style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', minHeight: '100dvh' }}>
+    <div style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', minHeight: '100dvh' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
       <ManagedPage slug="servd:press" />
-    </main>
+    </div>
   )
 }

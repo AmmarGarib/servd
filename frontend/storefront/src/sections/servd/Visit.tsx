@@ -1,12 +1,15 @@
 'use client'
 
 // servd.visit — "Come by." (anchor #visit): one card per kitchen with the live
-// open-now pill, area, and Order / WhatsApp / Email links. The brand data is
-// live; the heading and link labels are fields.
+// open-now pill, area, and Order / Location / WhatsApp / Email links. The brand
+// data is live; the heading and link labels are fields. Location links the
+// kitchen's /locations page once it has a real address; WhatsApp shows only
+// when the kitchen has a number (wa.me with none opens the share sheet, and
+// the message goes to whoever the visitor picks).
 
 import Link from 'next/link'
 import { formatBrandName } from '../../lib/concept'
-import { locationFromConcept, whatsappLink } from '../../lib/brandLocations'
+import { filled, isPublishableLocation, locationFromConcept, whatsappLink } from '../../lib/brandLocations'
 import { useScrollReveal } from '../../components/kinetic/motionHooks'
 import { OpenNowPill } from '../../components/brand/parts/OpenNowPill'
 import type { SectionProps } from '../types'
@@ -20,6 +23,7 @@ export function Visit({ fields, ctx }: SectionProps) {
   const slugs = list<{ brand?: unknown }>(fields.brands).map((b) => str(b.brand).trim()).filter(Boolean)
   const brands = brandsInOrder(slugs, ctx.concepts)
   const orderText = str(fields.orderText)
+  const locationText = str(fields.locationText)
   const whatsappText = str(fields.whatsappText)
   const emailText = str(fields.emailText)
   const greeting = str(fields.whatsappGreeting)
@@ -38,16 +42,24 @@ export function Visit({ fields, ctx }: SectionProps) {
             const name = formatBrandName(c.name)
             const loc = locationFromConcept(c)
             const email = c.email || loc.email
+            const area = filled(loc.area)
+            const city = filled(loc.city)
             return (
               <div key={c.slug} className="sv-visit-card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <h3>{name}</h3>
                   <span style={{ marginLeft: 'auto' }}><OpenNowPill slug={c.slug} fallback={pillFallback} /></span>
                 </div>
-                {!loc.area.startsWith('TODO') && <p>{loc.area}, {loc.city}</p>}
+                {area && <p>{city ? `${area}, ${city}` : area}</p>}
                 <div className="sv-visit-links">
                   {orderText && <Link href={`/${c.slug}`} className="sv-link">{orderText} <Chevron /></Link>}
-                  {whatsappText && (
+                  {locationText && isPublishableLocation(loc) && (
+                    <Link href={`/locations/${loc.locationSlug}`} className="sv-link"
+                      aria-label={`${locationText}: ${name}`}>
+                      {locationText} <Chevron />
+                    </Link>
+                  )}
+                  {whatsappText && filled(loc.whatsapp) && (
                     <a href={whatsappLink(loc, greeting.replace(/\{brand\}/g, name) || undefined)}
                       target="_blank" rel="noopener noreferrer" className="sv-link">
                       {whatsappText} <Chevron />

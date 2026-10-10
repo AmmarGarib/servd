@@ -7,55 +7,89 @@
 // the AI surfaces are now answering before Google's blue links —
 // missing this is missing the channel.
 //
-// Output is plain JSON (object → JSON.stringify in the consuming page).
-// Pages render via:
-//
-//   <script type="application/ld+json"
-//     dangerouslySetInnerHTML={{ __html: JSON.stringify(graph) }} />
+// Entities are linked by @id so every page describes the SAME things:
+//   servd / GS Foods        `${SERVD_ORIGIN}/#organization`
+//   each brand              `${brandCanonical(slug)}#restaurant`  (its own domain)
+//   each brand's menu       `${brandCanonical(slug, 'menu')}#menu`
+//   each site               `<origin>/#website`
+// NAP values pass through filled() so an unfilled placeholder never reaches
+// Google. Pages render via `jsonLdScript(graph)` (escaped for a <script>).
 
-import { type BrandLocation } from './brandLocations'
+import { filled, type BrandLocation } from './brandLocations'
+import { SERVD_ORIGIN, brandCanonical } from './brandDomains'
 
-import { SERVD_ORIGIN } from './brandDomains'
+/** The servd / GS Foods organization node's @id. */
+export const ORG_ID = `${SERVD_ORIGIN}/#organization`
 
-const SITE_URL = SERVD_ORIGIN
+/** The @id of a brand's Restaurant node (on the brand's own domain). */
+export const restaurantId = (slug: string) => `${brandCanonical(slug)}#restaurant`
+
+/** The @id of a brand's Menu node. */
+export const menuId = (slug: string) => `${brandCanonical(slug, 'menu')}#menu`
+
+/** The brand's share image (src/app/brand/[slug]/opengraph-image.tsx). */
+export const brandImageUrl = (slug: string) => `${SERVD_ORIGIN}/brand/${slug}/opengraph-image`
 
 interface OrgGraphInput {
   name:        string
   url:         string
   logoUrl:     string
-  sameAs?:     string[]              // social profiles
+  sameAs?:     string[]              // social profiles that are servd's own
+  legalName?:  string
+  email?:      string
 }
 
 /** Organization schema for the operator brand (servd / GS Foods). */
 export function organizationSchema(o: OrgGraphInput): Record<string, unknown> {
+  const email = filled(o.email)
   return {
     '@context': 'https://schema.org',
     '@type':    'Organization',
+    '@id':      ORG_ID,
     name:       o.name,
     url:        o.url,
     logo:       o.logoUrl,
+    ...(o.legalName && { legalName: o.legalName }),
+    ...(email && {
+      email,
+      contactPoint: { '@type': 'ContactPoint', contactType: 'customer support', email, areaServed: 'PK' },
+    }),
     sameAs:     o.sameAs ?? [],
   }
 }
 
-/** WebSite schema with SearchAction (lights up the Google search-box sitelink). */
-export function websiteSchema(): Record<string, unknown> {
+/**
+ * WebSite schema. With no options it is servd's, with a SearchAction (the
+ * Google sitelinks search box; /home?q= opens the search sheet). A brand site
+ * passes its own name + url and gets no SearchAction — it has no site search.
+ */
+export function websiteSchema(opts: { name?: string; url?: string } = {}): Record<string, unknown> {
+  const isServd = !opts.url
+  const url = opts.url ?? `${SERVD_ORIGIN}/home`
+  const origin = url.replace(/\/home$/, '').replace(/\/+$/, '')
   return {
     '@context': 'https://schema.org',
     '@type':    'WebSite',
-    name:       'servd',
-    url:        SITE_URL,
-    potentialAction: {
-      '@type':       'SearchAction',
-      target:        `${SITE_URL}/home?q={search_term_string}`,
-      'query-input': 'required name=search_term_string',
-    },
+    '@id':      `${origin}/#website`,
+    name:       opts.name ?? 'servd',
+    url,
+    inLanguage: 'en',
+    publisher:  { '@id': ORG_ID },
+    ...(isServd && {
+      potentialAction: {
+        '@type':       'SearchAction',
+        target:        `${SERVD_ORIGIN}/home?q={search_term_string}`,
+        'query-input': 'required name=search_term_string',
+      },
+    }),
   }
 }
 
 interface RestaurantGraphInput {
   loc:         BrandLocation
-  description: string
+  /** Defaults to the brand's own description (loc.description). Pass only
+   *  when the page has nothing better — every page should agree. */
+  description?: string
   imageUrl?:   string
   /** Aggregated rating data — surface stars + count in Maps + Knowledge Panel.
    *  Pull from the API when available; omit when no reviews exist (passing
@@ -64,10 +98,11 @@ interface RestaurantGraphInput {
     value:  number       // 1-5
     count:  number       // total review count
   }
-  /** Service hours per day-of-week. dayOfWeek follows JS getDay() (0=Sun..6=Sat).
-   *  openMin/closeMin are minutes since midnight; same shape as the
-   *  /storefront/brands/:slug/hours endpoint. */
+  /** Service hours (dayOfWeek per JS getDay(), minutes since midnight).
+   *  Defaults to loc.hours. */
   hours?: Array<{ dayOfWeek: number; openMin: number; closeMin: number }>
+  /** Emit hasMenu → the Menu node's @id (only when a menu is published). */
+  hasMenu?: boolean
 }
 
 const DOW_NAME = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
@@ -77,43 +112,54 @@ function minsToHHMM(m: number): string {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
 }
 
-/** Restaurant schema for a brand microsite. The combination of address +
- *  geo + cuisine + priceRange + acceptsReservations is what unlocks the
- *  full Knowledge Panel treatment in Google. */
+/** Restaurant schema for a brand. Its url and @id are the brand's OWN domain
+ *  (the canonical microsite), whichever page emits it. */
 export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknown> {
-  const url = `${SITE_URL}/brand/${r.loc.slug}`
-  // Never emit placeholder NAP to Google — unfilled street/area ("TODO_FILL_…")
-  // and fake +92300123456x phones are omitted until real data is set in admin.
-  const isPlaceholder = (s?: string | null) => !s || /todo|placeholder|^\+?92300123456/i.test(s)
+  const slug = r.loc.slug
+  const url = brandCanonical(slug)
+  const phone = filled(r.loc.phone)
+  const email = filled(r.loc.email)
+  const description = (r.description ?? r.loc.description ?? '').trim()
+  const hours = r.hours ?? r.loc.hours
+  const street = [filled(r.loc.street), filled(r.loc.area)].filter(Boolean).join(', ')
   const node: Record<string, unknown> = {
     '@context':   'https://schema.org',
     '@type':      'Restaurant',
-    '@id':        `${url}#restaurant`,
+    '@id':        restaurantId(slug),
     name:         r.loc.name,
     url,
-    description:  r.description,
-    image:        r.imageUrl ?? `${SITE_URL}/opengraph-image`,
+    ...(description && { description }),
+    image:        [r.imageUrl ?? brandImageUrl(slug)],
     servesCuisine: r.loc.cuisine,
     priceRange:    r.loc.priceRange,
-    acceptsReservations: r.loc.acceptsReservations,
-    menu:         `${SITE_URL}/${r.loc.slug}`,
-  }
-  if (!isPlaceholder(r.loc.phone)) node['telephone'] = r.loc.phone
-  if (r.loc.email) node['email'] = r.loc.email
-  if (!isPlaceholder(r.loc.street) || !isPlaceholder(r.loc.area)) {
-    node['address'] = {
+    // A reservable brand points at its booking page (a URL is allowed here).
+    acceptsReservations: r.loc.acceptsReservations ? `${SERVD_ORIGIN}/reserve/${slug}` : false,
+    menu:         brandCanonical(slug, 'menu'),
+    ...(r.hasMenu && { hasMenu: { '@id': menuId(slug) } }),
+    parentOrganization: { '@id': ORG_ID },
+    potentialAction: {
+      '@type': 'OrderAction',
+      target:  `${SERVD_ORIGIN}/${slug}`,
+    },
+    // Always an address: Google wants at least the locality and country, and
+    // the street is added once it is filled in admin.
+    address: {
       '@type':         'PostalAddress',
-      ...(isPlaceholder(r.loc.street) ? {} : { streetAddress: r.loc.street }),
-      ...(isPlaceholder(r.loc.area) ? {} : { addressLocality: r.loc.area }),
+      ...(street && { streetAddress: street }),
+      addressLocality: filled(r.loc.city) || 'Karachi',
       addressRegion:   'Sindh',
-      addressCountry:  r.loc.country,
-    }
+      ...(filled(r.loc.postalCode) && { postalCode: filled(r.loc.postalCode) }),
+      addressCountry:  'PK',
+    },
   }
+  if (phone) node['telephone'] = phone
+  if (email) node['email'] = email
+  if (r.loc.mapsUrl) node['hasMap'] = r.loc.mapsUrl
   if (typeof r.loc.geo?.lat === 'number' && typeof r.loc.geo?.lng === 'number') {
     node['geo'] = { '@type': 'GeoCoordinates', latitude: r.loc.geo.lat, longitude: r.loc.geo.lng }
   }
-  if (r.hours && r.hours.length > 0) {
-    node['openingHoursSpecification'] = r.hours.map((h) => ({
+  if (hours && hours.length > 0) {
+    node['openingHoursSpecification'] = hours.map((h) => ({
       '@type':      'OpeningHoursSpecification',
       dayOfWeek:    DOW_NAME[h.dayOfWeek],
       opens:        minsToHHMM(h.openMin),
@@ -137,40 +183,48 @@ interface MenuItemInput {
   name:         string
   description?: string | null
   priceCents:   number
+  imageUrl?:    string | null
+  isAvailable?: boolean
 }
 
 /** Menu schema scoped to a brand. Each section becomes a MenuSection, each
  *  item a MenuItem with offers. Lights up Google's menu carousel + helps
- *  LLMs answer "what's on simmer's menu". */
+ *  LLMs answer "what's on simmer's menu". Emit only for a published menu. */
 export function menuSchema(input: {
   loc:        BrandLocation
   sections:   Array<{ name: string; items: MenuItemInput[] }>
 }): Record<string, unknown> {
+  const slug = input.loc.slug
   return {
     '@context': 'https://schema.org',
     '@type':    'Menu',
-    '@id':      `${SITE_URL}/${input.loc.slug}#menu`,
+    '@id':      menuId(slug),
+    url:        brandCanonical(slug, 'menu'),
     name:       `${input.loc.name} menu`,
-    hasMenuSection: input.sections.map((s) => ({
-      '@type': 'MenuSection',
-      name:    s.name,
-      hasMenuItem: s.items.map((it) => ({
-        '@type':       'MenuItem',
-        name:          it.name,
-        description:   it.description ?? undefined,
-        offers: {
-          '@type':         'Offer',
-          price:           (it.priceCents / 100).toFixed(2),
-          priceCurrency:   'PKR',
-          availability:    'https://schema.org/InStock',
-        },
+    inLanguage: 'en',
+    hasMenuSection: input.sections
+      .filter((s) => s.items.length > 0)
+      .map((s) => ({
+        '@type': 'MenuSection',
+        name:    s.name,
+        hasMenuItem: s.items.map((it) => ({
+          '@type':       'MenuItem',
+          name:          it.name,
+          ...(it.description?.trim() && { description: it.description.trim() }),
+          ...(it.imageUrl && /^https:\/\//.test(it.imageUrl) && { image: it.imageUrl }),
+          offers: {
+            '@type':         'Offer',
+            price:           (it.priceCents / 100).toFixed(2),
+            priceCurrency:   'PKR',
+            availability:    it.isAvailable === false ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
+          },
+        })),
       })),
-    })),
   }
 }
 
-/** FAQPage schema for a brand microsite's Visit page (parking, dress code,
- *  reservations, halal, alcohol policy, etc.). LLMs lift these verbatim. */
+/** FAQPage schema. Only for Q&A that is VISIBLE on the page (Google's rule):
+ *  build it from the same section fields the page renders. */
 export function faqSchema(qa: Array<{ question: string; answer: string }>): Record<string, unknown> {
   return {
     '@context': 'https://schema.org',
@@ -186,7 +240,8 @@ export function faqSchema(qa: Array<{ question: string; answer: string }>): Reco
   }
 }
 
-/** BreadcrumbList — helps Google show breadcrumb trail in search results. */
+/** BreadcrumbList — helps Google show breadcrumb trail in search results.
+ *  Every item url must be a canonical URL (never a redirecting one). */
 export function breadcrumbSchema(items: Array<{ name: string; url: string }>): Record<string, unknown> {
   return {
     '@context': 'https://schema.org',
@@ -200,7 +255,12 @@ export function breadcrumbSchema(items: Array<{ name: string; url: string }>): R
   }
 }
 
-/** Convenience: render a JSON-LD <script> with consistent indentation. */
+/** Render JSON-LD for a <script type="application/ld+json">. `<`, `>` and `&`
+ *  are escaped so owner-edited text can never close the script tag; the
+ *  output is still valid JSON. */
 export function jsonLdScript(obj: Record<string, unknown> | Record<string, unknown>[]): string {
   return JSON.stringify(obj)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
 }

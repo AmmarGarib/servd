@@ -288,7 +288,7 @@ export default function CheckoutPage() {
   }, [])
 
   if (itemCount() === 0) return (
-    <main className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
+    <div className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}>
       <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="9" cy="21" r="1"/>
@@ -328,7 +328,7 @@ export default function CheckoutPage() {
           ))}
         </div>
       </div>
-    </main>
+    </div>
   )
 
   const walletBalance    = account?.walletBalance ?? 0
@@ -470,7 +470,7 @@ export default function CheckoutPage() {
       : 'Place Order'
 
   return (
-    <main
+    <div
       className={`min-h-dvh pb-32 relative overflow-hidden${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}
     >
@@ -1070,7 +1070,7 @@ export default function CheckoutPage() {
           <span>{displayTotal != null ? fmt(displayTotal) : '…'}</span>
         </button>
       </div>
-    </main>
+    </div>
   )
 }
 

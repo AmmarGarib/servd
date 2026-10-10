@@ -8,11 +8,11 @@
 // brand row through lib/brandLocations. Set a button's link to override.
 
 import type { ReactNode } from 'react'
-import type { Concept } from '../../lib/concept'
 import { locationFromConcept, whatsappLink } from '../../lib/brandLocations'
 import type { SectionProps } from '../types'
 import { list, safeHref, str } from '../safe'
-import { simmerConcept, simmerText, surface } from './shared'
+import type { ResolvedLink } from '../brand/util'
+import { HEADING_RESET, simmerConcept, simmerHref, simmerText, surface } from './shared'
 
 // Simmer's accounts — what an empty social button links to.
 const FALLBACK_SOCIAL = {
@@ -42,6 +42,10 @@ export function Elsewhere({ fields: f, ctx }: SectionProps) {
     maps:      loc.mapsUrl ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`,
     email:     `mailto:${loc.email || 'simmer@gsfoods.pk'}`,
   }
+  const liveTo = (icon: IconName): ResolvedLink | null => {
+    const href = safeHref(live[icon], '')
+    return href ? { href, external: /^https?:\/\//i.test(href) } : null
+  }
 
   return (
     <div className="simmer-page">
@@ -58,7 +62,10 @@ export function Elsewhere({ fields: f, ctx }: SectionProps) {
               gap: '1rem',
               flexWrap: 'wrap',
             }}>
-              <span className="utility" style={{ fontSize: '0.78rem' }}>{eyebrow}</span>
+              {/* The section's heading, set as the eyebrow it always was. */}
+              {eyebrow.trim()
+                ? <h2 className="utility" style={{ ...HEADING_RESET, fontSize: '0.78rem' }}>{eyebrow}</h2>
+                : <span />}
               <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{handle}</span>
             </div>
           )}
@@ -70,10 +77,13 @@ export function Elsewhere({ fields: f, ctx }: SectionProps) {
           }}>
             {buttons.map((b, i) => {
               const icon = (ICONS[str(b.icon) as IconName] ? str(b.icon) : 'instagram') as IconName
-              const href = safeHref(str(b.href).trim() || live[icon], '')
-              if (!href) return null   // e.g. no WhatsApp number on file
+              // An owner link goes through the brand resolver (tokens; a servd
+              // path is absolute from simmer.pk); empty = the live target.
+              const own = str(b.href).trim()
+              const to = own ? simmerHref(own, ctx) : liveTo(icon)
+              if (!to) return null   // e.g. no WhatsApp number on file
               return (
-                <ElsewhereButton key={i} href={href} ariaLabel={simmerText(b.label) || icon} ink={s.color} icon={ICONS[icon]} />
+                <ElsewhereButton key={i} href={to.href} external={to.external} ariaLabel={simmerText(b.label) || icon} ink={s.color} icon={ICONS[icon]} />
               )
             })}
           </div>
@@ -83,10 +93,9 @@ export function Elsewhere({ fields: f, ctx }: SectionProps) {
   )
 }
 
-// Outbound icon-only link. External URLs open in a new tab; mailto:/tel: and
-// site paths stay in place.
-function ElsewhereButton({ href, ariaLabel, ink, icon }: { href: string; ariaLabel: string; ink: string; icon: ReactNode }) {
-  const isExternal = !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('/') && !href.startsWith('#') && !href.startsWith('?')
+// Outbound icon-only link. Off-site URLs open in a new tab; mailto:/tel:,
+// site paths and servd pages stay in place.
+function ElsewhereButton({ href, external: isExternal, ariaLabel, ink, icon }: { href: string; external: boolean; ariaLabel: string; ink: string; icon: ReactNode }) {
   return (
     <a
       href={href}

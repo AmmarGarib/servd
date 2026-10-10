@@ -1,5 +1,6 @@
 // Shared bits for the Stackd sections: the page frame every section sits in,
-// the live brand the section renders against, and {{brand.name}} filling.
+// the live brand the section renders against, {{brand.name}} filling, and
+// link resolution for the host the page is served on.
 
 import type { ReactNode } from 'react'
 import type { Concept } from '../../lib/concept'
@@ -7,6 +8,7 @@ import { formatBrandName } from '../../lib/concept'
 import { FALLBACK_CONCEPTS } from '../../lib/fallbackBrands'
 import type { SectionContext } from '../types'
 import { safeSrc, str } from '../safe'
+import { brandHref } from '../brand/util'
 import './stackd.css'
 
 // Bundled artwork. Used until the operator uploads a replacement in
@@ -28,6 +30,20 @@ export function brandName(concept: Concept): string {
 /** A text field with {{brand.name}} filled from the live brand. */
 export function fill(v: unknown, concept: Concept): string {
   return str(v).replace(/\{\{brand\.name\}\}/g, brandName(concept))
+}
+
+/**
+ * A link field's href for the host the page is served on (the shared brand
+ * resolver, ../brand/util brandHref): the tokens (@menu, @order, @book …)
+ * resolve, this brand's own pages sit at the domain root on stackd.pk (/menu,
+ * not /brand/stackd/menu) and stay /brand/stackd/… on servd, and servd pages
+ * (ordering, booking, /home) are absolute on servd's origin from stackd.pk, so
+ * the brand domain never links to a second copy of a page. Resolved against
+ * the section's brand, which falls back to the bundled record when the API is
+ * down, so the tokens still work then. null = no usable target: hide the link.
+ */
+export function stackdHref(href: unknown, ctx: SectionContext, concept: Concept): string | null {
+  return brandHref(href, { ...ctx, concept }, { mode: 'host', onBrandHost: !!ctx.onBrandHost })?.href ?? null
 }
 
 /**

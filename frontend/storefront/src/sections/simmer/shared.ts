@@ -11,6 +11,7 @@ import { str, lines } from '../safe'
 import { FALLBACK_CONCEPTS } from '../../lib/fallbackBrands'
 import type { Concept } from '../../lib/concept'
 import type { SectionContext } from '../types'
+import { brandHref, type ResolvedLink } from '../brand/util'
 
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}]/gu
 
@@ -71,3 +72,29 @@ export function surface(v: unknown, fallback: SurfaceName): Surface {
 export function simmerConcept(ctx: SectionContext): Concept {
   return ctx.concept ?? (FALLBACK_CONCEPTS['simmer'] as Concept)
 }
+
+/**
+ * A link field's target for the host the page is served on (the shared brand
+ * resolver, ../brand/util brandHref). The tokens (@home @menu @order @book …)
+ * resolve; Simmer's own pages sit at the domain root on simmer.pk (/menu, not
+ * /brand/simmer/menu) and stay /brand/simmer/… on servd.pk; servd pages
+ * (ordering, booking, /home) are absolute on servd's origin from simmer.pk —
+ * so the brand domain never links to a second copy of a page. A stored link
+ * written out in full (/brand/simmer/menu) is rewritten the same way.
+ * An empty href takes `fallback` (a token such as '@book'). Resolved against
+ * the section's brand, which falls back to the bundled record when the API is
+ * down, so the tokens still work then. null = no usable target: hide the link.
+ */
+export function simmerHref(href: unknown, ctx: SectionContext, fallback = ''): ResolvedLink | null {
+  const raw = str(href).trim() || fallback
+  return brandHref(raw, { ...ctx, concept: simmerConcept(ctx) }, { mode: 'host', onBrandHost: !!ctx.onBrandHost })
+}
+
+/**
+ * Inline overrides for a heading tag set in one of Simmer's text styles.
+ * globals.css gives h1–h4 weight 800, tight tracking and line-height 1.1; a
+ * Simmer heading keeps the look of the text it replaced. Letter-spacing comes
+ * from the `.simmer-page .utility` / `.amarante` class (more specific than the
+ * h-tag rule), so only weight and leading are reset here.
+ */
+export const HEADING_RESET = { fontWeight: 'inherit', lineHeight: 'inherit' } as const

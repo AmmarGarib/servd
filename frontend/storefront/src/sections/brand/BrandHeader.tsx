@@ -12,6 +12,9 @@ import type { SectionProps } from '../types'
 import { link, list, safeSrc } from '../safe'
 import { brandHref, brandNameOf, fill, servdHref } from './util'
 
+/** Flipd's die-cut badge as bundled in this build (760×760). */
+const BUNDLED_BADGE = '/brand/flipd-badge.png'
+
 export function BrandHeader({ fields, ctx }: SectionProps) {
   const concept = ctx.concept
   // The server knows on the first paint whether this is the brand's own
@@ -46,9 +49,15 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
 
   const name = brandNameOf(ctx, fields.name)
   const accent = concept.primaryColor || 'var(--servd-green)'
-  const base = `/brand/${concept.slug}`
+  // The brand's home: the domain root on its own domain (stackd.pk/), its
+  // /brand/<slug> page on servd — never a /brand/<slug> copy on the brand
+  // domain.
+  const base = onBrandHost ? '/' : `/brand/${concept.slug}`
+  const to = (href: unknown) => brandHref(href, ctx, { mode: 'host', onBrandHost })
   const servdLink = link(fields.servdLink)
-  const servdHome = servdHref(brandHref(servdLink.href, ctx)?.href ?? '/', onBrandHost)
+  // servd's home is /home (a stored '/' 308s there, so it is mapped here).
+  const servdPath = servdLink.href.trim() === '/' ? '/home' : servdLink.href
+  const servdHome = servdHref(to(servdPath)?.href ?? '/home', onBrandHost)
   const surface = brandSurface(concept.slug)
   const wordmark = brandWordmark(concept.slug)
   // flipd paints its checker as a full header band. As its own box it leaves a
@@ -104,15 +113,18 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
   // the kitchen's Google Maps pin in a new tab when there is one).
   const links = list(fields.links).flatMap((item) => {
     const l = link(item)
-    const to = brandHref(l.href, ctx)
+    const target = to(l.href)
     const label = fill(l.text, ctx, name)
-    return to && label ? [{ href: to.href, label, external: to.external }] : []
+    return target && label ? [{ href: target.href, label, external: target.external }] : []
   })
   const order = link(fields.order)
-  const orderTo = brandHref(order.href, ctx)
+  const orderTo = to(order.href)
   const orderText = fill(order.text, ctx, name)
   const logo = safeSrc(fields.logo) || concept.logoUrl
-  const badge = safeSrc(fields.badge) || concept.wordmarkUrl || '/brand/flipd-badge.png'
+  // The home link is active only on the home page; the others on their page
+  // and below it. Absolute links (servd pages) are never this page.
+  const isActive = (href: string) => (href === base ? pathname === href : href !== '/' && href.startsWith('/') && pathname.startsWith(href))
+  const badge = safeSrc(fields.badge) || concept.wordmarkUrl || BUNDLED_BADGE
 
   return (
     <nav
@@ -145,17 +157,20 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
     >
       {/* Brand-mark — circular logo card + brand name (brand font + colour).
           flipd carries its die-cut badge instead: the badge IS the lockup, so
-          it replaces both the disc and the name. */}
+          it replaces both the disc and the name. The link's name is its
+          content (the badge's alt, or the name text), which is also what
+          search engines read as its anchor text. */}
       <Link
         href={base}
-        aria-label={name}
         style={{ display: 'flex', alignItems: 'center', gap: diner ? 0 : '0.7rem', textDecoration: 'none' }}>
         {diner ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={badge}
-            alt=""
-            aria-hidden="true"
+            alt={name}
+            // The bundled badge's own size, so the bar reserves its width
+            // before the file arrives (no layout shift).
+            {...(badge === BUNDLED_BADGE && { width: 760, height: 760 })}
             style={{ height: 'clamp(3rem, 5vw, 3.6rem)', width: 'auto', display: 'block' }}
           />
         ) : (
@@ -182,7 +197,12 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
         </span>
         )}
         {/* The name next to the disc drops on narrow phones (< 420px) so the
-            carded pill fits without the page scrolling sideways. */}
+            carded pill fits without the page scrolling sideways. Below that
+            width a screen-reader-only copy stands in, so the link keeps the
+            name as its text at every width (read out once; also its anchor
+            text for search engines). Two spans rather than `sr-only
+            min-[420px]:not-sr-only`: globals.css's own .sr-only pins
+            position:absolute !important, which not-sr-only cannot undo. */}
         {!diner && (
         <span className={pillNav ? 'hidden min-[420px]:inline' : undefined} style={{
           fontFamily: wordmark.font,
@@ -195,6 +215,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
           {name}
         </span>
         )}
+        {!diner && pillNav && <span className="sr-only min-[420px]:hidden">{name}</span>}
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -209,9 +230,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
           }}
         >
           {links.map((l, i) => {
-            const active = !l.external && (l.href === base
-              ? pathname === l.href
-              : pathname.startsWith(l.href))
+            const active = !l.external && isActive(l.href)
             // External links use a plain anchor so target/rel apply;
             // internal ones keep Next's <Link> for client-side navigation.
             const Tag: ElementType = l.external ? 'a' : Link
@@ -319,7 +338,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
           }}
         >
           {links.map((l, i) => {
-            const active = l.href === base ? pathname === l.href : pathname.startsWith(l.href)
+            const active = !l.external && isActive(l.href)
             return (
               <Link
                 key={`${l.href}-${i}`}

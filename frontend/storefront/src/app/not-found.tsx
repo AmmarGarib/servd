@@ -2,9 +2,13 @@
 // stale brand slugs after a concept rename.
 
 import Link from 'next/link'
+import { SERVD_LINK_ORIGIN } from '../lib/brandDomains'
+import { NotFoundTitle } from './NotFoundTitle'
 
 export const metadata = {
   title: 'Not found',
+  // Explicit, so a 404 never carries an inherited 'index, follow'.
+  robots: { index: false, follow: true },
 }
 
 export default function NotFound() {
@@ -21,6 +25,7 @@ export default function NotFound() {
         textAlign: 'center',
       }}
     >
+      <NotFoundTitle />
       <p style={{
         color: 'var(--servd-mute)',
         fontSize: 'clamp(0.7rem, 1.8vw, 0.85rem)',
@@ -42,8 +47,10 @@ export default function NotFound() {
       <p style={{ color: 'var(--servd-mute)', maxWidth: '28rem', margin: 0 }}>
         The page may have moved, or the brand may no longer be on servd.
       </p>
+      {/* The kitchens list on servd's home (absolute when this 404 is served
+          on a brand domain). /order only redirected there. */}
       <Link
-        href="/order"
+        href={`${SERVD_LINK_ORIGIN}/home#kitchens`}
         style={{
           display: 'inline-block',
           background: 'var(--servd-green)',

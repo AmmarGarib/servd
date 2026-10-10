@@ -1,7 +1,8 @@
 # [code]
 
-Storefront route: **/[code]**. Customer-facing page rendered via Next.js App Router.
+Storefront route: **/group-order/[code]** — one group's live shared cart.
 
 ## Files
 
-- `page.tsx` — Next.js page component (server or client)
+- `layout.tsx` — the page title (server).
+- `page.tsx` — the shared cart (client component).

@@ -116,15 +116,25 @@ export function BrandMenuView({ fields, ctx, categories }: Omit<SectionProps, 'i
                 {(cat.items ?? []).map((item) => (
                   <article key={item.id} className="servd-card" style={{ display: 'flex', flexDirection: 'column', opacity: item.isAvailable === false ? 0.5 : 1 }}>
                     {/* Media tile — video when set (muted + playsInline for
-                        mobile autoplay), else the still, else a soft wash. */}
+                        mobile autoplay), else the still, else a soft wash.
+                        The still is a real <img> named for the dish, so dish
+                        photos are found in image search. */}
                     <div style={{
                       aspectRatio: '4/3',
                       position: 'relative',
                       overflow: 'hidden',
-                      background: item.imageUrl
-                        ? `url(${item.imageUrl}) center/cover`
-                        : `linear-gradient(135deg, var(--servd-green-soft) 0%, white 100%)`,
+                      ...(!item.imageUrl && { background: `linear-gradient(135deg, var(--servd-green-soft) 0%, white 100%)` }),
                     }}>
+                      {item.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.imageUrl}
+                          alt={item.name}
+                          loading="lazy"
+                          decoding="async"
+                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+                        />
+                      )}
                       {item.videoUrl && (
                         <video
                           src={item.videoUrl}

@@ -22,17 +22,22 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
   const linkStyle: React.CSSProperties = {
     color: surface.text, opacity: 0.85, textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500,
   }
-  // servd pages: absolute on the brand's own domain.
+  // Every link resolves for the host this render is on: microsite pages at
+  // the domain root on the brand's own domain, servd pages absolute there.
+  const to = (href: unknown) => brandHref(href, ctx, { mode: 'host', onBrandHost })
+  // servd pages: absolute on the brand's own domain. servd's home is /home
+  // (a stored '/' 308s there, so it is mapped here).
   const servd = (v: unknown, fallback: string) => {
     const l = link(v)
-    return { text: fill(l.text, ctx, name), href: servdHref(brandHref(l.href, ctx)?.href ?? fallback, onBrandHost) }
+    const href = l.href.trim() === '/' ? '/home' : l.href
+    return { text: fill(l.text, ctx, name), href: servdHref(to(href)?.href ?? fallback, onBrandHost) }
   }
   const servdLink = servd(fields.servdLink, '/home')
   const allKitchens = servd(fields.allKitchens, '/home#kitchens')
   const backLink = servd(fields.backLink, '/home')
 
   const cta = link(fields.ctaButton)
-  const ctaTo = brandHref(cta.href, ctx)
+  const ctaTo = to(cta.href)
   const ctaText = fill(cta.text, ctx, name)
 
   // Socials: the owner's list. @whatsapp / @email resolve to the brand's own
@@ -40,15 +45,15 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
   // disappear when it is not set.
   const socials = list(fields.socials).flatMap((item) => {
     const l = link(item)
-    const to = brandHref(l.href, ctx)
+    const target = to(l.href)
     const label = fill(l.text, ctx, name)
-    return to && label ? [{ label, ...to }] : []
+    return target && label ? [{ label, ...target }] : []
   })
   const links = list(fields.links).flatMap((item) => {
     const l = link(item)
-    const to = brandHref(l.href, ctx, { mode: 'host', onBrandHost })
+    const target = to(l.href)
     const label = fill(l.text, ctx, name)
-    return to && label ? [{ label, ...to }] : []
+    return target && label ? [{ label, ...target }] : []
   })
 
   return (
@@ -59,19 +64,22 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
         color: surface.text,
       }}>
       <div className="container relative z-10">
-        {/* Brand-CTA banner at the top — where the eye lands when leaving a page. */}
+        {/* Brand-CTA banner at the top — where the eye lands when leaving a page.
+            A sign-off line, not a heading: it repeats on every page, so it
+            stays out of each page's outline (.display sets the same weight
+            and line height on a <p> as it did on the <h2>). */}
         <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
           <p className="eyebrow" style={{ color: accent, marginBottom: '1rem' }}>
             {fill(fields.ctaEyebrow, ctx, name)}
           </p>
-          <h2 className="display" style={{
+          <p className="display" style={{
             fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
             color: surface.text,
             marginBottom: '1.5rem',
           }}>
             {fill(fields.ctaHeadline, ctx, name)}
             <span className="display-italic" style={{ color: accent }}> {fill(fields.ctaAccent, ctx, name)}</span>
-          </h2>
+          </p>
           {ctaTo && ctaText && (
             <Link href={ctaTo.href} className="brand-pill">
               {ctaText}
@@ -115,9 +123,9 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem' }}>
+            <h2 className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem' }}>
               {orLive(fields.linksHeading, name, ctx, name)}
-            </h3>
+            </h2>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
               {links.map((l, i) => (
                 <li key={`${l.href}-${i}`}>
@@ -130,9 +138,10 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem' }}>
+            {/* A label, not a heading (line height as the heading had). */}
+            <p className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem', lineHeight: 1.1 }}>
               {fill(fields.poweredHeading, ctx, name)}
-            </h3>
+            </p>
             <Link href={servdLink.href} style={{
               display: 'inline-flex',
               alignItems: 'baseline',

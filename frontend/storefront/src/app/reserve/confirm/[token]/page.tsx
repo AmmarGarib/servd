@@ -46,7 +46,7 @@ export default function ReserveConfirmPage() {
             </p>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button onClick={() => act('confirm')} disabled={busy} className="servd-btn-primary" style={{ padding: '0.85rem 2rem' }}>
-                {busy ? 'Working…' : 'I&rsquo;m coming ✓'}
+                {busy ? 'Working…' : 'I’m coming ✓'}
               </button>
               <button onClick={() => act('cancel')} disabled={busy} className="servd-btn-secondary" style={{ padding: '0.85rem 2rem' }}>
                 Cancel reservation
@@ -62,7 +62,7 @@ export default function ReserveConfirmPage() {
             <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
               See you soon. We&rsquo;ll send a reminder 2 hours before.
             </p>
-            <Link href="/" className="servd-btn-secondary">Back to servd</Link>
+            <Link href="/home" className="servd-btn-secondary">Back to servd</Link>
           </>
         )}
 
@@ -81,7 +81,7 @@ export default function ReserveConfirmPage() {
           <>
             <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem' }}>Couldn&rsquo;t process that link.</h1>
             <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>It may have expired. Call the restaurant if you need help.</p>
-            <Link href="/" className="servd-btn-secondary">Back home</Link>
+            <Link href="/home" className="servd-btn-secondary">Back home</Link>
           </>
         )}
       </div>

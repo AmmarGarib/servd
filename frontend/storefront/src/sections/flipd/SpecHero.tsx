@@ -9,16 +9,34 @@
 // scrolling never re-renders React. Each part carries its own --t (0 before it
 // moves, 1 when seated) and the stage carries --fall and --hit for the drop.
 
-import Link from 'next/link'
 import { useScrollProgress } from '../../components/kinetic/motionHooks'
 import { formatBrandName } from '../../lib/concept'
 import type { SectionProps } from '../types'
-import { safeHref, safeSrc, str, link, list } from '../safe'
+import { safeSrc, str, link, list } from '../safe'
+import { fill } from '../brand/util'
+import { FlipdLink, flipdHref } from './links'
 
 interface PartField {
   no?: unknown; name?: unknown; spec?: unknown; image?: unknown
   width?: unknown; side?: unknown; flip?: unknown
 }
+
+/**
+ * The bundled part drawings' own pixel sizes. Given to the <img> as
+ * width/height so the browser reserves each slot before the file arrives —
+ * without them the stage grew by ~77px as the parts loaded (layout shift). CSS
+ * still sizes them (width 100%, height auto); the attributes only set the
+ * ratio. An owner's upload is of unknown shape, so it gets a typical part's
+ * ratio as a placeholder instead (`auto` = its real ratio once it has loaded).
+ */
+const BUNDLED_PART_SIZE: Record<string, { width: number; height: number }> = {
+  '/brand/parts/crown.png':   { width: 918,  height: 312 },
+  '/brand/parts/lettuce.png': { width: 993,  height: 201 },
+  '/brand/parts/wing.png':    { width: 1038, height: 144 },
+  '/brand/parts/patty.png':   { width: 834,  height: 147 },
+  '/brand/parts/heel.png':    { width: 894,  height: 186 },
+}
+const UPLOAD_PART_RATIO = 'auto 5 / 1'
 
 /**
  * Per BUILD step (0 = the bottom part, built first): when the part starts to
@@ -53,9 +71,15 @@ export function FlipdSpecHeroSection({ fields, ctx }: SectionProps) {
 
   const brandName = formatBrandName(ctx.concept?.name ?? 'flipd')
   const mark = str(fields.mark).trim() || brandName
+  // The page's one h1. The wordmark is drawn art that fades out as the build
+  // starts (and is never shown with reduced motion), so it can't be the
+  // heading — this is the same title, as text, visually hidden.
+  const heading = fill(fields.headingText, ctx, brandName).trim() || mark
   const ariaLabel = str(fields.ariaLabel).trim() || `${brandName} — how it is built`
   const primary = link(fields.primary)
   const secondary = link(fields.secondary)
+  const primaryTo = primary.text ? flipdHref(primary.href, ctx) : null
+  const secondaryTo = secondary.text ? flipdHref(secondary.href, ctx) : null
 
   const raw = list<PartField>(fields.parts).slice(0, FIRE.length)
   const n = raw.length
@@ -66,6 +90,7 @@ export function FlipdSpecHeroSection({ fields, ctx }: SectionProps) {
       name: str(p.name),
       spec: str(p.spec),
       src: safeSrc(p.image),
+      size: BUNDLED_PART_SIZE[safeSrc(p.image)],
       w: clampWidth(p.width),
       side: p.side === 'right' ? 'right' : 'left',
       flip: p.flip === true,
@@ -89,6 +114,7 @@ export function FlipdSpecHeroSection({ fields, ctx }: SectionProps) {
   return (
     <div className="flipd-page">
       <section ref={ref} className="flipd-spec" aria-label={ariaLabel}>
+        <h1 className="sr-only">{heading}</h1>
         <div className="flipd-spec-pin">
 
           <div className="flipd-spec-title">
@@ -135,13 +161,24 @@ export function FlipdSpecHeroSection({ fields, ctx }: SectionProps) {
                     className="flipd-spec-art"
                     style={{ ['--flip' as string]: part.flip ? '180deg' : '0deg' }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    {part.src && <img src={part.src} alt="" aria-hidden="true" />}
+                    {part.src && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={part.src}
+                        alt=""
+                        aria-hidden="true"
+                        {...(part.size
+                          ? { width: part.size.width, height: part.size.height }
+                          : { style: { aspectRatio: UPLOAD_PART_RATIO } })}
+                      />
+                    )}
                   </div>
                 </div>
               ))}
 
-              <p className="flipd-spec-mark" style={{ ['--t' as string]: markGone }}>
+              {/* Drawn art, not the heading (the h1 above carries the name),
+                  so it is not read out a second time. */}
+              <p className="flipd-spec-mark" style={{ ['--t' as string]: markGone }} aria-hidden="true">
                 {mark}
               </p>
             </div>
@@ -160,10 +197,10 @@ export function FlipdSpecHeroSection({ fields, ctx }: SectionProps) {
             style={{ ['--t' as string]: built, visibility: past ? 'visible' : 'hidden' }}
           >
             {str(fields.tagline) && <p className="flipd-spec-tagline">{str(fields.tagline)}</p>}
-            {(primary.text || secondary.text) && (
+            {(primaryTo || secondaryTo) && (
               <div className="flipd-spec-cta">
-                {primary.text && <Link href={safeHref(primary.href)} className="flipd-btn">{primary.text}</Link>}
-                {secondary.text && <Link href={safeHref(secondary.href)} className="flipd-btn flipd-btn-ghost">{secondary.text}</Link>}
+                {primaryTo && <FlipdLink to={primaryTo} className="flipd-btn">{primary.text}</FlipdLink>}
+                {secondaryTo && <FlipdLink to={secondaryTo} className="flipd-btn flipd-btn-ghost">{secondary.text}</FlipdLink>}
               </div>
             )}
           </div>

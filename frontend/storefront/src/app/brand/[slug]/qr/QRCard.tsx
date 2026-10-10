@@ -36,7 +36,7 @@ export function QRCard({ slug, brand, url }: Props) {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '2.5rem 1.25rem',
-        fontFamily: isSimmer ? 'Times New Roman, Times, serif' : 'system-ui, -apple-system, sans-serif',
+        fontFamily: isSimmer ? 'var(--simmer-body)' : 'system-ui, -apple-system, sans-serif',
       }}
     >
       <div style={{
@@ -57,7 +57,9 @@ export function QRCard({ slug, brand, url }: Props) {
         </p>
 
         <p style={{
-          fontFamily: isSimmer ? 'Amarante, serif' : 'system-ui',
+          // The Simmer display token (Amarante via next/font) — the family
+          // name itself is not global any more.
+          fontFamily: isSimmer ? 'var(--simmer-display)' : 'system-ui',
           fontSize: isSimmer ? '2.6rem' : '2.2rem',
           lineHeight: 1,
           margin: '0.8rem 0 0.4rem',

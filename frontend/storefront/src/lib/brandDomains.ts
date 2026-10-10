@@ -36,6 +36,11 @@ function apiBase(): string {
   return (internal ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001').replace(/\/+$/, '')
 }
 
+/** hostMap lookup that never reads Object.prototype ('constructor', …). */
+function ownHost(bare: string): string | null {
+  return Object.prototype.hasOwnProperty.call(hostMap, bare) ? hostMap[bare]! : null
+}
+
 function bareHost(host: string): string {
   return (host.split(':')[0] ?? host).trim().toLowerCase().replace(/\.$/, '')
 }
@@ -82,7 +87,7 @@ export async function resolveBrandHost(host: string): Promise<string | null> {
   if (SERVD_HOSTS.has(bare)) return null
   if (hostsLoadedAt === 0) await refreshBrandHosts()
   else if (Date.now() - hostsLoadedAt > HOSTS_TTL_MS) void refreshBrandHosts()
-  return hostMap[bare] ?? patternSlug(bare)
+  return ownHost(bare) ?? patternSlug(bare)
 }
 
 /**
@@ -96,7 +101,7 @@ export function resolveBrandSlug(host: string): string | null {
   const bare = bareHost(host)
   if (SERVD_HOSTS.has(bare)) return null
   if (hostsLoadedAt === 0 || Date.now() - hostsLoadedAt > HOSTS_TTL_MS) void refreshBrandHosts()
-  return hostMap[bare] ?? patternSlug(bare)
+  return ownHost(bare) ?? patternSlug(bare)
 }
 
 /**
@@ -144,6 +149,14 @@ export const SERVD_ORIGIN: string =
   (process.env['NEXT_PUBLIC_SITE_URL'] ?? 'https://servd.pk').replace(/\/+$/, '')
 
 /**
+ * The origin links to servd pages use when they are rendered on a brand
+ * domain (stackd.pk → https://servd.pk/login). Empty when NEXT_PUBLIC_SITE_URL
+ * is not set (local dev), so links stay on the current host there.
+ */
+export const SERVD_LINK_ORIGIN: string =
+  (process.env['NEXT_PUBLIC_SITE_URL'] ?? '').replace(/\/+$/, '')
+
+/**
  * Each brand's own domain — the canonical home of its microsite, used for
  * <link rel=canonical>, the sitemap and JSON-LD. Still a code constant: the
  * canonical URL is rendered synchronously in metadata, and which of a brand's
@@ -154,6 +167,25 @@ export const BRAND_ORIGIN: Record<string, string> = {
   flipd:  'https://flipd.pk',
   stackd: 'https://stackd.pk',
   simmer: 'https://simmer.pk',
+}
+
+/**
+ * The brand a request's Host belongs to, or null for servd / an unknown host.
+ * Server-side (middleware, sitemap, robots, llms.txt). Port, trailing dot and
+ * a www. prefix are ignored. The Domain list decides; if it has never loaded
+ * (API down since boot), a brand's canonical domain (BRAND_ORIGIN) still
+ * answers for itself, so a brand host never serves servd's files.
+ */
+export async function hostBrand(host: string): Promise<string | null> {
+  const bare = bareHost(host).replace(/^www\./, '')
+  if (SERVD_HOSTS.has(bare) || bare === hostnameOf(SERVD_ORIGIN)) return null
+  const slug = await resolveBrandHost(bare)
+  if (slug) return slug
+  return Object.keys(BRAND_ORIGIN).find((s) => hostnameOf(BRAND_ORIGIN[s]!) === bare) ?? null
+}
+
+function hostnameOf(origin: string): string {
+  try { return new URL(origin).hostname } catch { return '' }
 }
 
 /**
@@ -175,4 +207,70 @@ export function brandCanonical(slug: string, subpath = ''): string {
   const tail = subpath.replace(/^\/+/, '')
   if (origin === SERVD_ORIGIN) return `${origin}/brand/${slug}${tail ? `/${tail}` : ''}`
   return tail ? `${origin}/${tail}` : `${origin}/`
+}
+
+
+// ─── Page metadata ────────────────────────────────────────────────────────────
+//
+// One helper for every page's title, description, canonical and share card, so
+// og:url always equals the canonical and no page drops the share image (a
+// segment-level `openGraph` replaces its parent's entirely, image included).
+
+/** servd's default share card (src/app/opengraph-image.tsx). */
+export const SERVD_OG_IMAGE = `${SERVD_ORIGIN}/opengraph-image`
+export const SERVD_OG_IMAGE_ALT = 'servd. — every kitchen, one place'
+
+export interface PageMetaInput {
+  /** The page's own title. A string goes through the nearest title template
+   *  ('%s · servd' / '%s · <Brand>'); { absolute } skips it. */
+  title?: string | { absolute: string }
+  description?: string
+  /** Absolute canonical URL (brandCanonical(...) or `${SERVD_ORIGIN}/...`). */
+  canonical: string
+  /** og:site_name — 'servd' unless a brand site. */
+  siteName?: string
+  /** Absolute share-image URL; defaults to servd's card. */
+  image?: string
+  /** Alt text for the share image (defaults to servd's card alt). */
+  imageAlt?: string
+  /** Keep the page out of the index (it stays crawlable so the tag is seen). */
+  noindex?: boolean
+}
+
+/** Next.js Metadata for a page: title, description, canonical, Open Graph and
+ *  Twitter card. Typed loosely (no `next` import) — this module also runs in
+ *  the edge middleware. */
+export function pageMetadata(m: PageMetaInput) {
+  const shareTitle = typeof m.title === 'string' ? m.title : m.title?.absolute
+  const alt = m.imageAlt ?? (m.image ? undefined : SERVD_OG_IMAGE_ALT)
+  const images = [{ url: m.image ?? SERVD_OG_IMAGE, width: 1200, height: 630, type: 'image/png', ...(alt && { alt }) }]
+  return {
+    ...(m.title !== undefined && { title: m.title }),
+    ...(m.description && { description: m.description }),
+    alternates: { canonical: m.canonical },
+    openGraph: {
+      type: 'website' as const,
+      siteName: m.siteName ?? 'servd',
+      locale: 'en_PK',
+      url: m.canonical,
+      ...(shareTitle && { title: shareTitle }),
+      ...(m.description && { description: m.description }),
+      images,
+    },
+    twitter: {
+      card: 'summary_large_image' as const,
+      ...(shareTitle && { title: shareTitle }),
+      ...(m.description && { description: m.description }),
+      images: images.map((i) => i.url),
+    },
+    ...(m.noindex && { robots: { index: false, follow: true } }),
+  }
+}
+
+/** A description trimmed to ~155 chars on a word boundary. */
+export function metaDescription(text: string | null | undefined, max = 155): string {
+  const s = (text ?? '').replace(/\s+/g, ' ').trim()
+  if (s.length <= max) return s
+  const cut = s.slice(0, max - 1)
+  return `${cut.slice(0, cut.lastIndexOf(' ') > 80 ? cut.lastIndexOf(' ') : cut.length).replace(/[,.;:—-]+$/, '')}…`
 }

@@ -31,7 +31,7 @@ import {
   blocksSchema, pageSettingsSchema, popupRulesSchema, MAX_CONTENT_BYTES,
 } from './schemas.js'
 import {
-  parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
+  parseSlug, parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
   publicShape, resolveFonts, namesById,
 } from './service.js'
 
@@ -40,6 +40,11 @@ const PREVIEW_TTL = '30m'
 const jwtSecret = () => process.env['JWT_SECRET'] as string
 
 type SlugParams = { Params: { slug: string } }
+
+/** brand:<slug>:<part> names the storefront serves from its own routes (the
+ *  chrome, and the built-in about/visit/menu pages); any other part is a page
+ *  the owner added, at /brand/<slug>/pages/<part>. */
+const BRAND_FIXED_PARTS = new Set(['header', 'footer', 'about', 'visit', 'menu'])
 
 function slugOf(req: FastifyRequest<SlugParams>): string {
   try { return decodeURIComponent(req.params.slug) } catch { return req.params.slug }
@@ -106,8 +111,9 @@ const jsonOrNull = (v: unknown) => (v === null || v === undefined ? Prisma.DbNul
 export async function siteLayoutRoutes(fastify: FastifyInstance) {
   // ── Public ────────────────────────────────────────────────────────────────
 
-  // Live pop-ups inside their window. Static paths are registered before
-  // /:slug; find-my-way prefers static segments either way.
+  // Live pop-ups inside their window. Static paths (/popups/live,
+  // /pages/live) are registered before /:slug; find-my-way prefers static
+  // segments either way.
   fastify.get(
     '/popups/live',
     { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } },
@@ -136,6 +142,55 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         })
       }
       return out
+    },
+  )
+
+  // Every page with a live copy, for the storefront's sitemap: the slug and
+  // when it was published — never blocks, settings or anything from a draft.
+  // Pages only (servd:<page>, page:<slug>, brand:<slug>[:<page>]); pop-ups
+  // and the header/footer chrome are not pages. A draft, a draft waiting for
+  // the CEO or a scheduled one whose time hasn't come has no live copy, so it
+  // is not listed; a scheduled draft that has come due is published first,
+  // as on the live read. Like popups/live this spans companies on purpose:
+  // the public storefront lists every company's brands (/storefront/concepts).
+  // A brand's pages are listed only while that brand is on the storefront.
+  // A page the owner added (page:<slug>, brand:<slug>:<page>) whose live copy
+  // is empty is a 404 on the storefront, so it is not listed; a built-in page
+  // (servd:<page>, the brand home, about/visit/menu) shows its default design
+  // when empty, so it stays, with the date it was cleared.
+  fastify.get(
+    '/pages/live',
+    { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } },
+    async () => {
+      await publishDueLayouts({ kind: 'page' })
+      const live = { kind: 'page', liveVersion: { gt: 0 } }
+      const [rows, emptyRows] = await Promise.all([
+        prisma.siteLayout.findMany({ where: live, select: { slug: true, publishedAt: true }, orderBy: { slug: 'asc' } }),
+        prisma.siteLayout.findMany({ where: { ...live, blocks: { equals: [] } }, select: { slug: true } }),
+      ])
+      const empty = new Set(emptyRows.map((r) => r.slug))
+      // The slug decides, not just the stored kind: a row written before the
+      // kind column existed defaulted to 'page' whatever its slug.
+      const pages = rows.flatMap((r) => {
+        const parsed = parseSlug(r.slug)
+        if (parsed?.kind !== 'page') return []
+        const part = parsed.owner === 'brand' ? r.slug.split(':')[2] : undefined
+        // brand:<b>:About / :Header — slugs are case-sensitive, so this is
+        // not the brand's about page or chrome, and the storefront refuses
+        // the reserved name at /pages/<page> whatever its case: no URL.
+        if (part !== undefined && part !== part.toLowerCase() && BRAND_FIXED_PARTS.has(part.toLowerCase())) return []
+        const ownerPage = r.slug.startsWith('page:') || (part !== undefined && !BRAND_FIXED_PARTS.has(part))
+        if (ownerPage && empty.has(r.slug)) return []
+        return [{ row: r, brand: parsed.owner === 'brand' ? parsed.conceptSlug : null }]
+      })
+      const brandSlugs = [...new Set(pages.flatMap((p) => (p.brand ? [p.brand] : [])))]
+      const visible = new Set(brandSlugs.length === 0 ? [] : (await prisma.concept.findMany({
+        where: { slug: { in: brandSlugs }, isActive: true, storefrontVisible: true, deletedAt: null },
+        select: { slug: true },
+      })).map((c) => c.slug))
+      return pages
+        .filter((p) => p.brand === null || visible.has(p.brand))
+        .map((p) => ({ slug: p.row.slug, publishedAt: p.row.publishedAt }))
     },
   )
 

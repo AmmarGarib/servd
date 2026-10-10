@@ -1,9 +1,7 @@
 'use client'
 
-import { heroCover } from '../../lib/concept'
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -123,14 +121,31 @@ export function GroupOrderEntryClient({ brands }: Props) {
                     }}>
                     <div aria-hidden style={{
                       aspectRatio: '4 / 3',
-                      background: `${b.accent}${heroCover(b.heroImage)}`,
-                    }} />
+                      background: b.accent,
+                      position: 'relative',
+                      overflow: 'hidden',
+                    }}>
+                      {/* The card crop as a lazy <img> (decorative), not a
+                          CSS background that downloads on page load. */}
+                      {b.heroImage && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={b.heroImage}
+                          alt=""
+                          width={640}
+                          height={480}
+                          loading="lazy"
+                          decoding="async"
+                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+                        />
+                      )}
+                    </div>
                     <div style={{
                       padding: '0.6rem 0.8rem',
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       gap: '0.5rem',
                     }}>
-                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1rem', color: 'var(--servd-ink)' }}>
+                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', color: 'var(--servd-ink)' }}>
                         {b.name}
                       </span>
                       {selected && (
@@ -179,7 +194,7 @@ export function GroupOrderEntryClient({ brands }: Props) {
       )}
 
       <p className="mt-6 text-xs" style={{ color: 'var(--servd-mute)' }}>
-        After ordering, the host can <Link href="#" className="underline">split the bill</Link> at the POS — each diner pays their own.
+        After ordering, the host can split the bill at the POS — each diner pays their own.
       </p>
     </div>
   )

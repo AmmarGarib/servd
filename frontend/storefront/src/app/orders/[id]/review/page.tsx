@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useCustomerAuth } from '../../../../store/customerAuth'
 import { formatBrandName } from '../../../../lib/concept'
+import { brandCanonical } from '../../../../lib/brandDomains'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -130,7 +131,7 @@ export default function ReviewOrderPage() {
         <div style={{ marginBottom: '0.75rem', color: 'var(--servd-green-dark)' }}><BigCheckIcon /></div>
         <h1 className="font-display" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>Already reviewed.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>Thanks for the feedback — it helps us cook better.</p>
-        <MagneticLink href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
+        <MagneticLink href={brandCanonical(order.concept.slug)} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
       </Centered>
     )
   }
@@ -158,7 +159,7 @@ export default function ReviewOrderPage() {
           </div>
         )}
         <div>
-          <MagneticLink href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
+          <MagneticLink href={brandCanonical(order.concept.slug)} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
         </div>
       </Centered>
     )

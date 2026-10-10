@@ -15,6 +15,7 @@ import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useBrandSlug } from '../../../lib/host'
 import { formatBrandName } from '../../../lib/concept'
+import { brandCanonical } from '../../../lib/brandDomains'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -56,11 +57,12 @@ export default function ReservePage() {
   const { slug } = useParams<{ slug: string }>()
   const router = useRouter()
   const brandHost = useBrandSlug()
-  // On a brand custom domain (e.g. stackd.pk), middleware rewrites `/` to
-  // `/brand/<slug>` — so "back to brand" should send the user to `/`. On the
-  // canonical servd host, we want them on the explicit `/brand/<slug>` page.
-  // brandHost is null until the client mounts; SSR pass treats it as servd.
-  const backToBrandHref = brandHost ? '/' : `/brand/${slug}`
+  // "Back to brand" goes to the brand's microsite, which lives on its own
+  // domain (simmer.pk/). On that same domain `/` is already it; anywhere else
+  // (servd.pk, another brand's domain) link the canonical URL rather than the
+  // servd.pk/brand/<slug> duplicate. brandHost is null until the client
+  // mounts; the SSR pass treats it as servd.
+  const backToBrandHref = brandHost === slug ? '/' : brandCanonical(slug)
 
   const [partySize, setPartySize] = useState(2)
   const [date, setDate] = useState(todayPktIso())
@@ -201,7 +203,7 @@ export default function ReservePage() {
             Book a table
           </h1>
           <p style={{ color: 'var(--servd-mute)' }}>
-            {data ? `at ${formatBrandName(data.concept.name)}` : 'Choose a time and we&rsquo;ll save your spot.'}
+            {data ? `at ${formatBrandName(data.concept.name)}` : 'Choose a time and we’ll save your spot.'}
           </p>
         </div>
       </section>

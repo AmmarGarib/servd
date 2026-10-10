@@ -11,14 +11,25 @@
 // "RESERVATIONS only." lands on the back wall, then the tagline and the
 // Reserve / Menu buttons. Pure scroll, no clicks. The whole hero is a sticky
 // 260vh section; CSS reads --scroll-progress to choreograph it.
+//
+// The page's one h1 is the `headingText` field, visually hidden: the drawing
+// says "Simmer" to the eye, the heading says what and where to search engines
+// and screen readers. The drawing itself — the door, its callouts and the
+// title blocks around it — is decoration (aria-hidden) unless the owner fills
+// `drawingAlt`; the back-wall headline and the hours sticker are copy, so
+// screen readers get them. Sizes, positions and the phone layout (title row
+// and bottom row in flow with the door fitted between them, the thermometer,
+// the callouts that hang outside the door) are in ./simmer.css.
 
 import Link from 'next/link'
 import type { CSSProperties } from 'react'
 import { useScrollProgress } from '../../components/kinetic/motionHooks'
 import { formatBrandName } from '../../lib/concept'
 import type { SectionProps } from '../types'
-import { link, safeHref, safeSrc } from '../safe'
-import { simmerConcept, simmerText } from './shared'
+import { link, safeSrc } from '../safe'
+import { fill } from '../brand/util'
+import { simmerConcept, simmerHref, simmerText } from './shared'
+import './simmer.css'
 
 // The palette, fixed: the hero is the brand's own entrance, so its colours are
 // the SKILL.md tokens rather than owner fields (no white, single orange).
@@ -49,10 +60,16 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
   const concept = simmerConcept(ctx)
 
   const brandName = t('projectName').trim() || formatBrandName(concept.name)
+  const heading = fill(t('headingText'), { ...ctx, concept }).trim() || formatBrandName(concept.name)
+  const drawingAlt = t('drawingAlt').trim()
   const projectNote = t('projectNote').trim()
   const revision = t('revision').replace(/\{year\}/g, String(new Date().getFullYear()))
   const reserve = link(f['reserve'])
   const menu = link(f['menu'])
+  // Host-aware: /menu on simmer.pk, /brand/simmer/menu on servd; booking is
+  // a servd page (absolute from simmer.pk). null = hide the button.
+  const reserveTo = reserve.text ? simmerHref(reserve.href, ctx, '@book') : null
+  const menuTo = menu.text ? simmerHref(menu.href, ctx, '@menu') : null
   const coolerImageUrl = safeSrc(f['coolerImage'])
 
   const d: Drawing = {
@@ -71,6 +88,8 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
 
   return (
     <div className="simmer-page">
+      {/* The page's one h1 — hidden; the drawing shows the brand instead. */}
+      <h1 className="sr-only">{heading}</h1>
       <div
         ref={ref}
         style={{
@@ -83,7 +102,7 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
           ['--simmer-marble' as string]: MARBLE,
         } as CSSProperties}
       >
-        <div className="sticky overflow-hidden"
+        <div className="sticky overflow-hidden simmer-fridge-stage"
           style={{
             top: 0,
             height: '100vh',
@@ -122,184 +141,193 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
             background: 'radial-gradient(ellipse 120% 85% at 50% 24%, transparent 0%, transparent 52%, rgba(0,0,0,0.28) 100%)',
           }} />
 
-          {/* TITLE BLOCK — top-left: project name + drawing number */}
-          <div style={{
-            position: 'absolute', top: '3vh', left: '4vw',
-            color: 'rgba(237,230,211,0.7)',
-            fontFamily: 'var(--font-display)',
-            fontSize: '0.62rem',
-            letterSpacing: '0.32em',
-            lineHeight: 1.55,
-            zIndex: 6,
-            textTransform: 'uppercase',
-          }}>
-            <p style={{ color: 'rgba(237,230,211,0.45)' }}>{t('projectEyebrow')}</p>
-            <p style={{ color: '#EDE6D3', fontWeight: 700 }}>
-              {brandName.toUpperCase()}{projectNote && ` · ${projectNote}`}
-            </p>
-            <p style={{ color: 'rgba(237,230,211,0.45)', marginTop: '0.6rem' }}>{t('sheet')}</p>
-          </div>
-          {/* TITLE BLOCK — top-right: scale + revision */}
-          <div style={{
-            position: 'absolute', top: '3vh', right: '4vw',
-            color: 'rgba(237,230,211,0.7)',
-            fontFamily: 'var(--font-display)',
-            fontSize: '0.62rem',
-            letterSpacing: '0.32em',
-            lineHeight: 1.55,
-            zIndex: 6,
-            textTransform: 'uppercase',
-            textAlign: 'right',
-          }}>
-            <p style={{ color: 'rgba(237,230,211,0.45)' }}>{t('scale')}</p>
-            <p style={{ color: 'rgba(237,230,211,0.45)' }}>{revision}</p>
-            <p style={{ color: '#EDE6D3', fontWeight: 700, marginTop: '0.6rem' }}>{t('scrollCue')}</p>
-          </div>
-
-          {/* THE DOOR ASSEMBLY — interior (behind), door (rotates), frame. */}
-          <div
-            style={{
-              position: 'relative',
-              width: 'min(680px, 90vw)',
-              aspectRatio: '3 / 4.6',
-              perspective: 1800,
-              zIndex: 2,
-            }}
-          >
-            {/* INTERIOR — an empty walk-in cooler; the speakeasy hint is the
-                headline on the back wall. */}
-            <div
-              aria-hidden={true}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                borderRadius: '4px',
-                overflow: 'hidden',
-                opacity: 'calc(var(--scroll-progress, 0) * 1.8)',
-                transition: 'opacity 80ms linear',
-              } as CSSProperties}>
-              <CoolerInterior
-                accent={ACCENT}
-                cream={CREAM}
-                imageUrl={coolerImageUrl || null}
-                headline={t('headline')}
-                headlineAccent={t('headlineAccent')}
-                hours={t('hours')}
-                d={d}
-              />
+          {/* TITLE BLOCKS — one row across the top: project name + drawing
+              number on the left, scale + revision on the right. Position,
+              size, tracking and leading are in simmer.css (on phones the row
+              sits in flow above the door, so the door never runs under it).
+              Drawing annotation, so screen readers skip it: the h1 above
+              names the page. */}
+          <div aria-hidden="true" className="simmer-fridge-titles">
+            <div className="simmer-fridge-title" style={{
+              color: 'rgba(237,230,211,0.7)',
+              fontFamily: 'var(--font-display)',
+              textTransform: 'uppercase',
+            }}>
+              <p style={{ color: 'rgba(237,230,211,0.45)' }}>{t('projectEyebrow')}</p>
+              <p style={{ color: '#EDE6D3', fontWeight: 800 }}>
+                {brandName.toUpperCase()}{projectNote && ` · ${projectNote}`}
+              </p>
+              <p className="simmer-fridge-title-gap" style={{ color: 'rgba(237,230,211,0.45)' }}>{t('sheet')}</p>
             </div>
+            <div className="simmer-fridge-title" style={{
+              color: 'rgba(237,230,211,0.7)',
+              fontFamily: 'var(--font-display)',
+              textTransform: 'uppercase',
+              textAlign: 'right',
+            }}>
+              <p style={{ color: 'rgba(237,230,211,0.45)' }}>{t('scale')}</p>
+              <p style={{ color: 'rgba(237,230,211,0.45)' }}>{revision}</p>
+              <p className="simmer-fridge-title-gap" style={{ color: '#EDE6D3', fontWeight: 800 }}>{t('scrollCue')}</p>
+            </div>
+          </div>
 
-            {/* THE DOOR — rotates 0 → -120deg on its left hinge. Two faces
-                with backface-visibility hidden so the front never shows
-                mirrored past 90°. */}
+          {/* THE DOOR ASSEMBLY — interior (behind), door (rotates), frame.
+              The slot is layout-neutral on wider screens; on phones it is the
+              space between the title row and the bottom row, and the door is
+              sized to fit it (simmer.css). */}
+          <div className="simmer-fridge-slot">
             <div
+              className="simmer-fridge-door"
               style={{
-                position: 'absolute',
-                inset: 0,
-                transformOrigin: 'left center',
-                transform: 'rotateY(calc(var(--scroll-progress, 0) * -120deg))',
-                transformStyle: 'preserve-3d',
-                transition: 'transform 80ms linear',
-                zIndex: 3,
-                boxShadow: 'calc(var(--scroll-progress, 0) * 30px) 0 60px rgba(0,0,0,0.6)',
-              } as CSSProperties}
+                position: 'relative',
+                aspectRatio: '3 / 4.6',
+                perspective: 1800,
+                zIndex: 2,
+              }}
             >
-              {/* Front face — the blueprint drawing */}
-              <div style={{
-                position: 'absolute', inset: 0,
-                backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
-              }}>
-                <BlueprintCoolerDoor accent={ACCENT} d={d} />
+              {/* INTERIOR — an empty walk-in cooler; the speakeasy hint is the
+                  headline on the back wall. Not aria-hidden as a whole: the
+                  headline and the hours sticker are real copy (screen readers
+                  read them); the photo and the drawing under them are hidden. */}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: '4px',
+                  overflow: 'hidden',
+                  opacity: 'calc(var(--scroll-progress, 0) * 1.8)',
+                  transition: 'opacity 80ms linear',
+                } as CSSProperties}>
+                <CoolerInterior
+                  accent={ACCENT}
+                  cream={CREAM}
+                  imageUrl={coolerImageUrl || null}
+                  headline={t('headline')}
+                  headlineAccent={t('headlineAccent')}
+                  hours={t('hours')}
+                  d={d}
+                />
               </div>
-              {/* Inner face — same blueprint sheet, pre-rotated 180°. */}
-              <div aria-hidden="true" style={{
-                position: 'absolute', inset: 0,
-                transform: 'rotateY(180deg)',
-                backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
-                background: '#06392F',
-                overflow: 'hidden',
+
+              {/* THE DOOR — rotates 0 → -120deg on its left hinge. Two faces
+                  with backface-visibility hidden so the front never shows
+                  mirrored past 90°. */}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  transformOrigin: 'left center',
+                  transform: 'rotateY(calc(var(--scroll-progress, 0) * -120deg))',
+                  transformStyle: 'preserve-3d',
+                  transition: 'transform 80ms linear',
+                  zIndex: 3,
+                  boxShadow: 'calc(var(--scroll-progress, 0) * 30px) 0 60px rgba(0,0,0,0.6)',
+                } as CSSProperties}
+              >
+                {/* Front face — the blueprint drawing. Decoration (its ~20
+                    labels would otherwise be read out one by one) unless the
+                    owner describes it in `drawingAlt`. */}
+                <div
+                  {...(drawingAlt ? { role: 'img', 'aria-label': drawingAlt } : {})}
+                  style={{
+                    position: 'absolute', inset: 0,
+                    backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+                  }}
+                >
+                  <BlueprintCoolerDoor accent={ACCENT} d={d} />
+                </div>
+                {/* Inner face — same blueprint sheet, pre-rotated 180°. */}
+                <div aria-hidden="true" style={{
+                  position: 'absolute', inset: 0,
+                  transform: 'rotateY(180deg)',
+                  backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+                  background: '#06392F',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    backgroundImage: `
+                      linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),
+                      linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)
+                    `,
+                    backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
+                  }} />
+                  <BlueprintDoorInside d={d} />
+                </div>
+              </div>
+
+              {/* DIGITAL THERMOMETER — mounted above the door frame. Its
+                  `display` is in simmer.css: on phones it would sit on the
+                  title block, so it is not shown there. */}
+              <div aria-hidden="true" className="simmer-fridge-thermo" style={{
+                position: 'absolute',
+                top: '-86px', left: '50%',
+                transform: 'translateX(-50%)',
+                alignItems: 'center', gap: '10px',
+                zIndex: 5,
               }}>
                 <div style={{
-                  position: 'absolute', inset: 0,
-                  backgroundImage: `
-                    linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),
-                    linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)
-                  `,
-                  backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
+                  background: 'linear-gradient(180deg, #1f2326 0%, #0d0f10 100%)',
+                  borderRadius: '4px',
+                  padding: '6px 10px',
+                  boxShadow: '0 3px 8px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.08)',
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                }}>
+                  <span style={{
+                    fontFamily: 'monospace',
+                    fontSize: '0.62rem',
+                    color: '#7a8489',
+                    letterSpacing: '0.18em',
+                  }}>{t('unitCode')}</span>
+                  <span style={{
+                    background: '#050708',
+                    padding: '2px 6px',
+                    borderRadius: '2px',
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    fontSize: '0.92rem',
+                    color: '#3fda86',
+                    textShadow: '0 0 6px rgba(63,218,134,0.65)',
+                    letterSpacing: '0.04em',
+                  }}>{t('temperature')}</span>
+                </div>
+                <span style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: '#3fda86',
+                  boxShadow: '0 0 8px rgba(63,218,134,0.8)',
                 }} />
-                <BlueprintDoorInside d={d} />
               </div>
-            </div>
 
-            {/* DIGITAL THERMOMETER — mounted above the door frame. */}
-            <div aria-hidden="true" style={{
-              position: 'absolute',
-              top: '-86px', left: '50%',
-              transform: 'translateX(-50%)',
-              display: 'flex', alignItems: 'center', gap: '10px',
-              zIndex: 5,
-            }}>
-              <div style={{
-                background: 'linear-gradient(180deg, #1f2326 0%, #0d0f10 100%)',
+              {/* FRAME — slim stainless ring around the doorway. */}
+              <div aria-hidden="true" style={{
+                position: 'absolute',
+                inset: '-12px',
+                border: '12px solid transparent',
+                borderImage: 'linear-gradient(135deg, #e5ebee 0%, #989fa4 25%, #6a7077 50%, #989fa4 75%, #e5ebee 100%) 1',
                 borderRadius: '4px',
-                padding: '6px 10px',
-                boxShadow: '0 3px 8px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.08)',
-                display: 'flex', alignItems: 'center', gap: '6px',
+                boxShadow: '0 28px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.18), 0 0 0 1px rgba(0,0,0,0.25)',
+                pointerEvents: 'none',
+                zIndex: 4,
               }}>
-                <span style={{
-                  fontFamily: 'monospace',
-                  fontSize: '0.62rem',
-                  color: '#7a8489',
-                  letterSpacing: '0.18em',
-                }}>{t('unitCode')}</span>
-                <span style={{
-                  background: '#050708',
-                  padding: '2px 6px',
-                  borderRadius: '2px',
-                  fontFamily: 'monospace',
-                  fontWeight: 700,
-                  fontSize: '0.92rem',
-                  color: '#3fda86',
-                  textShadow: '0 0 6px rgba(63,218,134,0.65)',
-                  letterSpacing: '0.04em',
-                }}>{t('temperature')}</span>
+                {[['6px', '6px'], ['6px', 'auto', '6px', 'auto'], [null, '6px', '6px', 'auto'], [null, 'auto', '6px', '6px']].map((coords, i) => {
+                  const [top, right, bottom, left] = coords as Array<string | null | undefined>
+                  return (
+                    <div key={i} style={{
+                      position: 'absolute',
+                      top: top ?? undefined,
+                      right: right ?? undefined,
+                      bottom: bottom ?? undefined,
+                      left: left ?? undefined,
+                      width: 8, height: 8,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle at 30% 30%, #e5ebee 0%, #898f94 60%, #2a2e30 100%)',
+                      boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.4)',
+                    }} />
+                  )
+                })}
               </div>
-              <span style={{
-                width: 8, height: 8, borderRadius: '50%',
-                background: '#3fda86',
-                boxShadow: '0 0 8px rgba(63,218,134,0.8)',
-              }} />
-            </div>
-
-            {/* FRAME — slim stainless ring around the doorway. */}
-            <div aria-hidden="true" style={{
-              position: 'absolute',
-              inset: '-12px',
-              border: '12px solid transparent',
-              borderImage: 'linear-gradient(135deg, #e5ebee 0%, #989fa4 25%, #6a7077 50%, #989fa4 75%, #e5ebee 100%) 1',
-              borderRadius: '4px',
-              boxShadow: '0 28px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.18), 0 0 0 1px rgba(0,0,0,0.25)',
-              pointerEvents: 'none',
-              zIndex: 4,
-            }}>
-              {[['6px', '6px'], ['6px', 'auto', '6px', 'auto'], [null, '6px', '6px', 'auto'], [null, 'auto', '6px', '6px']].map((coords, i) => {
-                const [top, right, bottom, left] = coords as Array<string | null | undefined>
-                return (
-                  <div key={i} style={{
-                    position: 'absolute',
-                    top: top ?? undefined,
-                    right: right ?? undefined,
-                    bottom: bottom ?? undefined,
-                    left: left ?? undefined,
-                    width: 8, height: 8,
-                    borderRadius: '50%',
-                    background: 'radial-gradient(circle at 30% 30%, #e5ebee 0%, #898f94 60%, #2a2e30 100%)',
-                    boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.4)',
-                  }} />
-                )
-              })}
             </div>
           </div>
 
@@ -330,28 +358,26 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
               </p>
             )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.7rem', justifyContent: 'center' }}>
-              {reserve.text && (
-                <Link href={safeHref(reserve.href)} className="brand-pill">
+              {reserveTo && (
+                <Link href={reserveTo.href} className="brand-pill">
                   {simmerText(reserve.text)}
                 </Link>
               )}
-              {menu.text && (
-                <Link href={safeHref(menu.href)} className="brand-pill-outline" style={{ borderColor: CREAM, color: CREAM }}>
+              {menuTo && (
+                <Link href={menuTo.href} className="brand-pill-outline" style={{ borderColor: CREAM, color: CREAM }}>
                   {simmerText(menu.text)}
                 </Link>
               )}
             </div>
           </div>
 
-          {/* Bottom annotation row — engineering-drawing footer. */}
-          <div style={{
-            position: 'absolute',
-            bottom: '3vh', left: '4vw', right: '4vw',
+          {/* Bottom annotation row — engineering-drawing footer. Position,
+              size and tracking in simmer.css (larger and in flow on phones);
+              annotation, so screen readers skip it. */}
+          <div aria-hidden="true" className="simmer-fridge-foot" style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
             color: 'rgba(237,230,211,0.55)',
             fontFamily: 'var(--font-display)',
-            fontSize: '0.6rem',
-            letterSpacing: '0.32em',
             textTransform: 'uppercase',
             zIndex: 6,
             pointerEvents: 'none',
@@ -399,7 +425,11 @@ function BlueprintDoorInside({ d }: { d: Drawing }) {
 
 // ─── Blueprint cooler door (front face) ─────────────────────────────
 // Clean architectural schematic: thin cream strokes on ink, every part
-// labelled with a callout line + dimension annotations.
+// labelled with a callout line + dimension annotations. Decoration: hidden
+// from screen readers (the wrapper carries `drawingAlt` when the owner sets
+// one). The callouts that hang outside the door (hinge, view pane, kick
+// plate, door height) are hidden by simmer.css where the screen is too narrow
+// to show them whole, rather than cut off at its edge.
 function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
   const line   = 'rgba(237,230,211,0.85)'
   const fine   = 'rgba(237,230,211,0.45)'
@@ -409,6 +439,8 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
     <svg
       viewBox="0 0 600 880"
       preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+      focusable="false"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}
     >
       {/* DOOR PANEL */}
@@ -430,7 +462,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
           <circle cx="44" cy={y + 40} r="6" fill="none" stroke={line} strokeWidth="1.2" />
           <line x1="44" y1={y + 4} x2="44" y2={y + 52} stroke={fine} strokeWidth="0.7" strokeDasharray="2 2" />
           {i === 0 && (
-            <>
+            <g className="simmer-fridge-callout">
               <line x1="22" y1={y + 28} x2="-30" y2={y + 28} stroke={fine} strokeWidth="0.7" />
               <text x="-34" y={y + 26} fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" textAnchor="end">
                 {d.hinge}
@@ -438,7 +470,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
               <text x="-34" y={y + 38} fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2" textAnchor="end">
                 {d.hingeNote}
               </text>
-            </>
+            </g>
           )}
         </g>
       ))}
@@ -449,13 +481,15 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
         <rect x="150" y="170" width="300" height="140" fill="none" stroke={fine} strokeWidth="1" rx="2" strokeDasharray="3 2" />
         <line x1="160" y1="180" x2="190" y2="180" stroke={fine} strokeWidth="0.7" />
         <line x1="160" y1="180" x2="160" y2="210" stroke={fine} strokeWidth="0.7" />
-        <line x1="460" y1="240" x2="540" y2="240" stroke={fine} strokeWidth="0.7" />
-        <text x="546" y="238" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
-          {d.pane}
-        </text>
-        <text x="546" y="250" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
-          {d.paneNote}
-        </text>
+        <g className="simmer-fridge-callout">
+          <line x1="460" y1="240" x2="540" y2="240" stroke={fine} strokeWidth="0.7" />
+          <text x="546" y="238" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+            {d.pane}
+          </text>
+          <text x="546" y="250" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+            {d.paneNote}
+          </text>
+        </g>
       </g>
 
       {/* PADDLE HANDLE */}
@@ -466,8 +500,10 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
         <circle cx="358" cy="468" r="3" fill="#06392F" />
         <rect x="436" y="490" width="40" height="14" fill="none" stroke={fine} strokeWidth="1" rx="2" />
         <circle cx="456" cy="497" r="2.5" fill={fine} />
+        {/* Label set inside the handle, ending at its leader line (it used
+            to be drawn mirrored with scale(-1,1), so it read backwards). */}
         <line x1="540" y1="468" x2="600" y2="468" stroke={fine} strokeWidth="0.7" />
-        <text x="-540" y="466" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" transform="scale(-1,1)">
+        <text x="534" y="466" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" textAnchor="end">
           {d.handle}
         </text>
       </g>
@@ -475,7 +511,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
       {/* MANUFACTURER PLATE */}
       <g>
         <rect x="80" y="80" width="180" height="46" fill="rgba(237,230,211,0.04)" stroke={line} strokeWidth="1" rx="2" />
-        <text x="90" y="98" fill={label} fontFamily="var(--font-display)" fontSize="9" letterSpacing="3.2" fontWeight="700">
+        <text x="90" y="98" fill={label} fontFamily="var(--font-display)" fontSize="9" letterSpacing="3.2" fontWeight="800">
           {d.plateTitle}
         </text>
         <text x="90" y="114" fill={fine} fontFamily="var(--font-display)" fontSize="8" letterSpacing="2.5">
@@ -495,23 +531,27 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
         {[[95, 735], [505, 735], [95, 805], [505, 805]].map(([x, y], i) => (
           <circle key={i} cx={x} cy={y} r="3" fill="none" stroke={line} strokeWidth="0.9" />
         ))}
-        <line x1="520" y1="770" x2="580" y2="770" stroke={fine} strokeWidth="0.7" />
-        <text x="586" y="768" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
-          {d.kick}
-        </text>
-        <text x="586" y="780" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
-          {d.kickNote}
-        </text>
+        <g className="simmer-fridge-callout">
+          <line x1="520" y1="770" x2="580" y2="770" stroke={fine} strokeWidth="0.7" />
+          <text x="586" y="768" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+            {d.kick}
+          </text>
+          <text x="586" y="780" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+            {d.kickNote}
+          </text>
+        </g>
       </g>
 
-      {/* DIMENSION LINES */}
-      <g stroke={dim} strokeWidth="0.7" fontFamily="var(--font-display)">
+      {/* DIMENSION LINES — door height (left of the door), then width */}
+      <g className="simmer-fridge-dim-h" stroke={dim} strokeWidth="0.7" fontFamily="var(--font-display)">
         <line x1="-18" y1="40" x2="-18" y2="840" />
         <line x1="-22" y1="40" x2="-14" y2="40" />
         <line x1="-22" y1="840" x2="-14" y2="840" />
         <text x="-30" y="446" fill={label} fontSize="11" letterSpacing="2" textAnchor="middle" transform="rotate(-90, -30, 446)">
           {d.height}
         </text>
+      </g>
+      <g stroke={dim} strokeWidth="0.7" fontFamily="var(--font-display)">
         <line x1="40" y1="858" x2="560" y2="858" />
         <line x1="40" y1="854" x2="40" y2="862" />
         <line x1="560" y1="854" x2="560" y2="862" />
@@ -565,7 +605,11 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
         <CoolerInteriorSVG d={d} />
       )}
 
-      {/* HEADLINE — "RESERVATIONS only." as one phrase */}
+      {/* HEADLINE — "RESERVATIONS only." as one phrase. The two styled
+          halves are drawn for the eye; screen readers get the phrase once,
+          with its space (the gap on screen is a margin, not a space). Sizes
+          in simmer.css: on phones the phrase scales with the door, so the
+          default line is no longer cut at the door's edges. */}
       {(headline || headlineAccent) && (
         <div
           style={{
@@ -581,9 +625,9 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
             zIndex: 2,
           } as CSSProperties}
         >
-          <span style={{
+          <span className="sr-only">{[headline, headlineAccent].filter(Boolean).join(' ')}</span>
+          <span aria-hidden="true" className="simmer-fridge-headline" style={{
             color: cream,
-            fontSize: 'clamp(2rem, 4.8vw, 3.6rem)',
             letterSpacing: '0.06em',
             fontWeight: 800,
             textShadow: '0 2px 4px rgba(0,0,0,0.85), 0 6px 16px rgba(0,0,0,0.65)',
@@ -591,12 +635,11 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
             {headline}
           </span>
           {headlineAccent && (
-            <span style={{
+            <span aria-hidden="true" className="simmer-fridge-headline-accent" style={{
               color: accent,
-              fontSize: 'clamp(1.7rem, 4.2vw, 3rem)',
               fontStyle: 'italic',
               letterSpacing: '-0.01em',
-              fontWeight: 500,
+              fontWeight: 400,
               marginLeft: headline ? '0.32em' : 0,
             }}>
               {headlineAccent}
@@ -607,21 +650,21 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
 
       {/* Operating hours — etched along the cooler floor like a vinyl
           sticker, clear of the Reserve / Menu buttons. Bone at 55% (was
-          white at 55%: the SKILL.md allows no white). */}
+          white at 55%: the SKILL.md allows no white). Size, tracking and
+          wrapping in simmer.css: never under 12px, and on phones tracked
+          tighter (and free to wrap) so the door's edges never cut it. */}
       {hours && (
         <FridgeWord
           text={hours}
           fireAt={0.78}
           color="rgba(237,230,211,0.55)"
           heavyShadow
+          className="simmer-fridge-hours"
           style={{
             bottom: '4%', left: '50%',
             transform: 'translateX(-50%)',
-            fontSize: 'clamp(0.65rem, 1.2vw, 0.85rem)',
-            letterSpacing: '0.42em',
             textTransform: 'uppercase',
-            whiteSpace: 'nowrap',
-            fontWeight: 700,
+            fontWeight: 800,
           }}
         />
       )}
@@ -630,11 +673,12 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
 }
 
 // Staggered fade-in for a word on the cooler wall.
-function FridgeWord({ text, fireAt, color, heavyShadow, style }: {
+function FridgeWord({ text, fireAt, color, heavyShadow, className, style }: {
   text: string
   fireAt: number
   color: string
   heavyShadow?: boolean
+  className?: string
   style?: CSSProperties
 }) {
   const shadow = heavyShadow
@@ -642,7 +686,7 @@ function FridgeWord({ text, fireAt, color, heavyShadow, style }: {
     : '0 1px 2px rgba(0,0,0,0.6)'
   return (
     <p
-      className="display"
+      className={className ? `display ${className}` : 'display'}
       style={{
         position: 'absolute',
         margin: 0,
@@ -664,7 +708,8 @@ function FridgeWord({ text, fireAt, color, heavyShadow, style }: {
 // ─── Blueprint cooler interior ──────────────────────────────────────
 // The "view inside the cooler" as an architectural drawing: back wall, side
 // walls receding to a vanishing point, two wire racks, ceiling evaporator,
-// LED strip, floor dimension.
+// LED strip, floor dimension. Decoration: hidden from screen readers (the
+// headline and the hours drawn over it are not).
 function CoolerInteriorSVG({ d }: { d: Drawing }) {
   const line  = 'rgba(237,230,211,0.85)'
   const fine  = 'rgba(237,230,211,0.42)'
@@ -674,6 +719,8 @@ function CoolerInteriorSVG({ d }: { d: Drawing }) {
     <svg
       viewBox="0 0 1600 1000"
       preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+      focusable="false"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     >
       <g stroke={dim} strokeWidth="0.6" strokeDasharray="3 4">

@@ -7,14 +7,18 @@
 //   • Items published   → the live menu (fetchBrandMenu): one course per
 //     category with a roman numeral, dish + description + price, and an
 //     order button in place of the "flag your server" note.
+//
+// Outline: the masthead line is the page's h1, each course an h2, each dish
+// an h3, the closing headline an h2 — in the same type as before (the h-tag
+// defaults in globals.css are reset inline; see HEADING_RESET).
 
 import Link from 'next/link'
 import { Fragment } from 'react'
 import type { SectionProps } from '../types'
 import { fetchBrandMenu, hasMenuItems, type MenuCategory } from '../data'
 import { formatBrandName } from '../../lib/concept'
-import { link, list, safeHref, str } from '../safe'
-import { simmerConcept, simmerLines, simmerText, stampOr } from './shared'
+import { link, list, str } from '../safe'
+import { HEADING_RESET, simmerConcept, simmerHref, simmerLines, simmerText, stampOr } from './shared'
 
 interface Dish { name: string; body: string; price: string; soldOut?: boolean }
 interface Course { rubric: string; title: string; items: Dish[] }
@@ -69,6 +73,12 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
   const home = link(f['home'])
   const homeText = simmerText(home.text).trim() || `${formatBrandName(concept.name)} home`
   const soldOut = simmerText(f['soldOutLabel'])
+  // Host-aware targets: Simmer's home is / on simmer.pk and /brand/simmer on
+  // servd; ordering and booking are servd pages (absolute from simmer.pk).
+  // null = hide the button (e.g. @book when the brand takes no reservations).
+  const orderTo = live && order.text ? simmerHref(order.href, ctx, '@order') : null
+  const reserveTo = reserve.text ? simmerHref(reserve.href, ctx, '@book') : null
+  const homeTo = simmerHref(home.href, ctx, '@home')
 
   return (
     <div className="simmer-page" style={{ minHeight: '100dvh' }}>
@@ -94,11 +104,12 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
               </p>
             )}
             {(wordmark || mark) && (
-              <p className="wordmark amarante" style={{
+              <h1 className="wordmark amarante" style={{
+                ...HEADING_RESET,
                 fontSize: 'clamp(2.6rem, 8vw, 4.2rem)', lineHeight: 1, margin: 0,
               }}>
                 {wordmark}{mark && <span className="signal">{mark}</span>}
-              </p>
+              </h1>
             )}
             {!live && draftNote && (
               <p className="utility" style={{
@@ -133,9 +144,12 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
                     fontSize: '1.5rem', lineHeight: 1,
                   }}>{course.rubric}</span>
                 )}
-                <span className="utility" style={{
-                  fontSize: '0.72rem', opacity: 0.72,
-                }}>{course.title}</span>
+                {course.title && (
+                  <h2 className="utility" style={{
+                    ...HEADING_RESET,
+                    fontSize: '0.72rem', opacity: 0.72,
+                  }}>{course.title}</h2>
+                )}
               </div>
 
               {/* Items — name + body line, price right-aligned */}
@@ -149,11 +163,14 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
                     ...(item.soldOut && { opacity: 0.5 }),
                   }}>
                     <div>
-                      <p className="amarante" style={{
-                        fontSize: '1.2rem', lineHeight: 1.2, margin: '0 0 0.25rem',
-                      }}>
-                        {item.name}
-                      </p>
+                      {item.name && (
+                        <h3 className="amarante" style={{
+                          ...HEADING_RESET,
+                          fontSize: '1.2rem', lineHeight: 1.2, margin: '0 0 0.25rem',
+                        }}>
+                          {item.name}
+                        </h3>
+                      )}
                       {item.body && (
                         <p style={{
                           fontFamily: 'var(--simmer-body)',
@@ -199,11 +216,12 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
             </p>
           )}
           {closingHeadline && (
-            <p className="amarante" style={{
+            <h2 className="amarante" style={{
+              ...HEADING_RESET,
               fontSize: 'clamp(1.4rem, 4vw, 2rem)', lineHeight: 1.25, margin: '1.4rem 0 0',
             }}>
               {closingHeadline}
-            </p>
+            </h2>
           )}
           {closingBody.some((l) => l.trim()) && (
             <p style={{
@@ -217,15 +235,17 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
           <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             {/* One orange button per viewport: with a live menu "order" takes
                 the signal and reserve steps down to the bone outline. */}
-            {live && order.text && (
-              <Link href={safeHref(order.href.trim() || `/${slug}`)} className="action action--signal">{simmerText(order.text)}</Link>
+            {orderTo && (
+              <Link href={orderTo.href} className="action action--signal">{simmerText(order.text)}</Link>
             )}
-            {reserve.text && (
-              <Link href={safeHref(reserve.href.trim() || `/reserve/${slug}`)} className={live && order.text ? 'action' : 'action action--signal'}>
+            {reserveTo && (
+              <Link href={reserveTo.href} className={orderTo ? 'action' : 'action action--signal'}>
                 {simmerText(reserve.text)}
               </Link>
             )}
-            <Link href={safeHref(home.href.trim() || `/brand/${slug}`)} className="action">{homeText}</Link>
+            {homeTo && (
+              <Link href={homeTo.href} className="action">{homeText}</Link>
+            )}
           </div>
         </div>
       </section>

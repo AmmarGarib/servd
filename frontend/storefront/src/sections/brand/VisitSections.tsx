@@ -1,6 +1,7 @@
-// The brand Visit page (`brand:<slug>:visit`) as sections: a page header and
-// the live address / map / hours block. Address, phone, email, pin, kitchens
-// and hours are live (Admin → Brands / Locations); the labels are fields.
+// The brand Visit page (`brand:<slug>:visit`) as sections: a page header,
+// the live address / map / hours block, and the questions & answers. Address,
+// phone, email, pin, kitchens and hours are live (Admin → Brands / Locations);
+// the labels, questions and answers are fields.
 
 import Link from 'next/link'
 import type { ServiceHourSlot } from '../../lib/concept'
@@ -8,7 +9,8 @@ import { typeLabel } from '../../lib/concept'
 import { locationFromConcept, fetchBrandKitchens, mapsLinkFor, type BrandKitchen } from '../../lib/brandLocations'
 import type { SectionProps } from '../types'
 import { color, link, str } from '../safe'
-import { brandHref, brandNameOf, fill, orLive } from './util'
+import { TEXT_SURFACE, brandHref, brandNameOf, fill, orLive } from './util'
+import { faqEntries } from './faq'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -23,7 +25,7 @@ export function PageHeader({ fields, ctx }: SectionProps) {
   const cta = link(fields.cta)
   const to = brandHref(cta.href, ctx)
   return (
-    <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)', ...(color(fields.bg) && { background: color(fields.bg) }) }}>
+    <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)', background: color(fields.bg) ?? TEXT_SURFACE }}>
       <div className="container">
         {str(fields.eyebrow) && (
           <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
@@ -96,10 +98,13 @@ export async function VisitInfo({ fields, ctx }: SectionProps) {
   const loc = locationFromConcept(concept, primary)
   const cta = link(fields.cta)
   const to = brandHref(cta.href, ctx)
+  // The brand's servd location page (absolute on the brand's own domain).
+  const locLink = link(fields.locationLink)
+  const locTo = locLink.text.trim() ? brandHref(locLink.href, ctx) : null
   const accent = color(fields.linkColor) ?? 'var(--servd-green-dark)'
 
   return (
-    <section className="section">
+    <section className="section" style={{ background: color(fields.bg) ?? TEXT_SURFACE }}>
       <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '2.5rem' }}>
 
         {/* Address + map */}
@@ -133,6 +138,16 @@ export async function VisitInfo({ fields, ctx }: SectionProps) {
               <a href={`mailto:${loc.email}`}
                 style={{ color: accent, fontWeight: 600, fontSize: '0.95rem' }}>
                 {loc.email}
+              </a>
+            </p>
+          )}
+
+          {locTo && (
+            <p style={{ marginBottom: '0.5rem' }}>
+              <a href={locTo.href}
+                {...(locTo.external && { target: '_blank', rel: 'noopener noreferrer' })}
+                style={{ color: accent, fontWeight: 600, fontSize: '0.95rem' }}>
+                {fill(locLink.text, ctx, name)}
               </a>
             </p>
           )}
@@ -226,6 +241,50 @@ export async function VisitInfo({ fields, ctx }: SectionProps) {
           </Link>
         </div>
       )}
+    </section>
+  )
+}
+
+/** brand.faq — questions and answers, all visible (the Visit page's FAQPage
+ *  structured data is built from these same entries). */
+export function Faq({ fields, ctx }: SectionProps) {
+  const name = brandNameOf(ctx)
+  const items = faqEntries(fields, ctx)
+  if (items.length === 0) return null
+  return (
+    <section className="section" style={{ borderTop: '1px solid var(--servd-line)', background: color(fields.bg) ?? TEXT_SURFACE }}>
+      <div className="container-narrow">
+        {str(fields.eyebrow) && (
+          <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+            {fill(fields.eyebrow, ctx, name)}
+          </p>
+        )}
+        {str(fields.heading) && (
+          <h2 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', marginBottom: '2rem' }}>
+            {fill(fields.heading, ctx, name)}
+          </h2>
+        )}
+        <div style={{ display: 'grid', gap: '1.75rem' }}>
+          {items.map((q, i) => (
+            <div key={i}>
+              <h3 style={{ fontSize: '1.1rem', marginBottom: '0.45rem' }}>{q.question}</h3>
+              <p style={{ color: 'var(--servd-mute)', fontSize: '1rem', lineHeight: 1.6 }}>
+                {q.answer}
+                {q.link && (
+                  <>
+                    {' '}
+                    <a href={q.link.href}
+                      {...(q.link.external && { target: '_blank', rel: 'noopener noreferrer' })}
+                      style={{ color: 'var(--servd-green-dark)', fontWeight: 600 }}>
+                      {q.link.text}
+                    </a>
+                  </>
+                )}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
     </section>
   )
 }

@@ -10,11 +10,18 @@
 // Text fields accept {{brand.name}} (the live brand name). Brand data — name,
 // address, phone, email, hours, open/closed, reservations on/off, uploaded
 // wordmark and mascot — stays live; an override field left empty uses it.
+//
+// Links take the shared brand tokens (resolved by ../brand/util brandHref):
+// @menu, @order, @book … follow the host — /menu on stackd.pk and
+// /brand/stackd/menu on servd, and servd pages (ordering, booking, /home)
+// absolute on servd's origin from stackd.pk — so the brand domain never links
+// to a second copy of a page.
 import type { PageDefault, SectionSpec } from '../types'
 
 const PAGES = ['brand:stackd']
 const GROUP = 'Stackd'
 const BRAND_HINT = '{{brand.name}} = the live brand name'
+const LINK_HINT = 'Link tokens: @home @menu @about @visitpage @order @book @location. {{brand.name}} works in the label.'
 
 export const specs: SectionSpec[] = [
   {
@@ -33,8 +40,8 @@ export const specs: SectionSpec[] = [
         key: 'counterLines', label: 'What the counter puts out', kind: 'list', itemLabel: 'Line', max: 10,
         item: [{ key: 'text', label: 'Line', kind: 'text' }],
       },
-      { key: 'orderCta', label: 'Order button', kind: 'link', hint: BRAND_HINT },
-      { key: 'menuCta', label: 'Menu button', kind: 'link' },
+      { key: 'orderCta', label: 'Order button', kind: 'link', hint: LINK_HINT },
+      { key: 'menuCta', label: 'Menu button', kind: 'link', hint: LINK_HINT },
       { key: 'mascotAlt', label: 'Mascot description (alt text)', kind: 'text', hint: 'For the bundled two-piece drawing' },
       { key: 'breadImage', label: 'Bread piece (top half)', kind: 'image', hint: 'The stack that flies off the tray. Empty = bundled artwork' },
       { key: 'guyImage', label: 'Mascot piece (bottom half)', kind: 'image', hint: 'Tray, hands, trousers, shoes. Empty = bundled artwork' },
@@ -55,8 +62,8 @@ export const specs: SectionSpec[] = [
         { text: 'craft mocktails.' },
         { text: 'grab & go.' },
       ],
-      orderCta: { text: 'Order {{brand.name}}', href: '/stackd' },
-      menuCta: { text: 'See the menu', href: '/brand/stackd/menu' },
+      orderCta: { text: 'Order {{brand.name}}', href: '@order' },
+      menuCta: { text: 'See the menu', href: '@menu' },
       mascotAlt: 'The Stackd character — a stack of bread slices carried on a plum tray, striped trousers below',
       breadImage: '/brand/stackd/bread.png',
       guyImage: '/brand/stackd/guy.png',
@@ -75,24 +82,27 @@ export const specs: SectionSpec[] = [
     fields: [
       { key: 'specLeft', label: 'Top-left label', kind: 'text' },
       { key: 'specRight', label: 'Top-right label', kind: 'text' },
-      { key: 'headingText', label: 'Page heading (hidden text)', kind: 'text', hint: 'Read by search engines and screen readers; the wordmark image shows instead' },
+      {
+        key: 'headingText', label: 'Page heading (hidden text)', kind: 'text',
+        hint: `The page's one h1 — say what and where. Read by search engines and screen readers; the wordmark image shows instead. ${BRAND_HINT}`,
+      },
       { key: 'wordmark', label: 'Wordmark image', kind: 'image', hint: 'Empty = the wordmark uploaded in admin → Brands, else the bundled lockup' },
       { key: 'lineColor', label: 'Short rule colour', kind: 'color', hint: 'Empty = cream' },
       { key: 'tagline', label: 'Tagline', kind: 'text', hint: BRAND_HINT },
       { key: 'body', label: 'One-liner', kind: 'textarea', rows: 3, hint: BRAND_HINT },
-      { key: 'primaryCta', label: 'Primary button', kind: 'link', hint: BRAND_HINT },
-      { key: 'secondaryCta', label: 'Secondary button', kind: 'link' },
+      { key: 'primaryCta', label: 'Primary button', kind: 'link', hint: LINK_HINT },
+      { key: 'secondaryCta', label: 'Secondary button', kind: 'link', hint: LINK_HINT },
     ],
     defaults: {
       specLeft: 'Karachi',
       specRight: 'Café · market · scratch kitchen',
-      headingText: 'Stackd — Stackd & servd',
+      headingText: '{{brand.name}} — scratch-cooking café and market, Karachi',
       wordmark: '',
       lineColor: '',
       tagline: 'Cooked here. Wrapped, not plated.',
       body: 'A twenty-seat scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
-      primaryCta: { text: 'Order {{brand.name}}', href: '/stackd' },
-      secondaryCta: { text: 'View menu', href: '/brand/stackd/menu' },
+      primaryCta: { text: 'Order {{brand.name}}', href: '@order' },
+      secondaryCta: { text: 'View menu', href: '@menu' },
     },
   },
   {
@@ -163,7 +173,7 @@ export const specs: SectionSpec[] = [
       { key: 'addressMissing', label: 'Text when no address is set', kind: 'text' },
       { key: 'showPhone', label: 'Show phone', kind: 'toggle', hint: 'The live phone number' },
       { key: 'showEmail', label: 'Show email', kind: 'toggle', hint: 'The live guest email' },
-      { key: 'reserveCta', label: 'Reserve button', kind: 'link', hint: 'Shown only while reservations are on for the brand. Empty text = hidden' },
+      { key: 'reserveCta', label: 'Reserve button', kind: 'link', hint: `Shown only while reservations are on for the brand. Empty text = hidden. ${LINK_HINT}` },
     ],
     defaults: {
       hoursSpec: 'Hours',
@@ -175,7 +185,7 @@ export const specs: SectionSpec[] = [
       addressMissing: 'Karachi · address TBA',
       showPhone: true,
       showEmail: true,
-      reserveCta: { text: 'Reserve a table', href: '/reserve/stackd' },
+      reserveCta: { text: 'Reserve a table', href: '@book' },
     },
   },
   {
@@ -202,7 +212,7 @@ export const specs: SectionSpec[] = [
       { key: 'kicker', label: 'Kicker', kind: 'text', hint: 'Empty = “Other GS Foods kitchens”' },
       { key: 'heading', label: 'Heading', kind: 'text', hint: `Empty = “Liked … ? Try one of these.” ${BRAND_HINT}` },
       { key: 'subtitle', label: 'Line under the heading', kind: 'textarea', rows: 2, hint: 'Empty hides it.' },
-      { key: 'allLink', label: 'All-kitchens button', kind: 'link', hint: 'Empty label hides the button.' },
+      { key: 'allLink', label: 'All-kitchens button', kind: 'link', hint: 'Empty label hides the button. A servd path (/home#kitchens) is absolute on servd from stackd.pk.' },
       { key: 'cardCta', label: 'Card button', kind: 'text', hint: '{name} = that kitchen, e.g. Visit {name} →' },
       { key: 'accent', label: 'Kicker colour', kind: 'color', hint: 'Empty = brand cream' },
     ],
@@ -224,7 +234,13 @@ export const specs: SectionSpec[] = [
     pages: PAGES,
     summaryKey: 'headingText',
     fields: [
-      { key: 'headingText', label: 'Heading (hidden text)', kind: 'text', hint: 'Read by search engines and screen readers; the wordmark image shows instead' },
+      // Key kept from when this was a hidden h2, so owners' edits carry over;
+      // it is now the lockup image's alt text (not a heading: the hero's h1
+      // already heads the page with the same lockup).
+      {
+        key: 'headingText', label: 'Wordmark description (alt text)', kind: 'text',
+        hint: `What the lockup says, for Google and screen readers. Empty = decoration only. ${BRAND_HINT}`,
+      },
       { key: 'wordmark', label: 'Wordmark image', kind: 'image', hint: 'Empty = the wordmark uploaded in admin → Brands, else the bundled lockup' },
       { key: 'address', label: 'Line under the wordmark (override)', kind: 'text', hint: 'Empty = the live address' },
       { key: 'addressMissing', label: 'Text when no address is set', kind: 'text' },
@@ -233,7 +249,7 @@ export const specs: SectionSpec[] = [
       { key: 'lineColor', label: 'Address colour', kind: 'color', hint: 'Empty = faint cream' },
     ],
     defaults: {
-      headingText: 'Stackd & servd',
+      headingText: '{{brand.name}} & servd',
       wordmark: '',
       address: '',
       addressMissing: 'Karachi',

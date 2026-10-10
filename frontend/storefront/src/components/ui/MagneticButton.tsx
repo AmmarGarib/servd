@@ -1,7 +1,6 @@
 'use client'
 import * as React from 'react'
 import { useEffect, useState, useCallback } from 'react'
-import { motion, useAnimation, type AnimationControls } from 'framer-motion'
 import Link, { type LinkProps } from 'next/link'
 
 // "Magnetize" hover effect, colour-preserving. Two drop-ins:
@@ -16,14 +15,29 @@ import Link, { type LinkProps } from 'next/link'
 //    layer clips itself (overflow hidden + borderRadius inherit).
 //  - Particles are invisible at rest and only fly in on hover/touch, so a page
 //    full of these stays calm until you interact.
+//  - Plain CSS transitions, no animation library (framer-motion was ~38 KB gz
+//    of shared JS for this one effect). The curves stand in for the springs it
+//    used: attract was stiffness 50 / damping 10 (about 0.8 s, a small
+//    overshoot), release stiffness 100 / damping 15 (quicker, barely any).
+//  - Under prefers-reduced-motion the particles are not drawn at all.
 
 interface Particle { id: number; x: number; y: number }
 
+const ATTRACT = 'transform 800ms cubic-bezier(0.34, 1.32, 0.64, 1), opacity 500ms ease-out'
+const RELEASE = 'transform 550ms cubic-bezier(0.3, 1.18, 0.6, 1), opacity 350ms ease-out'
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+}
+
 function useMagnet(particleCount: number, disabled?: boolean) {
   const [particles, setParticles] = useState<Particle[]>([])
-  const controls = useAnimation()
+  const [attracted, setAttracted] = useState(false)
 
   useEffect(() => {
+    // Client-only (random positions), so the server renders no particles and
+    // hydration has nothing to disagree about.
+    if (prefersReducedMotion()) { setParticles([]); return }
     setParticles(
       Array.from({ length: particleCount }, (_, i) => ({
         id: i,
@@ -33,34 +47,32 @@ function useMagnet(particleCount: number, disabled?: boolean) {
     )
   }, [particleCount])
 
-  const attract = useCallback(async () => {
+  const attract = useCallback(() => {
     if (disabled) return
-    await controls.start({ x: 0, y: 0, opacity: 0.85, transition: { type: 'spring', stiffness: 50, damping: 10 } })
-  }, [controls, disabled])
+    setAttracted(true)
+  }, [disabled])
 
-  const release = useCallback(async () => {
-    await controls.start((i: number) => ({
-      x: particles[i]?.x ?? 0,
-      y: particles[i]?.y ?? 0,
-      opacity: 0,
-      transition: { type: 'spring', stiffness: 100, damping: 15 },
-    }))
-  }, [controls, particles])
+  const release = useCallback(() => {
+    setAttracted(false)
+  }, [])
 
-  return { particles, controls, attract, release }
+  return { particles, attracted, attract, release }
 }
 
-function ParticleLayer({ particles, controls }: { particles: Particle[]; controls: AnimationControls }) {
+function ParticleLayer({ particles, attracted }: { particles: Particle[]; attracted: boolean }) {
+  if (particles.length === 0) return null
   return (
     <span aria-hidden style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 'inherit', pointerEvents: 'none' }}>
       <span style={{ position: 'absolute', top: '50%', left: '50%' }}>
-        {particles.map((p, i) => (
-          <motion.span
+        {particles.map((p) => (
+          <span
             key={p.id}
-            custom={i}
-            initial={{ x: p.x, y: p.y, opacity: 0 }}
-            animate={controls}
-            style={{ position: 'absolute', width: 5, height: 5, borderRadius: 9999, background: 'currentColor' }}
+            style={{
+              position: 'absolute', top: 0, left: 0, width: 5, height: 5, borderRadius: 9999, background: 'currentColor',
+              transform: attracted ? 'translate(0px, 0px)' : `translate(${p.x}px, ${p.y}px)`,
+              opacity: attracted ? 0.85 : 0,
+              transition: attracted ? ATTRACT : RELEASE,
+            }}
           />
         ))}
       </span>
@@ -92,19 +104,19 @@ export function MagneticButton({
   onTouchEnd,
   ...props
 }: MagneticButtonProps) {
-  const { particles, controls, attract, release } = useMagnet(particleCount, disabled)
+  const { particles, attracted, attract, release } = useMagnet(particleCount, disabled)
   return (
     <button
       className={className}
       disabled={disabled}
       style={{ position: 'relative', ...style }}
-      onMouseEnter={(e) => { void attract(); onMouseEnter?.(e) }}
-      onMouseLeave={(e) => { void release(); onMouseLeave?.(e) }}
-      onTouchStart={(e) => { void attract(); onTouchStart?.(e) }}
-      onTouchEnd={(e) => { void release(); onTouchEnd?.(e) }}
+      onMouseEnter={(e) => { attract(); onMouseEnter?.(e) }}
+      onMouseLeave={(e) => { release(); onMouseLeave?.(e) }}
+      onTouchStart={(e) => { attract(); onTouchStart?.(e) }}
+      onTouchEnd={(e) => { release(); onTouchEnd?.(e) }}
       {...props}
     >
-      <ParticleLayer particles={particles} controls={controls} />
+      <ParticleLayer particles={particles} attracted={attracted} />
       <Content>{children}</Content>
     </button>
   )
@@ -129,18 +141,18 @@ export function MagneticLink({
   onTouchEnd,
   ...props
 }: MagneticLinkProps) {
-  const { particles, controls, attract, release } = useMagnet(particleCount, false)
+  const { particles, attracted, attract, release } = useMagnet(particleCount, false)
   return (
     <Link
       className={className}
       style={{ position: 'relative', ...style }}
-      onMouseEnter={(e) => { void attract(); onMouseEnter?.(e) }}
-      onMouseLeave={(e) => { void release(); onMouseLeave?.(e) }}
-      onTouchStart={(e) => { void attract(); onTouchStart?.(e) }}
-      onTouchEnd={(e) => { void release(); onTouchEnd?.(e) }}
+      onMouseEnter={(e) => { attract(); onMouseEnter?.(e) }}
+      onMouseLeave={(e) => { release(); onMouseLeave?.(e) }}
+      onTouchStart={(e) => { attract(); onTouchStart?.(e) }}
+      onTouchEnd={(e) => { release(); onTouchEnd?.(e) }}
       {...props}
     >
-      <ParticleLayer particles={particles} controls={controls} />
+      <ParticleLayer particles={particles} attracted={attracted} />
       <Content>{children}</Content>
     </Link>
   )

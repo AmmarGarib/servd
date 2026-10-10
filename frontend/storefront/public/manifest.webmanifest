@@ -2,19 +2,21 @@
   "name": "servd",
   "short_name": "servd",
   "description": "One app, every GS Foods kitchen.",
-  "start_url": "/",
+  "start_url": "/home",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0E0618",
-  "theme_color": "#3A0E69",
+  "background_color": "#f3e7cd",
+  "theme_color": "#f3e7cd",
   "categories": ["food", "lifestyle"],
   "icons": [
-    { "src": "/icon-192.png",         "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icon-512.png",         "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/icon.png",     "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Browse brands", "short_name": "Brands", "url": "/browse" },
+    { "name": "Browse brands", "short_name": "Brands", "url": "/home" },
     { "name": "My orders",     "short_name": "Orders", "url": "/orders" }
   ]
 }

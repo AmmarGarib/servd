@@ -11,6 +11,13 @@
 //
 // Local-storage gate: if a user submits within the last 14 days, we hide
 // the widget so we're not nagging — they can re-open it via /account.
+//
+// The trigger must never sit on top of the page's own actions. It is a 44px
+// icon button on phones (the labelled pill from 640px — styles are
+// `.sv-feedback` in globals.css), it is not shown at all on the form and
+// ordering screens (ROUTES_HIDDEN_ON), and it steps aside while a form field
+// has focus or any footer is on screen — the brand footers' "back to servd."
+// link and form submit buttons sit exactly where it floats.
 
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
@@ -19,7 +26,108 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const COOLDOWN_DAYS = 14
 const STORAGE_KEY = 'servd-feedback-cooldown'
 
-const ROUTES_HIDDEN_ON = ['/login', '/signup', '/auth', '/reserve/claim', '/orders/[id]/review']
+// Each entry hides the widget on that route and everything under it. The
+// waitlist / reservation forms and the brand ordering screens (/stackd,
+// /simmer, /flipd — menu, checkout, order tracking) carry their own primary
+// action at the bottom of the screen.
+const ROUTES_HIDDEN_ON = [
+  '/login', '/signup', '/auth', '/waitlist', '/reserve',
+  '/stackd', '/simmer', '/flipd',
+  '/orders/[id]/review',
+]
+// '[id]' matches one path segment; a route matches itself or any sub-path.
+const HIDDEN_ROUTE_PATTERNS = ROUTES_HIDDEN_ON.map(
+  (r) => new RegExp(`^${r.replace(/\[[^\]]+\]/g, '[^/]+')}(?:/|$)`),
+)
+
+function hiddenOnRoute(pathname: string): boolean {
+  return HIDDEN_ROUTE_PATTERNS.some((re) => re.test(pathname))
+}
+
+// Inputs that are buttons/toggles rather than somewhere to type.
+const NON_TEXT_INPUTS = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'hidden'])
+
+function isTypingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true
+  if (el instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(el.type)
+  return el.isContentEditable
+}
+
+/** True while a text field / textarea / select has focus. */
+function useTyping(enabled: boolean): boolean {
+  const [typing, setTyping] = useState(false)
+  useEffect(() => {
+    if (!enabled) return
+    setTyping(isTypingTarget(document.activeElement))
+    const onFocusIn = (e: FocusEvent) => setTyping(isTypingTarget(e.target))
+    // relatedTarget is where focus is going (null when it leaves the page).
+    const onFocusOut = (e: FocusEvent) => setTyping(isTypingTarget(e.relatedTarget))
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    return () => {
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+    }
+  }, [enabled])
+  return typing
+}
+
+/** Whether any page footer is in the viewport: null until that is known.
+ *  Footers mount and unmount with client navigation (servd's, a brand's), so
+ *  the set is re-scanned whenever the DOM gains or loses nodes.
+ *
+ *  The answer only comes from the observer's first callback, a frame after
+ *  mount, so it starts as null ("not known yet", which the caller treats as
+ *  concealed) rather than false — otherwise the button painted at full
+ *  opacity on a page whose footer was already on screen (a short page, a 404,
+ *  a reload restored to the bottom) and then faded out. It goes back to null
+ *  while the hook is off (the sheet open) for the same reason on close. */
+function useFooterInView(enabled: boolean): boolean | null {
+  const [inView, setInView] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!enabled) { setInView(null); return }
+    if (typeof IntersectionObserver === 'undefined') { setInView(false); return }
+    const observed = new Set<Element>()
+    const visible = new Set<Element>()
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) visible.add(entry.target)
+        else visible.delete(entry.target)
+      }
+      setInView(visible.size > 0)
+    })
+    const scan = () => {
+      const current = new Set(document.querySelectorAll('footer, [role="contentinfo"]'))
+      let removed = false
+      let added = false
+      observed.forEach((el) => {
+        if (!current.has(el)) { io.unobserve(el); observed.delete(el); visible.delete(el); removed = true }
+      })
+      current.forEach((el) => {
+        if (!observed.has(el)) { io.observe(el); observed.add(el); added = true }
+      })
+      // No footer on the page: nothing will ever report, so it is not in view.
+      if (observed.size === 0) setInView(false)
+      // A newly observed footer reports in the observer's first callback (with
+      // the whole visible set), so wait for that; a removal alone is final now.
+      else if (removed && !added) setInView(visible.size > 0)
+    }
+    scan()
+    let frame = 0
+    const mo = new MutationObserver(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(scan)
+    })
+    mo.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      mo.disconnect()
+      io.disconnect()
+    }
+  }, [enabled])
+  return inView
+}
 
 export function FeedbackWidget() {
   const pathname = usePathname() ?? ''
@@ -32,19 +140,34 @@ export function FeedbackWidget() {
   const [hidden, setHidden] = useState(true)  // SSR-safe — render nothing until client mount
 
   useEffect(() => {
-    const cooldown = localStorage.getItem(STORAGE_KEY)
+    let cooldown: string | null = null
+    try { cooldown = localStorage.getItem(STORAGE_KEY) } catch { /* storage blocked */ }
     if (cooldown && parseInt(cooldown, 10) > Date.now()) {
       setHidden(true)
       return
     }
-    if (ROUTES_HIDDEN_ON.some((r) => pathname.startsWith(r.replace('[id]', '')))) {
+    if (hiddenOnRoute(pathname)) {
       setHidden(true)
       return
     }
     setHidden(false)
   }, [pathname])
 
+  const watching = !hidden && !open
+  const typing = useTyping(watching)
+  const footerInView = useFooterInView(watching)
+
   if (hidden) return null
+
+  // Out of the way, but still mounted so it can fade back in. Two ways:
+  //  - 'typing': a form field has focus. visibility:hidden (in the CSS), so it
+  //    is out of the tab order and the accessibility tree too.
+  //  - 'footer': a footer is on screen (or that is not known yet). Only faded
+  //    and click-through, still focusable and still announced: the button sits
+  //    after the footer in the DOM, and focus on a footer link scrolls the
+  //    footer into view, so visibility:hidden here would drop it from the tab
+  //    order exactly when it is next. It shows again while it has focus.
+  const concealed = typing ? 'typing' : footerInView !== false ? 'footer' : undefined
 
   async function submit() {
     setSubmitting(true)
@@ -83,22 +206,16 @@ export function FeedbackWidget() {
       {/* Floating trigger */}
       {!open && (
         <button
+          type="button"
           onClick={() => setOpen(true)}
-          aria-label="Send feedback"
-          style={{
-            position: 'fixed', right: '1rem', bottom: '1rem', zIndex: 50,
-            background: '#000', color: '#fff', border: 'none',
-            borderRadius: '999px', padding: '0.85rem 1.25rem',
-            fontSize: '0.85rem', fontWeight: 700,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            cursor: 'pointer',
-          }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          aria-label="Feedback"
+          className="sv-feedback"
+          data-concealed={concealed}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
           </svg>
-          Feedback
+          <span className="sv-feedback-label">Feedback</span>
         </button>
       )}
 

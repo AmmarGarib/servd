@@ -1,0 +1,152 @@
+// The one server-side lookup of the live brands and of a brand by slug:
+// GET /storefront/concepts, else the bundled records in lib/fallbackBrands.ts
+// when the API can't be reached (warmup, network blip) — so a known brand's
+// pages keep rendering instead of 404ing.
+//
+// Use it from server components, layouts and generateMetadata instead of a
+// per-route getConcepts()/findConcept() copy. Next memoises identical GET
+// fetches within one request, so a layout, its generateMetadata and the page
+// asking for the list cost one API call.
+
+import type { Concept } from './concept'
+import { FALLBACK_CONCEPTS } from './fallbackBrands'
+
+const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+
+/**
+ * GET /storefront/concepts as the API answered it: the list of brands that
+ * are active and shown on the storefront, or null when it did NOT answer —
+ * down, a timeout, a 5xx, a 429 from the API's shared per-IP limit (every
+ * server-side fetch from this container shares one bucket), or a body that
+ * isn't a list. "Not in the list" means something only when this is non-null.
+ */
+export async function fetchConceptList(): Promise<Concept[] | null> {
+  try {
+    // no-store: a cached failure would stick until restart (CLAUDE.md).
+    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
+    if (!res.ok) return null
+    const body = (await res.json()) as unknown
+    return Array.isArray(body) ? (body as Concept[]) : null
+  } catch {
+    return null
+  }
+}
+
+/** Every live brand (GET /storefront/concepts). [] when the API is down. */
+export async function fetchLiveConcepts(): Promise<Concept[]> {
+  return (await fetchConceptList()) ?? []
+}
+
+/** The live brands, or the bundled fallback records when the list is empty. */
+export function conceptsOrFallback(live: Concept[]): Concept[] {
+  return live.length ? live : Object.values(FALLBACK_CONCEPTS)
+}
+
+/** The bundled record for a known brand slug. (Own-property check: a path
+ *  like /constructor must not resolve to Object.prototype.constructor.) */
+function fallbackConcept(slug: string): Concept | null {
+  return Object.prototype.hasOwnProperty.call(FALLBACK_CONCEPTS, slug) ? FALLBACK_CONCEPTS[slug] ?? null : null
+}
+
+/**
+ * A brand by its exact slug: the live row, else the bundled fallback for a
+ * known brand. null for anything else — the caller 404s.
+ *
+ * Lenient: a bundled brand resolves even when the API answered without it
+ * (hidden or deactivated in admin). The brand microsites rely on that. A
+ * route that must 404 a hidden brand, and must NOT 404 just because the API
+ * didn't answer, uses lookupConcept() instead.
+ */
+export function findConcept(slug: string, live: Concept[]): Concept | null {
+  return live.find((c) => c.slug === slug) ?? fallbackConcept(slug)
+}
+
+/** fetchLiveConcepts + findConcept in one call (layouts, generateMetadata). */
+export async function resolveConcept(slug: string): Promise<Concept | null> {
+  return findConcept(slug, await fetchLiveConcepts())
+}
+
+/**
+ * Where a slug stands, telling "the API said no" apart from "the API didn't
+ * answer":
+ *   live       — the API answered and lists it.
+ *   missing    — the API answered and does not list it (not a brand, or one
+ *                the owner hid / deactivated): the caller 404s.
+ *   fallback   — the API didn't answer; a known brand's bundled record.
+ *   unverified — the API didn't answer and the slug isn't a bundled brand.
+ *                It may well be a real brand (another company's, or a new
+ *                one), so the caller renders and lets the client page cope,
+ *                rather than turning an outage or a rate limit into a 404.
+ * An empty list from the API counts as "didn't answer" (as in
+ * conceptsOrFallback): a working storefront always has brands.
+ */
+export type ConceptLookup =
+  | { status: 'live' | 'fallback'; concept: Concept }
+  | { status: 'missing' | 'unverified'; concept: null }
+
+export async function lookupConcept(slug: string): Promise<ConceptLookup> {
+  const list = await fetchConceptList()
+  if (list && list.length > 0) {
+    const live = list.find((c) => c.slug === slug)
+    return live ? { status: 'live', concept: live } : { status: 'missing', concept: null }
+  }
+  const bundled = fallbackConcept(slug)
+  return bundled ? { status: 'fallback', concept: bundled } : { status: 'unverified', concept: null }
+}
+
+/**
+ * The brands in one fixed order, for anything built from the list as text or
+ * schema (titles, descriptions, ItemList positions). The API's order is the
+ * database's row order, which moves when a row is edited, so a title built
+ * from it could change between two requests. The bundled brands come first
+ * in the order the site's own copy names them (Simmer, Stackd, Flipd), then
+ * every other brand by name. Returns a copy; on-page lists keep their own
+ * order.
+ */
+export function inBrandOrder(concepts: Concept[]): Concept[] {
+  const fixed = Object.keys(FALLBACK_CONCEPTS)
+  const rank = (c: Concept) => {
+    const i = fixed.indexOf(c.slug)
+    return i === -1 ? fixed.length : i
+  }
+  return [...concepts].sort((a, b) =>
+    rank(a) - rank(b) ||
+    a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) ||
+    (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
+}
+
+/** "Simmer", "Simmer & Stackd", "Simmer, Stackd & Flipd" — for titles and
+ *  descriptions built from the live brand list. Names are already formatted. */
+export function joinNames(names: string[], last = '&'): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} ${last} ${names[names.length - 1]}`
+}
+
+/**
+ * A meta description built from whole sentences: the first always (trimmed
+ * on a word boundary if it alone is too long), then each further sentence
+ * that still fits under `max`. Built-from-data descriptions then end on a
+ * full stop instead of being cut mid-phrase.
+ */
+export function fitSentences(sentences: Array<string | null | undefined | false>, max = 160): string {
+  const parts = sentences
+    .map((s) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : ''))
+    .filter(Boolean)
+  if (!parts.length) return ''
+  let out = parts[0]!
+  if (out.length > max) {
+    const cut = out.slice(0, max - 1)
+    const sp = cut.lastIndexOf(' ')
+    return `${(sp > 60 ? cut.slice(0, sp) : cut).replace(/[,.;:—-]+$/, '')}…`
+  }
+  for (const p of parts.slice(1)) {
+    if (out.length + 1 + p.length <= max) out = `${out} ${p}`
+  }
+  return out
+}
+
+/** "Ends with a full stop." — for owner-written text joined into a sentence list. */
+export function asSentence(text: string | null | undefined): string {
+  const t = (text ?? '').trim()
+  return !t ? '' : /[.!?…]$/.test(t) ? t : `${t}.`
+}

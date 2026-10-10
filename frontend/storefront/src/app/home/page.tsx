@@ -5,53 +5,103 @@
 // which are the page as designed. Anchors #kitchens / #insiders / #visit live
 // on those sections.
 
-import { SERVD_ORIGIN } from '../../lib/brandDomains'
-import type { Concept } from '../../lib/concept'
-import { fetchBrandLocations } from '../../lib/brandLocations'
-import { organizationSchema, websiteSchema, restaurantSchema, jsonLdScript } from '../../lib/jsonLd'
-import { brandStory } from '../../lib/concept'
+import type { Metadata } from 'next'
+import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../lib/brandDomains'
+import { fetchSiteLayout, pageSeo, type Block, type SiteLayoutRead } from '../../lib/blocks'
+import { formatBrandName } from '../../lib/concept'
+import { organizationSchema, websiteSchema, restaurantId, jsonLdScript } from '../../lib/jsonLd'
+import { conceptsOrFallback, fetchLiveConcepts, inBrandOrder, joinNames } from '../../lib/liveConcepts'
+import { mergeFields } from '../../sections/catalog'
 import { ManagedPage } from '../../sections/ManagedPage'
 import { HomeSearchParam } from '../../sections/servd/HomeSearchParam'
 
-const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
-
 export const dynamic = 'force-dynamic'
 
-export const metadata = {
-  alternates: { canonical: '/home' },
+const CANONICAL = `${SERVD_ORIGIN}/home`
+const DESCRIPTION = 'One place to order from Simmer, Stackd, and Flipd. Explore the kitchens and join Insiders for rewards on every order.'
+
+export async function generateMetadata(): Promise<Metadata> {
+  const [layout, live] = await Promise.all([fetchSiteLayout('servd:home'), fetchLiveConcepts()])
+  const seo = pageSeo(layout)
+  // The home page's own title (no ' · servd' suffix — it leads with the
+  // name), built from the live brand list in a fixed order (inBrandOrder —
+  // the API's row order moves when a brand is edited, and the title must not
+  // flip between requests). The editor's SEO title (Admin → Storefront →
+  // servd:home → Page) wins and goes through the site template.
+  const names = inBrandOrder(conceptsOrFallback(live)).map((c) => formatBrandName(c.name))
+  const list = names.length > 0 && names.length <= 3 ? joinNames(names) : ''
+  return pageMetadata({
+    title:       seo.title ?? { absolute: list ? `servd — order ${list} online in Karachi` : 'servd — order from your favourite Karachi kitchens' },
+    description: seo.description ?? DESCRIPTION,
+    canonical:   CANONICAL,
+  })
 }
 
-async function getConcepts(): Promise<Concept[]> {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
-    if (!res.ok) return []
-    return await res.json()
-  } catch { return [] }
+/** The servd footer's fields (live layout, else the section defaults) — the
+ *  one place the company's legal name and contact email are edited. */
+function footerFields(layout: SiteLayoutRead | null): Record<string, unknown> {
+  const block = (layout?.blocks ?? []).find(
+    (b: Block) => b.type === 'section' && b.variant === 'servd.footer',
+  )
+  return mergeFields('servd.footer', block && block.type === 'section' ? block.fields : undefined)
+}
+
+/** Legal name + email from the footer's Company lines: the mailto: line is the
+ *  email, the line naming a company form (Pvt. Ltd., Limited…) the legal name. */
+function companyFacts(fields: Record<string, unknown>): { legalName?: string; email?: string } {
+  const lines = Array.isArray(fields['companyLines']) ? (fields['companyLines'] as unknown[]) : []
+  let legalName: string | undefined
+  let email: string | undefined
+  for (const raw of lines) {
+    if (!raw || typeof raw !== 'object') continue
+    const text = typeof (raw as { text?: unknown }).text === 'string' ? (raw as { text: string }).text.trim() : ''
+    const href = typeof (raw as { href?: unknown }).href === 'string' ? (raw as { href: string }).href.trim() : ''
+    if (!email && /^mailto:/i.test(href)) email = href.replace(/^mailto:/i, '').split('?')[0]?.trim() || undefined
+    else if (!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) email = text
+    else if (!legalName && /\b(pvt|private|ltd|limited|llc|inc|plc)\b/i.test(text)) legalName = text
+  }
+  return { ...(legalName && { legalName }), ...(email && { email }) }
 }
 
 export default async function HomePage() {
-  const [concepts, brandLocations] = await Promise.all([
-    getConcepts(),
-    fetchBrandLocations(API_URL),
+  const [live, footer] = await Promise.all([
+    fetchLiveConcepts(),
+    fetchSiteLayout('servd:footer'),
   ])
+  // Fixed order for the ItemList positions (the API's row order moves when a
+  // brand is edited). The kitchen tiles on the page keep their own order.
+  const brands = inBrandOrder(conceptsOrFallback(live))
 
-  // JSON-LD: Organization (servd) + WebSite (search-box) + one Restaurant
-  // graph per brand. Carrying the brand Restaurant nodes on the home page
-  // helps Karachi "restaurants near me" hits find each concept directly
-  // from the operator entry point. Brand-location data flows live from
-  // the Concept rows (admin-editable) with a hardcoded fallback so a fresh
-  // database still renders a plausible schema.
+  // JSON-LD: Organization (servd / GS Foods) + WebSite (search box) + the
+  // kitchens as an ItemList of Restaurant REFERENCES. Each brand's full
+  // Restaurant node lives on its own domain (same @id); repeating it here
+  // only let two copies of one entity drift apart.
   const schema = [
     organizationSchema({
       name:    'servd',
-      url:     SERVD_ORIGIN,
-      logoUrl: `${SERVD_ORIGIN}/icon.png`,
-      sameAs:  ['https://instagram.com/simmer_down'],
+      url:     CANONICAL,
+      logoUrl: `${SERVD_ORIGIN}/icon-512.png`,
+      // servd has no social profiles of its own yet (the old entry was
+      // Simmer's Instagram — a different entity).
+      sameAs:  [],
+      ...companyFacts(footerFields(footer)),
     }),
     websiteSchema(),
-    ...Object.values(brandLocations).map((loc) =>
-      restaurantSchema({ loc, description: brandStory(loc.slug).tagline })
-    ),
+    {
+      '@context': 'https://schema.org',
+      '@type':    'ItemList',
+      name:       'Kitchens on servd',
+      itemListElement: brands.map((c, i) => ({
+        '@type':  'ListItem',
+        position: i + 1,
+        item: {
+          '@type': 'Restaurant',
+          '@id':   restaurantId(c.slug),
+          name:    formatBrandName(c.name),
+          url:     brandCanonical(c.slug),
+        },
+      })),
+    },
   ]
 
   return (
@@ -60,7 +110,7 @@ export default async function HomePage() {
       {/* /home?q=… (the sitelinks search box above) opens the search sheet. */}
       <HomeSearchParam />
       <div className="sv-home">
-        <ManagedPage slug="servd:home" concepts={concepts} />
+        <ManagedPage slug="servd:home" {...(live.length > 0 && { concepts: live })} />
       </div>
     </>
   )

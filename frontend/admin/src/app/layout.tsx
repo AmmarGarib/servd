@@ -16,6 +16,10 @@ export const metadata: Metadata = {
   description: 'servd Hospitality Operations Platform',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'servd' },
+  // The operator console is never for search engines. next.config.js also
+  // sends X-Robots-Tag on every response; no robots.txt Disallow, or Google
+  // could not see this on pages it already holds.
+  robots: { index: false, follow: false },
 }
 
 export const viewport: Viewport = {

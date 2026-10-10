@@ -6,7 +6,7 @@
 import type { ReactNode } from 'react'
 import type { SectionProps } from '../types'
 import { list, safeSrc } from '../safe'
-import { simmerText, stampOr, surface, type Surface } from './shared'
+import { HEADING_RESET, simmerText, stampOr, surface, type Surface } from './shared'
 
 interface Stop { label?: unknown; image?: unknown; alt?: unknown; art?: unknown }
 
@@ -14,6 +14,7 @@ export function Itinerary({ fields: f }: SectionProps) {
   const s = surface(f['surface'], 'bone')
   const stamp = stampOr(f['stamp'])
   const stops = list<Stop>(f['stops'])
+  const eyebrow = simmerText(f['eyebrow'])
 
   return (
     <div className="simmer-page">
@@ -30,7 +31,10 @@ export function Itinerary({ fields: f }: SectionProps) {
             borderBottom: `1px solid ${s.line}`,
             marginBottom: '2.4rem',
           }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>{simmerText(f['eyebrow'])}</span>
+            {/* The section's heading, set as the eyebrow it always was. */}
+            {eyebrow.trim()
+              ? <h2 className="utility" style={{ ...HEADING_RESET, fontSize: '0.78rem' }}>{eyebrow}</h2>
+              : <span />}
             <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{stamp}</span>
           </div>
 
@@ -51,7 +55,8 @@ export function Itinerary({ fields: f }: SectionProps) {
                 return (
                   <ItineraryStop key={i} side={i % 2 === 0 ? 'left' : 'right'} label={simmerText(stop.label)} surface={s}>
                     {src
-                      ? <img src={src} alt={simmerText(stop.alt)} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      // Below the fold: lazy, so it doesn't compete with the hero.
+                      ? <img src={src} alt={simmerText(stop.alt)} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                       : art}
                   </ItineraryStop>
                 )

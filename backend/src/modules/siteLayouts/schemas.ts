@@ -7,7 +7,8 @@
 // and the renderers defend with optional chaining.
 //
 // Settings are validated more strictly: the renderers switch on the pop-up
-// enums and on the A/B split, so those must be trustworthy.
+// enums and on the A/B split, so those must be trustworthy; the SEO title and
+// description go straight into <head>, so they are length-bounded.
 
 import { z } from 'zod'
 
@@ -133,6 +134,13 @@ export const pageSettingsSchema = z.object({
     blocks:   blocksSchema,
   }).strip().optional(),
   popup: popupRulesSchema.optional(),
+  // Search/share overrides from the editor's Page tab: the storefront uses
+  // them for <title> / meta description / og tags in place of the page's
+  // built-in ones. Empty = the built-in one.
+  seo: z.object({
+    title:       z.string().trim().max(120).optional(),
+    description: z.string().trim().max(300).optional(),
+  }).strict().optional(),
 }).passthrough()
 
 export type PopupRules = z.infer<typeof popupRulesSchema>

@@ -4,7 +4,9 @@ Storefront route: **/group-order**. Customer-facing page rendered via Next.js Ap
 
 ## Files
 
-- `page.tsx` — Next.js page component (server or client)
+- `page.tsx` — server page: metadata (title/description built from the live
+  brand list, canonical `${SERVD_ORIGIN}/group-order`) and the brand cards.
+- `GroupOrderEntryClient.tsx` — the start / join UI (client component).
 
 ## Subdirectories
 

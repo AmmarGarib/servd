@@ -9,15 +9,23 @@
 // Each section paints its own `.flipd-page` wrapper (the brand's mustard field
 // and type scope), so they stack seamlessly in any order.
 
-import Link from 'next/link'
 import type { CSSProperties } from 'react'
+import { formatBrandName } from '../../lib/concept'
 import { locationFromConcept } from '../../lib/brandLocations'
 import { CrossBrandStrip } from '../../components/brand/parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../../components/brand/parts/OpenStatusBadge'
 import type { SectionProps } from '../types'
 import { safeHref, safeSrc, str, link, list, color } from '../safe'
+import { FlipdLink, flipdHref } from './links'
 
 const BRAND_BOOK_SIZE = 22
+
+/** Flipd's die-cut badge as bundled in this build, and its own size. */
+const BUNDLED_BADGE = '/brand/flipd-badge.png'
+const BUNDLED_BADGE_SIZE = { width: 760, height: 760 }
+/** An uploaded badge's placeholder box until it loads: square, like the
+    die-cut art; 'auto' switches to the file's own shape once it is in. */
+const UPLOAD_BADGE_RATIO = 'auto 1 / 1'
 
 /** The navy/bone checker band. The brand's edge, used as a rule. */
 export function FlipdChecker({ fields }: SectionProps) {
@@ -125,6 +133,8 @@ export function FlipdVisit({ fields, ctx }: SectionProps) {
   // only fills in when the API is down.
   const email = str(fields.email).trim() || (concept ? locationFromConcept(concept).email : '')
   const book = link(fields.book)
+  // Booking is a servd page: absolute on servd's origin from flipd.pk.
+  const bookTo = reservations && book.text ? flipdHref(book.href, ctx) : null
 
   return (
     <div className="flipd-page">
@@ -166,9 +176,9 @@ export function FlipdVisit({ fields, ctx }: SectionProps) {
                 <a href={safeHref(`mailto:${email}`)} style={contactLink}>{email}</a>
               </p>
             )}
-            {reservations && book.text && (
+            {bookTo && (
               <div style={{ marginTop: '2rem' }}>
-                <Link href={safeHref(book.href)} className="flipd-btn flipd-btn-ghost">{book.text}</Link>
+                <FlipdLink to={bookTo} className="flipd-btn flipd-btn-ghost">{book.text}</FlipdLink>
               </div>
             )}
           </div>
@@ -178,7 +188,8 @@ export function FlipdVisit({ fields, ctx }: SectionProps) {
   )
 }
 
-/** Sibling kitchens from the same company (the shared strip, live data). */
+/** Sibling kitchens from the same company (the shared strip, live data). On
+    flipd.pk its all-kitchens link is absolute on servd's origin. */
 export function FlipdCrossBrand({ fields, ctx }: SectionProps) {
   if (!ctx.concept) return null
   const kicker = str(fields.kicker)
@@ -195,6 +206,7 @@ export function FlipdCrossBrand({ fields, ctx }: SectionProps) {
         allLabel={link(fields.allLink).text}
         allHref={safeHref(link(fields.allLink).href, '/home#kitchens')}
         {...(str(fields.cardCta).trim() && { cardCta: str(fields.cardCta) })}
+        onBrandHost={!!ctx.onBrandHost}
       />
     </div>
   )
@@ -207,8 +219,11 @@ export function FlipdSignOff({ fields, ctx }: SectionProps) {
   // Field first, then operator-uploaded artwork, then the copy in this build.
   // `||` not `??` — a cleared admin field sends '', which must fall back too.
   const own = safeSrc(fields.badge) || concept?.wordmarkUrl || ''
-  const badge = own || '/brand/flipd-badge.png'
+  const badge = own || BUNDLED_BADGE
   const badgeIsFallback = !own
+  // The badge is the brand's logo — its alt is the brand's name (search
+  // engines and screen readers get the name the drawing spells out).
+  const badgeAlt = str(fields.badgeAlt).trim() || formatBrandName(concept?.name ?? 'flipd')
   const caption = str(fields.caption).trim() || concept?.address || str(fields.captionMissing)
   return (
     <div className="flipd-page">
@@ -219,13 +234,25 @@ export function FlipdSignOff({ fields, ctx }: SectionProps) {
           textAlign: 'center',
         }}
       >
+        {/* Near the foot of the page: lazy, so it is not preloaded against
+            the hero. The bundled file's own size reserves its box; an upload
+            holds a square box (the badge is square die-cut art) until it
+            loads, then takes its own shape ('auto'), so the caption and the
+            CTA below do not jump when it arrives. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={badge}
-          alt=""
-          aria-hidden="true"
-          {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
-          style={{ display: 'block', width: 'min(11rem, 40vw)', height: 'auto', margin: '0 auto 1.25rem' }}
+          alt={badgeAlt}
+          loading="lazy"
+          decoding="async"
+          {...(badgeIsFallback ? BUNDLED_BADGE_SIZE : {})}
+          style={{
+            display: 'block',
+            width: 'min(11rem, 40vw)',
+            height: 'auto',
+            margin: '0 auto 1.25rem',
+            ...(badgeIsFallback ? {} : { aspectRatio: UPLOAD_BADGE_RATIO }),
+          }}
         />
         {caption && (
           <p className="flipd-eyebrow" style={{ color: 'rgba(254,213,97,0.6)' }}>

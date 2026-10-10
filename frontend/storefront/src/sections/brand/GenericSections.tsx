@@ -6,7 +6,7 @@ import { brandStory } from '../../lib/concept'
 import { CrossBrandStrip } from '../../components/brand/parts/CrossBrandStrip'
 import { BottomCTA } from '../../components/brand/parts/BottomCTA'
 import type { SectionProps } from '../types'
-import { color, link, list, safeHref, safeSrc, str } from '../safe'
+import { color, link, list, safeSrc, str } from '../safe'
 import { brandHref, brandNameOf, fill, orLive } from './util'
 
 const eyebrowStyle = (accent: string, center = false): React.CSSProperties => ({
@@ -23,7 +23,7 @@ export function Signatures({ fields, ctx }: SectionProps) {
   const name = brandNameOf(ctx)
   const t = (v: unknown) => fill(v, ctx, name)
   const accent = accentOf(fields, ctx)
-  const items = list<{ name?: unknown; price?: unknown; note?: unknown; image?: unknown }>(fields.items)
+  const items = list<{ name?: unknown; price?: unknown; note?: unknown; image?: unknown; alt?: unknown }>(fields.items)
   return (
     <section style={{ padding: 'clamp(2.5rem, 6vw, 5rem) 0', borderBottom: '1px solid var(--servd-line)', background: color(fields.bg) ?? '#fff', color: 'var(--servd-ink)' }}>
       <div className="container">
@@ -35,15 +35,25 @@ export function Signatures({ fields, ctx }: SectionProps) {
           {items.map((d, i) => {
             const dish = t(d.name)
             const img = safeSrc(d.image)
+            // A described photo is a real <img> (Google Images, screen
+            // readers); an undescribed one stays a decorative background.
+            const alt = t(d.alt).trim()
+            const photo = img && alt
             return (
               <div key={i} className="servd-card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                <div style={{
+                <div {...(!photo && { 'aria-hidden': true })} style={{
                   aspectRatio: '4/3',
                   background: img
-                    ? `url(${img}) center/cover`
+                    ? (photo ? undefined : `url(${img}) center/cover`)
                     : `linear-gradient(135deg, ${accent} 0%, ${accent}cc 100%)`,
                   display: 'grid', placeItems: 'center', fontSize: '4rem',
+                  ...(photo && { position: 'relative', overflow: 'hidden' }),
                 }}>
+                  {photo && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={img} alt={alt} loading="lazy" decoding="async"
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+                  )}
                   {/* No photo yet: the dish's initial, never an emoji. */}
                   {!img && (
                     <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontWeight: 900, color: 'rgba(255,255,255,0.9)', lineHeight: 1 }}>
@@ -144,6 +154,7 @@ export function CrossBrand({ fields, ctx }: SectionProps) {
   return (
     <div style={{ background: color(fields.bg) ?? '#fff', color: 'var(--servd-ink)' }}>
       <CrossBrandStrip
+        onBrandHost={!!ctx.onBrandHost}
         current={concept}
         concepts={ctx.concepts}
         accent={accentOf(fields, ctx)}
@@ -151,7 +162,7 @@ export function CrossBrand({ fields, ctx }: SectionProps) {
         heading={t(fields.heading)}
         subtitle={t(fields.subtitle)}
         allLabel={t(all.text)}
-        allHref={safeHref(fill(all.href, ctx, name), '/home#kitchens')}
+        allHref={brandHref(all.href, ctx)?.href ?? '/home#kitchens'}
         cardCta={str(fields.cardCta)}
       />
     </div>

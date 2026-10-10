@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { brandStory, conceptHeroImage, heroCover } from '../../lib/concept'
 import type { SectionProps } from '../types'
 import { color, link, list, safeSrc, str } from '../safe'
-import { brandHref, brandNameOf, fill, orLive } from './util'
+import { TEXT_SURFACE, brandHref, brandNameOf, fill, orLive } from './util'
 
 /** brand.aboutHero — eyebrow, headline, long story. */
 export function AboutHero({ fields, ctx }: SectionProps) {
@@ -14,7 +14,7 @@ export function AboutHero({ fields, ctx }: SectionProps) {
   const name = brandNameOf(ctx)
   const story = brandStory(concept.slug)
   return (
-    <section className="section" style={{ paddingTop: 'clamp(3rem, 7vw, 5rem)' }}>
+    <section className="section" style={{ paddingTop: 'clamp(3rem, 7vw, 5rem)', background: color(fields.bg) ?? TEXT_SURFACE }}>
       <div className="container-narrow" style={{ textAlign: 'center' }}>
         <p style={{ color: color(fields.eyebrowColor) ?? 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '1rem' }}>
           {fill(fields.eyebrow, ctx, name)}
@@ -51,11 +51,24 @@ export function Pillars({ fields, ctx }: SectionProps) {
   )
 }
 
-/** brand.imageBreak — a full-bleed band: the brand colour, plus its image. */
+/** brand.imageBreak — a full-bleed band: the brand colour, plus its image.
+ *  A described photo (alt text set) is a real <img>, so search engines and
+ *  screen readers get it; without a description it is decoration, drawn as
+ *  a background and hidden from both. */
 export function ImageBreak({ fields, ctx }: SectionProps) {
   const concept = ctx.concept
   const img = safeSrc(fields.image) || (concept ? conceptHeroImage(concept) : null)
   const bg = color(fields.bg) ?? concept?.primaryColor ?? 'var(--servd-green-dark)'
+  const alt = str(fields.alt).trim()
+  if (img && alt) {
+    return (
+      <section style={{ height: 'clamp(220px, 40vw, 420px)', background: bg, overflow: 'hidden' }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={img} alt={fill(alt, ctx)} loading="lazy" decoding="async"
+          style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+      </section>
+    )
+  }
   return (
     <section style={{
       height: 'clamp(220px, 40vw, 420px)',
@@ -73,7 +86,7 @@ export function CtaBand({ fields, ctx }: SectionProps) {
   const s = brandHref(secondary.href, ctx)
   const body = fill(fields.body, ctx, name)
   return (
-    <section className="section" style={{ textAlign: 'center', ...(color(fields.bg) && { background: color(fields.bg) }) }}>
+    <section className="section" style={{ textAlign: 'center', background: color(fields.bg) ?? TEXT_SURFACE }}>
       <div className="container-narrow">
         <h2 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.5rem)', marginBottom: '0.75rem' }}>
           {fill(fields.headline, ctx, name)}

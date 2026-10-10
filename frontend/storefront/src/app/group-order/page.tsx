@@ -6,39 +6,41 @@
 // (enter a 6-char code from someone else). After start, redirects to
 // /group-order/<code>.
 
-import Link from 'next/link'
-import type { Concept } from '../../lib/concept'
+import type { Metadata } from 'next'
+import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
 import { brandAccent, conceptHeroImage, formatBrandName } from '../../lib/concept'
+import { conceptsOrFallback, fetchLiveConcepts, fitSentences, inBrandOrder, joinNames } from '../../lib/liveConcepts'
 import { GroupOrderEntryClient } from './GroupOrderEntryClient'
-
-const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata = {
-  title: 'Group order',
-  description: 'Start a shared cart, send the link, everyone adds their own — checkout once.',
-}
-
-async function getConcepts(): Promise<Concept[]> {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
-    if (!res.ok) return []
-    return await res.json()
-  } catch { return [] }
+export async function generateMetadata(): Promise<Metadata> {
+  // Built from the live brand list, in a fixed order (inBrandOrder — the
+  // API's row order moves when a brand is edited): 'Group order from
+  // Simmer, Stackd & Flipd'.
+  const names = inBrandOrder(conceptsOrFallback(await fetchLiveConcepts())).map((c) => formatBrandName(c.name))
+  const list = names.length > 0 && names.length <= 3 ? joinNames(names) : ''
+  return pageMetadata({
+    title:       list ? `Group order from ${list}` : 'Group order in Karachi',
+    description: fitSentences([
+      'Start a shared cart, send the link, everyone adds their own — checkout once.',
+      `Group orders from ${list || 'every servd kitchen'} in Karachi.`,
+    ]),
+    canonical:   `${SERVD_ORIGIN}/group-order`,
+  })
 }
 
 export default async function GroupOrderEntryPage() {
-  const concepts = await getConcepts()
+  const concepts = await fetchLiveConcepts()
   // Pre-build the brand cards on the server so the client component
   // gets a small typed payload (id/name/slug/accent/image) instead of
-  // re-fetching.
+  // re-fetching. The card art is the 640x480 card crop, not the full hero.
   const brandCards = concepts.map((c) => ({
     id: c.id,
     name: formatBrandName(c.name),
     slug: c.slug,
     accent: brandAccent(c.slug, c.primaryColor),
-    heroImage: conceptHeroImage(c),
+    heroImage: conceptHeroImage(c, 'card'),
   }))
 
   return <GroupOrderEntryClient brands={brandCards} />

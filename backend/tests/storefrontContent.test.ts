@@ -1,5 +1,6 @@
 // Storefront content module (decision 41): drafts, CEO approval, scheduled
-// publishing, rollback, company scoping, pop-up windows and A/B counters.
+// publishing, rollback, company scoping, pop-up windows, A/B counters, the
+// SEO settings and the public live-pages list the sitemap reads.
 //
 // Drives the real route handlers through Fastify inject against the
 // disposable test database (DATABASE_URL must contain "test").
@@ -13,7 +14,7 @@ const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
 const { siteLayoutRoutes } = await import('../src/modules/siteLayouts/routes.js')
 const { publishDueLayouts, parseSlug } = await import('../src/modules/siteLayouts/service.js')
-const { blocksSchema } = await import('../src/modules/siteLayouts/schemas.js')
+const { blocksSchema, pageSettingsSchema } = await import('../src/modules/siteLayouts/schemas.js')
 
 const PREFIX = 'sfc'
 const STAMP = Date.now()
@@ -22,6 +23,7 @@ let tenantA: string
 let tenantB: string
 let slugA = ''
 let slugB = ''
+let slugHidden = ''
 type U = { id: string; name: string; email: string; role: string }
 let ceo: U
 let marketer: U
@@ -65,6 +67,8 @@ beforeAll(async () => {
   slugB = `${PREFIX}-brand-b-${STAMP}`
   await prisma.concept.create({ data: { name: 'SFC Brand A', slug: slugA, type: 'restaurant', tenantId: tenantA } })
   await prisma.concept.create({ data: { name: 'SFC Brand B', slug: slugB, type: 'restaurant', tenantId: tenantB } })
+  slugHidden = `${PREFIX}-brand-hidden-${STAMP}`
+  await prisma.concept.create({ data: { name: 'SFC Brand Hidden', slug: slugHidden, type: 'restaurant', tenantId: tenantA, storefrontVisible: false } })
   ceo = await makeUser('ceo', 'admin', tenantA, [tenantA, tenantB])
   marketer = await makeUser('mkt', 'marketing', tenantA, [tenantA])
   marketerB = await makeUser('mktb', 'marketing', tenantB, [tenantB])
@@ -92,7 +96,7 @@ afterAll(async () => {
   await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } })
   await prisma.tenantMember.deleteMany({ where: { userId: { in: userIds } } })
   await prisma.user.deleteMany({ where: { id: { in: userIds } } })
-  await prisma.concept.deleteMany({ where: { slug: { in: [slugA, slugB] } } })
+  await prisma.concept.deleteMany({ where: { slug: { in: [slugA, slugB, slugHidden] } } })
   await prisma.tenant.deleteMany({ where: { id: { in: [tenantA, tenantB] } } })
 })
 
@@ -301,5 +305,168 @@ describe('pop-ups and tracking', () => {
       { version: 1, variant: 'a', views: 2, conversions: 1 },
       { version: 1, variant: 'b', views: 1, conversions: 0 },
     ])
+  })
+})
+
+describe('page SEO settings', () => {
+  it('accepts a trimmed, bounded settings.seo and rejects unknown keys and over-long text', () => {
+    const parsed = pageSettingsSchema.parse({ seo: { title: '  Ramadan at Stackd  ', description: ' Iftar boxes. ' } })
+    expect(parsed.seo).toEqual({ title: 'Ramadan at Stackd', description: 'Iftar boxes.' })
+    expect(pageSettingsSchema.safeParse({ seo: {} }).success).toBe(true)
+    expect(pageSettingsSchema.safeParse({ seo: { title: 'x'.repeat(121) } }).success).toBe(false)
+    expect(pageSettingsSchema.safeParse({ seo: { description: 'x'.repeat(301) } }).success).toBe(false)
+    expect(pageSettingsSchema.safeParse({ seo: { keywords: 'x' } }).success).toBe(false)
+    expect(pageSettingsSchema.safeParse({ seo: { title: 5 } }).success).toBe(false)
+  })
+})
+
+describe('pages/live (the sitemap list)', () => {
+  const SECRET = `BLOCK-CONTENT-${STAMP}`
+  const SEO_SECRET = `SEO-TITLE-${STAMP}`
+  const body = [{ id: 'b', type: 'text', body: SECRET }]
+  const live = `page:${PREFIX}-pl-live-${STAMP}`
+  const draftOnly = `page:${PREFIX}-pl-draft-${STAMP}`
+  const pending = `page:${PREFIX}-pl-pending-${STAMP}`
+  const scheduled = `page:${PREFIX}-pl-sched-${STAMP}`
+  const due = `page:${PREFIX}-pl-due-${STAMP}`
+  const popup = `popup:${PREFIX}-pl-popup-${STAMP}`
+  const brandPageA = () => `brand:${slugA}:pl-${STAMP}`
+  const brandPageB = () => `brand:${slugB}:pl-${STAMP}`
+  const hiddenBrandPage = () => `brand:${slugHidden}:pl-${STAMP}`
+  const footerA = () => `brand:${slugA}:footer`
+  const legacyHeaderA = () => `brand:${slugA}:header`
+  // Cleared and approved: an owner page with nothing live is a 404 on the
+  // storefront; a built-in page falls back to its default design.
+  const emptyPage = `page:${PREFIX}-pl-empty-${STAMP}`
+  const emptyBrandPageA = () => `brand:${slugA}:pl-empty-${STAMP}`
+  const emptyAboutA = () => `brand:${slugA}:about`
+  // A reserved brand part in another case is not the built-in page or the
+  // chrome, and the storefront has no URL for it.
+  const casedAboutA = () => `brand:${slugA}:About`
+  const casedHeaderA = () => `brand:${slugA}:Header`
+
+  const draft = async (slug: string, who: U, settings?: Record<string, unknown>, content: unknown[] = body) => {
+    const r = await call('PUT', `/${enc(slug)}/draft`, auth(who), { blocks: content, ...(settings ? { settings } : {}) })
+    expect(r.statusCode, slug).toBe(200)
+  }
+  const approve = async (slug: string, publishAt?: string) => {
+    const r = await call('POST', `/${enc(slug)}/approve`, auth(ceo), publishAt ? { publishAt } : {})
+    expect(r.statusCode, slug).toBe(200)
+    return r.json()
+  }
+  const list = async () => {
+    const r = await call('GET', '/pages/live')
+    expect(r.statusCode).toBe(200)
+    return r.json() as Array<Record<string, unknown>>
+  }
+
+  beforeAll(async () => {
+    const future = new Date(Date.now() + 3_600_000).toISOString()
+
+    // Live, with a newer draft on top that must not show.
+    await draft(live, marketer, { seo: { title: SEO_SECRET } })
+    await approve(live)
+    await draft(live, marketer, { seo: { title: `${SEO_SECRET}-draft` } })
+
+    await draft(draftOnly, marketer)
+    await draft(pending, marketer)
+    expect((await call('POST', `/${enc(pending)}/submit`, auth(marketer))).statusCode).toBe(200)
+    await draft(scheduled, marketer)
+    expect((await approve(scheduled, future)).draftStatus).toBe('scheduled')
+    await draft(due, marketer)
+    await approve(due, future)
+    await prisma.siteLayout.update({ where: { slug: due }, data: { publishAt: new Date(Date.now() - 1000) } })
+
+    // Owner pages of two companies, and one of a brand hidden from the storefront.
+    await draft(brandPageA(), marketer)
+    await approve(brandPageA())
+    await draft(brandPageB(), marketerB)
+    await approve(brandPageB())
+    await draft(hiddenBrandPage(), marketer)
+    await approve(hiddenBrandPage())
+
+    // Chrome and pop-ups are not pages: a published footer, a header row
+    // from before the kind column (stored kind 'page'), and a live pop-up.
+    await draft(footerA(), marketer)
+    await approve(footerA())
+    await prisma.siteLayout.upsert({
+      where: { slug: legacyHeaderA() },
+      create: { slug: legacyHeaderA(), kind: 'page', tenantId: tenantA, blocks: body, liveVersion: 1, publishedAt: new Date() },
+      update: { kind: 'page', blocks: body, liveVersion: 1, publishedAt: new Date() },
+    })
+    const rules = { popupKind: 'announcement', display: 'bar', trigger: 'before_page', pages: [], brands: [], audience: 'everyone', frequency: 'daily' }
+    await draft(popup, marketer, { popup: rules })
+    await approve(popup)
+
+    for (const slug of [emptyPage, emptyBrandPageA(), emptyAboutA()]) {
+      await draft(slug, marketer, undefined, [])
+      await approve(slug)
+    }
+    for (const slug of [casedAboutA(), casedHeaderA()]) {
+      await draft(slug, marketer)
+      await approve(slug)
+    }
+  })
+
+  it('lists published pages — servd custom pages and every company\'s brand pages — with no auth', async () => {
+    const slugs = (await list()).map((p) => p.slug)
+    expect(slugs).toContain(live)
+    expect(slugs).toContain(brandPageA())
+    expect(slugs).toContain(brandPageB())
+  })
+
+  it('never lists a draft, a pending draft or a scheduled page whose time has not come', async () => {
+    const slugs = (await list()).map((p) => p.slug)
+    expect(slugs).not.toContain(draftOnly)
+    expect(slugs).not.toContain(pending)
+    expect(slugs).not.toContain(scheduled)
+    const row = await prisma.siteLayout.findUniqueOrThrow({ where: { slug: scheduled } })
+    expect(row).toMatchObject({ liveVersion: 0, draftStatus: 'scheduled' })
+  })
+
+  it('publishes a scheduled page that has come due, then lists it', async () => {
+    const entry = (await list()).find((p) => p.slug === due)
+    expect(entry).toBeDefined()
+    expect((await prisma.siteLayout.findUniqueOrThrow({ where: { slug: due } })).liveVersion).toBe(1)
+  })
+
+  it('leaves out header/footer chrome, pop-ups and pages of a brand hidden from the storefront', async () => {
+    const slugs = (await list()).map((p) => p.slug)
+    expect(slugs).not.toContain(footerA())
+    expect(slugs).not.toContain(legacyHeaderA())
+    expect(slugs).not.toContain(popup)
+    expect(slugs).not.toContain(hiddenBrandPage())
+  })
+
+  it('leaves out an owner page whose live copy is empty, but keeps an empty built-in page', async () => {
+    const slugs = (await list()).map((p) => p.slug)
+    for (const slug of [emptyPage, emptyBrandPageA()]) {
+      expect((await prisma.siteLayout.findUniqueOrThrow({ where: { slug } })).liveVersion, slug).toBeGreaterThan(0)
+      expect(slugs).not.toContain(slug)
+    }
+    expect(slugs).toContain(emptyAboutA())
+  })
+
+  it('leaves out a reserved brand part written in another case', async () => {
+    const slugs = (await list()).map((p) => p.slug)
+    expect(slugs).not.toContain(casedAboutA())
+    expect(slugs).not.toContain(casedHeaderA())
+  })
+
+  it('returns only slug + publishedAt — no blocks, settings or draft content', async () => {
+    const r = await call('GET', '/pages/live')
+    expect(r.body).not.toContain(SECRET)
+    expect(r.body).not.toContain(SEO_SECRET)
+    for (const p of r.json() as Array<Record<string, unknown>>) {
+      expect(Object.keys(p).sort()).toEqual(['publishedAt', 'slug'])
+    }
+    const entry = (r.json() as Array<{ slug: string; publishedAt: string }>).find((p) => p.slug === live)!
+    const row = await prisma.siteLayout.findUniqueOrThrow({ where: { slug: live } })
+    expect(new Date(entry.publishedAt).getTime()).toBe(row.publishedAt!.getTime())
+  })
+
+  it('the live read carries the trimmed SEO settings of the live copy, not the draft', async () => {
+    const pub = (await call('GET', `/${enc(live)}`)).json()
+    expect(pub.settings).toEqual({ seo: { title: SEO_SECRET } })
   })
 })

@@ -1,7 +1,9 @@
 # [token]
 
-Storefront route: **/[token]**. Customer-facing page rendered via Next.js App Router.
+Storefront route: **/reserve/confirm/[token]** — confirm or cancel a booking
+from the SMS / email link.
 
 ## Files
 
-- `page.tsx` — Next.js page component (server or client)
+- `layout.tsx` — the page title (server).
+- `page.tsx` — the confirm / cancel screen (client component).

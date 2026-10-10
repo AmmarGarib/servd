@@ -140,8 +140,16 @@ const HERO_BY_SLUG: Record<string, string> = {
   'stackd': '/brand/stackd-concrete.webp',
 }
 
-export function conceptHeroImage(concept: Pick<Concept, 'slug'>): string | null {
-  return HERO_BY_SLUG[concept.slug] ?? null
+// Card-sized crops (640x480) of the hero art, for the small brand cards
+// (cross-brand strip, kitchens grid, reserve picker, group order) — the full
+// hero is 1600x2400 and was being downloaded to fill a 300px card.
+const CARD_BY_SLUG: Record<string, string> = {
+  'stackd': '/brand/stackd-concrete-card.webp',
+}
+
+/** A brand's hero art: 'full' for full-bleed bands, 'card' for small cards. */
+export function conceptHeroImage(concept: Pick<Concept, 'slug'>, size: 'full' | 'card' = 'full'): string | null {
+  return (size === 'card' ? CARD_BY_SLUG[concept.slug] : undefined) ?? HERO_BY_SLUG[concept.slug] ?? null
 }
 
 /** `url(...) center/cover` for a CSS background shorthand, or '' when there is no image. */

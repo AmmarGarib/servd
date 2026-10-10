@@ -14,10 +14,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
-import { useCart } from '../../store/cart'
-import { conceptHeroImage, heroCover, formatBrandName } from '../../lib/concept'
-import { useBrandSlug, getServdHost } from '../../lib/host'
-import { encodeCartToken } from '../../lib/cartHandoff'
+import { useCart } from '../../../store/cart'
+import { conceptHeroImage, heroCover, formatBrandName } from '../../../lib/concept'
+import { useBrandSlug, getServdHost } from '../../../lib/host'
+import { encodeCartToken } from '../../../lib/cartHandoff'
+import { brandCanonical, SERVD_LINK_ORIGIN } from '../../../lib/brandDomains'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -175,17 +176,23 @@ export default function ConceptOrderPage() {
     return () => window.removeEventListener('scroll', handler)
   }, [categories])
 
+  // The three states below (error / skeleton / menu) carry distinct keys so
+  // React mounts each fresh instead of morphing the skeleton's DOM into the
+  // next state — that morph was the page's one layout shift (CLS 0.20).
   if (error) {
     return (
-      <div className="min-h-dvh flex items-center justify-center p-6 text-center">
+      <div key="error" className="min-h-dvh flex items-center justify-center p-6 text-center">
         <div style={{ maxWidth: '28rem' }}>
           <h1 className="text-2xl font-bold mb-2">Tableside ordering isn&rsquo;t live yet.</h1>
           <p className="text-s-muted text-sm mb-4">
             The kitchen hasn&rsquo;t published a menu to the order system. Flag down your server — they&rsquo;ll take the order from the printed card. Reservations are open below.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <MagneticLink href={`/brand/${slug}/menu`} className="servd-btn-primary">See the menu</MagneticLink>
-            <MagneticLink href={`/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</MagneticLink>
+            {/* The menu lives on the brand's own domain (stackd.pk/menu);
+                booking is a servd page, absolute so a brand-domain copy of
+                this screen doesn't link to a brand-domain copy of it. */}
+            <MagneticLink href={brandCanonical(slug, 'menu')} className="servd-btn-primary">See the menu</MagneticLink>
+            <MagneticLink href={`${SERVD_LINK_ORIGIN}/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</MagneticLink>
           </div>
         </div>
       </div>
@@ -197,7 +204,7 @@ export default function ConceptOrderPage() {
     // as the real page, just shimmer-tinted. Reserves the layout so the
     // real menu doesn't push content around on hydrate (avoids CLS).
     return (
-      <div role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100dvh' }}>
+      <div key="skeleton" role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100dvh' }}>
         <div style={{ height: '260px', background: 'linear-gradient(90deg, var(--servd-surface), #f0f0f0, var(--servd-surface))', backgroundSize: '200% 100%', animation: 'skeletonShimmer 1.4s ease-in-out infinite' }} />
         <div style={{ padding: '1rem 1rem 0', display: 'flex', gap: '0.5rem', overflowX: 'hidden' }}>
           {Array.from({ length: 4 }).map((_, i) => (
@@ -241,7 +248,7 @@ export default function ConceptOrderPage() {
     ''
 
   return (
-    <div className={brandSkinClass}
+    <div key="menu" className={brandSkinClass}
       style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
       {/* Hero */}
       <section
@@ -257,10 +264,12 @@ export default function ConceptOrderPage() {
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.65) 100%)' }} />
         <div className="container" style={{ position: 'relative', zIndex: 1, paddingTop: '5rem', paddingBottom: '2rem' }}>
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <Link href={`/brand/${concept.slug}`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
+            {/* The brand's microsite is its own domain; the kitchens list
+                is servd's (absolute, for the brand-domain copy). */}
+            <Link href={brandCanonical(concept.slug)} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               ← {formatBrandName(concept.name)}
             </Link>
-            <Link href="/home#kitchens" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
+            <Link href={`${SERVD_LINK_ORIGIN}/home#kitchens`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               Other brands →
             </Link>
           </div>
@@ -425,10 +434,22 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
     >
       <div style={{
         aspectRatio: '4/3',
-        background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
+        background: item.imageUrl ? undefined : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
         position: 'relative',
         overflow: 'hidden',
       }}>
+        {/* A real image, not a CSS background, so the dish photo has alt text
+            and can be found in image search. Same box, same crop. */}
+        {item.imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={item.imageUrl}
+            alt={item.name}
+            loading="lazy"
+            decoding="async"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+          />
+        )}
         {item.videoUrl && (
           <video
             src={item.videoUrl}

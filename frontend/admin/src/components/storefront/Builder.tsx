@@ -46,6 +46,11 @@ function cleanSettings(s: PageSettings, isPopup: boolean): PageSettings {
   if (s.fonts && (s.fonts.heading || s.fonts.body)) out.fonts = s.fonts
   if (s.ab) out.ab = { splitPct: Math.max(0, Math.min(100, Math.round(s.ab.splitPct))), blocks: s.ab.blocks }
   if (isPopup && s.popup) out.popup = { ...s.popup, pages: s.popup.pages.map((p) => p.trim()).filter(Boolean) }
+  if (!isPopup && s.seo) {
+    const title = s.seo.title?.trim()
+    const description = s.seo.description?.trim()
+    if (title || description) out.seo = { ...(title && { title }), ...(description && { description }) }
+  }
   return out
 }
 
@@ -335,7 +340,7 @@ export function Builder({ slug }: { slug: string }) {
                 ? <BlockInspector key={selected.id} block={selected} fonts={fonts} onChange={(next) => setActive(updateBlock(activeBlocks, next))} />
                 : <p className="p-6 text-center text-sm text-s-muted">Select an element on the canvas to edit it.</p>)}
               {tab === 'page' && (
-                <PageSettingsPanel kind={kind} title={doc.title} onTitle={(t) => change((d) => ({ ...d, title: t }))}
+                <PageSettingsPanel slug={slug} kind={kind} title={doc.title} onTitle={(t) => change((d) => ({ ...d, title: t }))}
                   settings={doc.settings} onChange={(s) => change((d) => ({ ...d, settings: s }))}
                   fonts={fonts} variant={variant} onVariant={(v) => { setVariant(v); setSelectedId(null) }} blocksA={doc.blocks} />
               )}

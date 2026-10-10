@@ -145,13 +145,13 @@ export default function AccountPage() {
   }
 
   if (loading) return (
-    <main className="flex min-h-dvh items-center justify-center" style={{ background: 'transparent' }}>
+    <div className="flex min-h-dvh items-center justify-center" style={{ background: 'transparent' }}>
       <LoadingScreen label="Loading account…" minHeight="auto" />
-    </main>
+    </div>
   )
 
   if (error || !profile) return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
       <div className="text-5xl">⚠</div>
       <p className="text-sm" style={{ color: 'var(--servd-danger)' }}>{error || 'Account not found'}</p>
@@ -160,7 +160,7 @@ export default function AccountPage() {
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 4px 20px rgba(61,31,59,0.3)' }}>
         Browse brands
       </Link>
-    </main>
+    </div>
   )
 
   const initials      = (profile.name ?? 'A').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
@@ -175,7 +175,7 @@ export default function AccountPage() {
   const firstName     = profile.name?.split(' ')[0] ?? null
 
   return (
-    <main className="min-h-dvh pb-16 relative" style={{ background: 'transparent' }}>
+    <div className="min-h-dvh pb-16 relative" style={{ background: 'transparent' }}>
 
       {/* Subtle tier color accent */}
       <div className="fixed pointer-events-none select-none" style={{
@@ -572,7 +572,7 @@ export default function AccountPage() {
         {/* ── Need help? Inline complaint flow ── */}
         <SupportSection orders={profile.orders.slice(0, 10)} />
       </div>
-    </main>
+    </div>
   )
 }
 

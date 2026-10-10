@@ -19,6 +19,11 @@ export function GenericHero({ fields, ctx }: SectionProps) {
   const accent = color(fields.accent) ?? (concept.primaryColor || 'var(--servd-green-dark)')
   const story = brandStory(concept.slug)
   const heroImage = safeSrc(fields.image) || conceptHeroImage(concept)
+  // A described photo is a real <img> under the brand-colour wash (Google
+  // Images, screen readers); without a description it stays a background.
+  const imageAlt = t(fields.imageAlt).trim()
+  const photo = !!heroImage && !!imageAlt
+  const wash = `linear-gradient(135deg, ${accent} 0%, ${accent}dd 60%, ${accent}aa 100%)`
   const primary = link(fields.primary)
   const secondary = link(fields.secondary)
   const p = brandHref(primary.href, ctx)
@@ -39,12 +44,22 @@ export function GenericHero({ fields, ctx }: SectionProps) {
       flexDirection: 'column',
       justifyContent: 'flex-end',
       padding: 'clamp(2rem, 6vw, 4rem) 0',
-      background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 60%, ${accent}aa 100%)${heroImage ? `, url(${heroImage}) center/cover` : ''}`,
-      backgroundBlendMode: 'multiply',
+      ...(photo
+        ? { isolation: 'isolate' as const }
+        : { background: `${wash}${heroImage ? `, url(${heroImage}) center/cover` : ''}`, backgroundBlendMode: 'multiply' }),
       color: 'white',
       overflow: 'hidden',
       borderBottom: '1px solid var(--servd-line)',
     }}>
+      {photo && heroImage && (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={heroImage} alt={imageAlt}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+          {/* The same wash, multiplied over the photo as the background did. */}
+          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: wash, mixBlendMode: 'multiply' }} />
+        </>
+      )}
       <div className="container" style={{ position: 'relative', zIndex: 1 }}>
         {str(fields.eyebrow) && (
           <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.32em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.78)', marginBottom: '0.85rem' }}>
