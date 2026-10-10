@@ -138,8 +138,9 @@ export async function mediaRoutes(fastify: FastifyInstance) {
       const assets = await prisma.mediaAsset.findMany({
         where: {
           ...(await scopeTenantWhere(req, 'read')),
-          // Clock-in selfies share the upload path; they are not library content.
-          ...(cat && CATEGORIES.includes(cat as typeof CATEGORIES[number]) ? { category: cat } : { category: { not: 'clockin' } }),
+          // Clock-in selfies and waste-log evidence photos share the upload
+          // path; they are not library content (the waste log links its own).
+          ...(cat && CATEGORIES.includes(cat as typeof CATEGORIES[number]) ? { category: cat } : { category: { notIn: ['clockin', 'waste'] } }),
           ...(kind ? { kind } : {}),
           ...(q['tag'] ? { tags: { has: q['tag'] } } : {}),
           ...(q['conceptId'] ? { conceptId: q['conceptId'] } : {}),

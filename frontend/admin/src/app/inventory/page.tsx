@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
@@ -23,6 +23,7 @@ interface WasteLog {
   unit: string
   reason: string
   estimatedCostCents: number | null
+  photoUrl: string | null
   notes: string | null
   recordedAt: string
   inventoryItem: { name: string; unit: string }
@@ -37,6 +38,59 @@ function getStockStatus(item: InventoryItem): 'out' | 'low' | 'ok' {
   if (item.currentStock === 0) return 'out'
   if (item.currentStock <= item.parLevel) return 'low'
   return 'ok'
+}
+
+// ─── Waste photo ──────────────────────────────────────────────────────────────
+//
+// The server values waste itself (the item's average cost × quantity) and
+// refuses waste above the company's photo limit (PKR 500 by default) without a
+// photo. The photo goes up through the same presigned flow as every other
+// admin upload (GET /media/upload-url, then PUT straight to storage), and the
+// public URL rides on the waste log as photoUrl.
+
+// The server's default photo limit, for the hint only — the server decides.
+const DEFAULT_PHOTO_LIMIT_CENTS = 50_000
+const PHOTO_MAX_EDGE = 1600
+
+/**
+ * Re-encode a camera / gallery image as a JPEG, at most 1600 px on its long
+ * edge. Storage accepts JPEG/PNG/WebP/GIF only and some phones hand over HEIC;
+ * a full-size phone photo is also far bigger than a waste record needs.
+ */
+async function toJpeg(file: File): Promise<Blob> {
+  const src = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('That photo could not be read. Take it again, or pick a JPEG or PNG.'))
+      el.src = src
+    })
+    const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('This browser could not prepare the photo. Try another device.')
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+    if (!blob) throw new Error('This browser could not prepare the photo. Try another device.')
+    return blob
+  } finally {
+    URL.revokeObjectURL(src)
+  }
+}
+
+/** Upload a waste photo; returns the JPEG (for the preview) and its public URL. */
+async function uploadWastePhoto(file: File): Promise<{ blob: Blob; url: string }> {
+  const blob = await toJpeg(file)
+  const filename = `waste-${Date.now()}.jpg`
+  const { uploadUrl, publicUrl } = await api.get<{ uploadUrl: string; publicUrl: string }>(
+    `/media/upload-url?filename=${encodeURIComponent(filename)}&contentType=image/jpeg&category=waste`,
+  )
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob }).catch(() => null)
+  if (!put || !put.ok) throw new Error('The photo did not upload. Check the connection and try again.')
+  return { blob, url: publicUrl }
 }
 
 function downloadStockCsv(items: InventoryItem[]) {
@@ -75,6 +129,10 @@ export default function InventoryPage() {
   const needsCompanyPick = viewAll && tenants.length > 1
   const [wasteItemId, setWasteItemId] = useState<string | null>(null)
   const [wasteForm, setWasteForm] = useState({ quantity: '', unit: 'kg', reason: 'spoilage' as typeof WASTE_REASONS[number], notes: '' })
+  // The uploaded photo: its public URL (sent as photoUrl) and a local preview.
+  const [wastePhoto, setWastePhoto] = useState<{ url: string; previewUrl: string } | null>(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [photoError, setPhotoError] = useState<string | null>(null)
 
   // Toast state
   const [toast, setToast] = useState<string | null>(null)
@@ -121,14 +179,61 @@ export default function InventoryPage() {
       unit: wasteForm.unit,
       reason: wasteForm.reason,
       notes: wasteForm.notes || undefined,
+      ...(wastePhoto ? { photoUrl: wastePhoto.url } : {}),
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       void qc.invalidateQueries({ queryKey: ['inventory', 'waste-logs'] })
-      setWasteItemId(null)
-      setWasteForm({ quantity: '', unit: 'kg', reason: 'spoilage', notes: '' })
+      closeWaste()
     },
   })
+
+  function clearPhoto() {
+    if (wastePhoto) URL.revokeObjectURL(wastePhoto.previewUrl)
+    setWastePhoto(null)
+    setPhotoError(null)
+  }
+
+  function openWaste(item: InventoryItem) {
+    clearPhoto()
+    wasteMutation.reset()
+    setWasteItemId(item.id)
+    setWasteForm({ quantity: '', unit: item.unit, reason: 'spoilage', notes: '' })
+  }
+
+  function closeWaste() {
+    clearPhoto()
+    setWasteItemId(null)
+    setWasteForm({ quantity: '', unit: 'kg', reason: 'spoilage', notes: '' })
+  }
+
+  async function onPhotoPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setPhotoBusy(true)
+    setPhotoError(null)
+    try {
+      const { blob, url } = await uploadWastePhoto(file)
+      if (wastePhoto) URL.revokeObjectURL(wastePhoto.previewUrl)
+      setWastePhoto({ url, previewUrl: URL.createObjectURL(blob) })
+      // A PHOTO_REQUIRED refusal is answered now — clear it.
+      wasteMutation.reset()
+    } catch (err) {
+      setPhotoError((err as Error).message || 'The photo did not upload. Try again.')
+    } finally {
+      setPhotoBusy(false)
+    }
+  }
+
+  // The server's refusal for want of a photo is shown at the photo field
+  // (its message carries the value and the limit); anything else under the form.
+  const wasteError = wasteMutation.error as Error | null
+  const photoRequiredMsg = wasteError instanceof ApiError && wasteError.code === 'PHOTO_REQUIRED' ? wasteError.message : null
+  const wasteItem = items.find((i) => i.id === wasteItemId) ?? null
+  const wasteQty = Number(wasteForm.quantity)
+  const wasteValueCents = wasteItem?.unitCostCents && wasteQty > 0 ? Math.round(wasteItem.unitCostCents * wasteQty) : null
+  const photoLikelyNeeded = wasteValueCents != null && wasteValueCents >= DEFAULT_PHOTO_LIMIT_CENTS
 
   // Only items you actually track as stock belong on the Inventory page —
   // i.e. anything with stock on hand or a par level set. This keeps the shared
@@ -268,7 +373,7 @@ export default function InventoryPage() {
           {wasteItemId && (
             <div className="rounded-xl border border-s-red/50 bg-red-100/10 p-4 space-y-3">
               <p className="font-bold text-s-red text-sm">
-                Log waste — {items.find((i) => i.id === wasteItemId)?.name}
+                Log waste — {wasteItem?.name}
               </p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <F label="Quantity">
@@ -290,16 +395,54 @@ export default function InventoryPage() {
                     placeholder="Describe waste…" className={fi} />
                 </F>
               </div>
+
+              {/* Value at the item's current cost — the same figure the server
+                  books — so staff know before they press Log. */}
+              {wasteValueCents != null && (
+                <p className="text-xs text-s-muted">
+                  Worth about <span className="font-semibold text-s-text">PKR {Math.round(wasteValueCents / 100).toLocaleString()}</span> at current cost.
+                </p>
+              )}
+
+              {/* Photo — required above the company's photo limit. */}
+              <div className={`rounded-lg border p-3 space-y-2 ${photoRequiredMsg ? 'border-s-red bg-red-100/15' : 'border-s-border'}`}>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className={`cursor-pointer rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                    photoRequiredMsg ? 'border-s-red text-s-red' : 'border-s-border text-s-text hover:border-primary hover:text-primary-ink'
+                  } ${photoBusy ? 'pointer-events-none opacity-50' : ''}`}>
+                    {photoBusy ? 'Uploading photo…' : wastePhoto ? 'Retake photo' : 'Take or add photo'}
+                    <input type="file" accept="image/*" capture="environment" className="sr-only"
+                      onChange={(e) => void onPhotoPicked(e)} disabled={photoBusy} />
+                  </label>
+                  {wastePhoto && (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- local blob preview */}
+                      <img src={wastePhoto.previewUrl} alt="Waste photo" className="h-14 w-14 rounded-lg border border-s-border object-cover" />
+                      <button type="button" onClick={clearPhoto} className="text-xs text-s-muted hover:text-s-text underline">
+                        Remove
+                      </button>
+                    </>
+                  )}
+                  {!wastePhoto && !photoRequiredMsg && (
+                    <span className="text-xs text-s-muted">
+                      {photoLikelyNeeded ? 'Waste this size needs a photo.' : 'Needed for larger waste (PKR 500+ by default).'}
+                    </span>
+                  )}
+                </div>
+                {photoRequiredMsg && !wastePhoto && <p className="text-xs font-semibold text-s-red">{photoRequiredMsg}</p>}
+                {photoError && <p className="text-xs text-s-red">{photoError}</p>}
+              </div>
+
               <div className="flex gap-2">
                 <button onClick={() => wasteMutation.mutate(wasteItemId)}
-                  disabled={!wasteForm.quantity || wasteMutation.isPending}
+                  disabled={!wasteForm.quantity || wasteMutation.isPending || photoBusy}
                   className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {wasteMutation.isPending ? 'Logging…' : 'Log waste & deduct stock'}
                 </button>
-                <button onClick={() => setWasteItemId(null)}
+                <button onClick={closeWaste}
                   className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
-              {wasteMutation.isError && <p className="text-xs text-s-red">{(wasteMutation.error as Error).message}</p>}
+              {wasteError && !photoRequiredMsg && <p className="text-xs text-s-red">{wasteError.message}</p>}
             </div>
           )}
 
@@ -367,7 +510,7 @@ export default function InventoryPage() {
                                   className="text-xs px-2 py-1 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
                                   count
                                 </Link>
-                                <button onClick={() => { setWasteItemId(item.id); setWasteForm({ ...wasteForm, unit: item.unit }) }}
+                                <button onClick={() => openWaste(item)}
                                   className="text-xs px-2 py-1 rounded-lg border border-s-red/30 text-s-red/70 hover:border-s-red hover:text-s-red transition-colors">
                                   waste
                                 </button>
@@ -494,6 +637,10 @@ export default function InventoryPage() {
                           <td className="px-4 py-3">
                             <p className="font-semibold text-s-text">{log.inventoryItem.name}</p>
                             {log.notes && <p className="text-xs text-s-muted mt-0.5">{log.notes}</p>}
+                            {log.photoUrl && (
+                              <a href={log.photoUrl} target="_blank" rel="noreferrer"
+                                className="text-xs text-primary-ink hover:underline mt-0.5 inline-block">View photo</a>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-right font-bold text-s-red">
                             {log.quantity} {log.unit}

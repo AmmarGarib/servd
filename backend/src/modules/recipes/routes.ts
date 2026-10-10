@@ -349,9 +349,11 @@ async function assertIngredientsUsable(
 async function assertStationIn(stationId: string, tenantIds: string[]): Promise<void> {
   const st = await prisma.station.findFirst({
     where: { id: stationId, deletedAt: null, concept: { tenantId: { in: tenantIds }, deletedAt: null } },
-    select: { id: true },
+    select: { id: true, name: true, isActive: true },
   })
   if (!st) throw new AppError('STATION_NOT_IN_COMPANY', 'That station is not part of this recipe\'s company', 422)
+  // A switched-off station shows no screen: a step routed there reaches nobody.
+  if (!st.isActive) throw new AppError('STATION_NOT_LIVE', `${st.name} is switched off — pick a live station`, 422)
 }
 
 /** Companies a recipe's stations/ingredients may come from. */

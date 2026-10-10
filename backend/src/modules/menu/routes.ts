@@ -75,13 +75,25 @@ async function assertCategoryOf(conceptId: string, categoryId: string): Promise<
   if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'That category is not part of this brand', 422)
 }
 
-/** 422 unless `stationId` is a live station of `conceptId`. */
+/**
+ * 422 unless `stationId` is a live station of `conceptId`: the brand's own,
+ * not deleted and not switched off. A retired station is on no kitchen
+ * screen, so a dish routed there is cooked by nobody (2026-10-10 audit,
+ * BOH-03) — STATION_NOT_LIVE says so instead of "not part of this brand".
+ */
 async function assertStationOf(conceptId: string, stationId: string): Promise<void> {
   const st = await prisma.station.findFirst({
-    where: { id: stationId, conceptId, deletedAt: null },
-    select: { id: true },
+    where: { id: stationId, conceptId },
+    select: { id: true, name: true, isActive: true, deletedAt: true },
   })
   if (!st) throw new AppError('STATION_NOT_IN_BRAND', 'That station is not part of this brand', 422)
+  if (st.deletedAt || !st.isActive) {
+    throw new AppError(
+      'STATION_NOT_LIVE',
+      `${st.name} has been ${st.deletedAt ? 'deleted' : 'switched off'}, so no kitchen screen shows it. Pick a station the kitchen is using.`,
+      422,
+    )
+  }
 }
 
 /** A row's brand never changes from an edit; resending the same id is fine. */
