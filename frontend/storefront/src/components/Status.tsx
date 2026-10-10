@@ -60,6 +60,7 @@ export function Skeleton({ height = '1rem', width = '100%', radius = '0.25rem' }
   return (
     <span
       aria-hidden="true"
+      className="servd-skeleton"
       style={{
         display: 'block',
         height, width,
@@ -69,9 +70,13 @@ export function Skeleton({ height = '1rem', width = '100%', radius = '0.25rem' }
         animation: 'shimmer 1.6s ease-in-out infinite',
       }}
     >
+      {/* No quotes or other HTML-escaped characters in this CSS: the server
+          escapes them inside <style> and the browser doesn't unescape, so the
+          text no longer matches on hydration and React throws the whole
+          server render away (#418/#425 on every ordering page). */}
       <style>{`
         @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-        @media (prefers-reduced-motion: reduce) { span[aria-hidden="true"] { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .servd-skeleton { animation: none !important; } }
       `}</style>
     </span>
   )
