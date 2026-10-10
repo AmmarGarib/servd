@@ -367,20 +367,10 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
     slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
-  // Primary-button ink on the brand skins. The skins remap --servd-green to
-  // the brand accent but not --servd-green-hover, so a hovered primary turned
-  // servd green under the skin's white ink (about 2:1); and Stackd's skin sets
-  // white ink on its cream accent. Hover stays on the accent, and Stackd's
-  // primaries take the brand's dark plum. (Belongs in the skin blocks in
-  // globals.css, where checkout would get it too.)
-  const skinTokens = (brandSkinClass ? {
-    '--servd-green-hover': 'var(--servd-green)',
-    ...(slug === 'stackd' && { '--servd-on-green': 'var(--stackd-plum-dark)' }),
-  } : {}) as React.CSSProperties
 
   return (
     <div key="screen" className={brandSkinClass}
-      style={{ ...skinTokens, background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
+      style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
       {/* Hero */}
       <section
         style={{

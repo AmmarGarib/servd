@@ -188,6 +188,7 @@ summary:focus-visible {
   --servd-green:      var(--simmer-orange);
   --servd-green-dark: var(--simmer-orange);
   --servd-on-green:   #fff;  /* brand keeps its own on-accent ink */
+  --servd-green-hover: var(--servd-green);  /* hovering must not fall back to servd green under white text */
 
   background: var(--simmer-bone);
   color: var(--simmer-green);
@@ -266,7 +267,8 @@ summary:focus-visible {
   --servd-surface:    var(--stackd-cement);
   --servd-green:      var(--stackd-cream);
   --servd-green-dark: var(--stackd-cream);
-  --servd-on-green:   #fff;  /* brand keeps its own on-accent ink */
+  --servd-on-green:   var(--stackd-plum-dark);  /* white on cream was invisible */
+  --servd-green-hover: var(--servd-green);  /* hovering must not fall back to servd green under white text */
 
   background: var(--stackd-plum);
   color: var(--stackd-cream);
@@ -373,6 +375,7 @@ summary:focus-visible {
   --servd-green:      var(--flipd-blue);
   --servd-green-dark: var(--flipd-blue-deep);
   --servd-on-green:   #fff;  /* brand keeps its own on-accent ink */
+  --servd-green-hover: var(--servd-green);  /* hovering must not fall back to servd green under white text */
 
   background: var(--flipd-bone);
   color: var(--flipd-blue);
