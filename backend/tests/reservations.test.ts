@@ -18,6 +18,7 @@
 
 import { beforeEach, describe, expect, test } from 'vitest'
 import { PrismaClient } from '@prisma/client'
+import { withTableOverlapGuard } from '../src/modules/reservations/routes.js'
 
 const prisma = (globalThis as { __TEST_PRISMA__?: PrismaClient }).__TEST_PRISMA__ ?? new PrismaClient()
 
@@ -71,6 +72,22 @@ describe('reservations: race-proof booking', () => {
     // 23P01 (exclusion_violation) as a PrismaClientUnknownRequestError, so we
     // match on the constraint name carried in the error message.
     ).rejects.toThrow(/reservations_no_table_overlap/)
+  })
+
+  test('the route guard turns the overlap into a 409 TABLE_CONFLICT, not a 500', async () => {
+    // The real error a model write raises (PrismaClientUnknownRequestError,
+    // no code / meta) — the guard used to match only P2010, so it never fired.
+    const start = new Date('2026-08-02T19:00:00')
+    const end   = new Date('2026-08-02T20:30:00')
+    const book = (guestName: string) => withTableOverlapGuard(() => prisma.reservation.create({
+      data: { conceptId, tableId, partySize: 2, startTime: start, endTime: end, guestName, source: 'staff' },
+    }))
+    const results = await Promise.allSettled([book('A'), book('B')])
+    const ok = results.filter((r) => r.status === 'fulfilled')
+    const lost = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    expect(ok).toHaveLength(1)
+    expect(lost).toHaveLength(1)
+    expect(lost[0]!.reason).toMatchObject({ code: 'TABLE_CONFLICT', statusCode: 409 })
   })
 
   test('exclusion constraint rejects partial overlap', async () => {

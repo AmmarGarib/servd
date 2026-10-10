@@ -16,10 +16,17 @@
 // row, and assert a caller can only ever see the brand they asked for.
 
 import { beforeAll, afterAll, describe, expect, test } from 'vitest'
+import Fastify, { type FastifyInstance } from 'fastify'
+import { ZodError } from 'zod'
 import { PrismaClient } from '@prisma/client'
+import { discountRoutes } from '../src/modules/discounts/routes.js'
+import { AppError } from '../src/lib/errors.js'
 
 const prisma = (globalThis as { __TEST_PRISMA__?: PrismaClient }).__TEST_PRISMA__ ?? new PrismaClient()
-const API = process.env['TEST_API_URL'] ?? 'http://127.0.0.1:3011/api/v1'
+
+// In-process (app.inject), like every other suite: this file used to fetch()
+// a separate API on :3011 that nothing ever started.
+let app: FastifyInstance
 
 const stamp = Date.now()
 const ids: { tenantA?: string; tenantB?: string; conceptA?: string; conceptB?: string } = {}
@@ -36,6 +43,15 @@ const window = () => {
 }
 
 beforeAll(async () => {
+  app = Fastify()
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
+    if (err instanceof ZodError) return reply.status(400).send({ error: { code: 'VALIDATION_ERROR' } })
+    return reply.status(500).send({ error: { code: 'INTERNAL', message: String((err as Error).message) } })
+  })
+  await app.register(discountRoutes, { prefix: '/api/v1/discounts' })
+  await app.ready()
+
   const a = await prisma.tenant.create({ data: { name: `A${stamp}`, slug: `a-${stamp}` } })
   const b = await prisma.tenant.create({ data: { name: `B${stamp}`, slug: `b-${stamp}` } })
   ids.tenantA = a.id; ids.tenantB = b.id
@@ -62,13 +78,18 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  await app.close()
   await prisma.sectionDiscount.deleteMany({ where: { id: { in: discountIds } } })
   await prisma.concept.deleteMany({ where: { id: { in: [ids.conceptA!, ids.conceptB!] } } })
   await prisma.tenant.deleteMany({ where: { id: { in: [ids.tenantA!, ids.tenantB!] } } })
 })
 
-const get = (qs: string) =>
-  fetch(`${API}/discounts/active${qs}`).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }))
+const get = async (qs: string) => {
+  const r = await app.inject({ method: 'GET', url: `/api/v1/discounts/active${qs}` })
+  let body: unknown = null
+  try { body = r.json() } catch { /* not JSON */ }
+  return { status: r.statusCode, body }
+}
 
 describe('GET /discounts/active — public, so scoping is the only boundary', () => {
   test('a brand sees only its OWN discount', async () => {

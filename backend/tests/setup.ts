@@ -3,6 +3,7 @@
 // suite assumes DATABASE_URL points at a disposable test database.
 
 import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { beforeAll, afterAll } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 
@@ -43,6 +44,14 @@ beforeAll(async () => {
   const prisma = new PrismaClient()
   globalThis.__TEST_PRISMA__ = prisma
 
+  // `db push` builds only what schema.prisma can express. The raw-SQL objects
+  // production has (0_init's last section: the reservations no-overlap
+  // exclusion constraint and the recipe-ingredient one-source check, plus the
+  // btree_gist extension the first needs) are applied here, read straight
+  // from the migration so there is one copy of the SQL. Without them the
+  // race-proof booking tests ran against a table that allowed double bookings.
+  await applyRawSqlObjects(prisma)
+
   // Seed only the accounts we need for posting tests — not the full demo data
   await seedTestAccounts(prisma)
 }, 60_000)
@@ -50,6 +59,17 @@ beforeAll(async () => {
 afterAll(async () => {
   await globalThis.__TEST_PRISMA__?.$disconnect()
 })
+
+async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
+  const sql = readFileSync(new URL('../prisma/migrations/0_init/migration.sql', import.meta.url), 'utf8')
+  const marker = sql.indexOf('-- ─── Raw-SQL objects')
+  if (marker === -1) throw new Error('0_init: raw-SQL section not found — update tests/setup.ts')
+  await prisma.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS btree_gist')
+  const statements = sql.slice(marker)
+    .split('\n').filter((line) => !line.trimStart().startsWith('--')).join('\n')
+    .split(';').map((s) => s.trim()).filter(Boolean)
+  for (const statement of statements) await prisma.$executeRawUnsafe(statement)
+}
 
 async function seedTestAccounts(prisma: PrismaClient): Promise<void> {
   const accounts: Array<{ code: string; name: string; type: 'asset'|'liability'|'equity'|'revenue'|'expense' }> = [

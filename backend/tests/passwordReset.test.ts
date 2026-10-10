@@ -23,12 +23,23 @@
 //   7. Disabled / soft-deleted accounts cannot be reset into.
 
 import { beforeAll, afterAll, describe, expect, test } from 'vitest'
+import Fastify, { type FastifyInstance } from 'fastify'
+import { ZodError } from 'zod'
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import { authRoutes } from '../src/modules/auth/routes.js'
+import { AppError } from '../src/lib/errors.js'
+import { redis } from '../src/lib/redis.js'
 
 const prisma = (globalThis as { __TEST_PRISMA__?: PrismaClient }).__TEST_PRISMA__ ?? new PrismaClient()
-const API = process.env['TEST_API_URL'] ?? 'http://127.0.0.1:3011/api/v1'
+
+// The routes run in-process (app.inject), like every other suite. This file
+// used to fetch() a separate API on :3011 that nothing — not vitest, not CI —
+// ever started, so all ten tests failed with ECONNREFUSED. In-process the
+// delivery-channel check below also reads the same env as the route.
+let app: FastifyInstance
+const CLIENT_IP = '10.9.9.31'
 
 const stamp = Date.now()
 const LIVE_EMAIL     = `reset.live.${stamp}@gsfoods.pk`
@@ -43,13 +54,13 @@ let tenantId = ''
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
 
 async function post(path: string, body: unknown) {
-  const res = await fetch(`${API}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const text = await res.text()
-  return { status: res.status, body: text ? JSON.parse(text) : null }
+  const res = await app.inject({ method: 'POST', url: `/api/v1${path}`, payload: body as object, remoteAddress: CLIENT_IP })
+  return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null }
+}
+
+async function get(path: string) {
+  const res = await app.inject({ method: 'GET', url: `/api/v1${path}`, remoteAddress: CLIENT_IP })
+  return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null }
 }
 
 /** Pull the freshest live token row for a user and forge the plaintext we'd need.
@@ -68,6 +79,18 @@ async function issueToken(userId: string, opts: { expiresInMs?: number } = {}) {
 }
 
 beforeAll(async () => {
+  app = Fastify()
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
+    if (err instanceof ZodError) return reply.status(400).send({ error: { code: 'VALIDATION_ERROR' } })
+    return reply.status(500).send({ error: { code: 'INTERNAL', message: String((err as Error).message) } })
+  })
+  await app.register(authRoutes, { prefix: '/api/v1/auth' })
+  await app.ready()
+  // A clean slate for this client's rate-limit counters (login, forgot).
+  const keys = await redis.keys(`*${CLIENT_IP}*`)
+  if (keys.length) await redis.del(...keys)
+
   const tenant = await prisma.tenant.create({
     data: { name: `Reset Co ${stamp}`, slug: `reset-co-${stamp}`, countryCode: 'PK', currency: 'PKR', timezone: 'Asia/Karachi' },
   })
@@ -84,6 +107,7 @@ beforeAll(async () => {
 }, 60_000)
 
 afterAll(async () => {
+  await app.close()
   await prisma.staffPasswordReset.deleteMany({ where: { userId: { in: userIds } } })
   await prisma.user.deleteMany({ where: { id: { in: userIds } } })
   await prisma.tenant.deleteMany({ where: { id: tenantId } })
@@ -227,18 +251,18 @@ describe('GET /auth/password/reset', () => {
   test('reports a good link as valid and a spent one as not', async () => {
     const token = await issueToken(userIds[0]!)
 
-    const before = await fetch(`${API}/auth/password/reset?token=${encodeURIComponent(token)}`)
-    expect((await before.json()).valid).toBe(true)
+    const before = await get(`/auth/password/reset?token=${encodeURIComponent(token)}`)
+    expect(before.body.valid).toBe(true)
 
     await post('/auth/password/reset', { token, newPassword: 'Fresh-Password-7777-gggggg' })
 
-    const after = await fetch(`${API}/auth/password/reset?token=${encodeURIComponent(token)}`)
-    expect((await after.json()).valid).toBe(false)
+    const after = await get(`/auth/password/reset?token=${encodeURIComponent(token)}`)
+    expect(after.body.valid).toBe(false)
   })
 
   test('reports an absent token as invalid rather than erroring', async () => {
-    const res = await fetch(`${API}/auth/password/reset`)
+    const res = await get('/auth/password/reset')
     expect(res.status).toBe(200)
-    expect((await res.json()).valid).toBe(false)
+    expect(res.body.valid).toBe(false)
   })
 })

@@ -100,18 +100,26 @@ function requireId(value: string | undefined, name: string): string {
  * double-booking *physically impossible* even under perfect concurrency: the
  * application-level pre-check is just a friendly fast-path. If two concurrent
  * inserts both pass the pre-check, postgres still rejects the loser with
- * sqlstate 23P01 (exclusion_violation), which Prisma surfaces as P2010.
+ * sqlstate 23P01 (exclusion_violation).
  *
  * This helper catches that and turns it into a clean 409 instead of a 500.
+ * From a model write (create / update — every call site here) Prisma surfaces
+ * it as a PrismaClientUnknownRequestError with NO code and NO meta: only the
+ * message names the constraint. Matching on P2010 alone (the raw-query code)
+ * meant the guard never fired, and the loser of a race got a 500.
  */
-async function withTableOverlapGuard<T>(fn: () => Promise<T>): Promise<T> {
+export function isTableOverlapError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string; meta?: { code?: string; message?: string } }
+  return e?.meta?.code === '23P01'
+    || /reservations_no_table_overlap/i.test(e?.meta?.message ?? '')
+    || /reservations_no_table_overlap|23P01/.test(e?.message ?? '')
+}
+
+export async function withTableOverlapGuard<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (err) {
-    const e = err as { code?: string; meta?: { code?: string; message?: string } }
-    const isExclusion =
-      e?.code === 'P2010' && (e?.meta?.code === '23P01' || /reservations_no_table_overlap/i.test(e?.meta?.message ?? ''))
-    if (isExclusion) {
+    if (isTableOverlapError(err)) {
       throw new AppError(
         'TABLE_CONFLICT',
         'Another reservation just claimed that table for the same time. Pick a different table or time.',
