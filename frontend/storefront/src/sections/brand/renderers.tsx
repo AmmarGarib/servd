@@ -1,12 +1,12 @@
 // brand sections — renderers, keyed by variant. See ../README.md.
+// Server sections are static imports (they never ship to the browser); client
+// sections come from ./lazy so each page loads only the ones it renders.
 import type { SectionComponent } from '../types'
-import { BrandHeader } from './BrandHeader'
-import { BrandFooter } from './BrandFooter'
 import { AboutHero, Pillars, ImageBreak, CtaBand } from './AboutSections'
 import { PageHeader, VisitInfo, Faq } from './VisitSections'
 import { BrandMenu } from './BrandMenu'
-import { GenericHero } from './GenericHero'
 import { Signatures, Story, Reviews, CrossBrand, BottomCta } from './GenericSections'
+import { BrandHeader, BrandFooter, GenericHero } from './lazy'
 
 export const renderers: Record<string, SectionComponent> = {
   'brand.header': BrandHeader,

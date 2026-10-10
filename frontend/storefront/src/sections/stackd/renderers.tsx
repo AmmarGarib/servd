@@ -1,13 +1,12 @@
 // stackd sections — renderers, keyed by variant. See ../README.md.
+// Server sections are static imports (they never ship to the browser); client
+// sections come from ./lazy so each page loads only the ones it renders.
 import type { SectionComponent } from '../types'
-import { StackdSlip } from './StackdSlip'
-import { StackdHero } from './StackdHero'
-import { StackdStickers } from './StackdStickers'
-import { StackdRoom } from './StackdRoom'
-import { StackdVisit } from './StackdVisit'
 import { StackdRule } from './StackdRule'
-import { StackdCrossBrand } from './StackdCrossBrand'
 import { StackdSignoff } from './StackdSignoff'
+import {
+  StackdSlip, StackdHero, StackdStickers, StackdRoom, StackdVisit, StackdCrossBrand,
+} from './lazy'
 
 export const renderers: Record<string, SectionComponent> = {
   'stackd.slip': StackdSlip,

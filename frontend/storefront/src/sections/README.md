@@ -24,6 +24,7 @@ src/sections/
   safe.ts            safeHref / safeSrc / str / link / list / color / lines
   <group>/catalog.ts     specs + page defaults (DATA ONLY — no React imports)
   <group>/renderers.tsx  { [variant]: Component }
+  <group>/lazy.ts        next/dynamic wrappers for the group's CLIENT sections (code-split)
   <group>/*.tsx          the section components
 ```
 
@@ -84,6 +85,13 @@ export function MascotBand({ fields, ctx }: SectionProps) {
 ```
 
 3. Register it in `<group>/renderers.tsx`: `'stackd.mascotBand': MascotBand`.
+   - **Server section** (no `'use client'`): a static import in `renderers.tsx`.
+   - **Client section** (`'use client'`): add
+     `export const MascotBand = dynamic(() => import('./MascotBand').then((m) => m.MascotBand)) as SectionComponent`
+     to `<group>/lazy.ts` and import it from there — never import a client
+     section statically in `renderers.tsx`. That keeps each page's JS to the
+     sections it renders (a static import puts every client section on every
+     page: 150 kB → 122 kB first load when this was split, 2026-10-10).
 
 4. **Page defaults** in `<group>/catalog.ts` — the page as it looks today:
 
