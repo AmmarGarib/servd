@@ -2,13 +2,13 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { postJournalEntry } from './journal.js'
+import { postJournalEntry, reverseJournalEntry } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
-import { AppError } from '../../lib/errors.js'
-import { resolveDateRange, parsePktEndOfDay, fmtPktDate } from './dates.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { resolveDateRange, parsePktEndOfDay, fmtPktDate, pktToday } from './dates.js'
 import { trialBalance, balanceSheet, profitAndLoss, pnlByConcept, cashFlow } from './reports.js'
 import { salesTaxReturn } from './salesTaxReturn.js'
-import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
@@ -30,6 +30,18 @@ const journalEntrySchema = z.object({
   ).min(2),
 })
 
+// Manual journal entries carry `manual:<uuid>`; their reversal (posted by
+// reverseJournalEntry) carries `manual.reversal:<uuid>`.
+const MANUAL_PREFIX = 'manual:'
+const MANUAL_REVERSAL_PREFIX = 'manual.reversal:'
+
+const reverseSchema = z.object({
+  reason: z.string().trim().min(5).max(500),
+  // Date of the reversing entry; defaults to now. The original may sit in a
+  // closed month — the reversal is dated in the open period.
+  entryDate: z.string().datetime().optional(),
+})
+
 function sendCsv(reply: FastifyReply, filename: string, body: string) {
   reply.header('Content-Type', 'text/csv; charset=utf-8')
   reply.header('Content-Disposition', `attachment; filename="${filename}"`)
@@ -43,11 +55,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // activity links (?id=) and the CSV export. (/finance/ledger listed the
   // sales register to every manager tier and had no caller; the /finance
   // Transactions tab called a GET /accounting/entries that never existed.)
-  fastify.get<{ Querystring: { id?: string; accountId?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string } }>(
+  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string } }>(
     '/ledger',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
-      const { id, accountId, dateFrom, dateTo, limit: limitStr, cursor, format } = req.query
+      const { id, accountId, source, dateFrom, dateTo, limit: limitStr, cursor, format } = req.query
       const limit = Math.min(parseInt(limitStr ?? '50', 10), 1000)
       const { from, to } = resolveDateRange(dateFrom, dateTo)
 
@@ -62,6 +74,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             ? { id }
             : {
                 ...(accountId && { lines: { some: { accountId } } }),
+                // source=manual: the manual journal entries and their
+                // reversals (the Journal entry page's list).
+                ...(source === 'manual' && {
+                  OR: [{ reference: { startsWith: MANUAL_PREFIX } }, { reference: { startsWith: MANUAL_REVERSAL_PREFIX } }],
+                }),
                 entryDate: { gte: from, lte: to },
               }),
         },
@@ -95,7 +112,25 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         return sendCsv(reply, `ledger-${fmtPktDate(from)}-${fmtPktDate(to)}.csv`, toCsv(flat))
       }
 
-      return { data: entries, cursor: hasMore ? (entries[entries.length - 1]?.id ?? null) : null, hasMore }
+      // A manual entry says whether it has been reversed (and by which entry),
+      // wherever the reversal is dated — so the page offers "Reverse" only
+      // where it can still work.
+      const manualIds = entries
+        .filter((e) => e.tenantId && e.reference?.startsWith(MANUAL_PREFIX))
+        .map((e) => ({ tenantId: e.tenantId!, ref: `${MANUAL_REVERSAL_PREFIX}${e.reference!.slice(MANUAL_PREFIX.length)}` }))
+      const reversals = manualIds.length === 0 ? [] : await prisma.journalEntry.findMany({
+        where: { OR: manualIds.map((m) => ({ tenantId: m.tenantId, reference: m.ref })) },
+        select: { id: true, tenantId: true, reference: true, entryDate: true },
+      })
+      const reversalOf = new Map(reversals.map((r) => [`${r.tenantId}|${r.reference}`, { id: r.id, entryDate: r.entryDate }]))
+      const data = entries.map((e) => ({
+        ...e,
+        reversedBy: e.tenantId && e.reference?.startsWith(MANUAL_PREFIX)
+          ? (reversalOf.get(`${e.tenantId}|${MANUAL_REVERSAL_PREFIX}${e.reference.slice(MANUAL_PREFIX.length)}`) ?? null)
+          : null,
+      }))
+
+      return { data, cursor: hasMore ? (entries[entries.length - 1]?.id ?? null) : null, hasMore }
     },
   )
 
@@ -203,6 +238,99 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(entry)
   })
 
+  // ─── Reverse a manual journal entry (admin) ─────────────────────────────
+  //
+  // The ledger is append-only: a wrong manual entry is undone by a REVERSING
+  // entry (every line flipped), never by a delete, through reverseJournalEntry
+  // — the same balance rule, period-lock check and per-company chart as every
+  // other posting. Same role as posting a manual entry.
+  //
+  //   • Company: the entry's own. An entry of a company the operator is not a
+  //     member of is 404 — it does not confirm the id exists.
+  //   • Manual entries only. An order, shift, bill or payroll posting belongs
+  //     to its source document and is corrected there (refund, void the bill,
+  //     …); reversing it by hand would leave the document and the books
+  //     disagreeing, and the document's own reversal would then double it.
+  //   • Once. A second reversal is refused (409), and concurrent requests are
+  //     serialised on the entry so two clicks cannot post two reversals.
+  //   • Reason required; on the accounting trail and in the Exceptions inbox,
+  //     like the manual entry itself.
+  fastify.post<{ Params: { id: string } }>('/journal/:id/reverse', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+    const body = reverseSchema.parse(req.body ?? {})
+
+    const original = await prisma.journalEntry.findFirst({
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+      include: { lines: { include: { account: { select: { code: true, name: true, isActive: true } } } } },
+    })
+    if (!original || !original.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
+    const tenantId = original.tenantId
+    if (!original.reference?.startsWith(MANUAL_PREFIX)) {
+      throw new AppError(
+        'NOT_A_MANUAL_ENTRY',
+        original.reference?.startsWith(MANUAL_REVERSAL_PREFIX)
+          ? 'This entry is itself a reversal — post a new manual entry instead of reversing it.'
+          : 'Only manual journal entries can be reversed here. This entry was posted by its source document — correct it there (refund the order, void the bill, …).',
+        422,
+      )
+    }
+    const inactive = Array.from(new Set(original.lines.filter((l) => !l.account.isActive).map((l) => l.account.code)))
+    if (inactive.length > 0) {
+      throw new AppError('ACCOUNT_INACTIVE', `Account(s) ${inactive.join(', ')} are deactivated — reactivate them in Configuration → Chart of accounts first`, 422)
+    }
+    const sourceId = original.reference.slice(MANUAL_PREFIX.length)
+    const reversalRef = `${MANUAL_REVERSAL_PREFIX}${sourceId}`
+
+    const result = await prisma.$transaction(async (tx) => {
+      // One reversal per entry, even under a double click.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journal.reverse:${tenantId}:${original.reference}`}))`
+      const already = await tx.journalEntry.findFirst({ where: { tenantId, reference: reversalRef }, select: { id: true, entryDate: true } })
+      if (already) {
+        throw new AppError('ALREADY_REVERSED', `This entry was already reversed on ${fmtPktDate(already.entryDate)} (entry ${already.id.slice(0, 8)}).`, 409)
+      }
+      return reverseJournalEntry(tenantId, 'manual', sourceId, body.reason, {
+        tx,
+        postedBy: req.staffUser!.id,
+        entryDate: body.entryDate ? new Date(body.entryDate) : new Date(),
+      })
+    })
+    if (!result.posted) {
+      throw new AppError('ALREADY_REVERSED', 'This entry was already reversed.', 409)
+    }
+
+    const reversal = await prisma.journalEntry.findUniqueOrThrow({
+      where: { id: result.entryId },
+      include: { lines: { include: { account: true } } },
+    })
+    const amountCents = reversal.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
+    await audit({ category: 'accounting',
+      action: 'journal.reverse',
+      entity: 'JournalEntry',
+      entityId: reversal.id,
+      // The books this touched — the entry's company, which may not be the
+      // operator's active one.
+      userId: req.staffUser!.id, tenantId,
+      userEmail: req.staffUser!.email,
+      before: original,
+      after: reversal,
+      metadata: { ip: req.ip, reason: body.reason, reversedEntryId: original.id, amountCents },
+    })
+    const { flagException } = await import('../../lib/exceptions.js')
+    await flagException({
+      tenantId,
+      kind: 'manual_journal',
+      severity: amountCents >= 100000 ? 'high' : 'medium',
+      title: `Manual journal entry reversed: ${original.description}`,
+      description: `${req.staffUser!.email} reversed a manual JE of PKR ${(amountCents / 100).toFixed(0)}. Reason: ${body.reason}.`,
+      entityType: 'JournalEntry',
+      entityId: reversal.id,
+      actorId: req.staffUser!.id,
+      amountCents,
+      metadata: { reversedEntryId: original.id, reason: body.reason, ip: req.ip },
+    })
+
+    return reply.status(201).send({ ...reversal, reverses: { id: original.id, reference: original.reference } })
+  })
+
   // The chart of accounts is read and edited through /setup/chart-of-accounts
   // (Configuration → Chart of accounts) — the one chart API.
 
@@ -216,14 +344,24 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const report = await trialBalance((await resolveTenantScope(req)).tenantIds, asOf)
 
       if (req.query.format === 'csv') {
-        const rows = report.rows.map((r) => ({
+        // "All companies": every row names its company, and each company's
+        // own total follows the grand total.
+        const multi = report.companies.length > 1
+        const rows: Array<Record<string, string | number>> = report.rows.map((r) => ({
+          ...(multi && { company: r.companyName ?? '' }),
           code: r.code, account: r.name, type: r.type,
           debit: fmtPkr(r.debitCents), credit: fmtPkr(r.creditCents),
         }))
         rows.push({
-          code: '', account: 'TOTAL', type: 'asset',
+          ...(multi && { company: '' }),
+          code: '', account: 'TOTAL', type: '',
           debit: fmtPkr(report.totals.debitCents), credit: fmtPkr(report.totals.creditCents),
         })
+        if (multi) {
+          for (const c of report.companyTotals) {
+            rows.push({ company: c.name, code: '', account: 'COMPANY TOTAL', type: '', debit: fmtPkr(c.debitCents), credit: fmtPkr(c.creditCents) })
+          }
+        }
         return sendCsv(reply, `trial-balance-${report.asOf}.csv`, toCsv(rows))
       }
       return report
@@ -240,14 +378,17 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const report = await balanceSheet((await resolveTenantScope(req)).tenantIds, asOf)
 
       if (req.query.format === 'csv') {
+        // "All companies": every account row names its company.
+        const multi = report.companies.length > 1
+        const co = (name: string | null): Record<string, string> => (multi ? { company: name ?? '' } : {})
         const flat: Array<Record<string, string | number>> = []
-        for (const a of report.assets)      flat.push({ section: 'Assets',      code: a.code, name: a.name, balance: fmtPkr(a.balanceCents) })
-        flat.push({ section: 'Assets',      code: '', name: 'TOTAL ASSETS', balance: fmtPkr(report.totals.assetsCents) })
-        for (const l of report.liabilities) flat.push({ section: 'Liabilities', code: l.code, name: l.name, balance: fmtPkr(l.balanceCents) })
-        flat.push({ section: 'Liabilities', code: '', name: 'TOTAL LIABILITIES', balance: fmtPkr(report.totals.liabilitiesCents) })
-        for (const e of report.equity)      flat.push({ section: 'Equity',      code: e.code, name: e.name, balance: fmtPkr(e.balanceCents) })
-        flat.push({ section: 'Equity',      code: '', name: 'Current Period Earnings', balance: fmtPkr(report.totals.currentEarningsCents) })
-        flat.push({ section: 'Equity',      code: '', name: 'TOTAL EQUITY', balance: fmtPkr(report.totals.equityCents + report.totals.currentEarningsCents) })
+        for (const a of report.assets)      flat.push({ section: 'Assets',      ...co(a.companyName), code: a.code, name: a.name, balance: fmtPkr(a.balanceCents) })
+        flat.push({ section: 'Assets',      ...co(''), code: '', name: 'TOTAL ASSETS', balance: fmtPkr(report.totals.assetsCents) })
+        for (const l of report.liabilities) flat.push({ section: 'Liabilities', ...co(l.companyName), code: l.code, name: l.name, balance: fmtPkr(l.balanceCents) })
+        flat.push({ section: 'Liabilities', ...co(''), code: '', name: 'TOTAL LIABILITIES', balance: fmtPkr(report.totals.liabilitiesCents) })
+        for (const e of report.equity)      flat.push({ section: 'Equity',      ...co(e.companyName), code: e.code, name: e.name, balance: fmtPkr(e.balanceCents) })
+        flat.push({ section: 'Equity',      ...co(''), code: '', name: 'Current Period Earnings', balance: fmtPkr(report.totals.currentEarningsCents) })
+        flat.push({ section: 'Equity',      ...co(''), code: '', name: 'TOTAL EQUITY', balance: fmtPkr(report.totals.equityCents + report.totals.currentEarningsCents) })
         return sendCsv(reply, `balance-sheet-${report.asOf}.csv`, toCsv(flat))
       }
       return report
@@ -363,10 +504,14 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const report = await cashFlow((await resolveTenantScope(req)).tenantIds, from, to)
 
       if (req.query.format === 'csv') {
+        // Transfers between the company's own cash accounts (safe drops,
+        // pay-ins, deposits) have their own columns and are not inflow/outflow.
+        const multi = report.companies.length > 1
+        const co = (name: string | null): Record<string, string> => (multi ? { company: name ?? '' } : {})
         const flat: Array<Record<string, string | number>> = []
-        for (const a of report.byCashAccount) flat.push({ section: 'By account', code: a.code, name: a.name, inflow: fmtPkr(a.inflowCents), outflow: fmtPkr(a.outflowCents), net: fmtPkr(a.netCents) })
-        for (const c of report.byCategory)    flat.push({ section: 'By category', code: '', name: c.category, inflow: fmtPkr(c.inflowCents), outflow: fmtPkr(c.outflowCents), net: fmtPkr(c.netCents) })
-        flat.push({ section: 'Total', code: '', name: 'NET CHANGE IN CASH', inflow: fmtPkr(report.totals.inflowCents), outflow: fmtPkr(report.totals.outflowCents), net: fmtPkr(report.totals.netCents) })
+        for (const a of report.byCashAccount) flat.push({ section: 'By account', ...co(a.companyName), code: a.code, name: a.name, inflow: fmtPkr(a.inflowCents), outflow: fmtPkr(a.outflowCents), transferIn: fmtPkr(a.transferInCents), transferOut: fmtPkr(a.transferOutCents), net: fmtPkr(a.netCents) })
+        for (const c of report.byCategory)    flat.push({ section: 'By category', ...co(''), code: '', name: c.category, inflow: fmtPkr(c.inflowCents), outflow: fmtPkr(c.outflowCents), transferIn: '', transferOut: '', net: fmtPkr(c.netCents) })
+        flat.push({ section: 'Total', ...co(''), code: '', name: 'NET CHANGE IN CASH', inflow: fmtPkr(report.totals.inflowCents), outflow: fmtPkr(report.totals.outflowCents), transferIn: fmtPkr(report.totals.transfersCents), transferOut: fmtPkr(report.totals.transfersCents), net: fmtPkr(report.totals.netCents) })
         return sendCsv(reply, `cash-flow-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
       }
       return report
@@ -593,6 +738,21 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
 
     const newLock = parsePktEndOfDay(body.lockedThrough)
+    if (Number.isNaN(newLock.getTime())) {
+      throw new AppError('INVALID_DATE', 'Give the close date as YYYY-MM-DD', 422)
+    }
+    // A close is of days that have happened. Locking a future date (a typo for
+    // last year) silently refused every till close, bill and payment dated
+    // before it — the shift closed, its sales never reached the ledger, and
+    // nobody was told (BOOKS-07). The latest a period can close is today, PKT.
+    const today = pktToday()
+    if (newLock.getTime() > today.to.getTime()) {
+      throw new AppError(
+        'LOCK_IN_FUTURE',
+        `Cannot close the books through ${fmtPktDate(newLock)} — that is after today (${fmtPktDate(today.to)}, Pakistan time). Close a date that has already happened.`,
+        422,
+      )
+    }
     const existing = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
     if (existing && newLock <= existing.lockedThrough) {
       throw new AppError(

@@ -161,6 +161,7 @@ export default function AccountingHubPage() {
             <Link href="/accounting/balance-sheet"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Balance Sheet</Link>
             <Link href="/accounting/pl-ledger"      className="s-card-hover p-3 rounded border border-s-border text-s-text">P&L</Link>
             <Link href="/accounting/ledger"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Ledger</Link>
+            <Link href="/accounting/journal"        className="s-card-hover p-3 rounded border border-s-border text-s-text">Journal Entry</Link>
             <Link href="/accounting/cash-flow"      className="s-card-hover p-3 rounded border border-s-border text-s-text">Cash Flow</Link>
             <Link href="/accounting/period-close"      className="s-card-hover p-3 rounded border border-s-border text-s-text">Period Close</Link>
             <Link href="/accounting/ap-aging"          className="s-card-hover p-3 rounded border border-s-border text-s-text">AP Aging</Link>

@@ -123,6 +123,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   accounting:     [
     { label: 'Accounting', href: '/accounting', icon: '📊' },
     { label: 'Ledger', href: '/accounting/ledger', sub: true },
+    { label: 'Journal entry', href: '/accounting/journal', sub: true },
     { label: 'Trial balance', href: '/accounting/trial-balance', sub: true },
     { label: 'Balance sheet', href: '/accounting/balance-sheet', sub: true },
     { label: 'Cash flow', href: '/accounting/cash-flow', sub: true },

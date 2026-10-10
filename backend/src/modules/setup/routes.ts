@@ -19,10 +19,11 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { Prisma } from '@prisma/client'
+import { Prisma, type UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, APPROVERS } from '../auth/middleware.js'
+import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import {
   scopeTenantWhere, assertConceptOwned, conceptIdsInScope, conceptWhere, type ScopeMode,
@@ -69,6 +70,20 @@ async function assertStationOf(tenantId: string, stationId: string): Promise<voi
   })
   if (!station) throw new AppError('STATION_NOT_IN_COMPANY', 'That station does not belong to this company', 422)
 }
+
+/**
+ * Who may change the company's operations rules (PATCH /setup/operations-config):
+ * the CEO and co-owners (APPROVERS), plus the owner roles of the workspace the
+ * 'configuration' module lives in (lib/workspaces.ts — Operations, owned by the
+ * CEO). These rules are company-wide: whether clock-in needs a selfie or a
+ * geofence at EVERY branch, how tips are split, the service charge,
+ * withholding and invoice numbering. A floor manager could switch off the
+ * selfie for every branch and re-weight their own team's tips (PPL-09).
+ */
+const CONFIG_WORKSPACE = WORKSPACES.find((w) => w.id === WORKSPACE_OF_MODULE.get('configuration'))
+const OPERATIONS_RULE_EDITORS: UserRole[] = Array.from(
+  new Set<UserRole>([...APPROVERS, ...(CONFIG_WORKSPACE?.ownerRoles ?? [])]),
+)
 
 async function findOrCreateSingleton<T>(
   modelName: 'refundPolicy' | 'reservationPolicy' | 'receiptConfig' | 'operationsConfig',
@@ -321,7 +336,12 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // (lib/bankAccounts.ts): the ledger holds the balance. Each row carries its
   // accountCode and that code's ledger balance; openingBalanceCents is the
   // figure typed at setup, shown read-only, and read by nothing else.
-  fastify.get('/bank-accounts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  //
+  // FINANCE_TEAM (managers + finance): Bank accounts is a page of the
+  // 'accounting' module, which finance holds by default (lib/moduleAccess.ts),
+  // and the Reconciliation and Deposit drops pages read this list. Finance got
+  // 403 on all of them while these were MANAGERS-only (BOOKS-02).
+  fastify.get('/bank-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const rows = await prisma.bankAccount.findMany({
       where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       orderBy: { name: 'asc' },
@@ -338,7 +358,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
       ledgerBalanceCents: r.tenantId && r.accountCode ? balances.get(r.tenantId)?.get(r.accountCode) ?? null : null,
     }))
   })
-  fastify.post('/bank-accounts', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/bank-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req, reply) => {
     const body = z.object({
       name:                z.string().min(1).max(120),
       bankName:            z.string().nullable().optional(),
@@ -359,7 +379,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
     const created = await prisma.bankAccount.create({ data: { ...body, accountCode, tenantId } })
     return reply.status(201).send(created)
   })
-  fastify.patch<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.patch<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const body = z.object({
       name:                z.string().min(1).max(120).optional(),
       bankName:            z.string().nullable().optional(),
@@ -385,7 +405,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }
     return prisma.bankAccount.update({ where: { id: existing.id }, data: body })
   })
-  fastify.delete<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req, reply) => {
     const existing = await prisma.bankAccount.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       select: { id: true },
@@ -685,7 +705,9 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.get('/operations-config', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     return findOrCreateSingleton('operationsConfig', activeTenantId(req), {})
   })
-  fastify.patch('/operations-config', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // Reading stays open to every staff member (the till and the clock-in screen
+  // read it); changing it is CEO / owner only, and every change is audited.
+  fastify.patch('/operations-config', { preHandler: requireAuth(...OPERATIONS_RULE_EDITORS) }, async (req) => {
     const body = z.object({
       serviceChargePct:               z.number().min(0).max(1).optional(),
       serviceChargeAppliesToChannels: z.array(z.string()).optional(),
@@ -708,14 +730,15 @@ export async function setupRoutes(fastify: FastifyInstance) {
       // Concept.whatsapp (both per brand, on Storefront → Brands), and social
       // links are the brand footer (Storefront → Brand Footers). Columns kept.
     }).parse(req.body)
-    const cfg = await findOrCreateSingleton<{ id: string; geofenceEnforced: boolean }>('operationsConfig', activeTenantId(req), {})
+    const tenantId = activeTenantId(req)
+    const cfg = await findOrCreateSingleton<Record<string, unknown> & { id: string; geofenceEnforced: boolean }>('operationsConfig', tenantId, {})
     const { tipPoolRoleWeights, ...rest } = body
     // Switching the geofence on for a company with no located branch would
     // lock every non-exempt login out of clocking in. Refuse it here, with the
     // fix, rather than at 9am on the shop floor.
     if (body.geofenceEnforced === true && !cfg.geofenceEnforced) {
       const located = await prisma.location.count({
-        where: { tenantId: activeTenantId(req), isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
+        where: { tenantId, isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
       })
       if (located === 0) {
         throw new AppError('NO_LOCATED_BRANCH', 'Set the map pin on at least one of this company\'s locations (Configuration → Locations) before enforcing the clock-in geofence', 422)
@@ -731,6 +754,21 @@ export async function setupRoutes(fastify: FastifyInstance) {
         updatedById: req.staffUser!.id,
       },
     })
+    // Who changed which company-wide rule, from what to what.
+    const changed = (Object.keys(body) as Array<keyof typeof body>)
+      .filter((k) => JSON.stringify(cfg[k] ?? null) !== JSON.stringify((updated as Record<string, unknown>)[k] ?? null))
+    if (changed.length > 0) {
+      await audit({ category: 'identity',
+        action: 'operations_config.update',
+        entity: 'OperationsConfig',
+        entityId: updated.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        before: Object.fromEntries(changed.map((k) => [k, cfg[k] ?? null])),
+        after: Object.fromEntries(changed.map((k) => [k, (updated as Record<string, unknown>)[k] ?? null])),
+        metadata: { ip: req.ip, fields: changed },
+      })
+    }
     // Discount caps and the service charge are read through the cached reader.
     const { invalidateSetupCache } = await import('../../lib/setup-config.js')
     invalidateSetupCache()

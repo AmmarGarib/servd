@@ -5,11 +5,15 @@ import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import Link from 'next/link'
 
+// In "All companies" view (more than one company) each row names its company.
+type Row = { tenantId?: string | null; companyName?: string | null; code: string; name: string; balanceCents: number }
+
 interface BalanceSheet {
   asOf: string
-  assets:      Array<{ code: string; name: string; balanceCents: number }>
-  liabilities: Array<{ code: string; name: string; balanceCents: number }>
-  equity:      Array<{ code: string; name: string; balanceCents: number }>
+  companies: Array<{ id: string; name: string }>
+  assets:      Row[]
+  liabilities: Row[]
+  equity:      Row[]
   totals: {
     assetsCents: number
     liabilitiesCents: number
@@ -19,7 +23,7 @@ interface BalanceSheet {
   }
 }
 
-function Section({ title, rows, total }: { title: string; rows: BalanceSheet['assets']; total: number }) {
+function Section({ title, rows, total, multi }: { title: string; rows: Row[]; total: number; multi: boolean }) {
   return (
     <div className="s-card mb-4">
       <div className="px-4 py-2 border-b border-s-border bg-s-bg-soft">
@@ -29,19 +33,20 @@ function Section({ title, rows, total }: { title: string; rows: BalanceSheet['as
       <table className="w-full text-sm">
         <tbody>
           {rows.map((r) => (
-            <tr key={r.code} className="border-b border-s-border last:border-0">
+            <tr key={`${r.tenantId ?? ''}:${r.code}`} className="border-b border-s-border last:border-0">
+              {multi && <td className="px-4 py-2 text-xs text-s-muted whitespace-nowrap">{r.companyName ?? ''}</td>}
               <td className="px-4 py-2 font-mono text-xs text-s-muted w-20">{r.code}</td>
               <td className="px-4 py-2 text-s-text">{r.name}</td>
               <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.balanceCents)}</td>
             </tr>
           ))}
           {rows.length === 0 && (
-            <tr><td colSpan={3} className="px-4 py-3 text-xs text-s-muted">No balances</td></tr>
+            <tr><td colSpan={multi ? 4 : 3} className="px-4 py-3 text-xs text-s-muted">No balances</td></tr>
           )}
         </tbody>
         <tfoot className="bg-s-bg-soft border-t border-s-border font-semibold">
           <tr>
-            <td colSpan={2} className="px-4 py-2 text-s-text">Total {title}</td>
+            <td colSpan={multi ? 3 : 2} className="px-4 py-2 text-s-text">Total {title}</td>
             <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkr(total)}</td>
           </tr>
         </tfoot>
@@ -58,6 +63,8 @@ export default function BalanceSheetPage() {
     queryKey: ['balance-sheet', asOf],
     queryFn: () => api.get<BalanceSheet>(`/accounting/balance-sheet?asOf=${asOf}`),
   })
+
+  const multi = (data?.companies?.length ?? 0) > 1
 
   const apiUrl = process.env['NEXT_PUBLIC_API_URL'] ?? ''
   const csvHref = `${apiUrl}/api/v1/accounting/balance-sheet?asOf=${asOf}&format=csv`
@@ -80,9 +87,10 @@ export default function BalanceSheetPage() {
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && (
           <>
-            <Section title="Assets"      rows={data.assets}      total={data.totals.assetsCents} />
-            <Section title="Liabilities" rows={data.liabilities} total={data.totals.liabilitiesCents} />
+            <Section title="Assets"      rows={data.assets}      total={data.totals.assetsCents} multi={multi} />
+            <Section title="Liabilities" rows={data.liabilities} total={data.totals.liabilitiesCents} multi={multi} />
             <Section
+              multi={multi}
               title="Equity"
               rows={[
                 ...data.equity,

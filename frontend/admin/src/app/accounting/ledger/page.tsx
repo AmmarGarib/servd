@@ -28,6 +28,8 @@ interface LedgerEntry {
   entryDate: string
   postedBy: string | null
   lines: LedgerLine[]
+  // Manual entries only: the reversing entry, when there is one.
+  reversedBy?: { id: string; entryDate: string } | null
 }
 interface LedgerPage { data: LedgerEntry[]; cursor: string | null; hasMore: boolean }
 interface Account { id: string; code: string; name: string; isActive: boolean }
@@ -46,6 +48,8 @@ function EntryCard({ e, open, onToggle }: { e: LedgerEntry; open: boolean; onTog
           <span className="block text-sm text-s-text truncate">{e.description}</span>
           <span className="block text-[11px] text-s-dim font-mono truncate">{e.reference ?? `#${e.id.slice(0, 8)}`} · by {e.postedBy ?? 'system'}</span>
         </span>
+        {e.reference?.startsWith('manual.reversal:') && <span className="s-badge-muted shrink-0">Reversal</span>}
+        {e.reversedBy && <span className="s-badge-amber shrink-0">Reversed {pktDate(e.reversedBy.entryDate)}</span>}
         <span className="font-mono text-xs text-s-text shrink-0">{fmtPkr(total)}</span>
       </button>
       {open && (
@@ -133,6 +137,7 @@ function LedgerView() {
           <button onClick={() => router.push('/accounting/ledger')} className="s-btn-secondary text-sm">Show all entries</button>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
+            <Link href="/accounting/journal" className="s-btn-secondary text-sm">Journal entry</Link>
             <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
               className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text max-w-[16rem]">
               <option value="">All accounts</option>

@@ -102,11 +102,11 @@ export default function PeriodClosePage() {
           <div className="s-card p-4 space-y-3">
             <h3 className="text-sm font-semibold text-s-text">Close a new period</h3>
             <p className="text-xs text-s-muted">
-              After closing, postings dated on or before the end of this day (Pakistan time) are rejected. Lock dates only move forward.
+              After closing, postings dated on or before the end of this day (Pakistan time) are rejected. Lock dates only move forward, and can be no later than today.
             </p>
             <div className="space-y-2">
               <label htmlFor="lock-through" className="block text-xs text-s-muted">Lock through (inclusive)</label>
-              <input id="lock-through" type="date" value={lockedThrough} onChange={(e) => setLockedThrough(e.target.value)}
+              <input id="lock-through" type="date" value={lockedThrough} max={todayPktIso()} onChange={(e) => setLockedThrough(e.target.value)}
                 className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
             </div>
             <div className="space-y-2">
@@ -116,7 +116,7 @@ export default function PeriodClosePage() {
             </div>
             <button
               onClick={() => close.mutate({ lockedThrough, ...(note ? { note } : {}) })}
-              disabled={close.isPending}
+              disabled={close.isPending || !lockedThrough || lockedThrough > todayPktIso()}
               className="s-btn-primary text-sm w-full"
             >
               {close.isPending ? 'Closing…' : 'Close Period'}

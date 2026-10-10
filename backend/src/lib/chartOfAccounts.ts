@@ -73,7 +73,10 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
 
   // ── Revenue (per brand — see CONCEPT_REVENUE_CODE in accounting/journal.ts) ──
   { code: '4001', name: 'Revenue — Simmer',                   type: 'revenue' },
-  { code: '4002', name: 'Revenue — Stax',                     type: 'revenue' },
+  // Stax was renamed Stackd (2026-09-09). Existing charts are renamed by
+  // migration 20261010150200 where the name was still the old default. 4006
+  // stays "Stax @ Padel" — a separate business that kept its name.
+  { code: '4002', name: 'Revenue — Stackd',                   type: 'revenue' },
   { code: '4003', name: 'Revenue — Strata',                   type: 'revenue' },
   { code: '4004', name: 'Revenue — Flipd',                    type: 'revenue' },
   { code: '4005', name: 'Revenue — Garnish Station',          type: 'revenue' },
@@ -130,7 +133,8 @@ export const REQUIRED_ACCOUNT_CODES = [
   '1010', '1015', '1020', '1030', '1210', '1320',
   '2010', '2020', '2030', '2050', '2060', '2095',
   '4001', '4090', '4100',
-  '5010', '5040',
+  // 5050: stock counts post their variance here (crosschecks/countPosting.ts).
+  '5010', '5040', '5050',
   '6030', '6080',
   '7010', '7040',
   '8010',

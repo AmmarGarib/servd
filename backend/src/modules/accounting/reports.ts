@@ -24,12 +24,30 @@ function naturalBalanceCents(type: AccountType, debits: number, credits: number)
 
 interface AccountAggregation {
   accountId: string
+  // The company whose chart the account is in. In "All companies" view the
+  // same code appears once per company, so every row carries its company.
+  tenantId: string | null
   code: string
   name: string
   type: AccountType
   debitCents: number
   creditCents: number
   balanceCents: number
+}
+
+/** A company in the report's scope, for labelling rows. */
+export interface ReportCompany { id: string; name: string }
+
+/** The companies in scope, by name — what each row's `companyName` reads. */
+async function companiesInScope(tenantIds: string[]): Promise<ReportCompany[]> {
+  if (tenantIds.length === 0) return []
+  const rows = await prisma.tenant.findMany({ where: { id: { in: tenantIds } }, select: { id: true, name: true } })
+  return rows.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Order rows by company (name) then account code: one company's accounts together. */
+function byCompanyThenCode<T extends { companyName: string | null; code: string }>(a: T, b: T): number {
+  return (a.companyName ?? '').localeCompare(b.companyName ?? '') || a.code.localeCompare(b.code)
 }
 
 // Pulls all journal lines in the date range, grouped by account.
@@ -68,7 +86,7 @@ async function aggregateByAccount(opts: {
   const accountIds = Array.from(new Set(grouped.map((g) => g.accountId)))
   const accounts = await prisma.account.findMany({
     where: { id: { in: accountIds } },
-    select: { id: true, code: true, name: true, type: true },
+    select: { id: true, tenantId: true, code: true, name: true, type: true },
   })
   const accountMap = new Map(accounts.map((a) => [a.id, a]))
 
@@ -87,6 +105,7 @@ async function aggregateByAccount(opts: {
     if (!acc) continue
     out.push({
       accountId,
+      tenantId: acc.tenantId,
       code: acc.code,
       name: acc.name,
       type: acc.type,
@@ -107,20 +126,51 @@ async function aggregateByAccount(opts: {
 
 export interface TrialBalanceReport {
   asOf: string
-  rows: Array<{ code: string; name: string; type: AccountType; debitCents: number; creditCents: number }>
+  /** Companies in scope. More than one = "All companies" view: read each row's company. */
+  companies: ReportCompany[]
+  rows: Array<{
+    tenantId: string | null
+    companyName: string | null
+    code: string
+    name: string
+    type: AccountType
+    debitCents: number
+    creditCents: number
+  }>
   totals: { debitCents: number; creditCents: number; differenceCents: number }
+  /** Each company's own books, which must balance on their own. */
+  companyTotals: Array<{ tenantId: string; name: string; debitCents: number; creditCents: number; differenceCents: number }>
 }
 
 export async function trialBalance(tenantIds: string[], asOf: Date): Promise<TrialBalanceReport> {
-  const rows = await aggregateByAccount({ tenantIds, upTo: asOf })
+  const [agg, companies] = await Promise.all([aggregateByAccount({ tenantIds, upTo: asOf }), companiesInScope(tenantIds)])
+  const nameOf = new Map(companies.map((c) => [c.id, c.name]))
+  // One row per (company, account) — account rows are already per company,
+  // so "All companies" lists GS Foods' 2030 and GSX Viva's 2030 separately,
+  // each labelled, never two indistinguishable rows.
+  const rows = agg
+    .map((r) => ({
+      tenantId: r.tenantId,
+      companyName: r.tenantId ? (nameOf.get(r.tenantId) ?? null) : null,
+      code: r.code, name: r.name, type: r.type, debitCents: r.debitCents, creditCents: r.creditCents,
+    }))
+    .sort(byCompanyThenCode)
   const totals = rows.reduce(
     (s, r) => ({ debitCents: s.debitCents + r.debitCents, creditCents: s.creditCents + r.creditCents }),
     { debitCents: 0, creditCents: 0 },
   )
+  const companyTotals = companies.map((c) => {
+    const mine = rows.filter((r) => r.tenantId === c.id)
+    const debitCents = mine.reduce((s, r) => s + r.debitCents, 0)
+    const creditCents = mine.reduce((s, r) => s + r.creditCents, 0)
+    return { tenantId: c.id, name: c.name, debitCents, creditCents, differenceCents: debitCents - creditCents }
+  })
   return {
     asOf: fmtPktDate(asOf),
-    rows: rows.map((r) => ({ code: r.code, name: r.name, type: r.type, debitCents: r.debitCents, creditCents: r.creditCents })),
+    companies,
+    rows,
     totals: { ...totals, differenceCents: totals.debitCents - totals.creditCents },
+    companyTotals,
   }
 }
 
@@ -128,11 +178,15 @@ export async function trialBalance(tenantIds: string[], asOf: Date): Promise<Tri
 // Snapshot at a point in time: assets = liabilities + equity. Revenue/expense
 // accumulated balances roll into "current period earnings" within equity.
 
+type BalanceRow = { tenantId: string | null; companyName: string | null; code: string; name: string; balanceCents: number }
+
 export interface BalanceSheetReport {
   asOf: string
-  assets:      { code: string; name: string; balanceCents: number }[]
-  liabilities: { code: string; name: string; balanceCents: number }[]
-  equity:      { code: string; name: string; balanceCents: number }[]
+  /** Companies in scope. More than one = "All companies" view: read each row's company. */
+  companies: ReportCompany[]
+  assets:      BalanceRow[]
+  liabilities: BalanceRow[]
+  equity:      BalanceRow[]
   totals: {
     assetsCents: number
     liabilitiesCents: number
@@ -143,11 +197,20 @@ export interface BalanceSheetReport {
 }
 
 export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<BalanceSheetReport> {
-  const rows = await aggregateByAccount({ tenantIds, upTo: asOf })
+  const [rows, companies] = await Promise.all([aggregateByAccount({ tenantIds, upTo: asOf }), companiesInScope(tenantIds)])
+  const nameOf = new Map(companies.map((c) => [c.id, c.name]))
+  const section = (type: AccountType): BalanceRow[] => rows
+    .filter((r) => r.type === type)
+    .map((r) => ({
+      tenantId: r.tenantId,
+      companyName: r.tenantId ? (nameOf.get(r.tenantId) ?? null) : null,
+      code: r.code, name: r.name, balanceCents: r.balanceCents,
+    }))
+    .sort(byCompanyThenCode)
 
-  const assets = rows.filter((r) => r.type === 'asset').map((r) => ({ code: r.code, name: r.name, balanceCents: r.balanceCents }))
-  const liabilities = rows.filter((r) => r.type === 'liability').map((r) => ({ code: r.code, name: r.name, balanceCents: r.balanceCents }))
-  const equity = rows.filter((r) => r.type === 'equity').map((r) => ({ code: r.code, name: r.name, balanceCents: r.balanceCents }))
+  const assets = section('asset')
+  const liabilities = section('liability')
+  const equity = section('equity')
 
   const revenueCents = rows.filter((r) => r.type === 'revenue').reduce((s, r) => s + r.balanceCents, 0)
   const expenseCents = rows.filter((r) => r.type === 'expense').reduce((s, r) => s + r.balanceCents, 0)
@@ -159,6 +222,7 @@ export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<Bal
 
   return {
     asOf: fmtPktDate(asOf),
+    companies,
     assets,
     liabilities,
     equity,
@@ -437,20 +501,49 @@ export async function brandPnl(
 // ─── Cash flow (indirect-method-lite) ───────────────────────────────────────
 // True cash-flow categorisation requires tagging every JE with operating /
 // investing / financing intent. v1 takes a pragmatic shortcut: for each cash
-// account (1010, 1015, 1020, 1030), report inflow / outflow / net for the
-// period, then attribute by the OPPOSING account on each line.
+// account report inflow / outflow / net for the period, then attribute by the
+// OPPOSING account on each entry.
+//
+// Cash accounts are the till, safe, bank and gateway codes (1010, 1015, 1020,
+// 1030), every bank child code (1021–1029, lib/bankAccounts.ts) and any asset
+// account a live bank account is linked to.
+//
+// TRANSFERS ARE NOT CASH FLOW. Money moving between two of the company's own
+// cash accounts — a safe drop (1015 → 1010), a pay-in or COD hand-over
+// (1010 → 1015), a bank deposit (1010/1015 → 1020) — does not change the cash
+// the company holds. Counting both legs made a PKR 3,000 drop show as +3,000
+// in and −3,000 out (BOOKS-09), so each entry's cash-to-cash legs are netted
+// out before anything is summed:
+//   1. a cash debit and a cash credit on DIFFERENT cash accounts with the same
+//      amount and memo are a transfer pair (how the shift close, till
+//      pay-outs and manual transfers write them);
+//   2. of what is left, cash can only have come IN from a non-cash credit and
+//      gone OUT to a non-cash debit, so inflow is capped at the entry's
+//      non-cash credits and outflow at its non-cash debits; the excess on both
+//      sides is a transfer (a deposit split across safe and drawer, an entry
+//      made only of cash lines).
+// Transfers are reported per account (transferIn / transferOut, so each
+// account's net is still its true balance change) and in total, but never in
+// inflow, outflow or the categories.
 
-const CASH_ACCOUNT_CODES = [ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.BANK, ACCT.CARD_RECEIVABLE]
+const CASH_ACCOUNT_CODES: string[] = [ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.BANK, ACCT.CARD_RECEIVABLE]
+const BANK_CHILD_CODES = ['1021', '1022', '1023', '1024', '1025', '1026', '1027', '1028', '1029']
 
 export interface CashFlowReport {
   dateFrom: string
   dateTo: string
+  /** Companies in scope. More than one = "All companies" view: read each row's company. */
+  companies: ReportCompany[]
   byCashAccount: Array<{
+    tenantId: string | null
+    companyName: string | null
     code: string
     name: string
-    inflowCents: number
-    outflowCents: number
-    netCents: number
+    inflowCents: number         // from outside the company's cash
+    outflowCents: number        // to outside the company's cash
+    transferInCents: number     // from another of the company's cash accounts
+    transferOutCents: number    // to another of the company's cash accounts
+    netCents: number            // the account's balance change (incl. transfers)
   }>
   byCategory: Array<{
     category: 'operating' | 'investing' | 'financing'
@@ -458,7 +551,8 @@ export interface CashFlowReport {
     outflowCents: number
     netCents: number
   }>
-  totals: { inflowCents: number; outflowCents: number; netCents: number }
+  /** Inflow / outflow exclude transfers; transfersCents is what moved between own cash accounts. */
+  totals: { inflowCents: number; outflowCents: number; netCents: number; transfersCents: number }
 }
 
 function categorise(code: string, reference?: string | null): 'operating' | 'investing' | 'financing' {
@@ -470,15 +564,98 @@ function categorise(code: string, reference?: string | null): 'operating' | 'inv
   return 'operating'
 }
 
+export interface CashSplitLine {
+  accountId: string
+  type: 'debit' | 'credit'
+  amountCents: number
+  memo?: string | null
+}
+
+export interface CashSplit {
+  /** External cash in / out of the entry (transfers removed). */
+  inflowCents: number
+  outflowCents: number
+  /** Per cash account: external in / out and transfers in / out. */
+  perAccount: Map<string, { inflowCents: number; outflowCents: number; transferInCents: number; transferOutCents: number }>
+}
+
+/**
+ * Split ONE balanced journal entry's cash lines into external flow and
+ * transfers between the company's own cash accounts (see the header above).
+ * Pure — exported for the regression tests.
+ */
+export function splitEntryCash(lines: CashSplitLine[], isCash: (accountId: string) => boolean): CashSplit {
+  const perAccount: CashSplit['perAccount'] = new Map()
+  const slot = (id: string) => {
+    let s = perAccount.get(id)
+    if (!s) { s = { inflowCents: 0, outflowCents: 0, transferInCents: 0, transferOutCents: 0 }; perAccount.set(id, s) }
+    return s
+  }
+  const cash = lines.filter((l) => isCash(l.accountId)).map((l) => ({ ...l, left: l.amountCents }))
+  const nonCash = lines.filter((l) => !isCash(l.accountId))
+
+  // 1. Explicit transfer pairs.
+  const credits = cash.filter((l) => l.type === 'credit')
+  for (const d of cash.filter((l) => l.type === 'debit')) {
+    const c = credits.find((x) => x.left > 0 && x.accountId !== d.accountId
+      && x.left === d.left && (x.memo ?? '') === (d.memo ?? ''))
+    if (!c) continue
+    slot(d.accountId).transferInCents += d.left
+    slot(c.accountId).transferOutCents += c.left
+    d.left = 0
+    c.left = 0
+  }
+
+  // 2. Cap the rest by what non-cash lines can account for.
+  const rd = cash.filter((l) => l.type === 'debit').reduce((s, l) => s + l.left, 0)
+  const rc = cash.filter((l) => l.type === 'credit').reduce((s, l) => s + l.left, 0)
+  const nc = nonCash.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
+  const nd = nonCash.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
+  const transfer = Math.max(0, Math.min(rd - nc, rc - nd, rd, rc))
+
+  let tIn = transfer
+  let tOut = transfer
+  for (const l of cash) {
+    if (l.left === 0) { slot(l.accountId); continue }
+    const s = slot(l.accountId)
+    if (l.type === 'debit') {
+      const t = Math.min(tIn, l.left); tIn -= t
+      s.transferInCents += t
+      s.inflowCents += l.left - t
+    } else {
+      const t = Math.min(tOut, l.left); tOut -= t
+      s.transferOutCents += t
+      s.outflowCents += l.left - t
+    }
+  }
+  return { inflowCents: rd - transfer, outflowCents: rc - transfer, perAccount }
+}
+
 export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date): Promise<CashFlowReport> {
-  const cashAccounts = await prisma.account.findMany({
-    where: { tenantId: { in: tenantIds }, code: { in: CASH_ACCOUNT_CODES } },
-    select: { id: true, code: true, name: true },
+  // Asset accounts a live bank account points at, per company.
+  const linkedBanks = await prisma.bankAccount.findMany({
+    where: { tenantId: { in: tenantIds }, deletedAt: null, accountCode: { not: null } },
+    select: { tenantId: true, accountCode: true },
   })
+  const [cashAccounts, companies] = await Promise.all([
+    prisma.account.findMany({
+      where: {
+        tenantId: { in: tenantIds },
+        OR: [
+          { code: { in: [...CASH_ACCOUNT_CODES, ...BANK_CHILD_CODES] } },
+          ...linkedBanks.map((b) => ({ tenantId: b.tenantId!, code: b.accountCode!, type: 'asset' as const })),
+        ],
+      },
+      select: { id: true, tenantId: true, code: true, name: true },
+    }),
+    companiesInScope(tenantIds),
+  ])
+  const nameOf = new Map(companies.map((c) => [c.id, c.name]))
   const cashAccountIds = new Set(cashAccounts.map((a) => a.id))
+  const isCash = (id: string) => cashAccountIds.has(id)
 
   // Pull every line in entries that touched a cash account
-  const entriesWithCash = await prisma.journalEntry.findMany({
+  const entriesWithCash = cashAccountIds.size === 0 ? [] : await prisma.journalEntry.findMany({
     where: {
       tenantId: { in: tenantIds },
       entryDate: { gte: dateFrom, lte: dateTo },
@@ -487,10 +664,14 @@ export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date
     include: { lines: { include: { account: true } } },
   })
 
-  // Per-cash-account inflow/outflow (debit to cash = inflow; credit = outflow)
-  const perCash = new Map(cashAccounts.map((a) => [a.id, { code: a.code, name: a.name, inflowCents: 0, outflowCents: 0 }]))
+  const perCash = new Map(cashAccounts.map((a) => [a.id, {
+    tenantId: a.tenantId,
+    companyName: a.tenantId ? (nameOf.get(a.tenantId) ?? null) : null,
+    code: a.code, name: a.name,
+    inflowCents: 0, outflowCents: 0, transferInCents: 0, transferOutCents: 0,
+  }]))
 
-  // Per-category — opposing-account driven
+  // Per-category — opposing-account driven, external flow only
   const perCategory = new Map<'operating' | 'investing' | 'financing', { inflowCents: number; outflowCents: number }>([
     ['operating', { inflowCents: 0, outflowCents: 0 }],
     ['investing', { inflowCents: 0, outflowCents: 0 }],
@@ -498,41 +679,41 @@ export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date
   ])
 
   for (const entry of entriesWithCash) {
-    for (const line of entry.lines) {
-      if (!cashAccountIds.has(line.accountId)) continue
-      const slot = perCash.get(line.accountId)!
-      if (line.type === 'debit') slot.inflowCents  += line.amountCents
-      else                        slot.outflowCents += line.amountCents
+    const split = splitEntryCash(entry.lines, isCash)
+    for (const [accountId, s] of split.perAccount) {
+      const row = perCash.get(accountId)!
+      row.inflowCents      += s.inflowCents
+      row.outflowCents     += s.outflowCents
+      row.transferInCents  += s.transferInCents
+      row.transferOutCents += s.transferOutCents
     }
 
-    // Determine dominant non-cash account for category attribution
-    const nonCashLines = entry.lines.filter((l) => !cashAccountIds.has(l.accountId))
+    // Category: the dominant non-cash account. An entry made only of cash
+    // lines is a transfer and has no external flow to categorise.
+    const nonCashLines = entry.lines.filter((l) => !isCash(l.accountId))
     if (nonCashLines.length === 0) continue
     const dominant = nonCashLines.reduce((a, b) => (a.amountCents >= b.amountCents ? a : b))
-    const category = categorise(dominant.account.code, entry.reference)
-    const cashLines = entry.lines.filter((l) => cashAccountIds.has(l.accountId))
-    const inflow  = cashLines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
-    const outflow = cashLines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
-    const cat = perCategory.get(category)!
-    cat.inflowCents  += inflow
-    cat.outflowCents += outflow
+    const cat = perCategory.get(categorise(dominant.account.code, entry.reference))!
+    cat.inflowCents  += split.inflowCents
+    cat.outflowCents += split.outflowCents
   }
 
   const byCashAccount = Array.from(perCash.values())
-    .sort((a, b) => a.code.localeCompare(b.code))
-    .map((r) => ({ ...r, netCents: r.inflowCents - r.outflowCents }))
+    .sort(byCompanyThenCode)
+    .map((r) => ({ ...r, netCents: r.inflowCents - r.outflowCents + r.transferInCents - r.transferOutCents }))
 
   const byCategory = Array.from(perCategory.entries())
     .map(([category, v]) => ({ category, ...v, netCents: v.inflowCents - v.outflowCents }))
 
-  const totals = byCashAccount.reduce(
+  const sums = byCashAccount.reduce(
     (s, r) => ({
       inflowCents: s.inflowCents + r.inflowCents,
       outflowCents: s.outflowCents + r.outflowCents,
-      netCents: s.netCents + r.netCents,
+      transfersCents: s.transfersCents + r.transferInCents,
     }),
-    { inflowCents: 0, outflowCents: 0, netCents: 0 },
+    { inflowCents: 0, outflowCents: 0, transfersCents: 0 },
   )
+  const totals = { ...sums, netCents: sums.inflowCents - sums.outflowCents }
 
-  return { dateFrom: fmtPktDate(dateFrom), dateTo: fmtPktDate(dateTo), byCashAccount, byCategory, totals }
+  return { dateFrom: fmtPktDate(dateFrom), dateTo: fmtPktDate(dateTo), companies, byCashAccount, byCategory, totals }
 }
