@@ -13,8 +13,13 @@
 // server HTML. The menu itself is fetched here, from the public storefront
 // API: /storefront/:slug/menu (and /storefront/concepts only when the server
 // couldn't vouch for the slug).
+//
+// The basket is one kitchen's at a time (store/cart.ts, localStorage
+// 'servd-cart'). Opening another kitchen's menu never touches it: only when
+// the customer adds an item here while it holds another kitchen's items do we
+// ask — keep that basket, or start a new one for this kitchen.
 
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
@@ -24,6 +29,10 @@ import { conceptHeroImage, heroCover, formatBrandName } from '../../../lib/conce
 import { useBrandSlug, getServdHost } from '../../../lib/host'
 import { encodeCartToken } from '../../../lib/cartHandoff'
 import { brandCanonical, SERVD_LINK_ORIGIN } from '../../../lib/brandDomains'
+// How a brand takes web orders (lib/fulfilment.ts — the list checkout uses
+// too). A brand whose only option is dine-in can't take an order from anyone
+// who isn't seated: checkout would ask for a table number and stop.
+import { takesTableOrdersOnly } from '../../../lib/fulfilment'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -73,12 +82,51 @@ interface Concept    {
   description: string | null; logoUrl: string | null; primaryColor: string | null; taxRate?: number
   phone?: string | null; address?: string | null
   latitude?: number | null; longitude?: number | null
+  /** false = the brand takes no bookings (hide "Book a table"). Missing = takes them. */
+  reservationsEnabled?: boolean
 }
 
 /** The brand as the server resolved it — only what the hero needs, all
  *  serialisable. null when the API didn't answer and the slug isn't a bundled
  *  brand: the page then shows the slug as the name until the client lookup. */
-export type OrderingConcept = Pick<Concept, 'id' | 'slug' | 'name' | 'description' | 'primaryColor' | 'type' | 'logoUrl'>
+export type OrderingConcept = Pick<Concept, 'id' | 'slug' | 'name' | 'description' | 'primaryColor' | 'type' | 'logoUrl' | 'reservationsEnabled'>
+
+// ─── Table (dine-in) context ────────────────────────────────────────────────
+// The customer is seated at this brand's table: the menu URL carried
+// ?table=<label> (a table QR can add it), or they tapped "I'm at a table".
+// Remembered for the tab's session, per brand, under `servd:at-table:<slug>`
+// (value: the table label from the URL, '' when they only told us they're
+// seated) so checkout can prefill the label. Browser storage can be blocked,
+// so every access is guarded and the page works without it.
+const tableKey = (slug: string) => `servd:at-table:${slug}`
+
+function readAtTable(slug: string): boolean {
+  try {
+    const label = new URLSearchParams(window.location.search).get('table')?.trim()
+    if (label) {
+      try { sessionStorage.setItem(tableKey(slug), label.slice(0, 20)) } catch { /* storage blocked */ }
+      return true
+    }
+    return sessionStorage.getItem(tableKey(slug)) !== null
+  } catch {
+    return false
+  }
+}
+
+function rememberAtTable(slug: string): void {
+  try {
+    if (sessionStorage.getItem(tableKey(slug)) === null) sessionStorage.setItem(tableKey(slug), '')
+  } catch { /* storage blocked — the state still carries it for this visit */ }
+}
+
+/** A line the customer asked to add, held while we ask them something first. */
+interface AddRequest {
+  item: MenuItem
+  qty: number
+  modifiers: { modifierId: string; name: string; priceDeltaCents: number }[]
+  unitPriceCents: number
+  notes: string
+}
 
 
 // The slug → placeholder concept, for when no lookup knows the brand.
@@ -110,6 +158,12 @@ function prettifySlug(slug: string): string {
     .join(' ')
 }
 
+/** Display name for a brand we only know by slug (the kitchen a saved basket
+ *  belongs to): 'stackd' → 'Stackd', 'garnish-station' → 'Garnish Station'. */
+function brandNameForSlug(slug: string): string {
+  return formatBrandName(prettifySlug(slug))
+}
+
 export default function OrderingScreen({ initialConcept, verified = false }: {
   initialConcept: OrderingConcept | null
   /** The server's record is the live one (not the bundled fallback). */
@@ -124,9 +178,19 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [openItem, setOpenItem] = useState<MenuItem | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
+  // Bumped by Retry on the error screen to fetch the menu again.
+  const [attempt, setAttempt] = useState(0)
+  // Seated at this brand's table (see readAtTable). Read after mount — the
+  // server HTML has no URL query or session storage to go on.
+  const [atTable, setAtTable] = useState(false)
+  // An add waiting on the customer: 'switch' = the basket holds another
+  // kitchen's items; 'table' = this brand only takes orders at the table.
+  const [pendingAdd, setPendingAdd] = useState<{ reason: 'switch' | 'table'; request: AddRequest } | null>(null)
 
   const cart = useCart()
   const brandSlug = useBrandSlug()
+
+  useEffect(() => { setAtTable(readAtTable(slug)) }, [slug])
 
   // Fetch the menu (and the concept, when the server couldn't resolve it).
   // Resilient against either API hiccupping: if the /concepts fetch fails
@@ -165,8 +229,8 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
         if (cancelled) return
         setCategories(cats)
         setActiveCategory(cats[0]?.id ?? null)
-        if (cart.conceptSlug && cart.conceptSlug !== slug) cart.clearCart()
-        cart.setConceptSlug(slug)
+        // The basket is left alone here, even when it holds another
+        // kitchen's items — addToBasket asks before replacing it.
       } catch (e) {
         if (!cancelled) setError((e as Error).message)
       }
@@ -174,7 +238,59 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
     void load()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug])
+  }, [slug, attempt])
+
+  function retry() {
+    setError(null)
+    setCategories(null)
+    setAttempt((n) => n + 1)
+  }
+
+  const tableOnly = takesTableOrdersOnly(slug)
+
+  function markAtTable() {
+    rememberAtTable(slug)
+    setAtTable(true)
+  }
+
+  // Every add goes through here. `seated` skips the table check (the customer
+  // just told us); `fresh` starts a new basket for this kitchen (they chose
+  // "Start new"). Reads the store directly so a decision made in the same
+  // tick sees the basket as it is now.
+  function addToBasket(request: AddRequest, opts: { seated?: boolean; fresh?: boolean } = {}) {
+    if (tableOnly && !atTable && !opts.seated) {
+      setPendingAdd({ reason: 'table', request })
+      return
+    }
+    const store = useCart.getState()
+    const otherKitchen = store.items.length > 0 && store.conceptSlug !== null && store.conceptSlug !== slug
+    if (otherKitchen && !opts.fresh) {
+      setPendingAdd({ reason: 'switch', request })
+      return
+    }
+    // A new basket (or an empty one left by another kitchen) gets a fresh
+    // cart id, as it always has when the kitchen changes.
+    if (opts.fresh || (store.items.length === 0 && store.conceptSlug !== slug)) store.clearCart()
+    useCart.getState().setConceptSlug(slug)
+    for (let i = 0; i < request.qty; i++) {
+      useCart.getState().addItem({
+        menuItemId: request.item.id,
+        name: request.item.name,
+        priceCents: request.unitPriceCents,
+        ...(request.modifiers.length > 0 && { modifiers: request.modifiers }),
+        ...(request.notes && { notes: request.notes }),
+      })
+    }
+    setPendingAdd(null)
+    setOpenItem(null)
+    setCartOpen(true)
+  }
+
+  // The customer kept what they had (or backed out): drop the pending add.
+  function dismissPendingAdd() {
+    setPendingAdd(null)
+    setOpenItem(null)
+  }
 
   // Track active category as the user scrolls
   useEffect(() => {
@@ -199,23 +315,23 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   // in the server HTML and stays mounted when the menu arrives; only what
   // sits below it swaps.
   if (error) {
+    // Most failures are the API blinking, so the way forward is Retry. Only a
+    // customer seated at the brand's table has a server to turn to.
     return (
       <div key="error" className="min-h-dvh flex items-center justify-center p-6 text-center">
         <div style={{ maxWidth: '28rem' }}>
           <h1 className="text-sm font-semibold text-s-muted mb-1">
             {formatBrandName((loadedConcept ?? placeholderConcept(slug)).name)}
           </h1>
-          <h2 className="text-2xl font-bold mb-2">Tableside ordering isn&rsquo;t live yet.</h2>
+          <h2 className="text-2xl font-bold mb-2">We couldn&rsquo;t load the menu.</h2>
           <p className="text-s-muted text-sm mb-4">
-            The kitchen hasn&rsquo;t published a menu to the order system. Flag down your server — they&rsquo;ll take the order from the printed card. Reservations are open below.
+            {atTable
+              ? <>Please try again. If it still won&rsquo;t load, flag down your server &mdash; they&rsquo;ll take your order from the printed menu.</>
+              : 'Please try again.'}
           </p>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            {/* The menu lives on the brand's own domain (stackd.pk/menu);
-                booking is a servd page, absolute so a brand-domain copy of
-                this screen doesn't link to a brand-domain copy of it. */}
-            <MagneticLink href={brandCanonical(slug, 'menu')} className="servd-btn-primary">See the menu</MagneticLink>
-            <MagneticLink href={`${SERVD_LINK_ORIGIN}/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</MagneticLink>
-          </div>
+          <MagneticButton type="button" onClick={retry} className="servd-btn-primary" style={{ minHeight: '2.75rem' }}>
+            Retry
+          </MagneticButton>
         </div>
       </div>
     )
@@ -230,6 +346,15 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   // HTML (the skeleton) must not depend on it.
   const hasItems = categories !== null && itemTotal > 0
   const fmt = fmtFor(slug)
+  const brandName = formatBrandName(concept.name)
+  // The kitchen the basket belongs to — another one's when the customer kept
+  // a basket from there; checkout goes to that kitchen.
+  const basketSlug = cart.conceptSlug ?? slug
+  const basketBrand = basketSlug !== slug ? brandNameForSlug(basketSlug) : null
+  const takesBookings = concept.reservationsEnabled !== false
+  // Booking is a servd page — absolute, so a brand-domain copy of this
+  // screen doesn't link to a brand-domain copy of it.
+  const reserveHref = `${SERVD_LINK_ORIGIN}/reserve/${concept.slug}`
 
   // Per-brand skin — same class system as /[concept]/checkout. Wraps the
   // ordering surface in the brand's design language (token remap + a few
@@ -242,10 +367,20 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
     slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
+  // Primary-button ink on the brand skins. The skins remap --servd-green to
+  // the brand accent but not --servd-green-hover, so a hovered primary turned
+  // servd green under the skin's white ink (about 2:1); and Stackd's skin sets
+  // white ink on its cream accent. Hover stays on the accent, and Stackd's
+  // primaries take the brand's dark plum. (Belongs in the skin blocks in
+  // globals.css, where checkout would get it too.)
+  const skinTokens = (brandSkinClass ? {
+    '--servd-green-hover': 'var(--servd-green)',
+    ...(slug === 'stackd' && { '--servd-on-green': 'var(--stackd-plum-dark)' }),
+  } : {}) as React.CSSProperties
 
   return (
     <div key="screen" className={brandSkinClass}
-      style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
+      style={{ ...skinTokens, background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
       {/* Hero */}
       <section
         style={{
@@ -312,6 +447,44 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
         </div>
       ) : (
         <Fragment key="menu">
+          {/* A brand that only takes orders at the table says so up front,
+              instead of letting a customer at home fill a basket checkout
+              can't take. Seated customers say so and carry on. */}
+          {tableOnly && !atTable && categories.length > 0 && (
+            <section
+              aria-labelledby="table-only-title"
+              style={{
+                background: 'var(--servd-surface)',
+                color: 'var(--servd-ink)',
+                borderBottom: '1px solid var(--servd-line)',
+              }}
+            >
+              <div className="container" style={{ paddingTop: '1.25rem', paddingBottom: '1.25rem', display: 'grid', gap: '0.85rem' }}>
+                <div style={{ display: 'grid', gap: '0.3rem' }}>
+                  <h2 id="table-only-title" style={{ fontSize: '1.1rem', fontWeight: 800, lineHeight: 1.3 }}>
+                    {brandName} takes orders at the table.
+                  </h2>
+                  <p style={{ color: 'var(--servd-mute)', fontSize: '0.92rem', lineHeight: 1.5, maxWidth: '40rem' }}>
+                    There&rsquo;s no pickup or delivery from {brandName}.{' '}
+                    {takesBookings
+                      ? 'Book a table, then order from your phone once you’re seated.'
+                      : 'Order from your phone once you’re seated.'}
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  {takesBookings && (
+                    <MagneticLink href={reserveHref} className="servd-btn-primary" style={{ minHeight: '2.75rem' }}>
+                      Book a table
+                    </MagneticLink>
+                  )}
+                  <button type="button" onClick={markAtTable} style={{ ...OUTLINE_BTN, flex: 'none' }}>
+                    I&rsquo;m at a table
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* Sticky category nav */}
           {categories.length > 0 && (
             <nav
@@ -361,7 +534,8 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
           )}
 
           {/* Menu */}
-          <div className="container" style={{ padding: 'clamp(2rem, 4vw, 3rem) 0', display: 'grid', gap: '2.5rem' }}>
+          {/* Top/bottom only: .container's side padding is the page gutter. */}
+          <div className="container" style={{ paddingTop: 'clamp(2rem, 4vw, 3rem)', paddingBottom: 'clamp(2rem, 4vw, 3rem)', display: 'grid', gap: '2.5rem' }}>
             {categories.length === 0 && (
               <div className="text-center py-12">
                 <h3 className="text-lg font-semibold mb-2">No menu yet</h3>
@@ -388,19 +562,44 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
               fmt={fmt}
               onClose={() => setOpenItem(null)}
               onAdd={(item, qty, modifiers, finalPriceCents, notes) => {
-                for (let i = 0; i < qty; i++) {
-                  cart.addItem({
-                    menuItemId: item.id,
-                    name: item.name,
-                    priceCents: finalPriceCents,
-                    ...(modifiers.length > 0 && { modifiers }),
-                    ...(notes && { notes }),
-                  })
-                }
-                setOpenItem(null)
-                setCartOpen(true)
+                addToBasket({ item, qty, modifiers, unitPriceCents: finalPriceCents, notes })
               }}
             />
+          )}
+
+          {/* The basket holds another kitchen's items: ask before replacing
+              it. Keep = leave it as it is (this item isn't added). */}
+          {pendingAdd?.reason === 'switch' && (
+            <ChoiceSheet
+              title="Start a new basket?"
+              body={<>Your basket has items from {basketBrand ?? 'another kitchen'}. Start a new basket for {brandName}?</>}
+              onDismiss={dismissPendingAdd}
+            >
+              <button type="button" data-autofocus onClick={dismissPendingAdd} style={OUTLINE_BTN}>
+                Keep
+              </button>
+              <MagneticButton type="button" className="servd-btn-primary" style={{ flex: 1, minHeight: '2.75rem' }}
+                onClick={() => addToBasket(pendingAdd.request, { seated: true, fresh: true })}>
+                Start new
+              </MagneticButton>
+            </ChoiceSheet>
+          )}
+
+          {/* Table-only brand, customer hasn't said they're seated. */}
+          {pendingAdd?.reason === 'table' && (
+            <ChoiceSheet
+              title={`${brandName} takes orders at the table`}
+              body={<>There&rsquo;s no pickup or delivery from {brandName}. If you&rsquo;re seated now, carry on &mdash; you&rsquo;ll add your table number at checkout.</>}
+              onDismiss={dismissPendingAdd}
+            >
+              {takesBookings && (
+                <a href={reserveHref} style={OUTLINE_BTN}>Book a table</a>
+              )}
+              <MagneticButton type="button" data-autofocus className="servd-btn-primary" style={{ flex: 1, minHeight: '2.75rem' }}
+                onClick={() => { markAtTable(); addToBasket(pendingAdd.request, { seated: true }) }}>
+                I&rsquo;m at a table
+              </MagneticButton>
+            </ChoiceSheet>
           )}
 
           {/* Cart drawer */}
@@ -409,9 +608,12 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
               open={cartOpen}
               onOpen={() => setCartOpen(true)}
               onClose={() => setCartOpen(false)}
-              accent={accent}
-              fmt={fmt}
+              basketBrand={basketBrand}
+              fmt={fmtFor(basketSlug)}
               onCheckout={() => {
+                // Checkout is the basket's kitchen — another one's when the
+                // customer kept a basket from there.
+                //
                 // On a brand custom domain (stackd.pk, stackd.localhost:3002…),
                 // hand the cart off to the canonical servd checkout via a URL
                 // token so the user can be cross-sold items from other GS Foods
@@ -425,10 +627,10 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
                     conceptSlug: cart.conceptSlug,
                     items:       cart.items,
                   })
-                  window.location.href = `${servdHost}/${concept.slug}/checkout?cart=${encodeURIComponent(token)}`
+                  window.location.href = `${servdHost}/${basketSlug}/checkout?cart=${encodeURIComponent(token)}`
                   return
                 }
-                router.push(`/${concept.slug}/checkout`)
+                router.push(`/${basketSlug}/checkout`)
               }}
             />
           )}
@@ -440,27 +642,130 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
 
 // ───── Components ───────────────────────────────────────────────────────────
 
+// Secondary action next to a servd-btn-primary: outlined in the text colour,
+// so it reads on any brand skin. 44px tall — a comfortable tap target.
+const OUTLINE_BTN: React.CSSProperties = {
+  flex: 1,
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  minHeight: '2.75rem', padding: '0.7rem 1.25rem',
+  borderRadius: '999px', border: '1.5px solid currentColor',
+  background: 'transparent', color: 'inherit',
+  fontWeight: 700, fontSize: '0.95rem', textDecoration: 'none', cursor: 'pointer',
+}
+
+// Dietary / spice badges and the allergen line — shared by both card shapes.
+function ItemTags({ item }: { item: MenuItem }) {
+  return (
+    <>
+      {((item.dietary?.length ?? 0) > 0 || ((item.spiceLevel ?? 0) > 0)) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.2rem' }}>
+          {(item.dietary ?? []).map((d) => {
+            const b = DIETARY_BADGE[d]
+            return (
+              <span key={d} style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em',
+                padding: '0.15rem 0.45rem', borderRadius: '999px',
+                background: b?.color ?? 'rgba(0,0,0,0.06)', color: 'var(--servd-ink)',
+              }}>
+                {b?.withIcon && <LeafIcon />}
+                {b?.label ?? d}
+              </span>
+            )
+          })}
+          {(item.spiceLevel ?? 0) > 0 && (
+            <span aria-label={`Spice level ${Math.min(item.spiceLevel ?? 0, 3)} of 3`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.1rem',
+                fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.45rem',
+                borderRadius: '999px', background: 'rgba(220,38,38,0.12)', color: '#991b1b',
+              }}>
+              {Array.from({ length: Math.min(item.spiceLevel ?? 0, 3) }).map((_, i) => (
+                <FlameIcon key={i} />
+              ))}
+            </span>
+          )}
+        </div>
+      )}
+      {(item.allergens?.length ?? 0) > 0 && (
+        <p style={{ fontSize: '0.7rem', color: 'var(--servd-mute)', marginTop: '0.1rem' }}>
+          Contains: {(item.allergens ?? []).join(', ')}
+        </p>
+      )}
+    </>
+  )
+}
+
+const SOLD_OUT_TAG: React.CSSProperties = {
+  background: 'rgba(0,0,0,0.7)', color: 'white',
+  fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+  padding: '0.2rem 0.55rem', borderRadius: '999px',
+}
+
 function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () => void; accent: string; fmt: (cents: number) => string }) {
   const disabled = !item.isAvailable
+  const frame: React.CSSProperties = {
+    textAlign: 'left',
+    background: '#fff',
+    border: '1px solid var(--servd-line)',
+    borderRadius: '0.85rem',
+    padding: 0,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.55 : 1,
+    overflow: 'hidden',
+    transition: 'transform 180ms cubic-bezier(0.22,1,0.36,1), box-shadow 180ms',
+  }
+  const hover = {
+    onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => { if (!disabled) e.currentTarget.style.transform = 'translateY(-2px)'; if (!disabled) e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)' },
+    onMouseLeave: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none' },
+  }
+  const label = `${item.name} — ${fmt(item.priceCents)}${disabled ? ' — sold out' : ''}`
+
+  // No photo or video: a compact text card — name, description, price, Add —
+  // instead of an empty 4:3 picture box. In a row beside photo cards it
+  // stretches to their height with the price row at the foot.
+  if (!item.imageUrl && !item.videoUrl) {
+    return (
+      <button
+        type="button"
+        onClick={() => !disabled && onClick()}
+        disabled={disabled}
+        style={{ ...frame, padding: '0.95rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}
+        {...hover}
+        aria-label={label}
+      >
+        <h3 style={{ fontSize: '1rem', fontWeight: 700, lineHeight: 1.3 }}>{item.name}</h3>
+        {item.description && (
+          <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+            {item.description}
+          </p>
+        )}
+        <ItemTags item={item} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginTop: 'auto', paddingTop: '0.4rem' }}>
+          <span style={{ fontWeight: 800, color: 'var(--servd-green-dark)' }}>{fmt(item.priceCents)}</span>
+          {disabled ? (
+            <span style={SOLD_OUT_TAG}>Sold out</span>
+          ) : (
+            <span aria-hidden="true" style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+              padding: '0.3rem 0.85rem', borderRadius: '999px',
+              border: '1.5px solid currentColor', color: 'var(--servd-green-dark)',
+              fontSize: '0.85rem', fontWeight: 800,
+            }}>+ Add</span>
+          )}
+        </div>
+      </button>
+    )
+  }
+
   return (
     <button
       type="button"
       onClick={() => !disabled && onClick()}
       disabled={disabled}
-      style={{
-        textAlign: 'left',
-        background: '#fff',
-        border: '1px solid var(--servd-line)',
-        borderRadius: '0.85rem',
-        padding: 0,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.55 : 1,
-        overflow: 'hidden',
-        transition: 'transform 180ms cubic-bezier(0.22,1,0.36,1), box-shadow 180ms',
-      }}
-      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.transform = 'translateY(-2px)'; if (!disabled) e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none' }}
-      aria-label={`${item.name} — ${fmt(item.priceCents)}${disabled ? ' — sold out' : ''}`}
+      style={frame}
+      {...hover}
+      aria-label={label}
     >
       <div style={{
         aspectRatio: '4/3',
@@ -490,12 +795,7 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
           />
         )}
         {disabled && (
-          <span style={{
-            position: 'absolute', top: '0.6rem', left: '0.6rem',
-            background: 'rgba(0,0,0,0.7)', color: 'white',
-            fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-            padding: '0.2rem 0.55rem', borderRadius: '999px',
-          }}>Sold out</span>
+          <span style={{ ...SOLD_OUT_TAG, position: 'absolute', top: '0.6rem', left: '0.6rem' }}>Sold out</span>
         )}
       </div>
       <div style={{ padding: '0.95rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
@@ -505,41 +805,7 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
             {item.description}
           </p>
         )}
-        {((item.dietary?.length ?? 0) > 0 || ((item.spiceLevel ?? 0) > 0)) && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.2rem' }}>
-            {(item.dietary ?? []).map((d) => {
-              const b = DIETARY_BADGE[d]
-              return (
-                <span key={d} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                  fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em',
-                  padding: '0.15rem 0.45rem', borderRadius: '999px',
-                  background: b?.color ?? 'rgba(0,0,0,0.06)', color: 'var(--servd-ink)',
-                }}>
-                  {b?.withIcon && <LeafIcon />}
-                  {b?.label ?? d}
-                </span>
-              )
-            })}
-            {(item.spiceLevel ?? 0) > 0 && (
-              <span aria-label={`Spice level ${Math.min(item.spiceLevel ?? 0, 3)} of 3`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '0.1rem',
-                  fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.45rem',
-                  borderRadius: '999px', background: 'rgba(220,38,38,0.12)', color: '#991b1b',
-                }}>
-                {Array.from({ length: Math.min(item.spiceLevel ?? 0, 3) }).map((_, i) => (
-                  <FlameIcon key={i} />
-                ))}
-              </span>
-            )}
-          </div>
-        )}
-        {(item.allergens?.length ?? 0) > 0 && (
-          <p style={{ fontSize: '0.7rem', color: 'var(--servd-mute)', marginTop: '0.1rem' }}>
-            Contains: {(item.allergens ?? []).join(', ')}
-          </p>
-        )}
+        <ItemTags item={item} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.4rem' }}>
           <span style={{ fontWeight: 800, color: 'var(--servd-green-dark)' }}>{fmt(item.priceCents)}</span>
           {!disabled && <span style={{ fontSize: '1.25rem', color: 'var(--servd-green-dark)', fontWeight: 700 }}>+</span>}
@@ -637,27 +903,37 @@ function ItemDetailModal({
           animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
         }}
       >
-        <div style={{
-          aspectRatio: '16/10',
-          background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
-          position: 'relative',
-          overflow: 'hidden',
-        }}>
-          {item.videoUrl && (
-            <video
-              src={item.videoUrl}
-              {...(item.imageUrl ? { poster: item.imageUrl } : {})}
-              autoPlay muted loop playsInline preload="metadata"
-              aria-hidden="true"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          )}
-          <button onClick={onClose} aria-label="Close" style={{
-            position: 'absolute', top: '0.75rem', right: '0.75rem',
-            background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px',
-            width: '2rem', height: '2rem', fontSize: '1.1rem', cursor: 'pointer',
-          }}>×</button>
-        </div>
+        {item.imageUrl || item.videoUrl ? (
+          <div style={{
+            aspectRatio: '16/10',
+            background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
+            position: 'relative',
+            overflow: 'hidden',
+          }}>
+            {item.videoUrl && (
+              <video
+                src={item.videoUrl}
+                {...(item.imageUrl ? { poster: item.imageUrl } : {})}
+                autoPlay muted loop playsInline preload="metadata"
+                aria-hidden="true"
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            )}
+            <button type="button" onClick={onClose} aria-label="Close" style={{
+              position: 'absolute', top: '0.6rem', right: '0.6rem',
+              background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px',
+              width: '2.5rem', height: '2.5rem', fontSize: '1.2rem', cursor: 'pointer',
+            }}>×</button>
+          </div>
+        ) : (
+          // No photo: no picture box, just the close button above the name.
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.5rem 0.5rem 0' }}>
+            <button type="button" onClick={onClose} aria-label="Close" style={{
+              background: 'transparent', border: 'none', borderRadius: '999px', color: 'var(--servd-mute)',
+              width: '2.75rem', height: '2.75rem', fontSize: '1.4rem', cursor: 'pointer',
+            }}>×</button>
+          </div>
+        )}
 
         <div style={{ overflowY: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>{item.name}</h2>
@@ -749,12 +1025,12 @@ function ItemDetailModal({
         </div>
 
         <div style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.25rem 0.4rem' }}>
-            <button onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity"
-              style={{ width: '2rem', height: '2rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1.1rem', cursor: 'pointer' }}>−</button>
-            <span style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700 }}>{qty}</span>
-            <button onClick={() => setQty(Math.min(20, qty + 1))} aria-label="Increase quantity"
-              style={{ width: '2rem', height: '2rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1.1rem', cursor: 'pointer' }}>+</button>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
+            <button type="button" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity"
+              style={QTY_BTN}>−</button>
+            <span aria-live="polite" style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700 }}>{qty}</span>
+            <button type="button" onClick={() => setQty(Math.min(20, qty + 1))} aria-label="Increase quantity"
+              style={QTY_BTN}>+</button>
           </div>
           <button
             onClick={() => canAdd && onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim())}
@@ -772,15 +1048,25 @@ function ItemDetailModal({
   )
 }
 
+// Quantity steppers (item modal + basket): 40px tap targets; the visible
+// pill around them stays slim.
+const QTY_BTN: React.CSSProperties = {
+  width: '2.5rem', height: '2.5rem', borderRadius: '999px', border: 'none',
+  background: 'transparent', color: 'inherit', fontSize: '1.1rem', cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+}
+
 function CartDrawer({
-  open, onOpen, onClose, accent, onCheckout, fmt,
+  open, onOpen, onClose, onCheckout, fmt, basketBrand,
 }: {
   open: boolean
   onOpen: () => void
   onClose: () => void
-  accent: string
   onCheckout: () => void
   fmt: (cents: number) => string
+  /** The basket's kitchen when it isn't the one on screen (the customer kept
+   *  a basket from there); null when it's this kitchen's. */
+  basketBrand: string | null
 }) {
   // Tax is computed at checkout (payment-method aware), not here.
   // The basket just shows subtotal.
@@ -789,30 +1075,33 @@ function CartDrawer({
   const itemCount = cart.itemCount()
 
   if (!open) {
-    // Floating CTA pill anchored to bottom of screen
+    // Floating CTA pill anchored to bottom of screen — the primary action, so
+    // the house primary: green fill, purple ink (never white on green). The
+    // count chip inverts it.
     return (
       <button
+        type="button"
         onClick={onOpen}
-        aria-label={`View cart — ${itemCount} item${itemCount === 1 ? '' : 's'}, ${fmt(subtotal)}`}
+        aria-label={`View ${basketBrand ? `${basketBrand} ` : ''}basket — ${itemCount} item${itemCount === 1 ? '' : 's'}, ${fmt(subtotal)}`}
         style={{
           position: 'fixed', bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
-          background: '#0a0a0a', color: 'white', border: 'none',
+          background: 'var(--servd-green)', color: 'var(--servd-on-green)', border: 'none',
           borderRadius: '999px', padding: '0.85rem 1.5rem',
           display: 'flex', alignItems: 'center', gap: '0.85rem',
           boxShadow: '0 12px 40px rgba(0,0,0,0.25)', cursor: 'pointer',
-          fontWeight: 700,
+          fontWeight: 800, whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 2rem)',
         }}
       >
         <span style={{
-          background: accent, color: '#0a0a0a',
-          minWidth: '1.6rem', height: '1.6rem', borderRadius: '999px',
+          background: 'var(--servd-on-green)', color: 'var(--servd-green)',
+          minWidth: '1.6rem', height: '1.6rem', borderRadius: '999px', padding: '0 0.4rem',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           fontWeight: 900, fontSize: '0.85rem',
         }}>
           {itemCount}
         </span>
-        <span>View basket</span>
-        <span style={{ opacity: 0.85 }}>{fmt(subtotal)}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{basketBrand ? `${basketBrand} basket` : 'View basket'}</span>
+        <span>{fmt(subtotal)}</span>
       </button>
     )
   }
@@ -835,10 +1124,17 @@ function CartDrawer({
           animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
         }}
       >
-        <header style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Your basket</h2>
-          <button onClick={onClose} aria-label="Close basket"
-            style={{ background: 'transparent', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--servd-mute)' }}>×</button>
+        <header style={{ padding: '0.75rem 0.75rem 0.75rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <div>
+            <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Your basket</h2>
+            {basketBrand && (
+              <p style={{ color: 'var(--servd-mute)', fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                From {basketBrand} &mdash; checkout is with {basketBrand}.
+              </p>
+            )}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close basket"
+            style={{ background: 'transparent', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--servd-mute)', width: '2.75rem', height: '2.75rem', borderRadius: '999px', flex: 'none' }}>×</button>
         </header>
 
         <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -855,25 +1151,25 @@ function CartDrawer({
                   </p>
                 )}
                 <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>{fmt(line.priceCents)} · qty {line.quantity}</p>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.15rem 0.3rem' }}>
-                  <button onClick={() => cart.updateQty(line.lineId, line.quantity - 1)} aria-label="Decrease"
-                    style={{ width: '1.6rem', height: '1.6rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1rem', cursor: 'pointer' }}>−</button>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
+                  <button type="button" onClick={() => cart.updateQty(line.lineId, line.quantity - 1)} aria-label={`Decrease ${line.name}`}
+                    style={QTY_BTN}>−</button>
                   <span style={{ minWidth: '1.2rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem' }}>{line.quantity}</span>
-                  <button onClick={() => cart.updateQty(line.lineId, line.quantity + 1)} aria-label="Increase"
-                    style={{ width: '1.6rem', height: '1.6rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1rem', cursor: 'pointer' }}>+</button>
+                  <button type="button" onClick={() => cart.updateQty(line.lineId, line.quantity + 1)} aria-label={`Increase ${line.name}`}
+                    style={QTY_BTN}>+</button>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <p style={{ fontWeight: 700 }}>{fmt(line.priceCents * line.quantity)}</p>
-                <button onClick={() => cart.removeItem(line.lineId)}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--servd-mute)', fontSize: '0.75rem', marginTop: '0.4rem', cursor: 'pointer' }}>Remove</button>
+                <button type="button" onClick={() => cart.removeItem(line.lineId)} aria-label={`Remove ${line.name}`}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--servd-mute)', fontSize: '0.75rem', marginTop: '0.15rem', minHeight: '2.5rem', padding: '0 0 0 0.75rem', cursor: 'pointer' }}>Remove</button>
               </div>
             </div>
           ))}
         </div>
 
         {cart.items.length > 0 && (
-          <footer style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)' }}>
+          <footer style={{ padding: '1rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom))', borderTop: '1px solid var(--servd-line)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
               {/* Tax/GST is computed at checkout once the customer picks
                   a payment method (8% on card-rails, 15% on cash), so
@@ -892,11 +1188,72 @@ function CartDrawer({
                 <span>{fmt(subtotal)}</span>
               </div>
             </div>
-            <MagneticButton onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
+            {/* servd-btn-primary: green fill, var(--servd-on-green) ink. */}
+            <MagneticButton type="button" onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
               Checkout · {fmt(subtotal)} + tax
             </MagneticButton>
           </footer>
         )}
+      </div>
+    </div>
+  )
+}
+
+// A small bottom sheet that asks one question before an add goes through
+// (start a new basket? / are you at a table?). Not window.confirm: it wears
+// the brand skin, and Escape or a tap outside means "no change". Focus moves
+// to the button marked data-autofocus and returns where it was on close.
+function ChoiceSheet({ title, body, onDismiss, children }: {
+  title: string
+  body: React.ReactNode
+  onDismiss: () => void
+  children: React.ReactNode
+}) {
+  const id = useId()
+  const panelRef = useRef<HTMLDivElement>(null)
+  const dismissRef = useRef(onDismiss)
+  dismissRef.current = onDismiss
+
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    panelRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus()
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismissRef.current() }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      previous?.focus?.()
+    }
+  }, [])
+
+  return (
+    <div
+      onClick={onDismiss}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 70,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-body`}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', width: '100%', maxWidth: '34rem',
+          borderRadius: '1.25rem 1.25rem 0 0',
+          padding: '1.5rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom))',
+          display: 'grid', gap: '0.6rem',
+          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
+        }}
+      >
+        <h2 id={`${id}-title`} style={{ fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.3 }}>{title}</h2>
+        <p id={`${id}-body`} style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.5 }}>{body}</p>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
+          {children}
+        </div>
       </div>
     </div>
   )

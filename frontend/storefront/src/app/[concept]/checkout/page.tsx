@@ -8,6 +8,7 @@ import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
 import DeliveryPin, { type LatLng } from '../../../components/checkout/DeliveryPin'
+import { fulfilmentFor, type FulfilmentOption } from '../../../lib/fulfilment'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -43,22 +44,9 @@ interface CustomerAddress {
 
 type PaymentMethod = 'cash' | 'card' | 'jazzcash' | 'easypaisa' | 'keenu'
 
-// Fulfilment options. Backend accepts these strings on
-// POST /storefront/orders.type.
-type FulfilmentOption = 'dine-in' | 'pickup' | 'curbside' | 'delivery'
+// Which fulfilment modes each brand offers lives in lib/fulfilment.ts — the
+// one list the ordering screen reads too.
 
-// Per-brand allow-list. The brand's operating model decides what
-// fulfilment modes the customer can pick. Simmer is plated dining
-// only (the QR card is at the table); stackd is a twenty-seat cafe
-// with a grab-and-go counter, so it adds pickup + curbside; Flipd
-// ships hot from the kitchen, so it
-// also opens up delivery. Slugs not in the map see the full set
-// (legacy / generic brand pages).
-const BRAND_FULFILMENT: Record<string, FulfilmentOption[]> = {
-  simmer: ['dine-in'],
-  stackd:   ['dine-in', 'pickup', 'curbside'],
-  flipd:  ['dine-in', 'pickup', 'curbside', 'delivery'],
-}
 const FULFILMENT_LABEL: Record<FulfilmentOption, string> = {
   'dine-in':  'Dine in',
   'pickup':   'Pickup',
@@ -104,7 +92,7 @@ export default function CheckoutPage() {
   // gift card, total — comes from GET /storefront/quote, which prices with
   // the same server function checkout charges with (lib/pricing.ts). It used
   // to hardcode 15% / 8% here while the server always charged 8%.
-  const { items, subtotalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
+  const { items, subtotalCents, itemCount, clearCart, hydrateFromReorder, conceptSlug: cartSlug } = useCart()
   const token = useCustomerAuth((s) => s.token)
 
   // Per-brand ordering skin. Same class system as /[concept]/page.tsx so
@@ -129,6 +117,20 @@ export default function CheckoutPage() {
       router.replace(`/login?next=${next}`)
     }
   }, [token, slug, router])
+
+  // The basket belongs to one kitchen (the ordering screen can keep another
+  // kitchen's basket when the customer chooses to). Checking it out under a
+  // different brand's URL would send that kitchen's items to this one, so go
+  // to the basket's own checkout. Not while a ?cart= hand-off is pending: that
+  // effect below replaces the basket first.
+  useEffect(() => {
+    if (searchParams?.get('cart')) return
+    // A plain slug only: the basket's slug can arrive in a ?cart= link, and
+    // '/evil.example' would make this an open redirect.
+    if (cartSlug && /^[a-z0-9-]+$/.test(cartSlug) && cartSlug !== slug && items.length > 0) {
+      router.replace(`/${cartSlug}/checkout`)
+    }
+  }, [cartSlug, slug, items.length, searchParams, router])
 
   // Cross-domain handoff: when a user builds a cart on a brand custom domain
   // (stackd.pk, stackd.localhost:3002…) and clicks checkout, the brand site
@@ -172,8 +174,8 @@ export default function CheckoutPage() {
   // here" on arrival via /[concept]/order/[id], staff sees the queue at
   // /orders/curbside in admin and runs the bag out. The allow-list per
   // brand drives both the rendered chooser and the initial selection
-  // (whatever option appears first in BRAND_FULFILMENT for the slug).
-  const allowedFulfilment = BRAND_FULFILMENT[slug] ?? ['pickup', 'curbside', 'delivery']
+  // (whatever option appears first in fulfilmentFor(slug)).
+  const allowedFulfilment = fulfilmentFor(slug)
   const [fulfilmentType, setFulfilmentType] = useState<FulfilmentOption>(allowedFulfilment[0]!)
   const [curbsideVehicle,  setCurbsideVehicle]  = useState('')
   const [curbsidePlate,    setCurbsidePlate]    = useState('')
@@ -637,7 +639,7 @@ export default function CheckoutPage() {
             ))}
           </div>
           {/* How are you getting it? — brand-aware. Allow-list driven by
-              BRAND_FULFILMENT at top of file. When the brand offers only
+              lib/fulfilment.ts. When the brand offers only
               one option (e.g. Simmer = dine-in), skip the chooser and
               just confirm the mode statically. */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(135,197,64,0.06)', border: '1px solid rgba(135,197,64,0.25)' }}>

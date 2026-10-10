@@ -6,7 +6,7 @@ import { Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../ui/ErrorToast'
 import { MagneticButton } from '../ui/MagneticButton'
-import { postAuthDest } from './LoginForm'
+import { NETWORK_ERROR, customerErrorMessage, postAuthDest, useAuthReturnPath, withReturnPath, type ApiErrorBody } from './authFlow'
 
 // The storefront's one-code sign-up (details → code). ONE code is sent to
 // WhatsApp and email at the same time; the customer types whichever copy
@@ -42,6 +42,9 @@ export function SignupForm({
 }) {
   const router  = useRouter()
   const setAuth = useCustomerAuth((s) => s.setAuth)
+  // ?next= / ?return= (checkout, order tracker) — carried onto the "Sign in"
+  // links so hopping to /login keeps the customer's way back.
+  const loginHref = withReturnPath('/login', useAuthReturnPath())
 
   const [step,    setStep]    = useState<'details' | 'otp'>('details')
 
@@ -74,27 +77,27 @@ export function SignupForm({
   }, [resendCooldown])
 
   async function requestCodes(): Promise<boolean> {
+    let res: Response
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/customer/request-signup-codes`, {
+      res = await fetch(`${API_URL}/api/v1/auth/customer/request-signup-codes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: phone.trim(), email: email.trim() }),
       })
-      const data = await res.json() as {
-        phone?: { status: ChannelStatus }; email?: { status: ChannelStatus }
-        error?: { message?: string; code?: string }
-      }
-      if (!res.ok) {
-        setError(data.error?.message ?? 'Could not send codes — please check your details')
-        return false
-      }
-      setChannels({ phone: data.phone!.status, email: data.email!.status })
-      setResendCooldown(30)
-      return true
     } catch {
-      setError('Could not reach the server. Please try again.')
+      setError(NETWORK_ERROR)
       return false
     }
+    const data = await res.json().catch(() => null) as ({
+      phone?: { status: ChannelStatus }; email?: { status: ChannelStatus }
+    } & ApiErrorBody) | null
+    if (!res.ok || !data?.phone || !data.email) {
+      setError(customerErrorMessage(res.ok ? 500 : res.status, data, 'We couldn’t send your code. Please check your details and try again.'))
+      return false
+    }
+    setChannels({ phone: data.phone.status, email: data.email.status })
+    setResendCooldown(30)
+    return true
   }
 
   async function handleStep1(e: React.FormEvent) {
@@ -102,6 +105,11 @@ export function SignupForm({
     setEmailTaken(false)
     setError('')
     if (password.length < 8) { setError('Password must be at least 8 characters'); return }
+    // The API's own rules (POST /auth/customer/register) — checked here, before
+    // a code is sent, not after the customer has typed it in.
+    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('Password must contain a letter and a number'); return
+    }
     if (password !== confirm) { setError('Passwords do not match'); return }
     const digits = phone.replace(/\D/g, '')
     if (digits.length < 10) { setError('Enter a valid mobile number'); return }
@@ -117,8 +125,9 @@ export function SignupForm({
     setError('')
     if (otp.length < 6) { setError('Enter the 6-digit code'); return }
     setLoading(true)
+    let res: Response
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/customer/register`, {
+      res = await fetch(`${API_URL}/api/v1/auth/customer/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,25 +139,38 @@ export function SignupForm({
           ...(referralCode() && { referralCode: referralCode() }),
         }),
       })
-      const data = await res.json() as { token?: string; customer?: { id: string }; error?: { message?: string; code?: string } }
+    } catch {
+      setError(NETWORK_ERROR)
+      setLoading(false)
+      return
+    }
+    try {
+      const data = await res.json().catch(() => null) as ({ token?: string; customer?: { id: string } } & ApiErrorBody) | null
       if (!res.ok) {
-        if (res.status === 409 || data.error?.code === 'EMAIL_TAKEN') {
+        if (res.status === 409 || data?.error?.code === 'EMAIL_TAKEN') {
           setEmailTaken(true)
           setError('An account with this email already exists.')
           setStep('details')
-        } else if (data.error?.code?.includes('OTP') || data.error?.code?.endsWith('CODE_REQUIRED')) {
-          setError(data.error?.message ?? 'Invalid or expired code')
+        } else if (data?.error?.code?.includes('OTP') || data?.error?.code?.endsWith('CODE_REQUIRED')) {
+          setError(customerErrorMessage(res.status, data, 'Invalid or expired code'))
         } else {
-          setError(data.error?.message ?? 'Registration failed. Please try again.')
+          setError(customerErrorMessage(res.status, data, 'We couldn’t create your account. Please try again.'))
         }
         return
       }
-      setAuth(data.token!, data.customer!.id)
+      // A 200 without a session is the API's answer for an email that may
+      // already have an account (it won't say which, so nobody can probe
+      // for addresses). Point the customer at sign-in instead of crashing.
+      if (!data?.token || !data.customer?.id) {
+        setEmailTaken(true)
+        setError('If this email already has a servd account, sign in to it instead.')
+        setStep('details')
+        return
+      }
+      setAuth(data.token, data.customer.id)
       // Honour ?next=/?return= (checkout / order tracker) — same-origin only.
       if (onSuccess) onSuccess()
       else router.replace(postAuthDest())
-    } catch {
-      setError('Could not reach the server. Make sure the API is running.')
     } finally {
       setLoading(false)
     }
@@ -182,7 +204,7 @@ export function SignupForm({
           {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
           {emailTaken && (
             <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.25)' }}>
-              <Link href="/login" className="text-sm font-black text-white">→ Sign in to your existing account</Link>
+              <Link href={loginHref} className="text-sm font-black text-white">→ Sign in to your existing account</Link>
             </div>
           )}
 
@@ -297,7 +319,7 @@ export function SignupForm({
 
           <p className="text-center text-sm mt-5 text-white/60">
             Already have an account?{' '}
-            <Link href="/login" className="font-black text-white hover:text-white/80 transition-colors">Sign in →</Link>
+            <Link href={loginHref} className="font-black text-white hover:text-white/80 transition-colors">Sign in →</Link>
           </p>
         </>
       )}

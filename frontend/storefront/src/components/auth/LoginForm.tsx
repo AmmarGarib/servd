@@ -5,27 +5,18 @@ import { ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../ui/ErrorToast'
 import { MagneticButton } from '../ui/MagneticButton'
+import { NETWORK_ERROR, customerErrorMessage, postAuthDest, type ApiErrorBody } from './authFlow'
 
 // The storefront's sign-in form (email/password → /auth/customer/login →
 // setAuth). Shared by /login and the `signup_form` block (mode 'login') so
 // there is exactly one sign-in flow. Styled for a dark purple surface — callers
-// put it on one.
+// put it on one. Where it sends the customer afterwards (?next= / ?return=,
+// same-site paths only) lives in ./authFlow.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 const inputCls =
   'w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white bg-white/10 border border-white/20 placeholder:text-white/35 focus:outline-none focus:border-white/60 focus:bg-white/[0.16] transition-all'
-
-// Where to send the user after auth. Checkout sends ?next=, the order tracker
-// sends ?return= — honour both. Only same-origin relative paths (open-redirect
-// guard: no absolute URLs, no protocol-relative //host).
-export function postAuthDest(): string {
-  if (typeof window === 'undefined') return '/account'
-  const sp = new URLSearchParams(window.location.search)
-  const p = sp.get('next') || sp.get('return')
-  if (p && p.startsWith('/') && !p.startsWith('//')) return p
-  return '/account'
-}
 
 export function LoginForm({
   onSuccess, autoFocus = true, idPrefix = 'login',
@@ -48,20 +39,33 @@ export function LoginForm({
     e.preventDefault()
     setError('')
     setLoading(true)
+    let res: Response
     try {
-      const res  = await fetch(`${API_URL}/api/v1/auth/customer/login`, {
+      res = await fetch(`${API_URL}/api/v1/auth/customer/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), password }),
       })
-      const data = await res.json() as { token?: string; customer?: { id: string }; error?: { message?: string } }
-      if (!res.ok) { setError(data.error?.message ?? 'Invalid email or password'); return }
-      setAuth(data.token!, data.customer!.id)
-      if (onSuccess) onSuccess()
-      else router.replace(postAuthDest())
     } catch (err) {
       console.error('[login] fetch error:', err)
-      setError('Could not reach the server. Make sure the API is running.')
+      setError(NETWORK_ERROR)
+      setLoading(false)
+      return
+    }
+    try {
+      const data = await res.json().catch(() => null) as ({ token?: string; customer?: { id: string } } & ApiErrorBody) | null
+      if (!res.ok) {
+        // A malformed email or a too-short password fails the API's schema;
+        // on sign-in that is simply a wrong email or password.
+        setError(data?.error?.code === 'VALIDATION_ERROR'
+          ? 'Invalid email or password'
+          : customerErrorMessage(res.status, data, 'Invalid email or password'))
+        return
+      }
+      if (!data?.token || !data.customer?.id) { setError(customerErrorMessage(500, null, '')); return }
+      setAuth(data.token, data.customer.id)
+      if (onSuccess) onSuccess()
+      else router.replace(postAuthDest())
     } finally { setLoading(false) }
   }
 

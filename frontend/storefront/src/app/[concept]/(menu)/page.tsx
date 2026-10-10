@@ -29,6 +29,8 @@ export default async function ConceptOrderPage({ params }: Params) {
     description:  concept.description ?? null,
     logoUrl:      concept.logoUrl ?? null,
     primaryColor: concept.primaryColor ?? null,
+    // false hides "Book a table" on a table-only brand that takes no bookings.
+    reservationsEnabled: concept.reservationsEnabled,
   }
   // Keyed on the slug so moving between brands starts a fresh screen.
   // 'fallback' is the bundled record (the server's lookup got no answer —

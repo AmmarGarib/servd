@@ -2,13 +2,17 @@
 import Link from 'next/link'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
 import { LoginForm } from '../../components/auth/LoginForm'
+import { useAuthReturnPath, withReturnPath } from '../../components/auth/authFlow'
 
 // /login — glassmorphism card over an interactive servd-purple WebGL shader.
-// The form itself (email/password → /auth/customer/login → setAuth → /account)
-// lives in components/auth/LoginForm so the storefront content module's
-// sign-in block reuses the same flow.
+// The form itself (email/password → /auth/customer/login → setAuth → ?next=,
+// else /account) lives in components/auth/LoginForm so the storefront content
+// module's sign-in block reuses the same flow. "Create one" carries ?next= on
+// to /signup, so a customer sent here from checkout who signs up instead
+// still lands back in checkout.
 
 export default function LoginPage() {
+  const signupHref = withReturnPath('/signup', useAuthReturnPath())
   return (
     <div className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: 'var(--servd-black)' }}>
       <SmokeyBackground color="#5c3458" backdropBlur="sm" />
@@ -27,7 +31,7 @@ export default function LoginPage() {
 
           <p className="text-center text-sm mt-6 text-white/60">
             Don&apos;t have an account?{' '}
-            <Link href="/signup" className="font-black text-white hover:text-white/80 transition-colors">Create one →</Link>
+            <Link href={signupHref} className="font-black text-white hover:text-white/80 transition-colors">Create one →</Link>
           </p>
         </div>
 
