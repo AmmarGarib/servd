@@ -136,15 +136,19 @@ export function typeLabel(t: string): string {
 // never stock photography. A brand without one gets null and callers paint
 // its accent / a token background instead. Real photography goes in through
 // the storefront content module (Admin → Storefront → Library).
+//
+// Stackd's is its sticker art (plum field, cream/sky stickers, the mascot and
+// the bread illustrations): 2880x960, made for the wide bands it fills (the
+// About image break, the ordering hero) with everything in the middle 640px.
 const HERO_BY_SLUG: Record<string, string> = {
-  'stackd': '/brand/stackd-concrete.webp',
+  'stackd': '/brand/stackd-stickers.webp',
 }
 
-// Card-sized crops (640x480) of the hero art, for the small brand cards
-// (cross-brand strip, kitchens grid, reserve picker, group order) — the full
-// hero is 1600x2400 and was being downloaded to fill a 300px card.
+// Card-sized art (640x480) for the small brand cards (cross-brand strip,
+// kitchens grid, reserve picker, group order) — the mascot at size on one
+// sticker, rather than a crop of the wide band.
 const CARD_BY_SLUG: Record<string, string> = {
-  'stackd': '/brand/stackd-concrete-card.webp',
+  'stackd': '/brand/stackd-stickers-card.webp',
 }
 
 /** A brand's hero art: 'full' for full-bleed bands, 'card' for small cards. */
