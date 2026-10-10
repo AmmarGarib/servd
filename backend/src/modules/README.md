@@ -27,8 +27,10 @@ Every module is `routes.ts` (HTTP handlers) optionally with `service.ts` (busine
 | `giftCards` | `/gift-cards` | Gift card issuance + redemption |
 | `reviews` | `/reviews` | Customer reviews of orders |
 | `complaints` | `/complaints` | Customer complaint intake + resolution |
-| `riders` | `/riders` | Delivery rider assignments + payouts |
-| `dispatch` | `/dispatch` | Order → rider matching |
+| `riders` | `/riders` | Rider roster (company-scoped) + fleet agreements (`/riders/fleet/agreements`) |
+| `dispatch` | `/dispatch` | Assign / unassign / delivered, dispatch board, staff location relay — the one set of rules (`service.ts`) |
+| `riderAuth` | `/rider-auth` | Rider-app sign-in: WhatsApp code, rider-only tokens (`docs/rider-app.md`) |
+| `rider` | `/rider` | Rider app API: own jobs, shift, location, hand-over code (`docs/rider-app.md`) |
 | `tables` | `/tables` | Floor plan tables for in-store dining |
 | `floors` | `/floors` | Floor plan layout |
 | `reservations` | `/reservations` | Booking + capacity management |

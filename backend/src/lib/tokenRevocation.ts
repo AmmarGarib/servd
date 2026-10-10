@@ -14,7 +14,7 @@
 
 import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
-import { redis } from './redis.js'
+import { redis, redisFast } from './redis.js'
 
 const hash = (token: string) => crypto.createHash('sha256').update(token).digest('hex')
 
@@ -42,6 +42,44 @@ export async function revokeAllForSubject(sub: string): Promise<void> {
   try {
     await redis.set(`tva:${sub}`, String(Math.floor(Date.now() / 1000)), 'EX', CUTOFF_TTL_SEC)
   } catch { /* best-effort */ }
+}
+
+/**
+ * Revoke a token atomically and say whether THIS call did it — for rotating a
+ * refresh token, where "is it revoked?" then "revoke it" let two simultaneous
+ * refreshes both pass and both mint a session. `reason` is stored as the
+ * value, so a later claim can tell a token that was ROTATED (presented again =
+ * a copy is in someone else's hands) from one that was signed out.
+ *
+ * Returns { claimed: true } when this call revoked it, else { claimed: false,
+ * previous } with the stored reason. Uses the fast Redis connection (it is on
+ * a request path) and, like the rest of this module, fails open: with Redis
+ * down it reports `claimed: true`.
+ */
+export async function claimRevocation(
+  token: string,
+  ttlSec: number,
+  reason: string,
+): Promise<{ claimed: boolean; previous: string | null }> {
+  if (ttlSec <= 0) return { claimed: false, previous: null }
+  const k = `revoked:${hash(token)}`
+  try {
+    const ok = await redisFast.set(k, reason, 'EX', Math.ceil(ttlSec), 'NX')
+    if (ok === 'OK') return { claimed: true, previous: null }
+    return { claimed: false, previous: await redisFast.get(k) }
+  } catch {
+    return { claimed: true, previous: null }
+  }
+}
+
+/** True if the subject's cutoff (revokeAllForSubject) is after the token was issued. Fail-open. */
+export async function isCutOff(sub: string, iatSec: number | undefined): Promise<boolean> {
+  try {
+    const tva = await redisFast.get(`tva:${sub}`)
+    return !!tva && iatSec !== undefined && iatSec < parseInt(tva, 10)
+  } catch {
+    return false
+  }
 }
 
 // True if the token (or its subject's cutoff) has been revoked. Fail-open.

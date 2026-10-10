@@ -461,6 +461,66 @@ export async function emitAvailabilityChange(menuItemId: string, available: numb
   }
 }
 
+// ─── Rider location ───────────────────────────────────────────────────────────
+//
+// `rider:location` (docs/rider-app.md) goes to the rider's OWN company
+// (`tenant:{riderCompany}`) and, while the rider is carrying orders, to each
+// order company's order room (`tenant:{orderCompany}:orders`). Under a fleet
+// agreement those differ — and then the client company is told only about its
+// own order: each company's copy carries an order id of THAT company (or null),
+// never another company's.
+
+export interface RiderLocationFix {
+  riderId: string
+  lat: number
+  lng: number
+  heading: number | null
+  recordedAt: string
+}
+
+export interface RiderLocationInput {
+  fix: RiderLocationFix
+  riderTenantId: string | null
+  /** The order the fix was pinned to, if any, with its company. */
+  fixOrder: { id: string; tenantId: string | null } | null
+  /** The orders the rider has in hand (orderId + company) — who else should see the pin. */
+  jobs: Array<{ id: string; tenantId: string | null }>
+}
+
+/**
+ * Who gets which copy of a `rider:location` (pure — the emit below sends it).
+ * Rooms are grouped by the payload they get, so a socket in several rooms of
+ * the SAME company (a manager is in tenant:X and tenant:X:orders) gets it once.
+ */
+export function riderLocationFanout(opts: RiderLocationInput): Array<{ rooms: string[]; payload: RiderLocationFix & { orderId: string | null } }> {
+  const { fix, riderTenantId, fixOrder, jobs } = opts
+  const orderFor = (tenantId: string): string | null => {
+    if (fixOrder && fixOrder.tenantId === tenantId) return fixOrder.id
+    return jobs.find((j) => j.tenantId === tenantId)?.id ?? null
+  }
+  const byCompany = new Map<string, string[]>()
+  const add = (tenantId: string | null, room: string) => {
+    if (!tenantId) return
+    const rooms = byCompany.get(tenantId) ?? []
+    rooms.push(room)
+    byCompany.set(tenantId, rooms)
+  }
+  add(riderTenantId, `tenant:${riderTenantId}`)
+  const companies = new Set<string>()
+  if (fixOrder?.tenantId) companies.add(fixOrder.tenantId)
+  for (const j of jobs) if (j.tenantId) companies.add(j.tenantId)
+  for (const t of companies) add(t, `tenant:${t}:orders`)
+  return [...byCompany].map(([tenantId, rooms]) => ({ rooms, payload: { ...fix, orderId: orderFor(tenantId) } }))
+}
+
+export function emitRiderLocation(opts: RiderLocationInput) {
+  safeEmit('emitRiderLocation', (ws) => {
+    for (const { rooms, payload } of riderLocationFanout(opts)) {
+      ws.to(rooms).emit('rider:location', payload)
+    }
+  })
+}
+
 // ─── Reservation events ───────────────────────────────────────────────────────
 //
 // Fired from the reservation routes whenever a booking changes. Admin clients

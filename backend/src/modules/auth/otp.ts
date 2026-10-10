@@ -4,6 +4,7 @@
 // before the row is invalidated and the caller must request a new one.
 
 import crypto from 'crypto'
+import type { Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { sendText } from '../../lib/whatsapp.js'
 import { sendEmail } from '../../lib/mailer.js'
@@ -25,7 +26,8 @@ const DAILY_WINDOW_MS = 24 * 60 * 60_000
 const DAILY_CAP_DEFAULT = 10
 // Floor staff sign in with a code at every shift start and after every
 // session timeout; a busier budget so a cashier is never locked out of a till.
-const DAILY_CAP_BY_PURPOSE: Partial<Record<string, number>> = { staff_login: 20, staff_2fa: 20 }
+// Riders sign in at the start of a shift too (docs/rider-app.md).
+const DAILY_CAP_BY_PURPOSE: Partial<Record<string, number>> = { staff_login: 20, staff_2fa: 20, rider_login: 20 }
 
 function dailyCap(purpose: string): number {
   return DAILY_CAP_BY_PURPOSE[purpose] ?? DAILY_CAP_DEFAULT
@@ -35,18 +37,101 @@ function dailyLimitError(): AppError {
   return new AppError('OTP_DAILY_LIMIT', 'Too many codes have been requested for this contact today. Try again tomorrow.', 429)
 }
 
-async function assertPhoneUnderDailyCap(phone: string, purpose: string): Promise<void> {
-  const n = await prisma.phoneOtp.count({
+type Db = Prisma.TransactionClient
+
+async function assertPhoneUnderDailyCap(db: Db, phone: string, purpose: string): Promise<void> {
+  const n = await db.phoneOtp.count({
     where: { phone, purpose, createdAt: { gt: new Date(Date.now() - DAILY_WINDOW_MS) } },
   })
   if (n >= dailyCap(purpose)) throw dailyLimitError()
 }
 
-async function assertEmailUnderDailyCap(email: string, purpose: string): Promise<void> {
-  const n = await prisma.emailOtp.count({
+async function assertEmailUnderDailyCap(db: Db, email: string, purpose: string): Promise<void> {
+  const n = await db.emailOtp.count({
     where: { email, purpose, createdAt: { gt: new Date(Date.now() - DAILY_WINDOW_MS) } },
   })
   if (n >= dailyCap(purpose)) throw dailyLimitError()
+}
+
+function cooldownError(): AppError {
+  return new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
+}
+
+/**
+ * Issue a code under a per-contact lock. The resend cooldown and the daily cap
+ * are read-then-insert checks: without a lock, a burst of parallel requests
+ * all passed them and each sent a message (20 parallel requests for one
+ * rider's number sent 15 WhatsApp codes, against 1 per 30 s). A
+ * transaction-scoped advisory lock keyed on contact + purpose serialises
+ * them — the first creates the row, the rest find it inside the cooldown. The
+ * lock is held only for the checks and the insert; the send happens after.
+ * It lives in Postgres, beside the rows it guards, so the cooldown keeps one
+ * definition (the rows) and needs no second store to fall out of step.
+ */
+async function underContactLock<T>(keys: string[], fn: (tx: Db) => Promise<T>): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    // Always in the same order, so two multi-key callers cannot deadlock.
+    for (const k of [...keys].sort()) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${k}::text))`
+    }
+    return fn(tx)
+  })
+}
+
+const phoneLockKey = (phone: string, purpose: string) => `otp:phone:${purpose}:${phone}`
+const emailLockKey = (email: string, purpose: string) => `otp:email:${purpose}:${email}`
+
+/**
+ * Take one attempt on a code row BEFORE comparing. Reading `attempts` and
+ * incrementing after the compare let parallel guesses all pass the read — 25
+ * parallel wrong guesses left a row at 25 attempts against a limit of 5. The
+ * conditional increment is the claim: once MAX_ATTEMPTS slots are taken (or
+ * the row is used), nothing more is compared. A right code hands its slot
+ * back, so `attempts` still counts wrong guesses only.
+ */
+async function claimPhoneAttempt(id: string): Promise<boolean> {
+  const r = await prisma.phoneOtp.updateMany({
+    where: { id, consumedAt: null, attempts: { lt: MAX_ATTEMPTS } },
+    data: { attempts: { increment: 1 } },
+  })
+  return r.count > 0
+}
+
+async function claimEmailAttempt(id: string): Promise<boolean> {
+  const r = await prisma.emailOtp.updateMany({
+    where: { id, consumedAt: null, attempts: { lt: MAX_ATTEMPTS } },
+    data: { attempts: { increment: 1 } },
+  })
+  return r.count > 0
+}
+
+/**
+ * The right code: use it up (once — a second, simultaneous right guess finds
+ * it gone) or, for a check-only verify, give the attempt back. False when
+ * another request used the code first.
+ */
+async function settlePhoneMatch(id: string, consume: boolean): Promise<boolean> {
+  if (!consume) {
+    await prisma.phoneOtp.updateMany({ where: { id, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
+    return true
+  }
+  const r = await prisma.phoneOtp.updateMany({
+    where: { id, consumedAt: null },
+    data: { consumedAt: new Date(), attempts: { decrement: 1 } },
+  })
+  return r.count > 0
+}
+
+async function settleEmailMatch(id: string, consume: boolean): Promise<boolean> {
+  if (!consume) {
+    await prisma.emailOtp.updateMany({ where: { id, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
+    return true
+  }
+  const r = await prisma.emailOtp.updateMany({
+    where: { id, consumedAt: null },
+    data: { consumedAt: new Date(), attempts: { decrement: 1 } },
+  })
+  return r.count > 0
 }
 
 export type OtpPurpose =
@@ -57,13 +142,21 @@ export type OtpPurpose =
   | 'staff_2fa'        // second factor on a staff sign-in
   | 'staff_2fa_enrol'  // proving a number before 2FA is switched on for it
   | 'waitlist'         // joining the servd new-brand waitlist (modules/waitlist)
+  | 'rider_login'      // a delivery rider signing in to the rider app (modules/riderAuth)
 
 /** Normalise a Pakistani-style phone number to digits-only (E.164 minus the +). */
 export function normalisePhone(raw: string): string {
   // Strip everything that's not a digit. Map a leading 0 (locally-dialed) to
   // the country code 92 so the same number entered three different ways still
   // resolves to one canonical key.
-  const digits = raw.replace(/\D/g, '')
+  let digits = raw.replace(/\D/g, '')
+  // '0092 300…' — the 00 international prefix.
+  if (digits.startsWith('0092')) digits = digits.slice(2)
+  // '+92 (0)300 1234567' / '0092 0300…' — the trunk 0 written after the
+  // country code. A Pakistani number never has 0 straight after 92 (mobiles
+  // are 92 3xx…, landlines 92 + area code), so this is always that spelling.
+  // Mirrored in migration 20261010120000_rider_app (riders.phone).
+  if (/^920\d{9,10}$/.test(digits)) return '92' + digits.slice(3)
   if (digits.startsWith('92')) return digits
   if (digits.startsWith('0')) return '92' + digits.slice(1)
   if (digits.length === 10) return '92' + digits        // 3001234567 form
@@ -104,6 +197,8 @@ function messageFor(purpose: OtpPurpose, code: string): string {
       return `${code} is your servd code to turn on two-factor sign-in for this number. ${tail}`
     case 'waitlist':
       return `${code} is your servd code to join the new-brand waitlist. ${tail} If you did not ask to join, ignore this message.`
+    case 'rider_login':
+      return `${code} is your servd rider sign-in code. ${tail} If you did not just try to sign in, tell your manager.`
     default:
       return `Your servd verification code is ${code}. ${tail}`
   }
@@ -121,24 +216,26 @@ export async function requestOtp(opts: {
   const phone = normalisePhone(opts.phone)
   if (phone.length < 11) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
 
-  // Cooldown: don't allow another OTP for the same (phone, purpose) within
-  // the last 30s.
-  const recent = await prisma.phoneOtp.findFirst({
-    where: { phone, purpose: opts.purpose, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
-    orderBy: { createdAt: 'desc' },
-  })
-  if (recent) throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
-  await assertPhoneUnderDailyCap(phone, opts.purpose)
-
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
 
-  const created = await prisma.phoneOtp.create({
-    data: {
-      phone, code, purpose: opts.purpose,
-      customerId: opts.customerId ?? null,
-      expiresAt,
-    },
+  // Cooldown (no second code for the same phone + purpose within 30 s), the
+  // daily cap and the insert, all under the per-contact lock.
+  const created = await underContactLock([phoneLockKey(phone, opts.purpose)], async (tx) => {
+    const recent = await tx.phoneOtp.findFirst({
+      where: { phone, purpose: opts.purpose, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    if (recent) throw cooldownError()
+    await assertPhoneUnderDailyCap(tx, phone, opts.purpose)
+    return tx.phoneOtp.create({
+      data: {
+        phone, code, purpose: opts.purpose,
+        customerId: opts.customerId ?? null,
+        expiresAt,
+      },
+    })
   })
 
   // Send via WhatsApp. If the call fails (e.g. WHATSAPP_TOKEN missing in dev),
@@ -186,17 +283,17 @@ export async function verifyOtp(opts: {
   })
   if (!row) throw new AppError('OTP_NOT_FOUND', 'No active code for this number — request a new one', 404)
   if (row.expiresAt < new Date()) throw new AppError('OTP_EXPIRED', 'Code has expired — request a new one', 410)
-  if (row.attempts >= MAX_ATTEMPTS) {
+  // The attempt is taken before the compare (see claimPhoneAttempt), so
+  // parallel guesses cannot get past MAX_ATTEMPTS.
+  if (row.attempts >= MAX_ATTEMPTS || !(await claimPhoneAttempt(row.id))) {
     throw new AppError('OTP_LOCKED', 'Too many wrong attempts — request a new code', 429)
   }
   if (!codesMatch(row.code, opts.code.trim())) {
-    // Wrong code: bump counter so brute-force is bounded.
-    await prisma.phoneOtp.update({ where: { id: row.id }, data: { attempts: { increment: 1 } } })
     const left = MAX_ATTEMPTS - (row.attempts + 1)
     throw new AppError('OTP_WRONG', left > 0 ? `Wrong code. ${left} attempts left.` : 'Wrong code — request a new one', 400)
   }
-  if (opts.consume !== false) {
-    await prisma.phoneOtp.update({ where: { id: row.id }, data: { consumedAt: new Date() } })
+  if (!(await settlePhoneMatch(row.id, opts.consume !== false))) {
+    throw new AppError('OTP_NOT_FOUND', 'No active code for this number — request a new one', 404)
   }
   return { customerId: row.customerId }
 }
@@ -240,17 +337,19 @@ export async function requestEmailOtp(opts: {
   const email = normaliseEmail(opts.email)
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new AppError('INVALID_EMAIL', 'Email address looks invalid', 400)
 
-  const recent = await prisma.emailOtp.findFirst({
-    where: { email, purpose: opts.purpose, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
-    orderBy: { createdAt: 'desc' },
-  })
-  if (recent) throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
-  await assertEmailUnderDailyCap(email, opts.purpose)
-
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
-  const row = await prisma.emailOtp.create({
-    data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt },
+  const row = await underContactLock([emailLockKey(email, opts.purpose)], async (tx) => {
+    const recent = await tx.emailOtp.findFirst({
+      where: { email, purpose: opts.purpose, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    if (recent) throw cooldownError()
+    await assertEmailUnderDailyCap(tx, email, opts.purpose)
+    return tx.emailOtp.create({
+      data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt },
+    })
   })
 
   try {
@@ -286,16 +385,15 @@ export async function verifyEmailOtp(opts: {
   })
   if (!row) throw new AppError('EMAIL_OTP_NOT_FOUND', 'No active email code — request a new one', 404)
   if (row.expiresAt < new Date()) throw new AppError('EMAIL_OTP_EXPIRED', 'Email code has expired — request a new one', 410)
-  if (row.attempts >= MAX_ATTEMPTS) {
+  if (row.attempts >= MAX_ATTEMPTS || !(await claimEmailAttempt(row.id))) {
     throw new AppError('EMAIL_OTP_LOCKED', 'Too many wrong attempts — request a new email code', 429)
   }
   if (!codesMatch(row.code, opts.code.trim())) {
-    await prisma.emailOtp.update({ where: { id: row.id }, data: { attempts: { increment: 1 } } })
     const left = MAX_ATTEMPTS - (row.attempts + 1)
     throw new AppError('EMAIL_OTP_WRONG', left > 0 ? `Wrong email code. ${left} attempts left.` : 'Wrong email code — request a new one', 400)
   }
-  if (opts.consume !== false) {
-    await prisma.emailOtp.update({ where: { id: row.id }, data: { consumedAt: new Date() } })
+  if (!(await settleEmailMatch(row.id, opts.consume !== false))) {
+    throw new AppError('EMAIL_OTP_NOT_FOUND', 'No active email code — request a new one', 404)
   }
   return { customerId: row.customerId }
 }
@@ -353,34 +451,47 @@ export async function requestSharedCode(opts: {
   if (phone && phone.length < 11) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
   if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new AppError('INVALID_EMAIL', 'Email address looks invalid', 400)
 
-  // One cooldown across both: a resend within 30s would otherwise issue a
-  // second code while the first is still arriving, and the person types
-  // whichever they see first into a screen expecting the other.
-  const since = new Date(Date.now() - RESEND_COOLDOWN_MS)
-  const [recentPhone, recentEmail] = await Promise.all([
-    phone ? prisma.phoneOtp.findFirst({ where: { phone, purpose: opts.purpose, createdAt: { gt: since } } }) : null,
-    email ? prisma.emailOtp.findFirst({ where: { email, purpose: opts.purpose, createdAt: { gt: since } } }) : null,
-  ])
-  if (recentPhone || recentEmail) {
-    throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
-  }
-  // Either contact over its cap stops the whole send: the code goes to both,
-  // so a capped phone must not be reachable by pairing it with a fresh email.
-  await Promise.all([
-    phone ? assertPhoneUnderDailyCap(phone, opts.purpose) : null,
-    email ? assertEmailUnderDailyCap(email, opts.purpose) : null,
-  ])
-
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
   const text = messageFor(opts.purpose, code)
 
+  // The checks and both inserts under the per-contact lock(s) — see
+  // underContactLock. The sends happen after it is released.
+  const lockKeys = [
+    ...(phone ? [phoneLockKey(phone, opts.purpose)] : []),
+    ...(email ? [emailLockKey(email, opts.purpose)] : []),
+  ]
+  const rows = await underContactLock(lockKeys, async (tx) => {
+    // One cooldown across both: a resend within 30s would otherwise issue a
+    // second code while the first is still arriving, and the person types
+    // whichever they see first into a screen expecting the other.
+    const since = new Date(Date.now() - RESEND_COOLDOWN_MS)
+    const recentPhone = phone
+      ? await tx.phoneOtp.findFirst({ where: { phone, purpose: opts.purpose, createdAt: { gt: since } }, select: { id: true } })
+      : null
+    const recentEmail = email
+      ? await tx.emailOtp.findFirst({ where: { email, purpose: opts.purpose, createdAt: { gt: since } }, select: { id: true } })
+      : null
+    if (recentPhone || recentEmail) throw cooldownError()
+    // Either contact over its cap stops the whole send: the code goes to both,
+    // so a capped phone must not be reachable by pairing it with a fresh email.
+    if (phone) await assertPhoneUnderDailyCap(tx, phone, opts.purpose)
+    if (email) await assertEmailUnderDailyCap(tx, email, opts.purpose)
+    const phoneRow = phone
+      ? await tx.phoneOtp.create({ data: { phone, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt }, select: { id: true } })
+      : null
+    const emailRow = email
+      ? await tx.emailOtp.create({ data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt }, select: { id: true } })
+      : null
+    return { phoneRow, emailRow }
+  })
+
   const deliver = async (
-    make: () => Promise<{ id: string }>,
+    row: { id: string } | null,
     send: () => Promise<unknown>,
     drop: (id: string) => Promise<unknown>,
   ): Promise<ChannelStatus> => {
-    const row = await make()
+    if (!row) return 'skipped'
     try { await send(); return 'sent' }
     catch {
       // Production: an undelivered copy must not stay live. Dev: keep it so the
@@ -391,20 +502,16 @@ export async function requestSharedCode(opts: {
   }
 
   const [phoneStatus, emailStatus] = await Promise.all([
-    phone
-      ? deliver(
-          () => prisma.phoneOtp.create({ data: { phone, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt } }),
-          () => sendText(phone, text),
-          (id) => prisma.phoneOtp.delete({ where: { id } }),
-        )
-      : Promise.resolve<ChannelStatus>('skipped'),
-    email
-      ? deliver(
-          () => prisma.emailOtp.create({ data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt } }),
-          () => sendEmail({ to: email, subject: `${code} is your servd code`, html: emailHtmlFor(code, text) }),
-          (id) => prisma.emailOtp.delete({ where: { id } }),
-        )
-      : Promise.resolve<ChannelStatus>('skipped'),
+    deliver(
+      rows.phoneRow,
+      () => sendText(phone!, text),
+      (id) => prisma.phoneOtp.delete({ where: { id } }),
+    ),
+    deliver(
+      rows.emailRow,
+      () => sendEmail({ to: email!, subject: `${code} is your servd code`, html: emailHtmlFor(code, text) }),
+      (id) => prisma.emailOtp.delete({ where: { id } }),
+    ),
   ])
 
   const anySent = phoneStatus === 'sent' || emailStatus === 'sent'
@@ -437,25 +544,40 @@ export async function verifySharedCode(opts: {
     phone ? prisma.phoneOtp.findFirst({ where: { phone, purpose: opts.purpose, ...live }, orderBy: { createdAt: 'desc' } }) : null,
     email ? prisma.emailOtp.findFirst({ where: { email, purpose: opts.purpose, ...live }, orderBy: { createdAt: 'desc' } }) : null,
   ])
-  if (!p && !e) throw new AppError('OTP_NOT_FOUND', 'No active code — request a new one', 404)
+  const notFound = () => new AppError('OTP_NOT_FOUND', 'No active code — request a new one', 404)
+  if (!p && !e) throw notFound()
+
+  // An attempt is taken on every live copy BEFORE the compare (see
+  // claimPhoneAttempt): parallel guesses cannot get past MAX_ATTEMPTS. Only a
+  // copy whose slot was won is compared.
+  const [pClaimed, eClaimed] = await Promise.all([
+    p ? claimPhoneAttempt(p.id) : false,
+    e ? claimEmailAttempt(e.id) : false,
+  ])
+  if (!pClaimed && !eClaimed) throw notFound()   // used up or locked by parallel guesses meanwhile
 
   const given = opts.code.trim()
-  const ok = (p && codesMatch(p.code, given)) || (e && codesMatch(e.code, given))
-  if (!ok) {
-    await Promise.all([
-      p ? prisma.phoneOtp.update({ where: { id: p.id }, data: { attempts: { increment: 1 } } }) : null,
-      e ? prisma.emailOtp.update({ where: { id: e.id }, data: { attempts: { increment: 1 } } }) : null,
-    ])
+  const pOk = !!(p && pClaimed && codesMatch(p.code, given))
+  const eOk = !!(e && eClaimed && codesMatch(e.code, given))
+  if (!pOk && !eOk) {
     const used = Math.max(p?.attempts ?? 0, e?.attempts ?? 0) + 1
     const left = MAX_ATTEMPTS - used
     throw new AppError('OTP_WRONG', left > 0 ? `Wrong code. ${left} attempts left.` : 'Wrong code — request a new one', 400)
   }
 
-  if (opts.consume !== false) {
-    await Promise.all([
-      p ? prisma.phoneOtp.update({ where: { id: p.id }, data: { consumedAt: now } }) : null,
-      e ? prisma.emailOtp.update({ where: { id: e.id }, data: { consumedAt: now } }) : null,
-    ])
+  // The right code. The FIRST matching copy is settled first and decides: a
+  // simultaneous right guess that loses that claim is refused, so one code
+  // never makes two sessions. Then the other copy is used up too (or, for a
+  // check-only verify, every claimed slot handed back).
+  const consume = opts.consume !== false
+  const won = pOk ? await settlePhoneMatch(p!.id, consume) : await settleEmailMatch(e!.id, consume)
+  if (!won) throw notFound()
+  if (pOk && e) {
+    if (consume) await prisma.emailOtp.updateMany({ where: { id: e.id, consumedAt: null }, data: { consumedAt: now } })
+    if (eClaimed) await prisma.emailOtp.updateMany({ where: { id: e.id, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
+  } else if (eOk && p) {
+    if (consume) await prisma.phoneOtp.updateMany({ where: { id: p.id, consumedAt: null }, data: { consumedAt: now } })
+    if (pClaimed) await prisma.phoneOtp.updateMany({ where: { id: p.id, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
   }
   return { deliveredToPhone: !!p, deliveredToEmail: !!e, customerId: p?.customerId ?? e?.customerId ?? null }
 }

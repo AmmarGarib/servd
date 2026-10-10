@@ -72,6 +72,8 @@ import { complaintRoutes } from './modules/complaints/routes.js'
 import { feedbackRoutes } from './modules/feedback/routes.js'
 import { stockTransferRoutes } from './modules/stockTransfers/routes.js'
 import { riderRoutes } from './modules/riders/routes.js'
+import { riderAuthRoutes } from './modules/riderAuth/routes.js'
+import { riderAppRoutes } from './modules/rider/routes.js'
 import { promoRoutes } from './modules/promos/routes.js'
 import { walletRoutes } from './modules/wallet/routes.js'
 import { discountRoutes } from './modules/discounts/routes.js'
@@ -348,6 +350,10 @@ async function build() {
       await api.register(feedbackRoutes, { prefix: '/feedback' })
       await api.register(stockTransferRoutes, { prefix: '/stock-transfers' })
       await api.register(riderRoutes, { prefix: '/riders' })
+      // Rider app (docs/rider-app.md): its own sign-in and its own token type —
+      // a rider is not a staff User.
+      await api.register(riderAuthRoutes, { prefix: '/rider-auth' })
+      await api.register(riderAppRoutes, { prefix: '/rider' })
       await api.register(promoRoutes, { prefix: '/promos' })
       await api.register(walletRoutes, { prefix: '/wallet' })
       await api.register(discountRoutes, { prefix: '/discounts' })

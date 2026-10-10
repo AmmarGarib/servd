@@ -25,6 +25,52 @@ interface OrderStatus {
   curbsidePlate?: string | null
   curbsideArrivedAt?: string | null
   curbsideRunnerOutAt?: string | null
+  fulfilmentType?: string | null
+  deliveredAt?: string | null
+  /** When a rider was put on the order (docs/rider-app.md). */
+  riderAssignedAt?: string | null
+  /** The hand-over code for the rider at the door (docs/rider-app.md). The
+   *  API sends it to the order's own customer, on delivery orders only. */
+  deliveryOtp?: string | null
+}
+
+/** A tel: link for the rider. Rider numbers are stored normalised (92…
+ *  digits, docs/rider-app.md); without the + a phone dials them as local. */
+function riderTel(phone: string): string {
+  const digits = phone.replace(/[^\d+]/g, '')
+  return `tel:${digits.startsWith('92') ? `+${digits}` : digits}`
+}
+
+/** Statuses after which there is nothing left to hand over. 'completed' is
+ *  not one of them: a delivery order paid at the till is 'completed' there
+ *  and still has a rider on the way (see riderJobOpen). */
+const CLOSED = new Set(['cancelled', 'rejected', 'refunded'])
+
+/** How long a till-completed delivery stays an open rider job — the API's
+ *  rule (backend modules/rider/service.ts openJobWhere: 24 h from the rider
+ *  being assigned). */
+const COMPLETED_JOB_WINDOW_MS = 24 * 60 * 60_000
+
+/**
+ * A rider has this delivery and has not handed it over yet — the customer
+ * needs their code. Decided by deliveredAt, not by status: an order paid at
+ * the till is 'completed' before it leaves the kitchen, and the rider still
+ * asks for the code at the door.
+ */
+function riderJobOpen(o: OrderStatus): boolean {
+  if (o.fulfilmentType !== 'delivery' || !o.rider || o.deliveredAt) return false
+  if (CLOSED.has(o.status)) return false
+  if (o.status !== 'completed') return true
+  const assigned = o.riderAssignedAt ? Date.parse(o.riderAssignedAt) : NaN
+  return Number.isFinite(assigned) && Date.now() - assigned < COMPLETED_JOB_WINDOW_MS
+}
+
+/** Nothing more will change on this order: stop polling. */
+function trackingDone(o: OrderStatus): boolean {
+  if (CLOSED.has(o.status)) return true
+  // A completed delivery keeps polling until the rider hands it over, so the
+  // code card goes away by itself.
+  return o.status === 'completed' && !riderJobOpen(o)
 }
 
 const STEPS = [
@@ -91,9 +137,7 @@ export default function OrderStatusPage() {
         }
         prevStatus.current = data.status
         setOrder(data)
-        if (data.status === 'completed' || data.status === 'cancelled' || data.status === 'refunded') {
-          stop()
-        }
+        if (trackingDone(data)) stop()
       } catch { /* keep polling */ }
     }
     void poll()
@@ -132,7 +176,11 @@ export default function OrderStatusPage() {
   const isCancelled = order.status === 'cancelled'
   const isReady     = order.status === 'ready'
   const isPreparing = order.status === 'preparing'
-  const isDone      = order.status === 'completed' || isCancelled
+  // The hand-over code: once a rider has the order and until it is delivered.
+  const jobOpen     = riderJobOpen(order)
+  const handoverCode = jobOpen ? (order.deliveryOtp ?? '').trim() : ''
+  // A till-completed delivery is still live until the rider hands it over.
+  const isDone      = (order.status === 'completed' && !jobOpen) || isCancelled
   const cfg         = statusFor(order.status)
 
   const heroBg     = isCancelled ? 'rgba(239,68,68,0.06)' : `color-mix(in srgb, ${color} 8%, white)`
@@ -212,6 +260,9 @@ export default function OrderStatusPage() {
           </div>
         </div>
 
+        {/* ── Delivery hand-over code ── */}
+        {handoverCode ? <DeliveryCode code={handoverCode} riderName={order.rider?.name ?? null} /> : null}
+
         {/* ── Progress steps ── */}
         {!isCancelled && (
           <div className="rounded-2xl p-5"
@@ -233,7 +284,8 @@ export default function OrderStatusPage() {
                           transform: current ? 'scale(1.15)' : 'scale(1)',
                         }}>
                         {current && isPreparing
-                          ? <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }} aria-hidden>⏳</span>
+                          ? <span aria-hidden="true" className="inline-block h-3.5 w-3.5 animate-spin rounded-full"
+                              style={{ border: '2px solid currentColor', borderRightColor: 'transparent' }} />
                           : done
                             ? <CheckSmall />
                             : <span className="text-[11px]" style={{ color: 'var(--servd-dim)' }}>{i + 1}</span>
@@ -279,7 +331,7 @@ export default function OrderStatusPage() {
                     )}
                   </p>
                 </div>
-                <a href={`tel:${order.rider.phone}`}
+                <a href={riderTel(order.rider.phone)}
                   className="px-3 py-1.5 rounded-full text-xs font-bold"
                   style={{ background: 'var(--servd-ink)', color: '#fff' }}>
                   Call
@@ -338,7 +390,8 @@ export default function OrderStatusPage() {
         )}
 
         {/* ── Rate-your-meal CTA ── */}
-        {order.status === 'completed' && token && (
+        {/* Not while a till-completed delivery is still on its way. */}
+        {order.status === 'completed' && !jobOpen && token && (
           <Link href={`/orders/${order.id}/review`}
             className="block w-full rounded-3xl overflow-hidden transition-transform active:scale-[0.98]"
             style={{ background: 'var(--servd-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
@@ -363,6 +416,40 @@ export default function OrderStatusPage() {
         </Link>
       </div>
     </div>
+  )
+}
+
+// ── Delivery hand-over code — the customer reads it to the rider ──────────
+// The rider types it into their app to complete the delivery
+// (docs/rider-app.md); the same code reaches the customer on WhatsApp at
+// pick-up. Shown only while a rider has the order and it is not delivered.
+function DeliveryCode({ code, riderName }: { code: string; riderName: string | null }) {
+  return (
+    <section
+      aria-labelledby="delivery-code-title"
+      className="rounded-3xl px-5 py-5 text-center"
+      style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)' }}
+    >
+      <p id="delivery-code-title" className="text-[11px] font-black uppercase tracking-[0.2em]" style={{ opacity: 0.85 }}>
+        Your delivery code
+      </p>
+      <div className="mt-3 flex justify-center gap-2">
+        <span className="sr-only">{code.split('').join(' ')}</span>
+        {code.split('').map((digit, i) => (
+          <span
+            key={i}
+            aria-hidden="true"
+            className="flex h-16 w-12 items-center justify-center rounded-2xl font-mono text-[34px] font-black"
+            style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)' }}
+          >
+            {digit}
+          </span>
+        ))}
+      </div>
+      <p className="mt-3 text-sm font-semibold leading-snug">
+        Give it to your rider{riderName ? ` (${riderName})` : ''} at the door — only once your order is in your hands.
+      </p>
+    </section>
   )
 }
 

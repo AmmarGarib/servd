@@ -443,6 +443,12 @@ export function verifyStaffToken(token: string, expected: StaffTokenType): Staff
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }
+  // An allow-list, not a deny-list: customer tokens ('customer'), rider-app
+  // tokens ('rider' / 'rider_refresh', modules/riderAuth) and preview links
+  // are signed with the same secret and must never pass as a staff session —
+  // a rider is not a User, and a staff guard (or the socket handshake in
+  // lib/ws.ts, which calls this) accepting one would hand them every
+  // ALL_STAFF route, the hand-over codes included.
   if (!['access', 'refresh', 'mfa'].includes(payload.type)) {
     throw new UnauthorizedError('Invalid token type')
   }

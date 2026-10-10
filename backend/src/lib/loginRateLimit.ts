@@ -154,6 +154,15 @@ export function isDegraded(): boolean {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+function rateLimited(limit: Limit, ttlSec: number | null): AppError {
+  const mins = Math.max(1, Math.ceil((ttlSec && ttlSec > 0 ? ttlSec : limit.lockoutSec) / 60))
+  return new AppError(
+    'RATE_LIMITED',
+    `Too many failed attempts. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`,
+    429,
+  )
+}
+
 export async function check(limit: Limit, ip: string): Promise<void> {
   const k = key(limit.scope, ip)
   const now = Date.now()
@@ -180,13 +189,63 @@ export async function check(limit: Limit, ip: string): Promise<void> {
   }
 
   if (count === null || !Number.isFinite(count) || count < limit.max) return
+  throw rateLimited(limit, ttlSec)
+}
 
-  const mins = Math.max(1, Math.ceil((ttlSec && ttlSec > 0 ? ttlSec : limit.lockoutSec) / 60))
-  throw new AppError(
-    'RATE_LIMITED',
-    `Too many failed attempts. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`,
-    429,
-  )
+// INCR, and start the window on the first hit. Also re-arms a key that somehow
+// lost its TTL, so a crash between INCR and EXPIRE can never leave a permanent
+// lock-out behind.
+const CLAIM_SCRIPT = `
+local c = redis.call('INCR', KEYS[1])
+if c == 1 or redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return c`
+
+/**
+ * Take one slot from the bucket BEFORE doing the guarded work, and throw 429
+ * when the bucket is already full. Atomic, unlike `check` + `recordFailure`:
+ * those read the counter first and add to it after the attempt, so N parallel
+ * requests all pass the read and get N attempts — 25 parallel code guesses
+ * used to sail past a limit of 6. Use this wherever the attempt itself is the
+ * thing being limited (a code guess, a message sent); give the slot back with
+ * `release` when the attempt turns out not to count.
+ */
+export async function claim(limit: Limit, ip: string): Promise<void> {
+  const k = key(limit.scope, ip)
+  const now = Date.now()
+  let count: number
+  let ttlSec: number | null = null
+  try {
+    count = Number(await withTimeout(
+      redis.eval(CLAIM_SCRIPT, 1, k, String(limit.lockoutSec)) as Promise<number>,
+      'claim',
+    ))
+    noteRedisRecovered()
+  } catch (err) {
+    noteRedisFailure(err)
+    memoryIncrement(k, limit.lockoutSec, now)
+    const e = memoryGet(k, now)
+    count = e?.count ?? 1
+    ttlSec = e ? Math.ceil((e.expiresAt - now) / 1000) : null
+  }
+  if (count <= limit.max) return
+  if (ttlSec === null) {
+    try { ttlSec = await withTimeout(redis.ttl(k), 'ttl') } catch { /* the message falls back to lockoutSec */ }
+  }
+  throw rateLimited(limit, ttlSec)
+}
+
+/** Give back a slot taken by `claim` — the attempt succeeded and should not count. */
+export async function release(limit: Limit, ip: string): Promise<void> {
+  const k = key(limit.scope, ip)
+  const e = memoryGet(k, Date.now())
+  if (e && e.count > 0) e.count -= 1
+  try {
+    const v = await withTimeout(redis.decr(k), 'decr')
+    noteRedisRecovered()
+    if (v <= 0) await withTimeout(redis.del(k), 'del')
+  } catch (err) {
+    noteRedisFailure(err)
+  }
 }
 
 export async function recordFailure(limit: Limit, ip: string): Promise<void> {
@@ -242,6 +301,22 @@ export const STAFF_PASSWORD_USER_LIMIT: Limit = { scope: 'staff-login-user', max
 // and it would also punish a whole restaurant behind one NAT. 6 is a couple of
 // genuine retries plus a fat-fingered code, and no more.
 export const STAFF_OTP_PHONE_LIMIT: Limit = { scope: 'staff-otp-phone', max: 6, lockoutSec: 15 * 60 }
+// Rider-app sign-in (docs/rider-app.md). The same shape as the floor-staff code
+// sign-in: the phone bucket counts EVERY code request for that number (known
+// rider or not, so the 429 cannot tell the two apart) plus every wrong code;
+// the IP bucket counts requests and wrong codes and is loose, because riders on
+// mobile data sit behind carrier NAT and share addresses. Both are taken with
+// `claim` (before the work), never check-then-record.
+export const RIDER_OTP_PHONE_LIMIT: Limit = { scope: 'rider-otp-phone', max: 6, lockoutSec: 15 * 60 }
+export const RIDER_OTP_IP_LIMIT:    Limit = { scope: 'rider-otp-ip',    max: 40, lockoutSec: 10 * 60 }
+// Requests to /rider/* whose token is refused (bad, expired, revoked, or the
+// rider deactivated), per IP. Only failures count, so riders sharing a carrier
+// IP are not throttled by each other's ordinary traffic — an expired access
+// token is about one failure per rider per 15 minutes. It bounds replaying a
+// revoked or deactivated rider's token, which otherwise costs a Redis read (and
+// database reads) per request with no limit at all: the per-route limiter
+// keys on the rider and runs after the guard, so it never sees these.
+export const RIDER_BAD_TOKEN_IP_LIMIT: Limit = { scope: 'rider-bad-token-ip', max: 120, lockoutSec: 10 * 60 }
 export const CUSTOMER_PASSWORD_LIMIT: Limit = { scope: 'customer-login',   max: 8, lockoutSec: 15 * 60 }
 export const MAGIC_LINK_VERIFY_LIMIT: Limit = { scope: 'magic-link-verify', max: 30, lockoutSec: 5 * 60 }
 // Password-reset REQUESTS, keyed on the email. Deliberately tight: each one

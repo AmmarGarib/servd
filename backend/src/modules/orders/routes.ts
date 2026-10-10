@@ -7,6 +7,7 @@ import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/concept
 import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
 
 // Orders are brand-anchored (Order.conceptId) and a brand belongs to one
 // company, so "is this order mine?" is always answered through the concept.
@@ -18,6 +19,10 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 // (the till via /pos/orders, the storefront, group orders, WhatsApp); a staff
 // "manual intake" here used to skip the till's discount caps, service charge
 // and idempotency, and could book a paid Payment on no shift.
+//
+// The customer's delivery hand-over code (deliveryOtp) is stripped from every
+// order returned here unless the operator is admin / management: anyone who
+// can read it can "deliver" without going to the door (lib/deliveryOtp.ts).
 
 /**
  * `where` fragment: the order's brand belongs to a company in scope for
@@ -80,11 +85,13 @@ export async function orderRoutes(fastify: FastifyInstance) {
     // Empty scope → empty page. listOrders also refuses to run unscoped, but
     // there's no reason to hit the DB for it.
     if (finalConceptIds.length === 0) return { data: [], cursor: null, hasMore: false }
-    return listOrders({
+    const page = await listOrders({
       ...rest,
       conceptIds: finalConceptIds,
       limit: limit ? parseInt(limit, 10) : undefined,
     })
+    const role = req.staffUser!.role
+    return { ...page, data: page.data.map((o) => redactDeliveryOtp(o, role)) }
   })
 
   // GET /orders/:id
@@ -96,7 +103,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       // row ever being fetched.
       const order = await getOrder(req.params.id, await orderInCompany(req, 'read'))
       await assertConceptAccess(req.staffUser!, order.conceptId)
-      return order
+      return redactDeliveryOtp(order, req.staffUser!.role)
     },
   )
 
@@ -196,10 +203,11 @@ export async function orderRoutes(fastify: FastifyInstance) {
           throw new AppError('COMPLETE_ON_PAYMENT', 'A till sale completes when it is paid at the till.', 409)
         }
       }
-      return updateOrderStatus(req.params.id, status, {
+      const updated = await updateOrderStatus(req.params.id, status, {
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
         via: 'status_update',
       })
+      return redactDeliveryOtp(updated, req.staffUser!.role)
     },
   )
 
@@ -224,7 +232,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
         metadata: { ip: req.ip },
       })
-      return reply.send({ ok: true, order: updated })
+      return reply.send({ ok: true, order: redactDeliveryOtp(updated, req.staffUser!.role) })
     },
   )
 

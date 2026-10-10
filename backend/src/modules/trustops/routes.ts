@@ -21,11 +21,11 @@ import {
   SHIFT_COMPANY_INCLUDE, shiftTenantId,
 } from '../../lib/tenantScope.js'
 import { cashVarianceLimitCents } from '../../lib/drawer.js'
+import { generateDeliveryOtp, deliveryOtpMatches, DELIVERY_OTP_READERS, DELIVERY_OTP_MAX_ATTEMPTS } from '../../lib/deliveryOtp.js'
+import type { UserRole } from '@prisma/client'
 
-// 4-digit OTP for rider hand-off
-function generateOtp(): string {
-  return Math.floor(1000 + Math.random() * 9000).toString()
-}
+// The 4-digit hand-off code: generated with crypto.randomInt and compared in
+// constant time — the same helpers as the rider app (lib/deliveryOtp.ts).
 
 // Manager PIN: the ONE verifier (auth/managerPin.ts) — active accounts,
 // owner-decision-7 approvers, and only approvers of the company the action
@@ -109,27 +109,37 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // 1. RIDER OTP — generate on order, verify on dispatch
   // ════════════════════════════════════════════════════════════════════════
 
-  // GET /trustops/orders/:id/otp — customer-facing fetch (storefront calls this).
-  // Returns the OTP for the customer to show their rider. Auth via customer
-  // token in production; for now locked to ALL_STAFF + customer.
+  // GET /trustops/orders/:id/otp — support read of the hand-over code.
+  // admin / management ONLY (docs/rider-app.md): anyone who can read the code
+  // can "deliver" without going to the door. The customer gets their own code
+  // from GET /storefront/orders/:id and on WhatsApp at pick-up.
   fastify.get<{ Params: { id: string } }>(
     '/orders/:id/otp',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuth(...(DELIVERY_OTP_READERS as UserRole[])) },
     async (req) => {
       // Scoped through the order's brand → company: a foreign order is 404.
       const order = await findOrderInScope(req, req.params.id, { id: true, deliveryOtp: true, source: true, status: true })
       // Generate OTP on first read if missing (defensive)
       if (!order.deliveryOtp) {
-        const otp = generateOtp()
-        await prisma.order.update({ where: { id: order.id }, data: { deliveryOtp: otp } })
-        return { otp }
+        const otp = generateDeliveryOtp()
+        // Conditional: two first reads must not mint two different codes.
+        await prisma.order.updateMany({ where: { id: order.id, deliveryOtp: null }, data: { deliveryOtp: otp } })
+        const fresh = await prisma.order.findUnique({ where: { id: order.id }, select: { deliveryOtp: true } })
+        return { otp: fresh?.deliveryOtp ?? otp }
       }
       return { otp: order.deliveryOtp }
     },
   )
 
-  // POST /trustops/orders/:id/verify-otp — rider enters customer-provided OTP.
-  // Wrong OTP increments counter; 3+ failures = `lost_package` flag.
+  // POST /trustops/orders/:id/verify-otp — staff enter the customer's code
+  // for a rider without the app. Same budget as the rider app: each try takes
+  // an attempt slot BEFORE the compare (dispatch/service claimHandoverAttempt),
+  // DELIVERY_OTP_MAX_ATTEMPTS in total across both doors, then 423 OTP_LOCKED
+  // — a manager completes a locked order through /dispatch/orders/:id/delivered.
+  // It used to have no lock at all (any staff role could walk all 10,000 codes
+  // and record a fake "hand-over code verified") and wrote back a stale
+  // absolute count that could lower the rider app's. 3+ failures still raise a
+  // `lost_package` flag.
   fastify.post<{ Params: { id: string } }>(
     '/orders/:id/verify-otp',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -142,9 +152,18 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         throw new AppError('NO_OTP', 'No OTP set on this order. Customer should refresh their order page.', 400)
       }
 
-      if (body.otp !== order.deliveryOtp) {
-        const attempts = order.deliveryOtpAttempts + 1
-        await prisma.order.update({ where: { id: order.id }, data: { deliveryOtpAttempts: attempts } })
+      const { claimHandoverAttempt, releaseHandoverAttempt, markDelivered } = await import('../dispatch/service.js')
+      const slot = await claimHandoverAttempt(order.id, DELIVERY_OTP_MAX_ATTEMPTS)
+      if (!slot.claimed) {
+        throw new AppError(
+          'OTP_LOCKED',
+          'Too many wrong codes on this order. A manager has to mark it delivered from Dispatch.',
+          423,
+        )
+      }
+
+      if (!deliveryOtpMatches(order.deliveryOtp, body.otp)) {
+        const attempts = slot.attempts
         if (attempts >= 3) {
           await flagException({
             tenantId: order.concept.tenantId,
@@ -160,16 +179,23 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
             metadata: { attempts, customerId: order.customerId, customerName: order.customerName },
           })
         }
-        throw new AppError('OTP_MISMATCH', `Wrong OTP (attempt ${attempts}/3). Ask the customer to re-read the code.`, 403)
+        const left = Math.max(0, DELIVERY_OTP_MAX_ATTEMPTS - attempts)
+        throw new AppError(
+          'OTP_MISMATCH',
+          `Wrong code (attempt ${attempts} of ${DELIVERY_OTP_MAX_ATTEMPTS}). Ask the customer to re-read the code.`,
+          403,
+          { attemptsLeft: left },
+        )
       }
 
-      // OTP matched — the drop-off is proven. It goes through the one
+      // OTP matched — the drop-off is proven. The slot goes back (a clean
+      // hand-over is not a failed attempt), and it goes through the one
       // "delivered" rule (dispatch/service markDelivered): stamps the OTP
       // verification and the drop-off, frees the rider, and completes the
       // order through the one completion routine (decision 8). It used to
       // write status 'completed' directly — no ledger entry, no tax invoice,
       // no FBR/SRB filing, no loyalty earn, no rollups.
-      const { markDelivered } = await import('../dispatch/service.js')
+      await releaseHandoverAttempt(order.id)
       await markDelivered(order.id, {
         otpVerified: true,
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },

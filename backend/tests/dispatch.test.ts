@@ -11,9 +11,16 @@
 //     the rider on the order for history, completes a 'ready' order through
 //     updateOrderStatus (the ledger path) and refuses one the kitchen has not
 //     finished.
+//   - staff "Mark delivered" on a rider-app job is a manager's override, only
+//     once the hand-over code has locked or if the rider never accepted —
+//     checked up front AND in the delivered claim; pre-rider-app orders keep
+//     the old rule; a second press is not an error;
+//   - the rider app's own location fix is a claim on the rider being on
+//     shift: off shift, nothing is stored.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
-import { assignRider, unassignRider, markDelivered } from '../src/modules/dispatch/service.js'
+import { assignRider, unassignRider, markDelivered, recordRiderFix } from '../src/modules/dispatch/service.js'
+import { DELIVERY_OTP_MAX_ATTEMPTS } from '../src/lib/deliveryOtp.js'
 import { runDispatchSweep } from '../src/workers/riderDispatch.js'
 
 let tenantA: string
@@ -29,11 +36,12 @@ async function rider(tenantId: string, data: Partial<{ status: 'available' | 'bu
   })
 }
 
-async function order(conceptId: string, status: 'received' | 'confirmed' | 'preparing' | 'ready' | 'completed' = 'ready', extra: Partial<{ riderId: string; deliveryOtp: string }> = {}) {
+async function order(conceptId: string, status: 'received' | 'confirmed' | 'preparing' | 'ready' | 'completed' = 'ready', extra: Partial<{ riderId: string; deliveryOtp: string; fulfilmentType: 'delivery' | 'takeout' }> = {}) {
   return prisma.order.create({
     data: {
       conceptId, source: 'servd', status, totalCents: 50_000,
       riderId: extra.riderId ?? null, deliveryOtp: extra.deliveryOtp ?? null,
+      fulfilmentType: extra.fulfilmentType ?? 'takeout',
       ...(status === 'completed' && { completedAt: new Date() }),
     },
   })
@@ -128,12 +136,107 @@ describe('markDelivered', () => {
   })
 })
 
+describe('markDelivered as a staff close (POST /dispatch/orders/:id/delivered)', () => {
+  const manager = { staffClose: { manager: true } }
+  const cashier = { staffClose: { manager: false } }
+
+  it('on a rider-app job the rider has accepted: refused until the code locks, then a manager may close it', async () => {
+    const r = await rider(tenantA)
+    const o = await order(conceptA, 'ready', { deliveryOtp: '2580' })
+    await assignRider(o.id, r.id)
+    await prisma.order.update({ where: { id: o.id }, data: { riderAcceptedAt: new Date(), deliveryOtpAttempts: DELIVERY_OTP_MAX_ATTEMPTS - 1 } })
+
+    await expect(markDelivered(o.id, cashier)).rejects.toMatchObject({ code: 'FORBIDDEN', statusCode: 403 })
+    await expect(markDelivered(o.id, manager)).rejects.toMatchObject({ code: 'RIDER_CLOSES_WITH_CODE', statusCode: 409 })
+    // Refused before anything was written: not completed, not delivered.
+    let after = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
+    expect(after.status).toBe('ready')
+    expect(after.completedAt).toBeNull()
+    expect(after.deliveredAt).toBeNull()
+    expect((await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })).totalDeliveries).toBe(0)
+
+    // The code locks: now it is a manager's to close (still not a cashier's).
+    await prisma.order.update({ where: { id: o.id }, data: { deliveryOtpAttempts: DELIVERY_OTP_MAX_ATTEMPTS } })
+    await expect(markDelivered(o.id, cashier)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const done = await markDelivered(o.id, manager)
+    expect(done.alreadyDelivered).toBe(false)
+    after = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
+    expect(after.status).toBe('completed')
+    expect(after.deliveredAt).toBeInstanceOf(Date)
+    expect(after.deliveryOtpVerifiedAt).toBeNull()      // closed without the code
+    const ev = await prisma.riderJobEvent.findFirstOrThrow({ where: { orderId: o.id, type: 'delivered' } })
+    expect(ev.note).toBe('marked delivered by a manager — hand-over code locked')
+    const rr = await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })
+    expect(rr.totalDeliveries).toBe(1)
+    expect(rr.status).toBe('available')
+
+    // Idempotent: a second press is the same answer, not a 409.
+    const again = await markDelivered(o.id, manager)
+    expect(again.alreadyDelivered).toBe(true)
+    expect((await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })).totalDeliveries).toBe(1)
+  })
+
+  it('a manager may close a job the rider never accepted (a rider without the app)', async () => {
+    const r = await rider(tenantA)
+    const o = await order(conceptA, 'ready')
+    await assignRider(o.id, r.id)
+    await expect(markDelivered(o.id, cashier)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect((await markDelivered(o.id, manager)).alreadyDelivered).toBe(false)
+    const ev = await prisma.riderJobEvent.findFirstOrThrow({ where: { orderId: o.id, type: 'delivered' } })
+    expect(ev.note).toBe('marked delivered by a manager — rider never accepted')
+  })
+
+  it('an order from before the rider app (no riderAssignedAt) keeps the old rule', async () => {
+    const r = await rider(tenantA, { status: 'busy' })
+    const o = await order(conceptA, 'ready', { riderId: r.id })
+    const first = await markDelivered(o.id, cashier)
+    expect(first.alreadyDelivered).toBe(false)
+    expect(first.order.deliveredAt).toBeInstanceOf(Date)
+    expect((await markDelivered(o.id, cashier)).alreadyDelivered).toBe(true)
+  })
+
+  it('the rider closing with the code first makes a late staff press a no-op, not an error', async () => {
+    const r = await rider(tenantA)
+    const o = await order(conceptA, 'ready', { deliveryOtp: '1470' })
+    await assignRider(o.id, r.id)
+    await prisma.order.update({ where: { id: o.id }, data: { riderAcceptedAt: new Date(), pickedUpAt: new Date() } })
+    await markDelivered(o.id, { otpVerified: true })
+    const late = await markDelivered(o.id, manager)
+    expect(late.alreadyDelivered).toBe(true)
+    expect((await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })).totalDeliveries).toBe(1)
+  })
+})
+
+describe('recordRiderFix', () => {
+  it("the rider app's fix is a claim on being on shift: off shift, nothing is stored", async () => {
+    const r = await rider(tenantA, { status: 'offline' })
+    // The guard read the rider on shift; they went off before the write.
+    await expect(recordRiderFix(r, { lat: 24.8, lng: 67.05 }, { onShiftOnly: true }))
+      .rejects.toMatchObject({ code: 'OFF_SHIFT', statusCode: 409 })
+    expect(await prisma.riderLocation.count({ where: { riderId: r.id } })).toBe(0)
+    expect((await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })).lastReportedAt).toBeNull()
+
+    // The staff relay (no onShiftOnly) still records an off-shift rider's fix,
+    // and neither path changes their status.
+    await recordRiderFix(r, { lat: 24.8, lng: 67.05 })
+    expect(await prisma.riderLocation.count({ where: { riderId: r.id } })).toBe(1)
+    await prisma.rider.update({ where: { id: r.id }, data: { status: 'available' } })
+    await expect(recordRiderFix(r, { lat: 24.81, lng: 67.06 }, { onShiftOnly: true })).resolves.toMatchObject({ ok: true })
+    const after = await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })
+    expect(after.lastLat).toBe(24.81)
+    expect(after.status).toBe('available')
+    expect(await prisma.riderLocation.count({ where: { riderId: r.id } })).toBe(2)
+  })
+})
+
 describe('auto-dispatch worker', () => {
   it("only hands an order to a rider of the order's company", async () => {
     // Clear the field so the sweep sees only this test's riders.
     await prisma.rider.updateMany({ data: { status: 'offline' } })
     const foreign = await rider(tenantB)
-    const o = await order(conceptA, 'confirmed', { deliveryOtp: '1234' })
+    // A delivery order (its fulfilment type, not the presence of a code, is
+    // what makes it one — docs/rider-app.md).
+    const o = await order(conceptA, 'confirmed', { deliveryOtp: '1234', fulfilmentType: 'delivery' })
 
     // Only B's rider is free: A's order must wait rather than borrow them.
     await runDispatchSweep()

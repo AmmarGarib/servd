@@ -1,9 +1,12 @@
 // Rider dispatch + live location.
 //
-// Riders post their current location every ~10s while on shift. We persist
-// to RiderLocation history (pruned weekly) and update the Rider row with the
-// latest fix. The customer-facing tracking page polls /storefront/orders/:id
-// and reads the rider's lastLat/lastLng — no need for a per-customer socket.
+// Riders post their current location every ~10s while on shift — from the
+// rider app (POST /rider/location, modules/rider) or relayed by staff here. We
+// persist to RiderLocation history (pruned after 24 h by the rider-dispatch
+// worker), update the Rider row with the latest fix and push `rider:location`
+// over the socket (dispatch/service.ts recordRiderFix — one writer for both).
+// The customer-facing tracking page polls /storefront/orders/:id and reads the
+// rider's last fix.
 //
 // Auth + tenant model:
 //   - All routes require a staff session (requireAuth ALL_STAFF).
@@ -12,22 +15,34 @@
 //     through `scopeTenantWhere` ('read' on GETs — portfolio-aware; 'write'
 //     on mutations — every company the operator belongs to) so a cashier in
 //     tenant A cannot see, mutate, or geofence tenant B's fleet.
-//   - An order and the rider carrying it must belong to the SAME company. A
+//   - An order and the rider carrying it belong to the SAME company, or the
+//     rider's company has an active fleet agreement to deliver for the
+//     order's company (docs/rider-app.md — the one deliberate crossing). A
 //     head-office operator's write scope spans every company they are a
-//     member of, so "both in scope" is not enough on assign.
+//     member of, so "both in scope" is not enough on assign; assignRider
+//     checks the rule itself.
+//   - The board shows the operator's own fleet plus any other company's rider
+//     while (and only while) they carry one of the operator's orders — and
+//     then only those orders.
+//   - The customer's hand-over code is stripped from every order this module
+//     returns unless the operator is admin / management (lib/deliveryOtp.ts).
 //
 // This is the one set of rider-assignment routes (the rules live in
-// ./service.ts). /riders keeps the roster (create / edit / history / rating);
-// its old /riders/assign, /riders/unassign and the two rider-status PATCHes
-// were removed in favour of these.
+// ./service.ts). /riders keeps the roster (create / edit / history / rating /
+// fleet agreements); its old /riders/assign, /riders/unassign and the two
+// rider-status PATCHes were removed in favour of these.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
-import { assignRider, unassignRider, markDelivered, setRiderStatus } from './service.js'
+import {
+  assignRider, unassignRider, markDelivered, setRiderStatus, recordRiderFix, riderFixSchema, stillWithRiderWhere,
+} from './service.js'
+import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
 
 // Company-scoped rider lookup. Goes through scopeTenantWhere rather than the
 // raw tenantFilter so a staff user with no company resolves to an empty
@@ -59,14 +74,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       config: { rateLimit: { max: 600, timeWindow: '10 minutes' } },  // ~1/sec ceiling
     },
     async (req) => {
-      const body = z.object({
-        lat:      z.number().min(-90).max(90),
-        lng:      z.number().min(-180).max(180),
-        heading:  z.number().min(0).max(359).optional(),
-        accuracy: z.number().min(0).max(10_000).optional(),
-        speedMps: z.number().min(0).optional(),
-        orderId:  z.string().uuid().optional(),
-      }).parse(req.body)
+      const body = riderFixSchema.parse(req.body)
 
       const rider = await findRiderInScope(req, req.params.id, 'write')
       if (!rider) throw new NotFoundError('Rider', req.params.id)
@@ -87,33 +95,9 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
         if (!order) throw new AppError('ORDER_NOT_ASSIGNED', 'Order is not assigned to this rider', 422)
       }
 
-      const now = new Date()
-      await prisma.$transaction([
-        prisma.riderLocation.create({
-          data: {
-            riderId: rider.id,
-            orderId: body.orderId ?? null,
-            lat: body.lat, lng: body.lng,
-            heading: body.heading ?? null,
-            accuracy: body.accuracy ?? null,
-            speedMps: body.speedMps ?? null,
-            recordedAt: now,
-          },
-        }),
-        prisma.rider.update({
-          where: { id: rider.id },
-          data: {
-            lastLat: body.lat, lastLng: body.lng,
-            lastHeading: body.heading ?? null,
-            lastAccuracy: body.accuracy ?? null,
-            lastReportedAt: now,
-            // Auto-flip to 'available' if rider was offline
-            ...(rider.status === 'offline' && { status: 'available' as never }),
-          },
-        }),
-      ])
-
-      return { ok: true, recordedAt: now.toISOString() }
+      // No status change here any more: a fix used to flip an 'offline' rider
+      // back to 'available'. Going on shift is the rider's own action.
+      return recordRiderFix(rider, body)
     },
   )
 
@@ -142,36 +126,54 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
   // shouldn't appear on any dispatch board until an admin assigns them.
   fastify.get('/board', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const scope = await scopeTenantWhere(req, 'read')
-    const riders = await prisma.rider.findMany({
+    // Orders the board may show: still on a rider's hands — the one definition
+    // (service.ts riderOpenOrderWhere: in service, or 'completed' by expo / the
+    // till and still out with the rider), so the board, the rider's job list
+    // and freeing a rider agree — of a brand in scope.
+    const ordersInScope: Prisma.OrderWhereInput = {
+      ...stillWithRiderWhere(),
+      concept: { deletedAt: null, ...scope },
+    }
+    // serviceClient with explicit company filters on both the riders and
+    // their orders: a fleet partner's rider row belongs to ANOTHER company,
+    // which the RLS-scoped client would hide from this operator under
+    // enforced RLS (the riders policy only shows one's own company's rows).
+    const riders = await serviceClient.rider.findMany({
       where: {
         isActive: true,
         deletedAt: null,
-        ...scope,
+        // Our own fleet, plus another company's rider only while they carry
+        // one of OUR orders (a fleet agreement) — never their idle riders.
+        OR: [scope, { orders: { some: ordersInScope } }],
       },
       orderBy: { name: 'asc' },
       select: {
-        id: true, name: true, phone: true, vehicleType: true, status: true,
+        id: true, name: true, phone: true, vehicleType: true, status: true, tenantId: true,
         lastLat: true, lastLng: true, lastHeading: true, lastReportedAt: true,
         orders: {
-          where: {
-            status: { in: ['ready', 'preparing', 'confirmed'] },
-            deletedAt: null,
-            // Belt-and-braces: even within a tenant-scoped rider, only show
-            // orders whose concept is in scope.
-            concept: { deletedAt: null, ...scope },
-          },
+          // Belt-and-braces: even within a tenant-scoped rider, only show
+          // orders whose concept is in scope.
+          where: ordersInScope,
+          // An explicit field list — never deliveryOtp (the hand-over code).
+          // deliveryOtpAttempts tells the board the code has locked.
           select: {
             id: true, status: true, totalCents: true, customerName: true, deliveryNotes: true,
-            placedAt: true, estimatedPickup: true,
+            placedAt: true, estimatedPickup: true, fulfilmentType: true,
+            riderAssignedAt: true, riderAcceptedAt: true, pickedUpAt: true, arrivedAt: true,
+            deliveryOtpAttempts: true,
             concept: { select: { name: true, slug: true } },
           },
           orderBy: { placedAt: 'desc' },
         },
       },
     })
+    const inScope = new Set(typeof scope.tenantId === 'string' ? [scope.tenantId] : scope.tenantId.in)
     const now = Date.now()
-    return riders.map((r) => ({
+    return riders.map(({ tenantId, ...r }) => ({
       ...r,
+      // True for a rider of another company carrying our orders under a
+      // fleet agreement — the board can label them.
+      fleetPartner: !tenantId || !inScope.has(tenantId),
       lastFixAgeMs: r.lastReportedAt ? (now - new Date(r.lastReportedAt).getTime()) : null,
       stale: r.lastReportedAt ? (now - new Date(r.lastReportedAt).getTime()) > 5 * 60_000 : true,
     }))
@@ -189,7 +191,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       // assignRider.
       const rider = await findRiderInScope(req, body.riderId, 'write')
       if (!rider) throw new NotFoundError('Rider', body.riderId)
-      return assignRider(order.id, rider.id)
+      return redactDeliveryOtp(await assignRider(order.id, rider.id), req.staffUser!.role)
     },
   )
 
@@ -200,22 +202,28 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const order = await findOrderInScope(req, req.params.id)
-      return unassignRider(order.id)
+      return redactDeliveryOtp(await unassignRider(order.id), req.staffUser!.role)
     },
   )
 
   // POST /dispatch/orders/:id/delivered — the rider dropped it off. This is
   // when a delivery completes (decision 8): a still-'ready' order goes through
   // the one completion routine; the delivery is counted once and the rider
-  // freed.
+  // freed. On a rider-app job (riderAssignedAt set) the rider closes it with
+  // the customer's code, so this is a MANAGERS override, and only when the
+  // code has locked or the rider never accepted — otherwise 409
+  // RIDER_CLOSES_WITH_CODE (service.ts markDelivered staffClose). Older orders
+  // keep the old rule. Pressing it again on a delivered order is not an error.
   fastify.post<{ Params: { id: string } }>(
     '/orders/:id/delivered',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const order = await findOrderInScope(req, req.params.id)
-      return markDelivered(order.id, {
+      const r = await markDelivered(order.id, {
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
+        staffClose: { manager: MANAGERS.includes(req.staffUser!.role) },
       })
+      return { ...r, order: redactDeliveryOtp(r.order, req.staffUser!.role) }
     },
   )
 

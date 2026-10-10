@@ -14,6 +14,13 @@ import { SearchSheet } from './SearchSheet'
 // microsites with their own nav, the per-concept ordering experience).
 const HIDDEN_PREFIXES = ['/auth', '/login', '/signup', '/brand/']
 
+/** servd.pk/rider — the rider app's web version brings its own top bar
+ *  (app/rider/layout.tsx). Matched as a whole segment, not a prefix, so a
+ *  brand slug that merely starts with "rider" keeps its own rules. */
+export function isRiderPath(pathname: string): boolean {
+  return pathname === '/rider' || pathname.startsWith('/rider/')
+}
+
 interface Props {
   /**
    * The brand slug the server resolved for this request, or null on the servd
@@ -32,6 +39,7 @@ export function StorefrontNav({ initialBrandSlug = null, children }: Props) {
 
   if (onBrandMicrosite) return null
   if (HIDDEN_PREFIXES.some((p) => pathname.startsWith(p))) return null
+  if (isRiderPath(pathname)) return null
 
   // Hide nav on the per-concept ordering screen (/<brand>); that page has its
   // own brand-themed header. Every other one-segment servd page keeps it —

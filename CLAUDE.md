@@ -175,7 +175,8 @@ read), the Content editor (`/content`), `/storefront-hero`,
 display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
 
 - Everything is a `SiteLayout` row keyed by slug: `servd:<page>` (`home`,
-  `header` = top bar, `footer`, `waitlist`, `press`, `reserve`, `location` =
+  `header` = top bar, `footer`, `feedback` = the feedback button (layout kind
+  `widget`), `waitlist`, `press`, `reserve`, `location` =
   the template for every /locations page), `brand:<slug>` (home),
   `brand:<slug>:header|footer|about|visit|menu`, `brand:<slug>:<page>` (the
   owner's own brand pages — /brand/<slug>/pages/<page>, and `/pages/<page>` on
@@ -493,16 +494,30 @@ references in the codebase (`backend/src/adapters/foodpanda/`,
 are being removed. Do not add new aggregator integrations under any
 circumstances. GS Foods will run their own delivery fleet.
 
-### Own-fleet delivery — partially built
+### Own-fleet delivery — rider app v1 (2026-10-10)
 
-Schema + dispatch API + admin riders portal + tablet dispatch board +
-customer live tracker all exist and work today. The biggest missing
-piece is the **rider-facing mobile app** — the API expects POSTs from
-riders but no app is wired to call it. Future work in this order:
+**docs/rider-app.md is the contract.** Riders sign in with phone + a
+WhatsApp code (`/rider-auth/*`, token types `rider` / `rider_refresh` — a
+rider is NOT a `User`, so no staff route ever accepts a rider token and vice
+versa). Rider API at `/rider/*`: shift on/off, jobs (offered → accepted →
+picked up → arrived → delivered with the customer's 4-digit code), live
+location. Two clients: the Expo app in `rider/` (background location) and
+the web version at **servd.pk/rider** (`frontend/storefront/src/app/rider/`,
+noindex, no servd chrome / feedback / pop-ups).
 
-1. Rider Expo app (auth, location ingest, OTP verify, accept jobs)
-2. Earnings/payouts models + nightly payout worker + admin dashboard
-3. KYC, push notifications, route optimization
+- **Shared fleet (owner):** GS Foods runs shared staff for every company, like
+  head office. A rider belongs to one company; it carries another company's
+  orders only under an active `FleetAgreement` (provider → client), managed in
+  admin → Riders → Fleet by an operator in both companies. Every
+  `RiderJobEvent` carries the order's company (`tenantId`) and the rider's
+  (`riderTenantId`) — the future cost split reads those.
+- **The hand-over code** is shown to the customer (tracker + WhatsApp at
+  pick-up) and to admin/management only; never in staff order lists. The
+  staff "Delivered" override is managers-only and only when the code locked
+  or the rider never accepted.
+- **Not built yet:** earnings/payouts, push notifications for offers (the app
+  polls), store release (EAS, icons, Play background-location declaration),
+  KYC, route optimisation.
 
 ## Claude Code operating policy — model routing & parallel agents
 

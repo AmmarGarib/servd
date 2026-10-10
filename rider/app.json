@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "servd rider",
+    "slug": "servd-rider",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "servd-rider",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#f3e7cd",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "pk.servd.rider",
+      "adaptiveIcon": { "backgroundColor": "#5a2156" },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "VIBRATE"
+      ]
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "pk.servd.rider",
+      "infoPlist": {
+        "UIBackgroundModes": ["location"],
+        "NSLocationWhenInUseUsageDescription": "servd rider shares your location with the kitchen while you are on shift, so they can see where you and their order are.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "servd rider keeps sharing your location while you are on shift, even with the phone locked in your pocket. It stops as soon as you go off shift.",
+        "NSLocationAlwaysUsageDescription": "servd rider keeps sharing your location while you are on shift, even with the phone locked in your pocket. It stops as soon as you go off shift."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "servd rider shares your location with the kitchen while you are on shift, so they can see where you and their order are.",
+          "locationAlwaysAndWhenInUsePermission": "servd rider keeps sharing your location while you are on shift, even with the phone locked in your pocket. It stops as soon as you go off shift.",
+          "locationAlwaysPermission": "servd rider keeps sharing your location while you are on shift, even with the phone locked in your pocket. It stops as soon as you go off shift.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
+    "experiments": { "typedRoutes": true },
+    "extra": {
+      "apiUrl": "https://api.servd.pk"
+    }
+  }
+}

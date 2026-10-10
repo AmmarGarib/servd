@@ -843,7 +843,22 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     }
     // Store payment phone (JazzCash/EasyPaisa) in rawPayload for later integration
     if (body.paymentPhone && (body.paymentGateway === 'jazzcash' || body.paymentGateway === 'easypaisa')) {
-      orderPatch.rawPayload = { paymentPhone: body.paymentPhone, paymentGateway: body.paymentGateway }
+      orderPatch.rawPayload = {
+        ...(orderPatch.rawPayload as Record<string, unknown> | undefined),
+        paymentPhone: body.paymentPhone, paymentGateway: body.paymentGateway,
+      }
+    }
+    // The drop-off pin, when the customer gave one: the rider app navigates to
+    // it (docs/rider-app.md, Job.dropoff). The address text stays in
+    // deliveryNotes.
+    if (
+      body.type === 'delivery' && body.deliveryLat != null && body.deliveryLng != null
+      && Math.abs(body.deliveryLat) <= 90 && Math.abs(body.deliveryLng) <= 180
+    ) {
+      orderPatch.rawPayload = {
+        ...(orderPatch.rawPayload as Record<string, unknown> | undefined),
+        deliveryLat: body.deliveryLat, deliveryLng: body.deliveryLng,
+      }
     }
     if (Object.keys(orderPatch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: orderPatch })
@@ -1045,7 +1060,17 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         }
       }
 
-      return { ...order, rider: riderInfo, alreadyReviewed: review != null }
+      // The delivery hand-over code is the customer's to give their rider at
+      // the door (docs/rider-app.md), so their own order page shows it — on a
+      // delivery order only. Pickup and dine-in orders have no rider; a code
+      // minted on one (ingestOrder issues one whenever delivery notes are
+      // present) is nothing the customer needs.
+      return {
+        ...order,
+        deliveryOtp: order.fulfilmentType === 'delivery' ? order.deliveryOtp : null,
+        rider: riderInfo,
+        alreadyReviewed: review != null,
+      }
     },
   )
 

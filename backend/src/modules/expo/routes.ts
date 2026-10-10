@@ -16,6 +16,7 @@ import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getIOSafe } from '../../lib/ws.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
 
 const HANDOFF_ACTION = 'expo.handoff'
 
@@ -120,10 +121,13 @@ export async function expoRoutes(fastify: FastifyInstance) {
         return { totalSteps, doneSteps, activeStations: Array.from(activeStations) }
       }
 
+      // The customer's hand-over code stays off the pass: expo hands the bag
+      // to the rider, and only admin / management may read it (lib/deliveryOtp.ts).
+      const role = req.staffUser!.role
       return {
-        awaitingFire: awaitingFire.map((o) => ({ ...o, ...summarise(o) })),
-        inProgress:   inProgress.map((o)   => ({ ...o, ...summarise(o) })),
-        ready:        ready.map((o)        => ({ ...o, ...summarise(o) })),
+        awaitingFire: awaitingFire.map((o) => redactDeliveryOtp({ ...o, ...summarise(o) }, role)),
+        inProgress:   inProgress.map((o)   => redactDeliveryOtp({ ...o, ...summarise(o) }, role)),
+        ready:        ready.map((o)        => redactDeliveryOtp({ ...o, ...summarise(o) }, role)),
         stations: stations.map((s) => ({
           id:    s.id,
           name:  s.name,

@@ -6,6 +6,7 @@ import { fetchLivePopups, fontFaceCss, trackLayout } from '../../lib/blocks'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { PopupBlocks } from './PopupBlocks'
 import { ConversionContext, isManualConvertTarget } from '../blocks/conversion'
+import { isRiderPath } from '../StorefrontNav'
 
 // Storefront pop-ups (SiteLayout kind 'popup'), mounted once in the root
 // layout. Fetches the live pop-ups, evaluates each one's PopupRules against the
@@ -18,7 +19,7 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? ''
 // First path segments that are servd routes, not a brand's /<concept>/… pages.
 const RESERVED = new Set([
   'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'home', 'locations', 'login', 'order',
-  'orders', 'press', 'reserve', 'signup', 'pages', 'preview', 'checkout', 'api', 'waitlist',
+  'orders', 'press', 'reserve', 'signup', 'pages', 'preview', 'checkout', 'api', 'waitlist', 'rider',
 ])
 
 type OrderState = 'unknown' | 'loading' | 'none' | 'some' | 'error'
@@ -94,7 +95,8 @@ export function PopupHost({ initialBrandSlug }: { initialBrandSlug?: string | nu
   const close = useCallback(() => { activeRef.current = null; setActive(null) }, [])
 
   useEffect(() => {
-    if (!popups || popups.length === 0 || pathname.startsWith('/preview')) {
+    // No pop-ups on draft previews or in the rider app (servd.pk/rider).
+    if (!popups || popups.length === 0 || pathname.startsWith('/preview') || isRiderPath(pathname)) {
       if (activeRef.current) close()
       return
     }

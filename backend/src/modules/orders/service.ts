@@ -9,6 +9,7 @@ import type { OrderStatus, ItemStatus } from '@prisma/client'
 import { tenantIdOfConcept } from '../../lib/webhook-events.js'
 import { consumptionForSoldLines } from '../../lib/recipeCost.js'
 import type { OrderPrice } from '../../lib/pricing.js'
+import { generateDeliveryOtp } from '../../lib/deliveryOtp.js'
 
 // ─── Inventory deduction (recipe-driven) ─────────────────────────────────────
 //
@@ -299,9 +300,10 @@ export async function ingestOrder(dto: OrderDTO, opts: { price?: OrderPrice } = 
           estimatedPickup: dto.estimated_pickup ? new Date(dto.estimated_pickup) : null,
           placedAt: new Date(dto.placed_at),
           // Generate a 4-digit hand-off OTP for delivery orders. Customer
-          // sees it on the order page; rider verifies at dropoff.
+          // sees it on the order page; rider verifies at dropoff. From a
+          // CSPRNG (lib/deliveryOtp.ts) — it used to be Math.random.
           deliveryOtp: fulfilmentType === 'delivery' || dto.delivery_notes
-            ? Math.floor(1000 + Math.random() * 9000).toString()
+            ? generateDeliveryOtp()
             : null,
           rawPayload: dto.raw_payload as never ?? null,
           items: {
@@ -711,6 +713,16 @@ async function transitionOrder(
       })
   }
 
+  // A refund in full ends a till-paid order that may still be out with a
+  // rider (it was 'completed', so on their hands — dispatch/service
+  // riderOpenOrderWhere): free them, as cancelOrder does for a cancel.
+  if (status === 'refunded') {
+    const { releaseRiderFromEndedOrder } = await import('../dispatch/service.js')
+    await releaseRiderFromEndedOrder(id, 'order refunded').catch((err) =>
+      console.error(`[dispatch] rider release failed for refunded order ${id}:`, (err as Error).message),
+    )
+  }
+
   // A promo applied to an order that never happened is given back: the usage
   // row goes, so the per-customer limit no longer counts it, and a capped
   // promo's usedCount comes back down. Refunds keep the usage — the sale did
@@ -783,6 +795,13 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   if (changed) {
     await restoreInventoryForOrder(id).catch((err) =>
       console.error(`[inventory] restore failed for ${status} order ${id}:`, (err as Error).message),
+    )
+    // Its rider (if any) is freed, with an `unassigned` job event — an order
+    // that will never be delivered must not keep a rider 'busy' or on the
+    // rider app's job list (docs/rider-app.md).
+    const { releaseRiderFromEndedOrder } = await import('../dispatch/service.js')
+    await releaseRiderFromEndedOrder(id, `order ${status}: ${reason}`).catch((err) =>
+      console.error(`[dispatch] rider release failed for ${status} order ${id}:`, (err as Error).message),
     )
   }
 

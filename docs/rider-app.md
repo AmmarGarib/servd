@@ -46,7 +46,12 @@ staff see only the riders carrying B's orders.
 | POST | `/rider-auth/otp/request` | `{ phone }` | `202 { sent: true }` — always the same, known number or not. Sends a 6-digit WhatsApp code (`requestOtp`, purpose `rider_login`) only when exactly one active, non-deleted rider with a company has that normalised phone. Limits: per IP and per phone (reuse `loginRateLimit` buckets). |
 | POST | `/rider-auth/otp/verify` | `{ phone, code }` | `200 { accessToken, refreshToken, rider }` or `401 { error: { code: 'INVALID_CODE' } }` |
 | POST | `/rider-auth/refresh` | `{ refreshToken }` | `200 { accessToken, refreshToken }` (rotated; the old one is revoked) |
-| POST | `/rider-auth/logout` | `{ refreshToken? }` + Bearer | `204` (both tokens revoked) |
+| POST | `/rider-auth/logout` | `{ refreshToken? }` (+ Bearer when there is one) | `204` (both tokens revoked); works with an expired access token |
+
+Refresh rotation is atomic; presenting an already-rotated refresh token again
+ends every session of that rider (token theft). Sign-in claims its rate-limit
+slots atomically before checking a code, and code issuing is serialised per
+phone, so parallel requests can't beat the limits.
 
 Tokens are JWTs with `type: 'rider'` / `'rider_refresh'` and `sub = rider.id`
 (access 15 min, refresh 30 days). They are rejected everywhere a staff token is
@@ -64,12 +69,12 @@ hand-over code).
 | POST | `/rider/shift` | `{ online: boolean }` | online → `available` (or `busy` if carrying a job); offline → `offline`, refused (409 `ACTIVE_JOBS`) while carrying an accepted job. |
 | GET | `/rider/jobs` | — | `{ jobs: Job[] }` — orders with `riderId = me` that are not finished/cancelled, oldest first. |
 | GET | `/rider/jobs/:orderId` | — | `{ job: Job }`; 404 unless assigned to me. |
-| POST | `/rider/jobs/:orderId/accept` | `{ lat?, lng? }` | offered → accepted. |
+| POST | `/rider/jobs/:orderId/accept` | `{ lat?, lng? }` | offered → accepted. `409 OFFER_WITHDRAWN` when the offer timed out or the fleet agreement ended. |
 | POST | `/rider/jobs/:orderId/decline` | `{ reason?, lat?, lng? }` | unassigns; the auto-dispatcher never re-offers this order to this rider. |
 | POST | `/rider/jobs/:orderId/picked-up` | `{ lat?, lng? }` | needs accepted; order must be `ready` (409 `NOT_READY` otherwise). Sends the customer their code on WhatsApp (best effort). |
 | POST | `/rider/jobs/:orderId/arrived` | `{ lat?, lng? }` | needs picked up. |
 | POST | `/rider/jobs/:orderId/deliver` | `{ otp, lat?, lng? }` | needs picked up; verifies the customer's code (timing-safe). Wrong → `403 OTP_MISMATCH { attemptsLeft }`; after 5 wrong codes `423 OTP_LOCKED` (a manager marks it delivered from admin → Dispatch). Right → `markDelivered(..., { otpVerified: true })`. |
-| POST | `/rider/location` | `{ lat, lng, heading?, accuracy?, speedMps?, orderId? }` | Same validation as `/dispatch/riders/:id/location`, for the signed-in rider only. Rate limit keyed on the rider, not the IP (carrier NAT). Emits `rider:location`. |
+| POST | `/rider/location` | `{ lat, lng, heading?, accuracy?, speedMps?, orderId? }` | Same validation as `/dispatch/riders/:id/location`, for the signed-in rider only. Rate limit keyed on the rider, not the IP (carrier NAT). Emits `rider:location`. `409 OFF_SHIFT` (nothing stored) when the rider is offline — the clients stop sharing. |
 
 `Job`:
 
@@ -119,7 +124,11 @@ hand-over code).
 - The customer sees it on their order tracker once a rider is assigned, and
   gets it on WhatsApp at pick-up.
 - Staff no longer see it in order lists; only admin / management can read it
-  (for support).
+  (for support). The staff check (`/trustops/orders/:id/verify-otp`) locks
+  after 5 wrong codes too (`423 OTP_LOCKED`).
+- The staff "Delivered" override (`/dispatch/orders/:id/delivered`) on a
+  rider-app job is managers-only and allowed only when the code locked or the
+  rider never accepted (`409 RIDER_CLOSES_WITH_CODE` otherwise).
 
 ## Clients
 

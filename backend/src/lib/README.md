@@ -17,3 +17,5 @@ Cross-cutting infrastructure used by every module.
 - `fbr.ts` — FBR e-invoice submission helper.
 - `hmac.ts` — Constant-time HMAC verification for webhooks.
 - `conceptAccess.ts` — Multi-tenant access control (which concepts a staff user can see).
+- `fleet.ts` — Fleet agreements: may this rider's company carry that order's company's orders? (the one rule — `docs/rider-app.md`).
+- `deliveryOtp.ts` — The delivery hand-over code: CSPRNG generation, constant-time compare, the 5-try limit, and who may read it (admin / management).

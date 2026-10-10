@@ -1605,6 +1605,13 @@ model Order {
   // off. The claim that makes "mark delivered" count a delivery (and free the
   // rider) exactly once, while the order keeps its riderId for history.
   deliveredAt           DateTime?
+  // The CURRENT rider's job stages (rider app v1, docs/rider-app.md). Set by
+  // dispatch/service.ts and the rider routes; reset when the rider is taken
+  // off. The full history (offers, declines, time-outs) is RiderJobEvent.
+  riderAssignedAt       DateTime? // offered to the rider (manual assign or auto-dispatch)
+  riderAcceptedAt       DateTime? // the rider accepted the offer
+  pickedUpAt            DateTime? // the rider has the bag
+  arrivedAt             DateTime? // the rider is at the customer's door
   placedAt              DateTime       @default(now())
   completedAt           DateTime?
 
@@ -1667,6 +1674,7 @@ model Order {
   review              OrderReview?
   complaints          OrderComplaint[]
   promoUsages         PromoCodeUsage[]
+  riderJobEvents      RiderJobEvent[]
 
   @@unique([source, externalId])
   @@index([conceptId, placedAt(sort: Desc)])
@@ -1675,6 +1683,9 @@ model Order {
   @@index([customerId])
   @@index([shiftId])
   @@index([placedAt(sort: Desc)])
+  // The rider app reads "orders on this rider's hands" on every request, every
+  // location fix and every hand-back (dispatch/service riderOpenOrderWhere).
+  @@index([riderId, deliveredAt])
   @@map("orders")
 }
 
@@ -2746,7 +2757,7 @@ model SiteLayout {
   // Storefront content module (decision 41). One row per page / pop-up.
   // blocks + settings are the LIVE copy the storefront reads; draft* is the
   // working copy. Nothing reaches the live copy without CEO approval.
-  kind             String    @default("page") // page | hero | footer | popup
+  kind             String    @default("page") // page | header | footer | widget (servd:feedback) | popup
   tenantId         String? // null = the shared servd pages; else the owning company
   blocks           Json // Block[] — live
   settings         Json? // live PageSettings: fonts, A/B variant, pop-up rules
@@ -2989,6 +3000,10 @@ model Rider {
   tenantId        String?
   tenant          Tenant?     @relation(fields: [tenantId], references: [id])
   name            String
+  // The rider's sign-in identity for the rider app (a WhatsApp code to this
+  // number), so it stays unique across companies: one person, one login. Stored
+  // normalised (auth/otp.ts normalisePhone, 92… digits) from 2026-10-10 —
+  // migration 20261010120000_rider_app normalised the existing rows.
   phone           String      @unique
   vehicleType     VehicleType @default(bike)
   status          RiderStatus @default(offline)
@@ -3010,9 +3025,70 @@ model Rider {
   orders    Order[]
   locations RiderLocation[]
   ratings   RiderRating[]
+  jobEvents RiderJobEvent[]
 
   @@index([tenantId])
   @@map("riders")
+}
+
+// ─── Rider app: job events + fleet agreements (docs/rider-app.md) ─────────────
+
+enum RiderJobEventType {
+  offered
+  accepted
+  declined
+  timed_out
+  picked_up
+  arrived
+  delivered
+  otp_failed
+  unassigned
+}
+
+// Append-only trail of every step of every rider job. Stamped with BOTH
+// companies: `tenantId` is the ORDER's company (the client — whose staff see
+// it, and who a later cost split charges) and `riderTenantId` the rider's
+// employer (the provider fleet). They differ only under a FleetAgreement.
+model RiderJobEvent {
+  id            String            @id @default(uuid())
+  riderId       String
+  orderId       String
+  tenantId      String // the order's company (client)
+  riderTenantId String // the rider's company (provider)
+  type          RiderJobEventType
+  lat           Float?
+  lng           Float?
+  note          String?
+  createdAt     DateTime          @default(now())
+
+  rider Rider @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([riderId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("rider_job_events")
+}
+
+// The ONE deliberate crossing of company separation (owner, 2026-10-10): GS
+// Foods runs a shared fleet, so a provider company's riders may carry a client
+// company's orders — only while an active agreement exists. Created / ended
+// only by an operator who belongs to BOTH companies. Nothing else crosses.
+model FleetAgreement {
+  id               String   @id @default(cuid())
+  providerTenantId String // whose riders
+  clientTenantId   String // whose orders they may carry
+  isActive         Boolean  @default(true)
+  createdById      String // the staff user who first set it up
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  provider Tenant @relation("FleetProvider", fields: [providerTenantId], references: [id])
+  client   Tenant @relation("FleetClient", fields: [clientTenantId], references: [id])
+
+  @@unique([providerTenantId, clientTenantId])
+  @@index([clientTenantId])
+  @@map("fleet_agreements")
 }
 
 // ─── RiderRating ──────────────────────────────────────────────────────────────
@@ -3036,8 +3112,8 @@ model RiderRating {
 }
 
 // Append-only location stream from rider devices. Keeps a 24h history for
-// dispute resolution / time-to-arrive analytics. Older rows pruned by a
-// background sweep.
+// dispute resolution / time-to-arrive analytics. Older rows are pruned hourly
+// by the rider-dispatch worker (workers/riderDispatch.ts pruneRiderLocations).
 model RiderLocation {
   id         String   @id @default(uuid())
   riderId    String
@@ -4573,6 +4649,8 @@ model Tenant {
   positions              Position[]
   contributionsOut       TenantContribution[]    @relation("ContributionsFromTenant")
   contributionsIn        TenantContribution[]    @relation("ContributionsToTenant")
+  fleetProvided          FleetAgreement[]        @relation("FleetProvider")
+  fleetReceived          FleetAgreement[]        @relation("FleetClient")
 
   @@map("tenants")
 }
