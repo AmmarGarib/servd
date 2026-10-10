@@ -5,11 +5,38 @@
 // `brandFooter` block (lib/brandFooterConfig.ts).
 
 import Link from 'next/link'
+import type { CSSProperties } from 'react'
 import { brandSurface } from '../../lib/concept'
 import { useBrandSlug } from '../../lib/host'
 import type { SectionProps } from '../types'
 import { link, list, str } from '../safe'
 import { brandHref, brandNameOf, fill, orLive, servdHref } from './util'
+import './brand.css'
+
+/**
+ * The footer sits on the brand's dark band (brandSurface), so its signal
+ * colour has to read on that band. Two brands need their own:
+ *   flipd  — its brand colour IS the band (Flipd Blue on Flipd Blue): the
+ *            eyebrow, "Let's eat.", the Order button, the dots and "See all
+ *            kitchens" all vanished. It signals in Smash Mustard, and the
+ *            button is mustard with Flipd Blue ink (6.9:1).
+ *   simmer — one orange signal per viewport (SKILL rules), and the page's
+ *            sign-off ends on its orange full stop right above. The footer is
+ *            bone on tiber with no orange; the button is bone with tiber ink,
+ *            as on its servd home tile (never white text, no glow).
+ * Everyone else keeps the brand colour on its band.
+ */
+interface FooterTone { signal: string; eyebrow: string; pillBg: string; pillInk: string; pillShadow?: string }
+const FOOTER_TONE: Record<string, FooterTone> = {
+  flipd: {
+    signal: 'var(--flipd-mustard)', eyebrow: 'var(--flipd-mustard)',
+    pillBg: 'var(--flipd-mustard)', pillInk: 'var(--flipd-blue)',
+  },
+  simmer: {
+    signal: 'var(--simmer-bone)', eyebrow: 'color-mix(in srgb, var(--simmer-bone) 72%, transparent)',
+    pillBg: 'var(--simmer-bone)', pillInk: 'var(--simmer-green)', pillShadow: 'none',
+  },
+}
 
 export function BrandFooter({ fields, ctx }: SectionProps) {
   const concept = ctx.concept
@@ -17,7 +44,14 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
   if (!concept) return null
 
   const name = brandNameOf(ctx, fields.name)
-  const accent = concept.primaryColor || 'var(--servd-green)'
+  const tone = FOOTER_TONE[concept.slug]
+  // The signal colour on the band (eyebrow, accent words, dots, links).
+  const accent = tone?.signal ?? (concept.primaryColor || 'var(--servd-green)')
+  const pillStyle: CSSProperties | undefined = tone && {
+    ['--brand-accent' as string]: tone.pillBg,
+    ['--brand-ink' as string]: tone.pillInk,
+    ...(tone.pillShadow && { boxShadow: tone.pillShadow }),
+  } as CSSProperties
   const surface = brandSurface(concept.slug)
   const linkStyle: React.CSSProperties = {
     color: surface.text, opacity: 0.85, textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500,
@@ -69,7 +103,7 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
             stays out of each page's outline (.display sets the same weight
             and line height on a <p> as it did on the <h2>). */}
         <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
-          <p className="eyebrow" style={{ color: accent, marginBottom: '1rem' }}>
+          <p className="eyebrow" style={{ color: tone?.eyebrow ?? accent, marginBottom: '1rem' }}>
             {fill(fields.ctaEyebrow, ctx, name)}
           </p>
           <p className="display" style={{
@@ -81,7 +115,7 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
             <span className="display-italic" style={{ color: accent }}> {fill(fields.ctaAccent, ctx, name)}</span>
           </p>
           {ctaTo && ctaText && (
-            <Link href={ctaTo.href} className="brand-pill">
+            <Link href={ctaTo.href} className="brand-pill" {...(pillStyle && { style: pillStyle })}>
               {ctaText}
             </Link>
           )}
@@ -112,7 +146,7 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
             {socials.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '1.1rem' }}>
                 {socials.map((s, i) => (
-                  <a key={`${s.href}-${i}`} href={s.href}
+                  <a key={`${s.href}-${i}`} href={s.href} className="brand-footer-tap"
                     {...(s.href.startsWith('mailto:') ? { title: s.href.slice(7) } : { target: '_blank', rel: 'noreferrer' })}
                     style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: surface.muted, textDecoration: 'none' }}>
                     {s.label}
@@ -126,12 +160,12 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
             <h2 className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem' }}>
               {orLive(fields.linksHeading, name, ctx, name)}
             </h2>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
+            <ul className="brand-footer-list" style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
               {links.map((l, i) => (
                 <li key={`${l.href}-${i}`}>
                   {l.external
-                    ? <a href={l.href} target="_blank" rel="noopener noreferrer" style={linkStyle}>{l.label}</a>
-                    : <Link href={l.href} style={linkStyle}>{l.label}</Link>}
+                    ? <a href={l.href} target="_blank" rel="noopener noreferrer" className="brand-footer-tap" style={linkStyle}>{l.label}</a>
+                    : <Link href={l.href} className="brand-footer-tap" style={linkStyle}>{l.label}</Link>}
                 </li>
               ))}
             </ul>
@@ -159,7 +193,7 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
               {fill(fields.servdTagline, ctx, name)}
             </p>
             {allKitchens.text && (
-              <Link href={allKitchens.href} className="kinetic-caret" style={{
+              <Link href={allKitchens.href} className="kinetic-caret brand-footer-tap" style={{
                 display: 'inline-block',
                 marginTop: '1rem',
                 color: accent,
@@ -186,7 +220,7 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
         }}>
           <span>© {new Date().getFullYear()} {name}{str(fields.legal).trim() ? ` · ${fill(fields.legal, ctx, name)}` : ''}</span>
           {backLink.text && (
-            <Link href={backLink.href} style={{ color: surface.muted, textDecoration: 'none' }}>
+            <Link href={backLink.href} className="brand-footer-tap" style={{ color: surface.muted, textDecoration: 'none' }}>
               {backLink.text}<span style={{ color: accent }}>.</span> →
             </Link>
           )}

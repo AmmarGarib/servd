@@ -1,0 +1,14 @@
+/* servd.footer — on phones and touch screens every footer link is a 44px-tall
+   tap target (WCAG 2.5.8; the text rows were 19px). The link columns give up
+   their 0.7rem gap for it, and the plain lines in them (the company name)
+   take the same row height so the column keeps one rhythm. A mouse on a
+   desktop sees the footer as before. `!important` only to beat the inline
+   layout styles the links carry. */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  .sv-footer-list { gap: 0 !important; }
+  .sv-footer-tap {
+    display: inline-flex !important;
+    align-items: center;
+    min-height: 44px;
+  }
+}

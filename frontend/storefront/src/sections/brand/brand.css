@@ -1,0 +1,12 @@
+/* brand.footer — on phones and touch screens every footer link is a 44px-tall
+   tap target (WCAG 2.5.8; the text rows were 17–22px). The link list gives
+   up its 0.7rem gap for it. A mouse on a desktop sees the footer as before.
+   `!important` only to beat the inline layout styles the links carry. */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  .brand-footer-list { gap: 0 !important; }
+  .brand-footer-tap {
+    display: inline-flex !important;
+    align-items: center;
+    min-height: 44px;
+  }
+}

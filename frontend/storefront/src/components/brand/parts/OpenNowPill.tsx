@@ -6,12 +6,18 @@ import { useHoursData } from './OpenStatusBadge'
 // the brand pill on home, etc.). Until the hours fetch lands, falls
 // back to a static label so the visual placeholder is preserved.
 
+/** One colour pair for every state, for a brand whose palette the default
+ *  white / green / black pills would break (Simmer: no white, nothing off its
+ *  palette). The label carries the state. */
+export interface PillSkin { bg: string; fg: string }
+
 interface Props {
   slug: string
   fallback: string
+  skin?: PillSkin
 }
 
-export function OpenNowPill({ slug, fallback }: Props) {
+export function OpenNowPill({ slug, fallback, skin }: Props) {
   const data = useHoursData(slug)
 
   // Compute open/closed against the local browser time. Returns null
@@ -19,18 +25,25 @@ export function OpenNowPill({ slug, fallback }: Props) {
   // CLS flash from "Dine-in" → "Closed today" after hydrate).
   const status = data ? computeOpen(data) : null
 
-  const tone = !status
-    ? { bg: 'rgba(255,255,255,0.92)', fg: 'var(--servd-black)', label: fallback }
+  const label = !status
+    ? fallback
     : status.open
-      ? { bg: 'rgba(34,197,94,0.92)', fg: '#0a2415', label: `Open · closes ${status.closesAt ?? 'soon'}` }
-      : { bg: 'rgba(0,0,0,0.78)',     fg: 'rgba(255,255,255,0.95)', label: status.opensAt ? `Opens ${status.opensAt}` : 'Closed today' }
+      ? `Open · closes ${status.closesAt ?? 'soon'}`
+      : status.opensAt ? `Opens ${status.opensAt}` : 'Closed today'
+  const tone = skin
+    ? skin
+    : !status
+      ? { bg: 'rgba(255,255,255,0.92)', fg: 'var(--servd-black)' }
+      : status.open
+        ? { bg: 'rgba(34,197,94,0.92)', fg: '#0a2415' }
+        : { bg: 'rgba(0,0,0,0.78)',     fg: 'rgba(255,255,255,0.95)' }
 
   return (
     <span style={{
       background: tone.bg, color: tone.fg,
       fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em',
       textTransform: 'uppercase', padding: '0.3rem 0.65rem', borderRadius: '999px',
-    }}>{tone.label}</span>
+    }}>{label}</span>
   )
 }
 

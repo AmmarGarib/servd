@@ -1,0 +1,7 @@
+/* simmer.crossBrand — Simmer's `.action` button (globals.css) on the BONE
+   surface: tiber ink and border, inverting to tiber on hover. Its own small
+   file rather than simmer.css: CrossBrand is a server section imported
+   statically, and simmer.css is code-split with the fridge hero. Palette
+   tokens only. */
+.simmer-page .action.action--ink { border-color: var(--simmer-green); color: var(--simmer-green); }
+.simmer-page .action.action--ink:hover { background: var(--simmer-green); color: var(--simmer-bone); }

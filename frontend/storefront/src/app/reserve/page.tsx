@@ -10,10 +10,10 @@
 import type { Metadata } from 'next'
 import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../lib/blocks'
-import { formatBrandName } from '../../lib/concept'
 import { breadcrumbSchema, jsonLdScript } from '../../lib/jsonLd'
-import { conceptsOrFallback, fetchLiveConcepts, fitSentences, inBrandOrder, joinNames } from '../../lib/liveConcepts'
+import { conceptsOrFallback, fetchLiveConcepts, fitSentences } from '../../lib/liveConcepts'
 import { ManagedPage } from '../../sections/ManagedPage'
+import { bookableNames, takesReservations } from '../../sections/servd/reservable'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,17 +22,19 @@ const CANONICAL = `${SERVD_ORIGIN}/reserve`
 export async function generateMetadata(): Promise<Metadata> {
   const [layout, live] = await Promise.all([fetchSiteLayout('servd:reserve'), fetchLiveConcepts()])
   const seo = pageSeo(layout)
-  // Fixed order (inBrandOrder): the API's row order moves when a brand is
-  // edited, and the title must not flip between requests.
-  const names = inBrandOrder(conceptsOrFallback(live))
-    .filter((c) => c.reservationsEnabled !== false)
-    .map((c) => formatBrandName(c.name))
-  const list = names.length > 0 && names.length <= 3 ? joinNames(names, 'or') : ''
+  // The same kitchens, in the same words, as the picker's cards and the
+  // header's {bookable} (sections/servd/reservable.ts) — dine-in brands that
+  // take bookings, in a fixed order so the title never flips between
+  // requests. With the API down it names the bundled brands that do.
+  const reservable = conceptsOrFallback(live).filter(takesReservations)
+  const list = bookableNames(reservable)
   return pageMetadata({
     title:       seo.title ?? (list ? `Reserve a table at ${list}, Karachi` : 'Reserve a table in Karachi'),
     description: seo.description ?? fitSentences([
       `Book a table at ${list || 'a servd kitchen'} in Karachi.`,
-      'Pick the brand, a date, your party size and a time, and get an SMS confirmation.',
+      reservable.length > 1
+        ? 'Pick the kitchen, a date, your party size and a time, and get an SMS confirmation.'
+        : 'Pick a date, your party size and a time, and get an SMS confirmation.',
     ]),
     canonical:   CANONICAL,
   })

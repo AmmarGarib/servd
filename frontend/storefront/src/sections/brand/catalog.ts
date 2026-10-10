@@ -535,7 +535,7 @@ const crossBrand: SectionSpec = {
   defaults: {
     kicker: 'Other GS Foods kitchens',
     heading: 'Liked {{brand.name}}? Try one of these.',
-    subtitle: 'Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.',
+    subtitle: 'Same operator, same standards. Different cuisine, different vibe.', // each kitchen has its own basket
     allLink: { text: 'See all kitchens →', href: '/home#kitchens' },
     cardCta: 'Visit {name} →',
     accent: '',

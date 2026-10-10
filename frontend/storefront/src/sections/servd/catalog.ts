@@ -13,6 +13,9 @@ import { FEEDBACK_DEFAULTS } from './feedbackDefaults'
 
 const BRAND_HINT = 'Brand slug, e.g. stackd, simmer, flipd'
 
+const BOOKABLE_HINT =
+  '{bookable} = the kitchens taking reservations right now (live), e.g. “Simmer” or “Simmer or Stackd” — the same ones the reservation picker shows.'
+
 const LOCATION_PLACEHOLDERS =
   'Placeholders: {name} {area} {district} {city} {address} {street} {tagline}. One with no value yet is left out, with the “ · ” beside it.'
 
@@ -37,8 +40,8 @@ export const specs: SectionSpec[] = [
       ] },
       { key: 'mediaSrc', label: 'Expanding video', kind: 'video', hint: 'Video file or a YouTube link. Used when Media type is Video. Loads after the page is ready; keep it small (1280×720, no sound).' },
       { key: 'mediaImage', label: 'Expanding image', kind: 'image', hint: 'Used when Media type is Image.' },
-      { key: 'posterSrc', label: 'Video poster', kind: 'image', hint: 'Shown until the video starts, and instead of it for visitors who prefer less motion or save data. Optional.' },
-      { key: 'mediaAlt', label: 'Media description (alt text)', kind: 'text', hint: 'What the video/photo shows. Empty = decorative' },
+      { key: 'posterSrc', label: 'Video poster', kind: 'image', hint: 'Shown until the video starts, and instead of it for visitors who prefer less motion or save data. The default is a still of the default video: replace or clear it when you change the video. Empty = none.' },
+      { key: 'mediaAlt', label: 'Media description (alt text)', kind: 'text', hint: 'What the video/photo shows (the default describes the default video — rewrite it when you change it). Empty = decorative' },
       { key: 'bgImageSrc', label: 'Background image', kind: 'image', hint: 'Empty = plain servd purple.' },
       { key: 'title', label: 'Title', kind: 'text', hint: 'The first word slides left, the rest slides right.' },
       { key: 'headingLevel', label: 'Title tag', kind: 'select', hint: 'H1 = the page’s main title (one per page). Use H2 on a page that already has an H1.', options: [
@@ -56,15 +59,19 @@ export const specs: SectionSpec[] = [
       mediaType: 'video',
       mediaSrc: 'https://videos.pexels.com/video-files/854565/854565-hd_1280_720_25fps.mp4',
       mediaImage: '',
-      posterSrc: '',
-      mediaAlt: '',
+      // A still of the default clip at 1s (1280x720 WebP), so the box shows
+      // food from the first paint instead of an empty purple panel.
+      posterSrc: '/brand/servd-hero-poster.webp',
+      mediaAlt: 'Garlic and spring onion stirred in a hot wok with a wooden spatula',
       bgImageSrc: '',
-      title: 'Every kitchen. One order.',
+      // Each kitchen has its own basket and checkout, so no "one order" /
+      // "check out once" promise.
+      title: 'Every kitchen, one place to order.',
       headingLevel: 'h1',
       date: 'order · explore · insiders',
       scrollToExpand: 'Scroll to explore',
       textBlend: false,
-      overview: 'Simmer, Stackd and Flipd. Order from one kitchen or all three, and check out once.',
+      overview: 'Simmer, Stackd and Flipd. Pick a kitchen, see the menu, and order.',
       conclusion: 'Join Insiders for rewards on every order.',
       primaryCta: { text: 'Order now', href: '#kitchens' },
       secondaryCta: { text: 'Search the menus', href: '#search' },
@@ -119,9 +126,9 @@ export const specs: SectionSpec[] = [
       ] },
     ],
     defaults: {
-      heading: 'One order. Every kitchen.',
+      heading: 'Every kitchen. One account.',
       items: [
-        { icon: 'stack', title: 'Mix kitchens.', body: 'Add a Stackd pastry to a Flipd order. One cart, one checkout.' },
+        { icon: 'stack', title: 'Every menu, side by side.', body: 'Browse Stackd, Simmer and Flipd, then order from the kitchen you’re craving.' },
         { icon: 'clock', title: 'Timed together.', body: 'We hold the quickest dish for the slowest, so everything lands as it should.' },
         { icon: 'star', title: 'Rewarded everywhere.', body: 'Insiders earn on every order, at every kitchen.' },
       ],
@@ -400,10 +407,10 @@ export const specs: SectionSpec[] = [
     pages: ['servd:*', 'page:*'],
     summaryKey: 'title',
     fields: [
-      { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: 'Empty = none.' },
-      { key: 'title', label: 'Title', kind: 'text' },
-      { key: 'titleAccent', label: 'Title second line (italic)', kind: 'text', hint: 'Empty = none.' },
-      { key: 'body', label: 'Intro', kind: 'textarea', hint: 'Empty = none.' },
+      { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: `Empty = none. ${BOOKABLE_HINT}` },
+      { key: 'title', label: 'Title', kind: 'text', hint: BOOKABLE_HINT },
+      { key: 'titleAccent', label: 'Title second line (italic)', kind: 'text', hint: `Empty = none. ${BOOKABLE_HINT}` },
+      { key: 'body', label: 'Intro', kind: 'textarea', hint: `Empty = none. ${BOOKABLE_HINT}` },
       { key: 'tight', label: 'Tighter title spacing', kind: 'toggle' },
     ],
     defaults: {
@@ -602,11 +609,14 @@ export const pages: PageDefault[] = [
   {
     slug: 'servd:reserve',
     sections: [
+      // {bookable} = the kitchens that take bookings (live), so with one
+      // kitchen it reads "Book a table at Simmer." — matching the page title —
+      // instead of "Pick the kitchen." over a single card.
       { variant: 'servd.pageHeader', fields: {
         eyebrow: 'Reservations',
-        title: 'Book a table.',
-        titleAccent: 'Pick the kitchen.',
-        body: 'These brands hold the room for you — pick one to choose your party size and time.',
+        title: 'Book a table',
+        titleAccent: 'at {bookable}.',
+        body: 'We hold the room for you — choose a date, your party size and a time.',
         tight: false,
       } },
       { variant: 'servd.reservePicker' },

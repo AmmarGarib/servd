@@ -1,14 +1,26 @@
 // servd.pageHeader — eyebrow, a big title (optional italic second line) and an
 // intro. Used by /press and /reserve, and offered on custom pages.
+//
+// `{bookable}` in any of its words is the live list of kitchens that take
+// reservations ("Simmer", "Simmer or Stackd"), the same list the reservation
+// picker shows and the /reserve title names — so /reserve never says "pick
+// the kitchen" over a single kitchen. The list is only fetched when used.
 
 import type { SectionProps } from '../types'
 import { str } from '../safe'
+import { BOOKABLE_FALLBACK, bookableNames, reservableConcepts } from './reservable'
 
-export function PageHeader({ fields }: SectionProps) {
-  const eyebrow = str(fields.eyebrow)
-  const title = str(fields.title)
-  const accent = str(fields.titleAccent)
-  const body = str(fields.body)
+const BOOKABLE = /\{bookable\}/g
+
+export async function PageHeader({ fields }: SectionProps) {
+  let eyebrow = str(fields.eyebrow)
+  let title = str(fields.title)
+  let accent = str(fields.titleAccent)
+  let body = str(fields.body)
+  if ([eyebrow, title, accent, body].some((s) => s.includes('{bookable}'))) {
+    const names = bookableNames(await reservableConcepts()) || BOOKABLE_FALLBACK
+    ;[eyebrow, title, accent, body] = [eyebrow, title, accent, body].map((s) => s.replace(BOOKABLE, names)) as [string, string, string, string]
+  }
   return (
     <section className="section" style={{ paddingTop: 'clamp(4rem, 9vw, 6rem)', paddingBottom: 'clamp(2rem, 4vw, 3rem)' }}>
       <div className="container">

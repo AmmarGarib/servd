@@ -276,7 +276,7 @@ export const specs: SectionSpec[] = [
     defaults: {
       kicker: 'other kitchens',
       heading: 'more from the operator.',
-      subtitle: 'Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.',
+      subtitle: 'Same operator, same standards. Different cuisine, different vibe.', // each kitchen has its own basket
       allLink: { text: 'See all kitchens →', href: '/home#kitchens' },
       cardCta: 'Visit {name} →',
       surface: 'bone',

@@ -16,6 +16,7 @@ import { formatBrandName } from '../../lib/concept'
 import { brandCanonical, brandOrigin, SERVD_ORIGIN } from '../../lib/brandDomains'
 import type { SectionProps } from '../types'
 import { color, link, list, safeHref, str } from '../safe'
+import './servd.css'
 
 interface LinkItem { text?: unknown; href?: unknown }
 
@@ -132,12 +133,12 @@ export function Footer({ fields }: SectionProps) {
           {kitchens.length > 0 && (
             <div>
               <FooterHeading text={str(fields.kitchensHeading)} />
-              <ul style={listStyle}>
+              <ul className="sv-footer-list" style={listStyle}>
                 {kitchens.map((b, i) => (
                   <li key={i}>
                     <FooterLink
                       href={footerHref(b.href)}
-                      className="kinetic-caret"
+                      className="kinetic-caret sv-footer-tap"
                       style={{
                         color: 'rgba(255,255,255,0.85)',
                         textDecoration: 'none',
@@ -164,9 +165,9 @@ export function Footer({ fields }: SectionProps) {
           {customer.length > 0 && (
             <div>
               <FooterHeading text={str(fields.customerHeading)} />
-              <ul style={listStyle}>
+              <ul className="sv-footer-list" style={listStyle}>
                 {customer.map((l, i) => (
-                  <li key={i}><FooterLink href={footerHref(l.href)} style={footerLinkStyle}>{str(l.text)}</FooterLink></li>
+                  <li key={i}><FooterLink href={footerHref(l.href)} className="sv-footer-tap" style={footerLinkStyle}>{str(l.text)}</FooterLink></li>
                 ))}
               </ul>
             </div>
@@ -175,14 +176,14 @@ export function Footer({ fields }: SectionProps) {
           {company.length > 0 && (
             <div>
               <FooterHeading text={str(fields.companyHeading)} />
-              <ul style={listStyle}>
+              <ul className="sv-footer-list" style={listStyle}>
                 {company.map((l, i) => {
                   const href = str(l.href).trim()
                   return (
                     <li key={i}>
                       {href
-                        ? <FooterLink href={footerHref(href)} style={footerLinkStyle}>{str(l.text)}</FooterLink>
-                        : <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>{str(l.text)}</span>}
+                        ? <FooterLink href={footerHref(href)} className="sv-footer-tap" style={footerLinkStyle}>{str(l.text)}</FooterLink>
+                        : <span className="sv-footer-tap" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>{str(l.text)}</span>}
                     </li>
                   )
                 })}

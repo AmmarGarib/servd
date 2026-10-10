@@ -199,7 +199,7 @@ export const specs: SectionSpec[] = [
     defaults: {
       kicker: 'Also from the same kitchen group',
       heading: 'Other kitchens from the same group.',
-      subtitle: 'Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.',
+      subtitle: 'Same operator, same standards. Different cuisine, different vibe.', // each kitchen has its own basket
       allLink: { text: 'See all kitchens →', href: '/home#kitchens' },
       cardCta: 'Visit {name} →',
       accent: '',

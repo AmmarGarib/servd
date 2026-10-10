@@ -176,13 +176,16 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
             style={{ height: 'clamp(3rem, 5vw, 3.6rem)', width: 'auto', display: 'block' }}
           />
         ) : (
+        // Simmer's disc is bone with a tiber letter, not orange: the bar is
+        // pinned, so an orange disc sat in every viewport beside the page's
+        // own orange signal (SKILL rules: one per viewport).
         <span aria-hidden="true" style={{
           width: '2.5rem', height: '2.5rem',
           borderRadius: '50%',
           overflow: 'hidden',
           flexShrink: 0,
-          background: accent,
-          color: '#0a0a0a',
+          background: slug === 'simmer' ? 'var(--simmer-bone)' : accent,
+          color: slug === 'simmer' ? 'var(--simmer-green)' : '#0a0a0a',
           display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center',
           fontSize: '1.1rem',
@@ -278,8 +281,8 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
               }}
             >
               {/* flipd's system is two colours; the arrow stays ink. Simmer's
-                  orange 'S' disc is already the bar's one orange signal (its
-                  SKILL rules), so its arrow takes the text colour too. */}
+                  pinned bar carries no orange at all (the page below has its
+                  one signal per viewport), so its arrow takes the text colour. */}
               {orderText} <span style={{ color: diner ? 'var(--flipd-blue)' : slug === 'simmer' ? surface.text : accent }}>→</span>
             </Link>
           )}
