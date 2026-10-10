@@ -1,6 +1,6 @@
-// Server shell for the per-brand ordering screen (/<concept>). The page is a
-// client component, so this layout is where the route gets what only the
-// server can give it:
+// Server shell for the per-brand ordering screen (/<concept>). The page
+// (page.tsx → the client OrderingScreen) renders the hero; this layout is
+// where the route gets the rest of what only the server can give it:
 //
 //   • a real 404 for anything that is not a brand. [concept] is a one-segment
 //     catch-all, so every typo (/nope, /Stackd, /favicon.ico before the icon

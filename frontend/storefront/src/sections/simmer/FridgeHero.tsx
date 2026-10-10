@@ -32,7 +32,9 @@ import { simmerConcept, simmerHref, simmerText } from './shared'
 import './simmer.css'
 
 // The palette, fixed: the hero is the brand's own entrance, so its colours are
-// the SKILL.md tokens rather than owner fields (no white, single orange).
+// the SKILL.md tokens rather than owner fields (no white, single orange). The
+// one orange is the handle while the door is shut and the Reserve pill once it
+// is open; the back-wall accent and the tagline are bone.
 const ACCENT = 'var(--simmer-orange)'
 const INK = 'var(--simmer-green)'
 const WOOD = 'var(--simmer-walnut)'
@@ -54,8 +56,13 @@ interface Drawing {
   floor: string
 }
 
+// The reveal layer fades in as (progress − 0.65) × 3; by 0.75 the door has
+// swung past 90° and the buttons are a third of the way in. Until then they
+// are not clickable or tabbable (they stay in the DOM and the a11y tree).
+const LIVE_AT = 0.75
+
 export function FridgeHero({ fields: f, ctx }: SectionProps) {
-  const { ref } = useScrollProgress<HTMLDivElement>()
+  const { ref, past } = useScrollProgress<HTMLDivElement>({ liveAt: LIVE_AT })
   const t = (k: string) => simmerText(f[k])
   const concept = simmerConcept(ctx)
 
@@ -146,8 +153,13 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
               size, tracking and leading are in simmer.css (on phones the row
               sits in flow above the door, so the door never runs under it).
               Drawing annotation, so screen readers skip it: the h1 above
-              names the page. */}
-          <div aria-hidden="true" className="simmer-fridge-titles">
+              names the page. Once the stage pins it sits under the brand
+              header, so it fades as the door starts to move — a block that
+              wraps taller than the header never shows a strip under it. */}
+          <div aria-hidden="true" className="simmer-fridge-titles" style={{
+            opacity: 'calc(1 - var(--scroll-progress, 0) * 20)',
+            transition: 'opacity 80ms linear',
+          } as CSSProperties}>
             <div className="simmer-fridge-title" style={{
               color: 'rgba(237,230,211,0.7)',
               fontFamily: 'var(--font-display)',
@@ -199,7 +211,6 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
                   transition: 'opacity 80ms linear',
                 } as CSSProperties}>
                 <CoolerInterior
-                  accent={ACCENT}
                   cream={CREAM}
                   imageUrl={coolerImageUrl || null}
                   headline={t('headline')}
@@ -332,7 +343,9 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
           </div>
 
           {/* Reveal layer — once the door is mostly open the tagline and the
-              Reserve / Menu buttons fade in inside the cooler. */}
+              Reserve / Menu buttons fade in inside the cooler. Not clickable
+              or tabbable until LIVE_AT (see above). The tagline is bone: the
+              Reserve pill is the open door's one orange. */}
           <div
             style={{
               position: 'absolute',
@@ -343,7 +356,7 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
               transform: 'translateY(calc((1 - var(--scroll-progress, 0)) * 20px))',
               transition: 'opacity 100ms linear',
               zIndex: 10,
-              pointerEvents: 'auto',
+              pointerEvents: past ? 'auto' : 'none',
             } as CSSProperties}
           >
             {t('tagline') && (
@@ -351,7 +364,7 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
                 className="display-italic"
                 style={{
                   fontSize: 'clamp(1.5rem, 3vw, 2.2rem)',
-                  color: ACCENT,
+                  color: CREAM,
                 }}
               >
                 {t('tagline')}
@@ -359,12 +372,18 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
             )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.7rem', justifyContent: 'center' }}>
               {reserveTo && (
-                <Link href={reserveTo.href} className="brand-pill">
+                // Forest-green text on the orange pill: Simmer allows no white.
+                <Link href={reserveTo.href} className="brand-pill" tabIndex={past ? undefined : -1}
+                  style={{ ['--brand-ink' as string]: INK } as CSSProperties}>
                   {simmerText(reserve.text)}
                 </Link>
               )}
               {menuTo && (
-                <Link href={menuTo.href} className="brand-pill-outline" style={{ borderColor: CREAM, color: CREAM }}>
+                // The outline pill reads its colours from --brand-accent / --brand-ink:
+                // bone here, and on hover a bone fill with green text — never a second
+                // orange next to the Reserve pill.
+                <Link href={menuTo.href} className="brand-pill-outline" tabIndex={past ? undefined : -1}
+                  style={{ ['--brand-accent' as string]: CREAM, ['--brand-ink' as string]: INK } as CSSProperties}>
                   {simmerText(menu.text)}
                 </Link>
               )}
@@ -372,8 +391,9 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
           </div>
 
           {/* Bottom annotation row — engineering-drawing footer. Position,
-              size and tracking in simmer.css (larger and in flow on phones);
-              annotation, so screen readers skip it. */}
+              size and tracking in simmer.css (larger and in flow on phones,
+              where the right-hand reading is not shown); annotation, so
+              screen readers skip it. */}
           <div aria-hidden="true" className="simmer-fridge-foot" style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
             color: 'rgba(237,230,211,0.55)',
@@ -386,7 +406,7 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
             <span style={{ opacity: 'calc(1 - var(--scroll-progress, 0) * 2)' } as CSSProperties}>
               {t('footCentre')}
             </span>
-            <span>{t('footRight')}</span>
+            <span className="simmer-fridge-foot-right">{t('footRight')}</span>
           </div>
         </div>
       </div>
@@ -500,10 +520,14 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
         <circle cx="358" cy="468" r="3" fill="#06392F" />
         <rect x="436" y="490" width="40" height="14" fill="none" stroke={fine} strokeWidth="1" rx="2" />
         <circle cx="456" cy="497" r="2.5" fill={fine} />
-        {/* Label set inside the handle, ending at its leader line (it used
-            to be drawn mirrored with scale(-1,1), so it read backwards). */}
-        <line x1="540" y1="468" x2="600" y2="468" stroke={fine} strokeWidth="0.7" />
-        <text x="534" y="466" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" textAnchor="end">
+        {/* Label on the backing plate's top band, above the lever, ending
+            just short of the plate's right edge where its leader line starts
+            (it used to be drawn mirrored with scale(-1,1), so it read
+            backwards; then over the lever, where it ran across the pivot dot
+            and out past the capsule's end). Plain text on the front face, so
+            it reads the right way until the face turns away at 90°. */}
+        <line x1="540" y1="443" x2="600" y2="443" stroke={fine} strokeWidth="0.7" />
+        <text x="532" y="447" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" textAnchor="end">
           {d.handle}
         </text>
       </g>
@@ -567,8 +591,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
 // Behind the door. The owner's cooler photo (field `coolerImage`) with a
 // cool-tone wash, else the blueprint interior drawing. The headline and the
 // hours sticker fade in over it as the door opens.
-function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hours, d }: {
-  accent: string
+function CoolerInterior({ cream, imageUrl, headline, headlineAccent, hours, d }: {
   cream: string
   imageUrl: string | null
   headline: string
@@ -608,16 +631,18 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
       {/* HEADLINE — "RESERVATIONS only." as one phrase. The two styled
           halves are drawn for the eye; screen readers get the phrase once,
           with its space (the gap on screen is a margin, not a space). Sizes
-          in simmer.css: on phones the phrase scales with the door, so the
-          default line is no longer cut at the door's edges. */}
+          and wrapping in simmer.css: one line on desktop; on phones the
+          phrase scales with the door and longer copy wraps inside it instead
+          of being cut. The accent is bone italic — the open door's one
+          orange is the Reserve pill. */}
       {(headline || headlineAccent) && (
         <div
+          className="simmer-fridge-headline-row"
           style={{
             position: 'absolute',
             top: '38%', left: '50%',
             transform: 'translate(-50%, -50%)',
             textAlign: 'center',
-            whiteSpace: 'nowrap',
             fontFamily: 'var(--font-display)',
             lineHeight: 1,
             opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.50) * 6)',
@@ -636,11 +661,12 @@ function CoolerInterior({ accent, cream, imageUrl, headline, headlineAccent, hou
           </span>
           {headlineAccent && (
             <span aria-hidden="true" className="simmer-fridge-headline-accent" style={{
-              color: accent,
+              color: cream,
               fontStyle: 'italic',
               letterSpacing: '-0.01em',
               fontWeight: 400,
               marginLeft: headline ? '0.32em' : 0,
+              textShadow: '0 2px 4px rgba(0,0,0,0.85), 0 6px 16px rgba(0,0,0,0.65)',
             }}>
               {headlineAccent}
             </span>

@@ -25,10 +25,14 @@
 //     attached (and played) after hydration once the browser is idle — and
 //     never played under reduced motion or Save-Data, where the poster stands
 //     in (with no poster set, a still of the first frame does).
+//   - until there is something to see in the box, the servd Loader sits in it
+//     (under the title) and fades out once the video plays / the still or the
+//     YouTube player loads, or it fails; a poster on a file video stands in instead.
 // No framer-motion: the three fades are CSS opacity transitions with the same
 // durations and curve framer used (ease-in-out; 0.1s / 0.2s / 0.7s).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Loader } from './Loader';
 
 type HeadingLevel = 'h1' | 'h2';
 type MediaMode = 'none' | 'play' | 'still';
@@ -50,6 +54,14 @@ interface ScrollExpandMediaProps {
 }
 
 const YT_PARAMS = 'autoplay=1&mute=1&loop=1&controls=0&showinfo=0&rel=0&disablekb=1&modestbranding=1';
+
+/** Loader cells for the purple box: green → bone along the ripple's diagonal
+ *  (the default purple → green ramp would vanish into the purple). */
+const HERO_LOADER_CELLS = [
+  'var(--servd-green)', 'var(--servd-green)', 'var(--servd-green-soft)',
+  'var(--servd-green)', 'var(--servd-green-soft)', 'var(--servd-on-purple)',
+  'var(--servd-green-soft)', 'var(--servd-on-purple)', 'var(--servd-on-purple)',
+];
 
 /** Keys that scroll the page down — they expand the hero instead. */
 const EXPAND_KEYS = new Set(['PageDown', ' ', 'Spacebar', 'ArrowDown', 'End']);
@@ -109,6 +121,9 @@ const ScrollExpandMedia = ({
   // yet, the playing loop, or (less motion / less data, and no poster to
   // stand in) a still of the first frame.
   const [mediaMode, setMediaMode] = useState<MediaMode>('none');
+  // The video / YouTube slot shows what it is going to show: playing, its
+  // still painted, the player loaded — or it failed. Ends the loader.
+  const [mediaSettled, setMediaSettled] = useState<boolean>(false);
 
   const sectionRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -294,6 +309,7 @@ const ScrollExpandMedia = ({
   // an empty box — reduced motion renders it expanded, title off-screen.
   useEffect(() => {
     setMediaMode('none');
+    setMediaSettled(false);
     if (mediaType !== 'video' || !mediaSrc) return;
     const still = prefersReducedMotion() || saveDataOn();
     if (still && posterSrc) return;
@@ -312,19 +328,24 @@ const ScrollExpandMedia = ({
   useEffect(() => {
     const v = videoRef.current;
     if (!v || mediaMode === 'none' || isYouTube) return;
+    let live = true;
     v.muted = true;
     if (mediaMode === 'still') {
       v.preload = 'metadata';
       v.src = mediaSrc.includes('#') ? mediaSrc : `${mediaSrc}#t=0.001`;
     } else {
       v.src = mediaSrc;
-      v.play().catch(() => { /* autoplay refused (e.g. low-power mode): the poster stays */ });
+      // Autoplay refused (e.g. low-power mode): the poster stays, and nothing
+      // more is coming, so the loader goes too.
+      v.play().catch(() => { if (live) setMediaSettled(true); });
     }
     return () => {
+      live = false;
       v.pause();
       v.removeAttribute('src');
       v.preload = 'none';
       v.load();
+      setMediaSettled(false);
     };
   }, [mediaMode, mediaSrc, isYouTube]);
 
@@ -354,6 +375,26 @@ const ScrollExpandMedia = ({
   const youTubeId = isYouTube ? (mediaSrc.match(/(?:embed\/|[?&]v=)([\w-]{11})/)?.[1] ?? '') : '';
   const youTubeStill = posterSrc
     || (mediaMode === 'still' && youTubeId ? `https://i.ytimg.com/vi/${youTubeId}/hqdefault.jpg` : '');
+
+  // The loader holds the box while a video is on its way and nothing stands in
+  // for it. A poster on a file video is that stand-in (and the final picture
+  // under less motion / less data), so it gets none; a YouTube poster gives
+  // way to the player, so the loader covers the player while it boots. Same
+  // answer on the server, so it is in the first paint.
+  const posterStandsIn = !!posterSrc && !(isYouTube && mediaMode === 'play');
+  const nothingComing = isYouTube && mediaMode === 'still' && !youTubeStill;
+  const showLoader = mediaType === 'video' && !!mediaSrc && !posterStandsIn && !nothingComing && !mediaSettled;
+  // Kept mounted through its 300ms fade-out, then dropped (its ripple never stops).
+  const [loaderMounted, setLoaderMounted] = useState<boolean>(showLoader);
+  useEffect(() => {
+    if (showLoader) {
+      setLoaderMounted(true);
+      return;
+    }
+    const t = window.setTimeout(() => setLoaderMounted(false), 300);
+    return () => window.clearTimeout(t);
+  }, [showLoader]);
+  const settleMedia = (): void => setMediaSettled(true);
 
   const mediaA11y = mediaAlt
     ? { 'aria-label': mediaAlt }
@@ -403,7 +444,11 @@ const ScrollExpandMedia = ({
               >
                 {mediaType === 'video' ? (
                   isYouTube ? (
-                    <div className='relative w-full h-full pointer-events-none'>
+                    // Purple under the media: the box itself is transparent, and once the
+                    // hero opens the purple layer behind it fades to the page's bone —
+                    // the loader's light cells (and an empty or failed box) need the
+                    // purple to read. The video / player covers it once it paints.
+                    <div className='relative w-full h-full pointer-events-none rounded-xl' style={{ background: 'var(--servd-purple)' }}>
                       {mediaMode === 'play' ? (
                         <iframe
                           width='100%'
@@ -420,6 +465,7 @@ const ScrollExpandMedia = ({
                           frameBorder='0'
                           allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
                           allowFullScreen
+                          onLoad={settleMedia}
                         />
                       ) : youTubeStill ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -428,6 +474,7 @@ const ScrollExpandMedia = ({
                           alt={mediaAlt}
                           {...(!mediaAlt && { 'aria-hidden': true })}
                           className='w-full h-full object-cover rounded-xl'
+                          {...(mediaMode === 'still' && { onLoad: settleMedia, onError: settleMedia })}
                         />
                       ) : null}
                       <div
@@ -441,7 +488,7 @@ const ScrollExpandMedia = ({
                       />
                     </div>
                   ) : (
-                    <div className='relative w-full h-full pointer-events-none'>
+                    <div className='relative w-full h-full pointer-events-none rounded-xl' style={{ background: 'var(--servd-purple)' }}>
                       {/* No src until the browser is idle (see mediaMode). */}
                       <video
                         ref={videoRef}
@@ -455,6 +502,11 @@ const ScrollExpandMedia = ({
                         disablePictureInPicture
                         disableRemotePlayback
                         {...mediaA11y}
+                        onPlaying={settleMedia}
+                        onLoadedData={(e) => {
+                          if (mediaMode === 'still' || !e.currentTarget.paused) settleMedia();
+                        }}
+                        onError={settleMedia}
                       />
                       <div
                         className='absolute inset-0 z-10'
@@ -480,6 +532,22 @@ const ScrollExpandMedia = ({
                       className='absolute inset-0 bg-black/50 rounded-xl'
                       style={{ opacity: imageOverlayOpacity, transition: overlayTransition }}
                     />
+                  </div>
+                )}
+
+                {/* The title is centred over the box, so the loader takes the
+                    band under it (centred when there is no title): 42px on
+                    phones (200px box), 66px from md (400px box). Decorative
+                    media keeps it out of the accessibility tree. */}
+                {(showLoader || loaderMounted) && (
+                  <div
+                    className={`absolute z-20 flex items-center justify-center pointer-events-none ${
+                      title ? 'inset-x-0 bottom-0 h-[28%]' : 'inset-0'
+                    }`}
+                    style={{ opacity: showLoader ? 1 : 0, transition: 'opacity 300ms ease-in-out' }}
+                    {...(!mediaAlt && { 'aria-hidden': true })}
+                  >
+                    <Loader size={20} colors={HERO_LOADER_CELLS} className='scale-[0.64] md:scale-100' />
                   </div>
                 )}
 

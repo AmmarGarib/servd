@@ -277,8 +277,10 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
                 whiteSpace: 'nowrap',
               }}
             >
-              {/* flipd's system is two colours; the arrow stays ink. */}
-              {orderText} <span style={{ color: diner ? 'var(--flipd-blue)' : accent }}>→</span>
+              {/* flipd's system is two colours; the arrow stays ink. Simmer's
+                  orange 'S' disc is already the bar's one orange signal (its
+                  SKILL rules), so its arrow takes the text colour too. */}
+              {orderText} <span style={{ color: diner ? 'var(--flipd-blue)' : slug === 'simmer' ? surface.text : accent }}>→</span>
             </Link>
           )}
         </div>

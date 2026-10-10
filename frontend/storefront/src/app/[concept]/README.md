@@ -15,8 +15,19 @@ Storefront route: **/[concept]** — the per-brand ordering screen (`/stackd`,
     `lib/fallbackBrands.ts` keep their full metadata, any other slug gets a
     `noindex` title. Sets the ordering screen's title, description and
     canonical (`${SERVD_ORIGIN}/<slug>`).
-  - `(menu)/page.tsx` — the ordering UI (client component): menu, item modal,
-    cart drawer.
+  - `(menu)/page.tsx` — server component: resolves the brand with the same
+    `lookupConcept` (memoised within the request, so no extra API call) and
+    renders `OrderingScreen` with the hero's fields (`initialConcept`; `null`
+    when the API didn't answer and the slug isn't a bundled brand). That puts
+    the hero — the brand name as the page's one h1, its description and art —
+    in the server HTML.
+  - `(menu)/OrderingScreen.tsx` — the ordering UI (client component): fetches
+    the menu, then the category nav, menu, item modal and cart drawer. While
+    the menu loads, the real hero shows above a shimmer skeleton (category
+    strip + item rows, `role="status"`); the hero stays mounted when the menu
+    arrives, so it doesn't jump. With `initialConcept` `null` the hero is
+    named from the slug until the client's own `/storefront/concepts` lookup.
+    The "isn't live yet" error state keeps the brand name as its h1.
 
 ## Subdirectories
 

@@ -50,7 +50,7 @@ export const specs: SectionSpec[] = [
         hint: "The page's one h1 — say what and where. Read by search engines and screen readers; the drawing shows instead. Empty = the brand name. {{brand.name}} = the live brand name.",
       },
       { key: 'headline', label: 'Back-wall headline', kind: 'text', hint: RULES_HINT },
-      { key: 'headlineAccent', label: 'Headline accent (orange italic)', kind: 'text' },
+      { key: 'headlineAccent', label: 'Headline accent (italic)', kind: 'text' },
       { key: 'tagline', label: 'Tagline', kind: 'text', hint: 'Fades in under the headline. Empty hides it.' },
       { key: 'reserve', label: 'Reserve button', kind: 'link', hint: `Empty text hides it. Empty link = @book (hidden when the brand takes no reservations). ${LINK_HINT}` },
       { key: 'menu', label: 'Menu button', kind: 'link', hint: `Empty text hides it. Empty link = @menu. ${LINK_HINT}` },
