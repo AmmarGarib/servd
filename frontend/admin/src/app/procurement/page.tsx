@@ -172,6 +172,10 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   const [rejectReason, setRejectReason] = useState('')
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [cancelReason, setCancelReason] = useState('')
+  // Approved ≠ sent: "Mark sent" records that the buyer sent it themselves.
+  const [markSentId, setMarkSentId] = useState<string | null>(null)
+  const [markSentChannel, setMarkSentChannel] = useState<'phone' | 'whatsapp' | 'in_person' | 'email'>('phone')
+  const [markSentNote, setMarkSentNote] = useState('')
 
   const qs = new URLSearchParams()
   if (statusFilter) qs.set('status', statusFilter)
@@ -219,6 +223,10 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
       {showCreate && <CreatePoForm qc={qc} onClose={() => setShowCreate(false)} />}
 
+      {actionMut.error && (
+        <p className="text-xs text-s-red">{actionMut.error instanceof Error ? actionMut.error.message : 'That did not work'}</p>
+      )}
+
       {isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : orders.length === 0 ? (
@@ -256,6 +264,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <PoActions po={po} onAction={(action, body) => {
                       if (action === 'reject') { setRejectId(po.id); return }
                       if (action === 'cancel') { setCancelId(po.id); return }
+                      if (action === 'mark-sent') { setMarkSentId(po.id); return }
                       if (action === 'receive') { router.push(`/procurement/receiving?poId=${po.id}`); return }
                       actionMut.mutate({ id: po.id, action, body })
                     }} />
@@ -328,6 +337,36 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         </div>
       )}
 
+      {/* Mark sent modal — the PO went out by phone / own WhatsApp / in person */}
+      {markSentId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="font-bold text-s-text">Mark PO as sent</p>
+            <p className="text-xs text-s-muted">Only if you have already given this order to the supplier yourself.</p>
+            <Field label="How was it sent?">
+              <select value={markSentChannel} onChange={(e) => setMarkSentChannel(e.target.value as typeof markSentChannel)} className={fi}>
+                <option value="phone">Phone call</option>
+                <option value="whatsapp">WhatsApp (my phone)</option>
+                <option value="in_person">In person</option>
+                <option value="email">Email (my inbox)</option>
+              </select>
+            </Field>
+            <Field label="Note (optional)">
+              <input value={markSentNote} onChange={(e) => setMarkSentNote(e.target.value)} placeholder="e.g. spoke to Imran, delivery Tuesday" className={fi} />
+            </Field>
+            <div className="flex gap-2">
+              <button disabled={actionMut.isPending}
+                onClick={() => { actionMut.mutate({ id: markSentId, action: 'mark-sent', body: { channel: markSentChannel, note: markSentNote || null } }); setMarkSentId(null); setMarkSentNote('') }}
+                className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                Mark sent
+              </button>
+              <button onClick={() => { setMarkSentId(null); setMarkSentNote('') }}
+                className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Back</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cancel modal */}
       {cancelId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
@@ -362,7 +401,9 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
     actions.push({ label: 'Reject', action: 'reject', cls: 'text-s-red hover:opacity-80' })
   }
   if (po.status === 'approved') {
+    // Approved is not sent: email/WhatsApp it, or record that it was phoned in.
     actions.push({ label: 'Send', action: 'send', cls: 'text-sky-700 hover:opacity-80' })
+    actions.push({ label: 'Mark sent', action: 'mark-sent', cls: 'text-sky-700 hover:opacity-80' })
   }
   if (po.status === 'sent' || po.status === 'partial') {
     actions.push({ label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' })

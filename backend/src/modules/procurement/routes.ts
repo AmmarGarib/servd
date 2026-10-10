@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
 import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './scope.js'
@@ -11,8 +11,19 @@ import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './sc
 // 'read' (view-aware); anything that changes a supplier or attaches a new row
 // to one uses 'write' (a company the operator belongs to). An operator with
 // no company sees and touches nothing. Foreign ids are 404.
+//
+// Who (role gate; module 'procurement' is enforced on top by moduleAccess):
+//   PROCUREMENT_TEAM (managers + the buyer role 'procurement'): suppliers,
+//     POs (raise / submit / send / mark sent / cancel), and READ access to
+//     bills, payments, the 3-way match, AP aging, reorder and price history.
+//     The buyer role holds the procurement module, so these used to load the
+//     page and then 403 on every PO, bill and reorder call.
+//   MANAGERS: receiving (receiveGoods' own rule), recording / voiding bills,
+//     paying and allocating, a supplier's opening balance or company move —
+//     money moves and the books, kept apart from whoever raised the order.
+//   ADMIN_ONLY: approve / reject, the approval threshold, the backfill.
 import {
-  createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier,
+  createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, markPoSent,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment,
   agingReport, supplierAging, reorderSuggestions,
@@ -20,6 +31,7 @@ import {
 } from './service.js'
 import { receiveGoods } from './receiving.js'
 import { syncSupplierOpeningBalance } from './openingBalance.js'
+import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
 
 // Post a supplier's opening balance to its company's ledger (a delta — see
 // openingBalance.ts). A failure (e.g. the month is locked) is logged; the AP
@@ -109,7 +121,25 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.post('/suppliers', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  // A supplier's opening balance posts to the ledger (Dr 3020 / Cr 2010) and a
+  // company move carries its POs and bills with it — managers only. The buyer
+  // can add and edit everything else (the edit form re-sends both unchanged,
+  // so only a CHANGE is refused).
+  const assertManagerFields = (
+    req: FastifyRequest,
+    body: { openingBalanceCents?: number; tenantId?: string | null },
+    existing: { openingBalanceCents: number; tenantId: string | null } | null,
+  ) => {
+    if ((MANAGERS as string[]).includes(req.staffUser!.role)) return
+    if (body.openingBalanceCents !== undefined && body.openingBalanceCents !== (existing?.openingBalanceCents ?? 0)) {
+      throw new ForbiddenError('Only a manager can set a supplier\'s opening balance.')
+    }
+    if (existing && body.tenantId !== undefined && body.tenantId !== existing.tenantId) {
+      throw new ForbiddenError('Only a manager can move a supplier to another company.')
+    }
+  }
+
+  fastify.post('/suppliers', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req, reply) => {
     const body = z.object({
       name:                z.string().min(1),
       phone:               z.string().optional(),
@@ -127,6 +157,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       // Falls back to req.staffUser.tenantId when omitted.
       tenantId:            z.string().min(1).optional(),
     }).parse(req.body)
+    assertManagerFields(req, body, null)
 
     // A new supplier always belongs to a company: the picked one (which must
     // be one of the operator's) or the active one. Never a company-less row —
@@ -158,7 +189,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.patch<{ Params: { id: string } }>(
     '/suppliers/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const existing = await findSupplierInScope(req, req.params.id, 'write')
       const body = z.object({
@@ -178,6 +209,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
         openingBalanceCents: z.number().int().nonnegative().optional(),
       }).parse(req.body)
+      assertManagerFields(req, body, existing)
       // A supplier moves between the operator's companies, never out of them:
       // clearing its company would make it (and its POs, bills and threads)
       // visible to every company.
@@ -218,7 +250,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/suppliers/:id/statement',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const supplier = await findSupplierInScope(req, req.params.id, 'read')
       const [bills, payments, aging] = await Promise.all([
@@ -248,7 +280,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { supplierId?: string; status?: string; limit?: string } }>(
     '/purchase-orders',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '50', 10), 200)
       // Scope by supplier.tenantId — that's the single tenant anchor for
@@ -273,7 +305,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/purchase-orders/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const po = await prisma.purchaseOrder.findFirst({
         where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
@@ -289,7 +321,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/purchase-orders', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/purchase-orders', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req, reply) => {
     const body = poCreateSchema.parse(req.body)
     // Don't let the operator post a PO against a supplier they can't see.
     // createPo then checks every line's item is the supplier's company's.
@@ -310,7 +342,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/submit',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => { await guardPo(req, req.params.id); return submitPo(req.params.id, req.staffUser!.id) },
   )
 
@@ -332,7 +364,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/purchase-orders/:id/cancel',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       await guardPo(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
@@ -340,10 +372,25 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // Send an approved PO: email and/or WhatsApp. 'sent' only when it went out.
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/send',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => { await guardPo(req, req.params.id); return sendPoToSupplier(req.params.id, req.staffUser!.id) },
+  )
+
+  // The buyer sent it themselves (phone, own WhatsApp, in person) — record how.
+  fastify.post<{ Params: { id: string } }>(
+    '/purchase-orders/:id/mark-sent',
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    async (req) => {
+      await guardPo(req, req.params.id)
+      const body = z.object({
+        channel: z.enum(['phone', 'whatsapp', 'email', 'in_person']),
+        note:    z.string().max(200).nullable().optional(),
+      }).parse(req.body ?? {})
+      return markPoSent(req.params.id, req.staffUser!.id, body)
+    },
   )
 
   // Receive against a PO — the same receiveGoods() the dock page
@@ -390,14 +437,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // credits, opening balances on their own, suppliers with no company apart.
   // Behind the Accounting AP aging page and the Procurement Aging tab; open to
   // finance as well as managers (module: procurement OR accounting).
-  fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+  fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM, 'procurement') }, async (req) => {
     const scope = await resolveTenantScope(req)
     return agingReport(scope.tenantIds)
   })
 
   fastify.get<{ Querystring: { supplierId?: string; status?: string; overdue?: string } }>(
     '/bills',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.supplierBill.findMany({
@@ -419,7 +466,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/bills/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const bill = await prisma.supplierBill.findFirst({
         where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
@@ -437,13 +484,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post('/bills', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = billCreateSchema.parse(req.body)
-    // createBill then checks the PO, PO lines and items are this supplier's.
+    // createBill then checks the PO, PO lines and items are this supplier's,
+    // and posts the bill in the same transaction that saves it (a closed
+    // month is PERIOD_LOCKED 422 — nothing saved half-way).
     await findSupplierInScope(req, body.supplierId, 'write', { live: true })
     const bill = await createBill({ ...body, createdBy: req.staffUser!.id })
-    const { postSupplierBill } = await import('../accounting/supplierPosting.js')
-    postSupplierBill(bill.id).catch((err) =>
-      req.log.error({ err: (err as Error).message, billId: bill.id }, 'postSupplierBill failed'),
-    )
     return reply.status(201).send(bill)
   })
 
@@ -457,32 +502,37 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     if (!bill) throw new NotFoundError('SupplierBill', billId)
   }
 
+  // Read-only views of a bill (the 3-way match) scope like the bill list.
+  async function guardBillRead(req: FastifyRequest, billId: string) {
+    const bill = await prisma.supplierBill.findFirst({
+      where:  { id: billId, supplier: await supplierScopeWhere(req, 'read') },
+      select: { id: true },
+    })
+    if (!bill) throw new NotFoundError('SupplierBill', billId)
+  }
+
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/bills/:id/void',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       await guardBill(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
-      const result = await voidBill(req.params.id, req.staffUser!.id, reason)
-      const { postSupplierBillVoid } = await import('../accounting/supplierPosting.js')
-      postSupplierBillVoid(req.params.id, reason).catch((err) =>
-        req.log.error({ err: (err as Error).message, billId: req.params.id }, 'postSupplierBillVoid failed'),
-      )
-      return result
+      // The ledger reversal commits with the void (service.ts voidBill).
+      return voidBill(req.params.id, req.staffUser!.id, reason)
     },
   )
 
   fastify.get<{ Params: { id: string } }>(
     '/bills/:id/match',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => { await guardBill(req, req.params.id); return matchBill(req.params.id) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    async (req) => { await guardBillRead(req, req.params.id); return matchBill(req.params.id) },
   )
 
   // ── Supplier Payments ──────────────────────────────────────────────────────
 
   fastify.get<{ Querystring: { supplierId?: string } }>(
     '/payments',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.supplierPayment.findMany({
@@ -504,11 +554,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const body = paymentCreateSchema.parse(req.body)
     // createPayment then checks every applied bill is this supplier's.
     await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    // Posted in the same transaction (service.ts createPaymentTx): a payment
+    // dated in a closed month is PERIOD_LOCKED 422 and is not saved.
     const payment = await createPayment({ ...body, createdBy: req.staffUser!.id })
-    const { postSupplierPayment } = await import('../accounting/supplierPosting.js')
-    postSupplierPayment(payment.id).catch((err) =>
-      req.log.error({ err: (err as Error).message, paymentId: payment.id }, 'postSupplierPayment failed'),
-    )
     return reply.status(201).send(payment)
   })
 
@@ -528,14 +576,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // ── Aging + reorder + price history ────────────────────────────────────────
 
-  fastify.get('/reorder', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/reorder', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
     const scope = await resolveTenantScope(req)
     return reorderSuggestions(scope.tenantIds)
   })
 
   fastify.get<{ Querystring: { itemId?: string; supplierId?: string; limit?: string } }>(
     '/price-history',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
       // Anchored on the item (company master data): only this company's
@@ -576,6 +624,59 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       },
       orderBy: { createdAt: 'asc' },
     })
+  })
+
+  // ── Backfill: bills / payments that never reached the ledger ───────────────
+
+  // POST /procurement/post-unposted — bills and payments saved before posting
+  // moved into the save's transaction, whose after-commit post failed (most
+  // often a closed month). Admin; dry run by default. Each posts in its own
+  // transaction at its own date; one in a closed month is listed with the
+  // reason, never forced into another period.
+  fastify.post('/post-unposted', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ dryRun: z.boolean().default(true) }).parse(req.body ?? {})
+    const tenantIds = (await resolveTenantScope(req)).tenantIds
+    if (tenantIds.length === 0) return { dryRun: body.dryRun, rows: [] }
+    const [bills, payments, entries] = await Promise.all([
+      prisma.supplierBill.findMany({
+        where:   { status: { notIn: ['void', 'draft'] }, supplier: { tenantId: { in: tenantIds } } },
+        select:  { id: true, billNumber: true, billDate: true, totalCents: true, subtotalCents: true, taxCents: true, supplier: { select: { name: true, tenantId: true } } },
+        orderBy: { billDate: 'asc' },
+      }),
+      prisma.supplierPayment.findMany({
+        where:   { supplier: { tenantId: { in: tenantIds } } },
+        select:  { id: true, paymentDate: true, amountCents: true, supplier: { select: { name: true, tenantId: true } } },
+        orderBy: { paymentDate: 'asc' },
+      }),
+      prisma.journalEntry.findMany({
+        where:  { tenantId: { in: tenantIds }, reference: { startsWith: 'supplier.' } },
+        select: { tenantId: true, reference: true },
+      }),
+    ])
+    const onBooks = new Set(entries.map((e) => `${e.tenantId}|${e.reference}`))
+    type Row = { kind: 'bill' | 'payment'; id: string; label: string; date: Date; amountCents: number; outcome: string }
+    const rows: Row[] = []
+    const run = async (row: Omit<Row, 'outcome'>, ref: string, tenantId: string, post: () => Promise<{ posted: boolean; reason?: string }>) => {
+      if (onBooks.has(`${tenantId}|${ref}`)) return
+      if (body.dryRun) { rows.push({ ...row, outcome: 'would_post' }); return }
+      try {
+        const r = await post()
+        rows.push({ ...row, outcome: r.posted ? 'posted' : (r.reason ?? 'skipped') })
+      } catch (err) {
+        const e = err as AppError
+        rows.push({ ...row, outcome: `${e.code ?? 'error'}: ${e.message}` })
+      }
+    }
+    for (const b of bills) {
+      if (b.subtotalCents === 0 && b.taxCents === 0) continue
+      await run({ kind: 'bill', id: b.id, label: `${b.supplier.name} bill ${b.billNumber}`, date: b.billDate, amountCents: b.totalCents },
+        `supplier.bill:${b.id}`, b.supplier.tenantId!, () => postSupplierBill(b.id))
+    }
+    for (const p of payments) {
+      await run({ kind: 'payment', id: p.id, label: `Payment to ${p.supplier.name}`, date: p.paymentDate, amountCents: p.amountCents },
+        `supplier.payment:${p.id}`, p.supplier.tenantId!, () => postSupplierPayment(p.id))
+    }
+    return { dryRun: body.dryRun, rows }
   })
 
   // ── Settings: approval threshold ───────────────────────────────────────────

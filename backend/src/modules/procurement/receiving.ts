@@ -37,7 +37,11 @@ import { MANAGERS } from '../auth/middleware.js'
 /** Line variance above this (either way) raises an exception flag. */
 export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
 
-/** A PO can be received only once it has been approved and sent. */
+/**
+ * A PO can be received only once it has been approved AND sent — emailed /
+ * WhatsApped (sendPoToSupplier) or marked sent by whoever phoned it in
+ * (markPoSent). Approval alone no longer stamps 'sent'.
+ */
 export const RECEIVABLE_PO_STATUSES = ['sent', 'partial'] as const
 
 export type DiscrepancyReason = 'short_shipment' | 'over_shipment' | 'damaged' | 'wrong_item' | 'quality_issue'
@@ -51,7 +55,9 @@ export interface ReceiveGoodsLine {
   quantityReceived:   number
   /**
    * Unit cost in paisa. Required on a receipt without a PO (entered at the
-   * dock). On a PO line the agreed PO cost is used.
+   * dock). On a PO line the agreed PO cost is used; when the supplier's bill
+   * later charges a different price, postSupplierBill re-averages the item at
+   * the billed price (accounting/supplierPosting.ts).
    */
   unitCostCents?:     number | null
   discrepancyReason?: DiscrepancyReason | null
@@ -371,6 +377,9 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
 function assertReceivable(status: string) {
   if (status === 'cancelled') throw new AppError('PO_CANCELLED', 'Cannot receive a cancelled PO', 400)
   if (status === 'received')  throw new AppError('PO_RECEIVED', 'PO is already fully received', 400)
+  if (status === 'approved') {
+    throw new AppError('PO_NOT_SENT', 'This PO is approved but was never sent to the supplier. Send it, or mark it as sent if it was phoned in, then receive it.', 400)
+  }
   if (!(RECEIVABLE_PO_STATUSES as readonly string[]).includes(status)) {
     throw new AppError('PO_NOT_SENT', `A PO must be approved and sent before it can be received (this one is ${status})`, 400)
   }

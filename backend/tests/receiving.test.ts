@@ -8,7 +8,8 @@
 //     GoodsReceipt, bump PurchaseOrderLine.quantityReceived, move stock and
 //     re-average the unit cost (moving average of actual deliveries), in one
 //     transaction. A line can be 0 / omitted; a part-received PO stays open.
-//   - Only sent / partial POs can be received (not draft, pending, received).
+//   - Only sent / partial POs can be received (not draft, pending, approved-
+//     but-never-sent, received).
 //   - Owner decision 27: receiving without a PO is allowed for manager tiers
 //     with a unit cost; non-managers are refused; the PO raiser can't
 //     receive it — except the CEO.
@@ -26,7 +27,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
-import { createPo, submitPo, createPayment, agingReport } from '../src/modules/procurement/service.js'
+import { createPo, submitPo, markPoSent, createPayment, agingReport } from '../src/modules/procurement/service.js'
 import { postSupplierPayment } from '../src/modules/accounting/supplierPosting.js'
 import { syncSupplierOpeningBalance } from '../src/modules/procurement/openingBalance.js'
 import { assertNotSelfApproval } from '../src/lib/separation-of-duties.js'
@@ -61,8 +62,9 @@ async function sentPo(createdBy: string, lines: Array<{ item: string; qty: numbe
     lines: lines.map((l) => ({ inventoryItemId: l.item, quantityOrdered: l.qty, unitCostCents: l.cost })),
     createdBy,
   })
-  const r = await submitPo(po.id, createdBy)   // under the approval threshold → sent
-  expect(r.status).toBe('sent')
+  const r = await submitPo(po.id, createdBy)   // under the approval threshold → approved (not sent)
+  expect(r.status).toBe('approved')
+  await markPoSent(po.id, createdBy, { channel: 'phone' })
   return po
 }
 

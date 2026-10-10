@@ -40,6 +40,7 @@ interface PurchaseOrder {
 const STATUS_COLORS: Record<string, string> = {
   draft:            'text-s-muted border-s-border',
   pending_approval: 'text-s-amber border-s-amber',
+  approved:         'text-sky-700 border-sky-400',
   sent:             'text-blue-700 border-blue-400',
   received:         'text-primary-ink border-primary',
   partial:          'text-s-amber border-s-amber',

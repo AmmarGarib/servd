@@ -235,9 +235,9 @@ describe('approval threshold is per company', () => {
   })
 
   it('submitPo applies the PO\'s own company\'s threshold', async () => {
-    // 50,000 paisa: under A's 1,000,000 → auto-sent; over B's fallback 777 → needs approval.
+    // 50,000 paisa: under A's 1,000,000 → auto-approved; over B's fallback 777 → needs approval.
     const a = await createPo({ supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoA']!.id })
-    expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('sent')
+    expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('approved')
     const b = await createPo({ supplierId: supB, lines: [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoB']!.id })
     expect((await submitPo(b.id, users['ceoB']!.id)).status).toBe('pending_approval')
 

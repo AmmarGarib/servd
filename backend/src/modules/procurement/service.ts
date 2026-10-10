@@ -2,6 +2,12 @@
 //
 // Owns:
 //  - Purchase order lifecycle (create → submit → approve → send → receive → close)
+//      draft → pending_approval (at/above the company's threshold) → approved
+//      draft → approved (below it: auto-approved)
+//      approved → sent ONLY when it actually goes out: emailed / WhatsApped by
+//      sendPoToSupplier, or marked sent by staff who phoned it in (markPoSent).
+//      Approval used to stamp 'sent' + sentAt though nothing was sent, so staff
+//      believed a PO had gone out that the supplier never got.
 //  - Receiving (receiving.ts: GRN + moving-average cost + price history + variance log)
 //  - Supplier bills (AP), 3-way matching (PO ↔ receipt ↔ bill)
 //  - Multi-bill payment allocation
@@ -13,7 +19,8 @@ import { isBelowPar } from '../../lib/recipeCost.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendEmail } from '../../lib/notify.js'
-import { withholdingForBill } from '../accounting/supplierPosting.js'
+import { withholdingForBill, postSupplierBill, postSupplierBillVoid, postSupplierPayment } from '../accounting/supplierPosting.js'
+import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
 import type { Prisma } from '@prisma/client'
@@ -108,7 +115,11 @@ export async function createPo(input: CreatePoInput) {
   return po
 }
 
-/** Submit a draft PO for approval (or auto-approve if under threshold). */
+/**
+ * Submit a draft PO for approval, or auto-approve it under the threshold.
+ * Approved is not sent: the PO goes to the supplier through sendPoToSupplier
+ * or markPoSent.
+ */
 export async function submitPo(poId: string, userId: string) {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { supplier: { select: { tenantId: true } } } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
@@ -119,12 +130,12 @@ export async function submitPo(poId: string, userId: string) {
   const needsApproval = po.totalCents >= threshold
 
   return prisma.$transaction(async (tx) => {
-    const newStatus = needsApproval ? 'pending_approval' : 'sent'
+    const newStatus = needsApproval ? 'pending_approval' : 'approved'
     await tx.purchaseOrder.update({
       where: { id: poId },
       data: needsApproval
         ? { status: 'pending_approval' }
-        : { status: 'sent', approvedById: userId, approvedAt: new Date(), sentAt: new Date() },
+        : { status: 'approved', approvedById: userId, approvedAt: new Date() },
     })
     await tx.poActivityLog.create({
       data: { purchaseOrderId: poId, userId, action: 'submitted', details: { needsApproval, threshold, total: po.totalCents } },
@@ -146,10 +157,10 @@ export async function approvePo(poId: string, approverId: string) {
   return prisma.$transaction(async (tx) => {
     await tx.purchaseOrder.update({
       where: { id: poId },
-      data:  { status: 'sent', approvedById: approverId, approvedAt: new Date(), sentAt: new Date() },
+      data:  { status: 'approved', approvedById: approverId, approvedAt: new Date() },
     })
     await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'approved' } })
-    return { id: poId, status: 'sent' }
+    return { id: poId, status: 'approved' }
   })
 }
 
@@ -187,16 +198,44 @@ export async function cancelPo(poId: string, userId: string, reason: string) {
   })
 }
 
-/** Mark a PO as sent, including emailing the supplier. */
+/** A PO can go to the supplier once approved; re-sending a sent one is allowed. */
+const SENDABLE_PO_STATUSES = ['approved', 'sent', 'partial']
+
+function assertSendable(status: string) {
+  if (status === 'draft' || status === 'pending_approval') {
+    throw new AppError('PO_NOT_APPROVED', 'This PO has not been approved yet — submit it (and get it approved) before sending it', 400)
+  }
+  if (!SENDABLE_PO_STATUSES.includes(status)) {
+    throw new AppError('INVALID_STATE', `Cannot send a PO that is ${status}`, 400)
+  }
+}
+
+/**
+ * Send an approved PO to the supplier — email when they have an address,
+ * WhatsApp when they have a number (whatsappPhone, else phone). The PO
+ * becomes 'sent' only when at least one channel actually delivered. A
+ * supplier with neither: phone it in and use markPoSent.
+ */
 export async function sendPoToSupplier(poId: string, userId: string) {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
     include: { supplier: true, lines: { include: { inventoryItem: true } } },
   })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
-  if (!po.supplier.email) throw new AppError('NO_EMAIL', `Supplier ${po.supplier.name} has no email on file`, 400)
+  assertSendable(po.status)
+
+  const email = po.supplier.email || null
+  const waNumber = (po.supplier.whatsappPhone || po.supplier.phone || '').replace(/[^0-9]/g, '') || null
+  if (!email && !waNumber) {
+    throw new AppError(
+      'NO_CONTACT',
+      `${po.supplier.name} has no email or WhatsApp number on file. Add one to the supplier, or send the PO by phone and mark it as sent.`,
+      400,
+    )
+  }
 
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString()}`
+  const ref = po.reference ? `#${po.reference}` : `#${po.id.slice(0, 8).toUpperCase()}`
   const linesHtml = po.lines.map((l) => `
     <tr>
       <td style="padding:6px;border-bottom:1px solid #eee;">${l.inventoryItem.name}</td>
@@ -207,7 +246,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
 
   const html = `
     <div style="font-family:sans-serif;max-width:640px;">
-      <h2>Purchase Order ${po.reference ? `#${po.reference}` : `#${po.id.slice(0, 8).toUpperCase()}`}</h2>
+      <h2>Purchase Order ${ref}</h2>
       <p>Hi ${po.supplier.name},</p>
       <p>Please find our purchase order below. Confirm receipt at your earliest convenience.</p>
       <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:16px 0;">
@@ -230,19 +269,76 @@ export async function sendPoToSupplier(poId: string, userId: string) {
       <p style="color:#888;font-size:12px;margin-top:32px;">Sent via servd procurement.</p>
     </div>`
 
-  await sendEmail(po.supplier.email, `Purchase Order from servd — ${fmt(po.totalCents)}`, html)
+  const text = [
+    `Purchase Order ${ref}`,
+    `Hi ${po.supplier.name}, please supply:`,
+    '',
+    ...po.lines.map((l) => `- ${l.inventoryItem.name}: ${l.quantityOrdered} ${l.inventoryItem.unit} @ ${fmt(l.unitCostCents)}`),
+    '',
+    `Total: ${fmt(po.totalCents)}`,
+    ...(po.expectedDate ? [`Expected delivery: ${po.expectedDate.toDateString()}`] : []),
+    ...(po.notes ? [`Notes: ${po.notes}`] : []),
+    'Please confirm receipt.',
+  ].join('\n')
 
+  const sent: string[] = []
+  const failed: string[] = []
+  if (email) {
+    try { await sendEmail(email, `Purchase Order from servd — ${fmt(po.totalCents)}`, html); sent.push('email') }
+    catch (err) { failed.push(`email: ${(err as Error).message}`) }
+  }
+  if (waNumber) {
+    try { await sendWhatsApp(waNumber, text); sent.push('whatsapp') }
+    catch (err) { failed.push(`whatsapp: ${(err as Error).message}`) }
+  }
+
+  if (sent.length === 0) {
+    await prisma.poActivityLog.create({
+      data: { purchaseOrderId: poId, userId, action: 'send_failed', details: { errors: failed } },
+    })
+    throw new AppError('SEND_FAILED', `The PO did not reach ${po.supplier.name} (${failed.join('; ')}). Try again, or send it by phone and mark it as sent.`, 502)
+  }
+
+  const now = new Date()
   await prisma.$transaction([
     prisma.purchaseOrder.update({
       where: { id: poId },
-      data:  { sentAt: new Date(), sentToEmail: po.supplier.email, status: po.status === 'draft' ? 'sent' : po.status },
+      data:  {
+        sentAt: now,
+        ...(sent.includes('email') ? { sentToEmail: email } : {}),
+        status: po.status === 'approved' ? 'sent' : po.status,
+      },
     }),
     prisma.poActivityLog.create({
-      data: { purchaseOrderId: poId, userId, action: 'sent', details: { to: po.supplier.email } },
+      data: { purchaseOrderId: poId, userId, action: 'sent', details: { channels: sent, email: sent.includes('email') ? email : null, whatsapp: sent.includes('whatsapp') ? waNumber : null, failed } },
     }),
   ])
 
-  return { sentTo: po.supplier.email }
+  return { status: po.status === 'approved' ? 'sent' : po.status, channels: sent, sentTo: sent.includes('email') ? email : waNumber, failed }
+}
+
+export type PoSendChannel = 'phone' | 'whatsapp' | 'email' | 'in_person'
+
+/**
+ * Staff sent an approved PO themselves (phoned it in, WhatsApped it from their
+ * own phone, handed it over) — record that, and how. The only other way a PO
+ * becomes 'sent' is sendPoToSupplier actually delivering it.
+ */
+export async function markPoSent(poId: string, userId: string, input: { channel: PoSendChannel; note?: string | null }) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
+    const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true } })
+    if (!po) throw new NotFoundError('PurchaseOrder', poId)
+    if (po.status === 'draft' || po.status === 'pending_approval') {
+      throw new AppError('PO_NOT_APPROVED', 'This PO has not been approved yet — it cannot be sent', 400)
+    }
+    if (po.status !== 'approved') throw new AppError('INVALID_STATE', `This PO is already ${po.status}`, 400)
+    await tx.purchaseOrder.update({ where: { id: poId }, data: { status: 'sent', sentAt: new Date() } })
+    await tx.poActivityLog.create({
+      data: { purchaseOrderId: poId, userId, action: 'marked_sent', details: { channel: input.channel, note: input.note ?? null } },
+    })
+    return { id: poId, status: 'sent', channel: input.channel }
+  })
 }
 
 // ─── Receiving ───────────────────────────────────────────────────────────────
@@ -290,36 +386,43 @@ export async function createBill(input: CreateBillInput) {
     ? new Date(input.dueDate)
     : new Date(billDate.getTime() + supplier.paymentTermsDays * 24 * 60 * 60 * 1000)
 
+  // The bill and its ledger entry commit together (postSupplierBill in the
+  // same transaction): a bill dated in a closed month is PERIOD_LOCKED 422 and
+  // nothing is saved. It used to be saved (201) and then fail to post after
+  // commit, so AP aging owed money the ledger's AP 2010 did not.
   try {
-    const bill = await prisma.supplierBill.create({
-      data: {
-        supplierId:   input.supplierId,
-        poId:         input.poId      ?? null,
-        billNumber:   input.billNumber,
-        billDate,
-        dueDate,
-        subtotalCents,
-        taxCents,
-        totalCents,
-        whtCents,
-        notes:        input.notes         ?? null,
-        attachmentUrl: input.attachmentUrl ?? null,
-        createdBy:    input.createdBy,
-        status:       'open',
-        lines: {
-          create: input.lines.map((l) => ({
-            inventoryItemId: l.inventoryItemId ?? null,
-            poLineId:        l.poLineId        ?? null,
-            description:     l.description,
-            quantity:        l.quantity,
-            unitCostCents:   l.unitCostCents,
-            lineTotalCents:  Math.round(l.unitCostCents * l.quantity),
-          })),
+    return await prisma.$transaction(async (tx) => {
+      const bill = await tx.supplierBill.create({
+        data: {
+          supplierId:   input.supplierId,
+          poId:         input.poId      ?? null,
+          billNumber:   input.billNumber,
+          billDate,
+          dueDate,
+          subtotalCents,
+          taxCents,
+          totalCents,
+          whtCents,
+          notes:        input.notes         ?? null,
+          attachmentUrl: input.attachmentUrl ?? null,
+          createdBy:    input.createdBy,
+          status:       'open',
+          lines: {
+            create: input.lines.map((l) => ({
+              inventoryItemId: l.inventoryItemId ?? null,
+              poLineId:        l.poLineId        ?? null,
+              description:     l.description,
+              quantity:        l.quantity,
+              unitCostCents:   l.unitCostCents,
+              lineTotalCents:  Math.round(l.unitCostCents * l.quantity),
+            })),
+          },
         },
-      },
-      include: { supplier: true, lines: true, po: true },
+        include: { supplier: true, lines: true, po: true },
+      })
+      await postSupplierBill(bill.id, { tx })
+      return bill
     })
-    return bill
   } catch (err) {
     const e = err as Prisma.PrismaClientKnownRequestError
     if (e.code === 'P2002') {
@@ -382,9 +485,16 @@ export async function voidBill(billId: string, userId: string, reason: string) {
     throw new AppError('HAS_PAYMENTS', 'Cannot void a bill with applied payments — unapply payments first', 400)
   }
 
-  return prisma.supplierBill.update({
-    where: { id: billId },
-    data:  { status: 'void', voidedAt: new Date(), voidReason: reason, notes: bill.notes ? `${bill.notes}\n[voided by ${userId}]` : `[voided by ${userId}]` },
+  // The void and the ledger reversal (plus undoing the bill's item-cost
+  // re-average) commit together; a reversal the ledger refuses (e.g. today is
+  // in a closed period) refuses the void.
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.supplierBill.update({
+      where: { id: billId },
+      data:  { status: 'void', voidedAt: new Date(), voidReason: reason, notes: bill.notes ? `${bill.notes}\n[voided by ${userId}]` : `[voided by ${userId}]` },
+    })
+    await postSupplierBillVoid(billId, reason, { tx, postedBy: userId })
+    return updated
   })
 }
 
@@ -484,8 +594,10 @@ export async function createPayment(input: CreatePaymentInput) {
 /**
  * createPayment inside the caller's transaction — for a cash spend recorded
  * elsewhere (a petty-cash box paying a supplier's bill) that must write the
- * SupplierPayment and its own row atomically. The caller posts the ledger
- * entry (postSupplierPayment) after commit, as the /procurement route does.
+ * SupplierPayment and its own row atomically. The ledger entry
+ * (postSupplierPayment) posts in the SAME transaction: a payment dated in a
+ * closed month is PERIOD_LOCKED 422 and nothing is saved. (A caller's own
+ * postSupplierPayment after commit is now an idempotent no-op.)
  */
 export async function createPaymentTx(tx: Prisma.TransactionClient, input: CreatePaymentInput) {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Amount must be positive', 400)
@@ -542,6 +654,7 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
     }
   }
 
+  await postSupplierPayment(payment.id, { tx })
   return payment
 }
 
@@ -761,7 +874,7 @@ export async function reorderSuggestions(tenantIds: string[]) {
   const openLines = await prisma.purchaseOrderLine.findMany({
     where: {
       inventoryItemId: { in: items.map((i) => i.id) },
-      purchaseOrder: { status: { in: ['draft', 'pending_approval', 'sent', 'partial'] } },
+      purchaseOrder: { status: { in: ['draft', 'pending_approval', 'approved', 'sent', 'partial'] } },
     },
     include: { purchaseOrder: { select: { status: true } } },
   })
