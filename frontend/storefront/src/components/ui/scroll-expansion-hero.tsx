@@ -42,6 +42,10 @@ interface ScrollExpandMediaProps {
   mediaSrc: string;
   posterSrc?: string;
   bgImageSrc: string;
+  /** Photos behind the media, cross-faded one after another. Empty = bgImageSrc alone. */
+  bgSlides?: BgSlide[];
+  /** Seconds each photo shows (3–15). */
+  bgSlideSeconds?: number;
   title?: string;
   /** The title's tag. One h1 per page: use h2 when the page has its own h1. */
   headingLevel?: HeadingLevel;
@@ -51,6 +55,69 @@ interface ScrollExpandMediaProps {
   scrollToExpand?: string;
   textBlend?: boolean;
   children?: ReactNode;
+}
+
+export interface BgSlide { src: string; alt: string }
+
+/**
+ * The background slideshow: photos cross-fade (1 s) one after another. Only
+ * the photo on show and the NEXT one are loaded (each stays mounted once seen,
+ * so the fade-out works); the first is the page's LCP image and loads eagerly.
+ * Paused while the tab is hidden or the media is fully open; reduced motion
+ * or a single photo = the first photo, no timer.
+ */
+function BgSlideshow({ slides, seconds, paused }: { slides: BgSlide[]; seconds: number; paused: boolean }) {
+  const [index, setIndex] = useState(0);
+  const [reduced, setReduced] = useState(false);
+  const [seen, setSeen] = useState<ReadonlySet<number>>(() => new Set([0]));
+  const count = slides.length;
+  const current = count ? index % count : 0;
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setReduced(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  const cycling = count > 1 && !reduced;
+  const next = (current + 1) % Math.max(count, 1);
+
+  useEffect(() => {
+    if (!cycling) return;
+    setSeen((prev) => (prev.has(current) && prev.has(next) ? prev : new Set([...prev, current, next])));
+  }, [cycling, current, next]);
+
+  useEffect(() => {
+    if (!cycling || paused) return;
+    const t = setInterval(() => {
+      if (!document.hidden) setIndex((i) => (i + 1) % count);
+    }, seconds * 1000);
+    return () => clearInterval(t);
+  }, [cycling, paused, seconds, count]);
+
+  return (
+    <>
+      {slides.map((s, i) => {
+        if (i !== current && !(cycling && seen.has(i))) return null;
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={`${i}:${s.src}`}
+            src={s.src}
+            alt={s.alt}
+            {...(!s.alt && { 'aria-hidden': true })}
+            loading={i === 0 ? 'eager' : 'lazy'}
+            {...(i === 0 && { fetchPriority: 'high' as const })}
+            decoding='async'
+            className='absolute inset-0 w-screen h-screen object-cover'
+            style={{ objectPosition: 'center', opacity: i === current ? 1 : 0, transition: 'opacity 1s ease-in-out' }}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 const YT_PARAMS = 'autoplay=1&mute=1&loop=1&controls=0&showinfo=0&rel=0&disablekb=1&modestbranding=1';
@@ -98,6 +165,8 @@ const ScrollExpandMedia = ({
   mediaSrc,
   posterSrc,
   bgImageSrc,
+  bgSlides,
+  bgSlideSeconds = 6,
   title,
   headingLevel = 'h1',
   mediaAlt = '',
@@ -107,6 +176,8 @@ const ScrollExpandMedia = ({
   children,
 }: ScrollExpandMediaProps) => {
   const [scrollProgress, setScrollProgress] = useState<number>(0);
+  // The slideshow, or the single background photo as a one-photo slideshow.
+  const slides: BgSlide[] = bgSlides?.length ? bgSlides : bgImageSrc ? [{ src: bgImageSrc, alt: '' }] : [];
   const [showContent, setShowContent] = useState<boolean>(false);
   const [mediaFullyExpanded, setMediaFullyExpanded] = useState<boolean>(false);
   const [touchStartY, setTouchStartY] = useState<number>(0);
@@ -411,22 +482,17 @@ const ScrollExpandMedia = ({
             className='absolute inset-0 z-0 h-full'
             style={{ opacity: 1 - scrollProgress, transition: 'opacity 100ms ease-in-out' }}
           >
-            {bgImageSrc ? (
-              // Decorative: it sits behind the title and fades out.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={bgImageSrc}
-                alt=''
-                aria-hidden='true'
-                className='w-screen h-screen object-cover'
-                style={{ objectPosition: 'center' }}
-              />
+            {slides.length ? (
+              // Behind the title; the whole layer fades out as the media opens.
+              <div className='relative w-screen h-screen'>
+                <BgSlideshow slides={slides} seconds={Math.min(15, Math.max(3, bgSlideSeconds))} paused={mediaFullyExpanded} />
+              </div>
             ) : (
               <div aria-hidden='true' className='w-screen h-screen' style={{ background: 'var(--servd-purple)' }} />
             )}
             {/* The dimming film is for photo backgrounds only — over the plain
                 token purple it turned #5a2156 into a muddier #511e4d. */}
-            {bgImageSrc && <div className='absolute inset-0 bg-black/10' />}
+            {slides.length > 0 && <div className='absolute inset-0 bg-black/10' />}
           </div>
 
           <div className='container mx-auto flex flex-col items-center justify-start relative z-10'>

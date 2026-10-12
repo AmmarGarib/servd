@@ -77,8 +77,14 @@ rewritten, trust these corrections:
   (`--erp-accent`: the logo, accents, the sidebar's active item — purple text
   on green, never body text on white) and `#4f7a1c` (`--erp-success`,
   `text-success`, `s-badge-green`: profit / on target / paid — green vs red
-  for good vs bad). The top-left is the logo (`/brand/servd-logo.png`), not a
-  wordmark. ONE definition: channel variables (`--x-rgb` + `--x`) in
+  for good vs bad). **Green rule (owner, 2026-10-12: "more servd green"):**
+  purple = actions and identity (buttons, links, focus); green = state and
+  good news — switches when on, the active tab's underline, selected chips,
+  progress bars, live/available dots, done/paid/on-target/positive values,
+  the small eyebrow label above a page title (`text-success`), checkboxes
+  (accent-color). Legacy `s-teal` / `s-badge-teal` ARE the green accent;
+  `s-badge-purple` is the purple tint. The top-left is the logo
+  (`/brand/servd-logo.png`), not a wordmark. ONE definition: channel variables (`--x-rgb` + `--x`) in
   `frontend/admin/src/app/globals.css`, read by `tailwind.config.ts`
   (`rgb(var(--x-rgb) / <alpha-value>)`), so opacity modifiers work. Tailwind
   `white` = the area's foreground (`--fg-rgb`), so `text-white/40` is ink on
@@ -295,8 +301,11 @@ hero (`LandingScrollHero` → `ui/scroll-expansion-hero.tsx`) — keep it; a jum
 far down the page (an `Order` link to `#kitchens`) finishes the expansion
 instead of snapping back to the top. Search is the nav's `SearchSheet`
 (`openSearch()`), not a page. Link to `/home` or `/home#kitchens`, never
-`/browse`. The hero is the `servd.scrollHero` section on `servd:home`: the
-dining-room photo behind it (`/brand/servd-hero-bg.webp`) and NO words over
+`/browse`. The hero is the `servd.scrollHero` section on `servd:home`: a
+background SLIDESHOW behind it (`bgSlides`, 1-10 photos the owner adds in
+Admin -> Storefront, `bgSlideSeconds` 3-15; empty = the single `bgImageSrc`,
+default the dining-room photo `/brand/servd-hero-bg.webp`; only the current
+and next photo load; reduced motion = first photo only) and NO words over
 the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
 `sr-only` h1; eyebrow and scroll hint are empty. The nav shows the logo
 (`/brand/servd-logo.png`), not the text wordmark.
@@ -524,7 +533,13 @@ are switched on in `BrandFallback.tsx`. Live brands:
 - **stackd** — Industrial plum (Pantone 19-2025 Red Plum `#7C2946` + Pantone
   9180 cream `#FCE8CE`, Pantone 635 `#9BD3DD` as the one cool accent). Was
   "stax" / navy-grey; see the 2026-09-09 note above.
-- **flipd** — Cool diner (curious blue `#2092E9` + bone `#EDE6D3` + midnight-oil ink `#090D17`)
+- **flipd** — the servd purple / white / green (owner, 2026-10-12, replacing
+  the mustard `#FED561` / Flipd Blue `#294375` / bone book palette): marks
+  `#6A0DAD`, dark bands `#3B0764` with servd-green `#87C540` type, white
+  field, lavender `#F3EEFA` quiet surface, ink `#261038`, a purple + green
+  checker. The `--flipd-*` token NAMES stay as roles (`--flipd-blue` = the
+  mark colour, `--flipd-mustard` = the field). The logo artwork is being
+  redrawn in these colours by the owner's designer.
 
 CSS tokens for all three are defined in
 `frontend/storefront/src/app/globals.css` under `:root` (search

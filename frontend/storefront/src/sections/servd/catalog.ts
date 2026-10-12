@@ -42,7 +42,12 @@ export const specs: SectionSpec[] = [
       { key: 'mediaImage', label: 'Expanding image', kind: 'image', hint: 'Used when Media type is Image.' },
       { key: 'posterSrc', label: 'Video poster', kind: 'image', hint: 'Shown until the video starts, and instead of it for visitors who prefer less motion or save data. The default is a still of the default video: replace or clear it when you change the video. Empty = none.' },
       { key: 'mediaAlt', label: 'Media description (alt text)', kind: 'text', hint: 'What the video/photo shows (the default describes the default video — rewrite it when you change it). Empty = decorative' },
-      { key: 'bgImageSrc', label: 'Background image', kind: 'image', hint: 'The photo behind the media; it fades out as the media opens. Empty = plain servd purple.' },
+      { key: 'bgSlides', label: 'Background slideshow', kind: 'list', itemLabel: 'Photo', max: 10, hint: 'Photos behind the media, cross-fading one after another; the whole background fades out as the media opens. Empty = the single background image below.', item: [
+        { key: 'src', label: 'Photo', kind: 'image' },
+        { key: 'alt', label: 'What it shows (alt text)', kind: 'text', hint: 'Empty = decorative' },
+      ] },
+      { key: 'bgSlideSeconds', label: 'Seconds per photo', kind: 'number', min: 3, max: 15, step: 1 },
+      { key: 'bgImageSrc', label: 'Background image (single)', kind: 'image', hint: 'Used only when the slideshow is empty. Empty too = plain servd purple.' },
       { key: 'title', label: 'Title', kind: 'text', hint: 'The page heading. Shown on the media only when “Show the title” is on (the first word slides left, the rest slides right); otherwise search engines and screen readers still get it.' },
       { key: 'showTitle', label: 'Show the title on the media', kind: 'toggle', hint: 'Off = no words over the media.' },
       { key: 'headingLevel', label: 'Title tag', kind: 'select', hint: 'H1 = the page’s main title (one per page). Use H2 on a page that already has an H1.', options: [
@@ -67,6 +72,10 @@ export const specs: SectionSpec[] = [
       // The dining-room photo behind the hero (owner, 2026-10-12: "I had a
       // photo behind this"). Self-hosted 1600px WebP.
       bgImageSrc: '/brand/servd-hero-bg.webp',
+      // The slideshow (owner, 2026-10-12): starts with the one photo; the owner
+      // adds more in Admin -> Storefront.
+      bgSlides: [{ src: '/brand/servd-hero-bg.webp', alt: '' }],
+      bgSlideSeconds: 6,
       // Each kitchen has its own basket and checkout, so no "one order" /
       // "check out once" promise.
       title: 'Every kitchen, one place to order.',
@@ -321,7 +330,7 @@ export const specs: SectionSpec[] = [
       kitchens: [
         { name: 'Stackd', href: 'https://stackd.pk/', dot: '#FCE8CE' },
         { name: 'Simmer', href: 'https://simmer.pk/', dot: '#E94E1B' },
-        { name: 'Flipd', href: 'https://flipd.pk/', dot: '#2092E9' },
+        { name: 'Flipd', href: 'https://flipd.pk/', dot: '#6A0DAD' },
       ],
       customerHeading: 'Customer',
       customerLinks: [

@@ -11,7 +11,7 @@
 import ScrollExpandMedia from '../../components/ui/scroll-expansion-hero'
 import { openSearch } from '../../components/SearchSheet'
 import type { SectionProps } from '../types'
-import { link, safeHref, safeSrc, str } from '../safe'
+import { link, list, safeHref, safeSrc, str } from '../safe'
 import { Chevron } from './icons'
 
 export function ScrollHero({ fields }: SectionProps) {
@@ -36,6 +36,10 @@ export function ScrollHero({ fields }: SectionProps) {
       mediaSrc={mediaSrc}
       {...(poster && { posterSrc: poster })}
       bgImageSrc={safeSrc(fields.bgImageSrc)}
+      bgSlides={list<{ src?: unknown; alt?: unknown }>(fields.bgSlides)
+        .map((p) => ({ src: safeSrc(p.src), alt: str(p.alt).trim() }))
+        .filter((p) => p.src)}
+      bgSlideSeconds={Number(fields.bgSlideSeconds) || 6}
       title={showTitle ? title : ''}
       headingLevel={Heading}
       mediaAlt={str(fields.mediaAlt).trim()}
