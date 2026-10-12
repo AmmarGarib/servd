@@ -1949,6 +1949,7 @@ const NOTHING_TO_POST = new Set([
   'pos_skipped', 'zero_value_order', 'order_not_found',                 // postOrderCompletion
   'sale_booked_without_gift_card', 'original_not_booked',              // postOrderRefund / postLoyaltyReversal
   'tx_not_found', 'not_reversible', 'not_earn_tx', 'zero_value',       // loyalty postings
+  'not_redeem_tx', 'reversed',                                         // loyalty: a redeem looked up as an earn; an earn reversed before it posted
 ])
 
 async function orderBooksOf(orderId: string) {

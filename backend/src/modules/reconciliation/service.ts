@@ -6,7 +6,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { postJournalEntry, MAX_LINE_CENTS, type JournalLineInput } from '../accounting/journal.js'
 
 // ─── CSV statement parser ────────────────────────────────────────────────────
 // Lenient: accepts any of date,description,amount in the header (in any case);
@@ -58,7 +58,8 @@ function splitCsvLine(line: string): string[] {
 // paisa — so a single bank transaction can carry at most PKR 21,474,836.47.
 // (The statement's opening / closing BALANCES are BigInt and have no such
 // cap — BOOKS-06.) Above it, a clear 422 rather than a database 500.
-export const MAX_LINE_CENTS = 2_147_483_647
+// One shared ceiling: the ledger's (accounting/journal.ts).
+export { MAX_LINE_CENTS }
 
 export function parseStatementCsv(csv: string): ParsedStatementLine[] {
   const lines = csv.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim().length > 0)

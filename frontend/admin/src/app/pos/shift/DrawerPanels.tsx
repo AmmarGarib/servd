@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
 import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../../components/pos/pinErrors'
+import { orderRef } from '../../../lib/orderRef'
 
 interface PayoutCategory { key: string; label: string; code: string }
 interface CodDue {
@@ -114,7 +115,7 @@ export function CodPayInPanel({ shiftId }: { shiftId: string }) {
         {rows.map((p) => (
           <li key={p.id} className="flex items-center justify-between gap-3 rounded-lg border border-kds-border px-3 py-2">
             <div className="min-w-0">
-              <p className="text-sm text-kds-text truncate">{p.order.concept.name} · #{p.order.id.slice(0, 8)}</p>
+              <p className="text-sm text-kds-text truncate">{p.order.concept.name} · #{orderRef(p.order.id)}</p>
               <p className="text-xs text-kds-subtext truncate">{p.order.customerName ?? 'Customer'}{p.order.completedAt && ` · delivered ${new Date(p.order.completedAt).toLocaleString()}`}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">

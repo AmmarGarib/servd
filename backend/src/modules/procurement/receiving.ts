@@ -40,6 +40,7 @@ import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
 import { MANAGERS } from '../auth/middleware.js'
 import { applyCarriedBillVarianceTx } from '../accounting/supplierPosting.js'
+import { assertAmountFits } from './service.js'
 
 /** Line variance above this (either way) raises an exception flag. */
 export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
@@ -241,6 +242,9 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
       if (l.unitCostCents == null || !Number.isInteger(l.unitCostCents) || l.unitCostCents < 0) {
         throw new AppError('UNIT_COST_REQUIRED', `Enter the unit cost paid for ${it.name}`, 400)
       }
+      // BOOKS-06: amounts above INT4 would fail at the insert with a raw 500.
+      assertAmountFits(l.unitCostCents, `${it.name}'s unit cost`)
+      assertAmountFits(Math.round(l.unitCostCents * l.quantityReceived), `${it.name} (quantity × unit cost)`)
       prepared.push({
         poLineId: null, inventoryItemId: it.id, description: it.name, unit: it.unit,
         expectedQty: null, orderedQty: null, alreadyReceived: 0,

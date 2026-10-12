@@ -40,6 +40,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
+import { fmtPktDate } from './dates.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -386,15 +387,44 @@ export async function applyCarriedBillVarianceTx(tx: Tx, input: {
  * applyCarriedBillVarianceTx (oldest bill first). The share of it still on
  * hand — stock now less what this item received after the line's last
  * receipt — re-averages the item; the rest goes to 5060, dated today.
- * Idempotent: a second run finds nothing unmatched. One company at a time,
- * each PO line in its own transaction; `dryRun` only reports.
+ *
+ * Idempotent: what is applied is written down as 'supplier.bill.variance_applied'
+ * rows, which count as matched — a second run finds nothing unmatched (and
+ * each line runs under its PO's row lock, so two runs never apply one line
+ * twice). One company at a time, each PO line in its own transaction;
+ * `dryRun` only reports. Run by the CEO from Reconciliation (POST
+ * /reconciliation/apply-missed-bill-variances).
+ *
+ * Period locks: the 5060 part is dated today. A company whose books are
+ * closed through today has every line listed as 'locked' and nothing applied
+ * (stock and ledger untouched); a lock that lands mid-run refuses that line
+ * the same way. Any other refusal is listed as 'error' for that line and the
+ * run carries on.
  */
-export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[]; dryRun: boolean }): Promise<{
-  rows: Array<{ tenantId: string; poLineId: string; quantity: number; onHandQty: number; movedCents: number | null }>
-  summary: { lines: number; quantity: number }
+export type MissedVarianceOutcome = 'would_apply' | 'applied' | 'locked' | 'error'
+export interface MissedVarianceRow {
+  tenantId:   string
+  poLineId:   string
+  quantity:   number
+  onHandQty:  number
+  movedCents: number | null
+  outcome:    MissedVarianceOutcome
+  detail:     string
+  billNumbers: string[]
+  itemName:   string | null
+}
+
+export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[]; dryRun: boolean; now?: Date }): Promise<{
+  rows: MissedVarianceRow[]
+  summary: { lines: number; quantity: number } & Partial<Record<MissedVarianceOutcome, number>>
 }> {
-  const rows: Array<{ tenantId: string; poLineId: string; quantity: number; onHandQty: number; movedCents: number | null }> = []
+  const rows: MissedVarianceRow[] = []
+  const now = opts.now ?? new Date()
   for (const tenantId of opts.tenantIds) {
+    const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+    const lockedNote = lock && now <= lock.lockedThrough
+      ? `books are closed through ${fmtPktDate(lock.lockedThrough)} — the catch-up posts dated today; reopen the period to apply it`
+      : null
     const live = await prisma.supplierBill.findMany({
       where:  { status: { not: 'void' }, supplier: { tenantId } },
       select: { id: true },
@@ -403,16 +433,20 @@ export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[
     const poLineIds = new Set<string>()
     for (const lines of recorded.values()) for (const l of lines) if (l.carriedQty > 1e-9) poLineIds.add(l.poLineId)
     for (const poLineId of poLineIds) {
-      await prisma.$transaction(async (tx) => {
+      // What the line would apply, measured under its PO's lock; applied in
+      // the same transaction on a real run unless the company is locked.
+      const measure = async (tx: Tx) => {
         await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = (SELECT "purchaseOrderId" FROM purchase_order_lines WHERE id = ${poLineId}) FOR UPDATE`
         const pl = await tx.purchaseOrderLine.findUnique({
           where:  { id: poLineId },
-          select: { quantityReceived: true, inventoryItemId: true, purchaseOrderId: true, purchaseOrder: { select: { supplierId: true } } },
+          select: { quantityReceived: true, inventoryItemId: true, purchaseOrderId: true, purchaseOrder: { select: { supplierId: true } }, inventoryItem: { select: { name: true } } },
         })
-        if (!pl) return
-        const billIds = Array.from(new Set((await tx.supplierBillLine.findMany({
-          where: { poLineId, bill: { status: { not: 'void' }, supplier: { tenantId } } }, select: { billId: true },
-        })).map((b) => b.billId)))
+        if (!pl) return null
+        const billRows = await tx.supplierBillLine.findMany({
+          where: { poLineId, bill: { status: { not: 'void' }, supplier: { tenantId } } }, select: { billId: true, bill: { select: { billNumber: true } } },
+        })
+        const billIds = Array.from(new Set(billRows.map((b) => b.billId)))
+        const billNumbers = Array.from(new Set(billRows.map((b) => b.bill.billNumber)))
         const { recorded: rec, applied } = await varianceRecordsOf(tx, billIds)
         let carriedLeft = 0
         for (const id of billIds) {
@@ -421,7 +455,7 @@ export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[
         }
         const unmatched = pl.quantityReceived - await matchedByOtherBills(tx, poLineId, '')
         const quantity  = Math.min(Math.max(0, unmatched), Math.max(0, carriedLeft))
-        if (!(quantity > 1e-9)) return
+        if (!(quantity > 1e-9)) return null
         // Stock used oldest first: of the goods this line brought in, what is
         // still here is stock now less what the item received since.
         const last = await tx.goodsReceipt.findFirst({
@@ -433,14 +467,40 @@ export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[
         const item = await tx.inventoryItem.findUnique({ where: { id: pl.inventoryItemId }, select: { currentStock: true } })
         const since = last ? await receivedSince(tx, pl.inventoryItemId, last.receivedAt, last.id) : 0
         const onHandQty = Math.min(quantity, Math.max(0, (item?.currentStock ?? 0) - since))
-        const movedCents = opts.dryRun ? null : await applyCarriedBillVarianceTx(tx, {
-          poLineId, quantity, supplierId: pl.purchaseOrder.supplierId, receiptId: null, onHandQty,
+        return { pl, quantity, onHandQty, billNumbers }
+      }
+      const base = (m: NonNullable<Awaited<ReturnType<typeof measure>>>) => ({
+        tenantId, poLineId, quantity: m.quantity, onHandQty: m.onHandQty,
+        billNumbers: m.billNumbers, itemName: m.pl.inventoryItem?.name ?? null,
+      })
+      try {
+        await prisma.$transaction(async (tx) => {
+          const m = await measure(tx)
+          if (!m) return
+          if (lockedNote) { rows.push({ ...base(m), movedCents: null, outcome: 'locked', detail: lockedNote }); return }
+          if (opts.dryRun) { rows.push({ ...base(m), movedCents: null, outcome: 'would_apply', detail: `${m.quantity} received, ${m.onHandQty} still on hand` }); return }
+          const movedCents = await applyCarriedBillVarianceTx(tx, {
+            poLineId, quantity: m.quantity, supplierId: m.pl.purchaseOrder.supplierId, receiptId: null, onHandQty: m.onHandQty,
+          })
+          rows.push({ ...base(m), movedCents, outcome: 'applied', detail: `${m.quantity} received, ${m.onHandQty} still on hand` })
+        }, { timeout: 30_000 })
+      } catch (err) {
+        // The line's transaction rolled back: nothing of it was applied. A
+        // period closed mid-run is 'locked'; anything else an 'error'.
+        const e = err as { code?: string; message?: string }
+        rows.push({
+          tenantId, poLineId, quantity: 0, onHandQty: 0, movedCents: null, billNumbers: [], itemName: null,
+          outcome: e.code === 'PERIOD_LOCKED' ? 'locked' : 'error',
+          detail: e.message ?? String(err),
         })
-        rows.push({ tenantId, poLineId, quantity, onHandQty, movedCents })
-      }, { timeout: 30_000 })
+      }
     }
   }
-  return { rows, summary: { lines: rows.length, quantity: rows.reduce((s, r) => s + r.quantity, 0) } }
+  const summary: { lines: number; quantity: number } & Partial<Record<MissedVarianceOutcome, number>> = {
+    lines: rows.length, quantity: rows.reduce((s, r) => s + r.quantity, 0),
+  }
+  for (const r of rows) summary[r.outcome] = (summary[r.outcome] ?? 0) + 1
+  return { rows, summary }
 }
 
 /** Net debit (debit − credit) on `code` within one posted entry. */

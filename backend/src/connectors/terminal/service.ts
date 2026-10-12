@@ -926,6 +926,21 @@ export async function manualReverseCharge(req: FastifyRequest, id: string, input
 
 export interface StartRefundInput { paymentId: string; amountCents: number; terminalId: string; idempotencyKey: string; reason: string; photoUrl?: string }
 
+/**
+ * Orders whose card money may go back on the card machine: a completed sale
+ * (refundOrder → a sale refund + its fiscal refund document), and a ticket
+ * cancelled / rejected after the till took the card (LEDGER-R5: only up to
+ * what it still owes back, booked as the hand-back — never a sale refund, and
+ * nothing goes to the fiscal POS, since a ticket cancelled before the full &
+ * final bill never filed a sale). Anything else is refused NOT_REFUNDABLE.
+ */
+const CARD_REFUNDABLE_ORDER: ReadonlySet<string> = new Set(['completed', 'cancelled', 'rejected'])
+function assertCardRefundableOrder(status: string): void {
+  if (!CARD_REFUNDABLE_ORDER.has(status)) throw new AppError('NOT_REFUNDABLE', `A ${status} order cannot be refunded`, 409)
+}
+/** The refusals that mean "more than is left" — the card-refund API's one answer for them (spec §8.2). */
+const EXCEEDS_CODES: ReadonlySet<string> = new Set(['REFUND_EXCEEDS_PAID', 'REFUND_EXCEEDS_TENDER', 'REFUND_EXCEEDS_DUE', 'NOTHING_TO_REFUND'])
+
 export async function startTerminalRefund(req: FastifyRequest, input: StartRefundInput): Promise<{ view: TerminalChargeView; replay: boolean }> {
   const a = actorOf(req)
   const payment = await prisma.payment.findFirst({
@@ -943,7 +958,7 @@ export async function startTerminalRefund(req: FastifyRequest, input: StartRefun
     if (prior.targetPaymentId !== payment.id) throw new AppError('IDEMPOTENCY_KEY_REUSED', 'That idempotency key belongs to a different request — generate a new one', 409)
     return { view: await chargeView(prior, { staff: true }), replay: true }
   }
-  if (payment.order.status !== 'completed') throw new AppError('NOT_REFUNDABLE', `A ${payment.order.status} order cannot be refunded`, 409)
+  assertCardRefundableOrder(payment.order.status)
 
   const conn = await getConnector(tenantId, 'terminal')
   if (!usable(conn)) throw new AppError('TERMINAL_NOT_CONFIGURED', 'No card machine is set up for this company', 503)
@@ -963,54 +978,75 @@ export async function startTerminalRefund(req: FastifyRequest, input: StartRefun
   const refundCheck = { orderId: payment.orderId, amountCents: input.amountCents, method: 'card' as const, reason: input.reason, photoUrl: input.photoUrl, actorRole: a.role, tenantId }
 
   const now = connectorNow()
-  const charge = await prisma.$transaction(async (tx) => {
-    await lockOrderTx(tx, payment.orderId)
-    const current = await tx.order.findUniqueOrThrow({ where: { id: payment.orderId }, select: { status: true } })
-    if (current.status !== 'completed') throw new AppError('NOT_REFUNDABLE', `A ${current.status} order cannot be refunded`, 409)
-    const others = await tx.terminalCharge.findMany({
-      where: { tenantId, kind: 'refund', targetPaymentId: payment.id, status: { in: ['pending', 'sent', 'approved', 'cancel_requested', 'unknown', 'recorded', 'needs_attention'] } },
-      select: { amountCents: true },
-    })
-    const refundedOrInFlight = others.reduce((s, o) => s + o.amountCents, 0)
-    const ofPayment = payment.amountCents - refundedOrInFlight
-    if (input.amountCents > ofPayment) {
-      throw new AppError('AMOUNT_EXCEEDS_REFUNDABLE', `Only ${Math.max(0, ofPayment)} of this card payment can still be refunded`, 409, { refundableCents: Math.max(0, ofPayment) })
-    }
-    // The order-level check refundOrder makes, counting card refunds given on
-    // the machine but not booked yet (no refund Payment exists for them) —
-    // THE count refundOrder itself uses (pos/service inFlightTerminalRefundCents),
-    // here with the ones servd refused to book: that money is already back.
-    const inFlight = await inFlightTerminalRefundCents(tx, payment.orderId, { includeNeedsAttention: true })
-    try {
-      await assertRefundAllowed({ ...refundCheck, extraInFlightCents: inFlight })
-    } catch (err) {
-      // The card-refund API's own answer for "more than is left" (spec §8.2).
-      if (err instanceof AppError && (err.code === 'REFUND_EXCEEDS_PAID' || err.code === 'REFUND_EXCEEDS_TENDER')) {
-        throw new AppError('AMOUNT_EXCEEDS_REFUNDABLE', err.message, 409)
+  let replayed = false
+  let charge: TerminalCharge
+  try {
+    charge = await prisma.$transaction(async (tx) => {
+      await lockOrderTx(tx, payment.orderId)
+      // A double tap with the same key committed while this one waited for the
+      // lock: the same refund, never a second one pushed to the card.
+      const same = await tx.terminalCharge.findUnique({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } } })
+      if (same) {
+        if (same.targetPaymentId !== payment.id) throw new AppError('IDEMPOTENCY_KEY_REUSED', 'That idempotency key belongs to a different request — generate a new one', 409)
+        replayed = true
+        return same
       }
-      throw err
+      const current = await tx.order.findUniqueOrThrow({ where: { id: payment.orderId }, select: { status: true } })
+      assertCardRefundableOrder(current.status)
+      const others = await tx.terminalCharge.findMany({
+        where: { tenantId, kind: 'refund', targetPaymentId: payment.id, status: { in: ['pending', 'sent', 'approved', 'cancel_requested', 'unknown', 'recorded', 'needs_attention'] } },
+        select: { amountCents: true },
+      })
+      const refundedOrInFlight = others.reduce((s, o) => s + o.amountCents, 0)
+      const ofPayment = payment.amountCents - refundedOrInFlight
+      if (input.amountCents > ofPayment) {
+        throw new AppError('AMOUNT_EXCEEDS_REFUNDABLE', `Only ${Math.max(0, ofPayment)} of this card payment can still be refunded`, 409, { refundableCents: Math.max(0, ofPayment) })
+      }
+      // The order-level check refundOrder makes, counting card refunds given on
+      // the machine but not booked yet (no refund Payment exists for them) —
+      // THE count refundOrder itself uses (pos/service inFlightTerminalRefundCents),
+      // here with the ones servd refused to book: that money is already back.
+      const inFlight = await inFlightTerminalRefundCents(tx, payment.orderId, { includeNeedsAttention: true })
+      try {
+        await assertRefundAllowed({ ...refundCheck, extraInFlightCents: inFlight })
+      } catch (err) {
+        // The card-refund API's own answer for "more than is left" (spec §8.2) —
+        // for a cancelled ticket, more than it still owes back by card.
+        if (err instanceof AppError && EXCEEDS_CODES.has(err.code)) {
+          throw new AppError('AMOUNT_EXCEEDS_REFUNDABLE', err.message, 409)
+        }
+        throw err
+      }
+      return tx.terminalCharge.create({
+        data: {
+          tenantId,
+          kind: 'refund',
+          connectorId: conn.row.id,
+          terminalId: terminal.id,
+          orderId: payment.orderId,
+          shiftId: null,
+          targetPaymentId: payment.id,
+          originalChargeId: original?.id ?? null,
+          amountCents: input.amountCents,
+          tipCents: 0,
+          quoteDueCents: input.amountCents,
+          idempotencyKey: key,
+          status: 'pending',
+          expiresAt: new Date(now.getTime() + conn.terminalSettings.chargeTimeoutSec * 1000),
+          createdById: a.id,
+          vendorMeta: { reason: input.reason.slice(0, 300), ...(input.photoUrl && { photoUrl: input.photoUrl }) },
+        },
+      })
+    }, { maxWait: 10_000, timeout: 15_000 })
+  } catch (err) {
+    // Two taps with the same key raced past the lock check: the first one's refund.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const same = await prisma.terminalCharge.findUnique({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } } })
+      if (same && same.targetPaymentId === payment.id) return { view: await chargeView(same, { staff: true }), replay: true }
     }
-    return tx.terminalCharge.create({
-      data: {
-        tenantId,
-        kind: 'refund',
-        connectorId: conn.row.id,
-        terminalId: terminal.id,
-        orderId: payment.orderId,
-        shiftId: null,
-        targetPaymentId: payment.id,
-        originalChargeId: original?.id ?? null,
-        amountCents: input.amountCents,
-        tipCents: 0,
-        quoteDueCents: input.amountCents,
-        idempotencyKey: key,
-        status: 'pending',
-        expiresAt: new Date(now.getTime() + conn.terminalSettings.chargeTimeoutSec * 1000),
-        createdById: a.id,
-        vendorMeta: { reason: input.reason.slice(0, 300), ...(input.photoUrl && { photoUrl: input.photoUrl }) },
-      },
-    })
-  }, { maxWait: 10_000, timeout: 15_000 })
+    throw err
+  }
+  if (replayed) return { view: await chargeView(charge, { staff: true }), replay: true }
 
   await pushToMachine(charge, conn)
   await audit({

@@ -38,6 +38,7 @@ import {
   createPayment, allocatePayment,
   agingReport, supplierAging, reorderSuggestions,
   getApprovalThresholdCents, setApprovalThresholdCents,
+  MAX_AMOUNT_CENTS, amountTooLargeError,
 } from './service.js'
 import { receiveGoods } from './receiving.js'
 import { syncSupplierOpeningBalance } from './openingBalance.js'
@@ -58,10 +59,22 @@ async function syncOpening(req: FastifyRequest, supplierId: string) {
 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
 
+// A money input in paisa that fits a money column (INT4, at most
+// PKR 21,474,836.47). Above that it is 422 AMOUNT_TOO_LARGE with a plain
+// message, not a raw 500 at insert (BOOKS-06 follow-up). Computed totals
+// (quantity × unit cost, bill and PO totals) are checked in service.ts.
+const cents = (what: string, opts: { positive?: boolean } = {}) => {
+  const base = opts.positive ? z.number().int().positive() : z.number().int().nonnegative()
+  return base.transform((v) => {
+    if (v > MAX_AMOUNT_CENTS) throw amountTooLargeError(what, v)
+    return v
+  })
+}
+
 const poLineSchema = z.object({
   inventoryItemId: z.string().uuid(),
-  quantityOrdered: z.number().positive(),
-  unitCostCents:   z.number().int().nonnegative(),
+  quantityOrdered: z.number().positive().finite(),
+  unitCostCents:   cents('A unit cost'),
   notes:           z.string().optional().nullable(),
 })
 
@@ -77,8 +90,8 @@ const billLineSchema = z.object({
   inventoryItemId: z.string().uuid().optional().nullable(),
   poLineId:        z.string().uuid().optional().nullable(),
   description:     z.string().min(1),
-  quantity:        z.number().positive(),
-  unitCostCents:   z.number().int().nonnegative(),
+  quantity:        z.number().positive().finite(),
+  unitCostCents:   cents('A unit cost'),
 })
 
 const billCreateSchema = z.object({
@@ -87,7 +100,7 @@ const billCreateSchema = z.object({
   billNumber:    z.string().min(1),
   billDate:      z.string(),
   dueDate:       z.string().optional().nullable(),
-  taxCents:      z.number().int().nonnegative().optional(),
+  taxCents:      cents('The bill\'s tax').optional(),
   notes:         z.string().optional().nullable(),
   attachmentUrl: z.string().optional().nullable(),
   lines:         z.array(billLineSchema).min(1),
@@ -95,7 +108,7 @@ const billCreateSchema = z.object({
 
 const paymentApplicationSchema = z.object({
   billId:             z.string().uuid(),
-  amountAppliedCents: z.number().int().positive(),
+  amountAppliedCents: cents('An amount applied to a bill', { positive: true }),
 })
 
 const paymentCreateSchema = z.object({
@@ -103,7 +116,7 @@ const paymentCreateSchema = z.object({
   paymentDate:  z.string(),
   method:       z.enum(['cash', 'bank_transfer', 'cheque', 'wallet']),
   reference:    z.string().optional().nullable(),
-  amountCents:  z.number().int().positive(),
+  amountCents:  cents('This payment', { positive: true }),
   notes:        z.string().optional().nullable(),
   applications: z.array(paymentApplicationSchema).optional(),
 })
@@ -163,7 +176,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       notes:               z.string().optional(),
       paymentTermsDays:    z.number().int().min(0).max(365).optional(),
       leadTimeDays:        z.number().int().min(0).max(365).optional(),
-      openingBalanceCents: z.number().int().nonnegative().optional(),
+      openingBalanceCents: cents('The opening balance').optional(),
       // Explicit company picker from the Add Supplier modal. In portfolio
       // view the frontend renders a required dropdown so the CEO doesn't
       // have to bounce out of portfolio to add suppliers per company.
@@ -220,7 +233,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         tenantId:            z.string().min(1).nullable().optional(),
         paymentTermsDays:    z.number().int().min(0).max(365).optional(),
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
-        openingBalanceCents: z.number().int().nonnegative().optional(),
+        openingBalanceCents: cents('The opening balance').optional(),
       }).parse(req.body)
       assertManagerFields(req, body, existing)
       // A supplier moves between the operator's companies, never out of them:
@@ -707,7 +720,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.put('/settings/approval-threshold', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
     const { thresholdCents, tenantId: picked } = z.object({
-      thresholdCents: z.number().int().nonnegative(),
+      thresholdCents: cents('The approval limit'),
       tenantId:       z.string().min(1).optional(),
     }).parse(req.body)
     const tenantId = activeTenantOr422(req, picked ?? null)

@@ -639,6 +639,97 @@ export function dropRefundKey(paymentId: string, amountCents: number): void {
   storageSet('session', `refund:${paymentId}:${amountCents}`, null)
 }
 
+// ─── Refund to card on a cancelled ticket (LEDGER-R5 hand-back) ─────────────
+//
+// A ticket cancelled / rejected after the card machine took the card owes
+// that money back. Managers can send it back to the card on the machine
+// (POST /pos/terminal/refunds) — the server checks it against the ticket's
+// refund due BEFORE the machine moves money and books it as the hand-back
+// (never a sale refund, never a fiscal document). This is the server's rule
+// (backend pos/service.ts refundDueOf + inFlightTerminalRefundCents, and
+// connectors/terminal startTerminalRefund), used only to OFFER the button and
+// its most; the server re-checks everything under the order lock.
+
+/** A payment row as GET /orders/:id returns it. */
+export interface HandBackPayment {
+  id: string
+  method: string
+  amountCents: number
+  status: string
+  gateway?: string | null
+  gatewayRef?: string | null
+  shiftId?: string | null
+}
+
+type RefundChargeLike = Pick<TerminalChargeView, 'kind' | 'status' | 'amountCents' | 'payment'> & { targetPaymentId?: string | null }
+
+/** Card-machine refunds not booked yet that already hold card money (the server's start-time count). */
+const CARD_REFUND_IN_FLIGHT: ReadonlySet<string> = new Set(['pending', 'sent', 'approved', 'cancel_requested', 'unknown', 'needs_attention'])
+/** Card-machine refunds that count against the payment they go back on. */
+const CARD_REFUND_ON_PAYMENT: ReadonlySet<string> = new Set([...CARD_REFUND_IN_FLIGHT, 'recorded'])
+
+export interface CardRefundOffer {
+  /** The card-machine payment the refund goes back on. */
+  paymentId: string
+  /** The most that may go back to the card now, in paisa. */
+  maxCents: number
+}
+
+/**
+ * "Refund to card" on a cancelled / rejected ticket: offered when a card
+ * machine is connected and a card-machine payment still has money owed back.
+ * The most is the least of: what the ticket still owes back, what it owes
+ * back by card, and what is left on that card payment — each less the card
+ * refunds in flight on the machine. Null → no button (record the hand-back
+ * instead).
+ */
+export function cancelledCardRefundOffer(input: {
+  status: string
+  payments: readonly HandBackPayment[]
+  charges: readonly RefundChargeLike[]
+  terminalEnabled: boolean
+}): CardRefundOffer | null {
+  if (!input.terminalEnabled) return null
+  if (input.status !== 'cancelled' && input.status !== 'rejected') return null
+  const receipts = input.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'comp'
+    && (p.status === 'paid' || (p.status === 'pending' && (p.method === 'card' || p.method === 'keenu_qr') && !!p.gatewayRef)))
+  const refunds = input.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0)
+  const machineRefunds = input.charges.filter((c) => c.kind === 'refund')
+  const inFlight = machineRefunds
+    .filter((c) => !c.payment && CARD_REFUND_IN_FLIGHT.has(c.status))
+    .reduce((t, c) => t + c.amountCents, 0)
+  const sum = (rows: readonly HandBackPayment[]) => rows.reduce((t, p) => t + Math.abs(p.amountCents), 0)
+  const due = sum(receipts) - sum(refunds) - inFlight
+  const cardLeft = sum(receipts.filter((p) => p.method === 'card')) - sum(refunds.filter((p) => p.method === 'card')) - inFlight
+
+  let best: CardRefundOffer | null = null
+  for (const p of receipts) {
+    if (p.method !== 'card' || p.gateway !== 'card_terminal' || p.status !== 'paid') continue
+    const onPayment = machineRefunds
+      .filter((c) => c.targetPaymentId === p.id && CARD_REFUND_ON_PAYMENT.has(c.status))
+      .reduce((t, c) => t + c.amountCents, 0)
+    const left = p.amountCents - onPayment
+    if (!best || left > best.maxCents) best = { paymentId: p.id, maxCents: left }
+  }
+  if (!best) return null
+  const maxCents = Math.min(due, cardLeft, best.maxCents)
+  return maxCents > 0 ? { paymentId: best.paymentId, maxCents } : null
+}
+
+/**
+ * Everything the "Refund to card" button needs for one cancelled ticket: the
+ * order (status, payments), its card-machine charges, and whether a card
+ * machine is connected at `shiftId`'s outlet.
+ */
+export async function fetchCancelledCardRefundOffer(orderId: string, shiftId: string | null): Promise<CardRefundOffer | null> {
+  const [order, charges, config] = await Promise.all([
+    api.get<{ status: string; payments: HandBackPayment[] }>(`/orders/${encodeURIComponent(orderId)}`),
+    terminalChargesFor(orderId),
+    shiftId ? fetchTerminalConfig(shiftId).catch(() => null) : Promise.resolve(null),
+  ])
+  return cancelledCardRefundOffer({ status: order.status, payments: order.payments ?? [], charges, terminalEnabled: !!config?.enabled })
+}
+
 const TERMINAL_PICK_KEY = 'servd.till.terminal'
 /** The card machine this browser last used (per browser, spec §7.1). */
 export function rememberedTerminal(): string | null {
@@ -768,12 +859,27 @@ export interface ZReportExtras {
   giftCardCents?: number
   /** Money taken on tickets later cancelled, not yet handed back. */
   refundDueCents?: number
-  cancelledPaid?: { count: number; cashCents: number; cardCents: number }
+  /**
+   * `orderIds`: the cancelled tickets themselves (the shift screen offers
+   * "Refund to card" on each); `cardOwedCents`: the card money on them still
+   * owed back. Both absent on an older API.
+   */
+  cancelledPaid?: { count: number; cashCents: number; cardCents: number; orderIds?: string[]; cardOwedCents?: number }
   openTickets?: DrawerOpenTickets
   unassignedOpenTickets?: { count: number; totalCents: number }
   /** Takings less refunds (getZReport's netCents / netRevenue). */
   netCents?: number
   netRevenue?: number
+}
+
+/**
+ * Whether the shift's Z report shows the "card money on cancelled tickets"
+ * box: only while some card money is still owed back (`cardOwedCents`), not
+ * merely because card was taken (an older API without it: card taken).
+ */
+export function cancelledCardStillOwed(cp: ZReportExtras['cancelledPaid'] | null | undefined): boolean {
+  if (!cp) return false
+  return (typeof cp.cardOwedCents === 'number' ? cp.cardOwedCents : cp.cardCents) > 0
 }
 
 /** The figures the Z-report screen reads (getZReport's answer). */

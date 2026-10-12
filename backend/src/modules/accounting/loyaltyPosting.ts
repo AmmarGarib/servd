@@ -68,6 +68,7 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
   })
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'earn' || tx.pointsDelta <= 0) return { posted: false, entryId: null, reason: 'not_earn_tx' }
+  if (tx.reversedAt) return { posted: false, entryId: null, reason: 'reversed' }
 
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   // A point is worth what the company's loyalty setting says (owner decision 12).
@@ -76,7 +77,7 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
 
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
 
-  const result = await postJournalEntry({
+  return postUnlessReversed(loyaltyTxId, (db) => postJournalEntry({
     tenantId,
     sourceType: 'loyalty.earn',
     sourceId: tx.id,
@@ -87,8 +88,35 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
       { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'debit',  amountCents: valueCents, memo: `${tx.pointsDelta} pts issued` },
       { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'credit', amountCents: valueCents, memo: 'Liability accrued' },
     ],
+  }, { tx: db }))
+}
+
+/**
+ * Book an earn or a redeem only while it is not reversed (earn vs refund
+ * race). A refund / cancel claims the transaction (reversedAt) and then
+ * reverses its entry only when that entry is already on the books — otherwise
+ * it answers 'original_not_booked' and books nothing. An earn read before the
+ * claim and posted after it used to land anyway: 2060 credited for points the
+ * customer no longer had, with no reversal ever to follow. So the posting
+ * re-reads the transaction under a row lock (FOR UPDATE — the claim's UPDATE
+ * takes the same lock) inside the posting's own transaction:
+ *   - the claim committed first → reversedAt is set → 'reversed', nothing posted;
+ *   - the posting locked first → the claim waits for it to commit, then finds
+ *     the entry on the books and reverses it.
+ * Either way the ledger nets to what the points did.
+ */
+async function postUnlessReversed(
+  loyaltyTxId: string,
+  post: (db: Prisma.TransactionClient) => Promise<{ posted: boolean; entryId: string | null }>,
+): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+  return prisma.$transaction(async (db) => {
+    const locked = await db.$queryRaw<Array<{ reversedAt: Date | null }>>`
+      SELECT "reversedAt" FROM loyalty_transactions WHERE id = ${loyaltyTxId} FOR UPDATE`
+    if (locked.length === 0) return { posted: false, entryId: null, reason: 'tx_not_found' }
+    if (locked[0]!.reversedAt) return { posted: false, entryId: null, reason: 'reversed' }
+    const result = await post(db)
+    return { posted: result.posted, entryId: result.entryId }
   })
-  return { posted: result.posted, entryId: result.entryId }
 }
 
 export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
@@ -98,6 +126,9 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
   })
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'redeem' || tx.pointsDelta >= 0) return { posted: false, entryId: null, reason: 'not_redeem_tx' }
+  // Points given back (cancel / refund) before the redemption was booked: the
+  // restore found nothing to reverse, so booking it now would be one-sided.
+  if (tx.reversedAt) return { posted: false, entryId: null, reason: 'reversed' }
 
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
@@ -105,7 +136,7 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
   const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
-  const result = await postJournalEntry({
+  return postUnlessReversed(loyaltyTxId, (db) => postJournalEntry({
     tenantId,
     sourceType: 'loyalty.redeem',
     sourceId: tx.id,
@@ -116,8 +147,7 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
       { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts burned` },
       { accountCode: ACCT.LOYALTY_REDEMPTIONS,  type: 'credit', amountCents: valueCents, memo: 'Discount applied' },
     ],
-  })
-  return { posted: result.posted, entryId: result.entryId }
+  }, { tx: db }))
 }
 
 export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {

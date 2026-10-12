@@ -24,6 +24,7 @@ import {
 } from './RefundOptions'
 import { approvalErrorMessage, cancelOrderWithApproval, keepFollowingTerminalRefund, terminalRefundFinal, terminalRefundText } from './refundEngine'
 import { useIsManager } from '../../components/pos/managerRole'
+import { orderRef } from '../../lib/orderRef'
 
 interface Order {
   id: string
@@ -181,7 +182,7 @@ export default function RefundsPage() {
                   >
                     <td className="px-4 py-2">
                       <p className="text-s-text">{o.customerName ?? 'Walk-in'}</p>
-                      <p className="text-[11px] text-s-dim font-mono">#{o.id.slice(0, 8)} · {new Date(o.placedAt).toLocaleString()}</p>
+                      <p className="text-[11px] text-s-dim font-mono">#{orderRef(o.id)} · {new Date(o.placedAt).toLocaleString()}</p>
                     </td>
                     <td className="px-4 py-2 text-xs text-s-text">{o.concept.name}</td>
                     <td className="px-4 py-2 text-xs">
@@ -211,7 +212,7 @@ export default function RefundsPage() {
             ) : (
               <div className="p-4 space-y-3">
                 <div className="bg-s-bg-soft border border-s-border rounded p-3 text-xs">
-                  <p className="font-mono text-s-muted mb-1">#{selectedOrder.id.slice(0, 8)}</p>
+                  <p className="font-mono text-s-muted mb-1">#{orderRef(selectedOrder.id)}</p>
                   <p className="font-semibold text-s-text">{selectedOrder.concept.name} · {fmtPkr(selectedOrder.totalCents)}</p>
                   <p className="text-s-muted mt-1">
                     {selectedOrder.items.slice(0, 3).map((i) => `${i.quantity}× ${i.name}`).join(', ')}

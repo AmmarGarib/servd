@@ -32,6 +32,7 @@ import { assertNoActiveTerminalChargeTx } from '../../connectors/terminal/guard.
 import { getConnector, terminalDriverOf } from '../../connectors/registry.js'
 import { enqueueFiscalRefundTx, kickFiscal } from '../../connectors/fiscal/outbox.js'
 import { fiscalViewForOrder, legacySrbAlias, type FiscalView } from '../../connectors/fiscal/view.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -1328,6 +1329,18 @@ export async function getZReport(shiftId: string) {
   }
   const cancelledPaidCents = sales.cancelledPaid.cashCents + sales.cancelledPaid.cardCents
   const refundDueCents = Math.max(0, cancelledPaidCents - [...refundedOnCancelled.values()].reduce((t, c) => t + c, 0))
+  // Of that, what this drawer's CARD receipts on those tickets still owe back
+  // (less every card hand-back on the ticket) — the shift screen offers
+  // "Refund to card" only while some is left (T-RV-2).
+  let cancelledCardOwedCents = 0
+  const seenCancelled = new Set<string>()
+  for (const p of payments) {
+    if (!p.order || !cancelledIds.has(p.order.id) || seenCancelled.has(p.order.id)) continue
+    seenCancelled.add(p.order.id)
+    const took = p.order.payments.filter((r) => r.shiftId === shiftId && r.method === 'card' && isShiftReceipt(r)).reduce((t, r) => t + r.amountCents, 0)
+    const back = p.order.payments.filter((r) => r.status === 'refunded' && r.method === 'card').reduce((t, r) => t + Math.abs(r.amountCents), 0)
+    cancelledCardOwedCents += Math.max(0, took - back)
+  }
 
   // Expected drawer — the one formula (lib/drawer.ts): opening + cash sales
   // − cash refunds − drops − pay-outs + adds + pay-ins.
@@ -1393,6 +1406,10 @@ export async function getZReport(shiftId: string) {
       count:     sales.cancelledPaid.orderIds.length,
       cashCents: sales.cancelledPaid.cashCents,
       cardCents: sales.cancelledPaid.cardCents,
+      /** The cancelled tickets themselves (the shift screen's per-ticket "Refund to card"). */
+      orderIds: sales.cancelledPaid.orderIds,
+      /** Card money on them still owed back (machine refunds in flight not yet booked are not deducted). */
+      cardOwedCents: cancelledCardOwedCents,
     },
     refundDueCents,
     serviceChargeCents:   sales.totals.serviceChargeCents,
@@ -2118,7 +2135,7 @@ export async function compOrder(input: CompInput) {
         approvedById: approverId ?? input.actorId,
         shiftId: input.shiftId,
         conceptId: order.conceptId,
-        description: `Till order #${order.id.slice(0, 8)} — ${summary}`.slice(0, 200),
+        description: `Till order #${orderRefOf(order.id)} — ${summary}`.slice(0, 200),
         estimatedCostCents: costCents,
         reason: 'shift_meal',
       },
@@ -2268,6 +2285,14 @@ function refundableOf(payments: Array<Pick<Payment, 'method' | 'status' | 'amoun
  *     book (needs_attention) is money already back on the card. A new machine
  *     refund counts it; the manual refund does not — booking it by hand is
  *     exactly what its alert asks for.
+ *
+ * A refund charge whose refund Payment is already committed (its
+ * gatewayMeta.terminalChargeId) is booked, not in flight — even while the
+ * charge row itself still reads approved / paymentId null: recordApprovedCharge
+ * stamps the charge only AFTER the booking transaction commits, and a second
+ * booking waiting on the order lock wakes up inside that gap. Counting it here
+ * as well as in the booked refunds counted it twice and refused a legitimate
+ * refund the machine had already given (T-RV-1).
  */
 export async function inFlightTerminalRefundCents(
   db: Tx | typeof prisma,
@@ -2275,8 +2300,18 @@ export async function inFlightTerminalRefundCents(
   opts: { exceptChargeId?: string | null; includeNeedsAttention?: boolean } = {},
 ): Promise<number> {
   const statuses: TerminalChargeStatus[] = ['pending', 'sent', 'approved', 'cancel_requested', 'unknown', ...(opts.includeNeedsAttention ? ['needs_attention' as const] : [])]
+  const refundRows = await db.payment.findMany({
+    where: { orderId, status: 'refunded' },
+    select: { gatewayMeta: true },
+  })
+  const excluded = new Set<string>()
+  for (const p of refundRows) {
+    const id = (p.gatewayMeta as { terminalChargeId?: unknown } | null)?.terminalChargeId
+    if (typeof id === 'string' && id) excluded.add(id)
+  }
+  if (opts.exceptChargeId) excluded.add(opts.exceptChargeId)
   const agg = await db.terminalCharge.aggregate({
-    where: { orderId, kind: 'refund', paymentId: null, status: { in: statuses }, ...(opts.exceptChargeId && { id: { not: opts.exceptChargeId } }) },
+    where: { orderId, kind: 'refund', paymentId: null, status: { in: statuses }, ...(excluded.size > 0 && { id: { notIn: [...excluded] } }) },
     _sum: { amountCents: true },
   })
   return Math.max(0, agg._sum.amountCents ?? 0)
@@ -2392,7 +2427,8 @@ export function taxableRefundCents(order: { totalCents: number; tipCents: number
 function assertRefundableStatus(status: string): void {
   if (status === 'refunded') throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
   // (A cancelled / rejected ticket never reaches here: refundOrder hands back
-  // what it took through refundDueOnCancelledTicket — LEDGER-R5.)
+  // what it took through refundDueOnCancelledTicket, and assertRefundAllowed
+  // checks it against what it still owes back — LEDGER-R5.)
   if (status !== 'completed') {
     throw new AppError(
       'NOT_REFUNDABLE',
@@ -2428,11 +2464,18 @@ export async function assertRefundAllowed(input: {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Refund amount must be positive', 400)
   const order = await prisma.order.findUnique({ where: { id: input.orderId }, include: { payments: true } })
   if (!order) throw new NotFoundError('Order', input.orderId)
-  assertRefundableStatus(order.status)
   // Card refunds in flight on the machine (inFlightTerminalRefundCents) — the
   // caller counts them under its order lock and passes them in.
-  const state = withInFlight(refundableOf(order.payments, order.source), Math.max(0, input.extraInFlightCents ?? 0))
-  assertRefundable(state, input.amountCents, input.method)
+  const inFlight = Math.max(0, input.extraInFlightCents ?? 0)
+  if (order.status === 'cancelled' || order.status === 'rejected') {
+    // LEDGER-R5: a cancelled / rejected ticket was never a sale — what may go
+    // back is what it still owes back (refundDueOnCancelledTicket's own check),
+    // by the tender that took it, less what is already on its way back.
+    assertRefundDue(withInFlightDue(refundDueOf(order), inFlight), input.amountCents, input.method)
+  } else {
+    assertRefundableStatus(order.status)
+    assertRefundable(withInFlight(refundableOf(order.payments, order.source), inFlight), input.amountCents, input.method)
+  }
 
   const policy = await getRefundPolicy(input.tenantId)
   if (policy.requireReason && input.reason.trim().length === 0) throw new AppError('REASON_REQUIRED', 'Reason required by policy', 400)
@@ -2496,8 +2539,21 @@ function refundDueOf(order: { status: string; payments: DuePayment[] }) {
   }
 }
 
+/**
+ * What a cancelled ticket still owes back once card refunds in flight on the
+ * card machine (not booked yet — no refund Payment) are counted: they go back
+ * to the card, so neither the record-only hand-back nor a second machine
+ * refund may give that money back again (W4-MONEY-3, for LEDGER-R5).
+ */
+function withInFlightDue(state: ReturnType<typeof refundDueOf>, inFlightCardCents: number): ReturnType<typeof refundDueOf> {
+  if (inFlightCardCents <= 0) return state
+  const byMethod = new Map(state.byMethod)
+  byMethod.set('card', (byMethod.get('card') ?? 0) - inFlightCardCents)
+  return { ...state, due: state.due - inFlightCardCents, byMethod }
+}
+
 function assertRefundDue(state: ReturnType<typeof refundDueOf>, amountCents: number, method: RefundMethod): void {
-  if (state.due <= 0) throw new AppError('NOTHING_TO_REFUND', 'No money was taken on this ticket at the till', 422)
+  if (state.due <= 0) throw new AppError('NOTHING_TO_REFUND', 'Nothing taken on this ticket at the till is still owed back (or it is already on its way back to the card)', 422)
   if (amountCents > state.due) {
     throw new AppError('REFUND_EXCEEDS_DUE', `Refund of ${amountCents} exceeds the ${state.due} still owed back on this cancelled ticket`, 422)
   }
@@ -2604,7 +2660,7 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
   const reverse: SignedLine[] = []
   const shareDebits: Array<{ key: ParkKey; cents: number }> = []
   const parked: Record<ParkKey, number> = { cash: 0, card: 0 }
-  const id8 = order.id.slice(0, 8)
+  const id8 = orderRefOf(order.id)
 
   const receipts = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && isShiftReceipt(p))
   const drawers = [...new Set(receipts.map((p) => p.shiftId!))]
@@ -2740,7 +2796,7 @@ async function postCancelledUnwindTx(tx: Tx, order: CancelledBooksOrder, tenantI
     tenantId,
     sourceType: CANCEL_UNWIND_SOURCE,
     sourceId: order.id,
-    description: `Cancelled order ${order.id.slice(0, 8)} (${order.concept.slug} / ${order.source}): what was booked as a sale before the cancel, undone`,
+    description: `Cancelled order ${orderRefOf(order.id)} (${order.concept.slug} / ${order.source}): what was booked as a sale before the cancel, undone`,
     postedBy,
     lines,
   }, { tx })
@@ -2780,7 +2836,7 @@ async function bookCancelledHandBackTx(tx: Tx, refundPaymentId: string, postedBy
     tenantId,
     sourceType: 'order.refund',
     sourceId: payment.id,
-    description: `Money taken on cancelled order ${order.id.slice(0, 8)} handed back (${order.concept.slug}, ${payment.method}) — not a sale`,
+    description: `Money taken on cancelled order ${orderRefOf(order.id)} handed back (${order.concept.slug}, ${payment.method}) — not a sale`,
     entryDate: payment.processedAt ?? new Date(),
     postedBy,
     lines,
@@ -2819,16 +2875,33 @@ export async function postCancelledTicketUnwind(orderId: string, postedBy = 'sys
  * unless an invoice WAS filed for it. Same caps / manager PIN and drawer as
  * any refund; the amount is capped at refundDueCents, re-checked under the
  * order lock.
+ *
+ * Card money can go back on the card machine (connectors/terminal
+ * startTerminalRefund, managers): the machine refund is checked against this
+ * ticket's refund due BEFORE the machine moves money (assertRefundAllowed),
+ * and once approved it is booked HERE (terminalChargeId set) — the same
+ * hand-back entry, exactly once per machine refund. Until it is booked it
+ * counts as already on its way back (inFlightTerminalRefundCents), so the
+ * record-only hand-back and the machine never give the same money back twice.
  */
 async function refundDueOnCancelledTicket(
   input: RefundInput,
   order: Order & { payments: Payment[] },
   tenantId: string,
 ) {
-  const pre = refundDueOf(order)
+  // A card refund still on its way back through the card machine (no refund
+  // Payment yet) is money already promised back: counted, so the record-only
+  // hand-back never gives it back a second time. The machine refund being
+  // booked right now (input.terminalChargeId) is not counted against itself.
+  const pre = withInFlightDue(
+    refundDueOf(order),
+    await inFlightTerminalRefundCents(prisma, input.orderId, { exceptChargeId: input.terminalChargeId }),
+  )
   const method: RefundMethod = input.method ?? pre.latestMethod ?? 'cash'
   // Fast refusals before anyone is asked for a PIN; re-checked under the lock.
-  assertRefundDue(pre, input.amountCents, method)
+  // (A machine refund being booked was checked before the machine moved the
+  // money; its own replay is answered under the lock, below.)
+  if (!input.terminalChargeId) assertRefundDue(pre, input.amountCents, method)
 
   const policy = await getRefundPolicy(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
@@ -2846,14 +2919,23 @@ async function refundDueOnCancelledTicket(
   )
   const shiftId = await refundDrawerOf(input, tenantId, method)
 
-  const { refundPayment, entryId, state, fiscalDoc } = await prisma.$transaction(async (tx) => {
+  const booked = await prisma.$transaction(async (tx) => {
     await lockOrderTx(tx, input.orderId)
     const current = await tx.order.findUniqueOrThrow({
       where: { id: input.orderId },
       select: { status: true, payments: true },
     })
     const state = refundDueOf(current)
-    assertRefundDue(state, input.amountCents, method)
+    // Exactly once per machine refund: a second booking of the same card
+    // refund (the record lease lapsed while the first was committing) finds
+    // the first one's row here and returns it — never a second hand-back.
+    if (input.terminalChargeId) {
+      const already = current.payments.find((p) => p.status === 'refunded' && p.amountCents < 0
+        && (p.gatewayMeta as { terminalChargeId?: unknown } | null)?.terminalChargeId === input.terminalChargeId)
+      if (already) return { replay: already, state }
+    }
+    const inFlight = await inFlightTerminalRefundCents(tx, input.orderId, { exceptChargeId: input.terminalChargeId })
+    assertRefundDue(withInFlightDue(state, inFlight), input.amountCents, method)
     // Booked by where the money is parked, not as a sale refund (R5-A/B/C, above).
     const { payment: refundPayment, entryId } = await writeRefundTx(tx, {
       orderId: input.orderId, shiftId, method, amountCents: input.amountCents, reason: input.reason, approverId, actorId: input.actorId,
@@ -2867,9 +2949,15 @@ async function refundDueOnCancelledTicket(
     const fiscalDoc = order.srbInvoiceNumber || order.fbrInvoiceNumber
       ? await enqueueFiscalRefundTx(tx, { orderId: input.orderId, tenantId, refundPaymentId: refundPayment.id, amountCents: input.amountCents, reason: input.reason, method })
       : null
-    return { refundPayment, entryId, state, fiscalDoc }
+    return { replay: null, refundPayment, entryId, state, fiscalDoc }
   }, { maxWait: 10_000, timeout: 15_000 })
 
+  if (booked.replay) {
+    // The machine refund was booked already: the same row, nothing new.
+    const entry = await prisma.journalEntry.findFirst({ where: { tenantId, reference: `order.refund:${booked.replay.id}` }, select: { id: true } })
+    return { ...booked.replay, entryId: entry?.id ?? null, orderRefunded: false, fiscalRefund: null, srbReturnInvoiceNo: null, refundDueLeftCents: booked.state.due }
+  }
+  const { refundPayment, entryId, state, fiscalDoc } = booked
   if (fiscalDoc?.status === 'pending') void kickFiscal(fiscalDoc.id)
   const refundDueLeftCents = state.due - input.amountCents
   await audit({ category: 'identity',
@@ -2882,6 +2970,7 @@ async function refundDueOnCancelledTicket(
     after: { status: order.status, refundedCents: state.alreadyRefunded + input.amountCents, refundDueCents: refundDueLeftCents },
     metadata: {
       amountCents: input.amountCents, method, shiftId, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, entryId,
+      ...(input.terminalChargeId && { terminalChargeId: input.terminalChargeId }),
       fiscalRefund: fiscalDoc ? { documentId: fiscalDoc.id, status: fiscalDoc.status } : null,
     },
   })

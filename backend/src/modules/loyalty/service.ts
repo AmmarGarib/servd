@@ -40,6 +40,7 @@ import { primaryTenantId } from '../../lib/setup-config.js'
 import { calculatePointsEarned, loadLoyaltySettings, POINT_VALUE_CENTS } from '../../lib/loyaltySettings.js'
 // guard.ts imports only lib/prisma and lib/errors, so a static import is cycle-free.
 import { assertNoActiveTerminalChargeTx } from '../../connectors/terminal/guard.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -211,9 +212,12 @@ export async function creditPointsTx(tx: Tx, input: CreditInput): Promise<Credit
 
 /**
  * Outcomes of a loyalty posting that mean "nothing to book", not a refusal:
- * the transaction is gone, is not of that kind, or is worth nothing.
+ * the transaction is gone, is not of that kind, is worth nothing, or was
+ * reversed (refund / cancel) before its posting landed — the reversal found
+ * nothing booked and booked nothing, so the books already net to zero
+ * (postLoyaltyEarn / postLoyaltyRedeem re-check it under a row lock).
  */
-const LOYALTY_NOTHING_TO_POST = new Set(['tx_not_found', 'not_earn_tx', 'not_redeem_tx', 'zero_value'])
+export const LOYALTY_NOTHING_TO_POST: ReadonlySet<string> = new Set(['tx_not_found', 'not_earn_tx', 'not_redeem_tx', 'zero_value', 'reversed'])
 
 /**
  * A loyalty posting the ledger refused (BOOKS-R2-01 follow-up): raise the
@@ -303,7 +307,7 @@ export async function awardOrderPoints(orderId: string): Promise<CreditResult | 
       points,
       tenantId,
       orderId: order.id,
-      description: `${ORDER_EARN_PREFIX}${points} pts — order #${order.id.slice(0, 8)} completed`,
+      description: `${ORDER_EARN_PREFIX}${points} pts — order #${orderRefOf(order.id)} completed`,
       stampConceptSlug: order.concept.slug,
       stampThreshold: settings['loyalty.stamp_threshold'],
     })
@@ -429,7 +433,7 @@ async function claimRedemptionTx(tx: Tx, args: { customerId: string; orderId: st
       orderId,
       type: 'redeem',
       pointsDelta: -quote.points,
-      description: `Redeemed ${quote.points} pts for PKR ${(quote.discountCents / 100).toFixed(2)} off order #${orderId.slice(0, 8)}`,
+      description: `Redeemed ${quote.points} pts for PKR ${(quote.discountCents / 100).toFixed(2)} off order #${orderRefOf(orderId)}`,
     },
   })
   await tx.order.update({ where: { id: orderId }, data: { discountCents: { increment: quote.discountCents } } })

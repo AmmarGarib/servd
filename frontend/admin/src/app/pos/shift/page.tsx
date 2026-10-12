@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { posApi, type ZReport } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import { useAuthStore } from '../../../store/auth'
@@ -9,9 +9,13 @@ import { fmtPkrWhole } from '../../../lib/money'
 import { VendorPayoutPanel, CodPayInPanel } from './DrawerPanels'
 import { OpenTicketsCloseConfirm } from '../../../components/pos/OpenTicketsCloseConfirm'
 import {
-  closeDrawer, fetchDrawerOpenTickets, isOpenTicketsError, tillErrorMessage,
-  zReportLines, type DrawerOpenTickets, type ZReportExtras, type ZTone,
+  cancelledCardStillOwed, closeDrawer, fetchCancelledCardRefundOffer, fetchDrawerOpenTickets, isOpenTicketsError, tillErrorMessage,
+  zReportLines, type DrawerOpenTickets, type TerminalChargeView, type ZReportExtras, type ZTone,
 } from '../../../components/pos/tillApi'
+import { useIsManager } from '../../../components/pos/managerRole'
+import { parsePkrToCents } from '../../../components/pos/handBack'
+import { orderRef } from '../../../lib/orderRef'
+import { refundErrorMessage, refundOnCardMachine, terminalRefundFinal, terminalRefundText } from '../../refunds/refundEngine'
 
 type ClosedZReport = ZReport & ZReportExtras
 
@@ -200,6 +204,9 @@ function ZReportView({ report, onClose }: { report: ClosedZReport; onClose: () =
             <p className="text-xs text-kds-subtext">
               Taken on {report.cancelledPaid?.count ?? 0} ticket(s) that were then cancelled. Owed back to the customer, not a sale.
             </p>
+            {cancelledCardStillOwed(report.cancelledPaid) && (
+              <CancelledCardRefunds orderIds={report.cancelledPaid?.orderIds ?? null} shiftId={report.shiftId ?? null} />
+            )}
           </div>
         )}
 
@@ -227,5 +234,140 @@ function ZReportView({ report, onClose }: { report: ClosedZReport; onClose: () =
         </button>
       </div>
     </div>
+  )
+}
+
+// ─── Refund to card on the cancelled tickets (LEDGER-R5 hand-back) ─────────
+//
+// Card money taken on a ticket that was then cancelled goes back to the card
+// on the card machine — managers only (POST /pos/terminal/refunds), up to
+// what the ticket still owes back by card. The server checks it before the
+// machine moves money, books it as the hand-back (never a sale refund) and
+// sends nothing to the fiscal POS. Cash is handed back from the ticket's page.
+
+function CancelledCardRefunds({ orderIds, shiftId }: { orderIds: string[] | null; shiftId: string | null }) {
+  const isManager = useIsManager()
+  if (!orderIds) {
+    // An older API without the ticket list: no per-ticket button to point at.
+    return (
+      <p className="mt-2 text-xs text-kds-subtext">
+        Card money goes back to the card: a manager refunds it on the card machine, then records it on the ticket as a card hand-back.
+      </p>
+    )
+  }
+  if (!isManager) {
+    return (
+      <p className="mt-2 text-xs text-kds-subtext">
+        Card money goes back on the card machine — ask a manager to refund it to the card.
+      </p>
+    )
+  }
+  return (
+    <ul className="mt-3 space-y-2">
+      {orderIds.map((id) => <CancelledCardRefundRow key={id} orderId={id} shiftId={shiftId} />)}
+    </ul>
+  )
+}
+
+function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId: string | null }) {
+  const offer = useQuery({
+    queryKey: ['pos', 'cancelled-card-refund', orderId, shiftId],
+    queryFn: () => fetchCancelledCardRefundOffer(orderId, shiftId),
+    retry: false,
+  })
+  const [open, setOpen] = useState(false)
+  const [amount, setAmount] = useState('')
+  const [reason, setReason] = useState('')
+  const [progress, setProgress] = useState<TerminalChargeView | null>(null)
+
+  const refund = useMutation({
+    mutationFn: (input: { paymentId: string; amountCents: number }) => refundOnCardMachine(orderId, {
+      payment: { id: input.paymentId, method: 'card', amountCents: input.amountCents, status: 'paid', gateway: 'card_terminal' },
+      amountCents: input.amountCents,
+      reason: reason.trim(),
+      shiftId,
+    }, setProgress),
+    onSettled: () => { void offer.refetch() },
+  })
+
+  const data = offer.data ?? null
+  // Nothing to offer (cash only, no card machine here, or all of it already back): no row.
+  if (offer.isLoading) return null
+  if (!data && !progress) return null
+
+  const amountCents = parsePkrToCents(amount)
+  const amountOk = !!data && Number.isSafeInteger(amountCents) && amountCents > 0 && amountCents <= data.maxCents
+  const reasonOk = reason.trim().length >= 3
+  const state = progress ? terminalRefundText(progress) : null
+
+  return (
+    <li className="rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-kds-text">
+          #{orderRef(orderId)}
+          {data && <span className="text-kds-subtext"> · up to {fmtPkrWhole(data.maxCents)} by card</span>}
+        </span>
+        {data && !open && (
+          <button
+            type="button"
+            onClick={() => { setOpen(true); setAmount((data.maxCents / 100).toFixed(2)); setProgress(null); refund.reset() }}
+            className="rounded-lg bg-kds-amber px-3 py-1.5 font-bold text-kds-bg"
+          >
+            Refund to card
+          </button>
+        )}
+      </div>
+      {open && data && (
+        <div className="mt-2 space-y-2">
+          <label className="block text-kds-subtext">
+            Amount (PKR)
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="decimal"
+              className="mt-1 w-full rounded-lg border border-kds-border bg-kds-card px-3 py-2 font-bold text-kds-text"
+            />
+          </label>
+          <label className="block text-kds-subtext">
+            Reason
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={300}
+              placeholder="Why the ticket was cancelled"
+              className="mt-1 w-full rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-kds-text"
+            />
+          </label>
+          {!amountOk && amount !== '' && (
+            <p className="text-kds-red">Enter an amount up to {fmtPkrWhole(data.maxCents)}.</p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setOpen(false); refund.reset() }}
+              disabled={refund.isPending}
+              className="flex-1 rounded-lg border border-kds-border py-2 font-bold text-kds-text disabled:opacity-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => refund.mutate({ paymentId: data.paymentId, amountCents })}
+              disabled={!amountOk || !reasonOk || refund.isPending}
+              className="flex-1 rounded-lg bg-kds-green py-2 font-bold text-white disabled:opacity-50"
+            >
+              {refund.isPending ? 'On the card machine…' : 'Refund to card'}
+            </button>
+          </div>
+        </div>
+      )}
+      {state && (
+        <p className={`mt-2 ${state.ok ? 'text-kds-green' : 'text-kds-red'}`} role="status">
+          {state.text}
+          {progress && terminalRefundFinal(progress) && progress.status === 'recorded' && ' Nothing goes to the fiscal POS — the ticket was never a sale.'}
+        </p>
+      )}
+      {refund.isError && <p className="mt-2 text-kds-red" role="alert">{refundErrorMessage(refund.error)}</p>}
+    </li>
   )
 }

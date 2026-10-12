@@ -11,6 +11,7 @@ import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE, res
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { reportDateRange } from '../reports/service.js'
+import { MAX_LINE_CENTS, amountTooLarge } from '../accounting/journal.js'
 
 // Who works the reconciliation module (BOOKS-02): every manager tier plus the
 // finance role, which holds the `reconciliation` module by default
@@ -48,7 +49,12 @@ const adjustLineSchema = z.object({
   lines: z.array(z.object({
     accountCode: z.string().trim().min(1),
     type: z.enum(['debit', 'credit']),
-    amountCents: z.number().int().positive().refine(Number.isSafeInteger),
+    // One journal line each (INT4): above PKR 21,474,836.47 it is a plain
+    // 422 AMOUNT_TOO_LARGE here rather than a refusal deep in the posting.
+    amountCents: z.number().int().positive().refine(Number.isSafeInteger).transform((v) => {
+      if (v > MAX_LINE_CENTS) throw amountTooLarge('A split line')
+      return v
+    }),
     memo: z.string().trim().max(500).optional(),
   })).min(1).max(20).optional(),
 }).refine((b) => !!b.contraAccountCode !== !!b.lines, {
@@ -306,5 +312,64 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     // `rows` / `summary` stay the shifts' (the admin page reads them);
     // `orders` carries the order / loyalty / refund rows.
     return { dryRun: body.dryRun, ...result, orders }
+  })
+
+  // POST /reconciliation/apply-missed-bill-variances — NEEDS 21 (BK2-RV-2).
+  // Supplier bills booked before their goods carried their price difference
+  // in 1210 until the goods arrived; receipts made before receiving applied it
+  // itself never did. This applies those missed slices once
+  // (supplierPosting.applyMissedCarriedBillVariances): the share still on
+  // hand re-averages the item, the rest goes to 5060 dated today. CEO only
+  // (role admin); dry run unless { dryRun: false }. The companies in view, or
+  // the one picked (`tenantId`, which must be one of them — else 404).
+  // Idempotent — a second run finds nothing. A company whose books are closed
+  // through today is listed as 'locked' and nothing of it is applied.
+  fastify.post('/apply-missed-bill-variances', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({
+      dryRun:   z.boolean().default(true),
+      tenantId: z.string().min(1).optional(),
+    }).parse(req.body ?? {})
+    const scope = await resolveTenantScope(req)
+    if (scope.tenantIds.length === 0) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+    if (body.tenantId && !scope.tenantIds.includes(body.tenantId)) throw new NotFoundError('Company', body.tenantId)
+    const tenantIds = body.tenantId ? [body.tenantId] : scope.tenantIds
+    const { applyMissedCarriedBillVariances } = await import('../accounting/supplierPosting.js')
+    const { withBackfillSlot, BackfillRunningError } = await import('./backfillOrders.js')
+    const runAll = () => applyMissedCarriedBillVariances({ tenantIds, dryRun: body.dryRun })
+    let ran: Awaited<ReturnType<typeof runAll>>
+    try {
+      // A real run is single-flight per company (it shares the backfill's
+      // slot); a dry run writes nothing and never waits.
+      ran = body.dryRun ? await runAll() : await withBackfillSlot(tenantIds, runAll)
+    } catch (err) {
+      if (err instanceof BackfillRunningError) throw new AppError('BACKFILL_RUNNING', err.message, 409)
+      throw err
+    }
+    if (!body.dryRun && ran.rows.length > 0) {
+      // One audit row per company the run touched, filed under THAT company
+      // with only its own lines — never under the operator's home company
+      // (which may not be one of them, and must not see another's lines).
+      const byCompany = new Map<string, typeof ran.rows>()
+      for (const r of ran.rows) byCompany.set(r.tenantId, [...(byCompany.get(r.tenantId) ?? []), r])
+      for (const [companyId, rows] of byCompany) {
+        const summary: Record<string, number> = { lines: rows.length, quantity: rows.reduce((s, r) => s + r.quantity, 0) }
+        for (const r of rows) summary[r.outcome] = (summary[r.outcome] ?? 0) + 1
+        await audit({
+          category: 'accounting',
+          action: 'supplier.bill.variance_catch_up',
+          entity: 'SupplierBill',
+          userId: req.staffUser!.id,
+          userEmail: req.staffUser!.email,
+          tenantId: companyId,
+          after: summary,
+          metadata: {
+            tenantId: companyId,
+            applied: rows.filter((r) => r.outcome === 'applied').map((r) => ({ poLineId: r.poLineId, quantity: r.quantity, movedCents: r.movedCents })),
+            notApplied: rows.filter((r) => r.outcome !== 'applied').map((r) => ({ poLineId: r.poLineId, outcome: r.outcome, detail: r.detail })),
+          },
+        })
+      }
+    }
+    return { dryRun: body.dryRun, tenantIds, ...ran }
   })
 }

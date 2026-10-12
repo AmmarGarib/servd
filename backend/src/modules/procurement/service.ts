@@ -23,7 +23,35 @@ import { withholdingForBill, postSupplierBill, postSupplierBillVoid, postSupplie
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
+import { MAX_LINE_CENTS } from '../accounting/journal.js'
 import type { Prisma } from '@prisma/client'
+
+// ─── Amount ceiling (BOOKS-06 follow-up) ─────────────────────────────────────
+//
+// Every procurement money column (PO total and line cost, bill subtotal / tax
+// / total / WHT and line totals, payment and application amounts) is a
+// Postgres INT4, as is a ledger line: at most 2,147,483,647 paisa
+// (PKR 21,474,836.47). A bigger figure — typed, or computed as quantity ×
+// unit cost — used to reach the insert and come back as a raw 500. It is
+// refused here, before anything is written, with 422 AMOUNT_TOO_LARGE.
+
+export const MAX_AMOUNT_CENTS = MAX_LINE_CENTS
+
+const fmtPkr = (cents: number) =>
+  `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+export function amountTooLargeError(what: string, cents: number): AppError {
+  return new AppError(
+    'AMOUNT_TOO_LARGE',
+    `${what} comes to ${fmtPkr(cents)}, more than the PKR 21,474,836.47 one entry can hold. Check the figures you typed, or split it into smaller ones.`,
+    422,
+  )
+}
+
+/** Refuse a money figure no column can hold (or one that is not a number at all). */
+export function assertAmountFits(cents: number, what: string): void {
+  if (!Number.isFinite(cents) || Math.abs(cents) > MAX_AMOUNT_CENTS) throw amountTooLargeError(what, cents)
+}
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
@@ -86,7 +114,13 @@ export async function createPo(input: CreatePoInput) {
   }
   await assertItemsOfCompany(input.lines.map((l) => l.inventoryItemId), supplier.tenantId, supplier.name)
 
+  // Every line and the total must fit a money column (422, not a 500 at insert).
+  input.lines.forEach((l, i) => {
+    assertAmountFits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
+    assertAmountFits(Math.round(l.unitCostCents * l.quantityOrdered), `Line ${i + 1} (quantity × unit cost)`)
+  })
   const totalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
+  assertAmountFits(totalCents, 'This purchase order\'s total')
 
   const po = await prisma.purchaseOrder.create({
     data: {
@@ -374,9 +408,19 @@ export async function createBill(input: CreateBillInput) {
   if (!supplier) throw new NotFoundError('Supplier', input.supplierId)
   await assertBillReferences(input, supplier)
 
+  // Every line, the subtotal, the tax and the total must fit a money column
+  // (and a ledger line — the bill posts in the same transaction): 422, never
+  // a 500 at insert.
+  input.lines.forEach((l, i) => {
+    assertAmountFits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
+    assertAmountFits(Math.round(l.unitCostCents * l.quantity), `Line ${i + 1} (quantity × unit cost)`)
+  })
   const subtotalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantity), 0)
   const taxCents      = input.taxCents ?? 0
   const totalCents    = subtotalCents + taxCents
+  assertAmountFits(subtotalCents, 'This bill\'s subtotal')
+  assertAmountFits(taxCents, 'This bill\'s tax')
+  assertAmountFits(totalCents, 'This bill\'s total')
   // Withholding is fixed now, from the supplier's company's settings, and the
   // ledger books this same figure (postSupplierBill) — see SupplierBill.whtCents.
   const whtCents      = await withholdingForBill(subtotalCents, supplier.tenantId)
@@ -601,8 +645,10 @@ export async function createPayment(input: CreatePaymentInput) {
  */
 export async function createPaymentTx(tx: Prisma.TransactionClient, input: CreatePaymentInput) {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Amount must be positive', 400)
+  assertAmountFits(input.amountCents, 'This payment')
 
   const allocations = input.applications ?? []
+  allocations.forEach((a) => assertAmountFits(a.amountAppliedCents, 'An amount applied to a bill'))
   const totalAllocated = allocations.reduce((s, a) => s + a.amountAppliedCents, 0)
   if (totalAllocated > input.amountCents) {
     throw new AppError('OVER_ALLOCATED', 'Allocations exceed payment amount', 400)
@@ -663,6 +709,7 @@ export async function allocatePayment(
   paymentId: string,
   applications: Array<{ billId: string; amountAppliedCents: number }>,
 ) {
+  applications.forEach((a) => assertAmountFits(a.amountAppliedCents, 'An amount applied to a bill'))
   return prisma.$transaction(async (tx) => {
     const payment = await tx.supplierPayment.findUnique({
       where:   { id: paymentId },
