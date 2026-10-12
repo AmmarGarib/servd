@@ -11,5 +11,6 @@ The TypeScript source tree, registered into Fastify by `index.ts`.
 
 - [`modules/`](./modules/README.md) — HTTP surface, organised by domain (orders, menu, accounting, procurement, etc.).
 - [`lib/`](./lib/README.md) — Cross-cutting infrastructure (Prisma client, errors, ws, storage, permissions).
-- [`adapters/`](./adapters/README.md) — Third-party integration adapters (Foodpanda, Careem, FBR, WhatsApp, payment gateways).
+- [`adapters/`](./adapters/README.md) — Third-party integration adapters (WhatsApp, payment gateways: Easypaisa, JazzCash, Keenu).
+- [`connectors/`](./connectors/README.md) — The POS connector: the fiscal POS (the only FBR/SRB filer) and the card machine, with the fiscal outbox.
 - [`workers/`](./workers/README.md) — Background workers (BullMQ-driven and timer-driven).

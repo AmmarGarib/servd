@@ -4,9 +4,9 @@ Fastify HTTP API + WebSocket server. The single source of truth for orders, menu
 
 ## Stack
 
-- **Fastify 4** — HTTP framework (built for high-throughput webhooks)
+- **Fastify 5** — HTTP framework (built for high-throughput webhooks)
 - **Prisma 5** — type-safe ORM, PostgreSQL on Neon
-- **BullMQ + Redis** — background workers (order ingestion, FBR submission, daily digest)
+- **BullMQ + Redis** — background workers (fiscal connector outbox, card-machine reconciler, scheduled reports, rider dispatch)
 - **Socket.IO** — real-time fan-out to KDS and storefront clients
 - **Zod** — runtime validation for every route input
 
@@ -39,6 +39,5 @@ Optional but recommended:
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` — Cloudflare R2 for media uploads.
 - `SMTP_USER`, `SMTP_PASS` — outgoing email.
 - `TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_FROM` — SMS.
-- `FOODPANDA_WEBHOOK_SECRET`, `CAREEM_WEBHOOK_SECRET` — HMAC verification.
-- `FBR_API_KEY`, `FBR_POS_ID` — FBR e-invoice submission.
+- `SERVD_SECRET_KEY` — base64 of 32 bytes (`openssl rand -base64 32`); encrypts stored integration secrets (POS connector keys, WhatsApp gateway key). Box env only, never commit it. There are no FBR / SRB variables: the external fiscal POS files, configured per company in admin → Dev → API → POS connector (`src/connectors/`).
 - `ENABLE_WORKERS=true` — turn on BullMQ workers in dev (default off).

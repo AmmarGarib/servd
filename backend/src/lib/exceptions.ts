@@ -37,11 +37,24 @@ export type ExceptionKind =
   | 'lost_package'          // rider marked delivered but customer disputes
   | 'pii_export'            // bulk customer-list export
   | 'self_approval'         // user tried to approve their own creation
+  // Till overrides (FOH-R2-01 / FOH-R2-03). ExceptionFlag.kind is a plain
+  // String column, so these need no migration.
+  | 'manager_pin_failed'    // a sender (or one order) hit the wrong-manager-PIN limit — overrides locked
+  | 'discount_above_cap'    // a POS discount above the cashier's cap (authorised or not, always reviewed)
+  | 'price_override'        // POS line items priced away from the menu
   | 'ghost_employee'        // payroll line for user with zero clock logs
   | 'manual_journal'        // manual JE entry posted (every one is reviewable)
   | 'period_reopened'       // period lock removed
   | 'wage_change'           // wage rate edited
   | 'food_safety_temperature' // a temperature check outside its limit
+  | 'posting_failed'        // a ledger posting was refused (e.g. a till close in a locked period)
+  // POS connector (backend/src/connectors/alerts.ts, spec §9.3)
+  | 'fiscal_failed'          // a fiscal document gave up retrying
+  | 'fiscal_rejected'        // the fiscal POS rejected a document
+  | 'fiscal_auth'            // the fiscal POS refused servd's API key
+  | 'fiscal_manual_refund'   // a refund must be filed by hand (sale filed directly pre-cutover, or the POS cannot file refunds)
+  | 'terminal_void_failed'   // card charged, servd refused it, and the automatic reversal failed
+  | 'terminal_unreconciled'  // the card outcome disagrees with what servd recorded, or unknown > 24 h
 
 export interface FlagInput {
   /** The company the flagged entity belongs to. Pass it — see the header. */

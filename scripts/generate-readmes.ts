@@ -201,7 +201,7 @@ Hospitality operations platform — POS, KDS, storefront, accounting, procuremen
 
 ## Layout
 
-- [\`backend/\`](./backend/) — Fastify + Prisma + BullMQ. Owns orders, menu, inventory, accounting, FBR, aggregator webhooks.
+- [\`backend/\`](./backend/) — Fastify + Prisma + BullMQ. Owns orders, menu, inventory, accounting, and the POS connector (fiscal POS for FBR/SRB + card machine).
 - [\`frontend/admin/\`](./frontend/admin/) — Next.js admin portal: dashboard, KDS, POS, configuration hub.
 - [\`frontend/storefront/\`](./frontend/storefront/) — Next.js customer-facing storefront with brand microsites.
 - [\`packages/\`](./packages/) — Shared TypeScript packages (\`@servd/types\` for the canonical \`OrderDTO\`).
@@ -237,7 +237,7 @@ Fastify HTTP API + WebSocket server. The single source of truth for orders, menu
 
 - **Fastify 4** — HTTP framework (built for high-throughput webhooks)
 - **Prisma 5** — type-safe ORM, PostgreSQL on Neon
-- **BullMQ + Redis** — background workers (order ingestion, FBR submission, daily digest)
+- **BullMQ + Redis** — background workers (order ingestion, fiscal connector outbox, daily digest)
 - **Socket.IO** — real-time fan-out to KDS and storefront clients
 - **Zod** — runtime validation for every route input
 
@@ -271,7 +271,7 @@ Optional but recommended:
 - \`SMTP_USER\`, \`SMTP_PASS\` — outgoing email.
 - \`TWILIO_SID\`, \`TWILIO_TOKEN\`, \`TWILIO_FROM\` — SMS.
 - \`FOODPANDA_WEBHOOK_SECRET\`, \`CAREEM_WEBHOOK_SECRET\` — HMAC verification.
-- \`FBR_API_KEY\`, \`FBR_POS_ID\` — FBR e-invoice submission.
+- \`SERVD_SECRET_KEY\` — base64 32-byte key that encrypts stored integration secrets (POS connector keys, the WhatsApp key). \`openssl rand -base64 32\`; never in the repo. FBR/SRB filing has no env vars: the external fiscal POS files, configured per company in admin → Dev → API → POS connector (docs/TAX_SETUP.md).
 - \`ENABLE_WORKERS=true\` — turn on BullMQ workers in dev (default off).
 `
 }
@@ -290,7 +290,8 @@ The TypeScript source tree, registered into Fastify by \`index.ts\`.
 
 - [\`modules/\`](./modules/README.md) — HTTP surface, organised by domain (orders, menu, accounting, procurement, etc.).
 - [\`lib/\`](./lib/README.md) — Cross-cutting infrastructure (Prisma client, errors, ws, storage, permissions).
-- [\`adapters/\`](./adapters/README.md) — Third-party integration adapters (Foodpanda, Careem, FBR, WhatsApp, payment gateways).
+- [\`adapters/\`](./adapters/README.md) — Third-party integration adapters (WhatsApp, payment gateways).
+- [\`connectors/\`](./connectors/README.md) — The POS connector: the ONLY path to FBR/SRB filing (through an external fiscal POS) and to the card machine.
 - [\`workers/\`](./workers/README.md) — Background workers (BullMQ-driven and timer-driven).
 `
 }
@@ -338,7 +339,7 @@ Every module is \`routes.ts\` (HTTP handlers) optionally with \`service.ts\` (bu
 | \`siteLayouts\` | \`/site-layouts\` | Brand microsite layouts |
 | \`reconciliation\` | \`/reconciliation\` | Cash drawer reconciliation, payment-platform settlement matching |
 | \`allocations\` | \`/allocations\` | Cost allocation across concepts |
-| \`invoices\` | \`/invoices\` | Tax invoice issuance (FBR-compliant) |
+| \`invoices\` | \`/invoices\` | servd tax invoice (TaxInvoice) issuance — the fiscal number comes from the POS connector |
 | \`qrcodes\` | \`/qrcodes\` | Per-table scan-to-order QR generation |
 | \`media\` | \`/media\` | R2-backed media library |
 | \`apiTokens\` | \`/api-tokens\` | Long-lived bearer tokens for partners + mobile app |
@@ -363,9 +364,10 @@ Cross-cutting infrastructure used by every module.
 - \`permissions.ts\` — Role × permission catalogue + \`userCan()\` cache.
 - \`audit.ts\` — Audit log helpers (used by refunds, voids, comps, config edits).
 - \`notify.ts\` — Email + SMS dispatchers (no-op when SMTP/Twilio aren't configured).
-- \`whatsapp.ts\` — Meta Cloud API client.
+- \`whatsapp.ts\` — Hasham's WhatsApp gateway client (one platform-wide gateway; key encrypted at rest).
+- \`secretBox.ts\` — AES-256-GCM encryption at rest for integration secrets (\`SERVD_SECRET_KEY\`).
+- \`connectorRoles.ts\` — \`CONNECTOR_ADMINS\` (admin, it): who configures Dev → API.
 - \`reservation.ts\` — Background cart-release worker for abandoned reservations.
-- \`fbr.ts\` — FBR e-invoice submission helper.
 - \`hmac.ts\` — Constant-time HMAC verification for webhooks.
 - \`conceptAccess.ts\` — Multi-tenant access control (which concepts a staff user can see).
 `
@@ -391,7 +393,9 @@ Each adapter normalises a third-party payload into our canonical types (\`OrderD
 
 ## Compliance
 
-- [\`fbr/\`](./fbr/) — Pakistan FBR e-invoice submission adapter.
+There is no FBR/SRB adapter here: filing goes through the external fiscal POS
+via [\`../connectors/\`](../connectors/README.md). Never add a direct
+authority client.
 `
 }
 
@@ -408,7 +412,8 @@ Background workers. Most are BullMQ-driven (Redis-backed queues) — a few are s
 - \`loyaltyExpiration.ts\` — Expires unused loyalty points after the configured TTL.
 - \`reservationReminders.ts\` — 24h + 2h SMS reminders for upcoming reservations.
 - \`scheduledReports.ts\` — Per-company scheduled report emails (daily sales, shift summary, low stock, AP aging), configured in Configuration → Scheduled reports.
-- \`fbrSubmission.ts\` — Batches completed orders + submits to FBR every 5 minutes.
+- \`fiscalConnector.ts\` — Sends fiscal documents (FnF sales and refunds) to the fiscal POS; a 30 s sweeper re-drives anything due, even with Redis down.
+- \`terminalConnector.ts\` — Reconciles card-machine charges every 10 s (status, record approved, reverse, 24 h unknowns).
 - \`segmentComputation.ts\` — Recomputes behavioural CRM segments nightly.
 - \`socialPublish.ts\` — Polls scheduled Meta/Instagram posts and publishes them.
 `
@@ -588,7 +593,7 @@ A single page (\`/configuration\`) listing every editable setting in the platfor
 - [\`payment-methods/\`](./payment-methods/) — Cash/Keenu/JazzCash/EasyPaisa toggles + fees.
 - [\`printer/\`](./printer/) — Receipt printer / ESC-POS settings.
 - [\`roles/\`](./roles/) — **Role × permission matrix editor** (admin-only). Source of truth for the \`useCan()\` hook.
-- [\`tax/\`](./tax/) — GST rates + FBR e-invoice config.
+- [\`tax/\`](./tax/) — Redirects to the POS connector (admin → Dev → API → POS connector).
 
 ## How tiles get their status
 

@@ -3,66 +3,36 @@ import { redis } from './redis.js'
 
 const connection = redis
 
-// ─── FBR Submission Queue ─────────────────────────────────────────────────────
-// Fire-and-forget; failures do NOT block the POS payment response.
-// Worker retries with exponential backoff; final failure logs for compliance.
+// ─── Fiscal connector queue ───────────────────────────────────────────────────
+// (The direct 'fbr-submission' / 'srb-submission' queues are gone with the
+// direct FBR / SRB filers — the external fiscal POS is the only filer. Their
+// leftover jobs are drained once at boot by connectors/legacyDrain.ts.)
+//
+// Fast path for the POS connector's fiscal outbox (backend/src/connectors). The
+// outbox rows (FiscalDocument) are the source of truth: retries, backoff and
+// leases are driven by the database and a Redis-independent sweeper, so jobs
+// are single-attempt and losing one (Redis down) loses nothing.
 
-export interface FbrSubmissionJob {
-  orderId: string
+export interface FiscalConnectorJob {
+  documentId: string
 }
 
-let _fbrQueue: Queue<FbrSubmissionJob> | null = null
+let _fiscalQueue: Queue<FiscalConnectorJob> | null = null
 
-export function getFbrQueue(): Queue<FbrSubmissionJob> | null {
-  if (_fbrQueue) return _fbrQueue
+export function getFiscalQueue(): Queue<FiscalConnectorJob> | null {
+  if (_fiscalQueue) return _fiscalQueue
   try {
-    _fbrQueue = new Queue<FbrSubmissionJob>('fbr-submission', {
+    _fiscalQueue = new Queue<FiscalConnectorJob>('fiscal-connector', {
       connection,
       defaultJobOptions: {
-        attempts: 6,
-        backoff: { type: 'exponential', delay: 5000 },
+        attempts: 1,
         removeOnComplete: { count: 500 },
-        removeOnFail: { count: 500 },
+        removeOnFail: { count: 1000 },
       },
     })
-    return _fbrQueue
+    return _fiscalQueue
   } catch (err) {
-    console.warn('[queue] fbrQueue init failed (Redis unavailable):', (err as Error).message)
-    return null
-  }
-}
-
-// ─── SRB Submission Queue ─────────────────────────────────────────────────────
-// Parallel to FBR. Same retry profile — 6 attempts, exponential backoff.
-// Separate queue so a stuck SRB submission can't block FBR (or vice versa);
-// each can fail / drain on its own without dragging the other down.
-
-export interface SrbSubmissionJob {
-  orderId: string
-  // 'sale' (default) submits the normal invoice; 'return' files an
-  // invoiceType=2 sales-return for a refund.
-  kind?: 'sale' | 'return'
-  refundAmountCents?: number
-  refundRef?: string
-}
-
-let _srbQueue: Queue<SrbSubmissionJob> | null = null
-
-export function getSrbQueue(): Queue<SrbSubmissionJob> | null {
-  if (_srbQueue) return _srbQueue
-  try {
-    _srbQueue = new Queue<SrbSubmissionJob>('srb-submission', {
-      connection,
-      defaultJobOptions: {
-        attempts: 6,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: { count: 500 },
-        removeOnFail: { count: 500 },
-      },
-    })
-    return _srbQueue
-  } catch (err) {
-    console.warn('[queue] srbQueue init failed (Redis unavailable):', (err as Error).message)
+    console.warn('[queue] fiscalQueue init failed (Redis unavailable):', (err as Error).message)
     return null
   }
 }

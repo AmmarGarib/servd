@@ -7,7 +7,10 @@
 // customerId when a member is detected, so loyalty points + history accrue
 // correctly without requiring sign-in.
 
+import { randomUUID } from 'node:crypto'
+import type { OrderDTO } from '@servd/types'
 import { serviceClient as prisma } from '../../lib/prisma.js'
+import { priceOrder } from '../../lib/pricing.js'
 import { sendText, sendInteractiveList, sendButtons } from '../../lib/whatsapp.js'
 import {
   getSession, saveSession, clearSession, newSession,
@@ -96,7 +99,13 @@ async function greetReturningMember(
       orderBy: { placedAt: 'desc' },
       include: { items: { select: { name: true, quantity: true } } },
     }),
-    prisma.loyaltyAccount.findUnique({ where: { customerId: member.id } }).catch(() => null),
+    // Points are per company (ONL-04): the balance shown is the one the guest
+    // can spend at THIS brand — its company's account.
+    prisma.concept.findUnique({ where: { id: session.conceptId }, select: { tenantId: true } })
+      .then((c) => c?.tenantId
+        ? prisma.loyaltyAccount.findUnique({ where: { tenantId_customerId: { tenantId: c.tenantId, customerId: member.id } } })
+        : null)
+      .catch(() => null),
   ])
 
   const firstName = member.name.split(/\s+/)[0]
@@ -293,19 +302,68 @@ async function handleCart(phone: string, session: WaSession, message: WaIncoming
   return handleCartText(phone, session, message)
 }
 
+/**
+ * The session's idempotency key for the order it is about to place — minted
+ * when the summary is shown, so a double-tapped "Place Order" (or Meta
+ * re-delivering the webhook) gets the SAME order back from ingestOrder, never
+ * a second ticket. A new summary (cart changed, reorder) mints a new key.
+ */
+type WaSessionWithKey = WaSession & { orderKey?: string }
+
+/**
+ * The cart priced the way every channel is priced (lib/pricing priceOrder):
+ * today's menu prices for THIS brand (the session's stored prices may be
+ * stale), the brand's own GST rate for the tender — the order is paid on
+ * collection, so the cash rate (decision 9: cash 15% / card 8%; it was a
+ * hard-coded 17% here and never written to the order) — and the company's
+ * service charge for the WhatsApp channel. Items gone or 86'd since they were
+ * added are dropped (named in `dropped`).
+ */
+async function priceCart(session: WaSession) {
+  const concept = await prisma.concept.findUnique({
+    where: { id: session.conceptId },
+    select: { id: true, tenantId: true, taxRateCash: true, taxRateCard: true },
+  })
+  if (!concept) throw new Error(`Concept '${session.conceptId}' not found`)
+  const ids = [...new Set(session.cart.map((i) => i.menuItemId))]
+  const menu = new Map((await prisma.menuItem.findMany({
+    where: { id: { in: ids }, conceptId: session.conceptId, isAvailable: true, deletedAt: null, priceCents: { gt: 0 } },
+    select: { id: true, name: true, priceCents: true },
+  })).map((m) => [m.id, m]))
+  const lines: CartItem[] = []
+  const dropped: string[] = []
+  for (const i of session.cart) {
+    const m = menu.get(i.menuItemId)
+    if (!m) { dropped.push(i.name); continue }
+    lines.push({ menuItemId: m.id, name: m.name, priceCents: m.priceCents, quantity: i.quantity })
+  }
+  const price = await priceOrder(
+    lines.map((l) => ({ menuItemId: l.menuItemId, unitPriceCents: l.priceCents, quantity: l.quantity })),
+    'cash', 'whatsapp', concept,
+  )
+  return { lines, price, dropped }
+}
+
 async function proceedToConfirm(phone: string, session: WaSession) {
-  const cartTotal = session.cart.reduce((s, i) => s + i.priceCents * i.quantity, 0)
-  const tax = Math.round(cartTotal * 0.17)
-  const total = cartTotal + tax
+  const { lines, price, dropped } = await priceCart(session)
+  session.cart = lines
+  if (lines.length === 0) {
+    await saveSession(session)
+    await sendText(phone, 'Sorry — nothing in your cart is available right now. Let me show you the menu.')
+    return sendToMenu(phone, session)
+  }
 
   session.step = 'confirm'
+  ;(session as WaSessionWithKey).orderKey = randomUUID()
   await saveSession(session)
 
-  const itemList = session.cart.map((i) => `• ${i.quantity}× ${i.name}`).join('\n')
+  const itemList = lines.map((i) => `• ${i.quantity}× ${i.name}`).join('\n')
+  const droppedNote = dropped.length > 0 ? `\n\n_No longer available, removed: ${dropped.join(', ')}_` : ''
+  const serviceLine = price.serviceChargeCents > 0 ? `\nService charge: ${fmtPkr(price.serviceChargeCents)}` : ''
 
   return sendButtons(
     phone,
-    `🧾 *Order Summary*\n\n${itemList}\n\nSubtotal: ${fmtPkr(cartTotal)}\nGST 17%: ${fmtPkr(tax)}\n*Total: ${fmtPkr(total)}*\n\n_Pickup order. Pay on collection._`,
+    `🧾 *Order Summary*\n\n${itemList}${droppedNote}\n\nSubtotal: ${fmtPkr(price.itemTotalCents)}\nGST ${price.taxRatePct}%: ${fmtPkr(price.taxCents)}${serviceLine}\n*Total: ${fmtPkr(price.totalCents)}*\n\n_Pickup order. Pay on collection._`,
     [
       { id: 'action:place', title: '🛍️ Place Order' },
       { id: 'action:cancel', title: '❌ Cancel' },
@@ -329,15 +387,30 @@ async function handleConfirm(phone: string, session: WaSession, message: WaIncom
   return sendText(phone, 'Tap *Place Order* to confirm or *Cancel* to start over.')
 }
 
-async function placeOrder(phone: string, session: WaSession) {
-  const dto = {
-    source: 'whatsapp',
-    external_id: `wa_${phone}_${Date.now()}`,
+/**
+ * Place the WhatsApp order. Source 'servd' (the customer channel — the order
+ * sources are servd / pos / cart / manual, and 'whatsapp' was never one, so
+ * ingestOrder refused EVERY WhatsApp order with UNKNOWN_ORDER_SOURCE, hidden
+ * behind an `as never` cast) with raw_payload.channel = 'whatsapp' saying
+ * where it came from. Priced like every channel: the order carries its GST
+ * and rate, and the pending payment is the full bill.
+ */
+export async function placeOrder(phone: string, session: WaSession) {
+  const { lines, price } = await priceCart(session)
+  if (lines.length === 0) {
+    await sendText(phone, 'Sorry — nothing in your cart is available right now. Send "hi" to start again.')
+    return clearSession(phone)
+  }
+  const key = (session as WaSessionWithKey).orderKey ?? randomUUID()
+
+  const dto: OrderDTO = {
+    source: 'servd',
+    external_id: `whatsapp-${key}`,
     concept_id: session.conceptId,
     placed_at: new Date().toISOString(),
     customer_id: session.customerId ?? null,
     customer_name: session.customerName ?? `WA ${phone.slice(-4)}`,
-    items: session.cart.map((i) => ({
+    items: lines.map((i) => ({
       externalItemId: i.menuItemId,
       menuItemId: i.menuItemId,
       name: i.name,
@@ -345,18 +418,27 @@ async function placeOrder(phone: string, session: WaSession) {
       unitPriceCents: i.priceCents,
       modifiers: [],
     })),
-    payment: {
-      provider: 'cash' as const,
-      amountCents: session.cart.reduce((s, i) => s + i.priceCents * i.quantity, 0),
-      status: 'pending' as const,
-    },
+    payment: { provider: 'cash', amountCents: price.totalCents, status: 'pending' },
     loyalty_points_earned: null,
-    delivery_notes: 'WhatsApp order',
+    // Not a delivery: a note here would mint a rider hand-over code.
+    delivery_notes: null,
     estimated_pickup: null,
-    raw_payload: { source: 'whatsapp', phone, cart: session.cart },
+    tax_cents: price.taxCents,
+    fulfilment_type: 'takeout',
+    raw_payload: { channel: 'whatsapp', phone, cart: lines },
   }
 
-  const result = await ingestOrder(dto as never)
+  let result: Awaited<ReturnType<typeof ingestOrder>>
+  try {
+    result = await ingestOrder(dto, { price })
+  } catch (err) {
+    // An item 86'd between the summary and the tap, a brand mix-up, … — tell
+    // the customer rather than going silent. The session stays, so "hi"
+    // starts again.
+    console.error(`[whatsapp] order for ${phone.slice(-4)} not placed:`, (err as Error).message)
+    await sendText(phone, 'Sorry — we couldn\'t place that order just now. Send "hi" to start again.')
+    return
+  }
   await clearSession(phone)
 
   const orderRef = result.order.id.slice(-8).toUpperCase()

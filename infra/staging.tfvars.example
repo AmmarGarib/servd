@@ -32,7 +32,10 @@ ses_smtp_password        = ""
 # silent staging (alarms still trigger, just no email).
 alert_email = ""
 
-# FBR PRAL — leave empty in staging unless testing real PRAL sandbox.
-# Set FBR_ENV=sandbox in ECS env to use the PRAL sandbox endpoint.
-fbr_username = ""
-fbr_password  = ""
+# ── Secrets at rest ──────────────────────────────────────────────────────────
+# Encrypts stored integration secrets (POS connector keys, WhatsApp key).
+# Generate with `openssl rand -base64 32`; keep it outside the repo. Leave it
+# empty and connector / WhatsApp keys cannot be saved (503 SECRET_KEY_MISSING).
+# There are no FBR / SRB credentials: the external fiscal POS files, set up per
+# company in admin → Dev → API → POS connector.
+servd_secret_key = ""

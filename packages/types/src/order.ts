@@ -58,6 +58,13 @@ export interface OrderDTO {
   promo_discount_cents?: number
   // Wallet payment
   wallet_amount_cents?: number
+  /**
+   * The part of the bill that is a tip, in cents — written to Order.tipCents
+   * in the same insert as the total. It is already inside
+   * payment.amountCents (never added on top); ingestOrder refuses a tip
+   * larger than that. Optional; absent means no tip.
+   */
+  tip_cents?: number
   /** How the order leaves the kitchen. Inferred from table_id when absent. */
   fulfilment_type?: 'dine_in' | 'takeout' | 'delivery'
 }

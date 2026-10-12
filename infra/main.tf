@@ -36,10 +36,13 @@ variable "ses_smtp_password"  { sensitive = true, default = "" }
 # Leave empty to skip email subscription (useful in staging).
 variable "alert_email" { default = "" }
 
-# FBR PRAL Electronic POS credentials (SRO 1307(I)/2022 compliance).
-# Required for any concept registered with FBR as a Tier-1 business.
-variable "fbr_username" { sensitive = true, default = "" }
-variable "fbr_password" { sensitive = true, default = "" }
+# Encryption key for stored integration secrets (POS connector API keys and
+# webhook secrets, the WhatsApp gateway key) — env SERVD_SECRET_KEY, base64 of
+# 32 random bytes (`openssl rand -base64 32`). Optional so a plan without it
+# still applies, but connector / WhatsApp keys cannot be saved until it is set.
+# FBR / SRB credentials are gone: the external fiscal POS is the only filer,
+# configured per company in admin → Dev → API → POS connector.
+variable "servd_secret_key" { sensitive = true, default = "" }
 
 variable "api_image_tag"        { default = "latest" }
 variable "web_image_tag"        { default = "latest" }
@@ -486,20 +489,11 @@ resource "aws_ssm_parameter" "careem_webhook_secret" {
   overwrite = true
 }
 
-resource "aws_ssm_parameter" "fbr_username" {
-  count     = var.fbr_username == "" ? 0 : 1
-  name      = "/${var.app_name}/FBR_USERNAME"
+resource "aws_ssm_parameter" "servd_secret_key" {
+  count     = var.servd_secret_key == "" ? 0 : 1
+  name      = "/${var.app_name}/SERVD_SECRET_KEY"
   type      = "SecureString"
-  value     = var.fbr_username
-  key_id    = aws_kms_key.data.arn
-  overwrite = true
-}
-
-resource "aws_ssm_parameter" "fbr_password" {
-  count     = var.fbr_password == "" ? 0 : 1
-  name      = "/${var.app_name}/FBR_PASSWORD"
-  type      = "SecureString"
-  value     = var.fbr_password
+  value     = var.servd_secret_key
   key_id    = aws_kms_key.data.arn
   overwrite = true
 }
@@ -696,8 +690,7 @@ locals {
     var.keenu_webhook_secret == "" ? [] : [{ name = "KEENU_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.keenu_webhook_secret[0].arn }],
     var.foodpanda_webhook_secret == "" ? [] : [{ name = "FOODPANDA_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.foodpanda_webhook_secret[0].arn }],
     var.careem_webhook_secret == "" ? [] : [{ name = "CAREEM_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.careem_webhook_secret[0].arn }],
-    var.fbr_username == "" ? [] : [{ name = "FBR_USERNAME", valueFrom = aws_ssm_parameter.fbr_username[0].arn }],
-    var.fbr_password == "" ? [] : [{ name = "FBR_PASSWORD", valueFrom = aws_ssm_parameter.fbr_password[0].arn }],
+    var.servd_secret_key == "" ? [] : [{ name = "SERVD_SECRET_KEY", valueFrom = aws_ssm_parameter.servd_secret_key[0].arn }],
   )
 }
 
@@ -1067,7 +1060,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_api_memory" {
 }
 
 # Log-based ERROR metric — catches application-level errors that don't surface
-# as HTTP 5xx (e.g. FBR compliance failures, BullMQ worker panics).
+# as HTTP 5xx (e.g. unhandled route errors, BullMQ worker panics).
 resource "aws_cloudwatch_log_metric_filter" "api_errors" {
   name           = "${var.app_name}-api-error-count"
   log_group_name = aws_cloudwatch_log_group.api.name

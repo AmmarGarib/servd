@@ -1,7 +1,9 @@
 # tax
 
-Configuration sub-page: **Tax**. One of the tiles surfaced from the Configuration Hub at `/configuration`. Edits here change platform-wide settings for this concern.
+Redirect only: `/configuration/tax` → `/connectors/pos` (Dev → API → POS connector).
+
+FBR / SRB filing goes through the external fiscal POS via the POS connector, and the brand POS ids are edited on that page. Cash / card GST rates are per brand in Marketing → Brands → Tax registration.
 
 ## Files
 
-- `page.tsx` — Next.js page component (server or client)
+- `page.tsx` — server redirect

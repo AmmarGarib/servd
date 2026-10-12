@@ -49,10 +49,10 @@ ses_smtp_password = "REPLACE-ME-SES-SMTP-PASSWORD"
 # Leave empty to disable email alerts (SNS topic is always created).
 alert_email = "ops@servd.pk"
 
-# ── FBR PRAL Electronic POS (SRO 1307(I)/2022) ───────────────────────────────
-# Required if any concept is registered as a Tier-1 business with FBR.
-# Obtain from PRAL portal (https://esp.pral.com.pk) after POS registration.
-# Leave empty if FBR integration is not yet activated — the worker will skip
-# all orders gracefully (no fbrPosId set on concept = no submission).
-fbr_username = "REPLACE-ME-FBR-NTN-USERNAME"
-fbr_password  = "REPLACE-ME-FBR-PRAL-PASSWORD"
+# ── Secrets at rest ──────────────────────────────────────────────────────────
+# Encrypts stored integration secrets (POS connector keys, WhatsApp key).
+# Generate with `openssl rand -base64 32`; keep it outside the repo. Leave it
+# empty and connector / WhatsApp keys cannot be saved (503 SECRET_KEY_MISSING).
+# There are no FBR / SRB credentials: the external fiscal POS files, set up per
+# company in admin → Dev → API → POS connector.
+servd_secret_key = "REPLACE-ME-BASE64-32-BYTES"
