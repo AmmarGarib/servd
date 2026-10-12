@@ -31,7 +31,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   // The rider top bar (--servd-purple). Browser chrome takes a literal colour,
   // not a CSS variable.
-  themeColor: '#5a2156',
+  themeColor: '#6a0dad',
   colorScheme: 'light',
   width: 'device-width',
   initialScale: 1,

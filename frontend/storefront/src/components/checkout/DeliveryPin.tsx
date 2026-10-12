@@ -44,7 +44,7 @@ const PIN_ZOOM = 16
 const PIN_SVG =
   '<svg width="30" height="40" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
   '<path d="M15 1C7.3 1 1 7.2 1 14.9 1 25.3 15 39 15 39s14-13.7 14-24.1C29 7.2 22.7 1 15 1z" ' +
-  'fill="var(--servd-purple, #5a2156)" stroke="var(--servd-on-purple, #f3e7cd)" stroke-width="2"/>' +
+  'fill="var(--servd-purple, #6a0dad)" stroke="var(--servd-on-purple, #ffffff)" stroke-width="2"/>' +
   '<circle cx="15" cy="15" r="5.5" fill="var(--servd-green, #87c540)"/>' +
   '</svg>'
 

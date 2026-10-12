@@ -20,15 +20,15 @@ export default function OpengraphImage() {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'linear-gradient(135deg, #3f1640 0%, #5a2156 100%)',
+          background: 'linear-gradient(135deg, #3b0764 0%, #6a0dad 100%)',
           fontFamily: 'sans-serif',
         }}
       >
-        <div style={{ display: 'flex', fontSize: 200, fontWeight: 800, letterSpacing: '-8px', color: '#f3e7cd' }}>
+        <div style={{ display: 'flex', fontSize: 200, fontWeight: 800, letterSpacing: '-8px', color: '#ffffff' }}>
           <span>servd</span>
           <span style={{ color: '#87c540' }}>.</span>
         </div>
-        <div style={{ display: 'flex', fontSize: 46, color: 'rgba(243,231,205,0.85)', marginTop: 12 }}>
+        <div style={{ display: 'flex', fontSize: 46, color: 'rgba(255,255,255,0.85)', marginTop: 12 }}>
           every kitchen, one place
         </div>
       </div>

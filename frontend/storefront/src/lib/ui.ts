@@ -21,9 +21,9 @@ export function hexToRgb(hex: string): [number, number, number] {
 }
 
 export function deriveColors(primary: string | null) {
-  const [r, g, b] = hexToRgb(primary ?? '#5a2156')
+  const [r, g, b] = hexToRgb(primary ?? '#6a0dad')
   return {
-    mid:   primary ?? '#5a2156',
+    mid:   primary ?? '#6a0dad',
     dark:  `rgb(${Math.max(0, r - 90)}, ${Math.max(0, g - 90)}, ${Math.max(0, b - 90)})`,
     light: `rgb(${Math.min(255, r + 50)}, ${Math.min(255, g + 50)}, ${Math.min(255, b + 50)})`,
   }

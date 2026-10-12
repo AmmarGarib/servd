@@ -63,11 +63,14 @@ rewritten, trust these corrections:
 - **Storefront visual migration is DONE**, not "in progress." The legacy
   "premium" system (`#00D4B1` teal → `#6366F1` indigo, `#18160f` ink,
   `PremiumInput`) is fully removed from `frontend/storefront/src`. The whole
-  storefront is on `--servd-*` tokens. **servd storefront colours (owner,
-  2026-10-05): bone `#f3e7cd` background, green `#87c540` primary, purple
-  `#5a2156` secondary (bands, purple buttons; deep shade `#3f1640`) and
-  `#3d1f3b` as the ink/text colour.** Text on green is purple (never white);
-  green as text on bone is `#4f7a1c`. Legacy token names stay
+  storefront is on `--servd-*` tokens. **servd.pk colours (owner,
+  2026-10-12, same as the ERP): white `#ffffff` background, green `#87c540`
+  primary (Order buttons), deep vibrant purple `#6a0dad` secondary (bands,
+  purple buttons; deep shade `#3b0764`), ink `#261038`, lavender `#f3eefa`
+  surface.** Text on green is deep purple (never white); green as text on
+  white is `#4f7a1c`. Brand pages and brand ordering skins pin the previous
+  bone/plum values (`.servd-brand-scope` in the /brand/<slug> layout and the
+  `*-ordering` skins in globals.css) so brands never change. Legacy token names stay
   (`--servd-green` holds the primary). The brand microsites keep their own
   palettes: the servd ERP and servd.pk colours are NEVER applied to a brand
   (owner, 2026-10-12: "Only on servd erp and servds storefront. Brands remain

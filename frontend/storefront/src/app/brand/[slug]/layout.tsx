@@ -44,14 +44,19 @@ export default async function BrandLayout({
   // Hand ManagedPage the brands we already have (it falls back itself when
   // the list is empty).
   const known = live.length ? { concepts: live } : {}
+  // .servd-brand-scope (display:contents — layout-neutral) pins the servd
+  // tokens a brand page inherits to their pre-2026-10-12 values, so servd.pk's
+  // purple / white never reaches a brand (globals.css).
   return (
-    <BrandShell
-      concept={themed}
-      header={<ManagedPage slug={`brand:${slug}:header`} {...known} />}
-      footer={<ManagedPage slug={`brand:${slug}:footer`} {...known} />}
-    >
-      {children}
-    </BrandShell>
+    <div className="servd-brand-scope" style={{ display: 'contents' }}>
+      <BrandShell
+        concept={themed}
+        header={<ManagedPage slug={`brand:${slug}:header`} {...known} />}
+        footer={<ManagedPage slug={`brand:${slug}:footer`} {...known} />}
+      >
+        {children}
+      </BrandShell>
+    </div>
   )
 }
 

@@ -19,8 +19,8 @@
        --servd-on-green    text/icons ON --servd-green — purple, NEVER white
        --servd-green-dark  green used as TEXT on bone (#4f7a1c) — the light
                            green fails contrast as text; also focus rings
-       --servd-purple      secondary (#5a2156) — secondary buttons, dark bands
-       --servd-on-purple   text ON purple — bone
+       --servd-purple      secondary (#6a0dad) — secondary buttons, dark bands
+       --servd-on-purple   text ON purple — white
        --servd-ink         body text — purple
      Contrast rules: text on green is purple; green text on bone is the dark
      #4f7a1c; secondary buttons are purple with bone text.
@@ -31,16 +31,20 @@
   --servd-green-dark:   #4f7a1c;  /* text-safe green on bone; focus rings */
   --servd-green-soft:   #e2edc8;  /* soft green tint for chips, success cards */
   --servd-green-ink:    #3a5c12;  /* deep green, text on --servd-green-soft */
-  --servd-on-green:     #3d1f3b;  /* text on --servd-green (purple, never white) */
-  --servd-purple:       #5a2156;  /* secondary — secondary buttons, dark bands (A, owner 2026-10-06) */
-  --servd-on-purple:    #f3e7cd;  /* text on purple (bone) */
-  --servd-black:        #3f1640;  /* deepest purple — dark surfaces, purple hover */
-  --servd-ink:          #3d1f3b;  /* body text — purple */
-  --servd-mute:         #705764;  /* secondary text — purple over bone, ~5:1 */
-  --servd-dim:          #a3909e;  /* placeholders, separators */
-  --servd-line:         rgba(61,31,59,0.14);
-  --servd-bg:           #f3e7cd;  /* bone — main background */
-  --servd-surface:      #ece0c3;  /* deeper bone — panels, hover wells */
+  /* servd.pk palette (owner, 2026-10-12): the ERP's deep vibrant purple on
+     white with the servd green — servd's own pages ONLY. Brand pages keep
+     their own look: .servd-brand-scope (the /brand/<slug> layout) and the
+     brand ordering skins pin the previous values below. */
+  --servd-on-green:     #3b0764;  /* text on --servd-green (deep purple, never white) */
+  --servd-purple:       #6a0dad;  /* deep vibrant purple — secondary buttons, dark bands */
+  --servd-on-purple:    #ffffff;  /* text on purple */
+  --servd-black:        #3b0764;  /* deepest purple — dark surfaces, purple hover */
+  --servd-ink:          #261038;  /* body text */
+  --servd-mute:         #6b5b7c;  /* secondary text, ~6:1 on white */
+  --servd-dim:          #a497b4;  /* placeholders, separators */
+  --servd-line:         rgba(38,16,56,0.12);
+  --servd-bg:           #ffffff;  /* white — main background */
+  --servd-surface:      #f3eefa;  /* lavender — panels, hover wells */
   --servd-danger:       #b42318;  /* semantic error / destructive */
   /* Per-brand accents — exposed as CSS vars so the kinetic components
      (shapes, buttons, headlines) can pull whichever accent the page sets
@@ -178,6 +182,31 @@ summary:focus-visible {
 /* simmer — night-mode editorial. Bone surface, forest ink, orange signal,
    Amarante display + Times body. Per the simmer-brand SKILL.md: single
    orange signal per viewport, no white, no gradients, no emojis. */
+/* Brands keep their own look (owner, 2026-10-12: "Brands remain as they
+   are"). servd.pk moved to purple / white; brand pages and brand ordering
+   skins pin the servd tokens they inherit to the previous values so nothing
+   on a brand changes. The skins below still override ink / line / surface /
+   green with their own brand colours. */
+.servd-brand-scope {
+  --servd-on-green:    #3d1f3b;
+  --servd-purple:      #5a2156;
+  --servd-on-purple:   #f3e7cd;
+  --servd-black:       #3f1640;
+  --servd-ink:         #3d1f3b;
+  --servd-mute:        #705764;
+  --servd-dim:         #a3909e;
+  --servd-line:        rgba(61,31,59,0.14);
+  --servd-bg:          #f3e7cd;
+  --servd-surface:     #ece0c3;
+}
+.simmer-ordering, .stackd-ordering, .flipd-ordering {
+  --servd-purple:      #5a2156;
+  --servd-on-purple:   #f3e7cd;
+  --servd-black:       #3f1640;
+  --servd-dim:         #a3909e;
+  --servd-bg:          #f3e7cd;
+}
+
 .simmer-ordering {
   /* token remap — touches everything the checkout already styles
      through CSS vars (text, accents, borders, surfaces, CTAs) */
