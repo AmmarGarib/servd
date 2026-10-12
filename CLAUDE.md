@@ -628,6 +628,48 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   signup, staff code sign-in, reset and 2FA codes stop. After any such
   rollback re-enter the key in the old `/configuration/whatsapp` screen.
 
+### Round 5 rules (2026-10-12, after Monday onboarding)
+
+- **One order reference everywhere:** the LAST 8 characters of the order id,
+  uppercased — `orderRefOf` in `backend/src/lib/orderRef.ts` (admin and
+  tablet keep the same rule in their own `lib/orderRef.ts`). Receipts,
+  pre-bills, staff screens, ledger memos, customer/rider messages all use it.
+  Never `id.slice(0, 8)` for an order. Ledger lookups match the FULL order id
+  in memos, never the short reference.
+- **One managers list in the admin:** `lib/roles.ts` (server copy sent as
+  `roles.managers` from `GET /permissions/role-modules`). Don't keep a local
+  role list in a page. Override approvers (`useIsManager`) are a different list.
+- **Tip pools are company data:** `TipPool.tenantId` decides scope, ledger
+  postings and flags — never the operator's company. Members are a login
+  (`userId`) OR an HR employee with no login (`employeeId`), exactly one
+  (CHECK); per-pool uniqueness is two partial unique indexes in SQL that
+  Prisma can't express — don't re-declare them in schema.prisma.
+- **Tax invoices are per company:** `TaxInvoice.tenantId`, unique
+  `(tenantId, invoiceNumber)`, numbered per (company, prefix, Karachi year,
+  invoice/credit note) from `tax_invoice_series` under an advisory lock.
+  `invoice_counters` is no longer read.
+- **Alert kinds:** tip-pool outliers are `tip_pool_outlier`, CapEx overruns
+  `capex_over_budget` — `high_value_void` is for voids only.
+- **SMTP password at rest** goes through `lib/secretBox.ts` like the WhatsApp
+  key (encrypted when `SERVD_SECRET_KEY` is set, plain otherwise — saving is
+  never blocked; `/health` `smtpPassAtRest`). Same rollback caveat: after
+  rolling back below this release, re-enter the SMTP password.
+- **Card refunds on a cancelled ticket** may go back on the card machine, capped
+  at what the ticket still owes back (in-flight machine refunds counted),
+  booked as the LEDGER-R5 hand-back, never a sale refund and never a fiscal
+  document sent to the POS.
+- **WhatsApp ordering (owner, 2026-10-12):** one shared GS Foods number; a
+  conversation starts with a BRAND MENU across companies (brands that are
+  active, not deleted, storefront-visible, open now and have a priced dish —
+  `LIVE_BRAND` + `orderingState`); one open brand skips the menu; a cart never
+  mixes brands; the order lands in the chosen brand's company at its cash GST;
+  no loyalty/wallet/promo redemption on WhatsApp. Typed replies (numbers or
+  titles) work for the text-only gateway. `WHATSAPP_DEFAULT_CONCEPT` is
+  optional (listed first / fallback). Contract: `backend/src/adapters/whatsapp/README.md`.
+- **Money inputs above INT4** (PKR 21,474,836.47) answer 422
+  `AMOUNT_TOO_LARGE` on POs, bills, supplier payments, receiving and manual
+  journals until the BigInt migration lands.
+
 ## Claude Code operating policy — model routing & parallel agents
 
 Per the product owner (2026-09-27): optimize for **speed AND efficiency
