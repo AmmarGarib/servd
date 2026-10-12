@@ -160,7 +160,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
   gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: '🎁' }],
-  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️' }],
+  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️', hint: 'Shift closes, bank statements and Raast QR receipts (provisional until the statement matches)' }],
   voided_prebills: [{ label: 'Voided pre bills', href: '/finance/voided-pre-bills', hint: 'Every pre-bill printed — flagged when it never became a full & final bill or the final bill came out lower' }],
   exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: '🚨' }],
   capital:        [
@@ -236,7 +236,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'WhatsApp connector', href: '/connectors/whatsapp', hint: "Hasham's gateway — OTPs, staff codes, order messages" },
     { label: 'Email', href: '/configuration/email', sub: true, hint: 'SMTP — the backup channel for codes and resets' },
   ],
-  api_pos:        [{ label: 'POS connector', href: '/connectors/pos', hint: 'Fiscal POS (FBR / SRB) and card machine' }],
+  api_pos:        [{ label: 'POS connector', href: '/connectors/pos', hint: 'Fiscal POS (FBR / SRB), card machine and Raast QR bank alerts' }],
   integrations:   [
     { label: 'Integrations', href: '/settings/integrations', icon: '🔌', hint: 'Meta, webhooks, supplier portal' },
     { label: 'Webhooks', href: '/configuration/webhooks', sub: true },
@@ -271,7 +271,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion; till sales book COGS per brand at shift close. One price per item across channels; no combos.',
   procurement: 'One PO system, one receiving path (stock and moving-average cost in one transaction) and one AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
   food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company. No inspection export, no overdue reminders, not yet per outlet in the UI.',
-  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. Petty-cash spends that pay no supplier bill still post nothing.',
+  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it. Petty-cash spends that pay no supplier bill still post nothing.',
   accounting: 'One ledger feed, one period-lock path (reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Receivables have no credit notes, statements or on-account tender. Depreciation is charged by pressing "Charge month". The Sales quadrants page reads data.items from a bare array, so it shows nothing.',
   finance_pl: 'From the ledger. Shared cost reaches a brand only through allocation runs; the rest is one head-office line (decision 22).',
   capital: 'A paid CapEx instalment posts as a supplier advance; a delivered item is capitalised onto the fixed-asset register. Old capital-ledger rows are read-only history.',
@@ -282,7 +282,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   staff_hr: 'HR is the person master; each company can replace its forms in /hr/formats. Leave counts calendar days (weekly offs and holidays are not skipped); file fields take a link, not an upload.',
   staff_directory: 'A login is access only; one login can be linked to an employee in each company. Team leads add logins for their own roles from My team, and the CEO approves each one.',
   scheduling: 'Generated from the HR roster and approved swaps; managers store only one-off changes. Costed from HR salaries.',
-  api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet.',
+  api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet. Raast QR bank-SMS matching is off per company until the CEO switches it on; servd never logs in to internet banking.',
   integrations: 'No backup or data export screen. Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport. Meta tokens are global settings, so every company shares one Facebook page.',
   audit_log: 'Sign-ins (success, failure, OTP, 2FA, sign-out) are audited alongside account, access and on-shift actions, per company.',
 }

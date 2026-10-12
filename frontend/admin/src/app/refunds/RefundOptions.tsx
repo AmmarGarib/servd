@@ -4,6 +4,12 @@
 // managers), and with the evidence photo when the company's refund policy
 // asks for one. Shared by /refunds and the order page, so both offer exactly
 // the same choices. Admin colour tokens only.
+//
+// Raast QR: the money is sent back from the bank FIRST; the refund then
+// records that outgoing transfer's reference (required) and a manager always
+// approves it. "Same as paid" is not offered when the order took Raast and
+// another tender — the refund must say which, so the reference is never
+// missing.
 
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -13,7 +19,7 @@ import { useIsManager } from '../../components/pos/managerRole'
 import { usePosStore } from '../../store/pos'
 import type { TerminalChargeView } from '../../components/pos/tillApi'
 import {
-  TENDER_LABEL, fiscalRefundText, refundErrorMessage, refundOnCardMachine, refundTendersOf, refundThroughEngine,
+  TENDER_LABEL, fiscalRefundText, raastRefundRefProblem, refundErrorMessage, refundOnCardMachine, refundTendersOf, refundThroughEngine,
   terminalPaymentFor, terminalRefundText, uploadEvidencePhoto,
   type RefundPayment, type RefundResult, type RefundTender,
 } from './refundEngine'
@@ -24,6 +30,8 @@ export interface RefundChoice {
   /** Card refund through the card machine (the payment was taken on it). */
   viaMachine: boolean
   photoUrl: string | null
+  /** Raast QR: the reference of the transfer already sent back from the bank. */
+  raastRef?: string
 }
 
 interface RefundPolicyView { requirePhotoEvidence?: boolean; requireReason?: boolean }
@@ -40,7 +48,8 @@ export function useRefundPolicy() {
 /** The default choice for an order: its only tender, on the machine when the card was taken there. */
 export function defaultRefundChoice(payments: RefundPayment[], source?: string | null): RefundChoice {
   const tenders = refundTendersOf(payments, source)
-  const only = tenders.length === 1 ? tenders[0]! : ''
+  // With Raast among several tenders the refund names its tender (first listed: cash / card before Raast).
+  const only = tenders.length === 1 || (tenders.length > 1 && tenders.includes('raast')) ? tenders[0]! : ''
   return { method: only, viaMachine: only === 'card' && payments.some((p) => p.gateway === 'card_terminal' && p.status === 'paid'), photoUrl: null }
 }
 
@@ -60,9 +69,10 @@ export function RefundOptions({ payments, source, amountCents, value, onChange, 
   const [photoError, setPhotoError] = useState<string | null>(null)
 
   // Keep the choice valid for this order (an order switch, a tender list change).
+  const sameAsPaidOk = tenders.length > 1 && !tenders.includes('raast')
   useEffect(() => {
     if (value.method && !tenders.includes(value.method)) onChange(defaultRefundChoice(payments, source))
-    else if (!value.method && tenders.length === 1) onChange({ ...value, method: tenders[0]! })
+    else if (!value.method && (tenders.length === 1 || (tenders.length > 1 && !sameAsPaidOk))) onChange({ ...value, method: tenders[0]! })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenders.join(',')])
 
@@ -108,11 +118,34 @@ export function RefundOptions({ payments, source, amountCents, value, onChange, 
               onChange({ ...value, method: m, viaMachine: isManager && m === 'card' && payments.some((p) => p.gateway === 'card_terminal' && p.status === 'paid') })
             }}
             className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text">
-            {tenders.length > 1 && <option value="">Same as paid</option>}
+            {sameAsPaidOk && <option value="">Same as paid</option>}
             {tenders.map((t) => <option key={t} value={t}>{TENDER_LABEL[t]}</option>)}
           </select>
         )}
       </div>
+
+      {value.method === 'raast' && (
+        <div className="space-y-1.5 rounded-lg border border-s-amber/40 bg-s-amber-dim p-2.5">
+          <p className="text-xs text-s-text">
+            Send the money back to the customer from the company&rsquo;s bank (internet banking or the merchant app) first. Then type that
+            outgoing transfer&rsquo;s reference here — servd records the refund against the bank account that received the payment.
+          </p>
+          <label htmlFor={`${idPrefix}-raast-ref`} className="text-xs font-semibold text-s-muted block">Outgoing transfer reference (required)</label>
+          <input id={`${idPrefix}-raast-ref`} value={value.raastRef ?? ''} autoComplete="off" spellCheck={false}
+            onChange={(e) => onChange({ ...value, raastRef: e.target.value })}
+            placeholder="e.g. the transaction ID from the bank"
+            className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text font-mono uppercase" />
+          {(value.raastRef ?? '').trim() !== '' && raastRefundRefProblem(value.raastRef ?? '') && (
+            <p className="text-xs text-s-red">{raastRefundRefProblem(value.raastRef ?? '')}</p>
+          )}
+          <p className="text-[11px] text-s-muted">
+            {isManager ? 'A manager approves every Raast refund — that is you.' : 'A manager approves every Raast refund — you will be asked for a manager’s PIN.'}
+          </p>
+        </div>
+      )}
+      {value.method === 'keenu_qr' && (
+        <p className="text-xs text-s-muted">Keenu QR is retired — this older sale is refunded the way it was paid: send it back through Keenu first, servd records it here.</p>
+      )}
 
       {machineAny && (
         isManager ? (
@@ -157,6 +190,9 @@ export function refundChoiceReady(payments: RefundPayment[], choice: RefundChoic
   const tenders = refundTendersOf(payments, source)
   if (tenders.length === 0) return false
   if (needsPhoto && !choice.photoUrl) return false
+  // A Raast refund names its tender and carries the outgoing transfer's reference.
+  if (!choice.method && tenders.includes('raast') && tenders.length > 1) return false
+  if ((choice.method === 'raast' || (!choice.method && tenders.length === 1 && tenders[0] === 'raast')) && raastRefundRefProblem(choice.raastRef ?? '')) return false
   return true
 }
 
@@ -190,6 +226,7 @@ export async function performRefund(
     reason: input.reason,
     ...(choice.method && { method: choice.method }),
     ...(choice.photoUrl && { photoUrl: choice.photoUrl }),
+    ...(choice.method === 'raast' && choice.raastRef && { gatewayRef: choice.raastRef.trim() }),
   })
   return { kind: 'engine', result }
 }

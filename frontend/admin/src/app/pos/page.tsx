@@ -1,11 +1,13 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
 import { PosCart } from '../../components/pos/PosCart'
 import { PaymentModal } from '../../components/pos/PaymentModal'
 import { OpenTickets } from '../../components/pos/OpenTickets'
+import { RaastAlerts } from '../../components/pos/RaastAlerts'
+import { useIsManager } from '../../components/pos/managerRole'
 import { useOpenTickets, type TillBrand, type TillOrder } from '../../components/pos/tillApi'
 import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
 import Link from 'next/link'
@@ -82,6 +84,11 @@ export default function PosPage() {
 
   const openTickets = useOpenTickets(conceptId || null)
   const ticketCount = openTickets.data?.length ?? 0
+  // Raast QR bank alerts (transfers no bill claimed on its own): managers
+  // approve "Not a sale" / "Fix a typed reference" with their own session.
+  const isManager = useIsManager()
+  const refetchTickets = openTickets.refetch
+  const onRaastBillPaid = useCallback(() => { void refetchTickets() }, [refetchTickets])
 
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ['menu', conceptId],
@@ -196,11 +203,21 @@ export default function PosPage() {
               {c.name}
             </button>
           ))}
+          {/* Raast QR: bank transfers no bill claimed on its own (shown only when there are some) */}
+          <div className="ml-auto flex shrink-0 items-center">
+            <RaastAlerts
+              shiftId={shiftId}
+              brand={activeConcept}
+              tickets={openTickets.data ?? []}
+              isManager={isManager}
+              onBillPaid={onRaastBillPaid}
+            />
+          </div>
           {/* FOH-20: tables a waiter sent, paid here in one go */}
           <button
             onClick={() => setShowTickets(true)}
             disabled={!conceptId}
-            className="ml-auto flex shrink-0 items-center gap-2 rounded-lg border border-kds-border px-3 py-1 text-sm font-semibold text-kds-text hover:border-kds-green disabled:opacity-30"
+            className="flex shrink-0 items-center gap-2 rounded-lg border border-kds-border px-3 py-1 text-sm font-semibold text-kds-text hover:border-kds-green disabled:opacity-30"
           >
             Open tickets
             {ticketCount > 0 && (

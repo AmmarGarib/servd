@@ -10,6 +10,14 @@
 // /pos/terminal/refunds (managers), then the server books the refund through
 // the same refundOrder once the machine approves. Policy (reason, photo,
 // caps) is checked before the machine moves any money.
+//
+// Raast QR (2026-10-12): a Raast sale is refunded by Raast — the money is SENT
+// BACK FROM THE BANK FIRST, then recorded here with that outgoing transfer's
+// reference (`gatewayRef`, required: 400 RAAST_REFUND_REF_REQUIRED). A manager
+// always approves a Raast refund (403 MANAGER_OVERRIDE_REQUIRED for anyone
+// else → the PIN prompt below). The ledger credits the receiving bank account,
+// never 1030. Keenu QR is retired: an OLD keenu_qr sale is still refunded by
+// keenu_qr exactly as before.
 import { api, ApiError } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 import {
@@ -18,7 +26,7 @@ import {
 } from '../../components/pos/tillApi'
 import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../components/pos/pinErrors'
 
-export type RefundTender = 'cash' | 'card' | 'keenu_qr'
+export type RefundTender = 'cash' | 'card' | 'raast' | 'keenu_qr'
 
 export interface RefundRequest {
   amountCents: number
@@ -27,6 +35,8 @@ export interface RefundRequest {
   shiftId?: string
   /** Required when the company's refund policy asks for photo evidence. */
   photoUrl?: string
+  /** Raast QR: the reference of the transfer already sent back from the bank. */
+  gatewayRef?: string
 }
 
 export interface RefundResult {
@@ -57,6 +67,7 @@ export async function refundThroughEngine(orderId: string, req: RefundRequest): 
         ...(req.method && { method: req.method }),
         ...(req.shiftId && { shiftId: req.shiftId }),
         ...(req.photoUrl && { photoUrl: req.photoUrl }),
+        ...(req.gatewayRef && { gatewayRef: req.gatewayRef }),
         ...(pin && { managerOverridePin: pin }),
       })
     } catch (err) {
@@ -68,7 +79,9 @@ export async function refundThroughEngine(orderId: string, req: RefundRequest): 
       const entered = window.prompt(
         err.code === 'INVALID_MANAGER_PIN'
           ? 'That PIN is not right. Manager PIN:'
-          : 'This refund is above your limit. Manager PIN:',
+          : req.method === 'raast'
+            ? 'A manager approves every Raast refund. Manager PIN:'
+            : 'This refund is above your limit. Manager PIN:',
       )
       if (!entered) throw err
       pin = entered.trim()
@@ -86,18 +99,21 @@ export interface RefundPayment {
   gateway?: string | null
 }
 
-const TILL_TENDERS: readonly RefundTender[] = ['cash', 'card', 'keenu_qr']
+/** The server's REFUND_TENDERS (backend lib/tenders.ts): the way a sale was paid, incl. the retired Keenu QR's old rows. */
+const REFUND_TENDERS: readonly RefundTender[] = ['cash', 'card', 'raast', 'keenu_qr']
+/** The server's PENDING_GATEWAY_TENDERS: pending rows a processor may still confirm — never Raast. */
 const DIGITAL_TENDERS: readonly string[] = ['card', 'keenu_qr']
 
 /**
  * The payment rows a refund may go back on — the server's refundableOf
- * (backend pos/service.ts): the paid receipts (cash / card / Keenu QR,
- * positive amounts); when there are none, a completed ONLINE order (source
- * not 'pos') whose card / QR row the gateway never confirmed counts its
- * pending card / QR rows. A till order with nothing paid has nothing to refund.
+ * (backend pos/service.ts): the paid receipts (cash / card / Raast QR / the
+ * retired Keenu QR, positive amounts); when there are none, a completed ONLINE
+ * order (source not 'pos') whose card / QR row the gateway never confirmed
+ * counts its pending card / QR rows. A till order with nothing paid has
+ * nothing to refund.
  */
 export function refundBaseOf(payments: RefundPayment[], source?: string | null): RefundPayment[] {
-  const receipts = payments.filter((p) => p.status === 'paid' && p.amountCents > 0 && (TILL_TENDERS as readonly string[]).includes(p.method))
+  const receipts = payments.filter((p) => p.status === 'paid' && p.amountCents > 0 && (REFUND_TENDERS as readonly string[]).includes(p.method))
   if (receipts.length > 0) return receipts
   if (source != null && source !== 'pos') {
     return payments.filter((p) => p.status === 'pending' && p.amountCents > 0 && DIGITAL_TENDERS.includes(p.method))
@@ -108,7 +124,7 @@ export function refundBaseOf(payments: RefundPayment[], source?: string | null):
 /** The tenders the order was actually paid with — the only ones a refund may use (the server's rule, refundBaseOf). */
 export function refundTendersOf(payments: RefundPayment[], source?: string | null): RefundTender[] {
   const seen = new Set<RefundTender>(refundBaseOf(payments, source).map((p) => p.method as RefundTender))
-  return TILL_TENDERS.filter((t) => seen.has(t))
+  return REFUND_TENDERS.filter((t) => seen.has(t))
 }
 
 /** The card-machine payment a card refund of `amountCents` goes back on (the largest that covers it), or null. */
@@ -121,8 +137,26 @@ export function terminalPaymentFor(payments: RefundPayment[], amountCents: numbe
 
 export const TENDER_LABEL: Record<RefundTender, string> = {
   cash: 'Cash (from my open drawer)',
-  card: 'Card',
-  keenu_qr: 'Keenu QR',
+  card: 'Card – Keenu',
+  raast: 'Raast QR — send it back from the bank first',
+  keenu_qr: 'Keenu QR (retired)',
+}
+
+/**
+ * Why an outgoing Raast refund reference would be refused (the server's
+ * format rule — normalised, letters/digits, 3+ digits, not one repeated
+ * character; the length is the company rule, checked by the server), or null. A refund reference is not unique: one outgoing
+ * transfer is the bank's, not a sale's.
+ */
+export function raastRefundRefProblem(raw: string): string | null {
+  const ref = raw.trim().toUpperCase().replace(/[\s\-_./#:]+/g, '')
+  if (!ref) return 'Type the reference of the transfer you sent back from the bank.'
+  // Length is the company's own rule (refMinLength / refMaxLength) — the
+  // server checks it (RAAST_REF_INVALID); only rule-independent checks here (UI-4).
+  if (!/^[A-Z0-9]+$/.test(ref)) return 'A bank reference is letters and digits only.'
+  if ((ref.match(/[0-9]/g) ?? []).length < 3) return 'A bank reference has at least 3 digits.'
+  if (/^(.)\1*$/.test(ref)) return 'That is one repeated character, not a bank reference.'
+  return null
 }
 
 // ─── Evidence photo (refund policy: requirePhotoEvidence) ───────────────────
@@ -274,6 +308,18 @@ export function refundErrorMessage(e: unknown): string {
       case 'TERMINAL_NOT_CONFIGURED':
       case 'TERMINAL_NOT_IN_COMPANY':
         return terminalErrorMessage(e)
+      case 'RAAST_REFUND_REF_REQUIRED':
+        return 'A Raast refund is sent back from the bank first — type that outgoing transfer’s reference.'
+      case 'RAAST_REF_INVALID':
+        return e.message || 'That bank reference doesn’t look right — type the reference of the transfer you sent back.'
+      case 'RAAST_REFUND_SPLIT':
+        return e.message || 'That is more than any single Raast payment on this order can take back — refund it in parts, one per Raast payment.'
+      case 'RAAST_ACCOUNT_UNKNOWN':
+        return 'servd cannot tell which bank account received this Raast payment — finance must check it before it is refunded.'
+      case 'KEENU_QR_RETIRED':
+        return 'Keenu QR is retired — refund the sale the way it was paid.'
+      case 'REFUND_METHOD_NOT_TENDERED':
+        return e.message || 'Refund the way the sale was paid.'
     }
     return e.message || e.code
   }

@@ -122,6 +122,13 @@ export interface ReceiptOrder {
   totalCents:    number
   paidCents?:    number
   tenderType?:   string | null
+  /**
+   * The tenders (newer API, backend pos/receipt.ts paymentLabelOf): `label`
+   * is how the tender prints ("Cash", "Card – Keenu", "Raast QR — Ref <ref>",
+   * "Keenu QR (retired)"); `reference` is a Raast transfer's bank reference.
+   * Absent on an older API — the single "Paid (tenderType)" line prints then.
+   */
+  payments?:     Array<{ method: string; amountCents: number; tenderedCents?: number | null; label?: string; reference?: string | null }>
   placedAt:      string
   // Ids returned by the tax authorities, printed as-is.
   fbrInvoiceNo?: string | null
@@ -135,7 +142,11 @@ export interface ReceiptOrder {
   // (positive amounts), newest last.
   status?:        string
   banner?:        'REFUNDED' | 'PARTLY REFUNDED' | 'CANCELLED' | string | null
-  refunds?:       Array<{ method: string; amountCents: number; at: string }>
+  /**
+   * Money handed back. `label` (newer API) is how the tender prints — a Raast
+   * refund carries its outgoing transfer's reference in `reference`.
+   */
+  refunds?:       Array<{ method: string; amountCents: number; at: string; label?: string; reference?: string | null }>
   refundedCents?: number
   /**
    * The sale's fiscal document (POS connector). Absent on an older API — the
@@ -343,12 +354,27 @@ export function buildReceipt(order: ReceiptOrder, opts: ReceiptOptions = {}): Ui
   if (preBill) {
     // The card total under a cash headline (GST is 15% cash / 8% card), and
     // on a part-paid bill what is already paid and what is still owed.
+    // Card and Raast QR are the one digital tax group (card rate). The label
+    // is kept short enough for a 32-column 58 mm roll.
     if (order.cardTotalCents != null && order.cardTotalCents !== order.totalCents) {
-      bytes.push(...totalLine('If paid by card', order.cardTotalCents))
+      bytes.push(...totalLine('If paid by card/Raast', order.cardTotalCents))
     }
     if ((order.paidCents ?? 0) > 0) {
       bytes.push(...totalLine('Paid so far', -(order.paidCents ?? 0)))
       bytes.push(...boldOn, ...totalLine('BALANCE DUE', order.dueCents ?? Math.max(0, order.totalCents - (order.paidCents ?? 0))), ...boldOff)
+    }
+  } else if (order.payments && order.payments.length > 0 && order.payments.every((p) => !!p.label)) {
+    // One line per tender, labelled by the server; a Raast transfer's bank
+    // reference goes on its own line so a long reference never wraps the amount.
+    bytes.push(LF)
+    for (const p of order.payments) {
+      const label = p.label!
+      const base = p.reference ? label.replace(` \u2014 Ref ${p.reference}`, '').replace(` - Ref ${p.reference}`, '') : label
+      bytes.push(...totalLine(base, p.amountCents))
+      if (p.reference) bytes.push(...line(`  Ref ${p.reference}`))
+      if (p.tenderedCents != null && p.tenderedCents > p.amountCents) {
+        bytes.push(...totalLine('  Change', p.tenderedCents - p.amountCents))
+      }
     }
   } else if (order.paidCents !== undefined) {
     bytes.push(LF)
@@ -369,7 +395,9 @@ export function buildReceipt(order: ReceiptOrder, opts: ReceiptOptions = {}): Ui
     bytes.push(...alignLft, ...rule())
     for (const r of refunds) {
       const when = new Date(r.at).toLocaleString('en-PK')
-      bytes.push(...totalLine(`Refund ${r.method.replace(/_/g, ' ')}`, -r.amountCents))
+      const what = r.reference && r.label ? r.label.replace(` \u2014 Ref ${r.reference}`, '') : r.label ?? r.method.replace(/_/g, ' ')
+      bytes.push(...totalLine(`Refund ${what}`, -r.amountCents))
+      if (r.reference) bytes.push(...line(`   Ref ${r.reference}`))
       bytes.push(...line(`   ${when}`))
     }
     const refunded = order.refundedCents ?? refunds.reduce((s, r) => s + r.amountCents, 0)

@@ -446,6 +446,62 @@ export interface Payment {
   amountCents: number
   status: string
   changeCents: number | null
+  /** A Raast QR payment's reconciliation state (GET /orders/:id). */
+  raastReceipt?: RaastReceiptState | null
+}
+
+// ─── Raast QR (2026-10-12) ───────────────────────────────────────────────────
+// A Raast payment completes the sale at the till; its RaastReceipt stays
+// 'provisional' until a bank-statement line shows the money ('matched').
+
+export type RaastReceiptStatus = 'awaiting' | 'provisional' | 'matched' | 'cancelled' | 'unreceived' | 'needs_attention'
+
+export interface RaastReceiptState {
+  status: RaastReceiptStatus
+  bankRef: string | null
+  confirmedVia: 'cashier' | 'sms' | 'bank_api' | null
+  smsConfirmedAt: string | null
+  matchedAt: string | null
+}
+
+/** Plain words for a Raast receipt's state (finance and the order page). */
+export const RAAST_STATUS_LABEL: Record<RaastReceiptStatus, string> = {
+  awaiting: 'Waiting for the transfer',
+  provisional: 'Provisional — not on a bank statement yet',
+  matched: 'Matched to the bank statement',
+  cancelled: 'Cancelled',
+  unreceived: 'Written off — never received',
+  needs_attention: 'Needs attention',
+}
+
+/** Short chip text for a Raast receipt's state. */
+export const RAAST_STATUS_SHORT: Record<RaastReceiptStatus, string> = {
+  awaiting: 'Awaiting',
+  provisional: 'Provisional',
+  matched: 'Matched',
+  cancelled: 'Cancelled',
+  unreceived: 'Not received',
+  needs_attention: 'Needs attention',
+}
+
+/**
+ * Payment-method labels (the server's lib/tenders.ts TENDER_LABEL): tills take
+ * Cash, Card – Keenu and Raast QR; Keenu QR is retired (old rows only).
+ */
+export const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  cash: 'Cash',
+  card: 'Card – Keenu',
+  raast: 'Raast QR',
+  keenu_qr: 'Keenu QR (retired)',
+  comp: 'Comp',
+  split: 'Split',
+  wallet: 'Wallet',
+  gift_card: 'Gift card',
+}
+
+export function paymentMethodLabel(method: string | null | undefined): string {
+  if (!method) return ''
+  return PAYMENT_METHOD_LABEL[method] ?? method.replace(/_/g, ' ')
 }
 
 export interface Shift {
@@ -484,6 +540,12 @@ export interface ZReport {
   refundsCents: number
   cashRefundsCents: number
   byMethod: Array<{ method: string; count: number; amountCents: number }>
+  /** Raast QR takings on this drawer (absent on an API without Raast). */
+  raastSales?: number
+  raastCount?: number
+  /** Of raastSales: not on a bank statement yet / matched to one. */
+  raastProvisionalCents?: number
+  raastMatchedCents?: number
   cashMovements: { drops: number; adds: number; payouts: number; payins: number }
   expectedCashCents: number
   varianceCents: number | null

@@ -8,6 +8,11 @@
 // goes live, switches off, releases held sales and sets whether the company
 // needs fiscal reporting at all. Only full & final bills are filed — a
 // pre-bill never reaches the POS — and no real sale can be skipped.
+//
+// Raast QR tab (2026-10-12): bank-SMS matching for the Raast QR tender —
+// counter phones, bank senders, SMS templates, the tester and the bank SMS
+// log. OFF per company until the CEO switches it on. The receiving bank
+// accounts are finance's (Finance → Bank accounts) and read-only here.
 
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -24,13 +29,15 @@ import { PosIdsTable } from '../../../components/connectors/PosIdsTable'
 import { TerminalSetup } from '../../../components/connectors/TerminalSetup'
 import { FiscalSubmissions } from '../../../components/connectors/FiscalSubmissions'
 import { TerminalCharges } from '../../../components/connectors/TerminalCharges'
+import { RaastSetup } from '../../../components/connectors/RaastSetup'
 
-type Tab = 'status' | 'fiscal' | 'posids' | 'terminal' | 'submissions' | 'charges'
+type Tab = 'status' | 'fiscal' | 'posids' | 'terminal' | 'raast' | 'submissions' | 'charges'
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'status', label: 'Status' },
   { key: 'fiscal', label: 'Fiscal setup' },
   { key: 'posids', label: 'POS IDs' },
   { key: 'terminal', label: 'Card machine' },
+  { key: 'raast', label: 'Raast QR' },
   { key: 'submissions', label: 'Submissions' },
   { key: 'charges', label: 'Card charges' },
 ]
@@ -89,7 +96,7 @@ function PosConnector() {
           {data?.fiscal.isTest && <TestBadge />}
         </div>
         <p className="text-xs text-s-muted mt-1">
-          The fiscal POS that files FBR / SRB, and the card machine — for <strong className="text-s-text">{companyName}</strong>.
+          The fiscal POS that files FBR / SRB, the card machine and Raast QR bank alerts — for <strong className="text-s-text">{companyName}</strong>.
           {portfolio && ' This page (settings, counts, Submissions, Card charges and “needs a person”) shows the ACTIVE company only — switch company to see another company’s outbox.'}
         </p>
         <nav className="mt-3 -mb-4 flex gap-1 overflow-x-auto" aria-label="POS connector sections">
@@ -130,6 +137,15 @@ function PosConnector() {
                 <p>Numbers it returns are not real fiscal invoices. Switch to the vendor&rsquo;s driver before trading.</p>
               </Banner>
             )}
+            {data.raast?.enabled && (data.raast.counts.needsAttention > 0 || data.raast.counts.unparsed24h > 0) && tab !== 'raast' && (
+              <Banner tone="warn" title="Raast QR bank alerts need a look">
+                <p>
+                  {data.raast.counts.needsAttention > 0 && `${data.raast.counts.needsAttention} Raast receipt${data.raast.counts.needsAttention === 1 ? '' : 's'} need attention. `}
+                  {data.raast.counts.unparsed24h > 0 && `${data.raast.counts.unparsed24h} bank SMS in the last 24 hours could not be read — check the templates. `}
+                  <button className="font-semibold underline" onClick={() => go('raast')}>Open Raast QR</button>
+                </p>
+              </Banner>
+            )}
             {data.terminal.enabled && data.terminal.driver === 'test' && (
               <Banner tone="bad" title="TEST card machine is ON at the till — card sales are recorded as paid but no card is charged">
                 <p>The built-in test driver approves charges without any money moving. Switch it off or pick the processor&rsquo;s driver in Card machine before trading.</p>
@@ -143,6 +159,7 @@ function PosConnector() {
             {tab === 'fiscal' && <FiscalSetup data={data} companyName={companyName} canEdit={canEdit} isCeo={isCeo} />}
             {tab === 'posids' && <PosIdsTable data={data} canEdit={canEdit} activeTenantId={company?.id ?? null} />}
             {tab === 'terminal' && <TerminalSetup data={data} canEdit={canEdit} activeTenantId={company?.id ?? null} />}
+            {tab === 'raast' && <RaastSetup companyName={companyName} canEdit={canEdit} isCeo={isCeo} activeTenantId={company?.id ?? null} />}
             {tab === 'submissions' && <FiscalSubmissions key={docOpen.n} data={data} initialStatus={docStatus} initialDay={docOpen.day} canConfigure={canEdit} portfolio={portfolio} />}
             {tab === 'charges' && <TerminalCharges data={data} canConfigure={canEdit} portfolio={portfolio} />}
           </>

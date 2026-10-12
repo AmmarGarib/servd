@@ -17,14 +17,36 @@
 // code — Fastify's "route not found"), the till falls back to the order's
 // stored bill, and only for a tender the server will not re-price (the rate
 // the order was priced at). It never guesses a re-priced figure.
+//
+// Tenders (owner, 2026-10-12): Cash, Card – Keenu and Raast QR. Keenu QR is
+// retired — the server refuses it on every payment (422 KEENU_QR_RETIRED);
+// old keenu_qr rows stay readable. Raast QR is in the digital tax group with
+// card (the card rate), so its quote's `tender` reads 'card'.
 
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
+import { fmtPkr } from '../../lib/money'
+import { orderRef } from '../../lib/orderRef'
 
-export type TillTender = 'cash' | 'card' | 'keenu_qr'
-export const TILL_TENDERS: readonly TillTender[] = ['cash', 'card', 'keenu_qr']
+export type TillTender = 'cash' | 'card' | 'raast'
+export const TILL_TENDERS: readonly TillTender[] = ['cash', 'card', 'raast']
 export function isTillTender(m: string): m is TillTender {
   return (TILL_TENDERS as readonly string[]).includes(m)
+}
+
+/** How a tender reads to people (backend lib/tenders.ts TENDER_LABEL). */
+export const TENDER_LABEL: Readonly<Record<string, string>> = {
+  cash: 'Cash',
+  card: 'Card – Keenu',
+  raast: 'Raast QR',
+  keenu_qr: 'Keenu QR (retired)',
+  comp: 'Comp',
+  split: 'Split',
+  wallet: 'Wallet',
+  gift_card: 'Gift card',
+}
+export function tenderLabel(m: string): string {
+  return TENDER_LABEL[m] ?? m.replace(/_/g, ' ')
 }
 
 /** A brand as the till sees it (GET /concepts, narrow fields for till roles). */
@@ -180,6 +202,7 @@ export async function billFor(order: TillOrder, method: TillTender, brand: TillB
   }
   const stored = storedQuote(order)
   if (stored.paidCents > 0 || order.taxRatePct == null) return { kind: 'stored', quote: stored }
+  // Card and Raast QR share the digital (card) rate.
   const rate = method === 'cash' ? brand?.taxRateCash : brand?.taxRateCard
   if (rate != null && rate === order.taxRatePct) {
     return { kind: 'stored', quote: { ...stored, tender: method === 'cash' ? 'cash' : 'card' } }
@@ -187,8 +210,8 @@ export async function billFor(order: TillOrder, method: TillTender, brand: TillB
   return {
     kind: 'unavailable',
     message: method === 'cash'
-      ? 'This bill was priced for card. The server cannot quote the cash total yet, so take it by card or ask a manager.'
-      : 'This bill was priced for cash. The server cannot quote the card total yet, so take cash, or ring the sale with Card selected.',
+      ? 'This bill was priced for card / Raast. The server cannot quote the cash total yet, so take it by card or Raast QR, or ask a manager.'
+      : 'This bill was priced for cash. The server cannot quote the card / Raast total yet, so take cash, or ring the sale with Card or Raast QR selected.',
   }
 }
 
@@ -270,6 +293,8 @@ export function normaliseRungOrder(r: TillOrder | OfflinePlaceholder): TillOrder
 export function tillErrorMessage(e: unknown, fallback = 'Something went wrong — try again'): string {
   if (e instanceof ApiError) {
     if (e.code === 'VALIDATION_ERROR') return 'The till sent something the server could not accept. Reload the till and try again; if it keeps happening, call a manager.'
+    const raast = raastErrorText(e)
+    if (raast) return raast
     if (e.status === 0 || e.code === 'PORTFOLIO_WRITE_CANCELLED') return e.message
     return e.message || fallback
   }
@@ -787,9 +812,26 @@ export function payOrder(body: {
   tipCents?: number
   /** The card machine is offline / not answering: the reference was keyed from its slip (spec §7.13). */
   manualReason?: 'terminal_offline'
+  /**
+   * Raast QR: the cashier saw the money arrive on the COUNTER phone (bank SMS
+   * / merchant app) — never the customer's screen. Required by the server
+   * with a Raast reference (400 RAAST_NOT_VERIFIED without it).
+   */
+  raastVerified?: true
 }) {
   const { orderId, shiftId, idempotencyKey, ...p } = body
   return api.post<TillPaymentResult>('/pos/payments', { orderId, shiftId, idempotencyKey, payments: [p] })
+}
+
+/** A Raast QR tender's receipt as the payment answers carry it (backend pos/raastTender.ts raastTenderView). */
+export interface RaastTenderView {
+  receiptId: string
+  paymentId?: string | null
+  /** 'provisional' until the bank statement matches it; then 'matched'. */
+  status: RaastReceiptStatus
+  bankRef: string | null
+  confirmedVia: 'cashier' | 'sms' | 'bank_api' | null
+  smsConfirmed: boolean
 }
 
 /** POST /pos/payments (and the comp) answer. `fiscal` is the sale's fiscal document once the API files through the POS connector. */
@@ -797,6 +839,8 @@ export interface TillPaymentResult {
   payments: Array<{ id: string; changeCents: number | null }>
   orderCompleted: boolean
   fiscal?: FiscalView | null
+  /** Raast QR tenders of this submission (present on an API with Raast). */
+  raast?: RaastTenderView[]
 }
 
 // Till sales that are rung but not yet paid. A till sale completes when it is
@@ -851,6 +895,12 @@ export interface DrawerOpenTickets {
 
 /** The Z-report fields the shared ZReport type does not carry yet. */
 export interface ZReportExtras {
+  /** Raast QR takings on this drawer (absent on an API without Raast). */
+  raastSales?: number
+  raastCount?: number
+  /** Of raastSales: not on a bank statement yet / matched to one. */
+  raastProvisionalCents?: number
+  raastMatchedCents?: number
   /** Card / cash tips inside the takings — staff money (2095), not sales. */
   tipsCents?: number
   /** Takings (cash + card) less tips. */
@@ -864,7 +914,7 @@ export interface ZReportExtras {
    * "Refund to card" on each); `cardOwedCents`: the card money on them still
    * owed back. Both absent on an older API.
    */
-  cancelledPaid?: { count: number; cashCents: number; cardCents: number; orderIds?: string[]; cardOwedCents?: number }
+  cancelledPaid?: { count: number; cashCents: number; cardCents: number; raastCents?: number; orderIds?: string[]; cardOwedCents?: number }
   openTickets?: DrawerOpenTickets
   unassignedOpenTickets?: { count: number; totalCents: number }
   /** Takings less refunds (getZReport's netCents / netRevenue). */
@@ -923,9 +973,19 @@ export function varianceWords(varianceCents: number | null | undefined, fmt: (c:
 export function zReportLines(r: ZReportFigures, fmt: (c: number) => string): ZLine[] {
   const lines: ZLine[] = [
     { label: 'Cash takings', value: fmt(r.cashSales), tone: 'text' },
-    { label: 'Card takings', value: fmt(r.cardSales), tone: 'text' },
-    { label: 'Wallet', value: fmt(r.walletSales), tone: 'text' },
+    // Card on the Keenu machine (and old Keenu QR sales, which settle the same way).
+    { label: 'Card takings (Keenu)', value: fmt(r.cardSales), tone: 'text' },
   ]
+  if (r.raastSales !== undefined) {
+    lines.push({ label: `Raast takings${r.raastCount ? ` (${r.raastCount})` : ''}`, value: fmt(r.raastSales), tone: 'text' })
+    const provisional = r.raastProvisionalCents ?? 0
+    if (provisional > 0) {
+      // A Raast receipt is the cashier's word (or the bank SMS) until the bank
+      // statement shows the money — finance matches it.
+      lines.push({ label: 'of which not on a bank statement yet', value: fmt(provisional), tone: 'amber' })
+    }
+  }
+  lines.push({ label: 'Wallet', value: fmt(r.walletSales), tone: 'text' })
   if ((r.giftCardCents ?? 0) > 0) lines.push({ label: 'Gift cards', value: fmt(r.giftCardCents!), tone: 'text' })
   lines.push(
     { label: 'Discounts', value: fmt(r.totalDiscounts), tone: 'amber' },
@@ -938,7 +998,7 @@ export function zReportLines(r: ZReportFigures, fmt: (c: number) => string): ZLi
     lines.push({ label: 'of which tips', value: fmt(tips), tone: 'subtext' })
   }
   const cancelled = r.cancelledPaid
-  const cancelledCents = (cancelled?.cashCents ?? 0) + (cancelled?.cardCents ?? 0)
+  const cancelledCents = (cancelled?.cashCents ?? 0) + (cancelled?.cardCents ?? 0) + (cancelled?.raastCents ?? 0)
   if (cancelled && cancelledCents > 0) {
     lines.push({
       label: `of which on cancelled tickets (${cancelled.count})`,
@@ -996,4 +1056,272 @@ export function closeDrawer<T>(
     ...(opts.notes && { notes: opts.notes }),
     ...(opts.confirmOpenTickets && { confirmOpenTickets: true }),
   })
+}
+
+// ─── Raast QR (spec §6.6 / §8 E; backend modules/connectors/raastPosRoutes.ts) ─
+//
+// Raast QR is an instant bank transfer to the company's receiving account.
+// The cashier checks the money on the COUNTER phone (bank SMS / merchant
+// app) — NEVER the customer's screen or a screenshot — and types the bank
+// reference. The sale completes at the till like card; the receipt is
+// 'provisional' until finance matches it to the bank statement.
+//
+//   SMS matching OFF (default): POST /pos/payments {method 'raast', gatewayRef,
+//     raastVerified: true}.
+//   SMS matching ON: POST /pos/raast/intents puts the bill up for Raast; the
+//     bank SMS settles it by itself, or the cashier confirms by hand.
+
+export type RaastReceiptStatus = 'awaiting' | 'provisional' | 'matched' | 'cancelled' | 'unreceived' | 'needs_attention'
+
+/** The rule every Raast screen repeats (the server sends the same words). */
+export const RAAST_COUNTER_WARNING =
+  'Check the money on the counter phone (bank SMS / merchant app). Never accept the customer’s phone screen or a screenshot — fake payment screens are common.'
+/** S5: the old Keenu QR standees may still be on the counter after the cutover. */
+export const KEENU_QR_CUTOVER_NOTE = 'A payment made to the old Keenu QR is recorded as Card – Keenu.'
+
+/** GET /pos/raast/config — the brand's receiving account at this drawer's company. */
+export interface RaastConfig {
+  available: boolean
+  reason: null | 'NOT_SET_UP'
+  account: { bankName: string | null; accountTitle: string | null; raastId: string | null; last4: string | null } | null
+  /** Bank-SMS matching is on for the company (the CEO switches it on). */
+  smsMatching: boolean
+  intentTtlMin: number
+  refRule: { min: number; max: number }
+  warning: string
+  keenuQrNote?: string
+}
+
+/** An unmatched bank credit from just BEFORE the intent (S1) — never auto-attached. */
+export interface RaastEarlierPayment {
+  alertId: string
+  amountCents: number
+  payer: string | null
+  occurredAt: string | null
+  bankRefLast4: string | null
+}
+
+/** A Raast intent / receipt (GET /pos/raast/intents/:id). */
+export interface RaastIntentView {
+  id: string
+  status: RaastReceiptStatus
+  orderId: string
+  orderRef: string
+  amountCents: number
+  tipCents: number
+  dueCents: number
+  expiresAt: string | null
+  bankRef: string | null
+  confirmedVia: 'cashier' | 'sms' | 'bank_api' | null
+  smsConfirmed: boolean
+  /** A bank SMS is completing it right now. */
+  settling?: boolean
+  attentionReason: string | null
+  cancelReason?: string | null
+  targetPaymentId?: string | null
+  createdAt?: string
+  possibleEarlier?: RaastEarlierPayment[]
+  fiscal: FiscalView | null
+}
+
+/** An open bank alert at the till (GET /pos/raast/alerts). */
+export interface TillRaastAlert {
+  id: string
+  status: 'unmatched' | 'ambiguous' | 'needs_attention' | string
+  amountCents: number
+  bankRef: string | null
+  occurredAt: string | null
+  payer: string | null
+  bankAccount: { name: string; last4: string | null } | null
+  /**
+   * Bills waiting by Raast for this amount (ambiguous). `paymentId` = the
+   * split portion the request settles (absent on an API that does not send it;
+   * then the request is for the whole bill).
+   */
+  candidates: Array<{ receiptId: string; orderId: string; orderRef: string; amountCents: number; createdAt: string; paymentId?: string | null }>
+}
+
+/** Raast intent states in which nothing else may settle the bill. */
+export function raastIntentBlocks(i: Pick<RaastIntentView, 'status'> | null | undefined): boolean {
+  return !!i && i.status === 'awaiting'
+}
+
+/** The server's normalised bank reference (backend connectors/raast/reference.ts normalizeBankRef). */
+export function normalizeRaastRef(raw: string): string {
+  return raw.trim().toUpperCase().replace(/[\s\-_./#:]+/g, '')
+}
+
+/**
+ * Why a typed reference would be refused (the server's own rule, shown before
+ * sending so the cashier fixes it at once), or null. The server re-checks it
+ * and also refuses a reference already used on another bill.
+ */
+export function raastRefProblem(raw: string, rule: { min: number; max: number }, orderId?: string): string | null {
+  const ref = normalizeRaastRef(raw)
+  if (!ref) return null
+  if (!new RegExp(`^[A-Z0-9]{${rule.min},${rule.max}}$`).test(ref)) return `A bank reference is ${rule.min}–${rule.max} letters or digits.`
+  if ((ref.match(/[0-9]/g) ?? []).length < 3) return 'A bank reference has at least 3 digits.'
+  if (/^(.)\1*$/.test(ref)) return 'That is one repeated character, not a bank reference.'
+  if (orderId && ref === orderRef(orderId)) return 'That is the bill’s own number — type the transaction ID from the bank SMS or the merchant app.'
+  return null
+}
+
+/** GET /pos/raast/config?shiftId&conceptId — null on an API without Raast. */
+export async function fetchRaastConfig(shiftId: string, conceptId: string | null | undefined): Promise<RaastConfig | null> {
+  try {
+    const q = `shiftId=${encodeURIComponent(shiftId)}${conceptId ? `&conceptId=${encodeURIComponent(conceptId)}` : ''}`
+    return await api.get<RaastConfig>(`/pos/raast/config?${q}`)
+  } catch (e) {
+    if (isMissingRoute(e)) return null
+    throw e
+  }
+}
+
+/** The till's Raast settings for this drawer and brand. `data === null` → an API without Raast. */
+export function useRaastConfig(shiftId: string | null, conceptId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['pos', 'raast-config', shiftId, conceptId ?? null],
+    queryFn: () => fetchRaastConfig(shiftId!, conceptId),
+    enabled: !!shiftId && enabled,
+    staleTime: 15_000,
+    retry: false,
+  })
+}
+
+/** POST /pos/raast/intents — put the bill (or a Raast split portion) up for Raast. */
+export function createRaastIntent(body: {
+  orderId: string
+  shiftId: string
+  paymentId?: string
+  tipCents: number
+  expectedDueCents: number
+  idempotencyKey: string
+}): Promise<RaastIntentView> {
+  return api.post<RaastIntentView>('/pos/raast/intents', body)
+}
+
+export function getRaastIntent(id: string): Promise<RaastIntentView> {
+  return api.get<RaastIntentView>(`/pos/raast/intents/${encodeURIComponent(id)}`)
+}
+
+/** The order's waiting / needs-attention Raast payments (resume). [] on an API without Raast. */
+export async function activeRaastIntents(orderId: string): Promise<RaastIntentView[]> {
+  try {
+    return await api.get<RaastIntentView[]>(`/pos/raast/intents?orderId=${encodeURIComponent(orderId)}&active=1`)
+  } catch (e) {
+    if (isMissingRoute(e)) return []
+    throw e
+  }
+}
+
+/** POST /pos/raast/intents/:id/confirm — the cashier saw it on the counter phone and typed the reference. */
+export function confirmRaastIntent(id: string, bankRef: string): Promise<{ intent: RaastIntentView; payment: unknown }> {
+  return api.post<{ intent: RaastIntentView; payment: unknown }>(`/pos/raast/intents/${encodeURIComponent(id)}/confirm`, {
+    bankRef, counterVerified: true,
+  })
+}
+
+export function cancelRaastIntent(id: string, reason?: string): Promise<RaastIntentView> {
+  return api.post<RaastIntentView>(`/pos/raast/intents/${encodeURIComponent(id)}/cancel`, reason ? { reason } : {})
+}
+
+/** GET /pos/raast/alerts?shiftId — open bank alerts for this drawer's company. [] on an API without Raast. */
+export async function fetchRaastAlerts(shiftId: string): Promise<TillRaastAlert[]> {
+  try {
+    return await api.get<TillRaastAlert[]>(`/pos/raast/alerts?shiftId=${encodeURIComponent(shiftId)}`)
+  } catch (e) {
+    if (isMissingRoute(e)) return []
+    throw e
+  }
+}
+
+/** POST /pos/raast/alerts/:id/attach — pay a bill (or a Raast split portion) with that bank credit. */
+export function attachRaastAlert(alertId: string, body: { orderId: string; shiftId: string; paymentId?: string }): Promise<{ outcome: string; intent: RaastIntentView }> {
+  return api.post<{ outcome: string; intent: RaastIntentView }>(`/pos/raast/alerts/${encodeURIComponent(alertId)}/attach`, body)
+}
+
+/** Managers: a cashier's provisional receipt (no SMS yet) takes this alert's reference — a mistyped reference fixed. */
+export function fixRaastReference(alertId: string, body: { receiptId: string; managerOverridePin?: string }): Promise<{ outcome: string; intent: RaastIntentView }> {
+  return api.post<{ outcome: string; intent: RaastIntentView }>(`/pos/raast/alerts/${encodeURIComponent(alertId)}/attach`, body)
+}
+
+/** Managers: mark a bank credit "not a sale" (the money stays for finance; its reference can never pay a bill). */
+export function dismissRaastAlert(alertId: string, body: { reason: string; managerOverridePin?: string }): Promise<{ id: string; status: string }> {
+  return api.post<{ id: string; status: string }>(`/pos/raast/alerts/${encodeURIComponent(alertId)}/dismiss`, body)
+}
+
+/**
+ * POST /pos/payments/:id/settle (or /check-split/payments/:id/settle) — take
+ * one pending split portion. A Raast portion carries the bank reference and
+ * the counter-device tick.
+ */
+export function settlePortion(
+  paymentId: string,
+  body: { shiftId: string; gatewayRef?: string; tenderedCents?: number; raastVerified?: true },
+  route: 'pos' | 'check-split' = 'check-split',
+): Promise<unknown> {
+  const base = route === 'pos' ? '/pos/payments' : '/check-split/payments'
+  return api.post(`${base}/${encodeURIComponent(paymentId)}/settle`, body)
+}
+
+/** Cashier copy for a Raast refusal, or null when the code is not a Raast one. */
+export function raastErrorText(e: ApiError): string | null {
+  const d = (e.details ?? {}) as { orderRef?: string; smsAmountCents?: number; dueCents?: number; min?: number; max?: number }
+  switch (e.code) {
+    case 'KEENU_QR_RETIRED':
+      return 'Keenu QR is retired — take Raast QR or Card – Keenu. A payment made to the old Keenu QR is recorded as Card – Keenu.'
+    case 'RAAST_REF_REQUIRED':
+      return 'Type the bank reference (transaction ID) from the bank SMS or the merchant app on the counter phone.'
+    case 'RAAST_REF_INVALID':
+      return e.message || 'That bank reference doesn’t look right — type the transaction ID from the bank SMS or the merchant app.'
+    case 'RAAST_REF_USED':
+      return d.orderRef
+        ? `That bank reference already paid bill #${d.orderRef}. One transfer can only pay one bill — check the counter phone for this customer’s transfer.`
+        : (e.message || 'That bank reference already paid another bill. Check the counter phone for this customer’s transfer.')
+    case 'RAAST_REF_DISMISSED':
+      return e.message || 'That bank transfer was marked “not a sale” — it cannot pay a bill.'
+    case 'RAAST_NOT_VERIFIED':
+      return 'Tick that you saw the money arrive on the counter phone — never the customer’s screen.'
+    case 'RAAST_AMOUNT_MISMATCH':
+      return d.smsAmountCents != null
+        ? `The bank SMS for that reference is ${fmtPkr(d.smsAmountCents)}, not this bill’s amount. Check the counter phone — the customer may have sent the wrong amount.`
+        : (e.message || 'The bank transfer is not the amount of this bill. Check the counter phone.')
+    case 'RAAST_NOT_SET_UP':
+      return 'Raast is not set up for this brand — finance sets the receiving account in Finance → Bank accounts. Take cash or Card – Keenu.'
+    case 'RAAST_AWAITING':
+      return 'This bill is waiting for a Raast QR transfer — finish or cancel that first.'
+    case 'RAAST_INTENT_GONE':
+      return 'That Raast payment is no longer waiting (it was paid, cancelled or expired) — check the bill.'
+    case 'RAAST_SMS_OFF':
+      return 'Bank-SMS matching is off — check the counter phone and enter the bank reference.'
+    case 'RAAST_SETTLING':
+      return 'A bank SMS is completing this bill right now — wait a moment.'
+    case 'RAAST_AFTER_COMPLETION':
+      return e.message || 'This order is already completed — it cannot take a Raast payment now.'
+    case 'RAAST_ACCOUNT_MISMATCH':
+      return 'That transfer went to a different bank account than this brand’s Raast account — it cannot pay this bill.'
+    case 'RAAST_SMS_ALREADY_USED':
+    case 'RAAST_ALERT_NOT_OPEN':
+    case 'RAAST_ALERT_TOO_OLD':
+    case 'RAAST_NOT_FIXABLE':
+    case 'NOT_A_RAAST_PORTION':
+    case 'RAAST_ONE_PER_PAYMENT':
+      return e.message || null
+  }
+  return null
+}
+
+// Bills this browser took a Raast payment on by hand in the last few minutes:
+// the "a bank SMS completed a bill" toast skips them (the cashier is looking
+// at that bill's own done screen).
+const localRaast = new Map<string, number>()
+const LOCAL_RAAST_MS = 5 * 60_000
+export function noteLocalRaastPayment(orderId: string): void {
+  localRaast.set(orderId, Date.now())
+}
+export function isLocalRaastPayment(orderId: string): boolean {
+  const at = localRaast.get(orderId)
+  if (at == null) return false
+  if (Date.now() - at > LOCAL_RAAST_MS) { localRaast.delete(orderId); return false }
+  return true
 }

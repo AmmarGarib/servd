@@ -72,7 +72,16 @@ const KIND_LABEL: Record<string, string> = {
   fiscal_manual_refund:    'Refund to file by hand',
   terminal_void_failed:    'Card reversal failed',
   terminal_unreconciled:   'Card payment does not reconcile',
-  tip_pool_outlier:        'Tip pool share above 40%',
+  // Raast QR (backend lib/exceptions.ts; finance works them on Finance →
+  // Reconciliation → Raast, the floor at the till's bank alerts).
+  raast_unmatched:          'Raast payments not on a bank statement',
+  raast_unconfirmed:        'Raast payment with no bank SMS',
+  raast_needs_attention:    'Raast payment needs attention',
+  raast_sms_unparsed:       'Bank SMS not understood',
+  raast_sms_unmatched:      'Bank SMS matched no bill',
+  raast_statement_mismatch: 'Raast amount differs on the statement',
+  raast_debit_alert:        'Money left a Raast account',
+  tip_pool_outlier:       'Tip pool share above 40%',
   capex_over_budget:       'CapEx project over budget',
 }
 

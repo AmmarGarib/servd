@@ -8,12 +8,13 @@ import { usePosStore } from '../../store/pos'
 import { useAuthStore } from '../../store/auth'
 import { fmtPkr, fmtPkrWhole } from '../../lib/money'
 import {
-  activeTerminalCharges, billFor, chargeBlocks, fetchOrder, fetchOrderFiscal, fetchReceiptHtml, fiscalLine,
+  activeRaastIntents, activeTerminalCharges, billFor, chargeBlocks, fetchOrder, fetchOrderFiscal, fetchReceiptHtml, fiscalLine,
   isFiscalHeld, isOfflinePlaceholder, isPreBillRequired, isTillTender, newIdempotencyKey, payOrder, preBillErrorMessage, printHtml,
-  printPreBill, ringUp, storedQuote, tillErrorMessage, useCartQuote, useTerminalConfig,
-  type FiscalView, type TerminalChargeView, type TillBrand, type TillOrder, type TillQuote,
+  printPreBill, raastIntentBlocks, ringUp, storedQuote, tillErrorMessage, useCartQuote, useTerminalConfig,
+  type FiscalView, type RaastIntentView, type TerminalChargeView, type TillBrand, type TillOrder, type TillQuote,
 } from './tillApi'
 import { TerminalCharge } from './TerminalCharge'
+import { RaastPanel, type RaastDone } from './RaastPanel'
 import { orderRef } from '../../lib/orderRef'
 
 /** What the done screen shows: change due, the sale's fiscal document, the card the machine took. */
@@ -22,6 +23,8 @@ interface Done {
   /** undefined = the API did not say (older API) — the done screen asks GET /pos/orders/:id/fiscal. */
   fiscal?: FiscalView | null
   card?: { brand: string | null; last4: string | null; approvalRef: string | null } | null
+  /** A Raast QR transfer: its bank reference — provisional until the bank statement matches it. */
+  raast?: RaastDone | null
   at: number
 }
 
@@ -35,14 +38,17 @@ interface PaymentModalProps {
 }
 
 // F-PAY02: wallet methods removed in v1 — re-add when adapters ship.
-type PaymentMethod = 'cash' | 'card' | 'keenu_qr' | 'comp' | 'staff_meal'
+// Owner, 2026-10-12: Raast QR replaces Keenu QR at the till (Keenu QR is
+// retired; a payment made to an old Keenu QR standee is taken as Card – Keenu).
+type PaymentMethod = 'cash' | 'card' | 'raast' | 'comp' | 'staff_meal'
 
 // FOH-02: the till charges the SERVER's bill. Two steps:
 //   1. Ring up — POST /pos/orders (priced by the server for the chosen tender
 //      when the API takes it). The ticket fires and the cart becomes an order.
 //   2. Take payment — the bill for the tender the customer pays with, from the
-//      server (GET /pos/orders/:id/quote; a card payment is re-priced at 8%,
-//      cash 15%), and exactly that amount is sent to POST /pos/payments.
+//      server (GET /pos/orders/:id/quote; a card or Raast QR payment is
+//      re-priced at the digital rate (8%), cash 15%), and exactly that amount
+//      is sent to POST /pos/payments (Raast QR: RaastPanel).
 // An open ticket starts at step 2. Nothing here computes GST.
 export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   const qc = useQueryClient()
@@ -138,16 +144,25 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   const due = shown?.dueCents ?? 0
   const unavailable = tender && bill.data?.kind === 'unavailable' ? bill.data.message : null
 
-  // FOH-14: a tip on a card / QR payment rides on the charge (the terminal is
-  // keyed for due + tip). Offered only when the server's bill says the API
-  // takes tips (the quote carries tipCents) — never sent to an API that would
-  // read it as an overpayment.
-  const tipsAccepted = (method === 'card' || method === 'keenu_qr')
+  // Raast QR (RaastPanel): the request waiting for the customer's transfer,
+  // or one that needs a person. While it waits nothing else may settle the
+  // bill (the server's RAAST_AWAITING guard); its amount (due + tip) is fixed.
+  const [raastIntent, setRaastIntent] = useState<RaastIntentView | null>(null)
+  const raastBlocking = raastIntentBlocks(raastIntent)
+  const raastHeld = raastIntent && (raastIntent.status === 'awaiting' || raastIntent.status === 'needs_attention') ? raastIntent : null
+  /** Something on the server holds this bill: a card-machine charge or a waiting Raast request. */
+  const holding = chargeBlocking || raastBlocking
+
+  // FOH-14: a tip on a card / Raast payment rides on the charge (the terminal
+  // is keyed for due + tip; the Raast transfer is due + tip). Offered only
+  // when the server's bill says the API takes tips (the quote carries
+  // tipCents) — never sent to an API that would read it as an overpayment.
+  const tipsAccepted = (method === 'card' || method === 'raast')
     && bill.data?.kind === 'server' && bill.data.quote.tipCents !== undefined
   const tipCents = tipsAccepted ? Math.max(0, Math.round(parseFloat(tip || '0') * 100) || 0) : 0
   const chargeCents = due + tipCents
   const heldTip = chargeBlocks(runningCharge) ? runningCharge : null
-  const tipLocked = chargeBlocking || !!heldTip
+  const tipLocked = chargeBlocking || !!heldTip || !!raastHeld
 
   const tenderedCents = method === 'cash' ? Math.round(parseFloat(tendered || '0') * 100) : 0
   const changeCents = method === 'cash' && shown ? Math.max(0, tenderedCents - due) : 0
@@ -175,13 +190,28 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
     retry: false,
     meta: { inlineErrors: true },
   })
-  // Until the resume answer is in, no tender is offered (it may be a running charge).
-  const resumeSettled = !order || !!done || active.isFetchedAfterMount
+  // The same for a Raast QR request waiting for the customer's transfer (or
+  // one that needs a person): resume it on the Raast screen.
+  const activeRaast = useQuery({
+    queryKey: ['pos', 'active-raast', order?.id],
+    queryFn: () => activeRaastIntents(order!.id),
+    enabled: !!order && !done,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnMount: 'always',
+    retry: false,
+    meta: { inlineErrors: true },
+  })
+  // Until the resume answers are in, no tender is offered (it may be a running charge or a waiting Raast request).
+  const resumeSettled = !order || !!done || (active.isFetchedAfterMount && activeRaast.isFetchedAfterMount)
   const resumeCharge: TerminalChargeView | null =
     active.data?.find((c) => c.kind === 'charge' && (chargeBlocks(c) || c.status === 'void_pending' || c.status === 'needs_attention')) ?? null
+  const resumeRaast: RaastIntentView | null =
+    activeRaast.data?.find((i) => i.status === 'awaiting') ?? activeRaast.data?.find((i) => i.status === 'needs_attention') ?? null
   useEffect(() => {
     if (resumeCharge) setMethod('card')
-  }, [resumeCharge])
+    else if (resumeRaast) setMethod('raast')
+  }, [resumeCharge, resumeRaast])
   const configSettled = !shiftId || termConfig.isSuccess || termConfig.isError
   const useTerminal = method === 'card' && (terminalOn || !!resumeCharge) && !manualOpen
   // The manual reference (spec §7.2): a collapsed link whenever the company
@@ -189,7 +219,8 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   // highlighted when the machine reads offline / did not take the last attempt.
   const manualFallback = terminalOn && !!terminal?.allowManualRef
   const machineLooksDown = machineDown || terminal?.online === false
-  const needsRef = method === 'keenu_qr' || (method === 'card' && configSettled && !useTerminal)
+  // Raast QR takes its bank reference on its own screen (RaastPanel).
+  const needsRef = method === 'card' && configSettled && !useTerminal
 
   const pay = useMutation({
     meta: { inlineErrors: true },
@@ -225,8 +256,8 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
         amountCents: shown.dueCents + tipCents,
         ...(tipCents > 0 && { tipCents }),
         ...(method === 'cash' && { tenderedCents }),
-        // A card / QR sale carries the terminal's reference (owner decision 4).
-        ...((method === 'card' || method === 'keenu_qr') && { gatewayRef: gatewayRef.trim() }),
+        // A card sale carries the terminal's reference (owner decision 4).
+        ...(method === 'card' && { gatewayRef: gatewayRef.trim() }),
         // Keyed from the slip because the connected machine is offline (audited server-side).
         ...(method === 'card' && terminalOn && manualOpen && { manualReason: 'terminal_offline' as const }),
       })
@@ -253,6 +284,12 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
         setManualOpen(false)
         void active.refetch()
       }
+      // A Raast QR request is waiting on this bill (another till, a closed
+      // modal): show it instead of taking a second tender.
+      if (order && e instanceof ApiError && e.code === 'RAAST_AWAITING') {
+        setMethod('raast')
+        void activeRaast.refetch()
+      }
     },
   })
 
@@ -273,6 +310,11 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
       at: Date.now(),
     })
     setChargeBlocking(false)
+    void qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] })
+  }
+
+  function raastPaid(r: { fiscal?: FiscalView | null; raast: RaastDone }) {
+    setDone({ changeCents: 0, fiscal: r.fiscal, raast: r.raast, at: Date.now() })
     void qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] })
   }
 
@@ -307,7 +349,8 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
     if (!order) return
     setPreBillMsg(null)
     setPreBillBusy(true)
-    printPreBill(order.id, method === 'card' ? 'card' : 'cash', useAuthStore.getState().token)
+    // Card and Raast QR are the one digital tax group: the pre-bill's card total.
+    printPreBill(order.id, method === 'card' || method === 'raast' ? 'card' : 'cash', useAuthStore.getState().token)
       .then(() => setPreBillMsg({ ok: true, text: 'Pre-bill printed. It is not a tax invoice — the full & final bill prints after payment.' }))
       .catch((e: unknown) => setPreBillMsg({ ok: false, text: preBillErrorMessage(e) }))
       .finally(() => setPreBillBusy(false))
@@ -335,19 +378,22 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
 
   // F-PAY02: JazzCash + Easypaisa tiles removed — no live adapter ships
   // for either, so showing them in the UI would let a cashier accept a
-  // payment the server then rejects.
-  const METHODS: Array<{ id: PaymentMethod; label: string; emoji: string }> = [
-    { id: 'cash', label: 'Cash', emoji: '💵' },
-    { id: 'card', label: 'Card / Keenu', emoji: '💳' },
-    { id: 'keenu_qr', label: 'Keenu QR', emoji: '⬜' },
-    { id: 'staff_meal', label: 'Staff meal', emoji: '🍽' },
-    { id: 'comp', label: 'Comp', emoji: '🎁' },
+  // payment the server then rejects. Owner, 2026-10-12: the tills show
+  // exactly Cash, Card – Keenu and Raast QR (+ Staff meal, Comp); Keenu QR
+  // is retired. Text labels only — no emoji tiles.
+  const METHODS: Array<{ id: PaymentMethod; label: string; hint: string }> = [
+    { id: 'cash', label: 'Cash', hint: 'Cash rate' },
+    { id: 'card', label: 'Card – Keenu', hint: 'Card machine' },
+    { id: 'raast', label: 'Raast QR', hint: 'Bank transfer' },
+    { id: 'staff_meal', label: 'Staff meal', hint: 'Manager' },
+    { id: 'comp', label: 'Comp', hint: 'Reason' },
   ]
 
   function pickMethod(m: PaymentMethod) {
-    // A card-machine charge holds the order until it settles or is resolved;
-    // until the resume answer is in, there may be one we have not seen yet.
-    if (chargeBlocking || !resumeSettled) return
+    // A card-machine charge or a waiting Raast request holds the order until
+    // it settles or is resolved; until the resume answers are in, there may
+    // be one we have not seen yet.
+    if (holding || !resumeSettled) return
     setMethod(m)
     setBillChanged(false)
     setManualOpen(false)
@@ -382,15 +428,16 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
         <button
           key={m.id}
           onClick={() => pickMethod(m.id)}
-          disabled={(chargeBlocking && method !== m.id) || !resumeSettled}
-          className={`rounded-lg border py-3 text-center text-sm font-semibold transition-colors disabled:opacity-30 ${
+          disabled={(holding && method !== m.id) || !resumeSettled}
+          aria-pressed={method === m.id}
+          className={`rounded-lg border px-1 py-3 text-center text-sm font-semibold transition-colors disabled:opacity-30 ${
             method === m.id
               ? 'border-kds-green bg-kds-green/20 text-kds-green'
               : 'border-kds-border text-kds-subtext'
           }`}
         >
-          <div className="text-xl">{m.emoji}</div>
-          <div>{m.label}</div>
+          <div className="leading-tight">{m.label}</div>
+          <div className="mt-0.5 text-[10px] font-normal uppercase tracking-wider opacity-70">{m.hint}</div>
         </button>
       ))}
     </div>
@@ -422,7 +469,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           {discountCents > 0 && <Row label="Discount" value={`−${fmtPkr(discountCents)}`} tone="amber" />}
           {q ? (
             <>
-              <Row label={`GST (${q.taxRatePct}%, ${q.tender})`} value={fmtPkr(q.taxCents)} />
+              <Row label={`GST (${q.taxRatePct}%, ${q.tender === 'card' ? 'card / Raast' : q.tender})`} value={fmtPkr(q.taxCents)} />
               {q.serviceChargeCents > 0 && <Row label="Service charge" value={fmtPkr(q.serviceChargeCents)} />}
               <Row label="Total" value={fmtPkr(q.totalCents)} strong />
             </>
@@ -505,11 +552,16 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           )}
 
           {((method === 'card' && !configSettled) || !resumeSettled) && (
-            <p className="mb-4 text-sm text-kds-subtext">Checking the card machine…</p>
+            <p className="mb-4 text-sm text-kds-subtext">{!resumeSettled ? 'Checking for a card charge or Raast payment already on this bill…' : 'Checking the card machine…'}</p>
           )}
           {active.isError && (
             <p className="mb-4 text-xs font-semibold text-kds-amber" role="alert">
               Could not check whether a card charge is already running on this bill — look at the card machine before taking another tender.
+            </p>
+          )}
+          {activeRaast.isError && (
+            <p className="mb-4 text-xs font-semibold text-kds-amber" role="alert">
+              Could not check whether a Raast QR payment is already waiting on this bill — check the counter phone before taking another tender.
             </p>
           )}
 
@@ -549,7 +601,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
                 type="number"
                 inputMode="decimal"
                 min={0}
-                value={heldTip ? String(heldTip.tipCents / 100) : tip}
+                value={heldTip ? String(heldTip.tipCents / 100) : raastHeld ? String(raastHeld.tipCents / 100) : tip}
                 onChange={(e) => setTip(e.target.value)}
                 disabled={tipLocked}
                 placeholder="0"
@@ -560,6 +612,16 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
                   The card machine is charging {fmtPkr(heldTip.amountCents)}
                   {heldTip.tipCents > 0 ? ` (${fmtPkr(heldTip.amountCents - heldTip.tipCents)} bill + ${fmtPkr(heldTip.tipCents)} tip)` : ''}
                   {' '}— the tip cannot change while it runs.
+                </p>
+              ) : raastHeld ? (
+                <p className="mt-2 text-center text-sm font-semibold text-kds-amber">
+                  The Raast request is for {fmtPkr(raastHeld.amountCents)}
+                  {raastHeld.tipCents > 0 ? ` (${fmtPkr(raastHeld.amountCents - raastHeld.tipCents)} bill + ${fmtPkr(raastHeld.tipCents)} tip)` : ''}
+                  {' '}— cancel it to change the tip.
+                </p>
+              ) : tipCents > 0 && method === 'raast' ? (
+                <p className="mt-2 text-center text-sm font-semibold text-kds-amber">
+                  The customer transfers {fmtPkr(chargeCents)} ({fmtPkr(due)} bill + {fmtPkr(tipCents)} tip)
                 </p>
               ) : tipCents > 0 && (
                 <p className="mt-2 text-center text-sm font-semibold text-kds-amber">
@@ -667,7 +729,22 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
             </p>
           )}
 
-          {!resumeSettled ? null : useTerminal ? (
+          {!resumeSettled ? null : method === 'raast' ? (
+            order && shiftId && shown && (due > 0 || raastHeld) ? (
+              <RaastPanel
+                orderId={order.id}
+                conceptId={order.conceptId}
+                brandName={brand?.name}
+                shiftId={shiftId}
+                dueCents={due}
+                tipCents={tipCents}
+                initialIntent={resumeRaast}
+                onIntentChange={setRaastIntent}
+                onPaid={raastPaid}
+                onBillChanged={() => void reloadBill()}
+              />
+            ) : null
+          ) : useTerminal ? (
             shown && due > 0 ? (
               <TerminalCharge
                 orderId={order.id}
@@ -719,7 +796,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           )}
 
           {/* Pre-bill: the guest's bill before payment — never a tax invoice, never sent to the POS */}
-          <button type="button" onClick={preBill} disabled={preBillBusy || chargeBlocking}
+          <button type="button" onClick={preBill} disabled={preBillBusy || holding}
             className="mt-3 w-full rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
             {preBillBusy ? 'Printing pre-bill…' : 'Print pre-bill'}
           </button>
@@ -731,6 +808,8 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           <p className="mt-2 text-center text-xs text-kds-subtext">
             {chargeBlocking
               ? 'The card machine is working on this bill — closing keeps the charge running; reopen the ticket to see it.'
+              : raastBlocking
+              ? 'This bill is waiting for a Raast transfer — closing keeps the request; reopen the ticket to see it.'
               : 'Closing leaves this order open and unpaid — it stays under Open tickets.'}
           </p>
         </>
@@ -747,6 +826,16 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               <p className="mt-1 text-xs text-kds-subtext">
                 Card{done.card.brand ? ` ${done.card.brand}` : ''}{done.card.last4 ? ` •${done.card.last4}` : ''}
                 {done.card.approvalRef ? ` · Ref ${done.card.approvalRef}` : ''}
+              </p>
+            )}
+            {done.raast && (
+              <p className="mt-1 px-3 text-xs text-kds-subtext">
+                Raast QR — Ref <span className="font-mono font-bold text-kds-text">{done.raast.bankRef ?? '…'}</span>
+                {done.raast.status === 'matched'
+                  ? ' · matched to the bank statement'
+                  : done.raast.smsConfirmed
+                  ? ' · bank SMS seen (provisional until the bank statement)'
+                  : ' (provisional until the bank statement)'}
               </p>
             )}
           </div>

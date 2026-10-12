@@ -9,7 +9,8 @@ interface PosCartProps {
 }
 
 // The cart shows the food value and, when the API can quote a cart, the
-// server's bill for cash and card. It never works out GST itself (FOH-02):
+// server's bill for cash and for card / Raast QR (one digital tax group at
+// the card rate). It never works out GST itself (FOH-02):
 // the bill that is charged is the one the server returns at ring-up.
 export function PosCart({ conceptId, onCheckout }: PosCartProps) {
   const { cart, removeItem, updateItemQty, updateItemNotes, discountCents, itemTotalCents, lines } = usePosStore()
@@ -121,7 +122,7 @@ export function PosCart({ conceptId, onCheckout }: PosCartProps) {
             </div>
             {card && (
               <div className="flex justify-between text-sm text-kds-subtext">
-                <span>Total, card ({card.taxRatePct}% GST)</span>
+                <span>Card / Raast total ({card.taxRatePct}% GST)</span>
                 <span>{fmtPkrWhole(card.totalCents)}</span>
               </div>
             )}
@@ -136,7 +137,7 @@ export function PosCart({ conceptId, onCheckout }: PosCartProps) {
             <p className="pt-1 text-xs text-kds-subtext">
               {cashQuote.isFetching
                 ? 'Getting the bill from the server…'
-                : 'GST (cash or card rate) and any service charge are added by the server when you ring this up.'}
+                : 'GST (cash, or card / Raast rate) and any service charge are added by the server when you ring this up.'}
             </p>
           )
         )}

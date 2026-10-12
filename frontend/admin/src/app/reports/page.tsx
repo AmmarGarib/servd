@@ -24,6 +24,19 @@ interface TopItem   { menuItemId: string; name: string; quantity: number; revenu
 interface ByStation { stationId: string; stationName: string; avgMinutes: number; items: number }
 interface BySource  { source: string; orders: number; gross?: number; net?: number }
 
+// GET /reports/by-tender (Raast QR, spec §7.6): how the period's sold orders
+// were paid. The money only to the finance tier; everyone else gets the order
+// counts per tender (`volumeOnly`). Comps are not money — shown apart.
+interface TenderRow { tender: string; label: string; amountCents?: number; payments?: number; orders: number; sharePct?: number }
+interface ByTender {
+  volumeOnly?: boolean
+  tenders: TenderRow[]
+  totalCents?: number
+  comp: { amountCents?: number; orders: number }
+  raast?: { provisionalCents: number; provisionalCount: number; matchedCents: number; matchedCount: number; unreceivedCents: number; unreceivedCount: number }
+  refunds?: Array<{ tender: string; label: string; amountCents: number; count: number }>
+}
+
 interface KpiCard { label: string; value: string; color: string; sub?: string; delta: DeltaResult | null; invert?: boolean }
 
 /** The Sales tab's cards: the money ones only when the API sent the money. */
@@ -52,8 +65,8 @@ function salesCards(sales: SalesData, prev: SalesData | undefined, compare: bool
   ]
 }
 
-type Tab = 'sales' | 'items' | 'stations' | 'channel'
-const TAB_LABELS: Record<Tab, string> = { sales: 'Sales', items: 'Top Items', stations: 'By Station', channel: 'By Channel' }
+type Tab = 'sales' | 'items' | 'stations' | 'channel' | 'tender'
+const TAB_LABELS: Record<Tab, string> = { sales: 'Sales', items: 'Top Items', stations: 'By Station', channel: 'By Channel', tender: 'By Tender' }
 
 const PRESETS = [
   { label: 'Today',   days: 0 },
@@ -179,6 +192,12 @@ export default function ReportsPage() {
     queryKey: ['reports', 'channels', fromISO, toISO],
     queryFn: () => api.get<BySource[]>(`/reports/by-source?dateFrom=${fromISO}&dateTo=${toISO}`),
     enabled: tab === 'channel',
+  })
+
+  const { data: tenders, isLoading: tendersLoading } = useQuery<ByTender>({
+    queryKey: ['reports', 'by-tender', fromISO, toISO],
+    queryFn: () => api.get<ByTender>(`/reports/by-tender?dateFrom=${fromISO}&dateTo=${toISO}`),
+    enabled: tab === 'tender',
   })
 
   // ── Previous period queries (only when compare is on) ──────────────────────
@@ -506,6 +525,11 @@ export default function ReportsPage() {
           )
         ))}
 
+        {/* ── By Tender ─────────────────────────────────────────────────────── */}
+        {tab === 'tender' && (tendersLoading ? <Skeleton /> : tenders && tenders.tenders.length > 0 ? (
+          <TenderReport data={tenders} slug={slug} />
+        ) : <Empty />)}
+
         {/* ── By Channel ────────────────────────────────────────────────────── */}
         {tab === 'channel' && (channelsLoading ? <Skeleton /> : (
           (channels ?? []).length === 0 ? <Empty /> : (
@@ -571,6 +595,138 @@ export default function ReportsPage() {
         ))}
 
       </div>
+    </div>
+  )
+}
+
+/**
+ * Sales by tender: Cash, Card – Keenu, Raast QR (with how much of it a bank
+ * statement has proven), the retired Keenu QR's old rows, wallet and gift
+ * cards; comps apart; refunds by tender. Rupees only when the API sent them.
+ */
+function TenderReport({ data, slug }: { data: ByTender; slug: string }) {
+  const money = !data.volumeOnly && data.totalCents !== undefined
+  const raastRow = data.tenders.find((t) => t.tender === 'raast')
+  const raast = data.raast
+  const maxOrders = Math.max(1, ...data.tenders.map((t) => t.orders))
+  return (
+    <div className="space-y-5">
+      <div className="flex justify-end">
+        <button
+          onClick={() => {
+            const rows = data.tenders.map((t) => ({
+              tender: t.label,
+              orders: t.orders,
+              ...(money && { payments: t.payments ?? 0, amount_pkr: Math.round((t.amountCents ?? 0) / 100), share_pct: t.sharePct ?? 0 }),
+            }))
+            exportToCsv(rows as Record<string, unknown>[], `by-tender_${slug}.csv`)
+          }}
+          className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
+          Export CSV
+        </button>
+      </div>
+
+      {money && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="metric-card">
+            <p className="metric-label">Money taken</p>
+            <p className="metric-value text-primary-ink">{fmtPkrWhole(data.totalCents ?? 0)}</p>
+            <p className="text-[11px] text-s-dim mt-1">every tender except comps</p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">Raast QR share</p>
+            <p className="metric-value text-success">{(raastRow?.sharePct ?? 0).toFixed(1)}%</p>
+            <p className="text-[11px] text-s-dim mt-1">{raastRow ? `${fmtPkrWhole(raastRow.amountCents ?? 0)} on ${raastRow.orders} order${raastRow.orders === 1 ? '' : 's'}` : 'no Raast payments'}</p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">Raast not on a statement yet</p>
+            <p className={`metric-value ${raast && raast.provisionalCount > 0 ? 'text-s-amber' : 'text-s-text'}`}>{fmtPkrWhole(raast?.provisionalCents ?? 0)}</p>
+            <p className="text-[11px] text-s-dim mt-1">{raast?.provisionalCount ?? 0} provisional · {fmtPkrWhole(raast?.matchedCents ?? 0)} matched</p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">Comps</p>
+            <p className="metric-value text-s-muted">{fmtPkrWhole(data.comp.amountCents ?? 0)}</p>
+            <p className="text-[11px] text-s-dim mt-1">{data.comp.orders} order{data.comp.orders === 1 ? '' : 's'} — not money, not in the shares</p>
+          </div>
+        </div>
+      )}
+      {money && raast && raast.unreceivedCount > 0 && (
+        <p className="text-xs text-s-red">
+          {raast.unreceivedCount} Raast payment{raast.unreceivedCount === 1 ? '' : 's'} ({fmtPkrWhole(raast.unreceivedCents)}) written off as never received by the bank.
+        </p>
+      )}
+
+      <div className="s-card overflow-hidden max-w-3xl">
+        <div className="overflow-x-auto">
+          <table className="s-table w-full">
+            <thead>
+              <tr>
+                <th>Tender</th>
+                <th className="text-right">Orders</th>
+                {money && <th className="text-right">Payments</th>}
+                {money && <th className="text-right">Amount</th>}
+                {money && <th className="text-right">Share</th>}
+                {!money && <th className="w-1/3"></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {data.tenders.map((t) => (
+                <tr key={t.tender}>
+                  <td className="font-semibold text-s-text">
+                    {t.label}
+                    {t.tender === 'raast' && money && raast && raast.provisionalCount > 0 && (
+                      <span className="ml-2 s-badge s-badge-muted text-[10px]">{raast.provisionalCount} provisional</span>
+                    )}
+                  </td>
+                  <td className="text-right text-s-muted">{t.orders}</td>
+                  {money && <td className="text-right text-s-muted">{t.payments ?? 0}</td>}
+                  {money && <td className="text-right font-bold text-primary-ink">{fmtPkrWhole(t.amountCents ?? 0)}</td>}
+                  {money && (
+                    <td className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="stat-bar-track h-1.5 w-20"><div className="stat-bar-fill h-1.5 bg-s-teal/70" style={{ width: `${Math.min(100, t.sharePct ?? 0)}%` }} /></div>
+                        <span className="text-xs text-s-text w-12 text-right">{(t.sharePct ?? 0).toFixed(1)}%</span>
+                      </div>
+                    </td>
+                  )}
+                  {!money && (
+                    <td>
+                      <div className="stat-bar-track h-1.5"><div className="stat-bar-fill h-1.5 bg-s-teal/70" style={{ width: `${(t.orders / maxOrders) * 100}%` }} /></div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {!money && data.comp.orders > 0 && (
+                <tr>
+                  <td className="text-s-muted">Comp</td>
+                  <td className="text-right text-s-muted">{data.comp.orders}</td>
+                  <td />
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {money && (data.refunds ?? []).length > 0 && (
+        <div className="s-card overflow-hidden max-w-xl">
+          <div className="px-4 py-2 border-b border-s-border text-xs font-semibold text-s-muted uppercase tracking-wider">Refunds by tender</div>
+          <table className="s-table w-full">
+            <tbody>
+              {data.refunds!.map((r) => (
+                <tr key={r.tender}>
+                  <td className="text-s-text">{r.label} <span className="text-xs text-s-muted">({r.count})</span></td>
+                  <td className="text-right font-mono text-s-red">-{fmtPkrWhole(r.amountCents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[11px] text-s-dim max-w-3xl">
+        Card – Keenu and Raast QR are taxed at the brand&rsquo;s card (digital) rate; cash at the cash rate. A Raast payment is provisional until a
+        bank-statement line shows the money (Finance → Reconciliation → Raast). Keenu QR is retired — its rows are older sales.
+      </p>
     </div>
   )
 }

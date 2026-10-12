@@ -1,11 +1,13 @@
 'use client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Fragment, useState } from 'react'
-import { api, posApi, type ZReport } from '../../lib/api'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { api, posApi, ApiError, type ZReport } from '../../lib/api'
 import { fmtPkr, todayPktIso } from '../../lib/money'
+import { orderRef } from '../../lib/orderRef'
 import { format } from 'date-fns'
 import { BackfillUnposted } from './BackfillUnposted'
 import { MissedBillVariances } from './MissedBillVariances'
+import { RaastTab } from './RaastTab'
 import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseConfirm'
 import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
 import { useAuthStore } from '../../store/auth'
@@ -15,8 +17,10 @@ import { useAuthStore } from '../../store/auth'
 // red 403 behind a button it was shown is the bug we are removing).
 //   Closing a drawer is the till's close (POST /pos/shifts/:id/close, CASHIERS).
 //   Booking an adjustment journal is the approvers' (CEO + co-owners).
+//   Undoing a generic statement match is the approvers' too (S3).
 const DRAWER_CLOSERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'cashier', 'foh']
 const ADJUSTMENT_BOOKERS = ['admin', 'owner']
+const LINE_UNMATCHERS = ['admin', 'owner']
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +31,8 @@ interface ShiftSummaryRow {
   closedAt: string | null
   status: string
   totalSalesCents: number
+  /** Raast QR takings (absent on an API without Raast). */
+  raastSalesCents?: number
   cashSalesCents: number
   expectedCashCents: number
   closingFloatCents: number | null
@@ -52,18 +58,45 @@ interface BankImport {
   _count: { lines: number }
 }
 
-interface BankAccountOpt { id: string; name: string; bankName: string | null; accountCode: string | null }
+interface BankAccountOpt { id: string; name: string; bankName: string | null; accountCode: string | null; raastDefault?: boolean }
 
 interface StatementLine {
   id: string; postedDate: string; description: string; reference: string | null
   amountCents: number; matchStatus: 'unmatched' | 'matched' | 'adjusted' | 'ignored'; notes: string | null
+  /** The Raast QR payment this line matched (absent on an API without Raast). */
+  raastReceipt?: { id: string; bankRef: string | null; orderId: string; amountCents: number } | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type ReconTab = 'shifts' | 'bank'
+type ReconTab = 'shifts' | 'bank' | 'raast'
+const TABS: readonly ReconTab[] = ['shifts', 'bank', 'raast']
 
-const METHOD_LABEL: Record<string, string> = { cash: 'Cash', card: 'Card', keenu_qr: 'Keenu QR', comp: 'Comps', split: 'Split' }
+// The till's tenders (owner, 2026-10-12): Cash, Card – Keenu, Raast QR.
+// Keenu QR is retired — its rows are older sales.
+const METHOD_LABEL: Record<string, string> = {
+  cash: 'Cash', card: 'Card – Keenu', raast: 'Raast QR', keenu_qr: 'Keenu QR (retired)', comp: 'Comps', split: 'Split',
+}
+
+/**
+ * The bank accounts Raast QR payments land in (the company default, and every
+ * brand's own), so the statement view can warn before an adjustment books a
+ * customer's transfer a second time. Best effort: an API without Raast, or a
+ * portfolio view, gives the defaults only.
+ */
+function useRaastAccountIds(banks: BankAccountOpt[]): Set<string> {
+  const { data } = useQuery<{ brands: Array<{ overrideBankAccountId: string | null }> }>({
+    queryKey: ['raast-accounts'],
+    queryFn: () => api.get('/setup/raast-accounts'),
+    retry: false,
+    staleTime: 60_000,
+  })
+  return useMemo(() => {
+    const ids = new Set<string>(banks.filter((b) => b.raastDefault).map((b) => b.id))
+    for (const b of data?.brands ?? []) if (b.overrideBankAccountId) ids.add(b.overrideBankAccountId)
+    return ids
+  }, [banks, data])
+}
 
 // Balanced is the server's verdict against the drawer company's own
 // tolerance (Configuration → Receipts) — never a threshold of our own.
@@ -216,9 +249,16 @@ function ShiftDetailPanel({
                     </tr>
                   )}
                   <tr className="font-semibold">
-                    <td className="px-4 py-2.5 text-s-muted">Total sales (cash + card)</td>
+                    <td className="px-4 py-2.5 text-s-muted">Total sales (cash + card + Raast)</td>
                     <td className="px-4 py-2.5 text-right font-mono text-primary-ink">{fmtPkr(data.grossCents)}</td>
                   </tr>
+                  {(data.raastProvisionalCents ?? 0) > 0 && (
+                    <tr>
+                      <td colSpan={2} className="px-4 py-2 text-xs text-s-amber">
+                        {fmtPkr(data.raastProvisionalCents ?? 0)} of the Raast takings is not on a bank statement yet — see the Raast tab.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
               </div>
@@ -364,7 +404,7 @@ interface SplitRow { code: string; type: 'debit' | 'credit'; amount: string }
 
 const toCents = (pkr: string) => Math.round((parseFloat(pkr) || 0) * 100)
 
-function AdjustForm({ line, onDone, onCancel }: { line: StatementLine; onDone: () => void; onCancel: () => void }) {
+function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementLine; raastAccount: boolean; onDone: () => void; onCancel: () => void }) {
   const inflow = line.amountCents > 0
   const abs = Math.abs(line.amountCents)
   const bankSide: 'debit' | 'credit' = inflow ? 'debit' : 'credit'
@@ -393,6 +433,12 @@ function AdjustForm({ line, onDone, onCancel }: { line: StatementLine; onDone: (
 
   return (
     <div className="px-4 py-3 space-y-2 text-xs">
+      {inflow && raastAccount && (
+        <p role="alert" className="rounded-lg border border-s-amber/40 bg-s-amber-dim px-3 py-2 text-s-text">
+          This account receives Raast QR payments. If this credit is a customer&rsquo;s Raast payment for a bill, match it on the Raast tab instead —
+          the sale already booked it to this bank account, so an adjustment would book it twice.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <label className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={!split} onChange={() => setSplit(false)} /> One account</label>
         <label className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={split} onChange={() => setSplit(true)} /> Split (e.g. card settlement less fee)</label>
@@ -440,22 +486,34 @@ function AdjustForm({ line, onDone, onCancel }: { line: StatementLine; onDone: (
   )
 }
 
-function StatementLines({ importId }: { importId: string }) {
+function StatementLines({ importId, raastAccount, onOpenRaast }: { importId: string; raastAccount: boolean; onOpenRaast: () => void }) {
   const qc = useQueryClient()
   const [adjusting, setAdjusting] = useState<string | null>(null)
   const canBook = useAuthStore((s) => s.isRole(...ADJUSTMENT_BOOKERS))
+  const canUnmatch = useAuthStore((s) => s.isRole(...LINE_UNMATCHERS))
   const { data: lines = [], isLoading } = useQuery<StatementLine[]>({
     queryKey: ['bank-lines', importId],
     queryFn: () => api.get(`/reconciliation/bank/imports/${importId}/lines`),
   })
   const refresh = () => void qc.invalidateQueries({ queryKey: ['bank-lines', importId] })
   const ignore = useMutation({ mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/ignore`, {}), onSuccess: refresh })
+  // S3: undo a GENERIC match (the matcher paired the line with the wrong
+  // journal line). A line matched to a Raast payment is unmatched on the Raast tab.
+  const unmatch = useMutation({
+    mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/unmatch`, {}),
+    onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: ['raast-receipts'] }) },
+  })
+  const lineError = ignore.error ?? unmatch.error
 
   if (isLoading) return <p className="px-4 py-3 text-xs text-s-muted">Loading lines…</p>
   return (
     <div className="bg-s-bg-soft/40 overflow-x-auto">
-      {ignore.error && (
-        <p className="px-4 pt-2 text-xs text-s-red">{(ignore.error as Error).message}</p>
+      {lineError && (
+        <p className="px-4 pt-2 text-xs text-s-red">
+          {lineError instanceof ApiError && lineError.code === 'RAAST_MATCHED_LINE'
+            ? 'That line is matched to a Raast payment — unmatch it on the Raast tab.'
+            : (lineError as Error).message}
+        </p>
       )}
       <table className="w-full text-xs">
         <tbody>
@@ -463,10 +521,24 @@ function StatementLines({ importId }: { importId: string }) {
             <Fragment key={l.id}>
               <tr className="border-t border-s-border align-top">
                 <td className="px-4 py-2 text-s-muted whitespace-nowrap">{l.postedDate.slice(0, 10)}</td>
-                <td className="px-4 py-2 text-s-text">{l.description}{l.reference && <span className="text-s-muted"> · {l.reference}</span>}</td>
+                <td className="px-4 py-2 text-s-text">
+                  {l.description}{l.reference && <span className="text-s-muted"> · {l.reference}</span>}
+                  {l.raastReceipt && (
+                    <button onClick={onOpenRaast} title={`Raast payment${l.raastReceipt.bankRef ? ` ${l.raastReceipt.bankRef}` : ''} on bill #${orderRef(l.raastReceipt.orderId)}`}
+                      className="ml-2 s-badge-green text-[10px] font-semibold">
+                      Raast #{orderRef(l.raastReceipt.orderId)}
+                    </button>
+                  )}
+                </td>
                 <td className={`px-4 py-2 text-right font-mono ${l.amountCents < 0 ? 'text-s-red' : 'text-s-text'}`}>{fmtPkr(l.amountCents)}</td>
                 <td className="px-4 py-2 text-right whitespace-nowrap">
-                  {l.matchStatus !== 'unmatched' ? (
+                  {l.matchStatus === 'matched' && !l.raastReceipt && canUnmatch ? (
+                    <span className="inline-flex gap-3">
+                      <span className="text-s-muted">matched</span>
+                      <button onClick={() => { if (confirm('Undo this match? The line goes back to unmatched and its journal line is free again.')) unmatch.mutate(l.id) }}
+                        disabled={unmatch.isPending} className="text-s-muted underline hover:text-s-text">Unmatch</button>
+                    </span>
+                  ) : l.matchStatus !== 'unmatched' ? (
                     <span className="text-s-muted">{l.matchStatus}</span>
                   ) : adjusting === l.id ? (
                     <span className="text-s-muted">booking…</span>
@@ -481,7 +553,7 @@ function StatementLines({ importId }: { importId: string }) {
               {adjusting === l.id && l.matchStatus === 'unmatched' && (
                 <tr className="border-t border-s-border/50">
                   <td colSpan={4} className="p-0">
-                    <AdjustForm line={l} onCancel={() => setAdjusting(null)} onDone={() => { setAdjusting(null); refresh() }} />
+                    <AdjustForm line={l} raastAccount={raastAccount} onCancel={() => setAdjusting(null)} onDone={() => { setAdjusting(null); refresh() }} />
                   </td>
                 </tr>
               )}
@@ -499,6 +571,12 @@ function StatementLines({ importId }: { importId: string }) {
 export default function ReconciliationPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<ReconTab>('shifts')
+  // ?tab=raast (the period close and the Exceptions inbox link here). Read
+  // once on mount from window, so the page needs no Suspense boundary.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    if (t && (TABS as readonly string[]).includes(t)) setTab(t as ReconTab)
+  }, [])
   const [selectedShift, setSelectedShift] = useState<string | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [openImport, setOpenImport] = useState<string | null>(null)
@@ -514,6 +592,12 @@ export default function ReconciliationPage() {
     queryFn: () => api.get<BankImport[]>('/reconciliation/bank/imports'),
     enabled: tab === 'bank',
   })
+  const { data: banks = [] } = useQuery<BankAccountOpt[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () => api.get('/setup/bank-accounts'),
+    enabled: tab === 'bank',
+  })
+  const raastAccountIds = useRaastAccountIds(banks)
 
   const balancedCount = summary?.balancedShifts ?? 0
   const totalCount = summary?.totalShifts ?? 0
@@ -530,7 +614,7 @@ export default function ReconciliationPage() {
 
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <h1 className="text-xl font-bold text-s-text">Reconciliation</h1>
-        <p className="text-xs text-s-muted mt-0.5">POS shift cash reconciliation and bank statements</p>
+        <p className="text-xs text-s-muted mt-0.5">POS shift cash reconciliation, bank statements and Raast QR payments</p>
       </header>
 
       <div className="p-6 max-w-5xl mx-auto space-y-4">
@@ -563,6 +647,7 @@ export default function ReconciliationPage() {
           {([
             { key: 'shifts', label: 'POS Shifts' },
             { key: 'bank', label: 'Bank Imports' },
+            { key: 'raast', label: 'Raast' },
           ] as { key: ReconTab; label: string }[]).map((t) => (
             <button
               key={t.key}
@@ -595,6 +680,7 @@ export default function ReconciliationPage() {
                     <th className="px-4 py-2 text-left">Opened</th>
                     <th className="px-4 py-2 text-left">Closed</th>
                     <th className="px-4 py-2 text-right">Total sales</th>
+                    <th className="px-4 py-2 text-right">Raast</th>
                     <th className="px-4 py-2 text-right">Expected cash</th>
                     <th className="px-4 py-2 text-right">Variance</th>
                     <th className="px-4 py-2"></th>
@@ -618,6 +704,9 @@ export default function ReconciliationPage() {
                       <td className="px-4 py-2.5 text-right font-mono text-xs text-s-text">
                         {fmtPkr(s.totalSalesCents)}
                       </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-xs text-s-muted">
+                        {s.raastSalesCents ? fmtPkr(s.raastSalesCents) : '—'}
+                      </td>
                       <td className="px-4 py-2.5 text-right font-mono text-xs text-primary-ink">
                         {fmtPkr(s.expectedCashCents)}
                       </td>
@@ -635,7 +724,7 @@ export default function ReconciliationPage() {
                   ))}
                   {(!summary || summary.shifts.length === 0) && !summaryLoading && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-s-muted text-sm">
+                      <td colSpan={8} className="px-4 py-8 text-center text-s-muted text-sm">
                         No POS shifts in the last 30 days
                       </td>
                     </tr>
@@ -646,6 +735,9 @@ export default function ReconciliationPage() {
             )}
           </div>
         )}
+
+        {/* ── Raast tab ── */}
+        {tab === 'raast' && <RaastTab />}
 
         {/* ── Bank imports tab ── */}
         {tab === 'bank' && (
@@ -688,7 +780,9 @@ export default function ReconciliationPage() {
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(i.closingBalanceCents)}</td>
                     </tr>
                     {openImport === i.id && (
-                      <tr><td colSpan={6} className="p-0"><StatementLines importId={i.id} /></td></tr>
+                      <tr><td colSpan={6} className="p-0">
+                        <StatementLines importId={i.id} raastAccount={!!i.bankAccountId && raastAccountIds.has(i.bankAccountId)} onOpenRaast={() => setTab('raast')} />
+                      </td></tr>
                     )}
                   </Fragment>
                 ))}

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
-import { api } from '../../../lib/api'
+import { api, paymentMethodLabel, RAAST_STATUS_LABEL, RAAST_STATUS_SHORT, type RaastReceiptState } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
@@ -25,7 +25,7 @@ import {
   type RefundChoice,
 } from '../../refunds/RefundOptions'
 import {
-  approvalErrorMessage, cancelOrderWithApproval, keepFollowingTerminalRefund, refundOnCardMachine, refundThroughEngine,
+  approvalErrorMessage, cancelOrderWithApproval, keepFollowingTerminalRefund, raastRefundRefProblem, refundOnCardMachine, refundThroughEngine,
   terminalRefundFinal, terminalRefundText, uploadEvidencePhoto,
   type RefundResult, type RefundTender,
 } from '../../refunds/refundEngine'
@@ -87,6 +87,8 @@ interface OrderDetail {
     shiftId?: string | null
     processedAt?: string | null
     createdAt?: string
+    /** Raast QR: provisional until a bank-statement line matches it. */
+    raastReceipt?: RaastReceiptState | null
   }>
   taxInvoices?: Array<{ id: string; invoiceNumber: string; type: 'invoice' | 'credit_note'; issuedAt: string }>
 }
@@ -145,10 +147,12 @@ const PAYMENT_COLORS: Record<string, string> = {
   card:             'text-s-blue bg-s-blue/10',
   // F-PAY02: jazzcash/easypaisa keys kept here only for historical rows that
   // existed before the enum drop — the map is a defensive lookup, dead values
-  // are harmless. New rows can only land as cash/card/keenu_qr/split/comp.
+  // are harmless. New rows land as cash / card / raast / split / comp;
+  // keenu_qr is retired (old rows only, shown muted).
   jazzcash:         'text-orange-700 bg-orange-100',
   easypaisa:        'text-green-700 bg-green-100/20',
-  keenu_qr:         'text-purple-700 bg-purple-100/20',
+  raast:            'text-success bg-s-teal/15',
+  keenu_qr:         'text-s-muted bg-s-surface',
   comp:             'text-s-muted bg-s-surface',
   wallet:           'text-s-amber bg-s-amber/10',
 }
@@ -183,9 +187,13 @@ const STATUS_CTA: Record<string, string> = {
 // never a sale refund, never a fiscal document. cancelledCardRefundOffer
 // (tillApi) says whether to offer it and its most. A card taken by a manual
 // slip is refunded by hand and only recorded here ("Card — record only").
+//
+// Raast QR money goes back by Raast: the manager sends it back from the bank
+// first and records the outgoing transfer's reference (required); the server
+// books it against the bank account that received it (never 1030).
 
-const HAND_BACK_TENDERS: readonly RefundTender[] = ['cash', 'card', 'keenu_qr']
-const HAND_BACK_LABEL: Record<RefundTender, string> = { cash: 'Cash', card: 'Card', keenu_qr: 'Keenu QR' }
+const HAND_BACK_TENDERS: readonly RefundTender[] = ['cash', 'card', 'raast', 'keenu_qr']
+const HAND_BACK_LABEL: Record<RefundTender, string> = { cash: 'Cash', card: 'Card – Keenu', raast: 'Raast QR', keenu_qr: 'Keenu QR (retired)' }
 
 type OrderPayment = OrderDetail['payments'][number]
 
@@ -293,6 +301,9 @@ function MoneyTakenModal({
   const [amountInput, setAmountInput] = useState<string | null>(null)
   const amount = amountInput ?? (maxCents / 100).toFixed(2)
   const [reason, setReason] = useState('')
+  // Raast: the reference of the transfer the manager already sent back from the bank.
+  const [raastRef, setRaastRef] = useState('')
+  const raastRefIssue = method === 'raast' ? raastRefundRefProblem(raastRef) : null
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [photoError, setPhotoError] = useState<string | null>(null)
@@ -330,11 +341,12 @@ function MoneyTakenModal({
       method: method as RefundTender,
       ...(method === 'cash' && shiftId !== OWN_DRAWER && { shiftId }),
       ...(photoUrl && { photoUrl }),
+      ...(method === 'raast' && { gatewayRef: raastRef.trim() }),
     }) as Promise<RefundResult & { refundDueLeftCents?: number }>,
     onSuccess: (r) => {
       const how = HAND_BACK_LABEL[method as RefundTender] ?? method
       const left = r.refundDueLeftCents ?? Math.max(0, taken.dueCents - amountCents)
-      onDone(`Refunded ${fmtPkr(amountCents)} by ${how.toLowerCase()} and booked. ${left > 0 ? `${fmtPkr(left)} is still owed back on this ticket.` : 'Nothing more is owed back on this ticket.'}`)
+      onDone(`Refunded ${fmtPkr(amountCents)} by ${method === 'raast' ? `Raast QR (ref ${raastRef.trim().toUpperCase()})` : how.toLowerCase()} and booked. ${left > 0 ? `${fmtPkr(left)} is still owed back on this ticket.` : 'Nothing more is owed back on this ticket.'}`)
       onClose()
     },
     onError: (e) => {
@@ -466,7 +478,20 @@ function MoneyTakenModal({
                 : 'Refund the card on the card machine (or the bank’s portal) by hand first — servd records the refund here.'}
           </p>
         )}
-        {method === 'keenu_qr' && <p className="text-xs text-s-muted">Send the money back through Keenu first — servd records the refund here.</p>}
+        {method === 'keenu_qr' && <p className="text-xs text-s-muted">Keenu QR is retired — this older payment goes back through Keenu: send it there first, servd records the refund here.</p>}
+        {method === 'raast' && (
+          <div className="space-y-1.5 rounded-lg border border-s-amber/40 bg-s-amber-dim p-2.5">
+            <p className="text-xs text-s-text">
+              Send the money back to the guest from the company&rsquo;s bank (internet banking or the merchant app) first, then type that
+              outgoing transfer&rsquo;s reference. servd books it against the bank account that received the Raast payment.
+            </p>
+            <label htmlFor="due-raast-ref" className="text-xs text-s-muted block">Outgoing transfer reference (required)</label>
+            <input id="due-raast-ref" value={raastRef} onChange={(e) => setRaastRef(e.target.value)} autoComplete="off" spellCheck={false}
+              placeholder="e.g. the transaction ID from the bank"
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text font-mono uppercase focus:border-primary focus:outline-none" />
+            {raastRef.trim() !== '' && raastRefIssue && <p className="text-xs text-s-red">{raastRefIssue}</p>}
+          </div>
+        )}
 
         <div>
           <label htmlFor="due-amount" className="text-xs text-s-muted block mb-1">Amount (PKR) — up to {fmtPkr(maxCents)}</label>
@@ -507,7 +532,7 @@ function MoneyTakenModal({
           <button
             onClick={() => (viaMachine || following ? cardRefund.mutate() : handBack.mutate())}
             disabled={handBack.isPending || cardRefund.isPending || (!following && (
-              !method || !amountOk || reason.trim().length < 3 || uploading || (needsPhoto && !photoUrl) || machineStuck
+              !method || !amountOk || reason.trim().length < 3 || uploading || (needsPhoto && !photoUrl) || machineStuck || !!raastRefIssue
             ))}
             className="flex-1 rounded-xl bg-s-red text-bone text-sm font-bold py-2 hover:opacity-90 disabled:opacity-40">
             {cardRefund.isPending ? 'On the card machine…'
@@ -520,6 +545,43 @@ function MoneyTakenModal({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Raast QR state per payment ──────────────────────────────────────────────
+// A Raast payment completes the sale at the till; the bank statement is the
+// truth. 'Provisional' until finance (or the statement import) matches it.
+
+const RAAST_CHIP: Record<string, string> = {
+  provisional:     'text-s-amber bg-s-amber/10',
+  matched:         'text-success bg-s-teal/15',
+  needs_attention: 'text-s-red bg-s-red/10',
+  unreceived:      'text-s-red bg-s-red/10',
+  awaiting:        'text-s-muted bg-s-bg',
+  cancelled:       'text-s-muted bg-s-bg',
+}
+
+function RaastPaymentNote({ payment }: { payment: OrderPayment }) {
+  const r = payment.raastReceipt
+  // A refund row carries the OUTGOING transfer's reference; a sale row its receipt.
+  if (!r) {
+    return payment.gatewayRef
+      ? <p className="text-[10px] text-s-muted mt-1 font-mono">Ref {payment.gatewayRef}</p>
+      : null
+  }
+  const via = r.confirmedVia === 'sms' ? 'bank SMS' : r.confirmedVia === 'bank_api' ? 'bank' : 'cashier'
+  return (
+    <div className="mt-1 space-y-0.5">
+      <span title={RAAST_STATUS_LABEL[r.status]} className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${RAAST_CHIP[r.status] ?? 'text-s-muted bg-s-bg'}`}>
+        {RAAST_STATUS_SHORT[r.status] ?? r.status}
+      </span>
+      <p className="text-[10px] text-s-muted">
+        {r.bankRef && <span className="font-mono">Ref {r.bankRef}</span>}
+        {r.bankRef && ' · '}
+        confirmed by {via}{r.smsConfirmedAt && r.confirmedVia !== 'sms' ? ', bank SMS seen' : ''}
+        {r.matchedAt && <> · on the statement {format(new Date(r.matchedAt), 'dd MMM')}</>}
+      </p>
     </div>
   )
 }
@@ -699,7 +761,7 @@ export default function OrderDetailPage() {
     })
     void qc.invalidateQueries({ queryKey: ['order-detail', id] })
     const parts = [`Voided — ${fmtPkr(r.removedCents)} off the bill. New total ${fmtPkr(r.order.totalCents)}.`]
-    if (r.refund) parts.push(`${fmtPkr(r.refund.amountCents)} refunded by ${r.refund.method.replace(/_/g, ' ')}.`)
+    if (r.refund) parts.push(`${fmtPkr(r.refund.amountCents)} refunded by ${paymentMethodLabel(r.refund.method)}.`)
     if (r.splitCleared) parts.push('The split was cleared because the bill changed. Re-split it.')
     setNotice({ tone: r.splitCleared ? 'warn' : 'ok', text: parts.join(' '), splitLink: r.splitCleared })
   }
@@ -1169,10 +1231,13 @@ export default function OrderDetailPage() {
                 <div className="mt-4 pt-4 border-t border-s-border space-y-2">
                   <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Payments</p>
                   {order.payments.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between">
-                      <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${PAYMENT_COLORS[p.method] ?? 'text-s-muted bg-s-bg'}`}>
-                        {p.method.replace('_', ' ')}
-                      </span>
+                    <div key={p.id} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${PAYMENT_COLORS[p.method] ?? 'text-s-muted bg-s-bg'}`}>
+                          {paymentMethodLabel(p.method)}
+                        </span>
+                        {p.method === 'raast' && <RaastPaymentNote payment={p} />}
+                      </div>
                       <div className="text-right">
                         <span className="font-mono text-sm font-bold text-primary-ink">{fmtPkrWhole(p.amountCents)}</span>
                         {p.changeCents != null && p.changeCents > 0 && (

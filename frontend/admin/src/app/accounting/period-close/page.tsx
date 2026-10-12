@@ -4,9 +4,16 @@
 // moves forward only; reopening (owner decision 21) is admin only, removes the
 // latest close, needs a reason, and lands on the accounting audit trail and in
 // the Exceptions inbox.
+//
+// Raast QR (spec §7.4, S6): a Raast payment still 'provisional' (no bank
+// statement has shown it) or 'needs attention' dated up to the close means the
+// period's bank money is not proven. The page warns before the close, and the
+// API refuses it (409 RAAST_UNMATCHED) unless the CEO ticks "close anyway"
+// (closeWithUnmatchedRaast — audited).
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
+import { fmtPkr } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import Link from 'next/link'
 
@@ -24,6 +31,8 @@ interface CurrentLock {
   lockedAt: string | null
   lockedBy: string | null
   note: string | null
+  /** Raast payments not matched to a bank statement up to `through` (absent on an API without Raast). */
+  raastUnmatched?: { count: number; cents: number; through: string | null }
 }
 
 interface HistoryLock {
@@ -42,6 +51,8 @@ export default function PeriodClosePage() {
   const [note, setNote] = useState('')
   const [reopenReason, setReopenReason] = useState('')
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  // The CEO's explicit "close anyway" over unmatched Raast payments.
+  const [closeWithRaast, setCloseWithRaast] = useState(false)
 
   const { data: current } = useQuery({
     queryKey: ['period-close'],
@@ -52,19 +63,33 @@ export default function PeriodClosePage() {
     queryFn: () => api.get<{ locks: HistoryLock[] }>('/accounting/period-close/history'),
   })
 
+  // Raast payments still open up to the date being closed (re-read when the date changes).
+  const { data: raastCheck } = useQuery({
+    queryKey: ['period-close', 'raast', lockedThrough],
+    queryFn: () => api.get<CurrentLock>(`/accounting/period-close?lockedThrough=${encodeURIComponent(lockedThrough)}`),
+    enabled: isAdmin && /^\d{4}-\d{2}-\d{2}$/.test(lockedThrough),
+  })
+  const raastOpen = raastCheck?.raastUnmatched ?? null
+  const raastBlocks = !!raastOpen && raastOpen.count > 0
+
   const refresh = () => void qc.invalidateQueries({ queryKey: ['period-close'] })
 
   const close = useMutation({
-    mutationFn: (input: { lockedThrough: string; note?: string }) =>
+    mutationFn: (input: { lockedThrough: string; note?: string; closeWithUnmatchedRaast?: boolean }) =>
       api.post('/accounting/period-close', input),
     onSuccess: () => {
-      setFeedback({ ok: true, msg: `Period closed through ${lockedThrough}` })
+      setFeedback({ ok: true, msg: `Period closed through ${lockedThrough}${closeWithRaast && raastBlocks ? ' — with Raast payments still not matched (on the audit trail)' : ''}` })
       refresh()
       setNote('')
+      setCloseWithRaast(false)
     },
     // The API's message is shown as-is — LOCK_IN_FUTURE names the latest
-    // date that can be closed (yesterday, Pakistan time).
+    // date that can be closed (yesterday, Pakistan time); RAAST_UNMATCHED
+    // names the count and amount (the warning below then offers "close anyway").
     onError: (err: { message?: string }) => {
+      if (err instanceof ApiError && err.code === 'RAAST_UNMATCHED') {
+        void qc.invalidateQueries({ queryKey: ['period-close', 'raast', lockedThrough] })
+      }
       setFeedback({ ok: false, msg: err.message ?? 'Failed to close period' })
     },
   })
@@ -118,7 +143,7 @@ export default function PeriodClosePage() {
             </p>
             <div className="space-y-2">
               <label htmlFor="lock-through" className="block text-xs text-s-muted">Lock through (inclusive)</label>
-              <input id="lock-through" type="date" value={lockedThrough} max={maxLock} onChange={(e) => setLockedThrough(e.target.value)}
+              <input id="lock-through" type="date" value={lockedThrough} max={maxLock} onChange={(e) => { setLockedThrough(e.target.value); setCloseWithRaast(false) }}
                 className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
             </div>
             <div className="space-y-2">
@@ -126,9 +151,26 @@ export default function PeriodClosePage() {
               <input id="lock-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. April month-end signed off"
                 className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
             </div>
+            {raastBlocks && raastOpen && (
+              <div role="alert" className="rounded-lg border border-s-amber/40 bg-s-amber-dim p-3 space-y-2 text-xs">
+                <p className="text-s-text">
+                  <strong>{raastOpen.count} Raast QR payment{raastOpen.count === 1 ? '' : 's'} ({fmtPkr(raastOpen.cents)})</strong> up to {raastOpen.through ?? lockedThrough} {raastOpen.count === 1 ? 'is' : 'are'} not
+                  matched to a bank statement yet (provisional, or needing attention). Until a statement line shows the money, the
+                  bank balance for the period is not proven.
+                </p>
+                <p className="text-s-muted">
+                  Match them on <Link href="/reconciliation?tab=raast" className="text-primary-ink underline">Finance → Reconciliation → Raast</Link>{' '}
+                  (or mark the ones that never arrived as not received), then close.
+                </p>
+                <label className="flex items-start gap-2 text-s-text">
+                  <input type="checkbox" className="mt-0.5 accent-primary" checked={closeWithRaast} onChange={(e) => setCloseWithRaast(e.target.checked)} />
+                  <span>Close anyway with {raastOpen.count} unmatched Raast payment{raastOpen.count === 1 ? '' : 's'} — recorded on the audit trail.</span>
+                </label>
+              </div>
+            )}
             <button
-              onClick={() => close.mutate({ lockedThrough, ...(note ? { note } : {}) })}
-              disabled={close.isPending || !lockedThrough || lockedThrough > maxLock}
+              onClick={() => close.mutate({ lockedThrough, ...(note ? { note } : {}), ...(raastBlocks && closeWithRaast && { closeWithUnmatchedRaast: true }) })}
+              disabled={close.isPending || !lockedThrough || lockedThrough > maxLock || (raastBlocks && !closeWithRaast)}
               className="s-btn-primary text-sm w-full"
             >
               {close.isPending ? 'Closing…' : 'Close Period'}

@@ -7,8 +7,14 @@
 // pages say which company they show.
 //
 // Secrets never come back from the server — only hints (first 4 + last 4).
-// The one exception is a freshly regenerated webhook secret
-// (`newWebhookSecret`), returned once by PUT /connectors/:kind.
+// The exceptions are a freshly regenerated webhook secret
+// (`newWebhookSecret`, returned once by PUT /connectors/:kind) and a bank-SMS
+// device token (returned once when a device is added or rotated; the CEO may
+// reveal it again, audited).
+//
+// Raast QR bank alerts (2026-10-12) live under /connectors/raast (module
+// api_pos — no new module id). Bank-SMS matching is OFF per company until the
+// CEO switches it on; servd never logs in to internet banking.
 //
 // There is NO skip anywhere (§17.0): held documents are released all at once
 // per company (or per brand), never by date range, and no document can be
@@ -19,6 +25,7 @@ import { api, ApiError } from './api'
 
 // ─── Shapes ──────────────────────────────────────────────────────────────────
 
+/** Kinds the generic PUT /connectors/:kind configures. Raast has its own routes (/connectors/raast/*). */
 export type ConnectorKind = 'fiscal' | 'terminal'
 export type Authority = 'fbr' | 'srb' | 'pra' | 'kpra' | 'bra'
 export const AUTHORITIES: Authority[] = ['fbr', 'srb', 'pra', 'kpra', 'bra']
@@ -118,6 +125,8 @@ export interface ConnectorsOverview {
   brandPosIds: BrandPosIds[]
   counts: FiscalCounts
   terminalAttention: number
+  /** Raast QR bank alerts. Optional only so an older API (before Raast) still types. */
+  raast?: RaastOverview
 }
 
 export interface DriverInfo {
@@ -247,6 +256,243 @@ export interface ReportingRequiredResult {
   heldNote: string | null
 }
 
+// ─── Raast QR bank alerts (/connectors/raast/*) ─────────────────────────────
+
+export interface RaastCounts {
+  /** Raast intents waiting at a till for the customer's transfer. */
+  awaiting: number
+  /** Paid at the till, not yet matched to a bank-statement line. */
+  provisional: number
+  needsAttention: number
+  /** Bank SMS that fit no bill, or more than one, or need a person. */
+  unmatchedAlerts: number
+  /** Bank SMS from a listed sender that no template could read, last 24 h. */
+  unparsed24h: number
+}
+
+/** GET /connectors overview → raast. */
+export interface RaastOverview {
+  /** Bank-SMS matching ON for the company. */
+  enabled: boolean
+  /** Active counter phones. */
+  devices: number
+  lastSmsAt: string | null
+  counts: RaastCounts
+}
+
+export interface RaastSender {
+  id: string
+  /** Normalised by the server (HBL-Alert → HBLALERT, 0300… → 92300…). */
+  senderId: string
+  bankAccountId: string
+  /** Needed when one sender reports on several accounts. */
+  accountLast4?: string
+  templateIds: string[]
+  active: boolean
+}
+
+export type RaastTemplateKind = 'credit' | 'debit'
+
+export interface RaastTemplate {
+  id: string
+  label: string
+  kind: RaastTemplateKind
+  /** servd's own template language — placeholders {amount} {ref} {date} {time} {account} {payer} {*}. Never a regex. */
+  template: string
+  dateFormat?: string
+  timeFormat?: string
+  active: boolean
+}
+
+export interface RaastSettings {
+  matchWindowMin: number
+  intentTtlMin: number
+  clockSkewMin: number
+  smsConfirmMin: number
+  unmatchedAlertEscalateMin: number
+  statementMatchDays: number
+  provisionalFlagDays: number
+  refMinLength: number
+  refMaxLength: number
+  ignoreKeywords: string[]
+  senders: RaastSender[]
+  templates: RaastTemplate[]
+}
+
+export type RaastNumberKey =
+  | 'matchWindowMin' | 'intentTtlMin' | 'clockSkewMin' | 'smsConfirmMin' | 'unmatchedAlertEscalateMin'
+  | 'statementMatchDays' | 'provisionalFlagDays' | 'refMinLength' | 'refMaxLength'
+
+/** The scalar Raast settings, with their allowed ranges (backend connectors/config.ts). */
+export const RAAST_NUMBER_SETTINGS: Array<{ key: RaastNumberKey; label: string; min: number; max: number; hint: string }> = [
+  { key: 'intentTtlMin', label: 'Raast request expires after (min)', min: 5, max: 120, hint: 'How long a till waits for the customer’s transfer before the request lapses.' },
+  { key: 'matchWindowMin', label: 'Match window (min)', min: 2, max: 60, hint: 'How far back from the SMS time a waiting bill may have been put up for Raast.' },
+  { key: 'clockSkewMin', label: 'Clock difference allowed (min)', min: 0, max: 10, hint: 'Allowance for the bank’s SMS clock running ahead of servd.' },
+  { key: 'smsConfirmMin', label: 'Flag a typed reference with no SMS after (min)', min: 5, max: 240, hint: 'While matching is on, a cashier-typed reference with no bank SMS raises a flag after this.' },
+  { key: 'unmatchedAlertEscalateMin', label: 'Escalate an unmatched SMS after (min)', min: 15, max: 1440, hint: 'An SMS nobody attached to a bill is flagged to finance and the floor.' },
+  { key: 'statementMatchDays', label: 'Statement match window (days)', min: 1, max: 10, hint: 'Days either side of the payment a statement line may fall on.' },
+  { key: 'provisionalFlagDays', label: 'Flag unmatched receipts after (days)', min: 1, max: 30, hint: 'Receipts still not on a bank statement after this are flagged to finance.' },
+  { key: 'refMinLength', label: 'Shortest reference', min: 4, max: 20, hint: 'Characters, after spaces and dashes are removed.' },
+  { key: 'refMaxLength', label: 'Longest reference', min: 8, max: 64, hint: 'Characters, after spaces and dashes are removed.' },
+]
+
+/** The raast connector row as /connectors/raast shows it. */
+export interface RaastConnectorView {
+  id: string
+  kind: 'raast'
+  driver: string
+  enabled: boolean
+  smsMatching: boolean
+  smsOnSince: string | null
+  settings: RaastSettings
+  updatedAt: string
+}
+
+export interface RaastDevice {
+  id: string
+  label: string
+  locationId: string | null
+  active: boolean
+  /** S2: the forwarder may put the token in the URL (weaker — URLs land in logs). Off by default. */
+  allowPathToken: boolean
+  tokenHint: string
+  lastSeenAt: string | null
+  lastSmsAt: string | null
+  /** SMS from senders not on the list (or with an ignore keyword) — never stored. */
+  ignoredCount: number
+  lastIgnoredAt: string | null
+  rotatedAt: string | null
+  createdAt: string
+}
+
+export interface RaastAccount {
+  bankAccountId: string
+  ledgerCode: string
+  bankName: string | null
+  accountTitle: string | null
+  raastId: string | null
+  last4: string | null
+}
+
+export interface RaastBankAccountLite {
+  id: string
+  name: string
+  bankName: string | null
+  last4: string | null
+  accountCode: string | null
+  raastId: string | null
+}
+
+export interface RaastReceivingAccounts {
+  default: RaastAccount | null
+  brands: Array<{ conceptId: string; name: string; overrideBankAccountId: string | null; effective: RaastAccount | null }>
+  /** The company's active, ledger-linked bank accounts (a sender reports on one of these). */
+  bankAccounts: RaastBankAccountLite[]
+}
+
+/** GET /connectors/raast/settings */
+export interface RaastSettingsPage {
+  connector: RaastConnectorView
+  devices: RaastDevice[]
+  receivingAccounts: RaastReceivingAccounts
+  counts: RaastCounts
+  /** What stops the CEO switching SMS matching on (empty when ready). */
+  readiness: { ready: boolean; missing: string[] }
+  secretKeyConfigured: boolean
+}
+
+/** PUT /connectors/raast/settings — partial; a list (senders / templates) replaces the stored one. New entries have no id. */
+export type RaastSettingsPatch = Partial<Omit<RaastSettings, 'senders' | 'templates'>> & {
+  senders?: Array<Omit<RaastSender, 'id'> & { id?: string }>
+  templates?: Array<Omit<RaastTemplate, 'id'> & { id?: string }>
+}
+
+/** A new / rotated / revealed device token — shown ONCE. */
+export interface RaastDeviceToken {
+  device: RaastDevice
+  token: string
+  /** Where the forwarder posts (header auth — preferred). */
+  postUrl: string
+  /** The header line to put in the forwarder. */
+  header: string
+  /** Only when the device allows a token in the URL (S2); else null. */
+  pathUrl: string | null
+}
+
+export interface RaastParseFields {
+  amountCents: number
+  bankRef: string | null
+  refValid: boolean
+  occurredAt: string
+  occurredAtSource?: 'sms' | 'forwarder' | 'server'
+  accountLast4: string | null
+  payer: string | null
+}
+
+/** POST /connectors/raast/test-parse — writes nothing. */
+export interface RaastTestParseResult {
+  sender: string
+  senderAllowed: boolean
+  ignoredByKeyword: boolean
+  results: Array<{
+    templateId: string
+    label: string
+    kind: RaastTemplateKind
+    active: boolean
+    matched: boolean
+    fields: RaastParseFields | null
+    problems: string[]
+  }>
+}
+
+export type BankSmsStatus =
+  | 'received' | 'processing' | 'unparsed' | 'off' | 'debit' | 'duplicate' | 'matched' | 'confirmed'
+  | 'unmatched' | 'ambiguous' | 'needs_attention' | 'attached' | 'dismissed'
+
+export const BANK_SMS_STATUSES: BankSmsStatus[] = [
+  'received', 'processing', 'unparsed', 'off', 'debit', 'duplicate', 'matched', 'confirmed',
+  'unmatched', 'ambiguous', 'needs_attention', 'attached', 'dismissed',
+]
+
+export const BANK_SMS_STATUS_LABEL: Record<BankSmsStatus, string> = {
+  received: 'Received',
+  processing: 'Reading',
+  unparsed: 'Not understood',
+  off: 'Read (matching off)',
+  debit: 'Money out',
+  duplicate: 'Duplicate',
+  matched: 'Paid a bill',
+  confirmed: 'Confirmed a typed reference',
+  unmatched: 'No bill found',
+  ambiguous: 'Fits more than one bill',
+  needs_attention: 'Needs attention',
+  attached: 'Attached at the till',
+  dismissed: 'Not a sale',
+}
+
+export interface BankSmsRow {
+  id: string
+  status: BankSmsStatus
+  sender: string
+  /** null after the retention period. */
+  body: string | null
+  device: string
+  locationId: string | null
+  receivedAt: string
+  kind: RaastTemplateKind | null
+  templateId: string | null
+  amountCents: number | null
+  bankRef: string | null
+  occurredAt: string | null
+  payer: string | null
+  accountLast4: string | null
+  bankAccountId: string | null
+  resolution: string | null
+  receipt: { id: string; orderId: string; status: string } | null
+}
+
+export interface BankSmsPage { items: BankSmsRow[]; nextCursor: string | null }
+
 // ─── WhatsApp (platform-wide gateway, /auth/integrations/*) ─────────────────
 
 export interface WhatsappStatus {
@@ -311,6 +557,24 @@ export const connectorsApi = {
   reverseCharge: (id: string, body: { markRefundedOnMachine?: boolean; note?: string }) =>
     api.post<TerminalChargeView>(`/pos/terminal/charges/${encodeURIComponent(id)}/reverse`, body),
 
+  // Raast QR bank alerts (/connectors/raast — the ACTIVE company).
+  raastSettings: () => api.get<RaastSettingsPage>('/connectors/raast/settings'),
+  saveRaastSettings: (patch: RaastSettingsPatch) => api.put<RaastConnectorView>('/connectors/raast/settings', patch),
+  /** CEO only; 409 NOT_READY { missing[] } until the readiness check passes. */
+  raastSmsOn: () => api.post<RaastConnectorView>('/connectors/raast/sms-on', { confirm: 'SMS ON' }),
+  raastSmsOff: () => api.post<RaastConnectorView & { awaiting: number }>('/connectors/raast/sms-off', { confirm: 'SMS OFF' }),
+  addRaastDevice: (body: { label: string; locationId?: string | null; allowPathToken?: boolean }) =>
+    api.post<RaastDeviceToken>('/connectors/raast/devices', body),
+  rotateRaastDevice: (id: string) => api.post<RaastDeviceToken>(`/connectors/raast/devices/${encodeURIComponent(id)}/rotate`, {}),
+  updateRaastDevice: (id: string, body: { label?: string; locationId?: string | null; active?: boolean; allowPathToken?: boolean }) =>
+    api.patch<RaastDevice>(`/connectors/raast/devices/${encodeURIComponent(id)}`, body),
+  /** CEO only, audited. */
+  revealRaastDevice: (id: string) => api.post<RaastDeviceToken>(`/connectors/raast/devices/${encodeURIComponent(id)}/reveal`, {}),
+  raastTestParse: (body: { sender: string; body: string; templates?: Array<Omit<RaastTemplate, 'id'> & { id?: string }> }) =>
+    api.post<RaastTestParseResult>('/connectors/raast/test-parse', body),
+  raastSms: (f: { status?: string; cursor?: string; limit?: number }) =>
+    api.get<BankSmsPage>(`/connectors/raast/sms${q(f)}`),
+
   // WhatsApp (same endpoints as before the move).
   whatsapp: () => api.get<WhatsappStatus>('/auth/integrations/whatsapp'),
   saveWhatsapp: (body: { apiUrl: string; apiKey?: string }) => api.put<{ ok: true }>('/auth/integrations/whatsapp', body),
@@ -361,6 +625,16 @@ export function useDrivers() {
   })
 }
 
+/** The active company's Raast QR set-up (settings, devices, receiving accounts, readiness). */
+export function useRaastSettings(opts: { refetchMs?: number } = {}) {
+  return useQuery({
+    queryKey: ['raast-settings'],
+    queryFn: connectorsApi.raastSettings,
+    refetchInterval: opts.refetchMs,
+    retry: (n, err) => !(err instanceof ApiError && [401, 403, 404, 422].includes(err.status)) && n < 2,
+  })
+}
+
 interface TenantMine { id: string; name: string; isActive?: boolean }
 
 /** The operator's active company (the one every /connectors call binds to). */
@@ -404,6 +678,16 @@ export function connectorErrorText(err: unknown): string {
         return `${err.message} Do not file it on the authority portal until the fiscal POS confirms it never got it.`
       case 'NOT_RETRYABLE':
         return 'This document has moved on since the list loaded — reload it.'
+      case 'NOT_READY':
+        return err.message || 'Not ready yet — see the list of what is missing.'
+      case 'INVALID_TEMPLATE':
+        return `Template not saved: ${err.message.replace(/^Template /, '')}`
+      case 'BANK_ACCOUNT_NOT_IN_COMPANY':
+        return `${err.message}. Finance links the account to the chart in Finance → Bank accounts.`
+      case 'NOT_IN_COMPANY':
+        return 'That outlet does not belong to this company.'
+      case 'INVALID_SETTINGS':
+        return err.message || 'Those settings do not fit together.'
       default:
         return err.message || err.code
     }

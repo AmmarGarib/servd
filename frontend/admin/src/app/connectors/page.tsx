@@ -2,7 +2,7 @@
 // Dev → API (spec §10, D13). The admin "API" section holds exactly two
 // connectors: the WhatsApp gateway (one platform-wide gateway for every
 // company) and the POS connector (per company: the fiscal POS that files
-// FBR / SRB, and the card machine). Not under /api/* — the admin rewrites
+// FBR / SRB, the card machine and Raast QR bank alerts). Not under /api/* — the admin rewrites
 // /api/:path* to the backend.
 
 import Link from 'next/link'
@@ -78,7 +78,7 @@ function PosCard() {
     <Link href="/connectors/pos" className="s-card-hover block p-5 space-y-3">
       <div>
         <h2 className="text-base font-bold text-s-text">POS connector</h2>
-        <p className="text-xs text-s-muted">Fiscal POS (FBR / SRB) and card machine{company ? ` — ${company.name}` : ''}.</p>
+        <p className="text-xs text-s-muted">Fiscal POS (FBR / SRB), card machine and Raast QR bank alerts{company ? ` — ${company.name}` : ''}.</p>
       </div>
       {isLoading && <p className="text-xs text-s-muted">Loading…</p>}
       {error && <p className="text-xs text-s-muted">{denied(error) ? 'Open to the CEO, IT and management.' : connectorErrorText(error)}</p>}

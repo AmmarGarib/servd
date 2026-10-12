@@ -44,7 +44,9 @@ interface STR {
   notes: string[]
 }
 
-const TENDER_LABEL: Record<RateLine['tender'], string> = { cash: 'Cash', card: 'Card / online', other: 'Other' }
+// 'card' is the digital tax group: Card – Keenu, Raast QR and online card
+// (backend lib/pricing.ts CARD_TENDERS → the brand's card rate).
+const TENDER_LABEL: Record<RateLine['tender'], string> = { cash: 'Cash', card: 'Card / Raast (digital rate)', other: 'Other' }
 
 export default function SalesTaxReturnPage() {
   const [from, setFrom] = useState(startOfMonthPktIso())
@@ -177,7 +179,7 @@ export default function SalesTaxReturnPage() {
 
             {/* Per rate — the brand's cash and card rates, refunds netted */}
             <div className="s-card overflow-hidden">
-              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By rate (cash 15% / card 8%) — refunds netted</div>
+              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By rate (cash 15% / card and Raast QR 8%) — refunds netted</div>
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-s-muted">

@@ -18,6 +18,13 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 
+// A pre-bill is priced for cash or the digital rate. 'card' is the digital tax
+// group — Card – Keenu and Raast QR share it (backend lib/pricing.ts).
+function tenderText(t: string): string {
+  if (t === 'card') return 'card / Raast'
+  return t
+}
+
 // ─── Types (GET /pre-bills) ──────────────────────────────────────────────────
 
 type Flag = 'ORPHANED' | 'FINAL_LOWER' | 'LINE_VOIDS_AFTER'
@@ -308,7 +315,7 @@ export default function VoidedPreBillsPage() {
                       <td className="px-3 py-2.5 text-white/75">{r.printedBy ?? '—'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold text-white/85">
                         {fmtPkr(r.totalCents)}
-                        <span className="ml-1 text-[10px] uppercase text-white/35">{r.tender}</span>
+                        <span className="ml-1 text-[10px] uppercase text-white/35">{tenderText(r.tender)}</span>
                       </td>
                       <td className="px-3 py-2.5"><StatusPill status={r.status} /></td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right text-white/75">{r.finalTotalCents != null ? fmtPkr(r.finalTotalCents) : '—'}</td>
@@ -389,11 +396,11 @@ function Drawer({ row: r, onClose }: { row: Row; onClose: () => void }) {
             <div className="mt-2 space-y-1 border-t pt-2" style={{ borderColor: 'var(--border)' }}>
               <KV k="Subtotal" v={fmtPkr(r.subtotalCents)} />
               {r.discountCents > 0 && <KV k="Discount" v={`-${fmtPkr(r.discountCents)}`} />}
-              {r.taxCents > 0 && <KV k={`GST (${r.tender})`} v={fmtPkr(r.taxCents)} />}
+              {r.taxCents > 0 && <KV k={`GST (${tenderText(r.tender)})`} v={fmtPkr(r.taxCents)} />}
               {r.serviceChargeCents > 0 && <KV k="Service charge" v={fmtPkr(r.serviceChargeCents)} />}
               {otherCents !== 0 && <KV k={otherCents > 0 ? 'Tip' : 'Credits applied'} v={fmtPkr(otherCents)} />}
-              <KV k={<strong>Total ({r.tender})</strong>} v={<strong>{fmtPkr(r.totalCents)}</strong>} />
-              {r.cardTotalCents != null && <KV k="If paid by card" v={fmtPkr(r.cardTotalCents)} />}
+              <KV k={<strong>Total ({tenderText(r.tender)})</strong>} v={<strong>{fmtPkr(r.totalCents)}</strong>} />
+              {r.cardTotalCents != null && <KV k="If paid by card / Raast QR" v={fmtPkr(r.cardTotalCents)} />}
             </div>
           </Section>
 

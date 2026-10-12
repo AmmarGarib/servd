@@ -5,6 +5,10 @@
 // a manager (the server's override approvers), sends it as
 // managerOverridePin, and says plainly when the PIN is missing or wrong. The
 // answer carries the bill the void leaves, which the page shows at once.
+// On a paid, still-open bill whose line goes back by Raast QR, the manager
+// sends the money back from the bank FIRST and types that outgoing transfer's
+// reference (409 RAAST_REFUND_REFERENCE_REQUIRED {amountCents} → the dialog
+// asks for it and resends).
 // Light admin page: colour tokens only.
 
 import { useState } from 'react'
@@ -35,6 +39,7 @@ const VOID_MESSAGES: Record<string, string> = {
 export function voidErrorMessage(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.code === 'MANAGER_OVERRIDE_REQUIRED' || e.code === 'INVALID_MANAGER_PIN' || e.code === 'MANAGER_PIN_LOCKED') return approvalErrorMessage(e, 'void')
+    if (e.code === 'RAAST_REFUND_REFERENCE_REQUIRED') return 'Send the money back from the bank first, then enter the outgoing transfer’s reference.'
     return VOID_MESSAGES[e.code] ?? (e.message || e.code)
   }
   return e instanceof Error ? e.message : 'The void failed'
@@ -52,15 +57,24 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
   const [pin, setPin] = useState('')
   // A manager whose session the server did not accept as approver still gets the PIN box.
   const [askPin, setAskPin] = useState(!isManager)
+  // Raast QR: the outgoing transfer's reference, asked once the server says the line goes back by Raast.
+  const [raastRefund, setRaastRefund] = useState<{ amountCents: number | null; message: string } | null>(null)
+  const [refundReference, setRefundReference] = useState('')
 
   const send = useMutation({
     mutationFn: () => api.post<VoidLineResult>(`/pos/orders/${encodeURIComponent(orderId)}/void`, {
       orderItemId: item.id,
       reason: reason.trim(),
       ...(askPin && pin.trim() && { managerOverridePin: pin.trim() }),
+      ...(raastRefund && refundReference.trim() && { refundReference: refundReference.trim() }),
     }),
     onSuccess: (r) => onVoided(r),
     onError: (e) => {
+      if (e instanceof ApiError && e.code === 'RAAST_REFUND_REFERENCE_REQUIRED') {
+        const amount = (e.details as { amountCents?: number } | undefined)?.amountCents
+        setRaastRefund({ amountCents: typeof amount === 'number' ? amount : null, message: e.message })
+        return
+      }
       // A wrong PIN or the wrong-PIN lock-out (429 MANAGER_PIN_LOCKED): clear
       // the box; the message says whether to retype it or get a manager.
       if (e instanceof ApiError && (e.code === 'MANAGER_OVERRIDE_REQUIRED' || e.code === 'INVALID_MANAGER_PIN' || e.code === 'MANAGER_PIN_LOCKED')) {
@@ -96,9 +110,23 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
         ) : (
           <p className="text-xs text-s-muted">You are approving this void as a manager.</p>
         )}
-        {send.isError && <p className="text-sm text-s-red" role="alert">{voidErrorMessage(send.error)}</p>}
+        {raastRefund && (
+          <div className="space-y-2 rounded-xl border border-s-amber bg-s-amber-dim p-3">
+            <p className="text-sm font-semibold text-s-text">
+              This bill was paid by Raast QR. Send {raastRefund.amountCents != null ? fmtPkr(raastRefund.amountCents) : 'the line value'} back
+              to the customer from the bank first, then enter that outgoing transfer’s reference.
+            </p>
+            <label htmlFor="void-raast-ref" className="block text-xs text-s-muted">Outgoing transfer reference (from the bank app)</label>
+            <input id="void-raast-ref" value={refundReference} onChange={(e) => setRefundReference(e.target.value)} autoComplete="off"
+              autoCapitalize="characters" spellCheck={false} maxLength={120}
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 font-mono text-sm text-s-text focus:border-primary focus:outline-none" />
+          </div>
+        )}
+        {send.isError && !(send.error instanceof ApiError && send.error.code === 'RAAST_REFUND_REFERENCE_REQUIRED' && !refundReference.trim()) && (
+          <p className="text-sm text-s-red" role="alert">{voidErrorMessage(send.error)}</p>
+        )}
         <div className="flex gap-3">
-          <button type="submit" disabled={send.isPending || !reason.trim() || (askPin && !pin.trim())}
+          <button type="submit" disabled={send.isPending || !reason.trim() || (askPin && !pin.trim()) || (!!raastRefund && !refundReference.trim())}
             className="flex-1 rounded-xl bg-s-red py-2 text-sm font-bold text-bone hover:opacity-90 disabled:opacity-40">
             {send.isPending ? 'Voiding…' : 'Void item'}
           </button>
