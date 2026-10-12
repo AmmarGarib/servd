@@ -72,6 +72,8 @@ const KIND_LABEL: Record<string, string> = {
   fiscal_manual_refund:    'Refund to file by hand',
   terminal_void_failed:    'Card reversal failed',
   terminal_unreconciled:   'Card payment does not reconcile',
+  tip_pool_outlier:        'Tip pool share above 40%',
+  capex_over_budget:       'CapEx project over budget',
 }
 
 /** The kind a flag is really about: metadata.realKind when set, else its kind. */

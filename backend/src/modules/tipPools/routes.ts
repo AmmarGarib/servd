@@ -15,14 +15,26 @@
 // the draft, has hours with no known branch, or is still clocked in. Hours a
 // pool cannot hold are listed with the reason, never dropped silently.
 //
-// Kiosk-only staff (an HR record, no servd login) cannot be pool members yet:
-// tip_pool_members.userId is a required link to a login (HR-R7 — the schema
-// change is in the report). Splitting the whole pot among the login holders
-// would hand the kitchen's share to front of house, so a pool whose window a
-// kiosk-only person worked at the brand is not posted until they are given a
-// login linked to their HR record (and the draft is computed again) — or the
-// approver records, by name and with a reason, that they are not in the pool
-// (e.g. a house rule). That decision is audited.
+// A pool belongs to ONE company (TipPool.tenantId, HR-R7): created in the
+// operator's ACTIVE company, for one of that company's brands. The pool's own
+// company — never the operator's — decides who can see and edit it, the chart
+// its payout posts to and the inbox its flags reach.
+//
+// Staff with no working servd login (kiosk / time-clock staff: an HR record
+// only, or one whose login was deleted) are pool members like anyone else
+// (tip_pool_members.employeeId), read from that company's attendance punches.
+// Their tip-pool role is read strictly from their HR designation (or, with
+// none, an exact department name) — see hrRoleKey. Someone whose HR record
+// does not plainly say which role they work is never split silently: posting
+// waits until an approver adds them on the draft with a weight, or records by
+// name and with a reason that they are not in the pool (e.g. a security
+// guard) — for all their hours, placed or not. That decision is audited.
+//
+// Paying out: one journal entry for the pool (Dr 2095 Tips Payable / Cr the
+// cash or bank account the tips are paid from), and each member's share —
+// login holder or employee alike — is recorded on their member row (name
+// snapshot, shareCents) with its own audit entry. Tips are handed out by the
+// company, not run through payroll.
 //
 // A tip is pooled once (audit PPL-01). A brand's pools may not overlap in
 // time — the window is half-open, [periodStart, periodEnd), so back-to-back
@@ -32,9 +44,8 @@
 // (Stamping each pooled order with its pool would need an orders column —
 // see the report.)
 
-import { tenantForConcept } from '../../lib/setup-config.js'
-import type { FastifyInstance } from 'fastify'
-import type { Prisma, UserRole } from '@prisma/client'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { Prisma, type UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, APPROVERS, MANAGERS } from '../auth/middleware.js'
@@ -42,7 +53,8 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
 import { homeShiftOf } from '../accounting/orderPosting.js'
-import { conceptIdsInScope, assertConceptOwned } from '../../lib/tenantScope.js'
+import { conceptIdsInScope, assertConceptOwned, scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
+import { flagException } from '../../lib/exceptions.js'
 import { getOperationsConfig, tipPoolWeights, getGeofenceConfig } from '../../lib/setup-config.js'
 import { nearestAnchor } from '../timeclock/policy.js'
 import { attendanceKeys, isMissedClockOut, MISSING_PUNCH_AFTER_MS, type PunchEntry } from '../hr/attendance.js'
@@ -132,10 +144,10 @@ export type ExcludedReason =
   | 'no_branch'
   /** still clocked in: the shift is not over, so its hours are not known yet */
   | 'still_on_shift'
-  /** kiosk-only staff (no servd login): a pool member needs a login until
-   *  tip_pool_members gets an employee column (HR-R7). Posting waits for
-   *  them unless the approver records that they are not in the pool. */
-  | 'no_login'
+  /** staff with no servd login whose HR designation / department does not
+   *  say which tip-pool role they work (HR-R7). Posting waits until they are
+   *  added on the draft with a weight, or left out by name with a reason. */
+  | 'no_role'
 
 export interface ExcludedHours {
   name: string
@@ -147,7 +159,55 @@ export interface ExcludedHours {
   reason: ExcludedReason
 }
 
-export interface WorkedAtBrand { userId: string; name: string; role: string; designation: string | null; hours: number }
+/** Someone who worked at the brand: a login holder (userId) or, with no
+ *  login, an HR employee (employeeId, userId null). */
+export interface WorkedAtBrand { userId: string | null; employeeId: string | null; name: string; role: string | null; designation: string | null; hours: number }
+
+/** A pool member's identity: the login when there is one, else the HR record. */
+export const memberKey = (m: { userId: string | null; employeeId: string | null }) =>
+  m.userId ? `u:${m.userId}` : `e:${m.employeeId}`
+
+/** Jobs that are never tip-pool roles, whatever else the title says
+ *  ("Ghost Kitchen Driver", "Maintenance Helper", "Security Guard"). */
+const NOT_TIP_STAFF = /\b(?:drivers?|riders?|delivery|security|guards?|maintenance|electricians?|plumbers?|technicians?|mechanics?|accountants?|accounts|office|admin|clerks?|cleaners?|janitors?|sweepers?|gardeners?|mali|chowkidar|watchman|peon)\b/i
+/** A designation that names a tip-pool role — whole words only. */
+const DESIGNATION_ROLE: Array<[RegExp, string]> = [
+  [/\bbaristas?\b/i, 'barista'],
+  [/\bcashiers?\b/i, 'cashier'],
+  [/\bexpedit(?:er|or)s?\b|\bexpo\b/i, 'expediter'],
+  [/\b(?:servers?|waiters?|waitress(?:es)?|waitstaff|host(?:ess)?(?:es|s)?|front of house|foh)\b/i, 'foh'],
+  [/\b(?:cooks?|chefs?|commis|grill(?:er)?|tandoori?(?:ya|a)?|dishwashers?|boh|back of house|kitchen (?:helper|hand|assistant|porter|staff)s?)\b/i, 'kitchen'],
+]
+/** Department names that name a tip-pool role — exact names only. */
+const DEPARTMENT_ROLE: Record<string, string> = {
+  'kitchen': 'kitchen', 'main kitchen': 'kitchen', 'boh': 'kitchen', 'back of house': 'kitchen',
+  'foh': 'foh', 'front of house': 'foh',
+}
+
+/**
+ * The tip-pool role of someone with no login, from their HR record: the
+ * weight keys of /configuration/operations (TIP_POOL_DEFAULT_WEIGHTS — foh,
+ * cashier, barista, kitchen, boh, expediter). Null when the record does not
+ * plainly say — the pool then asks (reason 'no_role') rather than guess.
+ *
+ * Strict on purpose (review D-RV-1: "Security Guard" in "Security Services"
+ * matched /service/ and took half the pot). The designation decides when
+ * there is one: a tip role named as a whole word, and nothing that names a
+ * non-tip job (driver, guard, maintenance…). An unrecognised designation is
+ * null — the department is NOT read then. Only someone with no designation
+ * falls back to the department, and only an exact Kitchen / Main Kitchen /
+ * BOH / Back of House / FOH / Front of House.
+ */
+export function hrRoleKey(designation: string | null, department: string | null): string | null {
+  const title = designation?.trim()
+  if (title) {
+    if (NOT_TIP_STAFF.test(title)) return null
+    for (const [re, role] of DESIGNATION_ROLE) if (re.test(title)) return role
+    return null
+  }
+  const dept = department?.trim().toLowerCase().replace(/\s+/g, ' ')
+  return dept ? DEPARTMENT_ROLE[dept] ?? null : null
+}
 
 /**
  * Hours each person of the brand's company worked AT THE BRAND in the window
@@ -160,7 +220,8 @@ export interface WorkedAtBrand { userId: string; name: string; role: string; des
  *
  * Hours that cannot go in the pool are never dropped silently (audit HR-R4 /
  * HR-R7): they come back in `excluded`, per person, with the reason — no
- * known branch, still on shift, or kiosk-only staff.
+ * known branch or still on shift. Staff with no login (kiosk / time-clock)
+ * are in `worked` with their employeeId and the role their HR record gives.
  *
  * Someone with an HR record here is read from that company's attendance
  * punches — a person on two companies' payrolls is paid by each for its own
@@ -199,13 +260,24 @@ export async function hoursAtBrand(concept: { id: string; tenantId: string }, fr
     select: { employeeId: true, startDate: true, data: true },
   })
   const userIds = new Set(users.map((u) => u.id))
+  // Everyone with attendance here is read: a login holder of this company by
+  // their login, and everyone else — no login, a login since deleted, or a
+  // login that is not (any more) of this company — as staff with no login,
+  // by HR record (review D-RV-2: someone whose login was deleted was in
+  // neither group and their hours were dropped without a word).
+  const attendedIds = Array.from(new Set(attendance.map((a) => a.employeeId!)))
   const emps = await prisma.hrEmployee.findMany({
-    where: { tenantId, OR: [{ userId: { in: Array.from(userIds) } }, { userId: null, id: { in: Array.from(new Set(attendance.map((a) => a.employeeId!))) } }] },
-    select: { id: true, userId: true, fullName: true, designationId: true, locationId: true },
+    where: { tenantId, OR: [{ userId: { in: Array.from(userIds) } }, { id: { in: attendedIds } }] },
+    select: { id: true, userId: true, fullName: true, designationId: true, departmentId: true, locationId: true },
   })
-  const empByUser = new Map(emps.filter((e) => e.userId && userIds.has(e.userId)).map((e) => [e.userId!, e]))
+  /** No working login of this company: read by HR record, never by login. */
+  const noLogin = (e: { userId: string | null }) => !e.userId || !userIds.has(e.userId)
+  const empByUser = new Map(emps.filter((e) => !noLogin(e)).map((e) => [e.userId!, e]))
   const designations = await prisma.hrOrgUnit.findMany({ where: { tenantId, id: { in: emps.map((e) => e.designationId).filter(Boolean) as string[] } }, select: { id: true, name: true } })
   const designationName = new Map(designations.map((d) => [d.id, d.name]))
+  const kioskDeptIds = emps.filter((e) => noLogin(e) && e.departmentId).map((e) => e.departmentId!)
+  const departments = kioskDeptIds.length ? await prisma.department.findMany({ where: { tenantId, id: { in: kioskDeptIds } }, select: { id: true, name: true } }) : []
+  const departmentName = new Map(departments.map((d) => [d.id, d.name]))
   const keys = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
 
   // Each employee's days: spans (tagged with the day, for the rota fallback)
@@ -225,7 +297,7 @@ export async function hoursAtBrand(concept: { id: string; tenantId: string }, fr
   }
 
   // The rota fallback, only for the days a span has no branch.
-  const needRota = soleBrand ? [] : emps.filter((e) => e.userId && (work.get(e.id)?.spans.some((sp) => !sp.locationId) || work.get(e.id)?.open.some((o) => !o.locationId)))
+  const needRota = soleBrand ? [] : emps.filter((e) => !noLogin(e) && (work.get(e.id)?.spans.some((sp) => !sp.locationId) || work.get(e.id)?.open.some((o) => !o.locationId)))
   const rotaBrands = new Map<string, Set<string>>()
   if (needRota.length) {
     const days = Array.from(attendance.filter((a) => a.startDate).map((a) => ymd(a.startDate!))).sort()
@@ -258,7 +330,7 @@ export async function hoursAtBrand(concept: { id: string; tenantId: string }, fr
   /** The part of a still-open shift inside the window, up to now. */
   const openMs = (o: { at: Date }) => isMissedClockOut(o.at, now) || o.at >= to ? 0 : msWithin({ inAt: o.at, outAt: now < to ? now : to, locationId: null }, from, to)
 
-  const worked = users.map((u) => {
+  const worked: WorkedAtBrand[] = users.map((u) => {
     const emp = empByUser.get(u.id)
     const designation = emp?.designationId ? designationName.get(emp.designationId) ?? null : null
     const who = { name: u.name, userId: u.id, employeeId: emp?.id ?? null, role: u.role, designation }
@@ -283,20 +355,28 @@ export async function hoursAtBrand(concept: { id: string; tenantId: string }, fr
       const last = mine[mine.length - 1]
       if (last?.type === 'in' && place(last.locationId, undefined) !== 'elsewhere') exclude(who, 'still_on_shift', openMs(last))
     }
-    return { userId: u.id, name: u.name, role: u.role, designation, hours: ms / 3_600_000 }
+    return { userId: u.id, employeeId: emp?.id ?? null, name: u.name, role: u.role, designation, hours: ms / 3_600_000 }
   })
 
-  // Kiosk-only staff: hours at the brand (or of unknown place) that a pool
-  // member row cannot hold yet.
-  for (const e of emps.filter((x) => !x.userId)) {
+  // Staff with no working login (kiosk / time-clock, or a login since
+  // deleted or not of this company): their own attendance punches,
+  // placed by the punch's branch or their HR branch (the rota's brand is read
+  // from /scheduling shifts, which only login holders have). Their role is
+  // what their HR record says (hrRoleKey).
+  for (const e of emps.filter(noLogin)) {
     const w = work.get(e.id)
     if (!w) continue
     const designation = e.designationId ? designationName.get(e.designationId) ?? null : null
-    const who = { name: e.fullName, userId: null, employeeId: e.id, role: null, designation }
+    const role = hrRoleKey(designation, e.departmentId ? departmentName.get(e.departmentId) ?? null : null)
+    const who = { name: e.fullName, userId: null, employeeId: e.id, role, designation }
     let ms = 0
-    for (const sp of w.spans) if (place(sp.locationId, undefined) !== 'elsewhere') ms += msWithin(sp, from, to)
-    for (const o of w.open) if (place(o.locationId, undefined) !== 'elsewhere') ms += openMs(o)
-    exclude(who, 'no_login', ms)
+    for (const sp of w.spans) {
+      const where = place(sp.locationId, undefined)
+      if (where === 'here') ms += msWithin(sp, from, to)
+      else if (where === 'unknown') exclude(who, 'no_branch', msWithin(sp, from, to))
+    }
+    for (const o of w.open) if (place(o.locationId, undefined) !== 'elsewhere') exclude(who, 'still_on_shift', openMs(o))
+    worked.push({ userId: null, employeeId: e.id, name: e.fullName, role, designation, hours: ms / 3_600_000 })
   }
   for (const x of excluded) x.hours = Number(x.hours.toFixed(2))
   return { worked, excluded: excluded.sort((a, b) => a.name.localeCompare(b.name)) }
@@ -349,21 +429,46 @@ async function computePool(concept: { id: string; tenantId: string }, start: Dat
   const { worked, excluded } = await hoursAtBrand(concept, start, end, now)
   const members = worked.map((w) => {
     const weight = weightOf(w)
-    const units = mode === 'equal' ? 1 : mode === 'by_hours' ? w.hours : w.hours * weight
+    const units = unitsFor(mode, w.hours, weight)
     return { ...w, weight, units }
   }).filter((w) => w.hours > 0 && w.weight > 0)
+  // Staff with no login whose HR record names no tip-pool role: the pool
+  // cannot tell whether they are in it, so it asks (HR-R7) — about ALL their
+  // hours in the window: placed at the brand, with no known branch, or on a
+  // shift still open (review D-RV-4). Whether they are in the pool comes
+  // first; an approver who says they are not (a guard) must be able to say so
+  // by name, so their unplaced hours are never a blocker of their own.
+  const unknownRole = (x: { userId: string | null; role: string | null; designation: string | null }) => !x.userId && x.role == null && weightOf(x) === 0
+  const asked = new Map<string, ExcludedHours>()
+  for (const w of worked) {
+    if (!unknownRole(w) || !w.employeeId) continue
+    asked.set(w.employeeId, { name: w.name, userId: null, employeeId: w.employeeId, role: null, designation: w.designation, hours: w.hours, reason: 'no_role' })
+  }
+  const rest: ExcludedHours[] = []
+  for (const x of excluded) {
+    const row = x.employeeId && unknownRole(x) ? asked.get(x.employeeId) : undefined
+    if (row) row.hours += x.hours
+    else rest.push(x)
+  }
+  for (const row of asked.values()) {
+    row.hours = Number(row.hours.toFixed(2))
+    if (row.hours > 0) rest.push(row)
+  }
   // Only people the pool would hold matter: a role with no weight is not in
-  // it, whatever its hours. Kiosk-only staff have no login role, so they are
-  // always listed.
-  const relevant = excluded.filter((x) => x.reason === 'no_login' || weightOf(x) > 0)
-  return { cfg, mode, members, excluded: relevant }
+  // it, whatever its hours. Staff with no login and no known role are asked
+  // about (no_role) above.
+  const relevant = rest.filter((x) => x.reason === 'no_role' || weightOf(x) > 0)
+  return { cfg, mode, weightOf, members, excluded: relevant.sort((a, b) => a.name.localeCompare(b.name)) }
 }
+
+const unitsFor = (mode: Distribution, hours: number, weight: number) =>
+  mode === 'equal' ? 1 : mode === 'by_hours' ? hours : hours * weight
 
 const fmtHours = (h: number) => `${h.toFixed(1)} h`
 const REASON_TEXT: Record<ExcludedReason, string> = {
   no_branch: 'no branch is known for their punches — set their branch in HR (or roster them on this brand), then delete this draft and compute again',
   still_on_shift: 'still clocked in — compute the pool after they clock out',
-  no_login: 'kiosk-only staff (no servd login) — a pool can only pay staff with a login: give them a login linked to their HR record, then delete this draft and compute again (or, if they are not in the tip pool, say so when posting)',
+  no_role: 'no servd login, and their HR designation does not say which tip-pool role they work — add them on this draft with a weight, set their designation in HR and compute again, or, if they are not in the tip pool, say so when posting',
 }
 
 /** A till still holding tips from a pool's window: `open`, or `unposted` —
@@ -459,12 +564,22 @@ function tillText(tills: TillHoldingTips[]): string {
   return parts.join('; ')
 }
 
+type PoolForReview = {
+  id: string; tenantId: string; conceptId: string | null; periodStart: Date; periodEnd: Date; totalTipsCents: number
+  members: Array<{ userId: string | null; employeeId: string | null }>
+}
+
 /** What stands between a draft and posting it, computed now. */
-async function reviewDraft(pool: { id: string; conceptId: string | null; periodStart: Date; periodEnd: Date; totalTipsCents: number; members: Array<{ userId: string }> }, now = new Date()) {
+async function reviewDraft(pool: PoolForReview, now = new Date()) {
   if (!pool.conceptId) return null
   const concept = await prisma.concept.findUnique({ where: { id: pool.conceptId }, select: { id: true, tenantId: true } })
   if (!concept?.tenantId) return null
   const blockers: string[] = []
+  // The brand moved to another company since the draft: its tips and hours
+  // are that company's now, never this pool's.
+  if (concept.tenantId !== pool.tenantId) {
+    return { excluded: [], missing: [], staffWithoutRole: [], totalTipsNow: pool.totalTipsCents, blockers: ['This brand now belongs to another company — delete this draft and compute the pool in that company'] }
+  }
   if (pool.periodEnd > now) {
     blockers.push(`The window ends at ${pktStamp(pool.periodEnd)} — post it after the window is over, so every tip and every shift is in it`)
   }
@@ -472,31 +587,62 @@ async function reviewDraft(pool: { id: string; conceptId: string | null; periodS
   if (tills.length) blockers.push(tillText(tills))
   let computed: Awaited<ReturnType<typeof computePool>>
   try {
-    computed = await computePool({ id: concept.id, tenantId: concept.tenantId }, pool.periodStart, pool.periodEnd, now)
+    computed = await computePool({ id: concept.id, tenantId: pool.tenantId }, pool.periodStart, pool.periodEnd, now)
   } catch (e) {
     // e.g. the brand lost its branch links since the draft was computed.
-    if (e instanceof AppError) return { excluded: [], missing: [], kioskStaff: [], totalTipsNow: pool.totalTipsCents, blockers: [...blockers, e.message] }
+    if (e instanceof AppError) return { excluded: [], missing: [], staffWithoutRole: [], totalTipsNow: pool.totalTipsCents, blockers: [...blockers, e.message] }
     throw e
   }
   const { members, excluded } = computed
-  const inDraft = new Set(pool.members.map((m) => m.userId))
-  const missing = members.filter((m) => !inDraft.has(m.userId)).map((m) => ({ userId: m.userId, name: m.name, hours: Number(m.hours.toFixed(2)) }))
+  const inDraft = new Set(pool.members.map(memberKey))
+  const missing = members.filter((m) => !inDraft.has(memberKey(m))).map((m) => ({ userId: m.userId, employeeId: m.employeeId, name: m.name, hours: Number(m.hours.toFixed(2)) }))
   if (missing.length) {
     blockers.push(`${missing.map((m) => `${m.name} (${fmtHours(m.hours)})`).join(', ')} worked the window but ${missing.length === 1 ? 'is' : 'are'} not in this draft — delete it and compute again`)
   }
-  for (const x of excluded.filter((e) => e.reason !== 'no_login')) blockers.push(`${x.name}: ${fmtHours(x.hours)} not counted — ${REASON_TEXT[x.reason]}`)
-  // Kiosk-only staff who worked the window at the brand (HR-R7): posting
-  // waits for them unless the approver leaves them out by name (see post).
-  const kioskStaff = excluded.filter((e) => e.reason === 'no_login')
+  for (const x of excluded.filter((e) => e.reason !== 'no_role')) blockers.push(`${x.name}: ${fmtHours(x.hours)} not counted — ${REASON_TEXT[x.reason]}`)
+  // Staff with no login and no known role who worked the window at the
+  // brand (HR-R7), and are not on the draft: posting waits for them unless
+  // the approver leaves them out by name (see post).
+  const staffWithoutRole = excluded.filter((e) => e.reason === 'no_role' && !inDraft.has(memberKey(e)))
   const tips = await prisma.order.aggregate({
     where: { status: { in: ['completed', 'refunded'] }, completedAt: { gte: pool.periodStart, lt: pool.periodEnd }, conceptId: pool.conceptId, deletedAt: null },
     _sum: { tipCents: true },
   })
-  return { excluded, missing, kioskStaff, totalTipsNow: tips._sum.tipCents ?? 0, blockers }
+  return { excluded: excluded.filter((e) => e.reason !== 'no_role' || !inDraft.has(memberKey(e))), missing, staffWithoutRole, totalTipsNow: tips._sum.tipCents ?? 0, blockers }
 }
 
-/** The kiosk-only staff a post leaves out, by HR record, and why (HR-R7). */
-const LeaveOutKiosk = z.object({
+/**
+ * Members of a pool who are not (any more) of the pool's company: a login
+ * that is neither based in nor a member of it, or an HR record of another
+ * company. Never paid from this company's pool.
+ */
+async function membersOutsideCompany(tenantId: string, members: Array<{ userId: string | null; employeeId: string | null; userName: string }>): Promise<string[]> {
+  const userIds = members.map((m) => m.userId).filter((x): x is string => !!x)
+  const empIds = members.map((m) => m.employeeId).filter((x): x is string => !!x)
+  const [users, emps] = await Promise.all([
+    userIds.length ? prisma.user.findMany({ where: { id: { in: userIds }, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] }, select: { id: true } }) : [],
+    empIds.length ? prisma.hrEmployee.findMany({ where: { id: { in: empIds }, tenantId }, select: { id: true } }) : [],
+  ])
+  const ok = new Set([...users.map((u) => u.id), ...emps.map((e) => e.id)])
+  return members.filter((m) => !ok.has((m.userId ?? m.employeeId)!)).map((m) => m.userName)
+}
+
+/** A pool in the operator's companies for `mode`, or 404. */
+async function poolInScope(req: FastifyRequest, id: string, mode: 'read' | 'write') {
+  const pool = await prisma.tipPool.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) } })
+  if (!pool) throw new NotFoundError('TipPool', id)
+  return pool
+}
+
+const MEMBER_INCLUDE = {
+  members: {
+    orderBy: { userName: 'asc' as const },
+    include: { employee: { select: { employeeCode: true } } },
+  },
+}
+
+/** Staff with no known role a post leaves out, by HR record, and why (HR-R7). */
+const LeaveOutStaff = z.object({
   employeeIds: z.array(z.string().uuid()).max(500),
   reason: z.string().trim().min(5).max(300),
 })
@@ -507,10 +653,15 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     '/',
     { preHandler: requireAuth(...POOL_TEAM) },
     async (req) => {
+      // The pool's own company (view-aware), narrowed to a brand when one is
+      // asked for or picked in the global brand filter.
       const inScope = await conceptIdsInScope(req, 'read')
       const ids = req.query.conceptId ? inScope.filter((c) => c === req.query.conceptId) : inScope
       return prisma.tipPool.findMany({
-        where: { conceptId: { in: ids } },
+        where: {
+          ...(await scopeTenantWhere(req, 'read')),
+          ...(req.query.conceptId ? { conceptId: { in: ids } } : { OR: [{ conceptId: { in: ids } }, { conceptId: null }] }),
+        },
         orderBy: { periodStart: 'desc' },
         include: { _count: { select: { members: true } }, },
         take: 50,
@@ -524,8 +675,8 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...POOL_TEAM) },
     async (req) => {
       const pool = await prisma.tipPool.findFirst({
-        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'read') } },
-        include: { members: { orderBy: { userName: 'asc' } } },
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
+        include: MEMBER_INCLUDE,
       })
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
       // A draft shows what posting would refuse on: hours left out (and why),
@@ -543,16 +694,22 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...POOL_TEAM) },
     async (req, reply) => {
       const body = z.object({
-        // A pool belongs to a brand, and so to one company: tips and hours from
-        // every company can never be pooled together, and post/pay look the
-        // pool up by its brand.
+        // A pool belongs to a brand of the ACTIVE company: tips and hours from
+        // two companies can never be pooled together.
         conceptId: z.string().uuid(),
         name: z.string().min(1).max(80),
         periodStart: z.string().datetime(),
         periodEnd:   z.string().datetime(),
       }).parse(req.body)
-      const concept = await assertConceptOwned(req, body.conceptId, 'create')
-      if (!concept.tenantId) throw new NotFoundError('Concept', body.conceptId)
+      // The pool binds to the operator's ACTIVE company; its brand must be
+      // that company's. A brand of another of the operator's companies is a
+      // cross-company attach (422); one outside them all is 404.
+      const tenantId = activeTenantId(req, 'a tip pool belongs to one company')
+      const owned = await assertConceptOwned(req, body.conceptId, 'write')
+      if (owned.tenantId !== tenantId) {
+        throw new AppError('BRAND_NOT_IN_COMPANY', 'That brand belongs to another company — switch to it to pool its tips', 422)
+      }
+      const concept = { id: owned.id, tenantId }
       const periodStart = new Date(body.periodStart)
       const periodEnd   = new Date(body.periodEnd)
       if (!(periodEnd > periodStart)) throw new AppError('BAD_PERIOD', 'The period must end after it starts', 400)
@@ -586,6 +743,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         })
         const pool = await tx.tipPool.create({
           data: {
+            tenantId:     concept.tenantId,
             conceptId:    concept.id,
             name:         body.name,
             periodStart, periodEnd,
@@ -597,7 +755,10 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
           await tx.tipPoolMember.createMany({
             data: worked.map((w) => ({
               poolId:      pool.id,
+              // A login holder by login; staff with no login by HR record —
+              // exactly one (CHECK tip_pool_members_one_person).
               userId:      w.userId,
+              employeeId:  w.userId ? null : w.employeeId,
               userName:    w.name,
               hoursWorked: Number(w.hours.toFixed(2)),
               roleWeight:  w.weight,
@@ -609,7 +770,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         }
         return tx.tipPool.findUniqueOrThrow({
           where: { id: pool.id },
-          include: { members: { orderBy: { userName: 'asc' } } },
+          include: MEMBER_INCLUDE,
         })
       })
       // Hours the pool cannot hold are listed, never dropped silently (HR-R4,
@@ -624,15 +785,12 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...POOL_TEAM) },
     async (req, reply) => {
-      const pool = await prisma.tipPool.findFirst({
-        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
-      })
-      if (!pool) throw new NotFoundError('TipPool', req.params.id)
+      const pool = await poolInScope(req, req.params.id, 'write')
       const n = await prisma.tipPool.deleteMany({ where: { id: pool.id, status: 'draft' } })
       if (n.count === 0) throw new AppError('ALREADY_POSTED', `Pool is ${pool.status} — only a draft can be deleted`, 409)
       await audit({ category: 'accounting',
         action: 'tippool.delete_draft', entity: 'TipPool', entityId: pool.id,
-        userId: req.staffUser?.id ?? null, tenantId: (pool.conceptId ? await tenantForConcept(pool.conceptId) : null) ?? req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: pool.tenantId, userEmail: req.staffUser?.email ?? null,
         before: { name: pool.name, totalCents: pool.totalTipsCents, periodStart: pool.periodStart, periodEnd: pool.periodEnd },
       })
       return reply.status(204).send()
@@ -651,7 +809,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
       // Through its pool: a member of another company's pool is not found, and
       // shares are frozen once the pool is posted.
       const member = await prisma.tipPoolMember.findFirst({
-        where: { id: req.params.memberId, pool: { conceptId: { in: await conceptIdsInScope(req, 'write') } } },
+        where: { id: req.params.memberId, pool: await scopeTenantWhere(req, 'write') },
         include: { pool: { select: { status: true } } },
       })
       if (!member) throw new NotFoundError('TipPoolMember', req.params.memberId)
@@ -660,49 +818,162 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // Who can be added to a draft by hand: the pool's company's current HR
+  // employees not already in it (name, code, designation — nothing else).
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/candidates',
+    { preHandler: requireAuth(...POOL_TEAM) },
+    async (req) => {
+      const pool = await poolInScope(req, req.params.id, 'write')
+      const members = await prisma.tipPoolMember.findMany({ where: { poolId: pool.id }, select: { userId: true, employeeId: true } })
+      const inPool = new Set(members.map(memberKey))
+      const emps = await prisma.hrEmployee.findMany({
+        where: { tenantId: pool.tenantId, status: { in: ['active', 'on_leave'] } },
+        select: { id: true, employeeCode: true, fullName: true, userId: true, designationId: true },
+        orderBy: { fullName: 'asc' },
+        take: 2000,
+      })
+      const designations = await prisma.hrOrgUnit.findMany({
+        where: { tenantId: pool.tenantId, id: { in: emps.map((e) => e.designationId).filter((x): x is string => !!x) } },
+        select: { id: true, name: true },
+      })
+      const designation = new Map(designations.map((d) => [d.id, d.name]))
+      return emps
+        .filter((e) => !inPool.has(`e:${e.id}`) && !(e.userId && inPool.has(`u:${e.userId}`)))
+        .map((e) => ({ employeeId: e.id, employeeCode: e.employeeCode, name: e.fullName, designation: e.designationId ? designation.get(e.designationId) ?? null : null, hasLogin: !!e.userId }))
+    },
+  )
+
+  // Add someone to a draft by hand — typically staff with no servd login
+  // whose HR record does not say their tip-pool role (HR-R7), or anyone the
+  // punches missed. Either an HR employee (employeeId) or a login (userId);
+  // an employee who has a login is added by that login, the way the pool
+  // builder adds them. They must be of the POOL's company (422 otherwise).
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/members',
+    { preHandler: requireAuth(...POOL_TEAM) },
+    async (req, reply) => {
+      const body = z.object({
+        employeeId:  z.string().uuid().optional(),
+        userId:      z.string().uuid().optional(),
+        hoursWorked: z.number().min(0).max(1000),
+        // Defaults to the weight of the role their login / HR record gives.
+        roleWeight:  z.number().min(0).max(10).optional(),
+        notes:       z.string().trim().max(300).optional(),
+      }).refine((b) => !!b.employeeId !== !!b.userId, { message: 'Give exactly one of employeeId or userId' }).parse(req.body)
+      const pool = await poolInScope(req, req.params.id, 'write')
+      if (pool.status !== 'draft') throw new AppError('ALREADY_POSTED', `Pool is ${pool.status} — only a draft takes new members`, 422)
+
+      let who: { userId: string | null; employeeId: string | null; name: string; role: string | null; designation: string | null }
+      if (body.employeeId) {
+        const emp = await prisma.hrEmployee.findFirst({
+          where: { id: body.employeeId, tenantId: pool.tenantId },
+          select: { id: true, userId: true, fullName: true, designationId: true, departmentId: true },
+        })
+        if (!emp) throw new AppError('MEMBER_NOT_IN_COMPANY', 'That employee is not on this pool\'s company\'s HR records', 422)
+        const [designation, department, user] = await Promise.all([
+          emp.designationId ? prisma.hrOrgUnit.findFirst({ where: { id: emp.designationId, tenantId: pool.tenantId }, select: { name: true } }) : null,
+          emp.departmentId ? prisma.department.findFirst({ where: { id: emp.departmentId, tenantId: pool.tenantId }, select: { name: true } }) : null,
+          emp.userId ? prisma.user.findFirst({ where: { id: emp.userId, deletedAt: null }, select: { id: true, role: true } }) : null,
+        ])
+        who = {
+          userId: user?.id ?? null, employeeId: user ? null : emp.id, name: emp.fullName,
+          role: user ? user.role : hrRoleKey(designation?.name ?? null, department?.name ?? null),
+          designation: designation?.name ?? null,
+        }
+      } else {
+        const user = await prisma.user.findFirst({
+          where: { id: body.userId!, deletedAt: null, OR: [{ tenantId: pool.tenantId }, { tenantMemberships: { some: { tenantId: pool.tenantId } } }] },
+          select: { id: true, name: true, role: true },
+        })
+        if (!user) throw new AppError('MEMBER_NOT_IN_COMPANY', 'That login is not part of this pool\'s company', 422)
+        who = { userId: user.id, employeeId: null, name: user.name, role: user.role, designation: null }
+      }
+
+      const cfg = await getOperationsConfig(pool.tenantId)
+      const weights = tipPoolWeights(cfg)
+      const mode = (cfg?.tipPoolDistribution ?? 'equal') as Distribution
+      const derived = who.designation && /barista/i.test(who.designation) && weights['barista'] != null ? weights['barista']! : who.role ? weights[who.role] ?? 0 : 0
+      const weight = body.roleWeight ?? derived
+      if (!(weight > 0)) {
+        throw new AppError('ROLE_WEIGHT_REQUIRED', `${who.name}'s role carries no tip-pool weight — give a weight (e.g. 0.5 for kitchen) to add them`, 422)
+      }
+      const dup = await prisma.tipPoolMember.findFirst({
+        where: { poolId: pool.id, ...(who.userId ? { userId: who.userId } : { employeeId: who.employeeId }) },
+        select: { id: true },
+      })
+      if (dup) throw new AppError('ALREADY_IN_POOL', `${who.name} is already in this pool`, 409)
+      let member
+      try {
+        member = await prisma.tipPoolMember.create({
+          data: {
+            poolId: pool.id, userId: who.userId, employeeId: who.employeeId, userName: who.name,
+            hoursWorked: Number(body.hoursWorked.toFixed(2)), roleWeight: weight,
+            shareUnits: Number(unitsFor(mode, body.hoursWorked, weight).toFixed(3)), shareCents: 0,
+            notes: body.notes || 'added by hand',
+          },
+        })
+      } catch (e) {
+        // The partial unique index, on a race with another add.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new AppError('ALREADY_IN_POOL', `${who.name} is already in this pool`, 409)
+        throw e
+      }
+      await audit({ category: 'accounting',
+        action: 'tippool.add_member', entity: 'TipPoolMember', entityId: member.id,
+        userId: req.staffUser?.id ?? null, tenantId: pool.tenantId, userEmail: req.staffUser?.email ?? null,
+        after: { recipient: who.name, userId: who.userId, employeeId: who.employeeId, hours: member.hoursWorked, weight, units: member.shareUnits },
+        metadata: { tipPoolId: pool.id },
+      })
+      return reply.status(201).send(member)
+    },
+  )
+
   // Post — locks the pool, computes per-member shareCents, no JE (liability
   // is already on the books from each order's tip).
-  fastify.post<{ Params: { id: string }; Body: { leaveOutKioskStaff?: { employeeIds: string[]; reason: string } } | undefined }>(
+  fastify.post<{ Params: { id: string }; Body: { leaveOutStaff?: { employeeIds: string[]; reason: string }; leaveOutKioskStaff?: { employeeIds: string[]; reason: string } } | undefined }>(
     '/:id/post',
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
-      const body = z.object({ leaveOutKioskStaff: LeaveOutKiosk.optional() }).parse(req.body ?? {})
-      // Tip pools belong to a brand, and therefore to one company. Looking one
-      // up by bare id let a manager distribute another company's pool.
-      const found = await prisma.tipPool.findFirst({
-        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
-        select: { id: true },
-      })
-      if (!found) throw new NotFoundError('TipPool', req.params.id)
+      const body = z.object({ leaveOutStaff: LeaveOutStaff.optional(), leaveOutKioskStaff: LeaveOutStaff.optional() }).parse(req.body ?? {})
+      // `leaveOutKioskStaff` is the field's old name (until 2026-10-12).
+      const leaveOut = body.leaveOutStaff ?? body.leaveOutKioskStaff
+      // The pool's own company decides — another company's pool is not found.
+      const found = await poolInScope(req, req.params.id, 'write')
 
       // Posting splits what the draft holds, so the draft must still be the
       // whole story (audit HR-R3 / HR-R4): the window is over, nobody who
       // worked it is missing from the draft, and no hours sit unplaced or on
       // a shift still open.
       //
-      // Kiosk-only staff (no login) cannot be members yet (HR-R7). Posting
-      // without them would split their share among the login holders, so it
-      // waits until they have a login and the draft is computed again — unless
-      // the approver names each of them as not in this pool, with a reason.
-      const draft = await prisma.tipPool.findUniqueOrThrow({ where: { id: found.id }, include: { members: { select: { userId: true } } } })
-      let kioskLeftOut: Array<{ employeeId: string | null; name: string; hours: number }> = []
+      // Staff with no login whose HR record names no tip-pool role (HR-R7):
+      // posting without them would split their share among the others, so it
+      // waits until they are added on the draft — unless the approver names
+      // each of them as not in this pool, with a reason.
+      const draft = await prisma.tipPool.findUniqueOrThrow({ where: { id: found.id }, include: { members: { select: { userId: true, employeeId: true, userName: true } } } })
+      let leftOut: Array<{ employeeId: string | null; name: string; hours: number }> = []
       if (draft.status === 'draft') {
         const review = await reviewDraft(draft)
         if (review?.blockers.length) {
           throw new AppError('POOL_NOT_READY', `Not posted: ${review.blockers.join('. ')}.`, 409, review)
         }
-        const kiosk = review?.kioskStaff ?? []
-        const named = new Set(body.leaveOutKioskStaff?.employeeIds ?? [])
-        const unnamed = kiosk.filter((k) => !k.employeeId || !named.has(k.employeeId))
+        const unknown = review?.staffWithoutRole ?? []
+        const named = new Set(leaveOut?.employeeIds ?? [])
+        const unnamed = unknown.filter((k) => !k.employeeId || !named.has(k.employeeId))
         if (unnamed.length) {
           throw new AppError(
-            'KIOSK_STAFF_NOT_IN_POOL',
-            `Not posted: ${unnamed.map((k) => `${k.name} (${fmtHours(k.hours)})`).join(', ')} worked this window at the brand but ${unnamed.length === 1 ? 'has' : 'have'} no servd login, so the pool cannot pay them — posting now would give their share to the others. Give them a login linked to their HR record, delete this draft and compute again; or, if they are not in the tip pool, leave them out by name with a reason.`,
+            'STAFF_ROLE_UNKNOWN',
+            `Not posted: ${unnamed.map((k) => `${k.name} (${fmtHours(k.hours)})`).join(', ')} worked this window at the brand, but ${unnamed.length === 1 ? 'their' : 'these people\'s'} HR record does not say which tip-pool role they work — posting now would give their share to the others. Add them on the draft with a weight (or set their designation in HR, delete this draft and compute again); or, if they are not in the tip pool, leave them out by name with a reason.`,
             409,
             review,
           )
         }
-        kioskLeftOut = kiosk.map((k) => ({ employeeId: k.employeeId, name: k.name, hours: k.hours }))
+        leftOut = unknown.map((k) => ({ employeeId: k.employeeId, name: k.name, hours: k.hours }))
+        // Every member is of the pool's company — never pay another
+        // company's staff from this company's tips.
+        const outside = await membersOutsideCompany(draft.tenantId, draft.members)
+        if (outside.length) {
+          throw new AppError('MEMBER_NOT_IN_COMPANY', `Not posted: ${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} not part of this pool's company — delete this draft and compute again`, 422)
+        }
       }
 
       const { pool, updated } = await prisma.$transaction(async (tx) => {
@@ -745,18 +1016,18 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         }
         const n = await tx.tipPool.updateMany({ where: { id: pool.id, status: 'draft' }, data: { status: 'posted', postedAt: new Date() } })
         if (n.count === 0) throw new AppError('ALREADY_POSTED', 'Pool is no longer a draft', 422)
-        const updated = await tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: { members: { orderBy: { userName: 'asc' } } } })
+        const updated = await tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: MEMBER_INCLUDE })
         return { pool, updated }
       })
-      // The pool's own company (its brand's), never the operator's active one.
-      const poolTenantId = (pool.conceptId ? await tenantForConcept(pool.conceptId) : null) ?? req.staffUser?.tenantId ?? null
+      // The pool's own company, never the operator's active one.
+      const poolTenantId = pool.tenantId
       await audit({ category: 'accounting',
         action: 'tippool.post', entity: 'TipPool', entityId: pool.id,
         userId: req.staffUser?.id ?? null, tenantId: poolTenantId, userEmail: req.staffUser?.email ?? null,
         after: { totalCents: pool.totalTipsCents, members: updated.members.length },
-        // Kiosk-only staff who worked the window and were left out on purpose
-        // (HR-R7): who, their hours, and the approver's reason.
-        ...(kioskLeftOut.length > 0 && { metadata: { kioskStaffLeftOut: kioskLeftOut, reason: body.leaveOutKioskStaff?.reason ?? null } }),
+        // Staff with no known role who worked the window and were left out on
+        // purpose (HR-R7): who, their hours, and the approver's reason.
+        ...(leftOut.length > 0 && { metadata: { staffLeftOut: leftOut, reason: leaveOut?.reason ?? null } }),
       })
 
       // Per-member audit row so each individual share is independently
@@ -769,28 +1040,28 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
           entityId: m.id,
           userId: req.staffUser?.id ?? null, tenantId: poolTenantId,
           userEmail: req.staffUser?.email ?? null,
-          after: { recipient: m.userName, recipientId: m.userId, units: m.shareUnits, cents: m.shareCents },
+          after: { recipient: m.userName, recipientId: m.userId, employeeId: m.employeeId, units: m.shareUnits, cents: m.shareCents },
           metadata: { tipPoolId: pool.id, totalPool: pool.totalTipsCents },
         })
       }
 
       // Outlier flag: if any member is taking > 40% of the pool, flag.
       // Indicates either a real high-units worker (legit, reviewer can
-      // resolve) or a manipulated split.
+      // resolve) or a manipulated split. Raised once — a pool posts once.
       const big = updated.members.find((m) => m.shareCents > pool.totalTipsCents * 0.4)
       if (big && updated.members.length >= 3) {
-        const { flagException } = await import('../../lib/exceptions.js')
         await flagException({
-          tenantId: poolTenantId ?? req.staffUser!.tenantId,
-          kind: 'high_value_void',
+          tenantId: poolTenantId,
+          kind: 'tip_pool_outlier',
           severity: 'medium',
           title: `Tip pool: ${big.userName} taking ${((big.shareCents / pool.totalTipsCents) * 100).toFixed(0)}%`,
           description: `${big.userName} took ${((big.shareCents / pool.totalTipsCents) * 100).toFixed(0)}% of a PKR ${(pool.totalTipsCents / 100).toFixed(0)} pool across ${updated.members.length} members. Confirm units (${big.shareUnits}) reflect actual hours/role.`,
           entityType: 'TipPool',
           entityId: pool.id,
+          conceptId: pool.conceptId,
           actorId: req.staffUser?.id ?? null,
           amountCents: big.shareCents,
-          metadata: { recipient: big.userName, totalCents: pool.totalTipsCents, units: big.shareUnits, memberCount: updated.members.length },
+          metadata: { recipient: big.userName, userId: big.userId, employeeId: big.employeeId, totalCents: pool.totalTipsCents, units: big.shareUnits, memberCount: updated.members.length },
         })
       }
 
@@ -798,27 +1069,22 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Pay — disburses funds. Posts: Dr 2095 / Cr Bank. The status claim, the
-  // overlap check and the posting are one transaction under the brand's lock:
-  // the same tips are never paid twice, by a double click or by a second pool.
+  // Pay — disburses funds. Posts: Dr 2095 / Cr Bank, in the POOL's company.
+  // The status claim, the overlap check and the posting are one transaction
+  // under the brand's lock: the same tips are never paid twice, by a double
+  // click or by a second pool. Each member's share (login holder or employee)
+  // is already on their member row from posting; the entry is the pool's.
   fastify.post<{ Params: { id: string }; Body: { paidFromAccountCode?: string } }>(
     '/:id/pay',
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
-      const body = z.object({ paidFromAccountCode: z.string().optional() }).parse(req.body)
-      const pool = await prisma.tipPool.findFirst({
-        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
-      })
-      if (!pool) throw new NotFoundError('TipPool', req.params.id)
+      const body = z.object({ paidFromAccountCode: z.string().optional() }).parse(req.body ?? {})
+      const pool = await poolInScope(req, req.params.id, 'write')
       if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
 
-      const payoutTenantId = pool.conceptId
-        ? (await prisma.concept.findUnique({ where: { id: pool.conceptId }, select: { tenantId: true } }))?.tenantId ?? req.staffUser!.tenantId
-        : req.staffUser!.tenantId
-      if (!payoutTenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before paying out a tip pool', 422)
       // The money leaves a cash or bank account of the pool's own company —
       // never a revenue or liability code (audit PPL-R2-03).
-      const cashAccount = await payingAccount(payoutTenantId, body.paidFromAccountCode)
+      const cashAccount = await payingAccount(pool.tenantId, body.paidFromAccountCode)
       // Tips in a till whose close is not on the books — still open, or
       // closed with its posting refused or not run yet — are not in Tips
       // Payable (PPL-R2-04, RV-P-01).
@@ -836,7 +1102,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         if (n.count === 0) throw new AppError('NOT_POSTABLE', 'Pool is no longer posted — it may have just been paid', 422)
         if (pool.totalTipsCents > 0) {
           await postJournalEntry({
-            tenantId: payoutTenantId,
+            tenantId: pool.tenantId,
             sourceType: 'tippool.payout',
             sourceId: pool.id,
             description: `Tip pool payout · ${pool.name}`,
@@ -848,7 +1114,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
             ],
           }, { tx })
         }
-        return tx.tipPool.findUniqueOrThrow({ where: { id: pool.id } })
+        return tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: MEMBER_INCLUDE })
       })
     },
   )

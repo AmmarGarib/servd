@@ -1,7 +1,9 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
 import { issueInvoiceForOrder, issueCreditNoteForOrder, renderInvoiceHtml } from './service.js'
 
 const issueSchema = z.object({
@@ -13,27 +15,33 @@ const issueSchema = z.object({
   }).optional(),
 })
 
+// Company scope (lib/tenantScope.ts): every invoice carries its company
+// (TaxInvoice.tenantId). Lists and reads are view-aware ('read'); issuing an
+// invoice or a credit note acts on an EXISTING order, so the order must be
+// in one of the operator's companies ('write') — the document itself is
+// always stamped with the ORDER's company, never the operator's. Anything
+// outside the scope is 404, never a hint that it exists.
 export async function invoiceRoutes(fastify: FastifyInstance) {
   // List invoices (manager view)
   fastify.get<{ Querystring: { conceptId?: string; from?: string; to?: string } }>(
     '/',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      // Tenant scope: only invoices for concepts under the active tenant.
-      const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        select: { id: true },
-      })
-      const tenantConceptIds = tenantConcepts.map((c) => c.id)
+      const q = z.object({
+        conceptId: z.string().min(1).optional(),
+        from: z.string().refine((v) => !Number.isNaN(Date.parse(v)), 'not a date').optional(),
+        to:   z.string().refine((v) => !Number.isNaN(Date.parse(v)), 'not a date').optional(),
+      }).parse(req.query)
       return prisma.taxInvoice.findMany({
         where: {
-          conceptId: req.query.conceptId
-            ? (tenantConceptIds.includes(req.query.conceptId) ? req.query.conceptId : '__none__')
-            : { in: tenantConceptIds },
-          ...(req.query.from || req.query.to ? {
+          ...(await scopeTenantWhere(req, 'read')),
+          // A foreign brand id is 404 (conceptWhere); none = every brand in
+          // scope, narrowed by the global brand filter.
+          ...(await conceptWhere(req, q.conceptId, 'read')),
+          ...(q.from || q.to ? {
             issuedAt: {
-              ...(req.query.from && { gte: new Date(req.query.from) }),
-              ...(req.query.to   && { lte: new Date(req.query.to) }),
+              ...(q.from && { gte: new Date(q.from) }),
+              ...(q.to   && { lte: new Date(q.to) }),
             },
           } : {}),
         },
@@ -50,13 +58,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = issueSchema.parse(req.body ?? {})
-      const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-      })
-      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      await orderInScope(req, req.params.orderId)
       const invoice = await issueInvoiceForOrder({
         orderId: req.params.orderId,
         buyer: body.buyer,
@@ -71,13 +73,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
-      const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-      })
-      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      await orderInScope(req, req.params.orderId)
       const cn = await issueCreditNoteForOrder(req.params.orderId, reason)
       return reply.status(201).send(cn)
     },
@@ -88,16 +84,11 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     '/:id/html',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        select: { id: true },
-      })
-      const tenantConceptIds = tenantConcepts.map((c) => c.id)
       const invoice = await prisma.taxInvoice.findFirst({
-        where: { id: req.params.id, conceptId: { in: tenantConceptIds } },
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
         include: { lines: true },
       })
-      if (!invoice) return reply.status(404).send({ error: { code: 'NOT_FOUND' } })
+      if (!invoice) throw new NotFoundError('TaxInvoice', req.params.id)
       const html = renderInvoiceHtml(invoice)
       reply.header('Content-Type', 'text/html; charset=utf-8')
       return reply.send(html)
@@ -108,18 +99,22 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...ALL_STAFF) },
-    async (req, reply) => {
-      const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        select: { id: true },
-      })
-      const tenantConceptIds = tenantConcepts.map((c) => c.id)
+    async (req) => {
       const invoice = await prisma.taxInvoice.findFirst({
-        where: { id: req.params.id, conceptId: { in: tenantConceptIds } },
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
         include: { lines: true, original: { select: { invoiceNumber: true } } },
       })
-      if (!invoice) return reply.status(404).send({ error: { code: 'NOT_FOUND' } })
+      if (!invoice) throw new NotFoundError('TaxInvoice', req.params.id)
       return invoice
     },
   )
+}
+
+/** 404 unless the order's brand is in one of the operator's companies. */
+async function orderInScope(req: FastifyRequest, orderId: string): Promise<void> {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, deletedAt: null, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+    select: { id: true },
+  })
+  if (!order) throw new NotFoundError('Order', orderId)
 }

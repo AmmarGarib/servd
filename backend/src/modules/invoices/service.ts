@@ -1,17 +1,113 @@
 // Tax invoice generation.
 //
-// Sequential, gap-free numbering per concept per year. Allocation uses an
-// advisory lock on the InvoiceCounter row so concurrent issues serialise
-// without losing numbers.
+// Every invoice belongs to ONE company (TaxInvoice.tenantId — the order's
+// brand's company; a credit note carries its original's). Numbers are unique
+// per company and numbered per series: (company, prefix, year, invoice or
+// credit note). Two companies may use the same prefix — each starts at 1 —
+// and two brands of one company sharing a prefix share one series.
 //
-// Numbering scheme: <prefix>-<YYYY>-<00000> where prefix comes from
-// Concept.invoicePrefix and the counter resets each year.
+// Numbering scheme: <prefix>-<YYYY>-<00000> for invoices and
+// <prefix>-<YYYY>-CN-<00000> for credit notes, where prefix is
+// Concept.invoicePrefix (else the slug, upper-cased) and YYYY is the Karachi
+// calendar year of issue.
+//
+// Allocation is race-safe, gap-free and O(1): each series has one row in
+// tax_invoice_series holding the last number issued, bumped by a single
+// INSERT … ON CONFLICT DO UPDATE … RETURNING inside the issuing transaction.
+// The row lock serialises two issues in one series; a rolled-back issue
+// rolls its number back. (Review D-RV-3: the MAX() over every invoice the
+// company ever issued, run under the lock on every completed order, slowed
+// numbering down as history grew.) The issuing transaction also takes a
+// transaction-scoped advisory lock on the series first, so the "one invoice
+// per order" check runs under it and two concurrent issues for one order give
+// one invoice. (The per-brand invoice_counters table this replaced shared one
+// counter between a brand's invoices and credit notes, restarted a new year
+// at 2, and let two brands with one prefix collide.)
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 
 const COUNTER_PAD = 5  // STX-2026-00001, plenty of room for years of activity
+
+type Tx = Prisma.TransactionClient
+type Series = { tenantId: string; prefix: string; year: number; type: 'invoice' | 'credit_note' }
+
+/** The Karachi calendar year (PKT, UTC+5, no DST) of an instant. */
+export function karachiYear(at: Date = new Date()): number {
+  return new Date(at.getTime() + 5 * 3_600_000).getUTCFullYear()
+}
+
+/** A brand's invoice prefix. */
+export function invoicePrefix(concept: { invoicePrefix: string | null; slug: string }): string {
+  return concept.invoicePrefix?.trim() || concept.slug.toUpperCase()
+}
+
+/** The text every number of a series starts with, before its sequence. */
+function seriesHead(s: Series): string {
+  return s.type === 'credit_note' ? `${s.prefix}-${s.year}-CN-` : `${s.prefix}-${s.year}-`
+}
+
+/** Serialise everything that issues in one series, until the transaction ends. */
+async function lockSeries(tx: Tx, s: Series): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`taxinvoice:${s.tenantId}:${s.type}:${seriesHead(s)}`}))`
+}
+
+/** Bump a series' counter and return the new last value (the series' row
+ *  stays locked until the transaction ends). */
+async function bumpSeries(tx: Tx, tenantId: string, head: string, atLeast = 0): Promise<number> {
+  const rows = await tx.$queryRaw<Array<{ lastValue: number }>>`
+    INSERT INTO "tax_invoice_series" ("tenantId", "head", "lastValue", "updatedAt")
+    VALUES (${tenantId}, ${head}, ${atLeast + 1}, NOW())
+    ON CONFLICT ("tenantId", "head") DO UPDATE
+       SET "lastValue" = GREATEST("tax_invoice_series"."lastValue", ${atLeast}::int) + 1,
+           "updatedAt" = NOW()
+    RETURNING "lastValue"
+  `
+  return rows[0]!.lastValue
+}
+
+/**
+ * The highest sequence issued in a series, read from the invoices themselves
+ * by the number's shape, whatever its type (the old per-brand counter gave
+ * credit notes invoice-shaped numbers, and those numbers are taken all the
+ * same; "<head>CN-…" is not digits, so the credit-note series never feeds the
+ * invoice series). A scan of the company's invoices — only ever run when the
+ * counter is found behind (a number issued outside it), never on the normal
+ * path.
+ */
+async function highestIssued(tx: Tx, s: Series): Promise<number> {
+  const head = seriesHead(s)
+  const from = head.length + 1
+  const rows = await tx.$queryRaw<Array<{ max: number | null }>>`
+    SELECT MAX(CAST(SUBSTRING("invoiceNumber" FROM ${from}::int) AS INTEGER))::int AS max
+      FROM "tax_invoices"
+     WHERE "tenantId" = ${s.tenantId}
+       AND LEFT("invoiceNumber", ${head.length}::int) = ${head}
+       AND SUBSTRING("invoiceNumber" FROM ${from}::int) ~ '^[0-9]{1,9}$'
+  `
+  return rows[0]?.max ?? 0
+}
+
+/**
+ * The next number of a series. Call with the series lock held (lockSeries).
+ * O(1): one upsert on the series' counter row, plus one unique-index probe
+ * that the number is free. If it is taken — an invoice numbered while the
+ * counter was not kept (issued by an older release mid-deploy, or written by
+ * hand) — the counter catches up with the highest number issued, once.
+ */
+async function nextNumber(tx: Tx, s: Series): Promise<string> {
+  const head = seriesHead(s)
+  const fmt = (seq: number) => `${head}${String(seq).padStart(COUNTER_PAD, '0')}`
+  let seq = await bumpSeries(tx, s.tenantId, head)
+  const taken = await tx.taxInvoice.findUnique({ where: { tenantId_invoiceNumber: { tenantId: s.tenantId, invoiceNumber: fmt(seq) } }, select: { id: true } })
+  if (taken) seq = await bumpSeries(tx, s.tenantId, head, await highestIssued(tx, s))
+  return fmt(seq)
+}
+
+/** The issuing transaction's limits: a series lock wait in a rush is
+ *  expected, so wait longer than Prisma's 2 s / 5 s defaults — but bounded. */
+const ISSUE_TX = { maxWait: 10_000, timeout: 20_000 } as const
 
 export interface IssueInvoiceInput {
   orderId: string
@@ -24,15 +120,7 @@ export interface IssueInvoiceInput {
 }
 
 export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
-  // Serializable isolation prevents two concurrent issuances from grabbing the
-  // same counter value — FBR sequence numbers must be unique and gap-free, and
-  // ON CONFLICT alone doesn't give us that guarantee at default Read Committed.
-  // Retry up to 3x on serialization failures (Postgres 40001 / Prisma P2034).
-  const MAX_RETRIES = 3
-  let attempt = 0
-  while (true) {
-    try {
-      return await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -44,31 +132,28 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
     if (order.deletedAt)                   throw new AppError('ORDER_DELETED', 'Cannot issue invoice for deleted order', 422)
     if (order.status !== 'completed')      throw new AppError('ORDER_NOT_COMPLETED', `Order is ${order.status}; only completed orders can be invoiced`, 422)
 
-    // Prevent duplicates — one invoice per order
-    const existing = await tx.taxInvoice.findFirst({ where: { orderId: order.id, type: 'invoice' } })
-    if (existing) return existing
+    // One invoice per order (fast path; re-checked under the series lock).
+    const issued = await tx.taxInvoice.findFirst({ where: { orderId: order.id, type: 'invoice' }, include: { lines: true } })
+    if (issued) return issued
 
     const concept = order.concept
     if (!concept.invoiceLegalName) {
       throw new AppError('CONCEPT_NOT_REGISTERED', `Concept ${concept.slug} is missing invoice legal name. Set strn/ntn/invoiceLegalName/invoicePrefix on the concept first.`, 422)
     }
+    // The invoice is the brand's company's — the source document decides.
+    if (!concept.tenantId) {
+      throw new AppError('CONCEPT_NO_COMPANY', `Brand ${concept.slug} belongs to no company, so it cannot issue a tax invoice`, 422)
+    }
 
-    // Allocate next number under a row-level lock
-    const year = new Date().getUTCFullYear()
-    const counter = await tx.$queryRaw<Array<{ nextValue: number }>>`
-      INSERT INTO "invoice_counters" ("conceptId", "year", "nextValue")
-      VALUES (${concept.id}, ${year}, 1)
-      ON CONFLICT ("conceptId") DO UPDATE
-        SET "year" = CASE WHEN "invoice_counters"."year" = ${year} THEN "invoice_counters"."year" ELSE ${year} END,
-            "nextValue" = CASE WHEN "invoice_counters"."year" = ${year}
-                               THEN "invoice_counters"."nextValue" + 1
-                               ELSE 2 END
-      RETURNING "nextValue"
-    `
-    const seq = counter[0]!.nextValue
-    const padded = String(seq).padStart(COUNTER_PAD, '0')
-    const prefix = concept.invoicePrefix ?? concept.slug.toUpperCase()
-    const invoiceNumber = `${prefix}-${year}-${padded}`
+    const series: Series = { tenantId: concept.tenantId, prefix: invoicePrefix(concept), year: karachiYear(), type: 'invoice' }
+    await lockSeries(tx, series)
+
+    // One invoice per order — checked under the series lock, so a second
+    // concurrent issue for this order waits and then finds the first.
+    const existing = await tx.taxInvoice.findFirst({ where: { orderId: order.id, type: 'invoice' }, include: { lines: true } })
+    if (existing) return existing
+
+    const invoiceNumber = await nextNumber(tx, series)
 
     // Money snapshot — the order's STORED figures, never a recomputation:
     // the GST is Order.taxCents, charged at Order.taxRatePct by
@@ -91,8 +176,9 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
     const tip            = order.tipCents
     const total          = Math.max(0, subtotal - discount) + fbrTax + serviceCharge + tip
 
-    const invoice = await tx.taxInvoice.create({
+    return tx.taxInvoice.create({
       data: {
+        tenantId: concept.tenantId,
         invoiceNumber,
         type: 'invoice',
         orderId: order.id,
@@ -130,23 +216,11 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
       },
       include: { lines: true },
     })
-
-        return invoice
-      }, { isolationLevel: 'Serializable' })
-    } catch (err: unknown) {
-      const code = (err as { code?: string }).code
-      // P2034 = Prisma's serialization-failure retry signal.
-      // 40001 = Postgres' raw serialization-failure SQLSTATE.
-      if ((code === 'P2034' || code === '40001') && ++attempt < MAX_RETRIES) {
-        await new Promise((r) => setTimeout(r, 25 * attempt))
-        continue
-      }
-      throw err
-    }
-  }
+  }, ISSUE_TX)
 }
 
-// Credit note for a refunded order — references the original invoice.
+// Credit note for a refunded order — references the original invoice and
+// belongs to the original's company, in that company's credit-note series.
 export async function issueCreditNoteForOrder(orderId: string, reason: string) {
   return prisma.$transaction(async (tx) => {
     const original = await tx.taxInvoice.findFirst({
@@ -155,32 +229,23 @@ export async function issueCreditNoteForOrder(orderId: string, reason: string) {
     })
     if (!original) throw new NotFoundError('TaxInvoice', orderId)
 
-    const existing = await tx.taxInvoice.findFirst({
-      where: { originalInvoiceId: original.id, type: 'credit_note' },
-    })
-    if (existing) return existing
-
     const concept = await tx.concept.findUnique({ where: { id: original.conceptId } })
     if (!concept) throw new NotFoundError('Concept', original.conceptId)
 
-    const year = new Date().getUTCFullYear()
-    const counter = await tx.$queryRaw<Array<{ nextValue: number }>>`
-      INSERT INTO "invoice_counters" ("conceptId", "year", "nextValue")
-      VALUES (${concept.id}, ${year}, 1)
-      ON CONFLICT ("conceptId") DO UPDATE
-        SET "year" = CASE WHEN "invoice_counters"."year" = ${year} THEN "invoice_counters"."year" ELSE ${year} END,
-            "nextValue" = CASE WHEN "invoice_counters"."year" = ${year}
-                               THEN "invoice_counters"."nextValue" + 1
-                               ELSE 2 END
-      RETURNING "nextValue"
-    `
-    const seq = counter[0]!.nextValue
-    const padded = String(seq).padStart(COUNTER_PAD, '0')
-    const prefix = concept.invoicePrefix ?? concept.slug.toUpperCase()
-    const invoiceNumber = `${prefix}-${year}-CN-${padded}`
+    const series: Series = { tenantId: original.tenantId, prefix: invoicePrefix(concept), year: karachiYear(), type: 'credit_note' }
+    await lockSeries(tx, series)
+
+    const existing = await tx.taxInvoice.findFirst({
+      where: { originalInvoiceId: original.id, type: 'credit_note' },
+      include: { lines: true },
+    })
+    if (existing) return existing
+
+    const invoiceNumber = await nextNumber(tx, series)
 
     return tx.taxInvoice.create({
       data: {
+        tenantId: original.tenantId,
         invoiceNumber,
         type: 'credit_note',
         orderId: original.orderId,
@@ -213,7 +278,7 @@ export async function issueCreditNoteForOrder(orderId: string, reason: string) {
       },
       include: { lines: true },
     })
-  }, { isolationLevel: 'Serializable' })
+  }, ISSUE_TX)
 }
 
 // HTML render — kept minimal and printable. Operators can pdf-it via the

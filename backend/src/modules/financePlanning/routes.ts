@@ -36,7 +36,7 @@ import { audit } from '../../lib/audit.js'
 import {
   syncCapexPaymentPosting, capitaliseCapexLine, capexLedgerState, capexTreatmentOf, CAPEX_SOURCE,
 } from './capexPosting.js'
-import { flagException } from '../../lib/exceptions.js'
+import { flagException, kindsMatching } from '../../lib/exceptions.js'
 import {
   requireActiveCompany, assertConceptAttachable, assertLocationOfCompany,
   assertMemberOfCompany, assertCapexProjectOfCompany,
@@ -154,12 +154,14 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
   const overBy = committed - project.budgetEnvelopeCents
   // Don't double-flag â€” only if no open over-budget flag exists for this project
   const existing = await prisma.exceptionFlag.findFirst({
-    where: { kind: 'high_value_void', status: 'open', entityType: 'CapexProject', entityId: projectId },
+    // Its own kind since 2026-10-12; an open flag raised before that carries
+    // the stand-in 'high_value_void' and must still count.
+    where: { kind: { in: kindsMatching('capex_over_budget') }, status: 'open', entityType: 'CapexProject', entityId: projectId },
     select: { id: true },
   })
   if (existing) return
   await flagException({
-    kind: 'high_value_void',
+    kind: 'capex_over_budget',
     tenantId: project.tenantId,
     conceptId: project.conceptId,
     severity: overBy > project.budgetEnvelopeCents * 0.1 ? 'high' : 'medium',

@@ -17,7 +17,7 @@
 // company-less — invisible in every inbox — with a warning naming the caller.
 
 import { prisma } from './prisma.js'
-import type { ExceptionSeverity } from '@prisma/client'
+import { Prisma, type ExceptionSeverity } from '@prisma/client'
 import { tenantForConcept } from './setup-config.js'
 import type { TenantIdWhere } from './tenantScope.js'
 
@@ -55,6 +55,26 @@ export type ExceptionKind =
   | 'fiscal_manual_refund'   // a refund must be filed by hand (sale filed directly pre-cutover, or the POS cannot file refunds)
   | 'terminal_void_failed'   // card charged, servd refused it, and the automatic reversal failed
   | 'terminal_unreconciled'  // the card outcome disagrees with what servd recorded, or unknown > 24 h
+  // Kinds that were filed as a stand-in 'high_value_void' until 2026-10-12
+  // (migration 20261012120000 re-kinds the old rows by title). A de-dup query
+  // over one of them must match the stand-in too — see STAND_IN_KINDS.
+  | 'tip_pool_outlier'       // one member takes over 40% of a tip pool of 3+ people
+  | 'capex_over_budget'      // a CapEx project's commitments passed its budget envelope
+
+/**
+ * The kind a flag was filed under before it had its own. A query that looks
+ * for an OPEN flag of `kind` (to avoid raising it twice) matches these too,
+ * so a flag raised before the re-kind is not raised again beside it.
+ */
+export const STAND_IN_KINDS: Partial<Record<ExceptionKind, ExceptionKind[]>> = {
+  tip_pool_outlier:  ['high_value_void'],
+  capex_over_budget: ['high_value_void'],
+}
+
+/** `kind` plus its stand-ins, for a de-dup query's `kind: { in }`. */
+export function kindsMatching(kind: ExceptionKind): ExceptionKind[] {
+  return [kind, ...(STAND_IN_KINDS[kind] ?? [])]
+}
 
 export interface FlagInput {
   /** The company the flagged entity belongs to. Pass it — see the header. */
@@ -100,7 +120,7 @@ export async function flagException(input: FlagInput): Promise<{ id: string } | 
         description: input.description,
         entityType: input.entityType ?? null,
         entityId: input.entityId ?? null,
-        metadata: (input.metadata ?? null) as never,
+        metadata: input.metadata ? (input.metadata as Prisma.InputJsonObject) : Prisma.DbNull,
         conceptId: input.conceptId ?? null,
         actorId: input.actorId ?? null,
         amountCents: input.amountCents ?? null,

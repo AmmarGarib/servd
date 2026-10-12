@@ -16,27 +16,33 @@ interface PoolSummary {
   _count: { members: number }
 }
 
+/** A login holder (userId) or, with no servd login, an HR employee
+ *  (employeeId) — kiosk / time-clock staff. */
 interface PoolMember {
-  id: string; userId: string; userName: string
+  id: string; userId: string | null; employeeId: string | null; userName: string
   hoursWorked: number; roleWeight: number; shareUnits: number
-  shareCents: number
+  shareCents: number; notes: string | null
+  employee?: { employeeCode: string } | null
 }
 
 interface ExcludedHours {
   name: string; userId: string | null; employeeId: string | null
-  hours: number; reason: 'no_branch' | 'still_on_shift' | 'no_login'
+  hours: number; reason: 'no_branch' | 'still_on_shift' | 'no_role'
 }
 
 /** What posting would refuse on, computed when the draft is opened. */
 interface PoolReview {
   excluded: ExcludedHours[]
-  missing: Array<{ userId: string; name: string; hours: number }>
-  /** Kiosk-only staff (no login) who worked the window at the brand: posting
-   *  waits for them unless each is left out by name, with a reason. */
-  kioskStaff?: ExcludedHours[]
+  missing: Array<{ userId: string | null; employeeId: string | null; name: string; hours: number }>
+  /** Staff with no login whose HR record names no tip-pool role and who
+   *  worked the window at the brand: posting waits until each is added with
+   *  a weight, or left out by name with a reason. */
+  staffWithoutRole?: ExcludedHours[]
   totalTipsNow: number
   blockers: string[]
 }
+
+interface Candidate { employeeId: string; employeeCode: string; name: string; designation: string | null; hasLogin: boolean }
 
 interface PoolDetail extends PoolSummary {
   members: PoolMember[]
@@ -46,7 +52,7 @@ interface PoolDetail extends PoolSummary {
 const REASON: Record<ExcludedHours['reason'], string> = {
   no_branch: 'no known branch — set it in HR, then compute again',
   still_on_shift: 'still clocked in',
-  no_login: 'kiosk staff, no login — give them a login linked to their HR record, then delete this draft and compute again',
+  no_role: 'no login, and their HR designation does not say their tip-pool role — add them below with a weight, or leave them out',
 }
 
 /** The last full business day (06:00 to 06:00 Karachi) — a pool is computed
@@ -62,9 +68,12 @@ export default function TipPoolsPage() {
   const qc = useQueryClient()
   const [showNew, setShowNew] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
-  // Kiosk-only staff the approver leaves out of this pool on purpose, and why.
+  // Staff with no known role the approver leaves out of this pool on
+  // purpose, and why.
   const [leaveOut, setLeaveOut] = useState<string[]>([])
   const [leaveOutReason, setLeaveOutReason] = useState('')
+  // Weights typed for staff with no known role, by HR record.
+  const [weights, setWeights] = useState<Record<string, string>>({})
 
   const list = useQuery({
     queryKey: ['tip-pools'],
@@ -79,7 +88,7 @@ export default function TipPoolsPage() {
 
   const post = useMutation({
     mutationFn: (id: string) => api.post(`/tip-pools/${id}/post`, leaveOut.length
-      ? { leaveOutKioskStaff: { employeeIds: leaveOut, reason: leaveOutReason.trim() } }
+      ? { leaveOutStaff: { employeeIds: leaveOut, reason: leaveOutReason.trim() } }
       : {}),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['tip-pools'] }); void qc.invalidateQueries({ queryKey: ['tip-pool', openId] }) },
   })
@@ -93,7 +102,17 @@ export default function TipPoolsPage() {
     mutationFn: (id: string) => api.delete(`/tip-pools/${id}`),
     onSuccess: () => { setOpenId(null); void qc.invalidateQueries({ queryKey: ['tip-pools'] }) },
   })
-  const actionError = (post.error ?? pay.error ?? remove.error) as { message?: string } | null
+  // Add someone to the draft — staff with no known role, or anyone missed.
+  const addMember = useMutation({
+    mutationFn: (v: { poolId: string; employeeId: string; hoursWorked: number; roleWeight?: number }) =>
+      api.post(`/tip-pools/${v.poolId}/members`, { employeeId: v.employeeId, hoursWorked: v.hoursWorked, ...(v.roleWeight != null && { roleWeight: v.roleWeight }) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tip-pool', openId] })
+      void qc.invalidateQueries({ queryKey: ['tip-pool-candidates', openId] })
+      void qc.invalidateQueries({ queryKey: ['tip-pools'] })
+    },
+  })
+  const actionError = (post.error ?? pay.error ?? remove.error ?? addMember.error) as { message?: string } | null
   // Tip pools are the 'payroll' module (Module Access): without it the API
   // refuses, so say so rather than show an empty page.
   const noAccess = list.error instanceof ApiError && list.error.status === 403
@@ -131,7 +150,7 @@ export default function TipPoolsPage() {
             <tbody>
               {list.data?.map((p) => (
                 <tr key={p.id} className={`border-t border-s-border cursor-pointer ${openId === p.id ? 'bg-s-bg-soft' : 'hover:bg-s-bg-soft'}`}
-                  onClick={() => { setOpenId(p.id); setLeaveOut([]); setLeaveOutReason('') }}>
+                  onClick={() => { setOpenId(p.id); setLeaveOut([]); setLeaveOutReason(''); setWeights({}) }}>
                   <td className="px-4 py-2 text-xs">
                     <p>{p.periodStart.slice(0, 10)} → {p.periodEnd.slice(0, 10)}</p>
                   </td>
@@ -171,6 +190,7 @@ export default function TipPoolsPage() {
                     <div>
                       <p className="font-semibold">{m.userName}</p>
                       <p className="text-[11px] text-s-muted">
+                        {m.employeeId && <>no login{m.employee?.employeeCode ? ` · ${m.employee.employeeCode}` : ''} · </>}
                         {m.hoursWorked.toFixed(1)}h · weight {m.roleWeight} · {m.shareUnits.toFixed(2)} share units
                       </p>
                     </div>
@@ -199,16 +219,26 @@ export default function TipPoolsPage() {
                       </ul>
                     </div>
                   )}
-                  {(detail.data.review.kioskStaff?.length ?? 0) > 0 && (
+                  {(detail.data.review.staffWithoutRole?.length ?? 0) > 0 && (
                     <div className="space-y-1">
-                      <p className="font-bold">Kiosk staff not in this pool</p>
-                      <p className="text-s-muted">They worked this window at the brand but have no servd login, so the pool cannot pay them, and posting without them gives their share to everyone else. Give them a login linked to their HR record, delete this draft and compute again. Only if they are not in the tip pool, tick them and say why:</p>
-                      {detail.data.review.kioskStaff!.map((k) => k.employeeId && (
-                        <label key={k.employeeId} className="flex items-center gap-2">
-                          <input type="checkbox" checked={leaveOut.includes(k.employeeId)}
-                            onChange={(e) => setLeaveOut((cur) => e.target.checked ? [...cur, k.employeeId!] : cur.filter((x) => x !== k.employeeId))} />
-                          <span>{k.name} · {k.hours.toFixed(1)}h</span>
-                        </label>
+                      <p className="font-bold">Staff with no known tip-pool role</p>
+                      <p className="text-s-muted">They worked this window at the brand and have no servd login, and their HR designation does not say which role they work, so posting without them would give their share to everyone else. Add each with a weight (servers 1, cashiers 0.75, kitchen 0.5 by default). Only if they are not in the tip pool, tick them and say why:</p>
+                      {detail.data.review.staffWithoutRole!.map((k) => k.employeeId && (
+                        <div key={k.employeeId} className="flex flex-wrap items-center gap-2">
+                          <label className="flex items-center gap-2 flex-1 min-w-[140px]">
+                            <input type="checkbox" checked={leaveOut.includes(k.employeeId)}
+                              onChange={(e) => setLeaveOut((cur) => e.target.checked ? [...cur, k.employeeId!] : cur.filter((x) => x !== k.employeeId))} />
+                            <span>{k.name} · {k.hours.toFixed(1)}h</span>
+                          </label>
+                          <input value={weights[k.employeeId] ?? ''} onChange={(e) => setWeights((cur) => ({ ...cur, [k.employeeId!]: e.target.value }))}
+                            inputMode="decimal" placeholder="weight" aria-label={`Weight for ${k.name}`}
+                            className="w-16 bg-s-surface border border-s-border rounded px-2 py-1" />
+                          <button type="button" className="s-btn-secondary text-xs"
+                            disabled={addMember.isPending || !(Number(weights[k.employeeId]) > 0)}
+                            onClick={() => addMember.mutate({ poolId: detail.data.id, employeeId: k.employeeId!, hoursWorked: k.hours, roleWeight: Number(weights[k.employeeId!]) })}>
+                            Add to pool
+                          </button>
+                        </div>
                       ))}
                       {leaveOut.length > 0 && (
                         <input value={leaveOutReason} onChange={(e) => setLeaveOutReason(e.target.value)} placeholder="Why they are not in the pool (recorded in the audit log)"
@@ -220,6 +250,10 @@ export default function TipPoolsPage() {
                     <p className="text-s-muted">Tips in the window now: <strong>{fmtPkr(detail.data.review.totalTipsNow)}</strong> — posting uses this figure.</p>
                   )}
                 </div>
+              )}
+              {detail.data.status === 'draft' && (
+                <AddMember poolId={detail.data.id} pending={addMember.isPending}
+                  onAdd={(v) => addMember.mutate({ poolId: detail.data.id, ...v })} />
               )}
               <div className="px-4 py-3 border-t border-s-border flex gap-2">
                 {detail.data.status === 'draft' && (
@@ -243,7 +277,7 @@ export default function TipPoolsPage() {
                 ) : (
                   <span className="text-xs text-s-muted w-full text-center">Posted — the CEO or an owner marks it paid.</span>
                 ))}
-                {detail.data.status === 'paid' && <span className="text-xs text-primary-ink w-full text-center">Paid out ✓</span>}
+                {detail.data.status === 'paid' && <span className="text-xs text-primary-ink w-full text-center">Paid out</span>}
               </div>
               {actionError?.message && <p className="px-4 pb-3 text-xs text-s-red">{actionError.message}</p>}
             </div>
@@ -252,6 +286,58 @@ export default function TipPoolsPage() {
       </div>
 
       {showNew && <NewPoolModal onClose={() => setShowNew(false)} onCreated={() => { void qc.invalidateQueries({ queryKey: ['tip-pools'] }); setShowNew(false) }} />}
+    </div>
+  )
+}
+
+/** Add anyone of the pool's company to a draft by hand — staff with no
+ *  login included. Hours as worked; the weight defaults to their role's. */
+function AddMember({ poolId, pending, onAdd }: { poolId: string; pending: boolean; onAdd: (v: { employeeId: string; hoursWorked: number; roleWeight?: number }) => void }) {
+  const [open, setOpen] = useState(false)
+  const [employeeId, setEmployeeId] = useState('')
+  const [hours, setHours] = useState('')
+  const [weight, setWeight] = useState('')
+  const candidates = useQuery({
+    queryKey: ['tip-pool-candidates', poolId],
+    queryFn: () => api.get<Candidate[]>(`/tip-pools/${poolId}/candidates`),
+    enabled: open,
+  })
+  if (!open) {
+    return (
+      <div className="px-4 py-2 border-t border-s-border">
+        <button type="button" onClick={() => setOpen(true)} className="text-xs underline text-s-muted hover:text-s-text">Add someone to this pool</button>
+      </div>
+    )
+  }
+  const h = Number(hours)
+  const w = weight.trim() === '' ? undefined : Number(weight)
+  return (
+    <div className="px-4 py-3 border-t border-s-border space-y-2 text-xs">
+      <p className="font-bold">Add someone</p>
+      <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} aria-label="Employee"
+        className="w-full bg-s-surface border border-s-border rounded px-2 py-1">
+        <option value="">Choose an employee…</option>
+        {candidates.data?.map((c) => (
+          <option key={c.employeeId} value={c.employeeId}>
+            {c.name} · {c.employeeCode}{c.designation ? ` · ${c.designation}` : ''}{c.hasLogin ? '' : ' · no login'}
+          </option>
+        ))}
+      </select>
+      <div className="flex gap-2">
+        <input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" placeholder="hours worked" aria-label="Hours worked"
+          className="flex-1 bg-s-surface border border-s-border rounded px-2 py-1" />
+        <input value={weight} onChange={(e) => setWeight(e.target.value)} inputMode="decimal" placeholder="weight (optional)" aria-label="Weight"
+          className="flex-1 bg-s-surface border border-s-border rounded px-2 py-1" />
+      </div>
+      {candidates.error && <p className="text-s-red">{(candidates.error as { message?: string }).message ?? 'Could not load staff'}</p>}
+      <div className="flex gap-2 justify-end">
+        <button type="button" onClick={() => setOpen(false)} className="s-btn-secondary text-xs">Cancel</button>
+        <button type="button" className="s-btn-primary text-xs"
+          disabled={pending || !employeeId || !(h >= 0) || hours.trim() === '' || (w !== undefined && !(w > 0))}
+          onClick={() => { onAdd({ employeeId, hoursWorked: h, ...(w !== undefined && { roleWeight: w }) }); setEmployeeId(''); setHours(''); setWeight('') }}>
+          {pending ? 'Adding…' : 'Add'}
+        </button>
+      </div>
     </div>
   )
 }

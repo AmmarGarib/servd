@@ -1818,7 +1818,12 @@ enum TipPoolStatus {
 
 model TipPool {
   id             String        @id @default(uuid())
-  conceptId      String? // null = pool spans all concepts (single operator)
+  // The company the pool belongs to (HR-R7, migration 20261012120000). It
+  // decides everything company-shaped about the pool: who may see and edit
+  // it, which chart its payout posts to, and which inbox its flags reach.
+  // Set from the ACTIVE company on create (the brand must be that company's).
+  tenantId       String
+  conceptId      String? // the brand whose tips these are; null only on legacy rows
   name           String // e.g. "Sat dinner shift", "Week of Apr 28"
   periodStart    DateTime
   periodEnd      DateTime
@@ -1830,17 +1835,31 @@ model TipPool {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  tenant  Tenant          @relation("TenantTipPools", fields: [tenantId], references: [id], onDelete: Restrict)
   members TipPoolMember[]
 
   @@index([periodStart(sort: Desc)])
+  @@index([tenantId, periodStart])
   @@map("tip_pools")
 }
 
+// A pool member is a login holder (userId) OR an HR employee with no servd
+// login — kiosk / time-clock staff (employeeId). Exactly one of the two is
+// set: a CHECK constraint in migration 20261012120000 enforces it.
+//
+// One row per person per pool: two PARTIAL unique indexes in that migration's
+// SQL — "tip_pool_members_poolId_userId_key" (poolId, userId) WHERE userId IS
+// NOT NULL and "tip_pool_members_poolId_employeeId_key" (poolId, employeeId)
+// WHERE employeeId IS NOT NULL. Prisma cannot express a partial unique (and
+// its migrate diff does not see one), so they are deliberately NOT declared
+// here — declaring them would make the next generated migration try to
+// create them again. tests/setup.ts adds them (and the CHECK) after db push.
 model TipPoolMember {
   id          String  @id @default(uuid())
   poolId      String
-  userId      String
-  userName    String // snapshot — survives if user is later deleted
+  userId      String?
+  employeeId  String?
+  userName    String // name snapshot — survives if the login or HR record is later deleted
   // Computed: hoursWorked × roleWeight = shareUnits. Operator can override
   // shareUnits manually before posting (e.g. for tipout to BOH).
   hoursWorked Float
@@ -1849,11 +1868,13 @@ model TipPoolMember {
   shareCents  Int     @default(0) // computed share — set when pool is posted
   notes       String?
 
-  pool TipPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
-  user User    @relation(fields: [userId], references: [id])
+  pool     TipPool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  user     User?       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  employee HrEmployee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
-  @@unique([poolId, userId])
+  @@index([poolId])
   @@index([userId])
+  @@index([employeeId])
   @@map("tip_pool_members")
 }
 
@@ -2705,7 +2726,11 @@ enum InvoiceType {
 
 model TaxInvoice {
   id            String      @id @default(uuid())
-  invoiceNumber String      @unique // e.g. "STX-2026-0001"
+  // The company that issued it — the order's brand's company; a credit note
+  // carries its original's (migration 20261012120100). Numbers are unique
+  // per company, numbered per (company, prefix, year, invoice/credit note).
+  tenantId      String
+  invoiceNumber String // e.g. "STX-2026-00001", "STX-2026-CN-00001"
   type          InvoiceType @default(invoice)
   orderId       String
   conceptId     String
@@ -2738,14 +2763,36 @@ model TaxInvoice {
 
   pdfUrl String? // optional: where the rendered PDF lives in S3
 
+  tenant      Tenant           @relation("TenantTaxInvoices", fields: [tenantId], references: [id], onDelete: Restrict)
   order       Order            @relation(fields: [orderId], references: [id])
   lines       TaxInvoiceLine[]
   original    TaxInvoice?      @relation("InvoiceCorrections", fields: [originalInvoiceId], references: [id])
   corrections TaxInvoice[]     @relation("InvoiceCorrections")
 
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId, issuedAt(sort: Desc)])
   @@index([conceptId, issuedAt(sort: Desc)])
   @@index([orderId])
   @@map("tax_invoices")
+}
+
+// The next number of each tax-invoice series (D-RV-3, migration
+// 20261012120100). A series is one company's numbers that start with `head` —
+// "<prefix>-<YYYY>-" for invoices, "<prefix>-<YYYY>-CN-" for credit notes.
+// invoices/service.ts allocates with one upsert (INSERT … ON CONFLICT DO
+// UPDATE … RETURNING) inside the issuing transaction: the row lock makes it
+// race-safe, and a rolled-back issue rolls its number back, so the series
+// stays gap-free — in O(1), however many invoices the company has issued.
+model TaxInvoiceSeries {
+  tenantId  String
+  head      String // "GSF-2026-" or "GSF-2026-CN-"
+  lastValue Int // the last number issued in the series (0 = none yet)
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation("TenantTaxInvoiceSeries", fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@id([tenantId, head])
+  @@map("tax_invoice_series")
 }
 
 model TaxInvoiceLine {
@@ -4720,6 +4767,11 @@ model Tenant {
   terminalCharges TerminalCharge[] @relation("TenantTerminalCharges")
   preBills        PreBill[]        @relation("TenantPreBills")
 
+  // Company data (2026-10-12): tip pools and tax invoices carry their company
+  tipPools         TipPool[]          @relation("TenantTipPools")
+  taxInvoices      TaxInvoice[]       @relation("TenantTaxInvoices")
+  taxInvoiceSeries TaxInvoiceSeries[] @relation("TenantTaxInvoiceSeries")
+
   @@map("tenants")
 }
 
@@ -5770,9 +5822,11 @@ model HrEmployee {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  documents HrDocument[]
-  records   HrRecord[]
-  payslips  HrPayslip[]
+  documents          HrDocument[]
+  records            HrRecord[]
+  payslips           HrPayslip[]
+  // Tip pools this person is in without a servd login (kiosk / time-clock staff)
+  tipPoolMemberships TipPoolMember[]
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, userId])
