@@ -5,6 +5,11 @@
 // first link/button press. <BlockRenderer> renders a Block[] and is reused for
 // the blocks inside a `columns` block.
 //
+// Entrances: a block plays its own `animation`; a block with only a scroll
+// effect (`motion`, D4 stage 1) plays the matching entrance instead, and none
+// under the device's reduce-motion setting (./motion.ts). Unknown values are
+// static and fully visible.
+//
 // The app is dark, the web storefront is light: a block with no background
 // sits on the screen's own dark surface with light text; a block with a
 // background picks ink or white text by the background's luminance, unless
@@ -22,8 +27,9 @@ import { formatBrandName } from '../lib/brandName'
 import { getVisitorId, peekVisitorId, pickVariant, trackContent } from './api'
 import { resolveFontFamily, useLibraryFonts } from './fonts'
 import { openHref } from './links'
+import { entranceFor, ownEntrance, useReduceMotion } from './motion'
 import type {
-  Align, Block, BannerBlock, ButtonSize, ButtonStyle, ColumnsBlock, CtaButtonBlock, FeaturedMenuBlock,
+  Align, Animation, Block, BannerBlock, ButtonSize, ButtonStyle, ColumnsBlock, CtaButtonBlock, FeaturedMenuBlock,
   GalleryBlock, HeroBlock, ImageBlock, KitchensBlock, LibraryFont, PageSettings, QuoteBlock, ReviewsBlock,
   SectionPad, SignupFormBlock, StatStripBlock, TextBlock, Variant, VideoBlock, VoicesBlock, WaitlistFormBlock,
 } from './types'
@@ -226,6 +232,7 @@ function defaultPad(b: Block): SectionPad {
 
 function BlockSlot({ block }: { block: Block }) {
   const ctx = useContext(Ctx)
+  const reduceMotion = useReduceMotion()
   const bg = resolveColor(block.background)
   const light = bg ? isLight(bg) : false
   const own = resolveFontFamily(block.fontFamily)
@@ -238,9 +245,19 @@ function BlockSlot({ block }: { block: Block }) {
   const pad = PAD[block.paddingY ?? defaultPad(block)] ?? 0
   const content = renderBlock(block, look, ctx)
   if (content === null) return null
+  // The block's own entrance, else its scroll effect played as an entrance
+  // (the app has no scroll effects yet; see ./motion.ts). Timing fields belong
+  // to the block's own entrance, so a motion-derived one uses the defaults.
+  const kind = entranceFor(block, reduceMotion)
+  const ownTiming = ownEntrance(block) !== null
   return (
     <View style={{ backgroundColor: bg, paddingTop: pad, paddingBottom: pad }}>
-      <Animate block={block}>{content}</Animate>
+      <Animate
+        kind={kind}
+        durationMs={ownTiming ? block.animationDurationMs : undefined}
+        delayMs={ownTiming ? block.animationDelayMs : undefined}>
+        {content}
+      </Animate>
     </View>
   )
 }
@@ -275,21 +292,27 @@ function renderBlock(b: Block, look: Look, ctx: RenderCtx): ReactNode {
 const clamp = (n: number | undefined, lo: number, hi: number, dflt: number) =>
   typeof n === 'number' && Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt
 
-function Animate({ block, children }: { block: Block; children: ReactNode }) {
-  const kind = block.animation ?? 'none'
+function Animate({
+  kind, durationMs, delayMs, children,
+}: {
+  kind: Animation
+  durationMs: number | undefined
+  delayMs: number | undefined
+  children: ReactNode
+}) {
   const v = useRef(new Animated.Value(kind === 'none' ? 1 : 0)).current
   useEffect(() => {
     if (kind === 'none') return
     const anim = Animated.timing(v, {
       toValue: 1,
-      duration: clamp(block.animationDurationMs, 200, 3000, 600),
-      delay: clamp(block.animationDelayMs, 0, 3000, 0),
+      duration: clamp(durationMs, 200, 3000, 600),
+      delay: clamp(delayMs, 0, 3000, 0),
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     })
     anim.start()
     return () => anim.stop()
-  }, [kind, v, block.animationDurationMs, block.animationDelayMs])
+  }, [kind, v, durationMs, delayMs])
 
   if (kind === 'none') return <>{children}</>
   const transform =

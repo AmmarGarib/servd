@@ -65,11 +65,11 @@ const tagsSchema = z.union([z.array(z.string()), z.string()]).optional().transfo
 
 function toDto(a: {
   id: string; kind: string; name: string | null; url: string; filename: string; contentType: string
-  tags: string[]; conceptId: string | null; text: string | null; fontFamily: string | null; category: string; createdAt: Date
+  tags: string[]; conceptId: string | null; tenantId: string | null; text: string | null; fontFamily: string | null; category: string; createdAt: Date
 }) {
   return {
     id: a.id, kind: a.kind, name: a.name ?? a.filename, url: a.url, filename: a.filename,
-    contentType: a.contentType, tags: a.tags, conceptId: a.conceptId, text: a.text,
+    contentType: a.contentType, tags: a.tags, conceptId: a.conceptId, tenantId: a.tenantId, text: a.text,
     fontFamily: a.fontFamily, category: a.category, createdAt: a.createdAt,
   }
 }

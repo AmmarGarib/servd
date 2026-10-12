@@ -1,7 +1,7 @@
 // Block + settings validation for the storefront content module (decision 41).
 //
 // Blocks are validated LOOSELY: every block needs an id and a known type, the
-// shared animation/font fields are range-checked, and the new block types
+// shared animation/motion/font fields are range-checked, and the new block types
 // (columns, video, signup_form) get their structural fields checked. Anything
 // else passes through untouched — the admin editor adds fields per block type
 // and the renderers defend with optional chaining.
@@ -24,6 +24,21 @@ export const BLOCK_TYPES = [
 
 export const ANIMATIONS = ['none', 'fade-up', 'fade-in', 'slide-left', 'slide-right', 'zoom-in'] as const
 
+// Scroll effects (D4 stage 1). Same order and spelling in all four copies:
+// frontend/storefront/src/lib/blocks.ts, frontend/admin/src/lib/blocks.ts,
+// mobile/src/content/types.ts and here. A block's `motion` is independent of
+// its one-shot entrance `animation`. Keys reserved for later stages (do not
+// use them for anything else): keyframes, devices, range, delayMs.
+export const MOTION_PRESETS = ['parallax', 'fade', 'grow', 'pin-reveal', 'sticky-stack', 'side-pan', 'text-reveal'] as const
+export const MOTION_INTENSITIES = ['subtle', 'medium', 'strong'] as const
+
+/** `{ preset, intensity? }` — intensity absent = 'medium'. Strict: an extra
+ *  key, an unknown preset/intensity or a non-object is a validation error. */
+export const motionSchema = z.object({
+  preset:    z.enum(MOTION_PRESETS),
+  intensity: z.enum(MOTION_INTENSITIES).optional(),
+}).strict()
+
 export const MAX_TOP_LEVEL_BLOCKS = 80
 export const MAX_CONTENT_BYTES = 200_000
 
@@ -34,6 +49,8 @@ const blockBase = z.object({
   animationDelayMs:    z.number().int().min(0).max(3000).optional(),
   animationDurationMs: z.number().int().min(200).max(3000).optional(),
   fontFamily:          z.string().max(120).optional(),
+  // Scroll effect. null (a cleared field) means "none" and is dropped.
+  motion:              z.preprocess((v) => (v === null ? undefined : v), motionSchema.optional()),
 }).passthrough()
 
 const videoFields = z.object({
@@ -87,9 +104,20 @@ const columnsFields = z.object({
   stackOnMobile: z.boolean().optional(),
 }).passthrough()
 
-export const blockSchema = blockBase.superRefine((b, ctx) => {
-  if (b.type === 'columns') forward(ctx, columnsFields.safeParse(b))
-  else checkLeaf(b, ctx)
+// A `columns` block returns its PARSED children, so the column children get the
+// same output rules as top-level blocks (e.g. `motion: null` is dropped from
+// the stored JSON, not kept as null).
+export const blockSchema = blockBase.transform((b, ctx) => {
+  if (b.type !== 'columns') {
+    checkLeaf(b, ctx)
+    return b
+  }
+  const r = columnsFields.safeParse(b)
+  if (!r.success) {
+    forward(ctx, r)
+    return b
+  }
+  return { ...b, columns: r.data.columns }
 })
 
 export const blocksSchema = z.array(blockSchema).max(MAX_TOP_LEVEL_BLOCKS)

@@ -1,7 +1,8 @@
 // Storefront content module — block + settings types for the mobile renderer.
 //
 // Mirrors frontend/storefront/src/lib/blocks.ts plus the additions in the
-// content-module contract (decision 41): per-block animation + font, and the
+// content-module contract (decision 41): per-block animation + font, the
+// scroll-effect `motion` (D4 stage 1), and the
 // columns / video / signature / signup_form block types. Keep these in step
 // with the backend's modules/siteLayouts/schemas.ts; the API validates loosely,
 // so every renderer reads optional fields defensively.
@@ -11,6 +12,22 @@ export type ButtonSize  = 'sm' | 'md' | 'lg' | 'xl' | 'huge'
 export type Align       = 'left' | 'center' | 'right'
 export type SectionPad  = 'none' | 'sm' | 'md' | 'lg' | 'xl'
 export type Animation   = 'none' | 'fade-up' | 'fade-in' | 'slide-left' | 'slide-right' | 'zoom-in'
+
+// Scroll effects (D4 stage 1). Same order and spelling in all four copies:
+// frontend/storefront/src/lib/blocks.ts, frontend/admin/src/lib/blocks.ts,
+// backend/src/modules/siteLayouts/schemas.ts and here. The app has no scroll
+// effects yet: it plays the matching entrance instead (./motion.ts).
+export const MOTION_PRESETS = ['parallax', 'fade', 'grow', 'pin-reveal', 'sticky-stack', 'side-pan', 'text-reveal'] as const
+export type MotionPreset = (typeof MOTION_PRESETS)[number]
+export const MOTION_INTENSITIES = ['subtle', 'medium', 'strong'] as const
+export type MotionIntensity = (typeof MOTION_INTENSITIES)[number]
+
+/** A block's scroll effect. Absent = none. intensity absent = 'medium'.
+ *  Renderers treat an unknown/invalid value as "none" — never hidden content. */
+export interface BlockMotion {
+  preset: MotionPreset
+  intensity?: MotionIntensity
+}
 
 export interface BlockBase {
   id: string
@@ -24,6 +41,7 @@ export interface BlockBase {
   animationDelayMs?: number      // 0..3000
   animationDurationMs?: number   // 200..3000, default 600
   fontFamily?: string            // library font family or a built-in stack
+  motion?: BlockMotion           // scroll effect; independent of `animation` (entrance, plays once)
 }
 
 export interface HeroBlock extends BlockBase {
