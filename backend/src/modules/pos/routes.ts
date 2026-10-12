@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, CASHIERS, MANAGERS } from '../auth/middleware.js'
-import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement } from './service.js'
-import { PAYOUT_CATEGORIES } from '../accounting/expenseCategories.js'
+import { requireAuth, CASHIERS, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
+import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer } from './service.js'
+import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, shiftWhere, findShiftInScope, assertShiftOf } from '../../lib/tenantScope.js'
 import { buildReceiptHtml, buildReceiptData } from './receipt.js'
+import { assertShiftHasNoActiveCharges } from '../../connectors/terminal/guard.js'
+import { audit } from '../../lib/audit.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -15,6 +17,33 @@ import { buildReceiptHtml, buildReceiptData } from './receipt.js'
 // (shiftOfCompany / findShiftInScope / assertShiftOf): Shift.tenantId, with the
 // location and then the cashier as fallbacks ONLY for rows that predate it.
 // A guessed shift id from another company 404s exactly like a foreign order.
+
+// One line of a ring-up. Add-on prices are taken from the menu server-side
+// (resolvePosLines — FOH-08); a client priceDeltaCents only matters for a
+// free-text add-on, which may not lower the price.
+const posItemSchema = z.object({
+  // menuItemId may legitimately be null for manual line items (open-priced
+  // walk-in orders); validate as uuid only when set.
+  menuItemId: z.string().uuid().nullable().default(null),
+  name: z.string(),
+  quantity: z.number().int().min(1),
+  unitPriceCents: z.number().int().min(0),
+  notes: z.string().optional(),
+  course: z.number().int().optional(),
+  modifiers: z
+    .array(
+      z.object({
+        name: z.string(),
+        priceDeltaCents: z.number().int().default(0),
+        modifierId: z.string().uuid().optional(),
+      }),
+    )
+    .default([]),
+})
+
+// The tender the bill is priced for (decision 9: cash 15% / card 8%). Not
+// chosen → cash; the payment re-prices if the customer pays the other way.
+const tillTenderSchema = z.enum(['cash', 'card', 'keenu_qr'])
 
 const posOrderSchema = z.object({
   conceptId: z.string().uuid(),
@@ -24,34 +53,22 @@ const posOrderSchema = z.object({
   tableId: z.string().uuid().nullable().optional(),
   customerId: z.string().uuid().nullable().optional(),
   shiftId: z.string().uuid().nullable().optional(),
-  items: z.array(
-    z.object({
-      // menuItemId may legitimately be null for manual line items (open-priced
-      // walk-in orders); validate as uuid only when set.
-      menuItemId: z.string().uuid().nullable().default(null),
-      name: z.string(),
-      quantity: z.number().int().min(1),
-      unitPriceCents: z.number().int().min(0),
-      notes: z.string().optional(),
-      course: z.number().int().optional(),
-      modifiers: z
-        .array(
-          z.object({
-            name: z.string(),
-            priceDeltaCents: z.number().int().default(0),
-            modifierId: z.string().uuid().optional(),
-          }),
-        )
-        .default([]),
-    }),
-  ),
+  items: z.array(posItemSchema),
   discountCents: z.number().int().min(0).default(0),
   discountReason: z.string().optional(),
   managerOverridePin: z.string().min(4).max(8).optional(),     // required when discount/override exceeds cashier cap
   // Client-generated key, stable across retries of the SAME ring-up, so a
   // double-tap or an offline-queue resend dedupes to ONE order instead of
-  // firing duplicate tickets. Falls back to a timestamp when absent.
+  // firing duplicate tickets. Absent → the server generates a UUID (FOH-06).
   idempotencyKey: z.string().min(8).max(100).optional(),
+  paymentMethod: tillTenderSchema.optional(),
+})
+
+const posQuoteSchema = z.object({
+  conceptId: z.string().uuid(),
+  items: z.array(posItemSchema).min(1),
+  discountCents: z.number().int().min(0).default(0),
+  paymentMethod: tillTenderSchema.optional(),
 })
 
 const paymentSchema = z.object({
@@ -63,15 +80,25 @@ const paymentSchema = z.object({
       // it goes through POST /pos/orders/:id/comp (caps, PIN, audit). No
       // 'split': that is the group-order placeholder, not money — split the
       // bill (check-split) and settle each portion.
-      method: z.enum(['cash', 'card', 'keenu_qr']),
+      method: tillTenderSchema,
+      // What this tender takes: its share of the bill PLUS its tip.
       amountCents: z.number().int().min(0),
-      tenderedCents: z.number().int().optional(),
+      tenderedCents: z.number().int().min(0).optional(),
       // The card terminal's reference number — required for card / QR
       // (owner decision 4).
       gatewayRef: z.string().trim().max(120).optional(),
       gateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'none']).optional(),
+      // FOH-14: the part of amountCents that is a tip (→ Order.tipCents).
+      tipCents: z.number().int().min(0).optional(),
+      // The card machine is connected but offline: the cashier keyed the
+      // slip reference by hand (spec §7.13) — recorded in gatewayMeta and
+      // audited with the payment. (terminalChargeId / gateway 'card_terminal'
+      // are never accepted from a client: only the server records a charge.)
+      manualReason: z.enum(['terminal_offline']).optional(),
     }),
   ),
+  // FOH-04: one key per "Pay" submission, reused by its retries.
+  idempotencyKey: z.string().min(8).max(100).optional(),
 })
 
 const openShiftSchema = z.object({
@@ -81,6 +108,9 @@ const openShiftSchema = z.object({
 const closeShiftSchema = z.object({
   closingFloatCents: z.number().int().min(0),
   notes: z.string().optional(),
+  // FOH-21: close although unpaid tickets are still open on the drawer
+  // (409 OPEN_TICKETS lists them otherwise).
+  confirmOpenTickets: z.boolean().optional(),
 })
 
 export async function posRoutes(fastify: FastifyInstance) {
@@ -123,7 +153,10 @@ export async function posRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(order)
   })
 
-  // POST /pos/payments — take tenders at the till for what is due.
+  // POST /pos/payments — take tenders at the till for what is due. Returns
+  // `fiscal` (the sale's FiscalView once the bill completes; the till's
+  // bounded attempt to file it) and the deprecated `srb` alias (spec §8.4).
+  // 409 TERMINAL_CHARGE_ACTIVE while the card machine works on this bill.
   fastify.post('/payments', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
     const body = paymentSchema.parse(req.body)
     const order = await prisma.order.findFirst({
@@ -134,10 +167,57 @@ export async function posRoutes(fastify: FastifyInstance) {
       select: { id: true, concept: { select: { tenantId: true } } },
     })
     if (!order?.concept.tenantId) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-    // The drawer must be an OPEN shift of the order's own company.
+    // The drawer must be an OPEN shift of the order's own company, and the
+    // caller's own unless they are a manager (FOH-15).
     await assertShiftOf(order.concept.tenantId, body.shiftId, true)
+    await assertDrawerOperator(body.shiftId, req.staffUser!)
     const result = await processPayment(body)
+    // A card slip keyed by hand while the card machine is offline (spec §7.13): audited.
+    const keyed = body.payments.filter((p) => p.manualReason)
+    if (keyed.length > 0 && !result.replayed) {
+      await audit({
+        category: 'identity', action: 'terminal.manual_reference', entity: 'Order', entityId: order.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: order.concept.tenantId,
+        metadata: { reason: 'terminal_offline', tenders: keyed.map((p) => ({ method: p.method, amountCents: p.amountCents, gatewayRef: p.gatewayRef ?? null })), paymentIds: result.payments.map((p) => p.id) },
+      })
+    }
     return reply.status(201).send(result)
+  })
+
+  // GET /pos/orders/:orderId/quote?method=cash|card|keenu_qr — what POST
+  // /pos/payments will demand for this order paid that way (re-priced for the
+  // tender while nothing is paid yet). Read-only; the same function the
+  // payment prices with (quoteOrderForTender / tenderPriceOf).
+  fastify.get<{ Params: { orderId: string }; Querystring: { method?: string } }>(
+    '/orders/:orderId/quote',
+    { preHandler: requireAuth(...CASHIERS) },
+    async (req, reply) => {
+      const { method } = z.object({ method: tillTenderSchema.default('cash') }).parse(req.query)
+      const order = await prisma.order.findFirst({
+        where: { id: req.params.orderId, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+        select: { id: true },
+      })
+      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      return quoteOrderForTender(order.id, method)
+    },
+  )
+
+  // POST /pos/quote — what a ring-up WOULD be billed (add-ons at menu price,
+  // THE pricing function, the tender's GST). Writes nothing.
+  fastify.post('/quote', { preHandler: requireAuth(...CASHIERS) }, async (req) => {
+    const body = posQuoteSchema.parse(req.body)
+    // Priced for the brand as a ring-up would bind it: the ACTIVE company's
+    // (a foreign brand 404s).
+    await assertConceptOwned(req, body.conceptId, 'create')
+    await assertConceptAccess(req.staffUser!, body.conceptId)
+    const menuItemIds = Array.from(new Set(body.items.map((i) => i.menuItemId).filter((x): x is string => !!x)))
+    if (menuItemIds.length > 0) {
+      const owned = await prisma.menuItem.count({
+        where: { id: { in: menuItemIds }, conceptId: body.conceptId, deletedAt: null },
+      })
+      if (owned !== menuItemIds.length) throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
+    }
+    return quotePosOrder(body)
   })
 
   // POST /pos/payments/:id/settle — take the money for ONE pending payment row
@@ -156,9 +236,15 @@ export async function posRoutes(fastify: FastifyInstance) {
       }).parse(req.body)
       const payment = await prisma.payment.findFirst({
         where: { id: req.params.id, order: { concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } },
-        select: { id: true },
+        select: { id: true, order: { select: { concept: { select: { tenantId: true } } } } },
       })
       if (!payment) throw new NotFoundError('Payment', req.params.id)
+      // TILL-R7: the drawer must be an open one of the ORDER's company before
+      // anything is said about whose it is — another company's drawer and a
+      // made-up id answer the same (422), never "that is someone's drawer".
+      await assertShiftOf(payment.order.concept.tenantId, body.shiftId, true)
+      // FOH-15: onto the caller's own drawer, unless a manager.
+      await assertDrawerOperator(body.shiftId, req.staffUser!)
       return settlePayment({ paymentId: payment.id, via: 'till', shiftId: body.shiftId, gatewayRef: body.gatewayRef, tenderedCents: body.tenderedCents })
     },
   )
@@ -170,6 +256,8 @@ export async function posRoutes(fastify: FastifyInstance) {
       where: {
         method: 'cash',
         status: 'pending',
+        // A bill a gift card / wallet covered in full owes nothing (ONL-R2-06).
+        amountCents: { gt: 0 },
         order: { source: { not: 'pos' }, status: 'completed', concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
       },
       select: {
@@ -212,7 +300,7 @@ export async function posRoutes(fastify: FastifyInstance) {
     '/shifts/:id/close',
     { preHandler: requireAuth(...CASHIERS) },
     async (req, reply) => {
-      const { closingFloatCents, notes } = closeShiftSchema.parse(req.body)
+      const { closingFloatCents, notes, confirmOpenTickets } = closeShiftSchema.parse(req.body)
       // Closing an EXISTING drawer: any company the operator belongs to.
       const shift = await findShiftInScope(req, req.params.id, 'write')
       // Ownership: a cashier may only close their OWN shift. Closing someone
@@ -221,14 +309,34 @@ export async function posRoutes(fastify: FastifyInstance) {
       if (shift.userId !== req.staffUser!.id && !MANAGERS.includes(req.staffUser!.role)) {
         return reply.status(403).send({ error: { code: 'NOT_YOUR_SHIFT', message: 'Only the shift owner or a manager can close this shift' } })
       }
-      return closeShift(req.params.id, closingFloatCents, notes)
+      // §7.10: a drawer with a card-machine charge (or card refund) still in
+      // flight cannot close — 409 SHIFT_HAS_ACTIVE_CHARGE {charges}.
+      await assertShiftHasNoActiveCharges(shift.id)
+      return closeShift(req.params.id, closingFloatCents, notes, { confirmOpenTickets })
     },
   )
 
-  // GET /pos/shifts/:id/zreport
+  // GET /pos/shifts/:id/open-tickets — the unpaid tickets that hold this
+  // drawer's close (409 OPEN_TICKETS), so the till can name them before the
+  // cashier confirms "close anyway". Same access as the close: the drawer's
+  // own cashier or a manager, in a company the operator belongs to.
+  fastify.get<{ Params: { id: string } }>(
+    '/shifts/:id/open-tickets',
+    { preHandler: requireAuth(...CASHIERS) },
+    async (req, reply) => {
+      const shift = await findShiftInScope(req, req.params.id, 'write')
+      if (shift.userId !== req.staffUser!.id && !MANAGERS.includes(req.staffUser!.role)) {
+        return reply.status(403).send({ error: { code: 'NOT_YOUR_SHIFT', message: 'Only the shift owner or a manager can see this drawer' } })
+      }
+      return openTicketsOnDrawer(shift.id)
+    },
+  )
+
+  // GET /pos/shifts/:id/zreport — managers, and finance (BOOKS-02: the
+  // reconciliation module finance holds by default reads drawers' Z-reports).
   fastify.get<{ Params: { id: string } }>(
     '/shifts/:id/zreport',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCE_TEAM) },
     async (req) => {
       // View-aware: the active company, or every company in "All companies".
       const shift = await findShiftInScope(req, req.params.id, 'read')
@@ -236,9 +344,12 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /pos/receipt/:orderId — the receipt as printable HTML. Same data as
-  // /pos/orders/:orderId/receipt-data (one builder, pos/receipt.ts).
-  fastify.get<{ Params: { orderId: string } }>(
+  // GET /pos/receipt/:orderId — the FULL & FINAL bill as printable HTML. Same
+  // data as /pos/orders/:orderId/receipt-data (one builder, pos/receipt.ts).
+  // An open order answers 409 PRE_BILL_REQUIRED (§17.1) — print a pre-bill
+  // (POST /pos/orders/:id/pre-bill). ?duplicate=1 marks a reprint (FOH-23); a
+  // refunded / cancelled order is always bannered.
+  fastify.get<{ Params: { orderId: string }; Querystring: { duplicate?: string } }>(
     '/receipt/:orderId',
     { preHandler: requireAuth(...CASHIERS) },
     async (req, reply) => {
@@ -250,14 +361,17 @@ export async function posRoutes(fastify: FastifyInstance) {
         select: { id: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-      const html = await buildReceiptHtml(req.params.orderId)
+      const duplicate = ['1', 'true', 'yes'].includes(String(req.query.duplicate ?? '').toLowerCase())
+      const html = await buildReceiptHtml(order.id, { duplicate })
       return reply.type('text/html').send(html)
     },
   )
 
   // POST /pos/orders/:orderId/void — void a single line item.
-  // Enforces RefundPolicy.{cashier,manager}VoidLimitCents based on the line's
-  // value. Manager override required above the cashier cap.
+  // §17.4: EVERY void needs a manager — the signed-in user is one, or a valid
+  // manager PIN of the order's company is sent (403 MANAGER_OVERRIDE_REQUIRED
+  // / INVALID_MANAGER_PIN). The manager cap (RefundPolicy.managerVoidLimitCents)
+  // still applies; the approver is always recorded.
   fastify.post<{ Params: { orderId: string } }>(
     '/orders/:orderId/void',
     { preHandler: requireAuth(...CASHIERS) },
@@ -265,7 +379,7 @@ export async function posRoutes(fastify: FastifyInstance) {
       const body = z.object({
         orderItemId: z.string().uuid(),
         reason: z.string().min(1).max(200),
-        managerOverridePin: z.string().optional(),     // required when above cashier cap
+        managerOverridePin: z.string().optional(),     // required unless the signed-in user is a manager
       }).parse(req.body)
       // Company scope through the shared helper — a null tenantFilter would
       // otherwise match every company-less brand.
@@ -315,8 +429,10 @@ export async function posRoutes(fastify: FastifyInstance) {
         select: { id: true, concept: { select: { tenantId: true } } },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-      // Like a payment: the drawer must be an OPEN shift of the order's own company.
+      // Like a payment: the drawer must be an OPEN shift of the order's own
+      // company, and the caller's own unless they are a manager (FOH-15).
       await assertShiftOf(order.concept.tenantId, body.shiftId, true)
+      await assertDrawerOperator(body.shiftId, req.staffUser!)
       // A staff meal names a member of THIS company: resolve a code or a login
       // id to the staff member's login, never trust a foreign id.
       let staffMealUserId: string | undefined
@@ -392,7 +508,8 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
-        category: body.category as never,
+        // zod checked it against PAYOUT_CATEGORIES above.
+        category: body.category as PayoutCategory | undefined,
         supplierBillId: body.supplierBillId ?? null,
         vendorName: body.vendorName ?? null,
         receiptUrl: body.receiptUrl ?? null,
@@ -418,10 +535,12 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /pos/orders/:orderId/receipt-data — the receipt as data, for the
-  // tablet's thermal printer (ReceiptOrder in tablet/src/lib/printer.ts).
+  // GET /pos/orders/:orderId/receipt-data — the full & final bill as data, for
+  // the tablet's thermal printer (ReceiptOrder in tablet/src/lib/printer.ts).
   // Same builder as the HTML receipt: stored tax and total, modifiers in the
-  // subtotal, our TaxInvoice number, and the FBR / SRB ids and SRB QR link.
+  // subtotal, heading FULL & FINAL BILL, the sale's fiscal document, the card
+  // slip, and the legacy fbr / srb keys for installed tablets. 409
+  // PRE_BILL_REQUIRED for an open order (§17.1).
   fastify.get<{ Params: { orderId: string } }>(
     '/orders/:orderId/receipt-data',
     { preHandler: requireAuth(...CASHIERS) },
@@ -442,7 +561,9 @@ export async function posRoutes(fastify: FastifyInstance) {
   // /refunds, the order page and the till all call this. Caps + manager PIN
   // (403 MANAGER_OVERRIDE_REQUIRED → prompt for a PIN and resend), any amount
   // up to what is still refundable, the cash out of an OPEN drawer (owner
-  // decision 3), its own journal entry, and status 'refunded' once in full.
+  // decision 3), its own journal entry, the fiscal return document
+  // (`fiscalRefund`; `srbReturnInvoiceNo` is deprecated, always null), and
+  // status 'refunded' once in full.
   fastify.post<{ Params: { orderId: string } }>(
     '/orders/:orderId/refund',
     { preHandler: requireAuth(...CASHIERS) },
@@ -452,8 +573,9 @@ export async function posRoutes(fastify: FastifyInstance) {
         reason: z.string().trim().min(3).max(200),
         photoUrl: z.string().url().optional(),
         managerOverridePin: z.string().optional(),
-        // How the money goes back (defaults to the tender of the sale).
-        method: z.enum(['cash', 'card', 'keenu_qr']).optional(),
+        // How the money goes back (defaults to the tender of the sale). Only
+        // a tender the order was actually paid with (ONL-16).
+        method: tillTenderSchema.optional(),
         // The open drawer a cash refund leaves from (defaults to the
         // refunder's own open drawer).
         shiftId: z.string().uuid().optional(),
@@ -468,8 +590,13 @@ export async function posRoutes(fastify: FastifyInstance) {
         select: { id: true, concept: { select: { tenantId: true } } },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-      // A named drawer must be an OPEN drawer of the order's company.
-      if (body.shiftId) await assertShiftOf(order.concept.tenantId, body.shiftId, true)
+      // A named drawer must be an OPEN drawer of the order's company — and
+      // the caller's own unless they are a manager: cash must not leave
+      // another cashier's drawer (FOH-15).
+      if (body.shiftId) {
+        await assertShiftOf(order.concept.tenantId, body.shiftId, true)
+        await assertDrawerOperator(body.shiftId, req.staffUser!)
+      }
       const result = await refundOrder({
         orderId: order.id,
         amountCents: body.amountCents,

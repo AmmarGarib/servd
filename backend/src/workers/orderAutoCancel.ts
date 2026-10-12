@@ -13,6 +13,12 @@
 //       hours is a generous ceiling; real kitchens will notice before then, but
 //       this catches crashes, tablet deaths, or forgotten tickets.
 //
+// Pre-orders (ONL-R2-03): an order with a scheduledFor in the future is not
+// stalled — it is waiting for its time. Both clocks start at the LATER of
+// placedAt and scheduledFor, so tomorrow's 10:30 pre-order is not cancelled
+// half an hour after it was placed (it used to be, and the customer was told).
+// It is swept only if still unacknowledged 30 minutes after its own time.
+//
 // Each order is cancelled through cancelOrder() — the same path a manager's
 // cancel takes — so the customer is notified (operator templates apply), the
 // wallet and gift-card money they paid with is given back, a promo usage is
@@ -55,6 +61,16 @@ export function startOrderAutoCancelWorker() {
   }
 }
 
+/**
+ * `where` fragment: the order is not scheduled for a time after `cutoff` —
+ * either it has no scheduledFor (an order for now) or its scheduled time has
+ * itself passed the cutoff. Combined with `placedAt < cutoff` this is
+ * "greatest(placedAt, scheduledFor) < cutoff".
+ */
+function notScheduledAfter(cutoff: Date) {
+  return { OR: [{ scheduledFor: null }, { scheduledFor: { lt: cutoff } }] }
+}
+
 export async function runCancelSweep(): Promise<void> {
   const now = new Date()
   const receivedCutoff  = new Date(now.getTime() - RECEIVED_TIMEOUT_MS)
@@ -71,6 +87,7 @@ export async function runCancelSweep(): Promise<void> {
         deletedAt: null,
         source: { in: ['servd', 'cart'] },
         placedAt: { lt: receivedCutoff },
+        ...notScheduledAfter(receivedCutoff),
       },
       take: 200,
       select: { id: true, status: true },
@@ -82,6 +99,7 @@ export async function runCancelSweep(): Promise<void> {
         status: 'confirmed',
         deletedAt: null,
         placedAt: { lt: confirmedCutoff },
+        ...notScheduledAfter(confirmedCutoff),
       },
       take: 200,
       select: { id: true, status: true },

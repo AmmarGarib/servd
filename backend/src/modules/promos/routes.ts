@@ -1,9 +1,31 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, type ScopeMode, activeTenantId } from '../../lib/tenantScope.js'
+
+// discountValue units (ONL-01, lib/promoEval.ts): a 'percentage' promo stores
+// the percent (0 < v ≤ 100); a 'fixed' promo stores PAISA (cents), a whole
+// number — the admin form converts the rupees it shows. Checked on create and
+// on every edit (against the promo's own type when the edit doesn't change it).
+function assertDiscountValue(discountType: string, discountValue: number): void {
+  if (discountType === 'percentage' && !(discountValue > 0 && discountValue <= 100)) {
+    throw new AppError('INVALID_DISCOUNT', 'A percentage discount must be more than 0 and at most 100', 400)
+  }
+  if (discountType === 'fixed' && !(Number.isInteger(discountValue) && discountValue >= 1)) {
+    throw new AppError('INVALID_DISCOUNT', 'A fixed discount is a whole number of paisa (PKR 150 = 15000)', 400)
+  }
+}
+
+// A code is unique within its company (ONL-12, @@unique([tenantId, code])).
+// The clash is answered as a 409 naming nothing about any other company — the
+// check only ever looks inside the promo's own company.
+const CODE_TAKEN = () => new AppError('PROMO_CODE_TAKEN', 'Your company already has a promo with this code', 409)
+function isUniqueClash(err: unknown): boolean {
+  return (err as { code?: string })?.code === 'P2002'
+}
 
 const createPromoSchema = z.object({
   code: z.string().min(1).max(50).toUpperCase(),
@@ -37,11 +59,20 @@ async function findPromoInScope(req: FastifyRequest, id: string, mode: ScopeMode
   return promo
 }
 
+// Module Access really closes these staff routes (W3A-RV-03): the role array
+// lets the Marketing team in, and the CEO's Module Access (decision 34)
+// narrows it to logins holding promos (Promotions page). Same source of truth as the
+// central gate (lib/moduleAccess.ts effectiveModulesForUser).
+const marketingGuard = [requireAuth(...MARKETING_TEAM), requireModule('promos')]
+
+// Access (wave 3, UI-06): promos are the Marketing workspace's job (module
+// promos), so every route here is MARKETING_TEAM — MANAGERS plus marketing and
+// brand_manager — and every one stays company-scoped as above.
 export async function promoRoutes(fastify: FastifyInstance) {
   // GET /promos — the companies in view.
   fastify.get<{ Querystring: { conceptId?: string; active?: string } }>(
     '/',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req) => {
       return prisma.promoCode.findMany({
         where: {
@@ -56,22 +87,30 @@ export async function promoRoutes(fastify: FastifyInstance) {
   )
 
   // POST /promos
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/', { preHandler: marketingGuard }, async (req, reply) => {
     const body = createPromoSchema.parse(req.body)
     if (new Date(body.startAt) >= new Date(body.endAt)) {
       throw new AppError('INVALID_DATES', 'startAt must be before endAt', 400)
     }
+    assertDiscountValue(body.discountType, body.discountValue)
     // New promos bind to the ACTIVE company; a brand, if named, must be its.
     const tenantId = activeTenantId(req)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
-    const promo = await prisma.promoCode.create({ data: { ...body, tenantId, startAt: new Date(body.startAt), endAt: new Date(body.endAt) } })
-    return reply.status(201).send(promo)
+    if (await prisma.promoCode.findFirst({ where: { tenantId, code: body.code }, select: { id: true } })) throw CODE_TAKEN()
+    try {
+      const promo = await prisma.promoCode.create({ data: { ...body, tenantId, startAt: new Date(body.startAt), endAt: new Date(body.endAt) } })
+      return reply.status(201).send(promo)
+    } catch (err) {
+      // Two creates of the same code racing past the check above.
+      if (isUniqueClash(err)) throw CODE_TAKEN()
+      throw err
+    }
   })
 
   // PATCH /promos/:id
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req) => {
       const body = createPromoSchema.partial().parse(req.body)
       const owned = await findPromoInScope(req, req.params.id, 'write')
@@ -83,17 +122,32 @@ export async function promoRoutes(fastify: FastifyInstance) {
           : null
         if (!concept) throw new AppError('BRAND_NOT_IN_COMPANY', 'That brand is not part of this promo\'s company', 422)
       }
+      if (body.discountType !== undefined || body.discountValue !== undefined) {
+        assertDiscountValue(body.discountType ?? owned.discountType, body.discountValue ?? owned.discountValue)
+      }
+      if (body.code !== undefined && body.code !== owned.code) {
+        const clash = await prisma.promoCode.findFirst({
+          where: { tenantId: owned.tenantId, code: body.code, id: { not: owned.id } },
+          select: { id: true },
+        })
+        if (clash) throw CODE_TAKEN()
+      }
       const data: Record<string, unknown> = { ...body }
       if (body.startAt) data.startAt = new Date(body.startAt)
       if (body.endAt) data.endAt = new Date(body.endAt)
-      return prisma.promoCode.update({ where: { id: req.params.id }, data })
+      try {
+        return await prisma.promoCode.update({ where: { id: owned.id }, data })
+      } catch (err) {
+        if (isUniqueClash(err)) throw CODE_TAKEN()
+        throw err
+      }
     },
   )
 
   // DELETE /promos/:id
   fastify.delete<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req, reply) => {
       await findPromoInScope(req, req.params.id, 'write')
       await prisma.promoCode.delete({ where: { id: req.params.id } })
@@ -108,7 +162,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
   // GET /promos/usages — usage log (tenant-scoped via the order's concept).
   fastify.get<{ Querystring: { promoCodeId?: string; limit?: string } }>(
     '/usages',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '50', 10), 200)
       return prisma.promoCodeUsage.findMany({

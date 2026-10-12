@@ -14,8 +14,28 @@
 //     off) is reported as unrouted, exactly like a line with no station: no
 //     screen shows that station, so expo has to know.
 
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { getIOSafe, emitItemUpdated } from '../../lib/ws.js'
+
+/** Recipe phases that put a dish on a station when it is fired (fireOrderItems). */
+export const SERVICE_PHASES = ['service_cook', 'service_assemble'] as const
+
+/**
+ * A line that needs the kitchen: live, and routed somewhere — a station, or
+ * recipe steps (laid out already, or waiting in its recipe for the fire). A
+ * live line with none of these (a bottled drink, a market chiller item) has
+ * nothing to cook (R3).
+ */
+export const KITCHEN_WORK_LINE: Prisma.OrderItemWhereInput = {
+  status: { not: 'voided' },
+  voidedAt: null,
+  OR: [
+    { stationId: { not: null } },
+    { steps: { some: {} } },
+    { menuItem: { is: { recipe: { is: { recipeSteps: { some: { phase: { in: [...SERVICE_PHASES] } } } } } } } },
+  ],
+}
 
 type Liveness = { isActive: boolean; deletedAt: Date | null } | null
 
@@ -90,7 +110,7 @@ export async function fireOrderItems(
     const item = byId.get(id)
     if (!item || !isFireable(item)) continue
     const steps = item.menuItem?.recipe?.recipeSteps ?? []
-    const serviceSteps = steps.filter((s) => s.phase === 'service_cook' || s.phase === 'service_assemble')
+    const serviceSteps = steps.filter((s) => (SERVICE_PHASES as readonly string[]).includes(s.phase))
 
     // Claim the line and (step flow) lay out its steps together: a line is
     // never `preparing` without its steps, and never fired twice.

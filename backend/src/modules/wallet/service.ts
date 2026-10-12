@@ -1,0 +1,334 @@
+// The customer wallet — per company (ONL-R2-01).
+//
+// A wallet is a customer's stored value AT ONE COMPANY (CustomerWallet, keyed
+// (tenantId, customerId)). It used to be one servd-wide number
+// (Customer.walletBalance — retired, never read), so value company A granted
+// paid an order at company B's brand: B's 2050 Wallet Liability went to a
+// debit balance for money it never received, and A's top-up never reached
+// A's books at all. CLAUDE.md: customer-facing money stays inside the company
+// that issued it.
+//
+// This file is the ONE place a wallet balance moves:
+//   - topUpWallet:     credit the TOP-UP's company and post it there in the
+//                      same transaction — Dr 6060 Marketing & Promo (a
+//                      manager's goodwill credit) or Dr the tender's account
+//                      (1010 cash / 1030 card / 1020 bank, a paid top-up) /
+//                      Cr 2050. Never a top-up without its entry.
+//   - holdWalletForCheckout / attachHoldToOrder / releaseWalletHold: a wallet
+//                      that IS the payment method is taken before the order
+//                      is written (storefront ONLINE-R5), from the wallet of
+//                      the BRAND's company only.
+//   - spendWalletOnOrder: the "use my wallet" toggle, taken after the order
+//                      exists, from the ORDER's company's wallet.
+//   - restoreOrderWallet: a cancelled / refunded order's wallet share goes
+//                      back to the ORDER's company's wallet, once.
+// The spend itself is booked by the order's completion posting (Dr 2050 in
+// the order's company, orderPosting.ts) — the same company whose wallet paid.
+//
+// Locking: every debit takes SELECT … FOR UPDATE on the wallet row; when an
+// order is involved the ORDER row is locked first (the lock order every till
+// tender, gift-card redeem and loyalty claim uses: order row, then the
+// stored-value row).
+
+import type { Prisma } from '@prisma/client'
+import { prisma } from '../../lib/prisma.js'
+import { AppError } from '../../lib/errors.js'
+import { ACCT, postJournalEntry } from '../accounting/journal.js'
+
+type Tx = Prisma.TransactionClient
+
+/** Marketing & Promo — where a manager's goodwill wallet credit is expensed. */
+export const WALLET_GOODWILL_EXPENSE = '6060'
+
+/** The debit side of a PAID top-up, by how the customer paid it. */
+export const TOPUP_TENDER_ACCOUNT = {
+  cash: ACCT.CASH_ON_HAND,     // 1010 — cash taken at the counter
+  card: ACCT.CARD_RECEIVABLE,  // 1030 — card / gateway, awaiting settlement
+  bank: ACCT.BANK,             // 1020 — bank transfer into the operating account
+} as const
+export type TopUpTender = keyof typeof TOPUP_TENDER_ACCOUNT
+
+/** The balance of the customer's wallet at one company (0 when none). */
+export async function walletBalanceAt(tenantId: string | null | undefined, customerId: string, db: Tx | typeof prisma = prisma): Promise<number> {
+  if (!tenantId) return 0
+  const w = await db.customerWallet.findUnique({
+    where: { tenantId_customerId: { tenantId, customerId } },
+    select: { balanceCents: true },
+  })
+  return Math.max(0, w?.balanceCents ?? 0)
+}
+
+/** Every company's wallet of the customer: tenantId → balance. */
+export async function walletBalancesOf(customerIds: string[], tenantIds?: string[]): Promise<Map<string, Map<string, number>>> {
+  const out = new Map<string, Map<string, number>>()
+  if (customerIds.length === 0 || (tenantIds && tenantIds.length === 0)) return out
+  const rows = await prisma.customerWallet.findMany({
+    where: { customerId: { in: customerIds }, ...(tenantIds && { tenantId: { in: tenantIds } }) },
+    select: { customerId: true, tenantId: true, balanceCents: true },
+  })
+  for (const r of rows) {
+    const m = out.get(r.customerId) ?? new Map<string, number>()
+    m.set(r.tenantId, r.balanceCents)
+    out.set(r.customerId, m)
+  }
+  return out
+}
+
+/**
+ * The balance in view: the company's wallet, or — in a portfolio view — the
+ * wallets of the companies in view summed (each still spendable only at its
+ * own company's brands; `wallets` lists them apart).
+ */
+export function balanceInView(wallets: Map<string, number> | undefined, scope: string[]): number {
+  if (!wallets) return 0
+  return scope.reduce((t, id) => t + (wallets.get(id) ?? 0), 0)
+}
+
+async function lockOrderRowTx(tx: Tx, orderId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`
+}
+
+/** The wallet row, created empty when missing, locked FOR UPDATE. */
+async function lockWalletForCreditTx(tx: Tx, tenantId: string, customerId: string): Promise<{ id: string; balanceCents: number }> {
+  await tx.$executeRaw`
+    INSERT INTO customer_wallets ("id", "tenantId", "customerId", "balanceCents", "createdAt", "updatedAt")
+    VALUES (gen_random_uuid()::text, ${tenantId}, ${customerId}, 0, now(), now())
+    ON CONFLICT ("tenantId", "customerId") DO NOTHING`
+  const rows = await tx.$queryRaw<Array<{ id: string; balanceCents: number }>>`
+    SELECT id, "balanceCents" FROM customer_wallets
+     WHERE "tenantId" = ${tenantId} AND "customerId" = ${customerId}
+     FOR UPDATE`
+  return rows[0]!
+}
+
+/** The wallet row locked FOR UPDATE, or null when the customer has none here. */
+async function lockWalletForDebitTx(tx: Tx, tenantId: string, customerId: string): Promise<{ id: string; balanceCents: number } | null> {
+  const rows = await tx.$queryRaw<Array<{ id: string; balanceCents: number }>>`
+    SELECT id, "balanceCents" FROM customer_wallets
+     WHERE "tenantId" = ${tenantId} AND "customerId" = ${customerId}
+     FOR UPDATE`
+  return rows[0] ?? null
+}
+
+interface MoveInput {
+  tenantId: string
+  customerId: string
+  amountCents: number
+  type: 'topup' | 'spend' | 'refund' | 'bonus'
+  description: string
+  orderId?: string | null
+}
+
+/** Credit inside `tx` (wallet row locked). Returns the WalletTransaction and the balance after. */
+export async function creditWalletTx(tx: Tx, input: MoveInput): Promise<{ transactionId: string; balanceAfter: number }> {
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
+    throw new AppError('INVALID_AMOUNT', 'A wallet credit must be a positive whole amount', 400)
+  }
+  const w = await lockWalletForCreditTx(tx, input.tenantId, input.customerId)
+  const updated = await tx.customerWallet.update({
+    where: { id: w.id },
+    data: { balanceCents: { increment: input.amountCents } },
+    select: { balanceCents: true },
+  })
+  const wt = await tx.walletTransaction.create({
+    data: {
+      tenantId: input.tenantId,
+      customerId: input.customerId,
+      type: input.type,
+      amountCents: input.amountCents,
+      balanceAfter: updated.balanceCents,
+      description: input.description,
+      orderId: input.orderId ?? null,
+    },
+    select: { id: true },
+  })
+  return { transactionId: wt.id, balanceAfter: updated.balanceCents }
+}
+
+/** Debit inside `tx` (wallet row locked). null when the balance does not cover it — nothing moved. */
+export async function debitWalletTx(tx: Tx, input: MoveInput): Promise<{ transactionId: string; balanceAfter: number } | null> {
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) return null
+  const w = await lockWalletForDebitTx(tx, input.tenantId, input.customerId)
+  if (!w || w.balanceCents < input.amountCents) return null
+  const updated = await tx.customerWallet.update({
+    where: { id: w.id },
+    data: { balanceCents: { decrement: input.amountCents } },
+    select: { balanceCents: true },
+  })
+  const wt = await tx.walletTransaction.create({
+    data: {
+      tenantId: input.tenantId,
+      customerId: input.customerId,
+      type: input.type,
+      amountCents: -input.amountCents,
+      balanceAfter: updated.balanceCents,
+      description: input.description,
+      orderId: input.orderId ?? null,
+    },
+    select: { id: true },
+  })
+  return { transactionId: wt.id, balanceAfter: updated.balanceCents }
+}
+
+// ─── Top-ups ────────────────────────────────────────────────────────────────
+
+export interface TopUpInput {
+  tenantId: string
+  customerId: string
+  amountCents: number
+  /** goodwill = a manager's credit (Dr 6060); paid = the customer paid for it (Dr the tender). */
+  kind: 'goodwill' | 'paid'
+  tender?: TopUpTender
+  description: string
+  postedBy: string
+}
+
+/**
+ * Credit the customer's wallet AT `tenantId` and book it in that company in
+ * the SAME transaction: Dr 6060 (goodwill) or the tender's account (paid) /
+ * Cr 2050. A posting that cannot be made (period locked, chart missing a
+ * code) rolls the credit back — a wallet never holds value its company's
+ * books do not owe.
+ */
+export async function topUpWallet(input: TopUpInput): Promise<{ transactionId: string; balanceAfter: number; entryId: string | null }> {
+  if (input.kind === 'paid' && !input.tender) {
+    throw new AppError('TENDER_REQUIRED', 'Say how the customer paid for the top-up (cash, card or bank)', 422)
+  }
+  const debitAccount = input.kind === 'goodwill' ? WALLET_GOODWILL_EXPENSE : TOPUP_TENDER_ACCOUNT[input.tender!]
+  return prisma.$transaction(async (tx) => {
+    const moved = await creditWalletTx(tx, {
+      tenantId: input.tenantId,
+      customerId: input.customerId,
+      amountCents: input.amountCents,
+      type: 'topup',
+      description: input.description,
+    })
+    const memo = `Wallet top-up (${input.kind === 'goodwill' ? 'goodwill' : `paid — ${input.tender}`}) #${moved.transactionId.slice(0, 8)}`
+    const je = await postJournalEntry({
+      tenantId: input.tenantId,
+      sourceType: 'wallet.topup',
+      sourceId: moved.transactionId,
+      description: `${memo}: ${input.description}`.slice(0, 500),
+      postedBy: input.postedBy,
+      lines: [
+        { accountCode: debitAccount, type: 'debit', amountCents: input.amountCents, memo },
+        { accountCode: ACCT.WALLET_LIABILITY, type: 'credit', amountCents: input.amountCents, memo },
+      ],
+    }, { tx })
+    return { ...moved, entryId: je.entryId }
+  })
+}
+
+// ─── Checkout: the wallet as the payment method ─────────────────────────────
+
+/**
+ * Take `amountCents` from the customer's wallet at the brand's company BEFORE
+ * the order is written. The spend row is written now (no order yet) and tied
+ * to the order by attachHoldToOrder; if the order is never written,
+ * releaseWalletHold gives it back. null when the balance does not cover it.
+ */
+export async function holdWalletForCheckout(args: { tenantId: string; customerId: string; amountCents: number }): Promise<{ transactionId: string } | null> {
+  return prisma.$transaction(async (tx) => {
+    const moved = await debitWalletTx(tx, { ...args, type: 'spend', description: 'Checkout (order being placed)' })
+    return moved ? { transactionId: moved.transactionId } : null
+  })
+}
+
+/** The held spend now belongs to `orderId`. */
+export async function attachHoldToOrder(transactionId: string, orderId: string): Promise<void> {
+  await prisma.walletTransaction.update({
+    where: { id: transactionId },
+    data: { orderId, description: `Order ${orderId}` },
+  })
+}
+
+/**
+ * Give back a hold whose order was never written. Idempotent: the hold's
+ * spend row is deleted in the same transaction as the credit, so a second
+ * call finds nothing to give back.
+ */
+export async function releaseWalletHold(hold: { tenantId: string; customerId: string; amountCents: number; transactionId: string }): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const w = await lockWalletForCreditTx(tx, hold.tenantId, hold.customerId)
+    const gone = await tx.walletTransaction.deleteMany({ where: { id: hold.transactionId, orderId: null, type: 'spend' } })
+    if (gone.count === 0) return
+    await tx.customerWallet.update({ where: { id: w.id }, data: { balanceCents: { increment: hold.amountCents } } })
+  })
+}
+
+// ─── Checkout: the "use my wallet" toggle ───────────────────────────────────
+
+/**
+ * Take the wallet share of an order that already exists (its bill already
+ * excludes it), from the wallet of the ORDER's company. Order row locked
+ * first, then the wallet row. false when the balance moved and nothing was
+ * taken — the caller puts the share back on the bill.
+ */
+export async function spendWalletOnOrder(args: { customerId: string; orderId: string; amountCents: number }): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    await lockOrderRowTx(tx, args.orderId)
+    const order = await tx.order.findUnique({ where: { id: args.orderId }, select: { concept: { select: { tenantId: true } } } })
+    const tenantId = order?.concept.tenantId
+    if (!tenantId) return false
+    const moved = await debitWalletTx(tx, {
+      tenantId,
+      customerId: args.customerId,
+      amountCents: args.amountCents,
+      type: 'spend',
+      description: `Order ${args.orderId}`,
+      orderId: args.orderId,
+    })
+    return !!moved
+  })
+}
+
+// ─── Restores ───────────────────────────────────────────────────────────────
+
+/**
+ * Give an order's wallet share back to the wallet of the ORDER's company —
+ * once per order (a 'refund' WalletTransaction on the order is the claim,
+ * checked under the order's row lock, so two concurrent restores credit
+ * once). Returns the balance after, or null when nothing was restored.
+ *
+ * `book` (a refunded order: its sale debited 2050 for the share) runs in the
+ * SAME transaction as the credit and posts its Cr 2050 entry with that `tx`
+ * — the wallet is never credited without its entry, nor the entry posted
+ * without the credit (W-RV-02). A failed posting rolls the credit back and
+ * throws, so the caller flags it and a re-run restores and books together.
+ * When the restore was already made (a run before this change whose entry
+ * failed), `book` still runs — its posting is idempotent on the order — so
+ * the missing entry can catch up.
+ */
+export async function restoreOrderWallet(
+  orderId: string,
+  reason: string,
+  opts: { book?: (tx: Tx, amountCents: number) => Promise<void> } = {},
+): Promise<number | null> {
+  return prisma.$transaction(async (tx) => {
+    await lockOrderRowTx(tx, orderId)
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { customerId: true, walletAmountCents: true, concept: { select: { tenantId: true } } },
+    })
+    if (!order?.customerId || order.walletAmountCents <= 0) return null
+    const tenantId = order.concept.tenantId
+    if (!tenantId) {
+      throw new AppError('ORDER_HAS_NO_COMPANY', `Order ${orderId}'s brand has no company — its wallet share cannot be restored`, 500)
+    }
+    const already = await tx.walletTransaction.findFirst({ where: { orderId, type: 'refund' }, select: { id: true } })
+    if (already) {
+      if (opts.book) await opts.book(tx, order.walletAmountCents)
+      return null
+    }
+    const moved = await creditWalletTx(tx, {
+      tenantId,
+      customerId: order.customerId,
+      amountCents: order.walletAmountCents,
+      type: 'refund',
+      description: `Refund of order — ${reason}`,
+      orderId,
+    })
+    if (opts.book) await opts.book(tx, order.walletAmountCents)
+    return moved.balanceAfter
+  })
+}

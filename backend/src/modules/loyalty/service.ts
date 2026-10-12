@@ -24,17 +24,49 @@
 //   tierStatus / syncTier          the ladder is TierConfig, unlocked on the
 //                                  customer's lifetime spend at the company
 //                                  (owner decision 13).
+//
+// Accounts are PER COMPANY (ONL-04): LoyaltyAccount is keyed by (tenantId,
+// customerId). Points earned at one company's brands are spent, expired and
+// clawed back only at that company, whose books carry the liability. The one
+// shared account let a customer earn at GS Foods and spend at another company,
+// which then booked a redemption against a liability it never raised. Use
+// loyaltyAccountOf / ensureLoyaltyAccountTx — never look an account up by
+// customer alone.
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { primaryTenantId } from '../../lib/setup-config.js'
-import { calculatePointsEarned, calculatePointsValue, loadLoyaltySettings, POINT_VALUE_CENTS } from '../../lib/loyaltySettings.js'
+import { calculatePointsEarned, loadLoyaltySettings, POINT_VALUE_CENTS } from '../../lib/loyaltySettings.js'
+// guard.ts imports only lib/prisma and lib/errors, so a static import is cycle-free.
+import { assertNoActiveTerminalChargeTx } from '../../connectors/terminal/guard.js'
 
 type Tx = Prisma.TransactionClient
 
 /** Prefix every order earn carries; the once-per-order guard matches on it. */
 export const ORDER_EARN_PREFIX = 'Earned '
+
+// ─── Accounts: one per customer per company ──────────────────────────────────
+
+/** The customer's account at `tenantId`, created on first use, inside `tx`. */
+export async function ensureLoyaltyAccountTx(tx: Tx, customerId: string, tenantId: string) {
+  return tx.loyaltyAccount.upsert({
+    where: { tenantId_customerId: { tenantId, customerId } },
+    create: { tenantId, customerId, stampCounts: {} },
+    update: {},
+  })
+}
+
+/** The customer's account at `tenantId`, or null (no company → no account). */
+export async function loyaltyAccountOf(customerId: string, tenantId: string | null | undefined) {
+  if (!tenantId) return null
+  return prisma.loyaltyAccount.findUnique({ where: { tenantId_customerId: { tenantId, customerId } } })
+}
+
+/** Every account the customer holds — one per company they have points with. */
+export async function loyaltyAccountsOf(customerId: string) {
+  return prisma.loyaltyAccount.findMany({ where: { customerId }, orderBy: { createdAt: 'asc' } })
+}
 
 // ─── Which company a customer's points belong to ──────────────────────────────
 
@@ -58,6 +90,12 @@ export async function loyaltyCompanyOf(customerId: string | null, orderId?: stri
     if (last?.concept.tenantId) return last.concept.tenantId
   }
   return primaryTenantId()
+}
+
+/** The company of an order's brand, or null. */
+async function orderCompanyOf(orderId: string): Promise<string | null> {
+  const o = await prisma.order.findUnique({ where: { id: orderId }, select: { concept: { select: { tenantId: true } } } })
+  return o?.concept.tenantId ?? null
 }
 
 /** The company behind a brand slug, or null. */
@@ -85,6 +123,13 @@ export interface CreditInput {
   customerId: string
   points: number
   description: string
+  /**
+   * The company whose programme the points are in — the company that is
+   * giving them. Omitted: the order's brand's company. With neither, nothing
+   * is credited: a bonus is never parked at a guessed company (the customer's
+   * latest-order company or the oldest company — LEDGER-R8).
+   */
+  tenantId?: string | null
   orderId?: string | null
   /** Brand slug whose stamp card advances by one visit (order earns only). */
   stampConceptSlug?: string | null
@@ -110,11 +155,12 @@ export async function creditPointsTx(tx: Tx, input: CreditInput): Promise<Credit
   const points = Math.max(0, Math.floor(input.points))
   if (points <= 0 && !input.stampConceptSlug) return none
 
-  const account = await tx.loyaltyAccount.upsert({
-    where: { customerId: input.customerId },
-    create: { customerId: input.customerId, stampCounts: {} },
-    update: {},
-  })
+  const tenantId = input.tenantId ?? (input.orderId ? await orderCompanyOf(input.orderId) : null)
+  if (!tenantId) {
+    console.warn(`[loyalty] ${points} pts for customer ${input.customerId} not credited: no company given ("${input.description}")`)
+    return none
+  }
+  const account = await ensureLoyaltyAccountTx(tx, input.customerId, tenantId)
   // Serialise earns on this account so the once-per-order check below can't
   // be raced by a second completion of the same order.
   await tx.$queryRaw`SELECT id FROM loyalty_accounts WHERE id = ${account.id} FOR UPDATE`
@@ -163,16 +209,69 @@ export async function creditPointsTx(tx: Tx, input: CreditInput): Promise<Credit
   return { credited: true, txId: ltx.id, earnedFreeItem, stamps }
 }
 
-/** Book the loyalty liability for an earn (Dr 6060 / Cr 2060). Never throws. */
+/**
+ * Outcomes of a loyalty posting that mean "nothing to book", not a refusal:
+ * the transaction is gone, is not of that kind, or is worth nothing.
+ */
+const LOYALTY_NOTHING_TO_POST = new Set(['tx_not_found', 'not_earn_tx', 'not_redeem_tx', 'zero_value'])
+
+/**
+ * A loyalty posting the ledger refused (BOOKS-R2-01 follow-up): raise the
+ * posting_failed flag in the owning company's inbox, so it is fixed and
+ * re-posted from Reconciliation → Backfill unposted instead of living only in
+ * the log. The company is the points account's (else the order's brand's).
+ * Keyed on the order when there is one — the same key the order-completion
+ * check uses, so one refusal raises one flag. Never throws.
+ */
+async function flagLoyaltyRefusal(kind: 'loyalty.earn' | 'loyalty.redeem', txId: string, reason: string): Promise<void> {
+  try {
+    const ltx = await prisma.loyaltyTransaction.findUnique({
+      where: { id: txId },
+      select: {
+        orderId: true,
+        loyaltyAccount: { select: { tenantId: true } },
+        order: { select: { conceptId: true, concept: { select: { tenantId: true } } } },
+      },
+    })
+    const orderId = ltx?.orderId ?? null
+    const { flagPostingFailed } = await import('../accounting/journal.js')
+    await flagPostingFailed({
+      tenantId:   ltx?.loyaltyAccount.tenantId ?? ltx?.order?.concept.tenantId ?? null,
+      sourceType: kind,
+      sourceId:   txId,
+      entityType: orderId ? 'Order' : 'LoyaltyTransaction',
+      entityId:   orderId ?? txId,
+      reason,
+      title: kind === 'loyalty.earn'
+        ? `Loyalty points earned${orderId ? ' on an order' : ''} did not reach the ledger (2060)`
+        : 'Loyalty points redeemed did not reach the ledger (2060)',
+      conceptId:  ltx?.order?.conceptId ?? null,
+    })
+  } catch (err) {
+    console.error(`[loyalty] could not flag the refused ${kind} ${txId}:`, (err as Error).message)
+  }
+}
+
+/**
+ * Book the loyalty liability for an earn (Dr 6060 / Cr 2060). Never throws.
+ * A refusal (closed period, missing account, no company…) is flagged
+ * posting_failed for the company; "nothing to post" outcomes are not.
+ */
 export async function bookEarn(txId: string | null): Promise<void> {
   if (!txId) return
+  let reason: string | null = null
   try {
     const { postLoyaltyEarn } = await import('../accounting/loyaltyPosting.js')
     const r = await postLoyaltyEarn(txId)
-    if (!r.posted && r.reason) console.warn(`[loyalty] earn ${txId} not booked: ${r.reason}`)
+    if (!r.posted && r.reason) {
+      console.warn(`[loyalty] earn ${txId} not booked: ${r.reason}`)
+      if (!LOYALTY_NOTHING_TO_POST.has(r.reason)) reason = r.reason
+    }
   } catch (err) {
-    console.error(`[loyalty] postLoyaltyEarn failed for ${txId}:`, (err as Error).message)
+    reason = (err as Error).message
+    console.error(`[loyalty] postLoyaltyEarn failed for ${txId}:`, reason)
   }
+  if (reason) await flagLoyaltyRefusal('loyalty.earn', txId, reason)
 }
 
 /** Credit points in their own transaction and book the liability. */
@@ -202,6 +301,7 @@ export async function awardOrderPoints(orderId: string): Promise<CreditResult | 
     const result = await creditPoints({
       customerId: order.customerId,
       points,
+      tenantId,
       orderId: order.id,
       description: `${ORDER_EARN_PREFIX}${points} pts — order #${order.id.slice(0, 8)} completed`,
       stampConceptSlug: order.concept.slug,
@@ -222,7 +322,9 @@ export interface RedemptionQuote { points: number; discountCents: number; pointV
 /**
  * How much `requestedPoints` is worth against a bill of at most `capCents`, at
  * `tenantId`'s point value. Enforces the company's min_redeem_points and the
- * customer's balance; points are rounded up to cover a capped discount exactly.
+ * customer's balance AT THAT COMPANY (points earned at another company are
+ * not spendable here — ONL-04); points are rounded up to cover a capped
+ * discount exactly.
  */
 export async function quoteRedemption(args: {
   customerId: string
@@ -231,6 +333,23 @@ export async function quoteRedemption(args: {
   capCents: number
 }): Promise<RedemptionQuote> {
   const settings = await loadLoyaltySettings(args.tenantId)
+  return quoteWith(settings, args, async () => (await loyaltyAccountOf(args.customerId, args.tenantId))?.pointsBalance ?? 0)
+}
+
+type LoyaltySettings = Awaited<ReturnType<typeof loadLoyaltySettings>>
+
+/**
+ * The quote itself, on settings the caller already loaded and a balance read
+ * the caller supplies — so a caller inside an interactive transaction makes
+ * every read on its own `tx` (I1-RV-1: a read on the global client from inside
+ * a transaction needs a second pool connection, and as many concurrent callers
+ * as the pool has connections then starve each other until they all time out).
+ */
+async function quoteWith(
+  settings: LoyaltySettings,
+  args: { requestedPoints: number; tenantId: string | null; capCents: number },
+  readBalance: () => Promise<number>,
+): Promise<RedemptionQuote> {
   const value = settings['loyalty.point_value_cents'] || POINT_VALUE_CENTS
   const zero = { points: 0, discountCents: 0, pointValueCents: value }
   const requested = Math.max(0, Math.floor(args.requestedPoints))
@@ -240,74 +359,135 @@ export async function quoteRedemption(args: {
   if (requested < min) {
     throw new AppError('LOYALTY_BELOW_MINIMUM', `At least ${min} points are needed to redeem`, 400)
   }
-  const account = await prisma.loyaltyAccount.findUnique({ where: { customerId: args.customerId }, select: { pointsBalance: true } })
-  const available = account?.pointsBalance ?? 0
+  // No company → no account (points are held per company — ONL-04).
+  const available = args.tenantId ? Math.max(0, await readBalance()) : 0
   if (available < min) {
     throw new AppError('LOYALTY_BELOW_MINIMUM', `At least ${min} points are needed to redeem`, 400)
   }
   const usable = Math.min(requested, available)
-  const discountCents = Math.min(await calculatePointsValue(usable, args.tenantId), args.capCents)
+  // Same value as calculatePointsValue(usable, tenantId), on the settings in hand.
+  const discountCents = Math.min(usable * value, args.capCents)
   const points = Math.min(usable, Math.ceil(discountCents / value))
   return { points, discountCents, pointValueCents: value }
 }
 
 /**
- * Take quoted points for an order whose bill ALREADY excludes the discount.
- * Atomic on the balance; records the redeem transaction, adds the discount to
- * order.discountCents (the order posting books it as contra-revenue, the
- * redeem posting discharges the liability against it) and books the
- * redemption. Returns false when the balance moved and nothing was taken —
- * the caller must then put the discount back on the bill.
+ * The order's row lock — the same `SELECT … FOR UPDATE` every till tender
+ * takes (pos/service lockOrderTx). Inlined, not imported: pos/service imports
+ * this module. Anything here that touches the order's bill or discount takes
+ * it FIRST, before any loyalty-account row, so the lock order matches the
+ * till (order row, then everything else) and no new deadlock is possible.
  */
-export async function claimRedemption(args: { customerId: string; orderId: string; quote: RedemptionQuote }): Promise<boolean> {
-  const { customerId, orderId, quote } = args
-  if (quote.points <= 0 || quote.discountCents <= 0) return false
-  const txId = await prisma.$transaction(async (tx) => {
-    const took = await tx.loyaltyAccount.updateMany({
-      where: { customerId, pointsBalance: { gte: quote.points } },
-      data: { pointsBalance: { decrement: quote.points } },
-    })
-    if (took.count === 0) return null
-    const account = await tx.loyaltyAccount.findUniqueOrThrow({ where: { customerId }, select: { id: true } })
-    const ltx = await tx.loyaltyTransaction.create({
-      data: {
-        loyaltyAccountId: account.id,
-        orderId,
-        type: 'redeem',
-        pointsDelta: -quote.points,
-        description: `Redeemed ${quote.points} pts for PKR ${(quote.discountCents / 100).toFixed(2)} off order #${orderId.slice(0, 8)}`,
-      },
-    })
-    await tx.order.update({ where: { id: orderId }, data: { discountCents: { increment: quote.discountCents } } })
-    return ltx.id
-  })
-  if (!txId) return false
+async function lockOrderRowTx(tx: Tx, orderId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`
+}
+
+/**
+ * Book the liability discharge for a redeem (Dr 2060 / Cr 4xxx). Never
+ * throws. A refusal is flagged posting_failed for the company (see bookEarn).
+ */
+async function bookRedeem(txId: string | null): Promise<void> {
+  if (!txId) return
+  let reason: string | null = null
   try {
     const { postLoyaltyRedeem } = await import('../accounting/loyaltyPosting.js')
     const r = await postLoyaltyRedeem(txId)
-    if (!r.posted && r.reason) console.warn(`[loyalty] redeem ${txId} not booked: ${r.reason}`)
+    if (!r.posted && r.reason) {
+      console.warn(`[loyalty] redeem ${txId} not booked: ${r.reason}`)
+      if (!LOYALTY_NOTHING_TO_POST.has(r.reason)) reason = r.reason
+    }
   } catch (err) {
-    console.error(`[loyalty] postLoyaltyRedeem failed for ${txId}:`, (err as Error).message)
+    reason = (err as Error).message
+    console.error(`[loyalty] postLoyaltyRedeem failed for ${txId}:`, reason)
   }
+  if (reason) await flagLoyaltyRefusal('loyalty.redeem', txId, reason)
+}
+
+/**
+ * claimRedemption inside the caller's transaction. Takes the order's row lock
+ * first (lock order: order row, then the loyalty account). Returns the redeem
+ * transaction's id, or null when the balance moved and nothing was taken. The
+ * caller books it (bookRedeem) after the transaction commits.
+ */
+async function claimRedemptionTx(tx: Tx, args: { customerId: string; orderId: string; quote: RedemptionQuote }): Promise<string | null> {
+  const { customerId, orderId, quote } = args
+  if (quote.points <= 0 || quote.discountCents <= 0) return null
+  await lockOrderRowTx(tx, orderId)
+  // The order's brand decides whose points these are — never the caller.
+  const order = await tx.order.findUnique({ where: { id: orderId }, select: { concept: { select: { tenantId: true } } } })
+  const tenantId = order?.concept.tenantId
+  if (!tenantId) return null
+  const took = await tx.loyaltyAccount.updateMany({
+    where: { tenantId, customerId, pointsBalance: { gte: quote.points } },
+    data: { pointsBalance: { decrement: quote.points } },
+  })
+  if (took.count === 0) return null
+  const account = await tx.loyaltyAccount.findUniqueOrThrow({ where: { tenantId_customerId: { tenantId, customerId } }, select: { id: true } })
+  const ltx = await tx.loyaltyTransaction.create({
+    data: {
+      loyaltyAccountId: account.id,
+      orderId,
+      type: 'redeem',
+      pointsDelta: -quote.points,
+      description: `Redeemed ${quote.points} pts for PKR ${(quote.discountCents / 100).toFixed(2)} off order #${orderId.slice(0, 8)}`,
+    },
+  })
+  await tx.order.update({ where: { id: orderId }, data: { discountCents: { increment: quote.discountCents } } })
+  return ltx.id
+}
+
+/**
+ * Take quoted points for an order whose bill ALREADY excludes the discount.
+ * Atomic on the balance of the customer's account AT THE ORDER'S COMPANY;
+ * records the redeem transaction, adds the discount to order.discountCents
+ * (the order posting books it as contra-revenue, the redeem posting
+ * discharges the liability against it) and books the redemption. Returns
+ * false when the balance moved and nothing was taken — the caller must then
+ * put the discount back on the bill.
+ */
+export async function claimRedemption(args: { customerId: string; orderId: string; quote: RedemptionQuote }): Promise<boolean> {
+  const txId = await prisma.$transaction((tx) => claimRedemptionTx(tx, args))
+  if (!txId) return false
+  await bookRedeem(txId)
   return true
 }
 
-/** Lower an order's bill (and what is still pending on it) by `cents`, or raise it back with a negative amount. */
-export async function adjustOrderBill(orderId: string, cents: number): Promise<void> {
+/**
+ * Move the order's bill and what is still pending on it by `cents` inside
+ * `tx` (positive lowers, negative raises it back onto the first pending row).
+ * Under the order's row lock, and refused with 409 TERMINAL_CHARGE_ACTIVE
+ * while a card-machine charge is in flight on the bill (spec §7.10,
+ * W4-MONEY-1): the machine was sent an amount, and the bill must not move
+ * under it.
+ */
+async function adjustOrderBillTx(tx: Tx, orderId: string, cents: number): Promise<void> {
   if (cents === 0) return
-  await prisma.order.update({ where: { id: orderId }, data: { totalCents: { decrement: cents } } })
-  const pending = await prisma.payment.findMany({ where: { orderId, status: 'pending' }, orderBy: { createdAt: 'asc' }, select: { id: true, amountCents: true } })
+  await lockOrderRowTx(tx, orderId)
+  await assertNoActiveTerminalChargeTx(tx, orderId)
+  await tx.order.update({ where: { id: orderId }, data: { totalCents: { decrement: cents } } })
+  const pending = await tx.payment.findMany({ where: { orderId, status: 'pending' }, orderBy: { createdAt: 'asc' }, select: { id: true, amountCents: true } })
   if (cents < 0) {
-    if (pending[0]) await prisma.payment.update({ where: { id: pending[0].id }, data: { amountCents: { increment: -cents } } })
+    if (pending[0]) await tx.payment.update({ where: { id: pending[0].id }, data: { amountCents: { increment: -cents } } })
     return
   }
   let left = cents
   for (const p of pending) {
     if (left <= 0) break
     const take = Math.min(left, p.amountCents)
-    if (take > 0) await prisma.payment.update({ where: { id: p.id }, data: { amountCents: { decrement: take } } })
+    if (take > 0) await tx.payment.update({ where: { id: p.id }, data: { amountCents: { decrement: take } } })
     left -= take
   }
+}
+
+/**
+ * Lower an order's bill (and what is still pending on it) by `cents`, or raise
+ * it back with a negative amount — in one transaction under the order lock,
+ * never while the card machine is charging the bill (409
+ * TERMINAL_CHARGE_ACTIVE, nothing changed).
+ */
+export async function adjustOrderBill(orderId: string, cents: number): Promise<void> {
+  if (cents === 0) return
+  await prisma.$transaction((tx) => adjustOrderBillTx(tx, orderId, cents))
 }
 
 /**
@@ -315,31 +495,73 @@ export async function adjustOrderBill(orderId: string, cents: number): Promise<v
  * (POST /loyalty/redeem). Once per order. The bill and the pending payment
  * come down by the discount — the old endpoint only raised discountCents and
  * left the guest owing the full amount.
+ *
+ * One transaction under the order's row lock: the status, the once-per-order
+ * check and what is still owed are read under it, the points are taken and
+ * the bill lowered together, and nothing moves while a card-machine charge is
+ * in flight on the bill (409 TERMINAL_CHARGE_ACTIVE — points, discount and
+ * bill untouched). The discount is capped at what is still owed (total −
+ * paid), so it never pushes the bill below money already taken.
  */
 export async function redeemPointsOnOrder(args: { customerId: string; orderId: string; points: number }) {
-  const order = await prisma.order.findFirst({
+  // Everything that needs the global client is read BEFORE the transaction
+  // opens (I1-RV-1): the transaction holds one pool connection and the order
+  // lock, so a global-client read inside it would wait on a second connection
+  // — enough concurrent redeems and every one of them (and the rest of the
+  // API) waits on the pool until the transaction times out. The company is
+  // re-checked under the lock; the settings are its loyalty programme.
+  const pre = await prisma.order.findFirst({
     where: { id: args.orderId, customerId: args.customerId, deletedAt: null },
-    select: { id: true, status: true, totalCents: true, concept: { select: { tenantId: true } } },
+    select: { concept: { select: { tenantId: true } } },
   })
-  if (!order) throw new NotFoundError('Order', args.orderId)
-  if (['completed', 'cancelled', 'rejected', 'refunded'].includes(order.status)) {
-    throw new AppError('ORDER_NOT_OPEN', 'That order is already closed — points cannot be redeemed against it.', 422)
-  }
-  const already = await prisma.loyaltyTransaction.findFirst({ where: { orderId: order.id, type: 'redeem' }, select: { id: true } })
-  if (already) throw new AppError('ALREADY_REDEEMED', 'Points have already been redeemed on this order.', 409)
+  if (!pre) throw new NotFoundError('Order', args.orderId)
+  const tenantId = pre.concept.tenantId
+  const settings = await loadLoyaltySettings(tenantId)
 
-  const quote = await quoteRedemption({
-    customerId: args.customerId,
-    requestedPoints: args.points,
-    tenantId: order.concept.tenantId,
-    capCents: order.totalCents,
-  })
-  if (quote.points === 0) throw new AppError('INSUFFICIENT_POINTS', 'Not enough points', 400)
-  const ok = await claimRedemption({ customerId: args.customerId, orderId: order.id, quote })
-  if (!ok) throw new AppError('INSUFFICIENT_POINTS', 'Not enough points', 400)
-  await adjustOrderBill(order.id, quote.discountCents)
-  const account = await prisma.loyaltyAccount.findUnique({ where: { customerId: args.customerId }, select: { pointsBalance: true } })
-  return { pointsRedeemed: quote.points, discountCents: quote.discountCents, newBalance: account?.pointsBalance ?? 0 }
+  const done = await prisma.$transaction(async (tx) => {
+    await lockOrderRowTx(tx, args.orderId)
+    const order = await tx.order.findFirst({
+      where: { id: args.orderId, customerId: args.customerId, deletedAt: null },
+      select: {
+        id: true, status: true, totalCents: true, concept: { select: { tenantId: true } },
+        payments: { where: { status: 'paid' }, select: { amountCents: true } },
+      },
+    })
+    if (!order) throw new NotFoundError('Order', args.orderId)
+    if (order.concept.tenantId !== tenantId) {
+      // The order moved brand between the read above and the lock — the
+      // settings loaded are another company's. Never quote on them.
+      throw new AppError('ORDER_CHANGED', 'This order changed while redeeming — please try again.', 409)
+    }
+    if (['completed', 'cancelled', 'rejected', 'refunded'].includes(order.status)) {
+      throw new AppError('ORDER_NOT_OPEN', 'That order is already closed — points cannot be redeemed against it.', 422)
+    }
+    await assertNoActiveTerminalChargeTx(tx, order.id)
+    const already = await tx.loyaltyTransaction.findFirst({ where: { orderId: order.id, type: 'redeem' }, select: { id: true } })
+    if (already) throw new AppError('ALREADY_REDEEMED', 'Points have already been redeemed on this order.', 409)
+
+    const paid = order.payments.reduce((s, p) => s + p.amountCents, 0)
+    const outstanding = Math.max(0, order.totalCents - paid)
+    if (outstanding <= 0) throw new AppError('NOTHING_DUE', 'Nothing is left to pay on this order', 422)
+    const quote = await quoteWith(
+      settings,
+      { requestedPoints: args.points, tenantId, capCents: outstanding },
+      async () => tenantId
+        ? (await tx.loyaltyAccount.findUnique({
+            where: { tenantId_customerId: { tenantId, customerId: args.customerId } },
+            select: { pointsBalance: true },
+          }))?.pointsBalance ?? 0
+        : 0,
+    )
+    if (quote.points === 0) throw new AppError('INSUFFICIENT_POINTS', 'Not enough points', 400)
+    const txId = await claimRedemptionTx(tx, { customerId: args.customerId, orderId: order.id, quote })
+    if (!txId) throw new AppError('INSUFFICIENT_POINTS', 'Not enough points', 400)
+    await adjustOrderBillTx(tx, order.id, quote.discountCents)
+    return { txId, quote }
+  }, { maxWait: 10_000, timeout: 15_000 })
+  await bookRedeem(done.txId)
+  const account = await loyaltyAccountOf(args.customerId, tenantId)
+  return { pointsRedeemed: done.quote.points, discountCents: done.quote.discountCents, newBalance: account?.pointsBalance ?? 0 }
 }
 
 // ─── Tiers (TierConfig, unlocked on lifetime spend — decision 13) ─────────────
@@ -394,15 +616,14 @@ export async function tierStatus(customerId: string, tenantId: string | null) {
 }
 
 /**
- * Write the tier the customer has unlocked at `tenantId` onto the account so
- * the perk lookups (lib/tierPerks.ts) and the admin member counts see it.
- * Tiers only move up here; a paid tier assigned by staff is never overwritten.
- * One account spans companies, so the stored tier is the one earned at the
- * company of the latest completed order (report: a per-company tier table).
+ * Write the tier the customer has unlocked at `tenantId` onto their account
+ * AT THAT COMPANY so the perk lookups (lib/tierPerks.ts) and the admin member
+ * counts see it. Tiers only move up here; a paid tier assigned by staff is
+ * never overwritten.
  */
 export async function syncTier(customerId: string, tenantId: string): Promise<string | null> {
   const status = await tierStatus(customerId, tenantId)
-  const account = await prisma.loyaltyAccount.findUnique({ where: { customerId }, select: { id: true, tier: true } })
+  const account = await loyaltyAccountOf(customerId, tenantId)
   if (!account) return null
   const held = await prisma.tierConfig.findFirst({ where: { tenantId, tier: account.tier }, select: { isPaid: true, rank: true } })
   if (account.tier === status.tier.slug || held?.isPaid || (held && held.rank >= status.tier.rank)) return account.tier

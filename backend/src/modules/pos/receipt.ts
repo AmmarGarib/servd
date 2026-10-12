@@ -1,8 +1,33 @@
 // Receipts. ONE builder: buildReceiptData() reads the order as it was stored
 // and charged — its taxCents and totalCents, never a recomputation — plus the
-// numbers that identify it: our TaxInvoice number when one has been issued
-// (the brand's order reference otherwise), and the FBR / SRB invoice ids and
-// SRB verification link the tax authorities returned.
+// numbers that identify it.
+//
+// This is the FULL & FINAL bill (spec §11, §17.1): only an order that reached
+// its FnF prints one — completed (or since refunded / cancelled, bannered so),
+// or fully paid and waiting for its hand-off (an online order paid by card,
+// still in the kitchen — W4-FISCAL-3; the same "paid and nothing due" rule
+// the pre-bill refuses on, so the two never point at each other). An order
+// with money still due answers 409 PRE_BILL_REQUIRED — the till prints a
+// pre-bill (modules/prebills) instead, which is never a tax invoice and never
+// goes to the fiscal POS. Printing the bill files nothing: the sale document
+// is created at completion (orders/service completeOrder), exactly once.
+//
+// The fiscal block comes from the order's SALE document (connectors/fiscal):
+//   filed     → "{AUTH} Fiscal Invoice: {number}" + a real QR; the fiscal
+//               number is the headline "Invoice #" and our TaxInvoice number
+//               prints as "Ref" (owner flag a)
+//   pending / failed → "Fiscal invoice: pending" — never a servd number
+//               presented as a fiscal number
+//   held      → "Fiscal invoice: not yet issued" (the company is not live on
+//               the fiscal POS yet — no promise of a QR on a reprint, W4-RG-3)
+//   none yet  → paid, not completed: "issued when the order is completed";
+//               completed with no document (its enqueue failed and the
+//               recovery has not run yet — W4-FISCAL-2): "pending"
+//   test      → TEST — NOT A FISCAL INVOICE
+//   not required (§17.7) → "Not a tax invoice"
+//   legacy    → a sale filed directly with FBR / SRB before the connector
+// The old fbrInvoiceNo / srbInvoiceNo / srbQrLink keys stay for installed
+// tablets (filled from a FILED, non-test document, else the order columns).
 //
 //   GET /pos/orders/:id/receipt-data  → the data itself (tablet thermal print)
 //   GET /pos/receipt/:orderId         → buildReceiptHtml(), the same data as
@@ -14,14 +39,91 @@
 // modifiers out of the subtotal and used a different receipt number.
 
 import { prisma } from '../../lib/prisma.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getReceiptConfig } from '../../lib/setup-config.js'
 import { fmtPkr as fmtPkrShared } from '../accounting/csv.js'
 import { formatBrandName } from '../../lib/brandName.js'
+import { fiscalViewForOrder, type FiscalView } from '../../connectors/fiscal/view.js'
+import { renderQrSvg } from '../../connectors/fiscal/qr.js'
+import { fiscalReportingRequired } from '../../connectors/config.js'
+
+/** Statuses that have had their full & final bill (or ended, bannered CANCELLED). */
+const FINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'refunded', 'cancelled', 'rejected'])
+
+export const FULL_AND_FINAL_HEADING = 'FULL & FINAL BILL' as const
+export const TEST_FISCAL_BANNER = 'TEST — NOT A FISCAL INVOICE' as const
+export const NOT_TAX_INVOICE = 'Not a tax invoice' as const
+
+/** A sale filed directly with FBR / SRB before the POS connector (Order columns). */
+export interface LegacyFiscal {
+  status: 'legacy'
+  authority: 'srb' | 'fbr'
+  fiscalNumber: string
+  qrPayload: string | null
+  verifyUrl: string | null
+  /** Both numbers when the sale was filed with both authorities. */
+  fbrInvoiceNo: string | null
+  srbInvoiceNo: string | null
+}
+
+/**
+ * A sale that should have a fiscal document but has none yet: a fully paid
+ * order before its completion ('awaiting_completion'), or a completed one
+ * whose document is still being recovered ('not_queued'). Printed as
+ * pending — never a servd number presented as a fiscal number.
+ */
+export interface AwaitingFiscal {
+  status: 'pending'
+  kind: 'sale'
+  documentId: null
+  rawStatus: null
+  statusReason: 'awaiting_completion' | 'not_queued'
+  fiscalNumber: null
+  authority: null
+  qrPayload: null
+  verifyUrl: null
+  fiscalAt: null
+  isTest: false
+}
+
+export type ReceiptFiscal = FiscalView | LegacyFiscal | AwaitingFiscal
+
+/**
+ * Has this order reached its full & final bill? Completed / refunded /
+ * cancelled / rejected, or paid with nothing left due — the pre-bill's own
+ * ALREADY_FINAL rule (money taken, total covered).
+ */
+export function isFinalBill(status: string, paid?: { paidCents: number; totalCents: number }): boolean {
+  if (FINAL_STATUSES.has(status)) return true
+  return !!paid && paid.paidCents > 0 && paid.paidCents >= paid.totalCents
+}
+
+/** 409 PRE_BILL_REQUIRED — an order with money still due has no full & final bill yet (§17.1). */
+export function assertFinalBill(status: string, paid?: { paidCents: number; totalCents: number }): void {
+  if (!isFinalBill(status, paid)) {
+    throw new AppError('PRE_BILL_REQUIRED', "This order isn't fully paid yet — print a pre-bill", 409)
+  }
+}
+
+function awaitingFiscal(statusReason: AwaitingFiscal['statusReason']): AwaitingFiscal {
+  return {
+    status: 'pending', kind: 'sale', documentId: null, rawStatus: null, statusReason,
+    fiscalNumber: null, authority: null, qrPayload: null, verifyUrl: null, fiscalAt: null, isTest: false,
+  }
+}
 
 export interface ReceiptData {
-  /** The number printed as "Invoice #": our TaxInvoice number, else the order reference. */
+  /** 'final_bill' for a completed (or since refunded) sale, or one fully paid awaiting hand-off; 'cancelled' for an order that ended without one. */
+  kind: 'final_bill' | 'cancelled'
+  /** FULL & FINAL BILL on a sale's bill; null on a cancelled order's slip. */
+  heading: string | null
+  /**
+   * The number printed as "Invoice #": the fiscal number once the sale is
+   * FILED (not a test), else our TaxInvoice number, else the order reference.
+   */
   number: string
+  /** Our TaxInvoice number, printed as "Ref" when the fiscal number is the headline. */
+  servdRef: string | null
   /** Our TaxInvoice number — null until one is issued (or the brand is not registered). */
   invoiceNumber: string | null
   /** Short order reference (last 8 of the id) — always present. */
@@ -52,35 +154,79 @@ export interface ReceiptData {
   paidCents: number
   tenderType: string | null
   payments: Array<{ method: string; amountCents: number; tenderedCents: number | null }>
+  /** The order's status — a receipt for a refunded / cancelled order is not a valid bill. */
+  status: string
+  /**
+   * FOH-23: what the receipt must say about the bill's standing, printed as a
+   * banner: REFUNDED (in full), PARTLY REFUNDED, CANCELLED, or null for a
+   * normal receipt.
+   */
+  banner: 'REFUNDED' | 'PARTLY REFUNDED' | 'CANCELLED' | null
+  /** Money handed back (refund rows), oldest first; amounts positive. */
+  refunds: Array<{ method: string; amountCents: number; at: string }>
+  refundedCents: number
   placedAt: string
-  /** Ids returned by the tax authorities — printed as-is when present. */
+  /**
+   * The sale's fiscal document (spec §11): a FiscalView, a legacy direct
+   * filing, or null when there is none (no FnF bill yet, a cancelled order,
+   * a company that does not report sales).
+   */
+  fiscal: ReceiptFiscal | null
+  /** The company does not report sales to a fiscal POS (§17.7): the bill says "Not a tax invoice". */
+  notTaxInvoice: boolean
+  /** A payment taken on the card machine: what the slip says. */
+  card: { brand: string | null; last4: string | null; authCode: string | null } | null
+  /** Legacy keys for installed tablets — a FILED (non-test) fiscal number, else the order's own columns. */
   fbrInvoiceNo: string | null
   srbInvoiceNo: string | null
   srbQrLink: string | null
 }
 
+/** A filed document's extra authority numbers (e.g. SRB alongside FBR). */
+type ExtraNumber = { authority: string; number: string; qrPayload?: string; verifyUrl?: string }
+
+function extraNumbersOf(v: unknown): ExtraNumber[] {
+  if (!Array.isArray(v)) return []
+  return v.filter((x): x is ExtraNumber =>
+    !!x && typeof x === 'object' && typeof (x as ExtraNumber).authority === 'string' && typeof (x as ExtraNumber).number === 'string')
+}
+
+/**
+ * The full & final bill's data. Throws 409 PRE_BILL_REQUIRED for an order that
+ * has not reached it (§17.1).
+ */
 export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { name: true, invoiceLegalName: true, ntn: true, strn: true } },
+      concept: { select: { name: true, invoiceLegalName: true, ntn: true, strn: true, tenantId: true } },
       items: {
-        where: { status: { not: 'voided' } },
         include: { modifiers: true },
         orderBy: { createdAt: 'asc' },
       },
-      payments: { where: { status: 'paid' }, orderBy: { createdAt: 'asc' } },
+      payments: { where: { status: { in: ['paid', 'refunded'] } }, orderBy: { createdAt: 'asc' } },
       customer: { select: { name: true } },
       table: { select: { label: true } },
       taxInvoices: { where: { type: 'invoice' }, select: { invoiceNumber: true }, take: 1 },
     },
   })
   if (!order) throw new NotFoundError('Order', orderId)
+  const paidRows = order.payments.filter((p) => p.status === 'paid' && p.amountCents > 0)
+  assertFinalBill(order.status, { paidCents: paidRows.reduce((s, p) => s + p.amountCents, 0), totalCents: order.totalCents })
+  const cancelled = order.status === 'cancelled' || order.status === 'rejected'
 
-  const items = order.items.map((it) => {
+  // A line voided on a PAID, still-open order was not taken off the bill — its
+  // value went back as a refund (pos/service voidOrderItem, TILL-R3). It stays
+  // on the bill marked "(refunded)", so the lines add up to the TOTAL and the
+  // refund row below takes it off — exactly as the fiscal sale lists it.
+  const refundedVoidIds = new Set(order.payments
+    .filter((p) => p.status === 'refunded')
+    .map((p) => (p.gatewayMeta as { refund?: { voidedItemId?: unknown } } | null)?.refund?.voidedItemId)
+    .filter((v): v is string => typeof v === 'string'))
+  const items = order.items.filter((it) => it.status !== 'voided' || refundedVoidIds.has(it.id)).map((it) => {
     const unit = it.unitPriceCents + it.modifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
     return {
-      name: it.name,
+      name: it.status === 'voided' ? `${it.name} (refunded)` : it.name,
       qty: it.quantity,
       price: unit,
       lineTotalCents: unit * it.quantity,
@@ -89,9 +235,70 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
   })
   const orderRef = order.id.slice(-8).toUpperCase()
   const invoiceNumber = order.taxInvoices[0]?.invoiceNumber ?? null
+  const paid = order.payments.filter((p) => p.status === 'paid')
+  const refunds = order.payments
+    .filter((p) => p.status === 'refunded')
+    .map((p) => ({ method: p.method, amountCents: Math.abs(p.amountCents), at: (p.processedAt ?? p.createdAt).toISOString() }))
+  const refundedCents = refunds.reduce((s, r) => s + r.amountCents, 0)
+  const banner: ReceiptData['banner'] =
+    order.status === 'refunded' ? 'REFUNDED'
+    : order.status === 'cancelled' || order.status === 'rejected' ? 'CANCELLED'
+    : refundedCents > 0 ? 'PARTLY REFUNDED'
+    : null
+
+  // The sale's fiscal document. A cancelled order never had a sale.
+  const view = cancelled ? null : await fiscalViewForOrder(order.id, 'sale')
+  let fiscal: ReceiptFiscal | null = view
+  // Filed directly with SRB / FBR before the connector (no document, or the
+  // sale document auto-skipped as prefiled_direct): the old numbers and QR.
+  const prefiled = !view || (view.rawStatus === 'skipped' && view.statusReason === 'prefiled_direct')
+  if (prefiled && !cancelled && (order.srbInvoiceNumber || order.fbrInvoiceNumber)) {
+    fiscal = {
+      status: 'legacy',
+      authority: order.srbInvoiceNumber ? 'srb' : 'fbr',
+      fiscalNumber: (order.srbInvoiceNumber ?? order.fbrInvoiceNumber)!,
+      qrPayload: order.srbInvoiceNumber ? order.srbQrCodeLink ?? null : null,
+      verifyUrl: order.srbInvoiceNumber ? order.srbQrCodeLink ?? null : null,
+      fbrInvoiceNo: order.fbrInvoiceNumber ?? null,
+      srbInvoiceNo: order.srbInvoiceNumber ?? null,
+    }
+  }
+  // No document and no legacy filing: either the company does not report
+  // sales (§17.7 → "Not a tax invoice"), or the sale's document is still to
+  // come — printed as pending, never with a servd number as the fiscal one.
+  let notTaxInvoice = false
+  if (!cancelled && !view && !fiscal && order.concept.tenantId) {
+    if (!(await fiscalReportingRequired(order.concept.tenantId))) notTaxInvoice = true
+    else fiscal = awaitingFiscal(FINAL_STATUSES.has(order.status) ? 'not_queued' : 'awaiting_completion')
+  }
+
+  // The fiscal number is the headline only once FILED and not a test.
+  const filed = view?.status === 'filed' && !view.isTest && !!view.fiscalNumber ? view : null
+  const extras = filed
+    ? extraNumbersOf((await prisma.fiscalDocument.findUnique({ where: { id: filed.documentId }, select: { extraNumbers: true } }))?.extraNumbers)
+    : []
+  const filedNumberOf = (auth: 'fbr' | 'srb'): { number: string; link: string | null } | null => {
+    if (!filed) return null
+    if (filed.authority === auth) return { number: filed.fiscalNumber!, link: filed.verifyUrl ?? filed.qrPayload }
+    const x = extras.find((e) => e.authority === auth)
+    return x ? { number: x.number, link: x.verifyUrl ?? x.qrPayload ?? null } : null
+  }
+  const fbr = filedNumberOf('fbr')
+  const srb = filedNumberOf('srb')
+
+  // A payment taken on the card machine: brand, last 4 and auth code from its slip.
+  const terminal = paid.find((p) => p.gateway === 'card_terminal')
+  const tmeta = (terminal?.gatewayMeta ?? {}) as { cardBrand?: unknown; cardLast4?: unknown; authCode?: unknown }
+  const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const card = terminal
+    ? { brand: str(tmeta.cardBrand), last4: str(tmeta.cardLast4), authCode: str(tmeta.authCode) }
+    : null
 
   return {
-    number: invoiceNumber ?? orderRef,
+    kind: cancelled ? 'cancelled' : 'final_bill',
+    heading: cancelled ? null : FULL_AND_FINAL_HEADING,
+    number: filed?.fiscalNumber ?? invoiceNumber ?? orderRef,
+    servdRef: invoiceNumber,
     invoiceNumber,
     orderRef,
     conceptName: formatBrandName(order.concept.name),
@@ -108,13 +315,20 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
     serviceChargeCents: order.serviceChargeCents,
     tipCents: order.tipCents,
     totalCents: order.totalCents,
-    paidCents: order.payments.reduce((s, p) => s + p.amountCents, 0),
-    tenderType: order.payments[0]?.method ?? null,
-    payments: order.payments.map((p) => ({ method: p.method, amountCents: p.amountCents, tenderedCents: p.tenderedCents ?? null })),
+    paidCents: paid.reduce((s, p) => s + p.amountCents, 0),
+    tenderType: paid[0]?.method ?? null,
+    payments: paid.map((p) => ({ method: p.method, amountCents: p.amountCents, tenderedCents: p.tenderedCents ?? null })),
+    status: order.status,
+    banner,
+    refunds,
+    refundedCents,
     placedAt: order.placedAt.toISOString(),
-    fbrInvoiceNo: order.fbrInvoiceNumber ?? null,
-    srbInvoiceNo: order.srbInvoiceNumber ?? null,
-    srbQrLink: order.srbQrCodeLink ?? null,
+    fiscal,
+    notTaxInvoice,
+    card,
+    fbrInvoiceNo: fbr?.number ?? order.fbrInvoiceNumber ?? null,
+    srbInvoiceNo: srb?.number ?? order.srbInvoiceNumber ?? null,
+    srbQrLink: srb ? srb.link : order.srbQrCodeLink ?? null,
   }
 }
 
@@ -132,7 +346,11 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-export async function buildReceiptHtml(orderId: string): Promise<string> {
+/**
+ * The receipt as printable HTML. `duplicate` marks a reprint (DUPLICATE —
+ * not a new sale); a refunded or cancelled order is always bannered.
+ */
+export async function buildReceiptHtml(orderId: string, opts: { duplicate?: boolean } = {}): Promise<string> {
   const r = await buildReceiptData(orderId)
   const order = await prisma.order.findUnique({ where: { id: orderId }, select: { concept: { select: { tenantId: true } } } })
   const cfg = await getReceiptConfig(order?.concept.tenantId ?? null)
@@ -165,11 +383,21 @@ export async function buildReceiptHtml(orderId: string): Promise<string> {
   const tipRow = r.tipCents > 0
     ? `<tr><td>Tip</td><td style="text-align:right">${fmtPkr(r.tipCents)}</td></tr>`
     : ''
-  const authorityRows = [
-    cfg.showFbrInvoice && r.fbrInvoiceNo ? `<div>FBR Invoice: ${esc(r.fbrInvoiceNo)}</div>` : '',
-    r.srbInvoiceNo ? `<div>SRB Invoice No: ${esc(r.srbInvoiceNo)}</div>` : '',
-    r.srbQrLink ? `<div style="font-size:10px;word-break:break-all">Verify with SRB: ${esc(r.srbQrLink)}</div>` : '',
-  ].filter(Boolean).join('')
+  // FOH-23: a refunded / cancelled order never prints like a valid paid bill.
+  const banners = [r.banner, opts.duplicate ? 'DUPLICATE' : null].filter((b): b is string => !!b)
+  const bannerHtml = banners.length > 0
+    ? `<div class="center bold" style="font-size:16px;border:2px solid #000;padding:4px;margin:6px 0">${banners.map(esc).join(' · ')}</div>`
+    : ''
+  const refundRows = r.refunds.length > 0
+    ? `<div class="divider"></div>${r.refunds.map((x) => `<div>REFUND ${esc(x.method.replace(/_/g, ' '))} -${fmtPkr(x.amountCents)} (${fmtDate(x.at)})</div>`).join('')}<div class="bold">Refunded: -${fmtPkr(r.refundedCents)}</div>`
+    : ''
+  const authorityRows = await fiscalBlockHtml(r, cfg.showFbrInvoice)
+  const cardRow = r.card && (r.card.last4 || r.card.authCode)
+    ? `<div>Card${r.card.brand ? ` ${esc(r.card.brand)}` : ''}${r.card.last4 ? ` •${esc(r.card.last4)}` : ''}${r.card.authCode ? `&nbsp; Auth ${esc(r.card.authCode)}` : ''}</div>`
+    : ''
+  // Owner flag (a): once the fiscal number is the headline, our own
+  // TaxInvoice number prints as the reference.
+  const refRow = r.servdRef && r.servdRef !== r.number ? `<div>Ref: ${esc(r.servdRef)}</div>` : ''
 
   return `<!DOCTYPE html>
 <html>
@@ -195,9 +423,12 @@ export async function buildReceiptHtml(orderId: string): Promise<string> {
   ${cfg.headerText ? `<div class="center" style="font-size:11px">${esc(cfg.headerText)}</div>` : ''}
   ${r.strn ? `<div class="center" style="font-size:10px">STRN: ${esc(r.strn)}</div>` : ''}
   ${r.ntn ? `<div class="center" style="font-size:10px">NTN: ${esc(r.ntn)}</div>` : ''}
+  ${bannerHtml}
+  ${r.heading ? `<div class="center bold" style="font-size:14px;margin-top:6px">${esc(r.heading)}</div>` : ''}
   <div class="divider"></div>
   <div>Invoice #: <strong>${esc(r.number)}</strong></div>
-  ${r.invoiceNumber ? `<div>Order: ${esc(r.orderRef)}</div>` : ''}
+  ${refRow}
+  ${r.number !== r.orderRef ? `<div>Order: ${esc(r.orderRef)}</div>` : ''}
   <div>Date: ${fmtDate(r.placedAt)}</div>
   ${r.customerName ? `<div>Customer: ${esc(r.customerName)}</div>` : ''}
   ${r.table ? `<div>Table: ${esc(r.table)}</div>` : ''}
@@ -216,6 +447,8 @@ export async function buildReceiptHtml(orderId: string): Promise<string> {
   <div class="divider"></div>
   ${r.payments.map((p) => `<div>${esc(p.method.replace(/_/g, ' '))} ${fmtPkr(p.amountCents)}${p.tenderedCents && p.tenderedCents > p.amountCents ? ` / Change: ${fmtPkr(p.tenderedCents - p.amountCents)}` : ''}</div>`).join('')}
   ` : ''}
+  ${cardRow}
+  ${refundRows}
   ${authorityRows ? `<div class="divider"></div>${authorityRows}` : ''}
   ${cfg.legalDisclaimer ? `<div class="divider"></div><div class="center" style="font-size:10px;color:#555">${esc(cfg.legalDisclaimer)}</div>` : ''}
   <div class="divider"></div>
@@ -224,4 +457,54 @@ export async function buildReceiptHtml(orderId: string): Promise<string> {
   <script>window.onload = function(){ window.print() }</script>
 </body>
 </html>`
+}
+
+/**
+ * The fiscal block of the printed bill (spec §11). Gated by
+ * ReceiptConfig.showFbrInvoice, except "Not a tax invoice" (§17.7), which a
+ * company that does not report sales always prints.
+ */
+async function fiscalBlockHtml(r: ReceiptData, show: boolean): Promise<string> {
+  if (r.notTaxInvoice) return `<div class="center bold">${esc(NOT_TAX_INVOICE)}</div>`
+  const f = r.fiscal
+  if (!show || !f) return ''
+  const qr = (text: string | null | undefined, auth: string): string => {
+    const svg = renderQrSvg(text, { label: `Scan to verify with ${auth}` })
+    return svg ? `<div class="center" style="margin:6px 0">${svg}</div><div class="center" style="font-size:10px">Scan to verify with ${esc(auth)}</div>` : ''
+  }
+  if (f.status === 'legacy') {
+    const lines = [
+      f.fbrInvoiceNo ? `<div>FBR Invoice: ${esc(f.fbrInvoiceNo)}</div>` : '',
+      f.srbInvoiceNo ? `<div>SRB Invoice No: ${esc(f.srbInvoiceNo)}</div>` : '',
+    ].join('')
+    return lines + (f.authority === 'srb' ? qr(f.qrPayload ?? f.verifyUrl, 'SRB') : '')
+  }
+  const auth = (f.authority ?? '').toUpperCase() || 'the tax authority'
+  switch (f.status) {
+    case 'not_required':
+      return ''
+    case 'filed':
+    case 'test': {
+      const test = f.status === 'test'
+      const head = test ? `<div class="center bold">${esc(TEST_FISCAL_BANNER)}</div>` : ''
+      if (!f.fiscalNumber) return head
+      const extras = test ? [] : extraNumbersOf((await prisma.fiscalDocument.findUnique({ where: { id: f.documentId }, select: { extraNumbers: true } }))?.extraNumbers)
+      return head
+        + `<div class="bold">${esc(auth)} Fiscal Invoice: ${esc(f.fiscalNumber)}</div>`
+        + qr(f.qrPayload ?? f.verifyUrl, auth)
+        + (f.fiscalAt ? `<div style="font-size:10px">${fmtDate(f.fiscalAt)}</div>` : '')
+        + extras.map((x) => `<div>${esc(x.authority.toUpperCase())} Fiscal Invoice: ${esc(x.number)}</div>`).join('')
+    }
+    default:
+      // Never a servd number presented as a fiscal number.
+      if (f.rawStatus === 'held') {
+        // W4-RG-3: the company is not live on the fiscal POS yet — nothing is
+        // being filed, so no promise of a QR on a reprint.
+        return '<div>Fiscal invoice: not yet issued.</div>'
+      }
+      if (f.statusReason === 'awaiting_completion') {
+        return '<div>Fiscal invoice: issued when the order is completed. Ask for a reprint for the verification QR.</div>'
+      }
+      return '<div>Fiscal invoice: pending — filed automatically. Ask for a reprint for the verification QR.</div>'
+  }
 }

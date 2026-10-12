@@ -17,7 +17,7 @@
 // has a different thirty-second remedy:
 //
 //   session dropped    → re-scan the QR on the gateway page (needs the phone)
-//   key rejected       → paste the current key into admin → Configuration
+//   key rejected       → paste the current key into admin → Dev → API → WhatsApp
 //   gateway unreachable→ the gateway host itself is down; not a servd problem
 //
 // DELIVERY. The obvious trap is alerting about a broken channel THROUGH the
@@ -52,7 +52,7 @@ const HUMAN: Record<DeliveryState['cause'], { detail: string; fix: string }> = {
   ok: { detail: 'Codes are sending.', fix: '' },
   unconfigured: {
     detail: 'No WhatsApp gateway is configured, so no codes can be sent at all.',
-    fix: 'Open admin → Configuration → WhatsApp and paste the endpoint and API key from the gateway’s API Info tab.',
+    fix: 'Open admin → Dev → API → WhatsApp connector and paste the endpoint and API key from the gateway’s API Info tab.',
   },
   session_dropped: {
     detail: 'The gateway is up but its WhatsApp session is not linked — this is what happens when the phone goes offline or WhatsApp logs the device out.',
@@ -60,7 +60,7 @@ const HUMAN: Record<DeliveryState['cause'], { detail: string; fix: string }> = {
   },
   bad_key: {
     detail: 'The gateway rejected our API key.',
-    fix: 'Copy the current key from the gateway’s API Info tab into admin → Configuration → WhatsApp.',
+    fix: 'Copy the current key from the gateway’s API Info tab into admin → Dev → API → WhatsApp connector.',
   },
   gateway_unreachable: {
     detail: 'The gateway host itself did not answer.',
@@ -68,7 +68,7 @@ const HUMAN: Record<DeliveryState['cause'], { detail: string; fix: string }> = {
   },
   unknown: {
     detail: 'Sending failed for a reason we do not recognise.',
-    fix: 'Check admin → Configuration → WhatsApp and use Send test to see the gateway’s own error message.',
+    fix: 'Check admin → Dev → API → WhatsApp connector and use Send test to see the gateway’s own error message.',
   },
 }
 

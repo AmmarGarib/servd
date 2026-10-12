@@ -2,14 +2,15 @@ import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireCustomerAuth, requireAuth, MANAGERS, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import {
   LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, calculatePointsValue, invalidateLoyaltySettings,
 } from '../../lib/loyaltySettings.js'
 import { loadCompanyLoyaltySettings, saveCompanyLoyaltySettings } from './settings.js'
 import {
-  awardOrderPoints, companyOfConceptSlug, loyaltyCompanyOf, loyaltyProgram, redeemPointsOnOrder, tierStatus,
+  awardOrderPoints, companyOfConceptSlug, loyaltyAccountOf, loyaltyCompanyOf, loyaltyProgram, redeemPointsOnOrder, tierStatus,
 } from './service.js'
 
 // ─── Points configuration ────────────────────────────────────────────────
@@ -43,23 +44,51 @@ const tierBody = z.object({
   description:           z.string().max(500).optional().nullable(),
 })
 
+// Module Access really closes these staff routes (W3A-RV-03): the role array
+// lets the Marketing team in, and the CEO's Module Access (decision 34)
+// narrows it to logins holding crm (CRM → Loyalty) or configuration (the hub's Loyalty tile). Same source of truth as the
+// central gate (lib/moduleAccess.ts effectiveModulesForUser).
+const marketingGuard = [requireAuth(...MARKETING_TEAM), requireModule('crm', 'configuration')]
+
 export async function loyaltyRoutes(fastify: FastifyInstance) {
-  // GET /loyalty/account — authenticated customer's balance
-  fastify.get('/account', { preHandler: requireCustomerAuth }, async (req) => {
-    const account = await prisma.loyaltyAccount.findUnique({
-      where: { customerId: req.customer!.id },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' }, take: 20 },
-        customer: { select: { name: true, email: true } },
-      },
-    })
+  // GET /loyalty/account?conceptSlug= — authenticated customer's balance at
+  // one company: the brand's company, else the company they last ordered
+  // from. Points are per company (ONL-04); `companies` lists every company's
+  // balance the customer holds, so a page can show them side by side.
+  fastify.get<{ Querystring: { conceptSlug?: string } }>('/account', { preHandler: requireCustomerAuth }, async (req) => {
+    const customerId = req.customer!.id
+    const tenantId = (await companyOfConceptSlug(req.query.conceptSlug)) ?? (await loyaltyCompanyOf(customerId))
+    const account = tenantId
+      ? await prisma.loyaltyAccount.findUnique({
+          where: { tenantId_customerId: { tenantId, customerId } },
+          include: {
+            transactions: { orderBy: { createdAt: 'desc' }, take: 20 },
+            customer: { select: { name: true, email: true } },
+          },
+        })
+      : null
     if (!account) throw new NotFoundError('LoyaltyAccount')
 
-    // One account spans companies; the balance is valued at the company the
-    // customer last ordered from (the same company the books use).
+    const all = await prisma.loyaltyAccount.findMany({
+      where: { customerId },
+      select: { tenantId: true, pointsBalance: true, lifetimePoints: true, tier: true },
+      orderBy: { createdAt: 'asc' },
+    })
+    const names = new Map((await prisma.tenant.findMany({
+      where: { id: { in: all.map((a) => a.tenantId) } },
+      select: { id: true, name: true },
+    })).map((t) => [t.id, t.name]))
     return {
       ...account,
-      pointsValueCents: await calculatePointsValue(account.pointsBalance, await loyaltyCompanyOf(req.customer!.id)),
+      pointsValueCents: await calculatePointsValue(account.pointsBalance, tenantId),
+      companies: await Promise.all(all.map(async (a) => ({
+        tenantId: a.tenantId,
+        companyName: names.get(a.tenantId) ?? null,
+        pointsBalance: a.pointsBalance,
+        lifetimePoints: a.lifetimePoints,
+        tier: a.tier,
+        pointsValueCents: await calculatePointsValue(a.pointsBalance, a.tenantId),
+      }))),
     }
   })
 
@@ -78,7 +107,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     const customerId = req.customer!.id
     const tenantId = (await companyOfConceptSlug(req.query.conceptSlug)) ?? (await loyaltyCompanyOf(customerId))
     const [account, program, tiers] = await Promise.all([
-      prisma.loyaltyAccount.findUnique({ where: { customerId }, select: { pointsBalance: true, lifetimePoints: true } }),
+      loyaltyAccountOf(customerId, tenantId),
       loyaltyProgram(tenantId),
       tierStatus(customerId, tenantId),
     ])
@@ -140,12 +169,16 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     return t
   }
 
-  fastify.get('/settings', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // Access (wave 3, UI-06): the loyalty programme (earn/redeem rates, tier
+  // ladder) is run from CRM → Loyalty, a Marketing-workspace page, so settings
+  // and tiers are MARKETING_TEAM. Moving points into one customer's account
+  // (POST /earn) stays MANAGERS.
+  fastify.get('/settings', { preHandler: marketingGuard }, async (req) => {
     const values = await loadCompanyLoyaltySettings(activeCompany(req))
     return { values, defaults: LOYALTY_DEFAULTS }
   })
 
-  fastify.patch('/settings', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.patch('/settings', { preHandler: marketingGuard }, async (req) => {
     const tenantId = activeCompany(req)
     const body = z.object(
       Object.fromEntries(
@@ -165,21 +198,22 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
   // Each company has its own ladder (owner decision 13): the list shows the
   // companies in view, and every write pins to the active company.
 
-  fastify.get('/tiers', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const tiers = await prisma.tierConfig.findMany({ where: await scopeTenantWhere(req, 'read'), orderBy: [{ rank: 'asc' }, { tier: 'asc' }] })
+  fastify.get('/tiers', { preHandler: marketingGuard }, async (req) => {
+    const scope = await scopeTenantWhere(req, 'read')
+    const tiers = await prisma.tierConfig.findMany({ where: scope, orderBy: [{ rank: 'asc' }, { tier: 'asc' }] })
     // Member counts per tier come off LoyaltyAccount.tier (not Customer —
-    // the tier field lives on the account row). Informative for the admin
-    // list: shows operator how many are on each tier before they touch
-    // the toggles.
+    // the tier field lives on the account row), counted per company: an
+    // account is one company's (ONL-04), and a tier is one company's ladder.
     const counts = await prisma.loyaltyAccount.groupBy({
-      by: ['tier'],
+      by: ['tenantId', 'tier'],
+      where: scope,
       _count: { _all: true },
     })
-    const countMap = new Map(counts.map((c) => [c.tier, c._count._all]))
-    return tiers.map((t) => ({ ...t, memberCount: countMap.get(t.tier) ?? 0 }))
+    const countMap = new Map(counts.map((c) => [`${c.tenantId}|${c.tier}`, c._count._all]))
+    return tiers.map((t) => ({ ...t, memberCount: countMap.get(`${t.tenantId}|${t.tier}`) ?? 0 }))
   })
 
-  fastify.post('/tiers', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/tiers', { preHandler: marketingGuard }, async (req, reply) => {
     const body = tierBody.parse(req.body)
     if (body.isPaid && (body.monthlyPriceCents == null || body.monthlyPriceCents <= 0)) {
       return reply.status(400).send({ error: { code: 'VALIDATION', message: 'Paid tiers must have a monthlyPriceCents > 0' } })
@@ -193,7 +227,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
 
   fastify.patch<{ Params: { id: string } }>(
     '/tiers/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req, reply) => {
       const body = tierBody.partial().parse(req.body)
       // Don't let an operator rename the slug if it's already in use —
@@ -213,14 +247,16 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
 
   fastify.delete<{ Params: { id: string } }>(
     '/tiers/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req, reply) => {
       const tier = await prisma.tierConfig.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
       if (!tier) throw new NotFoundError('TierConfig', req.params.id)
       // Refuse deletion if customers are assigned — operator should toggle
       // isActive instead (already supported via PATCH). Prevents orphan
       // customers stuck on a slug that no longer maps to perks.
-      const assigned = await prisma.loyaltyAccount.count({ where: { tier: tier.tier } })
+      const assigned = await prisma.loyaltyAccount.count({
+        where: { tier: tier.tier, ...(tier.tenantId ? { tenantId: tier.tenantId } : { tenantId: { in: [] } }) },
+      })
       if (assigned > 0) {
         return reply.status(400).send({
           error: { code: 'TIER_IN_USE', message: `${assigned} customers are on this tier — toggle Active off instead of deleting.` },

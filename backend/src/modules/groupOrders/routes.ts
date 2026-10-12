@@ -17,6 +17,7 @@ import { requireCustomerAuth } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { ingestOrder } from '../orders/service.js'
 import { priceOrder } from '../../lib/pricing.js'
+import { assertOpenForOrders, assertItemsServedAt } from '../storefront/serviceHours.js'
 import type { OrderDTO } from '@servd/types'
 
 function genShareCode(): string {
@@ -27,6 +28,11 @@ function genShareCode(): string {
   let out = ''
   for (let i = 0; i < 6; i++) out += ALPHABET[bytes[i]! % ALPHABET.length]
   return out
+}
+
+/** A group's cart as priceOrder lines — shared by the GET quote and submit. */
+function groupLines(items: Array<{ menuItemId: string; unitPriceCents: number; quantity: number }>) {
+  return items.map((i) => ({ menuItemId: i.menuItemId, unitPriceCents: i.unitPriceCents, quantity: i.quantity }))
 }
 
 export async function groupOrderRoutes(fastify: FastifyInstance) {
@@ -48,6 +54,9 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         where: { slug: body.conceptSlug, isActive: true, deletedAt: null },
       })
       if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
+      // Don't start a group the brand can't take an order for (ONLINE-R6):
+      // 409 BRAND_CLOSED with "opens at …", the same answer checkout gives.
+      await assertOpenForOrders(concept, new Date(), false)
 
       let code = genShareCode()
       for (let i = 0; i < 5; i++) {
@@ -84,13 +93,29 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       const go = await prisma.groupOrder.findUnique({
         where: { shareCode: code },
         include: {
-          concept: { select: { id: true, name: true, slug: true, taxRate: true, taxRateCash: true } },
+          concept: { select: { id: true, name: true, slug: true, tenantId: true, taxRateCash: true, taxRateCard: true } },
           members: { orderBy: { joinedAt: 'asc' } },
           items:   { orderBy: { createdAt: 'asc' } },
         },
       })
       if (!go) throw new NotFoundError('GroupOrder', code)
-      return go
+      // The bill as submit will price it — the SAME priceOrder call (cash
+      // rate, 'group' channel → the till's service charge, item tax classes),
+      // so the cart shows what staff will collect instead of a client-side
+      // approximation. A card payment is re-priced at the till.
+      const quote = go.items.length > 0 && !go.orderId
+        ? await priceOrder(groupLines(go.items), 'cash', 'group', go.concept)
+        : null
+      return {
+        ...go,
+        quote: quote && {
+          tender:             quote.tender,
+          itemTotalCents:     quote.itemTotalCents,
+          taxCents:           quote.taxCents,
+          serviceChargeCents: quote.serviceChargeCents,
+          totalCents:         quote.totalCents,
+        },
+      }
     },
   )
 
@@ -153,6 +178,10 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         select: { id: true, name: true, priceCents: true },
       })
       if (!item) throw new NotFoundError('MenuItem', body.menuItemId)
+      // A time-limited section (lunch, breakfast) only takes items while it is
+      // showing on the menu, in Karachi time — the rule checkout applies
+      // (ONLINE-R6). 400 ITEM_UNAVAILABLE outside the window.
+      await assertItemsServedAt(go.conceptId, [item.id], new Date())
 
       return prisma.groupOrderItem.create({
         data: {
@@ -207,10 +236,19 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       if (!go.members.some((m) => m.customerId === req.customer!.id)) {
         throw new AppError('FORBIDDEN', 'Only group members can lock the cart', 403)
       }
-      return prisma.groupOrder.update({
-        where: { id: go.id },
+      // Only an open group locks. This used to overwrite any status, so a
+      // cancelled group could be re-locked — clearing 'cancelled' — and then
+      // submitted, firing a kitchen ticket for a cancelled group. Conditional,
+      // so a cancel or submit racing the lock still wins.
+      const locked = await prisma.groupOrder.updateMany({
+        where: { id: go.id, status: 'open', orderId: null },
         data: { status: 'locked' },
       })
+      if (locked.count === 0) {
+        const now = await prisma.groupOrder.findUnique({ where: { id: go.id }, select: { status: true } })
+        throw new AppError('GROUP_LOCKED', `Group is ${now?.status ?? go.status}`, 422)
+      }
+      return prisma.groupOrder.findUniqueOrThrow({ where: { id: go.id } })
     },
   )
 
@@ -225,7 +263,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       const code = req.params.code.toUpperCase()
       const go = await prisma.groupOrder.findUnique({
         where: { shareCode: code },
-        include: { items: { include: { member: true } }, members: true, concept: true },
+        include: { members: true, concept: true },
       })
       if (!go) throw new NotFoundError('GroupOrder', code)
       if (go.orderId) {
@@ -237,8 +275,6 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       if (go.status === 'cancelled') {
         throw new AppError('GROUP_CANCELLED', 'This group order was cancelled', 422)
       }
-      if (go.items.length === 0) throw new AppError('NO_ITEMS', 'Group has no items', 422)
-
       // The blacklist applies here too. Storefront checkout refuses a banned
       // customer and the public reservation form refuses a banned phone or
       // email, but group-order submit checked neither — so a barred customer
@@ -266,6 +302,59 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         throw new AppError('FORBIDDEN', 'Only group members can submit the order', 403)
       }
 
+      // Lock and submit are ONE step. The client used to lock first and then
+      // submit, so a submit refused after the lock (brand closed, a section
+      // ended, an unpriced item) stranded the cart: a locked group can't have
+      // items removed and there is no unlock. Now submit itself closes the
+      // cart (open or already-locked → locked, conditionally, so a cancel that
+      // got in first wins), reads the items AFTER that, and when a guard
+      // refuses before any order exists it reopens the group so the members
+      // can fix the cart and send it again.
+      const closed = await prisma.groupOrder.updateMany({
+        where: { id: go.id, orderId: null, status: { in: ['open', 'locked'] } },
+        data: { status: 'locked' },
+      })
+      if (closed.count === 0) {
+        const fresh = await prisma.groupOrder.findUnique({ where: { id: go.id }, select: { orderId: true, status: true } })
+        if (fresh?.orderId) return { orderId: fresh.orderId, alreadySubmitted: true }
+        if (fresh?.status === 'cancelled') throw new AppError('GROUP_CANCELLED', 'This group order was cancelled', 422)
+        throw new AppError('GROUP_LOCKED', `Group is ${fresh?.status ?? go.status}`, 422)
+      }
+      const externalId = `group-${go.shareCode}`
+      const reopen = async () => {
+        // Only while nothing reached the kitchen: if an order with this
+        // group's idempotency key exists, the group stays closed (a retry
+        // gets that order back).
+        const fired = await prisma.order.findFirst({ where: { source: 'servd', externalId }, select: { id: true } })
+        if (fired) return
+        await prisma.groupOrder.updateMany({
+          where: { id: go.id, orderId: null, status: 'locked' },
+          data: { status: 'open' },
+        })
+      }
+      const guarded = async <T>(step: () => Promise<T>): Promise<T> => {
+        try { return await step() } catch (err) { await reopen(); throw err }
+      }
+      const items = await prisma.groupOrderItem.findMany({
+        where: { groupOrderId: go.id },
+        include: { member: true },
+        orderBy: { createdAt: 'asc' },
+      })
+      if (items.length === 0) {
+        await reopen()
+        throw new AppError('NO_ITEMS', 'Group has no items', 422)
+      }
+
+      // Opening hours and time-limited sections apply at submit too
+      // (ONLINE-R6). A group can stay open for hours, so the brand may have
+      // closed — or the lunch section ended — since the items went in. Without
+      // this a group order fired a ticket into a closed kitchen, or for a dish
+      // the menu no longer showed, where checkout refuses both: 409
+      // BRAND_CLOSED / 400 ITEM_UNAVAILABLE, before anything is written.
+      const now = new Date()
+      await guarded(() => assertOpenForOrders(go.concept, now, false))
+      await guarded(() => assertItemsServedAt(go.conceptId, items.map((i) => i.menuItemId), now))
+
       // THE order pricing (lib/pricing.ts). A group order is one table's bill
       // settled at the till, so it takes the rate of the tender used there
       // (decision 9). That tender isn't known yet: it is priced at the cash
@@ -273,8 +362,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       // pays by card (pos/service processPayment). Service charge as for a
       // till sale; item tax classes apply. (concept.taxRate, the legacy 17%,
       // is never read.)
-      const lines = go.items.map((i) => ({ menuItemId: i.menuItemId, unitPriceCents: i.unitPriceCents, quantity: i.quantity }))
-      const price = await priceOrder(lines, 'cash', 'group', go.concept)
+      const price = await guarded(() => priceOrder(groupLines(items), 'cash', 'group', go.concept))
       const taxCents = price.taxCents
       const total    = price.totalCents
 
@@ -297,12 +385,12 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         // Idempotency key: ingestOrder dedupes on (source, external_id), so a
         // double-tapped submit gets the SAME order back instead of a second
         // ticket.
-        external_id: `group-${go.shareCode}`,
+        external_id: externalId,
         concept_id: go.conceptId,
         placed_at: new Date().toISOString(),
         customer_id: submitter?.id ?? null,
         customer_name: submitter?.name ?? go.initiatorName,
-        items: go.items.map((i) => ({
+        items: items.map((i) => ({
           menuItemId: i.menuItemId,
           externalItemId: i.id,
           name: `${i.name} · ${i.member.displayName}`,
@@ -322,7 +410,9 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         fulfilment_type: 'dine_in',
         raw_payload: { channel: 'group_order', shareCode: go.shareCode },
       }
-      const { order, created } = await ingestOrder(dto, { price })
+      // ITEM_NOT_PRICED and the other ingestOrder guards throw before the
+      // order is written, so the group reopens for the members to fix.
+      const { order, created } = await guarded(() => ingestOrder(dto, { price }))
 
       // One pending Payment row so the check-split flow has something to
       // replace, and so an order without any Payment doesn't slip through

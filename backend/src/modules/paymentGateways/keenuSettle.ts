@@ -13,11 +13,32 @@
 //              reconciled against the Keenu settlement statement.
 //
 // The old handler flipped the status with updateMany, so a confirmed card
-// never completed its order, never filed FBR / SRB and never reached the
-// ledger.
+// never completed its order, never filed its tax invoice and never reached
+// the ledger.
+//
+// Card machine separation (spec D12 / §7.12): a callback only ever touches
+// rows with gateway 'keenu', or legacy 'none' rows that are NOT a card-machine
+// charge (no gatewayMeta.terminalChargeId). A 'card_terminal' payment is
+// settled by the POS connector alone — even if the processor behind the card
+// machine is Keenu and a callback carries the same transaction id, it is
+// never settled, failed or marked refunded here (no double settlement).
 
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { settlePayment } from '../pos/service.js'
+
+type KeenuRow = { id: string; amountCents: number; status: string; shiftId: string | null; gateway: string; gatewayMeta: Prisma.JsonValue }
+
+function metaOf(v: Prisma.JsonValue): Prisma.JsonObject {
+  return v && typeof v === 'object' && !Array.isArray(v) ? v as Prisma.JsonObject : {}
+}
+
+/** A row a Keenu callback may act on: Keenu's own, or a legacy row that is not a card-machine charge. */
+export function isKeenuRow(r: Pick<KeenuRow, 'gateway' | 'gatewayMeta'>): boolean {
+  if (r.gateway === 'keenu') return true
+  if (r.gateway !== 'none') return false
+  return typeof metaOf(r.gatewayMeta)['terminalChargeId'] !== 'string'
+}
 
 export interface KeenuCallback {
   orderId: string
@@ -36,10 +57,11 @@ export type KeenuOutcome =
   | { result: 'ignored'; status: string }
 
 export async function applyKeenuCallback(cb: KeenuCallback, log: { error: (o: object, m: string) => void } = console as never): Promise<KeenuOutcome> {
-  const rows = await prisma.payment.findMany({
-    where: { orderId: cb.orderId, gatewayRef: cb.transactionId },
-    select: { id: true, amountCents: true, status: true, shiftId: true },
+  const all: KeenuRow[] = await prisma.payment.findMany({
+    where: { orderId: cb.orderId, gatewayRef: cb.transactionId, gateway: { in: ['keenu', 'none'] } },
+    select: { id: true, amountCents: true, status: true, shiftId: true, gateway: true, gatewayMeta: true },
   })
+  const rows = all.filter(isKeenuRow)
   if (rows.length === 0) return { result: 'unmatched' }
 
   if (cb.status === 'SUCCESS') {
@@ -64,10 +86,14 @@ export async function applyKeenuCallback(cb: KeenuCallback, log: { error: (o: ob
 
   if (cb.status === 'REFUNDED') {
     // Recorded for reconciliation; the books move only through refundOrder.
-    await prisma.payment.updateMany({
-      where: { id: { in: rows.map((r) => r.id) } },
-      data: { gatewayMeta: { keenu: { status: 'REFUNDED', at: new Date().toISOString() } } },
-    })
+    // Merged into the row's own meta (its idempotency key, tip, refund note).
+    const at = new Date().toISOString()
+    for (const r of rows) {
+      await prisma.payment.update({
+        where: { id: r.id },
+        data: { gatewayMeta: { ...metaOf(r.gatewayMeta), keenu: { status: 'REFUNDED', at } } },
+      })
+    }
     return { result: 'refunded', paymentIds: rows.map((r) => r.id) }
   }
 

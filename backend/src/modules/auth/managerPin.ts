@@ -5,6 +5,10 @@ import { AppError } from '../../lib/errors.js'
 import { OVERRIDE_APPROVERS } from '../../lib/roles.js'
 import { ACTIVE_ACCOUNT_WHERE } from './accountStatus.js'
 import { hashPin } from './service.js'
+import { getRlsContext } from '../../lib/rlsContext.js'
+import { audit } from '../../lib/audit.js'
+import { flagException } from '../../lib/exceptions.js'
+import { claimPinAttempt, pinAttemptSucceeded, MANAGER_PIN_ACTOR_LIMIT, MANAGER_PIN_ORDER_LIMIT, type PinAttemptKeys } from '../../lib/managerPinLimit.js'
 
 /**
  * Manager override PIN — ONE verifier, ONE setter.
@@ -49,30 +53,151 @@ function inCompanies(tenantIds: string[]): Prisma.UserWhereInput {
   return { OR: [{ tenantId: { in: tenantIds } }, { tenantMemberships: { some: { tenantId: { in: tenantIds } } } }] }
 }
 
+/** Who is sending the PIN and what it is for — the attempt limiter's keys (FOH-R2-01). */
+export interface ManagerPinContext {
+  /**
+   * The signed-in person sending the PIN. Defaults to the request's staff
+   * user (lib/rlsContext), so a caller that forgets it is still limited.
+   */
+  actorId?: string | null
+  /** The order the override is for, when there is one (its own bucket). */
+  orderId?: string | null
+  /** What is being approved ("void", "refund", "discount", …) — for the audit trail. */
+  action?: string
+}
+
 /**
  * Who, if anyone, approves with this PIN at `tenantId`'s tills and boxes.
  * Returns the approver so the caller can record them, or null.
+ *
+ * FOH-R2-01: every PIN that is actually sent is an attempt. It is counted
+ * against the sender (and the order) BEFORE it is compared — over the limit
+ * (5 per 15 minutes) → 429 MANAGER_PIN_LOCKED, with no comparison made. A
+ * wrong PIN is audited ('manager_pin.failed': actor, order, company) and the
+ * attempt that reaches the limit raises an exception flag for the company's
+ * owner. A correct PIN gives back only its own slot — the wrong guesses
+ * around it keep counting (T-RV-01: knowing one valid PIN must not reset the
+ * budget for guessing the others). Every override in servd —
+ * voids, cancels, refunds, comps, discounts, price overrides, pay-outs, staff
+ * meals, petty cash — comes through here, so this is the one limit.
+ *
+ * PIN length rules are unchanged (4 to 8 digits — owner decision).
  */
 export async function verifyManagerPin(
   pin: string | null | undefined,
   tenantId: string | null | undefined,
   roles: readonly UserRole[] = OVERRIDE_APPROVERS,
+  ctx: ManagerPinContext = {},
 ): Promise<{ id: string; role: UserRole } | null> {
   pin = pin?.trim()
-  if (!pin || !PIN_FORMAT.test(pin) || !tenantId) return null
-  const candidates = await prisma.user.findMany({
-    where: {
-      ...ACTIVE_ACCOUNT_WHERE,
-      role: { in: [...roles] },
-      pin: { not: null },
-      ...inCompanies([tenantId]),
-    },
-    select: { id: true, role: true, pin: true },
-  })
-  for (const c of candidates) {
-    if (c.pin && await bcrypt.compare(pin, c.pin)) return { id: c.id, role: c.role }
+  // Nothing sent, or no company to approve in: not an attempt (callers answer
+  // "PIN required" / deny).
+  if (!pin || !tenantId) return null
+
+  const actorId = ctx.actorId ?? getRlsContext()?.staffUserId ?? null
+  // No signed-in actor (a background path): count against the company, so the
+  // limit still holds.
+  const keys: PinAttemptKeys = { actor: actorId ? `user:${actorId}` : `company:${tenantId}`, orderId: ctx.orderId ?? null }
+  const claimed = await claimPinAttempt(keys)
+
+  let approver: { id: string; role: UserRole } | null = null
+  if (PIN_FORMAT.test(pin)) {
+    const candidates = await prisma.user.findMany({
+      where: {
+        ...ACTIVE_ACCOUNT_WHERE,
+        role: { in: [...roles] },
+        pin: { not: null },
+        ...inCompanies([tenantId]),
+      },
+      select: { id: true, role: true, pin: true },
+    })
+    for (const c of candidates) {
+      if (c.pin && await bcrypt.compare(pin, c.pin)) { approver = { id: c.id, role: c.role }; break }
+    }
   }
+
+  if (approver) {
+    await pinAttemptSucceeded(keys)
+    return approver
+  }
+  await recordPinFailure(tenantId, actorId, ctx, claimed)
   return null
+}
+
+async function recordPinFailure(
+  tenantId: string,
+  actorId: string | null,
+  ctx: ManagerPinContext,
+  claimed: { actorCount: number; orderCount: number | null },
+): Promise<void> {
+  await audit({
+    category: 'identity',
+    action: 'manager_pin.failed',
+    entity: ctx.orderId ? 'Order' : 'User',
+    entityId: ctx.orderId ?? actorId,
+    userId: actorId,
+    tenantId,
+    metadata: { action: ctx.action ?? null, orderId: ctx.orderId ?? null, actorAttempts: claimed.actorCount, orderAttempts: claimed.orderCount },
+  })
+  // The attempt that fills a bucket locks it — tell the owner once per lock.
+  const actorLocked = claimed.actorCount === MANAGER_PIN_ACTOR_LIMIT.max
+  const orderLocked = claimed.orderCount === MANAGER_PIN_ORDER_LIMIT.max
+  if (!actorLocked && !orderLocked) return
+  const baseMeta = { realKind: 'manager_pin_failed', action: ctx.action ?? null, orderId: ctx.orderId ?? null, actorAttempts: claimed.actorCount, orderAttempts: claimed.orderCount }
+
+  if (actorLocked) {
+    // One person sent all five: they are the one locked out (every order), so
+    // the flag names them.
+    const who = actorId
+      ? (await prisma.user.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? 'A staff member'
+      : 'A till'
+    await flagException({
+      tenantId,
+      kind: 'manager_pin_failed',
+      severity: 'high',
+      title: `${who}: ${MANAGER_PIN_ACTOR_LIMIT.max} wrong manager PINs — overrides locked`,
+      description: `${who} sent ${MANAGER_PIN_ACTOR_LIMIT.max} wrong manager PINs within 15 minutes${ctx.action ? ` (last: ${ctx.action})` : ''}. Manager-PIN approvals by ${who} are locked for 15 minutes${orderLocked ? ', and so are PIN approvals for this order' : ''}. Someone may be guessing a manager's PIN — check who was on the till and consider changing the managers' PINs.`,
+      entityType: ctx.orderId ? 'Order' : 'User',
+      entityId: ctx.orderId ?? actorId ?? undefined,
+      actorId,
+      metadata: { ...baseMeta, lock: orderLocked ? 'actor_and_order' : 'actor' },
+    })
+    return
+  }
+
+  // Only the ORDER's bucket filled (IB-RV-3): the wrong PINs for this order
+  // may have come from several people over the void, cancel and refused-at-door
+  // doors, so the last sender is not "the guesser". Name nobody as the actor;
+  // list everyone who sent a wrong PIN for this order in the window (from the
+  // manager_pin.failed audit rows, which include the attempt just recorded).
+  const since = new Date(Date.now() - MANAGER_PIN_ORDER_LIMIT.lockoutSec * 1000)
+  const rows = ctx.orderId
+    ? await prisma.auditLog.findMany({
+        where: { action: 'manager_pin.failed', tenantId, entityId: ctx.orderId, createdAt: { gte: since } },
+        select: { userId: true },
+      })
+    : []
+  const counts = new Map<string, number>()
+  for (const r of rows) if (r.userId) counts.set(r.userId, (counts.get(r.userId) ?? 0) + 1)
+  const people = counts.size
+    ? await prisma.user.findMany({ where: { id: { in: [...counts.keys()] } }, select: { id: true, name: true } })
+    : []
+  const nameOf = new Map(people.map((p) => [p.id, p.name]))
+  const senders = [...counts.entries()].map(([userId, attempts]) => ({ userId, name: nameOf.get(userId) ?? null, attempts }))
+  const sendersText = senders.length
+    ? ` Sent by: ${senders.map((s) => `${s.name ?? 'unknown staff member'} (${s.attempts})`).join(', ')}.`
+    : ''
+  await flagException({
+    tenantId,
+    kind: 'manager_pin_failed',
+    severity: 'high',
+    title: `${MANAGER_PIN_ORDER_LIMIT.max} wrong manager PINs on one order — PIN approvals for this order locked`,
+    description: `${MANAGER_PIN_ORDER_LIMIT.max} wrong manager PINs were sent for one order within 15 minutes${ctx.action ? ` (last: ${ctx.action})` : ''}.${sendersText} Manager-PIN approvals for this order are locked for 15 minutes; a manager who signs in can still act on it. Someone may be guessing a manager's PIN — check who was on the till and consider changing the managers' PINs.`,
+    entityType: 'Order',
+    entityId: ctx.orderId ?? undefined,
+    actorId: null,
+    metadata: { ...baseMeta, lock: 'order', senders },
+  })
 }
 
 /**

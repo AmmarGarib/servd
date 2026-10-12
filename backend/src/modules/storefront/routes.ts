@@ -5,14 +5,17 @@ import { randomUUID } from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.js'
 import { verifyCustomerToken } from '../auth/service.js'
-import { ingestOrder } from '../orders/service.js'
+import { ingestOrder, type IngestOrderDTO } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
 import { priceOrder, tenderOf, deliveryFeeFor } from '../../lib/pricing.js'
 import { haversineKm } from '../../lib/geo.js'
-import type { OrderDTO } from '@servd/types'
 import { redis } from '../../lib/redis.js'
 import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
+import { formatBrandName } from '../../lib/brandName.js'
+import { assertPaymentMethodAvailable, availablePaymentMethods } from './paymentMethods.js'
+import { assertOpenForOrders, orderingState, orderTime, sectionVisibleAt } from './serviceHours.js'
+import { walletBalanceAt, holdWalletForCheckout, attachHoldToOrder, releaseWalletHold, spendWalletOnOrder } from '../wallet/service.js'
 
 
 // Snap rider coordinates to a ~110m grid before returning to customers.
@@ -87,10 +90,16 @@ const releaseSchema = z.object({
  * client-sent priceDelta of -9999999 used to zero the bill). Shared by
  * checkout and GET /storefront/quote so the two can never price different
  * baskets.
+ *
+ * `at` is when the order is for (now, or a pre-order's time): an item in a
+ * time-limited menu section (breakfast, dinner specials) can only be ordered
+ * while that section shows, in Karachi time (ONL-13) — the menu hiding it was
+ * never enough, because the basket is the client's.
  */
 async function resolveCheckoutItems(
   conceptId: string,
   items: Array<{ menuItemId: string; quantity: number; notes?: string; modifiers: Array<{ modifierId: string }> }>,
+  at: Date = new Date(),
 ) {
   const resolvedItems: Array<{
     externalItemId: string
@@ -105,9 +114,20 @@ async function resolveCheckoutItems(
   for (const item of items) {
     const menuItem = await prisma.menuItem.findFirst({
       where: { id: item.menuItemId, conceptId, isAvailable: true, deletedAt: null },
-      include: { modifierGroups: { include: { modifiers: { where: { deletedAt: null } } } } },
+      include: {
+        modifierGroups: { include: { modifiers: { where: { deletedAt: null } } } },
+        category: { select: { timeRestrictionStart: true, timeRestrictionEnd: true } },
+      },
     })
     if (!menuItem) throw new AppError('ITEM_UNAVAILABLE', `Item ${item.menuItemId} is not available`, 400)
+    const section = menuItem.category
+    if (section && !sectionVisibleAt(section.timeRestrictionStart, section.timeRestrictionEnd, at)) {
+      throw new AppError(
+        'ITEM_UNAVAILABLE',
+        `${menuItem.name} is only served ${section.timeRestrictionStart}–${section.timeRestrictionEnd ?? '24:00'}`,
+        400,
+      )
+    }
 
     const validMods = new Map<string, { id: string; name: string; priceDeltaCents: number }>()
     for (const g of menuItem.modifierGroups) {
@@ -137,6 +157,40 @@ async function resolveCheckoutItems(
   return { resolvedItems, itemTotal }
 }
 
+/**
+ * Can this gift card pay at this brand? (ONL-15) A card of the brand's own
+ * company only (owner decision 14), active, unexpired, with a balance.
+ * Another company's card and an unknown code answer alike — the answer never
+ * confirms a card exists elsewhere. Checkout refuses an unusable card with a
+ * 422 BEFORE anything is claimed or created (it used to drop the card with a
+ * log line and charge the full price); the quote reports it as giftCardError.
+ */
+type GiftCardCheck =
+  | { ok: true; balanceCents: number }
+  | { ok: false; code: string; message: string }
+async function checkGiftCard(rawCode: string, concept: { tenantId: string | null; name: string }): Promise<GiftCardCheck> {
+  const code = rawCode.trim().toUpperCase()
+  const card = concept.tenantId && code
+    ? await prisma.giftCard.findFirst({
+        where: { code, tenantId: concept.tenantId },
+        select: { status: true, balanceCents: true, expiresAt: true },
+      })
+    : null
+  if (!card) {
+    return { ok: false, code: 'GIFT_CARD_NOT_VALID_HERE', message: `This gift card can't be used at ${formatBrandName(concept.name)}.` }
+  }
+  if ((card.expiresAt && card.expiresAt.getTime() < Date.now()) || card.status === 'expired') {
+    return { ok: false, code: 'GIFT_CARD_EXPIRED', message: 'This gift card has expired.' }
+  }
+  if (card.status === 'redeemed_full' || (card.status === 'active' && card.balanceCents <= 0)) {
+    return { ok: false, code: 'GIFT_CARD_EMPTY', message: 'This gift card has no balance left.' }
+  }
+  if (card.status !== 'active') {
+    return { ok: false, code: 'GIFT_CARD_INACTIVE', message: 'This gift card can’t be used right now.' }
+  }
+  return { ok: true, balanceCents: card.balanceCents }
+}
+
 const quoteQuerySchema = z.object({
   conceptSlug: z.string().min(1),
   type: z.enum(['delivery', 'pickup', 'dine-in', 'curbside']).default('pickup'),
@@ -152,6 +206,9 @@ const quoteQuerySchema = z.object({
   // A percentage tip (the page's chips) — of food + GST. Ignored when tipCents is set.
   tipPct: z.coerce.number().min(0).max(100).optional(),
   giftCardCode: z.string().max(40).optional(),
+  // A pre-order's time — opening hours and time-limited sections are checked
+  // for it instead of now (same as checkout).
+  scheduledFor: z.string().datetime().optional(),
 })
 
 export async function storefrontRoutes(fastify: FastifyInstance) {
@@ -296,23 +353,18 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       })
       if (!concept) throw new NotFoundError('Concept', req.params.concept)
 
+      // Time-limited sections (breakfast, dinner specials) show by KARACHI
+      // time (ONL-13). This compared against the server clock, which is UTC
+      // in production — five hours off. Filtered here rather than in SQL so a
+      // section that runs past midnight (22:00–02:00) works too; checkout
+      // applies the same rule (resolveCheckoutItems).
       const now = new Date()
-      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
 
-      const categories = await prisma.category.findMany({
+      const allCategories = await prisma.category.findMany({
         where: {
           conceptId: concept.id,
           deletedAt: null,
           isActive: true,
-          OR: [
-            { timeRestrictionStart: null },
-            {
-              AND: [
-                { timeRestrictionStart: { lte: currentTime } },
-                { timeRestrictionEnd: { gte: currentTime } },
-              ],
-            },
-          ],
         },
         orderBy: { sortOrder: 'asc' },
         include: {
@@ -329,6 +381,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           },
         },
       })
+      const categories = allCategories.filter((c) => sectionVisibleAt(c.timeRestrictionStart, c.timeRestrictionEnd, now))
 
       // Enrich items with live availability counts — single Redis MGET instead of N round-trips
       const allItems = categories.flatMap((cat) => cat.items)
@@ -339,6 +392,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         ...cat,
         items: cat.items.map((item) => ({ ...item, available: availMap.get(item.id) ?? null })),
       }))
+
+      // Whether the brand takes orders right now (its opening hours in PKT,
+      // ONL-14) and how a customer can pay (ONL-02) — so the brand page and
+      // checkout can say "closed, opens at …" and offer only what checkout
+      // will accept.
+      const ordering = await orderingState(concept, now)
 
       return {
         concept: {
@@ -351,9 +410,20 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           storefrontLayout: concept.storefrontLayout,
         },
         categories: enrichedCategories,
+        ordering: {
+          open: ordering.open,
+          opensAt: ordering.opensAt?.toISOString() ?? null,
+          message: ordering.message,
+        },
+        paymentMethods: availablePaymentMethods(),
       }
     },
   )
+
+  // GET /storefront/payment-methods — what checkout accepts (ONL-02). Online
+  // gateways appear only once checkout really charges through them; until
+  // then this is cash only. The same list is on /:concept/menu and /quote.
+  fastify.get('/payment-methods', async () => ({ methods: availablePaymentMethods() }))
 
   // GET /storefront/:concept/availability — live availability snapshot for polling
   fastify.get<{ Params: { concept: string } }>('/:concept/availability', async (req) => {
@@ -511,6 +581,14 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const concept = await prisma.concept.findFirst({ where: { slug: q.conceptSlug, isActive: true } })
     if (!concept) throw new NotFoundError('Concept', q.conceptSlug)
 
+    // The same refusals checkout makes, so the page says so before the
+    // customer presses the button: an online method checkout cannot charge
+    // (422, ONL-02), and a brand that is closed for this order's time (409,
+    // ONL-14).
+    assertPaymentMethodAvailable(q.paymentGateway)
+    const when = orderTime(q.scheduledFor)
+    await assertOpenForOrders(concept, when.at, when.scheduled)
+
     // Optional customer session (points, wallet, per-customer promo limit).
     let customerId: string | null = null
     const auth = req.headers.authorization
@@ -518,7 +596,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       try { customerId = verifyCustomerToken(auth.slice(7)).sub } catch { customerId = null }
     }
 
-    const { resolvedItems, itemTotal } = await resolveCheckoutItems(concept.id, items)
+    const { resolvedItems, itemTotal } = await resolveCheckoutItems(concept.id, items, when.at)
     const deliveryFeeCents = q.type === 'delivery'
       ? (await deliveryFeeFor(concept, itemTotal, q.deliveryLat, q.deliveryLng)).feeCents
       : 0
@@ -557,10 +635,18 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       due -= r.discountCents
     }
 
+    // The wallet as a top-up (the toggle) comes off before the tip; as the
+    // payment method it pays the tip too — checkout's order (ONLINE-R5).
+    const walletIsMethod = q.paymentGateway === 'wallet'
     let walletCents = 0
-    if (customerId && (q.useWallet === 'true' || q.useWallet === '1')) {
-      const c = await prisma.customer.findUnique({ where: { id: customerId }, select: { walletBalance: true } })
-      walletCents = Math.max(0, Math.min(c?.walletBalance ?? 0, due))
+    let walletBalance = 0
+    if (customerId && (walletIsMethod || q.useWallet === 'true' || q.useWallet === '1')) {
+      // The wallet at THIS brand's company only (ONL-R2-01) — another
+      // company's balance never pays here.
+      walletBalance = await walletBalanceAt(concept.tenantId, customerId)
+    }
+    if (!walletIsMethod && walletBalance > 0) {
+      walletCents = Math.min(walletBalance, Math.max(0, due))
       due -= walletCents
     }
 
@@ -568,19 +654,24 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       ? q.tipCents
       : Math.round(((price.itemTotalCents + price.taxCents) * (q.tipPct ?? 0)) / 100)
     due = Math.max(0, due) + tipCents
+    if (walletIsMethod && walletBalance > 0) {
+      walletCents = Math.min(walletBalance, due)
+      due -= walletCents
+    }
 
     // Gift card: an estimate from the card's balance (a card of this brand's
     // company, active, not expired — decision 14). The redeem at checkout is
-    // what actually applies it.
+    // what actually applies it. A card that can't be used is reported, like a
+    // promo (ONL-15) — checkout refuses it with the same code and message.
     let giftCardCents = 0
+    let giftCardError: { code: string; message: string } | null = null
     if (q.giftCardCode?.trim()) {
-      const card = await prisma.giftCard.findFirst({
-        where: { code: q.giftCardCode.trim().toUpperCase(), tenantId: concept.tenantId, status: 'active' },
-        select: { balanceCents: true, expiresAt: true },
-      })
-      if (card && (!card.expiresAt || card.expiresAt.getTime() >= Date.now())) {
-        giftCardCents = Math.max(0, Math.min(card.balanceCents, due))
+      const gc = await checkGiftCard(q.giftCardCode, concept)
+      if (gc.ok) {
+        giftCardCents = Math.max(0, Math.min(gc.balanceCents, due))
         due -= giftCardCents
+      } else {
+        giftCardError = { code: gc.code, message: gc.message }
       }
     }
 
@@ -599,13 +690,24 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       walletCents,
       tipCents,
       giftCardCents,
+      giftCardError,
       totalCents: due,
+      paymentMethods: availablePaymentMethods(),
     }
   })
 
   fastify.post('/orders', {
     preHandler: requireCustomerAuth,
     onError: async (req, _reply, _err) => {
+      // A wallet taken up front for a wallet-paid order (ONLINE-R5) goes back
+      // if the order was never written.
+      const hold = (req as { walletHold?: { tenantId: string; customerId: string; amountCents: number; transactionId: string } }).walletHold
+      if (hold) {
+        ;(req as { walletHold?: unknown }).walletHold = undefined
+        // Back to the same company's wallet it was taken from (ONL-R2-01).
+        await releaseWalletHold(hold).catch((err) =>
+          req.log.error({ err: (err as Error).message, hold }, 'wallet hold not released'))
+      }
       const claim = (req as { promoClaim?: { promoId: string; counted: boolean; lockKey: string | null } }).promoClaim
       if (!claim) return
       ;(req as { promoClaim?: unknown }).promoClaim = undefined
@@ -623,6 +725,13 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const customer = await prisma.customer.findUnique({ where: { id: customerId } })
     const concept = await prisma.concept.findFirst({ where: { slug: body.conceptSlug, isActive: true } })
     if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
+    // The wallet is per company (ONL-R2-01): only the balance at THIS brand's
+    // company can pay here — value another company granted never crosses
+    // over. Read now; it is TAKEN later under the wallet row's lock.
+    const walletIsMethod = body.paymentGateway === 'wallet'
+    const walletBalance = (walletIsMethod || body.useWallet) && concept.tenantId
+      ? await walletBalanceAt(concept.tenantId, customerId)
+      : 0
 
     // Ban check — one mechanism (CustomerBan), per company (owner decision
     // 15): an active ban raised by THIS brand's company, matched on the
@@ -638,9 +747,32 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       intent:   'order',
     })
 
+    // Refusals that must come before anything is claimed or created:
+    //  - an online method checkout cannot actually charge (ONL-02): a Keenu /
+    //    JazzCash / EasyPaisa order used to go to the kitchen with a pending
+    //    payment no gateway was ever asked to take;
+    //  - a brand that is closed for this order's time, in PKT (ONL-14) — a
+    //    pre-order (scheduledFor in the future) is checked at its own time;
+    //  - a gift card that can't pay here (ONL-15) — it used to be dropped
+    //    with a log line and the customer charged the full price.
+    assertPaymentMethodAvailable(body.paymentGateway)
+    if (body.type === 'curbside' && !body.curbsideVehicle) {
+      // Checked here, not after the order is written (it used to create the
+      // order and then answer 422).
+      throw new AppError('CURBSIDE_VEHICLE_REQUIRED', 'Tell us about your car so we can find you.', 422)
+    }
+    const when = orderTime(body.scheduledFor)
+    await assertOpenForOrders(concept, when.at, when.scheduled)
+    let giftCardBalanceCents = 0
+    if (body.giftCardCode?.trim()) {
+      const gc = await checkGiftCard(body.giftCardCode, concept)
+      if (!gc.ok) throw new AppError(gc.code, gc.message, 422)
+      giftCardBalanceCents = gc.balanceCents
+    }
+
     // Items and modifiers resolved from the DB (the one resolver, shared
     // with GET /storefront/quote).
-    const { resolvedItems, itemTotal } = await resolveCheckoutItems(concept.id, body.items)
+    const { resolvedItems, itemTotal } = await resolveCheckoutItems(concept.id, body.items, when.at)
 
     // THE order pricing (lib/pricing.ts), the same function GET
     // /storefront/quote shows the customer. GST by tender (decision 9): cash
@@ -754,16 +886,76 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     let loyaltyPointsRedeemed = loyaltyQuote.points
     let loyaltyDiscountCents = loyaltyQuote.discountCents
 
-    // Wallet payment — atomic deduction to prevent double-spend
+    // Wallet as a top-up on another method (the "use my wallet" toggle):
+    // taken after the order exists, atomically (see below), from the wallet
+    // of the brand's company (walletBalance, read above).
     let walletAmountCents = 0
-    if (body.useWallet && customer && customer.walletBalance > 0) {
-      walletAmountCents = Math.min(customer.walletBalance, subtotal)
+    if (!walletIsMethod && body.useWallet && walletBalance > 0) {
+      walletAmountCents = Math.min(walletBalance, Math.max(0, subtotal))
       subtotal -= walletAmountCents
     }
 
-    const totalCents = Math.max(0, subtotal)
+    // What the customer owes, tip included (ONL-03). The tip goes into the
+    // order total AND the pending payment in the same insert (ingestOrder
+    // writes both from payment.amountCents). It used to be added to the order
+    // total afterwards and never to the payment, so the rider collected the
+    // bill without the tip, the ledger booked the gap as a card receivable on
+    // a cash order, and a full refund was refused as exceeding what was paid.
+    let totalCents = Math.max(0, subtotal) + body.tipCents
 
-    const dto: OrderDTO = {
+    // The servd wallet is not a gateway: as the payment method it can only
+    // cover the whole bill (with a gift card). Anything left would be a
+    // pending online payment nobody ever collects — the ONL-02 hole again.
+    //
+    // ONLINE-R5: as the method, the wallet pays the bill INCLUDING the tip (it
+    // used to be capped at the pre-tip subtotal, so any tip made a well-funded
+    // wallet "not cover" the order), and it is TAKEN before the order is
+    // written — atomically, so a second checkout spending the same wallet at
+    // the same moment is refused here, with nothing created. It used to be
+    // taken afterwards; a lost race then raised the pending row (a 'card' row,
+    // as for every non-cash method) to the whole bill, and the order went to
+    // the kitchen with a card receivable no gateway would ever settle.
+    if (walletIsMethod) {
+      walletAmountCents = Math.min(walletBalance, totalCents)
+      totalCents -= walletAmountCents
+    }
+    if (walletIsMethod && totalCents - Math.min(giftCardBalanceCents, totalCents) > 0) {
+      throw new AppError(
+        'PAYMENT_METHOD_UNAVAILABLE',
+        'Your wallet doesn’t cover this order. Please pay the rest with cash.',
+        422,
+        { available: availablePaymentMethods() },
+      )
+    }
+    let walletTakenUpFront = false
+    let walletHoldTxId: string | null = null
+    if (walletIsMethod && walletAmountCents > 0) {
+      // From the wallet of the brand's company, under its row lock.
+      const taken = concept.tenantId
+        ? await holdWalletForCheckout({ tenantId: concept.tenantId, customerId, amountCents: walletAmountCents })
+        : null
+      if (!taken) {
+        throw new AppError(
+          'WALLET_BALANCE_CHANGED',
+          'Your wallet balance just changed. Please check your order and try again.',
+          409,
+        )
+      }
+      // Given back by the onError hook if the order is never written.
+      ;(req as { walletHold?: unknown }).walletHold = {
+        tenantId: concept.tenantId!, customerId, amountCents: walletAmountCents, transactionId: taken.transactionId,
+      }
+      walletHoldTxId = taken.transactionId
+      walletTakenUpFront = true
+    }
+
+    // The tip's own column goes in the same insert as the total and the
+    // pending payment (F1) — it used to be patched in a second write after.
+    // ingestOrder bounds the tip by what the order is paid with: the pending
+    // payment plus the wallet share. Both checkout shapes stay inside it — a
+    // wallet top-up leaves the tip in payment.amountCents, and when the wallet
+    // is the method its share covers the tip — so it is always written here.
+    const dto: IngestOrderDTO = {
       source: 'servd',
       // Unique per request. This was `direct-${Date.now()}` — millisecond
       // precision, with nothing in it identifying the customer or the cart —
@@ -782,13 +974,17 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       external_id: `direct-${randomUUID()}`,
       concept_id: concept.id,
       placed_at: new Date().toISOString(),
-      scheduled_for: body.scheduledFor ?? null,
-      is_pre_order: !!body.scheduledFor,
+      // A pre-order only when the time is really in the future (orderTime):
+      // a past or present scheduledFor is "now" — stored as neither a time nor
+      // a pre-order, so the kitchen and dispatch don't hold it (O-RV-3).
+      scheduled_for: when.scheduled ? when.at.toISOString() : null,
+      is_pre_order: when.scheduled,
       customer_id: customerId,
       customer_name: customer?.name ?? null,
       table_id: body.tableId ?? null,
       items: resolvedItems,
-      payment: { provider: body.paymentGateway as never, amountCents: totalCents, status: 'pending' },
+      // amountCents is the order total and the pending payment (tip included).
+      payment: { provider: body.paymentGateway, amountCents: totalCents, status: 'pending' },
       loyalty_points_earned: null,
       delivery_notes: body.deliveryAddress ?? null,
       estimated_pickup: null,
@@ -800,20 +996,24 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       promo_code_id: promoCodeId,
       promo_discount_cents: promoDiscountCents,
       wallet_amount_cents: walletAmountCents,
+      tip_cents: body.tipCents,
     }
 
     const { order } = await ingestOrder(dto, { price })
+    if (walletTakenUpFront) {
+      // The order exists and carries the wallet share: from here a cancel /
+      // refund restores it (orderPosting postOrderRefund), not the hook.
+      ;(req as { walletHold?: unknown }).walletHold = undefined
+      // The spend row written at the hold now names its order.
+      await attachHoldToOrder(walletHoldTxId!, order.id)
+    }
 
     // Persist computed surcharges + curbside details. ingestOrder() doesn't
     // know about zones / service charge / curbside so we patch after creation.
     // (GST, its rate and the service charge were written by ingestOrder from
     // `price`.)
     const orderPatch: Record<string, unknown> = {}
-    if (body.type === 'curbside') {
-      if (!body.curbsideVehicle) {
-        // Schema-level validation should have caught this, but defend anyway.
-        throw new AppError('CURBSIDE_VEHICLE_REQUIRED', 'Tell us about your car so we can find you.', 422)
-      }
+    if (body.type === 'curbside' && body.curbsideVehicle) {
       orderPatch.curbsideVehicle = body.curbsideVehicle
       if (body.curbsidePlate) orderPatch.curbsidePlate = body.curbsidePlate
       if (body.curbsideSpot)  orderPatch.curbsideSpot = body.curbsideSpot
@@ -864,25 +1064,27 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       await prisma.order.update({ where: { id: order.id }, data: orderPatch })
     }
 
-    // Tip + gift card — patched after creation so we don't have to plumb them
-    // through OrderDTO. Order total adjusts to reflect tip.
-    if (body.tipCents > 0) {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: { tipCents: body.tipCents, totalCents: { increment: body.tipCents } },
-      })
-    }
-    if (body.giftCardCode) {
-      // THE gift-card redeem (modules/giftCards/service.ts): a card of this
-      // brand's company only (owner decision 14), up to what is owed on the
-      // (post-tip) bill, with the bill and pending payment lowered in the same
-      // transaction. An unusable card leaves the bill as it is.
+    // Gift card — THE redeem (modules/giftCards/service.ts): a card of this
+    // brand's company only (owner decision 14), up to what is owed on the
+    // (post-tip) bill, with the bill and pending payment lowered in the same
+    // transaction. The card was checked before anything was created, so this
+    // only fails if its balance moved in the last moment (another order spent
+    // it). Then the order stands at its full price and the response says so
+    // (giftCardError) — never silently.
+    let giftCardAppliedCents = 0
+    let giftCardError: { code: string; message: string } | null = null
+    if (body.giftCardCode?.trim() && totalCents > 0) {
       try {
         const { redeemGiftCard } = await import('../giftCards/service.js')
         const gc = await redeemGiftCard({ code: body.giftCardCode, orderId: order.id })
-        order.totalCents -= gc.appliedCents
+        giftCardAppliedCents = gc.appliedCents
       } catch (err) {
-        req.log.warn({ err: (err as Error).message }, 'gift card not applied at checkout')
+        const e = err as { code?: string; message?: string }
+        giftCardError = {
+          code: e.code ?? 'GIFT_CARD_NOT_APPLIED',
+          message: 'Your gift card could not be applied, so this order is at its full price. Contact us and we will adjust it.',
+        }
+        req.log.warn({ err: e.message, orderId: order.id }, 'gift card not applied at checkout')
       }
     }
 
@@ -897,32 +1099,20 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       await redis.del(promoLock).catch(() => {})
       promoLock = null
     }
-    if (walletAmountCents > 0 && customer) {
-      // Atomic deduction: only succeeds if balance is still sufficient (prevents double-spend)
-      const walletUpdate = await prisma.customer.updateMany({
-        where: { id: customerId, walletBalance: { gte: walletAmountCents } },
-        data: { walletBalance: { decrement: walletAmountCents } },
-      })
-      if (walletUpdate.count === 0) {
+    if (walletAmountCents > 0 && !walletTakenUpFront) {
+      // Atomic deduction from the ORDER's company's wallet (order row locked,
+      // then the wallet row): only succeeds if the balance still covers it.
+      const spent = await spendWalletOnOrder({ customerId, orderId: order.id, amountCents: walletAmountCents })
+      if (!spent) {
         // Balance changed since we read it, so nothing was charged. The order
         // total was ALREADY discounted by this amount above — leaving it there
         // gave the customer free credit they never had. Put the amount back on
-        // the bill and clear the wallet attribution.
-        await prisma.order.update({
-          where: { id: order.id },
-          data: {
-            totalCents:        { increment: walletAmountCents },
-            walletAmountCents: 0,
-          },
-        })
-        order.totalCents += walletAmountCents
-        order.walletAmountCents = 0
+        // the bill AND on the pending payment (adjustOrderBill raises both;
+        // this used to raise only the total, so the rider / counter collected
+        // the wallet's share short), and clear the wallet attribution.
+        await loyaltySvc.adjustOrderBill(order.id, -walletAmountCents)
+        await prisma.order.update({ where: { id: order.id }, data: { walletAmountCents: 0 } })
         walletAmountCents = 0
-      } else {
-        const updatedCustomer = await prisma.customer.findUnique({ where: { id: customerId }, select: { walletBalance: true } })
-        await prisma.walletTransaction.create({
-          data: { customerId, type: 'spend', amountCents: -walletAmountCents, balanceAfter: updatedCustomer?.walletBalance ?? 0, description: `Order ${order.id}`, orderId: order.id },
-        })
       }
     }
     // Loyalty points — claim what was quoted. If the balance moved and nothing
@@ -932,11 +1122,42 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       const claimed = await loyaltySvc.claimRedemption({ customerId, orderId: order.id, quote: loyaltyQuote })
       if (!claimed) {
         await loyaltySvc.adjustOrderBill(order.id, -loyaltyDiscountCents)
-        order.totalCents += loyaltyDiscountCents
         loyaltyPointsRedeemed = 0
         loyaltyDiscountCents  = 0
       }
     }
+
+    // A wallet-paid order must owe nothing (ONLINE-R5). If a gift card or the
+    // points were lost to a race after the order was written, the rest would
+    // sit on a pending 'card' row no gateway ever collects. Cancel the order
+    // instead — the cancel gives back the wallet, the gift card, the points
+    // and the promo (orders/service cancelOrder → postOrderRefund) — and say
+    // so.
+    if (walletIsMethod) {
+      const due = await prisma.payment.aggregate({
+        where: { orderId: order.id, status: 'pending' },
+        _sum: { amountCents: true },
+      })
+      if ((due._sum.amountCents ?? 0) > 0) {
+        const { cancelOrder } = await import('../orders/service.js')
+        await cancelOrder(order.id, {
+          reason: 'Wallet-paid checkout left an amount due (gift card or points changed during checkout)',
+          actor: null,
+        })
+        throw new AppError(
+          'PAYMENT_NOT_COVERED',
+          'Your gift card or points changed while we placed your order, so your wallet no longer covers it. Nothing was charged — please check your order and try again.',
+          409,
+        )
+      }
+    }
+
+    // Nothing left to collect (ONL-R2-06): a bill the gift card, wallet or
+    // points covered in full leaves a PKR 0 pending row behind (ingestOrder
+    // writes one for every order; the redeems lower it to 0). It is not a
+    // payment — the rider / counter cash-due list showed it as "PKR 0 to
+    // collect". Drop it; the order's value is booked from its own figures.
+    await prisma.payment.deleteMany({ where: { orderId: order.id, status: 'pending', amountCents: { lte: 0 } } })
 
     // QR conversion tracking
     // Only a QR code of THIS order's brand is credited — a client-supplied id
@@ -949,7 +1170,18 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       }).catch(() => {})
     }
 
-    return reply.status(201).send({ ...order, promoDiscountCents, walletAmountCents, loyaltyPointsRedeemed, loyaltyDiscountCents })
+    // The order as it now stands — tip, gift card, wallet and points all
+    // applied (ONL-03: this returned the in-memory row from before the tip,
+    // so the confirmation showed the pre-tip total).
+    const placed = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: { items: { include: { modifiers: true } }, concept: true },
+    })
+    return reply.status(201).send({
+      ...placed,
+      promoDiscountCents, walletAmountCents, loyaltyPointsRedeemed, loyaltyDiscountCents,
+      giftCardAppliedCents, giftCardError,
+    })
   })
 
   // POST /storefront/orders/:id/arrived — customer marks "I'm here" for a
@@ -1113,7 +1345,11 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   })
 
   // GET /storefront/account — customer profile + loyalty + wallet + referrals
-  fastify.get('/account', { preHandler: requireCustomerAuth }, async (req) => {
+  // Loyalty accounts are per company (one per customer per company).
+  // `loyaltyAccount` stays in the response for the pages that read it: the
+  // account at the company of ?conceptSlug= (checkout passes its brand), else
+  // at the company the customer last ordered from. `loyaltyAccounts` has all.
+  fastify.get<{ Querystring: { conceptSlug?: string } }>('/account', { preHandler: requireCustomerAuth }, async (req) => {
     const customer = await prisma.customer.findUnique({
       where: { id: req.customer!.id },
       select: {
@@ -1121,12 +1357,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         phoneVerifiedAt: true, emailVerifiedAt: true,
         marketingOptIn: true, birthdayMmDd: true,
         firstOrderAt: true, lastOrderAt: true,
-        totalSpentCents: true, walletBalance: true,
+        totalSpentCents: true,
         isBlacklisted: true, createdAt: true,
         // Referral fields surfaced so the storefront /account can render the
         // share box ("Invite friends, get 200 pts each").
         referralCode: true, referredAt: true, referralRewardCreditedAt: true,
-        loyaltyAccount: true,
+        loyaltyAccounts: true,
         orders: {
           orderBy: { placedAt: 'desc' },
           take: 10,
@@ -1135,15 +1371,41 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
             concept: { select: { name: true } },
           },
         },
-        walletTransactions: {
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: { id: true, type: true, amountCents: true, balanceAfter: true, description: true, createdAt: true },
-        },
       },
     })
     if (!customer) throw new NotFoundError('Customer')
-    return customer
+    const { loyaltyCompanyOf, companyOfConceptSlug } = await import('../loyalty/service.js')
+    const tenantId = (await companyOfConceptSlug(req.query.conceptSlug)) ?? (await loyaltyCompanyOf(customer.id))
+    const loyaltyAccount = customer.loyaltyAccounts.find((a) => a.tenantId === tenantId) ?? null
+    // The wallet is per company too (ONL-R2-01): `walletBalance` and
+    // `walletTransactions` are the wallet at the same company as
+    // `loyaltyAccount` — the one that can pay at this brand. `wallets` lists
+    // every company's balance (each spendable only at its own brands).
+    const wallets = await prisma.customerWallet.findMany({
+      where: { customerId: customer.id },
+      orderBy: { createdAt: 'asc' },
+      select: { tenantId: true, balanceCents: true },
+    })
+    const companyNames = new Map((await prisma.tenant.findMany({
+      where: { id: { in: wallets.map((w) => w.tenantId) } },
+      select: { id: true, name: true },
+    })).map((t) => [t.id, t.name]))
+    const walletTransactions = tenantId
+      ? await prisma.walletTransaction.findMany({
+          where: { customerId: customer.id, tenantId },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: { id: true, type: true, amountCents: true, balanceAfter: true, description: true, createdAt: true },
+        })
+      : []
+    return {
+      ...customer,
+      loyaltyAccount,
+      walletTenantId: tenantId,
+      walletBalance: Math.max(0, wallets.find((w) => w.tenantId === tenantId)?.balanceCents ?? 0),
+      walletTransactions,
+      wallets: wallets.map((w) => ({ ...w, companyName: companyNames.get(w.tenantId) ?? null })),
+    }
   })
 
   // GET /storefront/my-reservations — upcoming + recent reservations for the
@@ -1193,19 +1455,18 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   // GET /storefront/my-perks — tier perks the customer has unlocked. Used
   // by the /account page to render the "what your tier gets you" panel and
   // by mobile to show the same.
-  fastify.get('/my-perks', { preHandler: requireCustomerAuth }, async (req) => {
+  fastify.get<{ Querystring: { conceptSlug?: string } }>('/my-perks', { preHandler: requireCustomerAuth }, async (req) => {
     const { getTierPerks } = await import('../../lib/tierPerks.js')
-    const { tierStatus, loyaltyCompanyOf } = await import('../loyalty/service.js')
+    const { tierStatus, loyaltyCompanyOf, loyaltyAccountOf, companyOfConceptSlug } = await import('../loyalty/service.js')
     const customerId = req.customer!.id
-    const account = await prisma.loyaltyAccount.findUnique({
-      where: { customerId },
-      select: { pointsBalance: true, lifetimePoints: true, tier: true },
-    })
+    // Accounts and tier ladders are per company: the brand's company when a
+    // slug is given, else the company the customer last ordered from.
+    const tenantId = (await companyOfConceptSlug(req.query.conceptSlug)) ?? (await loyaltyCompanyOf(customerId))
+    const account = await loyaltyAccountOf(customerId, tenantId)
     if (!account) return { tier: 'bronze', pointsBalance: 0, lifetimePoints: 0, perks: null, nextTier: null }
 
     // Tiers are the company's ladder and unlock on lifetime spend (owner
     // decision 13); tierStatus knows the ladder, the spend and what is next.
-    const tenantId = await loyaltyCompanyOf(customerId)
     const status = await tierStatus(customerId, tenantId)
     const perks = await getTierPerks(account.tier, tenantId)
     const nextPerks = status.nextTier ? await getTierPerks(status.nextTier.slug, tenantId) : null
@@ -1240,13 +1501,14 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
 
     // Sum loyalty points earned from referrals, by reading transaction descriptions.
     // Relies on the worker's deterministic prefix; if missing, just shows 0.
-    const account = await prisma.loyaltyAccount.findUnique({
+    // Across the customer's accounts (one per company).
+    const accounts = await prisma.loyaltyAccount.findMany({
       where: { customerId: req.customer!.id },
       select: { id: true },
     })
-    const earnedPoints = account
+    const earnedPoints = accounts.length > 0
       ? await prisma.loyaltyTransaction.aggregate({
-          where: { loyaltyAccountId: account.id, description: { startsWith: 'Referral bonus:' } },
+          where: { loyaltyAccountId: { in: accounts.map((a) => a.id) }, description: { startsWith: 'Referral bonus:' } },
           _sum: { pointsDelta: true },
         }).then((r) => r._sum.pointsDelta ?? 0)
       : 0

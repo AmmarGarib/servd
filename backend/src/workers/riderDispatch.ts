@@ -8,7 +8,9 @@
 //      (often a rider without the app) is not overruled by a timer.
 //   2. Delivery orders (`fulfilmentType = 'delivery'`) with no rider, in
 //      `confirmed | preparing | ready`, placed in the last DISPATCH_WINDOW_MS,
-//      are offered to the nearest available rider — from the order's own
+//      (or, for a pre-order, scheduled inside the window and no later than
+//      its prep window from now — O-RV-3) are offered to the nearest
+//      available rider — from the order's own
 //      company or from a company with an active fleet agreement to deliver for
 //      it (lib/fleet.ts). A rider who declined that order is never offered it
 //      again; one whose offer timed out is tried only when nobody else is free.
@@ -38,6 +40,7 @@ import { haversineKm } from '../lib/geo.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { fleetCompaniesFor } from '../lib/fleet.js'
 import { assignRider, withdrawOffer, AUTO_OFFER_NOTE, RIDER_ACTIVE_STATUSES } from '../modules/dispatch/service.js'
+import { PRE_ORDER_PREP_MS } from '../modules/orders/service.js'
 
 const QUEUE_NAME = 'rider-dispatch'
 const RUN_EVERY_MS = 30_000
@@ -145,25 +148,41 @@ export async function expireStaleOffers(now = new Date()): Promise<string[]> {
 export async function runDispatchSweep(now = new Date()): Promise<void> {
   await expireStaleOffers(now)
 
-  const orders = await prisma.order.findMany({
+  // The window runs on the order's EFFECTIVE time — greatest(placedAt,
+  // scheduledFor) — and a pre-order is offered only once its prep window has
+  // opened (O-RV-3). Keyed on placedAt alone, a delivery pre-order the kitchen
+  // confirmed today for tomorrow was offered to a rider straight away, and one
+  // placed more than 6 h ahead was never offered when it was cooked.
+  const windowStart = new Date(now.getTime() - DISPATCH_WINDOW_MS)
+  const horizon = new Date(now.getTime() + PRE_ORDER_PREP_MS)
+  const found = await prisma.order.findMany({
     where: {
       fulfilmentType: 'delivery',
       riderId: null,
       deletedAt: null,
       deliveredAt: null,
       status: { in: [...DISPATCHABLE] },
-      placedAt: { gte: new Date(now.getTime() - DISPATCH_WINDOW_MS) },
+      AND: [
+        { OR: [{ placedAt: { gte: windowStart } }, { scheduledFor: { gte: windowStart } }] },
+        { OR: [{ scheduledFor: null }, { scheduledFor: { lte: horizon } }] },
+      ],
       concept: { tenantId: { not: null } },
     },
     orderBy: { placedAt: 'asc' },
     take: SWEEP_BATCH,
     select: {
       id: true,
+      placedAt: true,
+      scheduledFor: true,
       concept: { select: { latitude: true, longitude: true, tenantId: true } },
       location: { select: { latitude: true, longitude: true } },
     },
   })
-  if (orders.length === 0) return
+  if (found.length === 0) return
+  // Oldest effective time first.
+  const effective = (o: { placedAt: Date; scheduledFor: Date | null }) =>
+    Math.max(o.placedAt.getTime(), o.scheduledFor?.getTime() ?? 0)
+  const orders = [...found].sort((a, b) => effective(a) - effective(b))
 
   // Which companies' riders may carry each order's company's orders.
   const orderCompanies = [...new Set(orders.map((o) => o.concept.tenantId!))]

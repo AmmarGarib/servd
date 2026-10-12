@@ -8,11 +8,11 @@
 // Codes are 12 chars in groups of 4 (GS-XXXX-XXXX), generated from a 32-char
 // alphabet. Looked up case-insensitively.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
@@ -38,14 +38,31 @@ function generateCode(): string {
 // everywhere", and the list/void filters OR'd those cards in for every
 // company, so any company could read, void or drain another's open cards.
 
+// Who READS the register (wave 3, UI-07): the manager tiers plus finance, which
+// owns the Finance workspace and holds the 'gift_cards' module by default — the
+// /gift-cards prefix is module-gated on top (lib/moduleAccess.ts), so a role
+// without the module is still refused. The card's liability (2080) and every
+// redemption are finance's to reconcile. Voiding a card stays with MANAGERS:
+// it writes off a customer's balance.
+const GIFT_CARD_READERS = FINANCE_TEAM
+
+// A card's code is a bearer credential: whoever holds it can spend the
+// customer's balance through the ALL_STAFF redeem. Finance reconciles the 2080
+// liability and needs neither the code nor the buyer's / recipient's contact
+// details, so outside the manager tiers (who read the full register as before)
+// the code is masked to its last 4 and the emails and gift message are blanked
+// (review W3B-RV-2). The redeem engine still takes a code presented at the till.
+const FULL_CARD_READERS = new Set<string>(MANAGERS)
+const seesFullCard = (req: FastifyRequest) => FULL_CARD_READERS.has(req.staffUser!.role)
+export const maskGiftCardCode = (code: string) => `••••${code.slice(-4)}`
 
 export async function giftCardRoutes(fastify: FastifyInstance) {
   // List — the companies in view.
   fastify.get<{ Querystring: { status?: string } }>(
     '/',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...GIFT_CARD_READERS) },
     async (req) => {
-      return prisma.giftCard.findMany({
+      const cards = await prisma.giftCard.findMany({
         where: {
           ...(await scopeTenantWhere(req, 'read')),
           ...(req.query.status && { status: req.query.status as never }),
@@ -53,6 +70,39 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
         take: 100,
       })
+      if (seesFullCard(req)) return cards
+      return cards.map((c) => ({
+        ...c,
+        code: maskGiftCardCode(c.code),
+        buyerEmail: null, recipientEmail: null, buyerCustomerId: null, message: null,
+      }))
+    },
+  )
+
+  // One card's history — what was spent, against which order, and what was
+  // put back by a refund (reversedAt). The card must be one of the companies
+  // in view; another company's card is 404. This is the card's own ledger:
+  // the page used to send people to the accounting audit log for it, which
+  // finance cannot open (accounting_audit is CEO + management).
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/redemptions',
+    { preHandler: requireAuth(...GIFT_CARD_READERS) },
+    async (req) => {
+      const card = await prisma.giftCard.findFirst({
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
+        select: { id: true, code: true, issuedAmountCents: true, balanceCents: true, status: true, createdAt: true, voidedAt: true, voidReason: true },
+      })
+      if (!card) throw new NotFoundError('GiftCard', req.params.id)
+      const redemptions = await prisma.giftCardRedemption.findMany({
+        where: { giftCardId: card.id },
+        orderBy: { redeemedAt: 'desc' },
+        take: 200,
+        select: {
+          id: true, amountCents: true, balanceAfter: true, redeemedAt: true, reversedAt: true,
+          order: { select: { id: true, placedAt: true, status: true } },
+        },
+      })
+      return { card: seesFullCard(req) ? card : { ...card, code: maskGiftCardCode(card.code) }, redemptions }
     },
   )
 
