@@ -242,6 +242,31 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
   (`mobile/src/content/`). Keep the block schema in step across
   `frontend/storefront/src/lib/blocks.ts`, `frontend/admin/src/lib/blocks.ts`
   and `mobile/src/content/types.ts`.
+- **The live page in the editor (D4 stage 1, 2026-10-12).** The builder is
+  Layers | Add, the live page, and the inspector. The centre is an iframe of
+  the storefront route **`/editor-frame`**: the admin posts the UNSAVED draft
+  with `postMessage`, and the frame renders it through the real renderer via
+  a server action. The frame never fetches a draft, never counts
+  `SiteLayoutStat`, is noindex, and is framable ONLY by `ADMIN_ORIGINS`
+  (`frontend/storefront/src/lib/adminOrigins.ts` is the one definition; the
+  CSP is set in the middleware for that route only, `X-Frame-Options
+  SAMEORIGIN` everywhere else). The admin posts only to and accepts only from
+  `STOREFRONT_ORIGIN` (`NEXT_PUBLIC_STOREFRONT_URL`; prod default
+  `https://servd.pk`). The two protocol files must stay byte-identical:
+  `frontend/storefront/src/editor/protocol.ts` and
+  `frontend/admin/src/lib/editorProtocol.ts`. The storefront image must be
+  built with `NEXT_PUBLIC_SITE_URL=https://servd.pk` (server-action origin
+  check). Cloudflare must not add its own frame headers to `/editor-frame`.
+- **Scroll effects:** `block.motion = { preset, intensity }` (parallax, fade,
+  grow, pin-reveal, sticky-stack, side-pan, text-reveal × subtle/medium/strong),
+  independent of the one-shot entrance `animation`. FOUR copies stay in step:
+  storefront `lib/blocks.ts` (+ the one value table `lib/motion.ts`), admin
+  `lib/blocks.ts`, mobile `content/types.ts` (+ `content/motion.ts`, which maps
+  motion to an entrance animation for now), and the backend zod in
+  `modules/siteLayouts/schemas.ts`. Web uses CSS scroll-driven animations with
+  a small JS fallback; reduced motion = no effect. Offered on pages and
+  footers only; footers exclude pin-reveal and sticky-stack; Simmer pages
+  exclude text-reveal. No animation library.
 
 ## servd home is /home (owner, 2026-10-07)
 
