@@ -86,17 +86,17 @@ type Tab = 'pos' | 'bills' | 'payments' | 'suppliers' | 'aging' | 'reorder' | 'a
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: 'text-zinc-600 bg-s-elevated',
-  pending_approval: 'text-amber-700 bg-amber-100/40',
-  approved: 'text-sky-700 bg-sky-100',
+  draft: 'text-s-muted bg-s-elevated',
+  pending_approval: 'text-s-amber bg-amber-100/40',
+  approved: 'text-success bg-accent-dim',
   sent: 'text-blue-700 bg-blue-100/40',
-  partial: 'text-purple-700 bg-purple-100/40',
-  received: 'text-primary-ink bg-green-100/40',
-  cancelled: 'text-zinc-500 bg-zinc-100/60',
-  open: 'text-amber-700 bg-amber-100/40',
-  partially_paid: 'text-purple-700 bg-purple-100/40',
-  paid: 'text-primary-ink bg-green-100/40',
-  void: 'text-zinc-500 bg-zinc-100/60',
+  partial: 'text-primary-ink bg-primary/10',
+  received: 'text-success bg-accent-dim',
+  cancelled: 'text-s-muted bg-s-elevated',
+  open: 'text-s-amber bg-amber-100/40',
+  partially_paid: 'text-primary-ink bg-primary/10',
+  paid: 'text-success bg-accent-dim',
+  void: 'text-s-muted bg-s-elevated',
   overdue: 'text-s-red bg-red-100/40',
 }
 
@@ -151,7 +151,7 @@ export default function ProcurementPage() {
         {tabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg border-b-2 whitespace-nowrap transition-colors
-              ${tab === t.id ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
+              ${tab === t.id ? 'border-accent text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
             <span>{t.icon}</span>{t.label}
           </button>
         ))}
@@ -222,7 +222,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           {statuses.map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-                ${statusFilter === s ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
+                ${statusFilter === s ? 'bg-accent-dim border border-accent text-s-text' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
               {s || 'All'}
             </button>
           ))}
@@ -339,7 +339,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             <div className="flex gap-2">
               <button disabled={!rejectReason || actionMut.isPending}
                 onClick={() => { actionMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason } }); setRejectId(null); setRejectReason('') }}
-                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Reject
               </button>
               <button onClick={() => { setRejectId(null); setRejectReason('') }}
@@ -390,7 +390,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             <div className="flex gap-2">
               <button disabled={!cancelReason || actionMut.isPending}
                 onClick={() => { actionMut.mutate({ id: cancelId, action: 'cancel', body: { reason: cancelReason } }); setCancelId(null); setCancelReason('') }}
-                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Cancel PO
               </button>
               <button onClick={() => { setCancelId(null); setCancelReason('') }}
@@ -410,7 +410,7 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   const canReceive = isManager && !ownPo
   const actions: { label: string; action: string; cls: string; title?: string }[] = []
   if (po.status === 'draft') {
-    actions.push({ label: 'Submit', action: 'submit', cls: 'text-amber-700 hover:text-amber-700' })
+    actions.push({ label: 'Submit', action: 'submit', cls: 'text-s-amber hover:text-s-amber' })
   }
   if (po.status === 'pending_approval') {
     actions.push({ label: 'Approve', action: 'approve', cls: 'text-primary-ink hover:opacity-80' })
@@ -608,13 +608,13 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           {statuses.map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-                ${statusFilter === s && !overdue ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
+                ${statusFilter === s && !overdue ? 'bg-accent-dim border border-accent text-s-text' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
               {s || 'All'}
             </button>
           ))}
           <button onClick={() => { setOverdue(!overdue); setStatusFilter('') }}
             className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-              ${overdue ? 'bg-s-red text-[#fff]' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
+              ${overdue ? 'bg-s-red text-bone' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
             Overdue
           </button>
         </div>
@@ -701,7 +701,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             <div className="flex gap-2">
               <button disabled={!voidReason || voidMut.isPending}
                 onClick={() => voidMut.mutate({ id: voidId, reason: voidReason })}
-                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Void
               </button>
               <button onClick={() => { setVoidId(null); setVoidReason('') }}
@@ -869,7 +869,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                   <td className="px-4 py-3 text-s-muted hidden md:table-cell capitalize">{p.method.replace(/_/g, ' ')}</td>
                   <td className="px-4 py-3 text-s-muted font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
                   <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(p.amountCents)}</td>
-                  <td className={`px-4 py-3 text-right font-semibold ${p.amountCents - p.appliedCents > 0 ? 'text-amber-700' : 'text-s-muted'}`}>
+                  <td className={`px-4 py-3 text-right font-semibold ${p.amountCents - p.appliedCents > 0 ? 'text-s-amber' : 'text-s-muted'}`}>
                     {fmtPkrWhole(p.amountCents - p.appliedCents)}
                   </td>
                   <td className="px-4 py-3">
@@ -1107,7 +1107,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               <p className="text-xs text-s-muted">Opening balance (included above)</p>
               <p className="text-sm font-semibold text-s-text">{fmtPkrWhole(statement.supplier.openingBalanceCents)}</p>
               {(statement.openingUnpostedCents ?? 0) !== 0 && (
-                <p className="text-[11px] text-amber-700">{fmtPkrWhole(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
+                <p className="text-[11px] text-s-amber">{fmtPkrWhole(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
               )}
             </div>
           </div>
@@ -1131,7 +1131,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                   <div key={p.id} className="flex items-center justify-between text-xs">
                     <span className="text-s-muted">{fmt(p.paymentDate)}</span>
                     <span className="text-s-text capitalize">{p.method.replace(/_/g, ' ')}</span>
-                    <span className="text-primary-ink font-semibold">{fmtPkrWhole(p.amountCents)}</span>
+                    <span className="text-success font-semibold">{fmtPkrWhole(p.amountCents)}</span>
                   </div>
                 ))}
               </div>
@@ -1249,7 +1249,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
-      {err && <p className="text-xs font-bold text-red-700 pt-1">{err}</p>}
+      {err && <p className="text-xs font-bold text-s-red pt-1">{err}</p>}
       <div className="flex gap-2 pt-2 border-t border-s-border">
         <button onClick={submit} disabled={!form.name || mut.isPending}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
@@ -1323,7 +1323,7 @@ function ReorderTab() {
                   </td>
                   <td className="px-4 py-3 text-right text-s-red font-bold">{item.currentStock} {item.unit}</td>
                   <td className="px-4 py-3 text-right text-s-muted">{item.parLevel} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-amber-700 font-semibold">{item.reorderQty} {item.unit}</td>
+                  <td className="px-4 py-3 text-right text-s-amber font-semibold">{item.reorderQty} {item.unit}</td>
                   <td className="px-4 py-3 text-right text-s-muted hidden md:table-cell">{estCost != null ? fmtPkrWhole(estCost * 100) : '—'}</td>
                   <td className="px-4 py-3 text-s-muted text-xs hidden md:table-cell">
                     {item.suppliers?.map((s) => s.name).join(', ') ?? '—'}
@@ -1400,7 +1400,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <EmptyState icon="✅" title="No pending approvals" sub="All purchase orders have been reviewed" />
       ) : (
         <>
-          <p className="text-sm font-bold text-amber-700">{orders.length} PO{orders.length !== 1 ? 's' : ''} awaiting approval</p>
+          <p className="text-sm font-bold text-s-amber">{orders.length} PO{orders.length !== 1 ? 's' : ''} awaiting approval</p>
           <div className="rounded-xl border border-amber-900/40 overflow-hidden">
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1448,7 +1448,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             <div className="flex gap-2">
               <button disabled={!rejectReason || approveRejectMut.isPending}
                 onClick={() => { approveRejectMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason } }); setRejectId(null) }}
-                className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Reject
               </button>
               <button onClick={() => setRejectId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>

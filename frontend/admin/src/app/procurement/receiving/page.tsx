@@ -194,9 +194,9 @@ export default function ReceivingPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-primary-rgb) / 0.1)',
-              color: feedback.tone === 'warn' ? '#a15c00' : 'var(--erp-primary-ink)',
-              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
+              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
+              color: feedback.tone === 'warn' ? 'var(--erp-warning)' : 'var(--erp-success)',
+              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
             }}>
             {feedback.text}
           </div>
@@ -223,7 +223,7 @@ export default function ReceivingPage() {
                     <div key={po.id} className="rounded-lg p-3"
                       style={{
                         background: 'rgb(var(--fg-rgb) / 0.025)',
-                        border: `1px solid ${po.id === wantedPo ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
+                        border: `1px solid ${po.id === wantedPo ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
                       }}>
                       <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
                       <p className="text-xs text-white/45">{po.supplier.name}{po.status === 'partial' ? ' · part-received' : ''}</p>
@@ -246,7 +246,7 @@ export default function ReceivingPage() {
         {canReceive && (<>
         <Section title="Step 1 — Match to a PO (or take a delivery without one)">
           {selectedPo ? (
-            <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
+            <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.12)', border: '1px solid var(--erp-accent)' }}>
               <div>
                 <p className="text-sm font-bold text-white/90">{poLabel(selectedPo)} · {selectedPo.supplier.name}</p>
                 <p className="text-xs text-white/45">{selectedPo.status === 'partial' ? 'Part-received — showing what is still outstanding' : 'Sent'}</p>
@@ -314,7 +314,7 @@ export default function ReceivingPage() {
                     className={fieldCls + ' w-24'} placeholder="Recv" />
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-white/45 w-10">{l.unit}</span>
-                    {!poId && <button onClick={() => rmLine(l.key)} className="text-white/30 hover:text-red-700 text-sm px-2" aria-label="Remove line">×</button>}
+                    {!poId && <button onClick={() => rmLine(l.key)} className="text-white/30 hover:text-s-red text-sm px-2" aria-label="Remove line">×</button>}
                   </div>
                 </div>
                 {!l.poLineId && (
@@ -325,7 +325,7 @@ export default function ReceivingPage() {
                   </div>
                 )}
                 {variance != null && Math.abs(variance) > 0.5 && (
-                  <p className="text-[11px] font-bold" style={{ color: flag ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.55)' }}>
+                  <p className="text-[11px] font-bold" style={{ color: flag ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.55)' }}>
                     {variance > 0 ? '+' : ''}{variance.toFixed(1)}% {flag ? '— will flag' : ''}
                   </p>
                 )}
@@ -369,7 +369,7 @@ export default function ReceivingPage() {
               <div key={r.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-xs"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                 <span className="text-white/75">{new Date(r.receivedAt).toLocaleString()} · {supplierName.get(r.supplierId) ?? 'Supplier'}</span>
-                <span className="text-white/45">{r.poId ? 'PO' : 'No PO'} · {r.lines.length} lines · <span style={{ color: r.varianceFlag ? '#a15c00' : undefined }}>{r.status}</span></span>
+                <span className="text-white/45">{r.poId ? 'PO' : 'No PO'} · {r.lines.length} lines · <span style={{ color: r.varianceFlag ? 'var(--erp-warning)' : undefined }}>{r.status}</span></span>
               </div>
             ))}
           </div>
@@ -390,6 +390,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function ErrorBanner({ label, error }: { label: string; error: unknown }) {
   const msg = error instanceof Error ? error.message : 'Something went wrong'
-  return <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#b42318' }}><strong>{label}</strong> {msg}</div>
+  return <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--erp-danger)' }}><strong>{label}</strong> {msg}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

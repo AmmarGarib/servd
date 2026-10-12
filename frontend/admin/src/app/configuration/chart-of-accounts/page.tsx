@@ -16,10 +16,10 @@ interface Account {
 
 const TYPE_COLOR: Record<AccountType, { bg: string; fg: string }> = {
   asset:     { bg: 'rgb(var(--erp-primary-rgb) / 0.12)', fg: 'var(--erp-primary)' },
-  liability: { bg: 'rgba(245,158,11,0.12)', fg: '#a15c00' },
+  liability: { bg: 'rgba(245,158,11,0.12)', fg: 'var(--erp-warning)' },
   equity:    { bg: 'rgb(var(--ink-rgb) / 0.12)', fg: 'var(--erp-primary-ink)' },
-  revenue:   { bg: 'rgba(34,197,94,0.12)', fg: '#3f7d20' },
-  expense:   { bg: 'rgba(239,68,68,0.12)', fg: '#b42318' },
+  revenue:   { bg: 'rgb(var(--erp-accent-rgb) / 0.18)', fg: 'var(--erp-success)' },
+  expense:   { bg: 'rgba(239,68,68,0.12)', fg: 'var(--erp-danger)' },
 }
 
 export default function ChartOfAccountsPage() {
@@ -124,7 +124,7 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={fieldCls} placeholder="What goes here vs other accounts" /></Field>
           {account && (
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
               <span className="text-xs text-white/65">Active</span>
             </label>
           )}

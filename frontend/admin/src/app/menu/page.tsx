@@ -120,7 +120,7 @@ export default function MenuPage() {
         {(Object.keys(VIEW_LABEL) as MenuView[]).map((v) => (
           <button key={v} onClick={() => setView(v)}
             className={`rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              view === v ? 'border-primary text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'
+              view === v ? 'border-accent text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'
             }`}>
             {VIEW_LABEL[v]}
           </button>
@@ -369,7 +369,7 @@ function Switch({ value, onChange, disabled, label }: { value: boolean; onChange
   return (
     <button type="button" role="switch" aria-checked={value} aria-label={label} title={label}
       disabled={disabled} onClick={() => onChange(!value)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-primary' : 'bg-s-border'}`}>
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-accent' : 'bg-s-border'}`}>
       <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-s-surface shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   )

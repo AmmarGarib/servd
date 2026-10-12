@@ -91,13 +91,13 @@ function Statement({ data }: { data: PL }) {
       <div className="s-card p-4 mb-4">
         <div className="flex justify-between text-base font-bold">
           <span className="text-s-text">Gross Profit</span>
-          <span className="text-primary-ink">{fmtPkr(data.totals.grossProfitCents)} ({data.totals.grossMarginPct}%)</span>
+          <span className="text-success">{fmtPkr(data.totals.grossProfitCents)} ({data.totals.grossMarginPct}%)</span>
         </div>
       </div>
 
       <Section title="Operating Expenses" rows={data.opex} total={data.totals.opexCents} neg />
 
-      <div className="s-card p-4 border-2 border-s-teal">
+      <div className="s-card p-4 border-2 border-accent">
         <div className="flex justify-between text-lg font-bold">
           <span className="text-s-text">Net Profit</span>
           <span className={data.totals.netProfitCents >= 0 ? 'text-success' : 'text-s-red'}>
@@ -220,7 +220,7 @@ export default function PLLedgerPage() {
               <button key={p.key} onClick={() => applyPreset(p.key)}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                   preset === p.key
-                    ? 'bg-s-teal-dim border border-s-teal/40 text-primary-ink'
+                    ? 'bg-accent-dim border border-accent text-s-text'
                     : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'
                 }`}>
                 {p.label}
@@ -238,7 +238,7 @@ export default function PLLedgerPage() {
           {([['statement', 'Statement'], ['brands', 'By brand']] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                tab === k ? 'border-s-teal text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'
+                tab === k ? 'border-accent text-primary-ink' : 'border-transparent text-s-muted hover:text-s-text'
               }`}>
               {label}
             </button>

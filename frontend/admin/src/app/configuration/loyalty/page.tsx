@@ -194,7 +194,7 @@ function SettingsForm({ settings, onSaved }: { settings: LoyaltySettings; onSave
       </div>
 
       <div className="flex items-center justify-between pt-3 border-t border-s-border/60">
-        <div className="text-xs text-s-dim">
+        <div className={`text-xs ${dirty ? 'text-s-dim' : 'text-success'}`}>
           {dirty ? '· unsaved changes' : '· in sync'}
         </div>
         <div className="flex items-center gap-3">
@@ -339,7 +339,7 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
 
   return (
     <div className={`p-5 ${isNew ? 'rounded-xl border border-s-teal bg-s-teal-dim/30' : 'border-t border-s-border bg-s-bg/30'} space-y-5`}>
-      {isNew && <p className="text-xs font-bold text-primary-ink">+ New tier</p>}
+      {isNew && <p className="text-xs font-bold text-success">+ New tier</p>}
 
       {/* Identity */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

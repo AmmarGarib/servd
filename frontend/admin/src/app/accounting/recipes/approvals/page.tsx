@@ -111,7 +111,7 @@ export default function RecipeApprovalsPage() {
           </div>
         )}
         {(approve.isError || reject.isError) && (
-          <p className="mt-3 text-xs text-red-700">
+          <p className="mt-3 text-xs text-s-red">
             {(approve.error as Error)?.message ?? (reject.error as Error)?.message}
           </p>
         )}

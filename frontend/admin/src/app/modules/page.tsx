@@ -32,7 +32,7 @@ export default function WorkspacesPage() {
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="px-6 pt-8 pb-6 max-w-6xl mx-auto">
-        <p className="text-xs uppercase tracking-[0.18em] text-s-muted">
+        <p className="text-xs uppercase tracking-[0.18em] text-success">
           {user?.name ? `Welcome back, ${user.name.split(' ')[0]}` : 'servd'}
         </p>
         <h1 className="text-3xl font-black text-s-text mt-1">Workspaces</h1>
@@ -49,7 +49,7 @@ export default function WorkspacesPage() {
           const open = mine.has(w.id)
           return (
             <section key={w.id} className="rounded-2xl p-5"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: `1px solid ${open ? 'rgb(var(--erp-primary-rgb) / 0.22)' : 'rgb(var(--fg-rgb) / 0.07)'}` }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: `1px solid ${open ? 'rgb(var(--erp-accent-rgb) / 0.5)' : 'rgb(var(--fg-rgb) / 0.07)'}` }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-black text-s-text">{w.title}</h2>
@@ -92,7 +92,7 @@ export default function WorkspacesPage() {
                         })}
                       </div>
                       {gaps.map((g) => (
-                        <p key={g.module} className="text-[10.5px] mt-2 leading-snug" style={{ color: 'rgba(245,158,11,0.85)' }}>
+                        <p key={g.module} className="text-[10.5px] mt-2 leading-snug" style={{ color: 'var(--erp-warning)' }}>
                           {g.note}
                         </p>
                       ))}

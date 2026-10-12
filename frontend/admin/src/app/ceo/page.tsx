@@ -35,7 +35,7 @@ export default function CeoHomePage() {
 
   return (
     <Shell>
-      <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">Workspace</p>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-success">Workspace</p>
       <h1 className="text-3xl font-black text-white/90">CEO</h1>
       <p className="text-sm text-white/50 mt-1 max-w-2xl">
         Approvals, your companies, who can sign in and what they can open, and the rules every branch runs on.

@@ -321,7 +321,7 @@ export default function InventoryPage() {
           ] as { key: Tab; label: string }[]).map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
-                ${tab === t.key ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
+                ${tab === t.key ? 'border-accent text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
               {t.label}
             </button>
           ))}
@@ -448,7 +448,7 @@ export default function InventoryPage() {
               <div className="flex gap-2">
                 <button onClick={() => wasteMutation.mutate(wasteItemId)}
                   disabled={!wasteForm.quantity || wasteMutation.isPending || photoBusy}
-                  className="rounded-xl bg-s-red text-[#fff] font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                  className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {wasteMutation.isPending ? 'Logging…' : 'Log waste & deduct stock'}
                 </button>
                 <button onClick={closeWaste}
@@ -556,7 +556,7 @@ export default function InventoryPage() {
             alerts.length === 0 ? (
               <div className="text-center py-16 text-s-muted">
                 <p className="text-4xl mb-3">✅</p>
-                <p className="font-semibold text-s-text">All stocked up</p>
+                <p className="font-semibold text-success">All stocked up</p>
                 <p className="text-sm mt-1">No items are below par level</p>
               </div>
             ) : (

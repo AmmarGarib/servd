@@ -76,8 +76,8 @@ export default function ParSheetPage() {
             {rows.length > 0 && (
               <div className="rounded-xl px-3 py-2 text-center"
                 style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
-                <p className="text-[9px] uppercase tracking-wider font-black text-red-700">Not made</p>
-                <p className="text-xl font-black text-red-700 leading-none mt-0.5">{notMade}</p>
+                <p className="text-[9px] uppercase tracking-wider font-black text-s-red">Not made</p>
+                <p className="text-xl font-black text-s-red leading-none mt-0.5">{notMade}</p>
               </div>
             )}
           </div>
@@ -94,7 +94,7 @@ export default function ParSheetPage() {
             <button key={k} onClick={() => setMadeFilter(k)}
               className="rounded-full px-3 py-1 text-[11px] font-bold transition-colors"
               style={madeFilter === k
-                ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', boxShadow: 'inset 0 0 0 1px var(--erp-accent)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
               {label}
             </button>
@@ -125,7 +125,7 @@ export default function ParSheetPage() {
             style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <table className="w-full text-sm border-collapse min-w-[640px]">
               <thead>
-                <tr style={{ background: 'rgba(15,17,22,0.95)' }}>
+                <tr style={{ background: 'var(--elevated)' }}>
                   {['Sub-recipe', 'One batch', 'Made', 'Batches', 'Last batch', ''].map((h, i) => (
                     <th key={i} className={`${i === 0 ? 'text-left px-4' : 'text-center px-3'} py-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/45`}
                       style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>{h}</th>
@@ -142,7 +142,7 @@ export default function ParSheetPage() {
                     </td>
                     <td className="px-3 py-2.5 text-center text-white/60 tabular-nums">{grams(r.batchYieldGrams)}</td>
                     <td className="px-3 py-2.5 text-center font-bold tabular-nums"
-                      style={{ color: r.batches > 0 ? '#3f7d20' : '#b42318' }}>
+                      style={{ color: r.batches > 0 ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
                       {r.batches > 0 ? grams(r.madeGrams) : 'Nothing made'}
                     </td>
                     <td className="px-3 py-2.5 text-center text-white/60 tabular-nums">{r.batches}</td>

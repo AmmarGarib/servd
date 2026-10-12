@@ -122,8 +122,8 @@ export default function EmailSettingsPage() {
       <div className="p-6 max-w-2xl mx-auto space-y-4">
         {isLoading && <p className="text-xs text-s-muted">Loading…</p>}
         {data && (
-          <div className={`s-card p-4 ${data.configured ? 'border-emerald-300' : 'border-amber-300'}`}>
-            <p className="text-sm font-semibold text-s-text">
+          <div className={`s-card p-4 ${data.configured ? 'border-accent' : 'border-amber-300'}`}>
+            <p className={`text-sm font-semibold ${data.configured ? 'text-success' : 'text-s-text'}`}>
               {data.configured ? 'Email configured' : 'No backup channel'}
             </p>
             <p className="text-xs text-s-muted mt-1">
@@ -164,7 +164,7 @@ export default function EmailSettingsPage() {
             className="px-4 py-2 rounded bg-secondary text-secondary-on text-sm font-semibold disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
-          {save.isSuccess && <span className="ml-3 text-xs text-emerald-700">Saved.</span>}
+          {save.isSuccess && <span className="ml-3 text-xs font-semibold text-success">Saved.</span>}
           {save.isError && <span className="ml-3 text-xs text-red-700">{(save.error as Error).message}</span>}
           {/* The server saves even without SERVD_SECRET_KEY (email is the fallback
               channel) and says so here; an older API sends no warning. */}
@@ -185,7 +185,7 @@ export default function EmailSettingsPage() {
             </button>
           </div>
           {result && (
-            <p className={`text-xs ${result.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+            <p className={`text-xs ${result.ok ? 'text-success' : 'text-red-700'}`}>
               {result.ok ? 'Sent. Check the inbox (and spam).' : `Failed — ${result.error}`}
             </p>
           )}

@@ -155,7 +155,7 @@ function Modal({ zone, concepts, onClose, onSaved }: { zone: Zone | null; concep
           </div>
           {zone && (
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
               <span className="text-xs text-white/65">Active</span>
             </label>
           )}

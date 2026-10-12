@@ -214,7 +214,7 @@ function AddAsset({ reg, concepts, onClose }: { reg: Register; concepts: Concept
       {f.funding === 'existing' && (
         <p className="text-[11px] text-white/45 mt-3">Already owned: enters the books against owner&rsquo;s capital. Use the original purchase date and cost, and depreciation catches up as you charge each month.</p>
       )}
-      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
+      {err && <p className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button onClick={() => save.mutate()} disabled={save.isPending || !f.name || !f.cost}
           className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">{save.isPending ? 'Saving…' : 'Add to register'}</button>
@@ -242,8 +242,8 @@ function Dispose({ asset, onClose }: { asset: Asset; onClose: () => void }) {
         <label className="block"><span className="text-[11px] font-bold text-white/50">Date</span><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Sold for (PKR, 0 if scrapped)</span><input type="number" min={0} className={inp} value={proceeds} onChange={(e) => setProceeds(e.target.value)} /></label>
       </div>
-      <p className="text-xs mt-3" style={{ color: gl >= 0 ? '#3f7d20' : '#b42318' }}>{gl >= 0 ? `Gain of ${fmtPkrWhole(gl)}` : `Loss of ${fmtPkrWhole(-gl)}`}</p>
-      {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
+      <p className="text-xs mt-3" style={{ color: gl >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)' }}>{gl >= 0 ? `Gain of ${fmtPkrWhole(gl)}` : `Loss of ${fmtPkrWhole(-gl)}`}</p>
+      {err && <p className="text-xs text-s-red mt-2">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button onClick={() => go.mutate()} disabled={go.isPending} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">{go.isPending ? 'Posting…' : 'Dispose'}</button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>

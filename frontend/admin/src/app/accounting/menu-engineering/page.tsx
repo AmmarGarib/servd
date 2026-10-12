@@ -21,10 +21,10 @@ interface MenuEngineeringItem {
 }
 
 const QUADRANT_META = {
-  star:      { label: 'Stars',       color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.08)',  border: 'rgb(var(--erp-primary-rgb) / 0.25)', desc: 'High popularity · High margin — promote & protect' },
+  star:      { label: 'Stars',       color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.12)',  border: 'rgb(var(--erp-accent-rgb) / 0.45)', desc: 'High popularity · High margin — promote & protect' },
   plowHorse: { label: 'Plowhorses', color: 'var(--erp-secondary)', bg: 'rgb(var(--ink-rgb) / 0.08)', border: 'rgb(var(--ink-rgb) / 0.25)', desc: 'High popularity · Low margin — reduce cost or reprice' },
-  puzzle:    { label: 'Puzzles',    color: '#a15c00', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.25)', desc: 'Low popularity · High margin — reposition or bundle' },
-  dog:       { label: 'Dogs',       color: '#b42318', bg: 'rgba(255,77,79,0.08)',   border: 'rgba(255,77,79,0.25)',  desc: 'Low popularity · Low margin — consider removing' },
+  puzzle:    { label: 'Puzzles',    color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.25)', desc: 'Low popularity · High margin — reposition or bundle' },
+  dog:       { label: 'Dogs',       color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.08)',   border: 'rgba(255,77,79,0.25)',  desc: 'Low popularity · Low margin — consider removing' },
 }
 
 function toDateInput(d: Date) { return d.toISOString().split('T')[0]! }
@@ -196,7 +196,7 @@ export default function MenuEngineeringPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>{item.qtySold}</td>
-                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: item.grossMarginPct >= 0 ? 'var(--erp-success)' : '#b42318' }}>{item.hasRecipe ? `${item.grossMarginPct.toFixed(1)}%` : '—'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: item.grossMarginPct >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)' }}>{item.hasRecipe ? `${item.grossMarginPct.toFixed(1)}%` : '—'}</td>
                       <td className="px-4 py-3 text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>{rec}</td>
                     </tr>
                   )

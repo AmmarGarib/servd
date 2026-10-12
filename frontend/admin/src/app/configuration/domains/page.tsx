@@ -39,10 +39,10 @@ interface Domain {
 }
 
 const STATUS_META: Record<Domain['status'], { label: string; color: string; bg: string }> = {
-  pending:  { label: 'Pending DNS', color: '#a15c00', bg: 'rgba(245,158,11,0.1)' },
-  verified: { label: 'Verified',    color: '#3f7d20', bg: 'rgba(34,197,94,0.1)' },
-  active:   { label: '✓ Live',      color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.12)' },
-  failed:   { label: 'DNS not found', color: '#b42318', bg: 'rgba(255,77,79,0.1)' },
+  pending:  { label: 'Pending DNS', color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.1)' },
+  verified: { label: 'Verified',    color: 'var(--erp-success)', bg: 'var(--erp-accent-dim)' },
+  active:   { label: '✓ Live',      color: 'var(--erp-on-accent)', bg: 'var(--erp-accent)' },
+  failed:   { label: 'DNS not found', color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.1)' },
   disabled: { label: 'Disabled',    color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.05)' },
 }
 
@@ -244,13 +244,13 @@ function DnsRecordCard({ label, record }: { label: string; record: DnsRecord }) 
         <span className="text-white/40 uppercase font-bold tracking-wider">Host:</span>
         <code className="font-mono text-white/85 truncate">{record.host}</code>
         <button onClick={() => copy(record.host, 'host')}
-          className="text-[10px] font-bold text-primary-ink hover:underline">
+          className={`text-[10px] font-bold hover:underline ${copied === 'host' ? 'text-success' : 'text-primary-ink'}`}>
           {copied === 'host' ? '✓ Copied' : 'Copy'}
         </button>
         <span className="text-white/40 uppercase font-bold tracking-wider">Value:</span>
         <code className="font-mono text-white/85 truncate">{record.value}</code>
         <button onClick={() => copy(record.value, 'value')}
-          className="text-[10px] font-bold text-primary-ink hover:underline">
+          className={`text-[10px] font-bold hover:underline ${copied === 'value' ? 'text-success' : 'text-primary-ink'}`}>
           {copied === 'value' ? '✓ Copied' : 'Copy'}
         </button>
         <span className="text-white/40 uppercase font-bold tracking-wider">TTL:</span>
@@ -358,8 +358,8 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
                 <button key={opt.key} onClick={() => setPurpose(opt.key as 'order' | 'brand_microsite')}
                   className="flex-1 rounded-lg px-3 py-2 text-left transition-colors"
                   style={{
-                    background: purpose === opt.key ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.03)',
-                    border: purpose === opt.key ? '1px solid rgb(var(--erp-primary-rgb) / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.08)',
+                    background: purpose === opt.key ? 'var(--erp-accent-dim)' : 'rgb(var(--fg-rgb) / 0.03)',
+                    border: purpose === opt.key ? '1px solid var(--erp-accent)' : '1px solid rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <p className="text-xs font-bold text-white/85">{opt.label}</p>
                   <p className="text-[10px] text-white/45 mt-0.5">{opt.desc}</p>

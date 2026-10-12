@@ -168,7 +168,7 @@ export default function SupplierChatPage() {
                 key={c.id}
                 onClick={() => setSelectedId(c.id)}
                 className={`w-full p-4 text-left border-b border-s-border transition-colors hover:bg-s-bg/50 ${
-                  c.id === selectedId ? 'bg-s-bg/70' : ''
+                  c.id === selectedId ? 'bg-accent-dim shadow-[inset_3px_0_0_rgb(var(--erp-accent-rgb))]' : ''
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -573,7 +573,7 @@ function PortalTokenButton({
           href={waUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded-lg bg-[#25D366] text-[#fff] px-3 py-1.5 text-xs font-bold hover:opacity-90"
+          className="rounded-lg bg-[#25D366] text-bone px-3 py-1.5 text-xs font-bold hover:opacity-90"
         >
           📱 WhatsApp
         </a>
@@ -581,7 +581,7 @@ function PortalTokenButton({
       <button
         onClick={copy}
         className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
-          copied ? 'border-primary text-primary-ink' : 'border-s-border text-s-muted hover:text-s-text'
+          copied ? 'border-accent text-success' : 'border-s-border text-s-muted hover:text-s-text'
         }`}
       >
         {copied ? '✓ Copied' : '📋 Copy link'}
@@ -712,14 +712,16 @@ function SupplierOnboardingWizard({
               <div key={n} className="flex items-center gap-2">
                 <div
                   className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-black ${
-                    step >= (n as 1 | 2 | 3)
+                    step > n
+                      ? 'bg-accent text-accent-on'
+                      : step === n
                       ? 'bg-primary text-primary-on'
                       : 'bg-s-bg text-s-muted border border-s-border'
                   }`}
                 >
                   {step > n ? '✓' : n}
                 </div>
-                {n < 3 && <div className={`h-px w-8 ${step > n ? 'bg-primary' : 'bg-s-border'}`} />}
+                {n < 3 && <div className={`h-px w-8 ${step > n ? 'bg-accent' : 'bg-s-border'}`} />}
               </div>
             ))}
           </div>
@@ -739,13 +741,13 @@ function SupplierOnboardingWizard({
                 <div className="flex rounded-lg border border-s-border overflow-hidden text-xs font-bold">
                   <button
                     onClick={() => setMode('existing')}
-                    className={`flex-1 px-3 py-2 ${mode === 'existing' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}
+                    className={`flex-1 px-3 py-2 ${mode === 'existing' ? 'bg-accent-dim text-s-text' : 'text-s-muted'}`}
                   >
                     Existing supplier
                   </button>
                   <button
                     onClick={() => setMode('new')}
-                    className={`flex-1 px-3 py-2 border-l border-s-border ${mode === 'new' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}
+                    className={`flex-1 px-3 py-2 border-l border-s-border ${mode === 'new' ? 'bg-accent-dim text-s-text' : 'text-s-muted'}`}
                   >
                     New supplier
                   </button>
@@ -789,7 +791,7 @@ function SupplierOnboardingWizard({
                           onClick={() => setCategory(cat.value)}
                           className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold text-left transition-colors ${
                             category === cat.value
-                              ? 'border-primary bg-primary/10 text-s-text'
+                              ? 'border-accent bg-accent-dim text-s-text'
                               : 'border-s-border text-s-muted hover:text-s-text'
                           }`}
                         >
@@ -863,7 +865,7 @@ function SupplierOnboardingWizard({
                     href={waUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] text-[#fff] py-3 font-black hover:opacity-90"
+                    className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] text-bone py-3 font-black hover:opacity-90"
                   >
                     📱 Send via WhatsApp
                   </a>

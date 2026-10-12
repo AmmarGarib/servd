@@ -190,7 +190,7 @@ function Switch({ value, onChange, disabled, label }: { value: boolean; onChange
   return (
     <button type="button" role="switch" aria-checked={value} aria-label={label} title={label}
       disabled={disabled} onClick={() => onChange(!value)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-primary' : 'bg-s-border'}`}>
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-accent' : 'bg-s-border'}`}>
       <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-s-surface shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   )
@@ -449,7 +449,7 @@ export default function RidersPage() {
         {tabs.map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
-              ${tab === t ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
+              ${tab === t ? 'border-accent text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
             {t === 'dispatch'
               ? `Dispatch Board${unassigned.length > 0 ? ` (${unassigned.length} pending)` : ''}`
               : t === 'roster' ? 'Rider Roster' : 'Fleet'}

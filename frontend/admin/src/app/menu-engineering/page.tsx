@@ -38,9 +38,9 @@ function fmtPct(n: number) { return `${n.toFixed(1)}%` }
 // Food-cost % health: same thresholds as the old recipe-page badges.
 function fcColor(pct: number | null) {
   if (pct === null) return 'rgb(var(--fg-rgb) / 0.35)'
-  if (pct <= 28)    return 'var(--erp-primary-ink)'
-  if (pct <= 35)    return '#a15c00'
-  return '#b42318'
+  if (pct <= 28)    return 'var(--erp-success)'
+  if (pct <= 35)    return 'var(--erp-warning)'
+  return 'var(--erp-danger)'
 }
 
 export default function MenuEngineeringPage() {
@@ -133,7 +133,7 @@ export default function MenuEngineeringPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-xs text-s-muted">Kitchen</p>
+            <p className="text-xs text-success">Kitchen</p>
             <h1 className="text-xl font-bold text-s-text">Menu Engineering</h1>
             <p className="text-xs text-s-dim mt-0.5">
               Click a plate to open its price structure — cost build-up + margin waterfall.
@@ -160,7 +160,7 @@ export default function MenuEngineeringPage() {
             {
               label: 'Avg Food Cost',
               value: avgFc != null ? fmtPct(avgFc) : '—',
-              color: avgFc == null ? 'text-s-muted' : avgFc <= 28 ? 'text-primary-ink' : avgFc <= 35 ? 'text-s-amber' : 'text-s-red',
+              color: avgFc == null ? 'text-s-muted' : avgFc <= 28 ? 'text-success' : avgFc <= 35 ? 'text-s-amber' : 'text-s-red',
             },
             { label: 'Over 35% FC', value: String(overBudget), color: overBudget ? 'text-s-red' : 'text-s-muted' },
           ].map(({ label, value, color }) => (
@@ -239,7 +239,7 @@ export default function MenuEngineeringPage() {
                             }}
                             onBlur={() => commitPrice(r)}
                             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                            className="w-24 text-right font-mono rounded-md border border-s-border bg-s-bg px-2 py-1 text-xs focus:border-s-teal focus:outline-none"/>
+                            className="w-24 text-right font-mono rounded-md border border-s-border bg-s-bg px-2 py-1 text-xs focus:border-primary focus:outline-none"/>
                         ) : (
                           <p className="text-[10px] text-s-dim">opens with approval</p>
                         )}
@@ -247,7 +247,7 @@ export default function MenuEngineeringPage() {
                       <div className="text-right" style={{ minWidth: 110 }}>
                         <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Contribution</p>
                         <p className="text-xs font-bold font-mono"
-                          style={{ color: cm === null ? 'rgb(var(--fg-rgb) / 0.3)' : cm >= 0 ? 'var(--erp-success)' : '#b42318' }}>
+                          style={{ color: cm === null ? 'rgb(var(--fg-rgb) / 0.3)' : cm >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
                           {cm !== null ? `${fmtPkrWhole(cm)}${cmPct !== null ? ` · ${fmtPct(cmPct)}` : ''}` : '—'}
                         </p>
                       </div>

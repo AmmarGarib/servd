@@ -146,7 +146,7 @@ export default function TimeClockPage() {
           {(['me', 'kiosk'] as const).map((m) => (
             <button key={m} onClick={() => { setMode(m); setFeedback(''); setStage('idle') }}
               className="rounded-full px-4 py-1.5 text-xs font-bold"
-              style={mode === m ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' } : { color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
+              style={mode === m ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' } : { color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
               {m === 'me' ? 'Me' : 'Staff without a login'}
             </button>
           ))}
@@ -156,7 +156,7 @@ export default function TimeClockPage() {
           <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
           <canvas ref={canvasRef} className="hidden" />
           <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
-            style={{ background: coords ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)', color: coords ? '#3f7d20' : '#b42318' }}>
+            style={{ background: coords ? 'rgb(var(--erp-accent-rgb) / 0.22)' : 'rgba(239,68,68,0.18)', color: coords ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
             {coords ? 'located' : geoErr ? 'no location' : 'locating…'}
           </div>
         </div>
@@ -170,7 +170,7 @@ export default function TimeClockPage() {
 
         {mode === 'me' && stage !== 'working' && (
           <div className="space-y-3">
-            <p className="text-center text-sm text-white/70">
+            <p className={`text-center text-sm ${punchedIn ? 'text-success' : 'text-white/70'}`}>
               {status.isLoading ? '…' : punchedIn ? `On shift since ${new Date(status.data!.shift!.clockInAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : 'Not clocked in'}
               {!punchedIn && status.data?.missedClockOut && (
                 <span className="block text-xs text-white/50 mt-1">
@@ -179,7 +179,7 @@ export default function TimeClockPage() {
               )}
             </p>
             {punchedIn
-              ? <button onClick={() => punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'rgba(239,68,68,0.15)', color: '#b42318', border: '1px solid rgba(239,68,68,0.35)' }}>Clock out</button>
+              ? <button onClick={() => punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--erp-danger)', border: '1px solid rgba(239,68,68,0.35)' }}>Clock out</button>
               : <button onClick={() => punchMe('in')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>Clock in</button>}
           </div>
         )}
@@ -204,8 +204,8 @@ export default function TimeClockPage() {
         {stage === 'working' && <p className="text-center py-6 text-sm text-white/85 animate-pulse">Recording…</p>}
         {feedback && (
           <div className="rounded-xl px-4 py-4 text-center mt-2"
-            style={stage === 'error' ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' } : { background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
-            <p className="text-sm font-bold" style={{ color: stage === 'error' ? '#b42318' : '#3f7d20' }}>{feedback}</p>
+            style={stage === 'error' ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' } : { background: 'var(--erp-accent-dim)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.6)' }}>
+            <p className="text-sm font-bold" style={{ color: stage === 'error' ? 'var(--erp-danger)' : 'var(--erp-success)' }}>{feedback}</p>
           </div>
         )}
       </div>

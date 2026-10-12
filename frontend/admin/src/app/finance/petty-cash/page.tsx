@@ -88,7 +88,7 @@ export default function PettyCashPage() {
                   <div className="mt-3 space-y-1">
                     {b.movements.slice(0, 3).map((m) => (
                       <div key={m.id} className="text-xs flex items-center gap-2">
-                        <span className="font-bold" style={{ color: m.amountCents >= 0 ? 'var(--erp-success)' : '#a15c00' }}>
+                        <span className="font-bold" style={{ color: m.amountCents >= 0 ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                           {m.amountCents >= 0 ? '+' : ''}PKR {(m.amountCents / 100).toLocaleString()}
                         </span>
                         <span className="text-white/55">{m.reason}</span>
@@ -174,11 +174,11 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
   return <Modal title={`${type === 'topup' ? 'Top up' : 'Spend from'} ${box.name}`} onClose={onClose}>
     <div className="flex gap-2">
       <button type="button" onClick={() => setType('spend')} className="flex-1 rounded-lg px-4 py-2 text-sm font-bold"
-        style={type === 'spend' ? { background: 'rgba(245,158,11,0.15)', color: '#a15c00', border: '1px solid rgba(245,158,11,0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+        style={type === 'spend' ? { background: 'rgba(245,158,11,0.15)', color: 'var(--erp-warning)', border: '1px solid rgba(245,158,11,0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
         Spend
       </button>
       <button type="button" onClick={() => setType('topup')} className="flex-1 rounded-lg px-4 py-2 text-sm font-bold"
-        style={type === 'topup' ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+        style={type === 'topup' ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
         Top up
       </button>
     </div>
@@ -241,7 +241,7 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
       <p className="text-[10px] text-white/30 mt-1">≈ PKR {(counted / 100).toLocaleString()}</p>
     </Field>
     {Math.abs(variance) > 0 && (
-      <div className="rounded-lg p-3 text-sm font-bold" style={{ background: Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.08)' : 'rgb(var(--erp-accent-rgb) / 0.12)', color: Math.abs(variance) >= 20000 ? '#a15c00' : 'var(--erp-success)', border: `1px solid ${Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.4)'}` }}>
+      <div className="rounded-lg p-3 text-sm font-bold" style={{ background: Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.08)' : 'rgb(var(--erp-accent-rgb) / 0.12)', color: Math.abs(variance) >= 20000 ? 'var(--erp-warning)' : 'var(--erp-success)', border: `1px solid ${Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.4)'}` }}>
         Variance: {variance > 0 ? '+' : ''}PKR {(variance / 100).toLocaleString()}
         {Math.abs(variance) >= 20000 && ' — will flag'}
       </div>
@@ -278,6 +278,6 @@ function pinRefusal(e: unknown): Error | null {
   if (e instanceof ApiError && e.code === 'INVALID_MANAGER_PIN') return new Error(WRONG_PIN_MESSAGE)
   return null
 }
-function ErrorBanner({ error }: { error: unknown }) { const msg = error instanceof Error ? error.message : 'Failed'; return <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div> }
+function ErrorBanner({ error }: { error: unknown }) { const msg = error instanceof Error ? error.message : 'Failed'; return <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div> }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

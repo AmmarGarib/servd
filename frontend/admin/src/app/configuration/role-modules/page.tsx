@@ -124,11 +124,11 @@ export default function RoleModulesPage() {
           />
 
           <div className="text-xs text-white/45 flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-sm" style={{ background: 'var(--erp-primary)' }} />
+            <span className="inline-block w-3 h-3 rounded-sm" style={{ background: 'var(--erp-accent)' }} />
             allowed
             <span className="inline-block w-3 h-3 rounded-sm ml-3 border border-white/15" />
             hidden
-            <span className="inline-block w-3 h-3 rounded-sm ml-3" style={{ background: '#a15c00' }} />
+            <span className="inline-block w-3 h-3 rounded-sm ml-3" style={{ background: 'var(--erp-warning)' }} />
             customised
           </div>
         </div>
@@ -140,7 +140,7 @@ export default function RoleModulesPage() {
             <button key={r.value} onClick={() => { setFocusRole(r.value); setViewAs(r.value) }}
               className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
               style={focusRole === r.value
-                ? { background: 'rgb(var(--ink-rgb) / 0.18)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--ink-rgb) / 0.35)' }
+                ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.45)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {r.emoji} {r.label}
             </button>
@@ -148,7 +148,7 @@ export default function RoleModulesPage() {
           {focusRole && (
             <button onClick={() => { setFocusRole(null); setViewAs(null) }}
               className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
-              style={{ background: 'rgba(255,77,79,0.08)', color: '#b42318', border: '1px solid rgba(255,77,79,0.18)' }}>
+              style={{ background: 'rgba(255,77,79,0.08)', color: 'var(--erp-danger)', border: '1px solid rgba(255,77,79,0.18)' }}>
               Clear preview
             </button>
           )}
@@ -158,9 +158,9 @@ export default function RoleModulesPage() {
         <div className="rounded-2xl overflow-x-auto" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <table className="w-full text-sm border-collapse min-w-[1200px]">
             <thead>
-              <tr style={{ background: 'rgba(15,17,22,0.95)' }}>
+              <tr style={{ background: 'var(--surface)' }}>
                 <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/45 sticky left-0"
-                  style={{ background: 'rgba(15,17,22,0.95)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+                  style={{ background: 'var(--surface)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   Module
                 </th>
                 {editableRoles.map((r) => (
@@ -193,7 +193,7 @@ export default function RoleModulesPage() {
                     {/* Quick-toggle row: per-role checkbox to bulk-toggle this whole section */}
                     <tr style={{ background: 'rgb(var(--fg-rgb) / 0.005)' }}>
                       <td className="px-4 py-1.5 text-[10px] text-white/45 italic sticky left-0"
-                        style={{ background: 'rgba(9,10,14,0.95)' }}>
+                        style={{ background: 'var(--surface)' }}>
                         — toggle whole section —
                       </td>
                       {editableRoles.map((r) => {
@@ -206,7 +206,7 @@ export default function RoleModulesPage() {
                             <button onClick={() => toggleSection(r.value, modIds)}
                               className="h-4 w-4 rounded-sm mx-auto flex items-center justify-center transition-all"
                               style={allOn
-                                ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                                ? { background: 'var(--erp-accent)', color: 'var(--erp-on-accent)' }
                                 : someOn
                                   ? { background: 'rgba(245,158,11,0.7)', color: 'var(--erp-on-primary)' }
                                   : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
@@ -219,7 +219,7 @@ export default function RoleModulesPage() {
                     {mods.map((m) => (
                       <tr key={m.id} className="hover:bg-white/[0.015] transition-colors">
                         <td className="px-4 py-2 sticky left-0"
-                          style={{ background: 'rgba(9,10,14,0.95)', borderRight: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
+                          style={{ background: 'var(--surface)', borderRight: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                           <p className="text-xs font-bold text-white/85">{m.label}</p>
                           <p className="text-[10px] text-white/30 font-mono mt-0.5">{m.id}</p>
                         </td>
@@ -233,7 +233,7 @@ export default function RoleModulesPage() {
                               <button onClick={() => toggleModule(r.value, m.id)}
                                 className="h-5 w-5 rounded-sm mx-auto flex items-center justify-center text-[10px] font-black transition-all hover:scale-110"
                                 style={enabled
-                                  ? { background: isCustom ? '#a15c00' : 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                                  ? (isCustom ? { background: 'var(--erp-warning)', color: 'var(--erp-on-primary)' } : { background: 'var(--erp-accent)', color: 'var(--erp-on-accent)' })
                                   : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'transparent' }}
                                 title={enabled ? 'Allowed — click to hide' : 'Hidden — click to allow'}>
                                 {enabled ? '✓' : ''}
@@ -259,7 +259,7 @@ export default function RoleModulesPage() {
               <button key={r.value} onClick={() => resetRole(r.value)} disabled={!isCustom}
                 className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-25"
                 style={isCustom
-                  ? { background: 'rgba(245,158,11,0.1)', color: '#a15c00', border: '1px solid rgba(245,158,11,0.25)' }
+                  ? { background: 'rgba(245,158,11,0.1)', color: 'var(--erp-warning)', border: '1px solid rgba(245,158,11,0.25)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.35)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                 {r.emoji} {r.label}
               </button>
@@ -270,13 +270,13 @@ export default function RoleModulesPage() {
         {/* Helper card */}
         <div className="rounded-xl p-4 text-xs text-white/45 leading-relaxed"
           style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.15)' }}>
-          💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. The CEO is the only one who can change this map — non-admin sessions can&rsquo;t open this page. Amber ticks indicate a role you&rsquo;ve customised; teal ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
+          💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. The CEO is the only one who can change this map — non-admin sessions can&rsquo;t open this page. Amber ticks indicate a role you&rsquo;ve customised; green ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
         </div>
 
         {focusedRoleMeta && focusedRoleModules && (
           <div className="fixed bottom-4 right-4 rounded-2xl p-4 max-w-sm shadow-2xl"
-            style={{ background: 'rgba(15,17,22,0.98)', border: '1px solid rgb(var(--ink-rgb) / 0.35)' }}>
-            <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: 'var(--erp-primary-ink)' }}>
+            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.6)' }}>
+            <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: 'var(--erp-success)' }}>
               🔭 Previewing as
             </p>
             <p className="text-sm font-bold text-white/90">{focusedRoleMeta.emoji} {focusedRoleMeta.label}</p>

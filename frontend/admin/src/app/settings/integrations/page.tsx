@@ -69,8 +69,8 @@ export default function IntegrationsPage() {
       </div>
 
       {socialConnected && (
-        <div className="mb-6 rounded-xl border border-primary bg-primary/10 p-4">
-          <p className="font-bold text-primary-ink">✓ Connected to Facebook Page: {decodeURIComponent(socialConnected)}</p>
+        <div className="mb-6 rounded-xl border border-accent bg-accent-dim p-4">
+          <p className="font-bold text-success">✓ Connected to Facebook Page: {decodeURIComponent(socialConnected)}</p>
           <p className="text-sm text-s-muted mt-1">Instagram and Facebook posting are now enabled in the Content Calendar.</p>
         </div>
       )}
@@ -108,7 +108,7 @@ export default function IntegrationsPage() {
               className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 status?.connected
                   ? 'border border-s-border text-s-muted hover:border-s-red hover:text-s-red'
-                  : 'bg-blue-600 text-[#fff] hover:bg-blue-700'
+                  : 'bg-primary text-primary-on hover:bg-primary-hover'
               }`}
             >
               {connecting ? 'Opening Meta…' : status?.connected ? 'Reconnect' : 'Connect'}
@@ -148,7 +148,7 @@ export default function IntegrationsPage() {
                 <span className="text-xl">📘</span>
                 <div>
                   <p className="text-sm font-semibold text-s-text">Facebook Page</p>
-                  <p className="text-xs text-primary-ink">
+                  <p className="text-xs text-success">
                     ✓ {status.page?.name ?? 'Page'} (ID: {status.page?.id})
                   </p>
                 </div>
@@ -158,7 +158,7 @@ export default function IntegrationsPage() {
                 <div>
                   <p className="text-sm font-semibold text-s-text">Instagram Business</p>
                   {status.ig
-                    ? <p className="text-xs text-primary-ink">✓ Connected (User ID: {status.ig.userId})</p>
+                    ? <p className="text-xs text-success">✓ Connected (User ID: {status.ig.userId})</p>
                     : <p className="text-xs text-s-amber">⚠ No Instagram Business account found on this Page</p>
                   }
                 </div>

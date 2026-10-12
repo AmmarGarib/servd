@@ -730,7 +730,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               <button key={d} type="button" onClick={() => toggleDaypart(d)}
                 className="text-xs font-bold px-3 py-1.5 rounded-full"
                 style={daypartFocus.includes(d)
-                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
+                  ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                 {d.replace('_', ' ')}
               </button>
@@ -751,7 +751,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               <button key={t.value} type="button" onClick={() => setPriceTier(t.value)}
                 className="text-xs px-3 py-2.5 rounded-lg text-left"
                 style={priceTier === t.value
-                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.45)' }
+                  ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="font-bold">{t.label}</p>
                 <p className="text-[10px] opacity-75 mt-0.5">{t.hint}</p>
@@ -967,7 +967,7 @@ function LocationStep({ concepts, onDone }: { concepts: Concept[]; onDone: () =>
                 : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <input type="checkbox" checked={conceptIds.includes(c.id)}
                 onChange={() => setConceptIds((p) => p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id])}
-                className="accent-primary" />
+                className="accent-accent" />
               <span className="text-xs font-bold text-white/85">{c.name}</span>
             </label>
           ))}
@@ -1099,7 +1099,7 @@ function HoursStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => vo
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={d.isOpen}
                   onChange={(e) => patchDay(i, { isOpen: e.target.checked })}
-                  className="accent-primary" />
+                  className="accent-accent" />
                 <span className="text-sm font-bold text-white/85 w-10">{DAY_LABELS[i]}</span>
                 {!d.isOpen && <span className="text-xs text-white/35 italic">Closed</span>}
               </label>

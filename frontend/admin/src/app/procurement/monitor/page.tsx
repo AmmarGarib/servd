@@ -48,17 +48,17 @@ interface PurchaseOrder {
 const STATUS_COLORS: Record<string, string> = {
   draft:            'text-s-muted border-s-border',
   pending_approval: 'text-s-amber border-s-amber',
-  approved:         'text-sky-700 border-sky-400',
+  approved:         'text-success border-accent',
   sent:             'text-blue-700 border-blue-400',
-  received:         'text-primary-ink border-primary',
+  received:         'text-success border-accent bg-accent-dim',
   partial:          'text-s-amber border-s-amber',
   cancelled:        'text-s-red border-s-red',
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  meat:       'bg-red-500/20 text-red-700',
+  meat:       'bg-s-red/20 text-s-red',
   fish:       'bg-blue-500/20 text-blue-700',
-  farm:       'bg-green-500/20 text-green-700',
+  farm:       'bg-accent-dim text-success',
   dairy:      'bg-yellow-500/20 text-yellow-700',
   'dry-goods':'bg-orange-500/20 text-orange-700',
 }
@@ -237,7 +237,7 @@ export default function ProcurementMonitorPage() {
                             a company assignment via the edit drawer. */}
                         {!s.tenantId && (
                           <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                            style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
+                            style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}
                             title="No company assigned — click Edit to fix.">
                             ⚠ No company
                           </span>
@@ -373,7 +373,7 @@ function SupplierEditDrawer({
           {tenants.length > 0 && (
             <div>
               <label className="text-xs text-s-muted">
-                Company {!supplier.tenantId && <span className="text-red-700">— orphan, pick one</span>}
+                Company {!supplier.tenantId && <span className="text-s-red">— orphan, pick one</span>}
               </label>
               <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
                 className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">

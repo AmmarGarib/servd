@@ -147,7 +147,7 @@ export default function AccountingHubPage() {
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
-        <p className="text-xs text-s-muted">Finance</p>
+        <p className="text-xs text-success">Finance</p>
         <h1 className="text-xl font-bold text-s-text">Accounting Hub</h1>
       </header>
 
@@ -239,12 +239,12 @@ export default function AccountingHubPage() {
             <div className="mb-4">
               <div className="flex justify-between text-xs text-s-muted mb-1.5">
                 <span>0%</span>
-                <span className="text-primary-ink">Target 30%</span>
+                <span className="text-success">Target 30%</span>
                 <span>50%+</span>
               </div>
               <div className="stat-bar-track h-3 relative">
                 {/* target line */}
-                <div className="absolute top-0 bottom-0 w-px bg-s-teal/60" style={{ left: '60%' }} />
+                <div className="absolute top-0 bottom-0 w-px bg-accent" style={{ left: '60%' }} />
                 <div
                   className={`stat-bar-fill h-3 ${fcStatus?.bar}`}
                   style={{ width: `${Math.min((fc.theoreticalFoodCostPct / 50) * 100, 100)}%` }}
@@ -263,7 +263,7 @@ export default function AccountingHubPage() {
               {[
                 { label: 'Theoretical Cost', value: fmtPkrShort(fc.theoreticalCents), color: 'text-s-text' },
                 { label: 'Actual Purchases', value: fmtPkrShort(fc.actualPurchasesCents), color: 'text-s-amber' },
-                { label: 'Gross Revenue', value: fmtPkrShort(foodCost!.revenue.grossCents), color: 'text-primary-ink' },
+                { label: 'Gross Revenue', value: fmtPkrShort(foodCost!.revenue.grossCents), color: 'text-success' },
               ].map((s) => (
                 <div key={s.label} className="text-center rounded-lg bg-s-elevated border border-s-border p-3">
                   <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
@@ -295,7 +295,7 @@ export default function AccountingHubPage() {
                     </div>
                     <div className="ml-3 text-right shrink-0">
                       <p className="text-sm font-bold text-s-text">{fmtPkrShort(item.totalCost)}</p>
-                      <p className={`text-[11px] font-semibold ${item.foodCostPct > 35 ? 'text-s-red' : item.foodCostPct > 30 ? 'text-s-amber' : 'text-primary-ink'}`}>
+                      <p className={`text-[11px] font-semibold ${item.foodCostPct > 35 ? 'text-s-red' : item.foodCostPct > 30 ? 'text-s-amber' : 'text-success'}`}>
                         {item.foodCostPct}% FC
                       </p>
                     </div>

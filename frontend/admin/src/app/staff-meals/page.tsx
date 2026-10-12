@@ -72,7 +72,7 @@ export default function StaffMealsPage() {
                     <p className="text-xs text-white/55 mt-1">{m.description}</p>
                     <p className="text-[11px] text-white/35 mt-1">{new Date(m.consumedAt).toLocaleString()}</p>
                   </div>
-                  <span className="text-sm font-bold text-amber-700">PKR {(m.estimatedCostCents / 100).toLocaleString()}</span>
+                  <span className="text-sm font-bold text-s-amber">PKR {(m.estimatedCostCents / 100).toLocaleString()}</span>
                 </div>
               </div>
             ))}

@@ -51,9 +51,9 @@ export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 
 // Shared status badge styling — reused by the recipe list + approvals inbox.
 export const recipeStatusMeta: Record<RecipeStatus, { label: string; color: string; bg: string }> = {
-  iteration:        { label: 'Testing',          color: '#a15c00', bg: 'rgba(245,158,11,0.12)' },
+  iteration:        { label: 'Testing',          color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.12)' },
   pending_approval: { label: 'Pending approval',  color: 'var(--erp-primary-ink)', bg: 'rgb(var(--ink-rgb) / 0.15)' },
-  production:       { label: 'Live',              color: '#3f7d20', bg: 'rgb(var(--erp-primary-rgb) / 0.12)' },
+  production:       { label: 'Live',              color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.15)' },
 }
 
 export interface RecipeFormInitial {
@@ -464,8 +464,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                   onClick={() => setKind(t.v)}
                   className="text-left rounded-xl px-3 py-2 border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{
-                    background:  kind === t.v ? 'rgb(var(--erp-primary-rgb) / 0.10)' : 'rgb(var(--fg-rgb) / 0.02)',
-                    borderColor: kind === t.v ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.08)',
+                    background:  kind === t.v ? 'rgb(var(--erp-accent-rgb) / 0.14)' : 'rgb(var(--fg-rgb) / 0.02)',
+                    borderColor: kind === t.v ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <div className="text-sm font-bold">{t.label}</div>
                   <div className="text-[10px] text-s-muted">{t.hint}</div>
@@ -498,7 +498,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                 )}
               </div>
               {initial.status === 'iteration' && initial.rejectionReason && (
-                <p className="mt-2 text-[11px]" style={{ color: '#a15c00' }}>
+                <p className="mt-2 text-[11px]" style={{ color: 'var(--erp-warning)' }}>
                   Previously sent back by the CEO: “{initial.rejectionReason}”
                 </p>
               )}
@@ -664,7 +664,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                         <td className="px-2 py-1.5">
                           <button onClick={() => setIngs(ings.filter((_, j) => j !== i))}
                             disabled={ings.length === 1}
-                            className="text-red-700 hover:bg-red-400/10 rounded px-2 disabled:opacity-30">×</button>
+                            className="text-s-red hover:bg-red-400/10 rounded px-2 disabled:opacity-30">×</button>
                         </td>
                       </tr>
                     )
@@ -701,7 +701,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
               <div className="mt-3 text-[11px] text-s-muted">
                 Allergens (auto): {allAllergens.map((a) => (
                   <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
-                    style={{ background: 'rgba(245,158,11,0.15)', color: '#a15c00' }}>{a}</span>
+                    style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--erp-warning)' }}>{a}</span>
                 ))}
               </div>
             )}
@@ -749,7 +749,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                     </div>
                     <button type="button" title="Remove step"
                       onClick={() => setMethodSteps(methodSteps.filter((_, j) => j !== i))}
-                      className="mt-1 text-red-700 hover:bg-red-400/10 rounded px-2 shrink-0">×</button>
+                      className="mt-1 text-s-red hover:bg-red-400/10 rounded px-2 shrink-0">×</button>
                   </div>
                 ))}
                 <button type="button" onClick={() => setMethodSteps([...methodSteps, { station: '', instruction: '' }])}
@@ -775,7 +775,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
             Set that on the brand in <Link href="/settings" className="text-primary-ink hover:underline">Tenants &amp; Brands</Link>.
           </div>
           {err && (
-            <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-700">{err}</div>
+            <div className="rounded-xl border border-red-500/40 bg-s-red/10 p-3 text-xs text-s-red">{err}</div>
           )}
           <div className="flex gap-2">
             <button onClick={() => router.push('/accounting/recipes')}
@@ -864,7 +864,7 @@ function CostPanel({ computed, kind, yieldGrams }: {
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
       <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)' }}>
         <p className="text-[10px] uppercase tracking-wider text-s-muted">Recipe cost</p>
-        <p className="text-base font-black mt-0.5" style={{ color: '#3f7d20' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
+        <p className="text-base font-black mt-0.5" style={{ color: 'var(--erp-success)' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
       </header>
 
       <div className="p-4 space-y-3">
@@ -929,8 +929,8 @@ function NumInput({ value, onChange, placeholder, className }: {
   )
 }
 
-const inputCls = 'w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-s-teal focus:outline-none'
+const inputCls = 'w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'
 // Same as inputCls but WITHOUT w-full — for controls inside a flex row where
 // width is governed by flex (w-40/flex-1). w-full there fights flex sizing and
 // collapses siblings (the method-step instruction box was being crushed).
-const controlCls = 'rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-s-teal focus:outline-none'
+const controlCls = 'rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'

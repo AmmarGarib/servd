@@ -253,7 +253,7 @@ export default function CalendarPage() {
                   )}
                   <div className="mt-1.5 flex items-center gap-2">
                     <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                      e.status === 'done' ? 'border-primary text-primary-ink' :
+                      e.status === 'done' ? 'border-accent text-success' :
                       e.status === 'live' ? 'border-s-amber text-s-amber' :
                       e.status === 'cancelled' ? 'border-s-red text-s-red' :
                       'border-s-border text-s-muted'

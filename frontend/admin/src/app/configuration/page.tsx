@@ -29,8 +29,8 @@ interface Tile {
 }
 
 const STATUS_PILL: Record<Status, { label: string; bg: string; fg: string }> = {
-  ready:      { label: 'Ready',         bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary)' },
-  incomplete: { label: 'Needs setup',   bg: 'rgba(245,158,11,0.12)', fg: '#a15c00' },
+  ready:      { label: 'Ready',         bg: 'rgb(var(--erp-accent-rgb) / 0.2)',  fg: 'var(--erp-success)' },
+  incomplete: { label: 'Needs setup',   bg: 'rgba(245,158,11,0.12)', fg: 'var(--erp-warning)' },
   optional:   { label: 'Optional',      bg: 'rgb(var(--fg-rgb) / 0.06)', fg: 'rgb(var(--fg-rgb) / 0.55)' },
   unknown:    { label: '—',             bg: 'rgb(var(--fg-rgb) / 0.04)', fg: 'rgb(var(--fg-rgb) / 0.35)' },
 }
@@ -251,7 +251,7 @@ export default function ConfigurationHubPage() {
       <header className="px-7 py-7 border-b border-white/[0.05]">
         <div className="flex items-start justify-between gap-6 max-w-[1200px] mx-auto">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Setup</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-success">Setup</p>
             <h1 className="text-2xl font-black text-white/90 mt-1">Configuration Hub</h1>
             <p className="text-sm text-white/40 mt-1.5">
               One place to wire up brands, channels, finance, kitchen, and the platform itself.
@@ -261,13 +261,13 @@ export default function ConfigurationHubPage() {
           {/* Setup progress card */}
           <div className="rounded-2xl p-4 min-w-[220px]"
             style={{
-              background: 'linear-gradient(135deg, rgb(var(--erp-primary-rgb) / 0.08), rgb(var(--ink-rgb) / 0.05))',
-              border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)',
+              background: 'linear-gradient(135deg, rgb(var(--erp-accent-rgb) / 0.16), rgb(var(--erp-accent-rgb) / 0.04))',
+              border: '1px solid rgb(var(--erp-accent-rgb) / 0.45)',
             }}>
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-white/40">Setup progress</p>
-            <p className="text-3xl font-black mt-1" style={{ color: 'var(--erp-primary-ink)' }}>{setupPct}%</p>
+            <p className="text-3xl font-black mt-1" style={{ color: 'var(--erp-success)' }}>{setupPct}%</p>
             <div className="h-1.5 rounded-full mt-2 overflow-hidden bg-white/5">
-              <div className="h-full" style={{ width: `${setupPct}%`, background: 'var(--erp-primary)' }} />
+              <div className="h-full" style={{ width: `${setupPct}%`, background: 'var(--erp-accent)' }} />
             </div>
             <p className="text-[11px] text-white/40 mt-2">
               {readyCount} ready · {incompleteCount} pending
@@ -314,7 +314,7 @@ function ConfigTile({ tile }: { tile: Tile }) {
         background: 'rgb(var(--fg-rgb) / 0.02)',
         border: '1px solid rgb(var(--fg-rgb) / 0.06)',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--erp-primary-rgb) / 0.25)'; e.currentTarget.style.background = 'rgb(var(--erp-primary-rgb) / 0.03)' }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--erp-accent-rgb) / 0.55)'; e.currentTarget.style.background = 'rgb(var(--erp-accent-rgb) / 0.05)' }}
       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)' }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">

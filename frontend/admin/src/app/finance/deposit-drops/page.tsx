@@ -68,13 +68,13 @@ export default function DepositDropsPage() {
                   {d.expectedCents > 0 && (
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
                       style={d.withinTolerance
-                        ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }
-                        : { background: 'rgba(245,158,11,0.12)', color: '#a15c00' }}>
+                        ? { background: 'rgb(var(--erp-accent-rgb) / 0.15)', color: 'var(--erp-success)' }
+                        : { background: 'rgba(245,158,11,0.12)', color: 'var(--erp-warning)' }}>
                       {d.varianceCents >= 0 ? '+' : ''}PKR {(d.varianceCents / 100).toLocaleString()}
                     </span>
                   )}
                   {!d.receiptUrl && d.amountCents >= 100000 && (
-                    <span className="text-[10px] font-bold text-amber-700">⚠ NO RECEIPT</span>
+                    <span className="text-[10px] font-bold text-s-amber">⚠ NO RECEIPT</span>
                   )}
                 </div>
                 <p className="text-xs text-white/45 mt-1">
@@ -157,7 +157,7 @@ function DropModal({ banks, onClose, onSaved }: { banks: BankAccount[]; onClose:
           <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
         </div>
         <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
-        {save.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
+        {save.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
       </div>
       <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
         <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>

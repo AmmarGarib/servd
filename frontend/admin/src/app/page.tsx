@@ -41,7 +41,7 @@ export default function LandingPage() {
             Order Online →
           </a>
           <Link href="/login"
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-s-border bg-s-surface hover:border-s-teal/40 hover:text-primary-ink text-s-muted transition-all">
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-s-border bg-s-surface hover:border-primary/40 hover:text-primary-ink text-s-muted transition-all">
             Staff Login
           </Link>
         </div>
@@ -60,7 +60,7 @@ export default function LandingPage() {
         <div className="relative max-w-3xl mx-auto animate-fade-in">
           <div className="inline-flex items-center gap-2 rounded-full border border-s-teal/20 bg-s-teal-dim/40 px-3 py-1 mb-6">
             <span className="h-1.5 w-1.5 rounded-full bg-s-teal animate-pulse" />
-            <span className="text-xs font-medium text-primary-ink">Restaurant operations platform</span>
+            <span className="text-xs font-medium text-success">Restaurant operations platform</span>
           </div>
 
           <h1 className="text-5xl sm:text-6xl font-black text-s-text leading-[1.05] tracking-tight mb-5">
@@ -79,7 +79,7 @@ export default function LandingPage() {
               Staff Portal →
             </Link>
             <a href={STOREFRONT_URL}
-              className="inline-flex items-center gap-2 rounded-xl border border-s-border bg-s-surface text-s-text font-semibold px-6 py-3 text-sm hover:border-s-teal/40 transition-all">
+              className="inline-flex items-center gap-2 rounded-xl border border-s-border bg-s-surface text-s-text font-semibold px-6 py-3 text-sm hover:border-primary/40 transition-all">
               Customer Ordering
               <span className="text-s-dim text-xs">↗</span>
             </a>

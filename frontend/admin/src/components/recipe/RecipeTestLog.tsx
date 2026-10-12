@@ -29,9 +29,9 @@ interface TestAttempt {
 }
 
 const OUTCOME_META: Record<Outcome, { label: string; color: string; bg: string }> = {
-  promising:  { label: 'Promising',  color: '#3f7d20', bg: 'rgb(var(--erp-primary-rgb) / 0.12)' },
-  needs_work: { label: 'Needs work', color: '#a15c00', bg: 'rgba(245,158,11,0.12)' },
-  rejected:   { label: 'Rejected',   color: '#b42318', bg: 'rgba(255,77,79,0.12)' },
+  promising:  { label: 'Promising',  color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.15)' },
+  needs_work: { label: 'Needs work', color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.12)' },
+  rejected:   { label: 'Rejected',   color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.12)' },
 }
 
 export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
@@ -105,7 +105,7 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
             {add.isPending ? 'Logging…' : 'Log attempt'}
           </button>
         </div>
-        {err && <p className="text-[11px] text-red-700">{err}</p>}
+        {err && <p className="text-[11px] text-s-red">{err}</p>}
       </div>
 
       {/* History */}
@@ -124,11 +124,11 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
                       {OUTCOME_META[d.outcome].label}
                     </span>
                   )}
-                  {d.rating !== '' && <span style={{ color: '#a15c00' }}>{'★'.repeat(Number(d.rating))}</span>}
+                  {d.rating !== '' && <span style={{ color: 'var(--erp-warning)' }}>{'★'.repeat(Number(d.rating))}</span>}
                   <span className="text-s-dim ml-auto">saves with recipe</span>
                   <button type="button" title="Remove"
                     onClick={() => onDraftsChange?.((drafts ?? []).filter((_, j) => j !== i))}
-                    className="text-red-700 hover:bg-red-400/10 rounded px-1.5">×</button>
+                    className="text-s-red hover:bg-red-400/10 rounded px-1.5">×</button>
                 </div>
                 <p className="mt-1 text-xs text-s-muted whitespace-pre-wrap">{d.notes}</p>
               </div>
@@ -149,7 +149,7 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
                     {OUTCOME_META[a.outcome].label}
                   </span>
                 )}
-                {a.rating != null && <span style={{ color: '#a15c00' }}>{'★'.repeat(a.rating)}</span>}
+                {a.rating != null && <span style={{ color: 'var(--erp-warning)' }}>{'★'.repeat(a.rating)}</span>}
                 <span className="text-s-dim ml-auto">
                   {a.testedByName ?? 'Unknown'} · {new Date(a.createdAt).toLocaleDateString()}
                 </span>

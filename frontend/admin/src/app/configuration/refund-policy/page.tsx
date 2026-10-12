@@ -132,7 +132,7 @@ function Money({ label, value, onChange, optional }: { label: string; value: num
 function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex items-start gap-3 cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-primary mt-0.5" />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-accent mt-0.5" />
       <div>
         <p className="text-sm text-white/85">{label}</p>
         {hint && <p className="text-[11px] text-white/40">{hint}</p>}

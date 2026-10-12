@@ -33,9 +33,9 @@ const input = 'w-full rounded-lg px-3 py-2 text-sm bg-s-surface border border-wh
 const CODE_LOGIN_ROLES = new Set(['cashier', 'foh', 'boh', 'kitchen', 'expediter'])
 
 const INVITE_STATUS: Record<Invite['status'], { label: string; color: string }> = {
-  pending:   { label: 'Waiting for the CEO', color: '#a15c00' },
-  active:    { label: 'Approved',            color: '#3f7d20' },
-  suspended: { label: 'Rejected / off',      color: '#b42318' },
+  pending:   { label: 'Waiting for the CEO', color: 'var(--erp-warning)' },
+  active:    { label: 'Approved',            color: 'var(--erp-success)' },
+  suspended: { label: 'Rejected / off',      color: 'var(--erp-danger)' },
 }
 
 export default function MyTeamPage() {
@@ -52,7 +52,7 @@ export default function MyTeamPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
         <header>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">Me</p>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-success">Me</p>
           <h1 className="text-3xl font-black text-white/90">My team</h1>
           <p className="text-sm text-white/45 mt-1">Everyone who reports to you, directly or through someone else, and how today looks.</p>
         </header>
@@ -60,8 +60,8 @@ export default function MyTeamPage() {
         {data?.me && (
           <div className="grid grid-cols-3 gap-3 max-w-xl">
             <Stat label="People" value={data.team.length} />
-            <Stat label="In today" value={inToday} color="#3f7d20" />
-            <Link href="/ceo/approvals?type=hr_request"><Stat label="Waiting on you" value={pending} color={pending > 0 ? '#a15c00' : undefined} /></Link>
+            <Stat label="In today" value={inToday} color="var(--erp-success)" />
+            <Link href="/ceo/approvals?type=hr_request"><Stat label="Waiting on you" value={pending} color={pending > 0 ? 'var(--erp-warning)' : undefined} /></Link>
           </div>
         )}
 
@@ -203,7 +203,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
           </select>
         </label>
         {err && <p className="text-xs font-bold text-red-700">{err}</p>}
-        {done && <p className="text-xs font-bold text-[#3f7d20]">{done}</p>}
+        {done && <p className="text-xs font-bold text-success">{done}</p>}
         <button type="submit" disabled={invite.isPending}
           className="rounded-lg px-3 py-2 text-xs font-black disabled:opacity-50" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
           {invite.isPending ? 'Sending…' : 'Send for approval'}

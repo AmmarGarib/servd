@@ -73,7 +73,7 @@ export default function FoodCostPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs text-s-muted">Accounting</p>
+            <p className="text-xs text-success">Accounting</p>
             <h1 className="text-xl font-bold text-s-text">Food Cost Analysis</h1>
           </div>
           <Link href="/accounting" className="text-xs text-primary-ink hover:underline">← Hub</Link>
@@ -121,7 +121,7 @@ export default function FoodCostPage() {
               onClick={() => { setDateFrom(p.from); setDateTo(p.to) }}
               className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
                 dateFrom === p.from && dateTo === p.to
-                  ? 'border-s-teal/40 bg-s-teal-dim text-primary-ink'
+                  ? 'border-accent bg-accent-dim text-s-text'
                   : 'border-s-border bg-s-surface text-s-muted hover:text-s-text'
               }`}>
               {p.label}
@@ -172,7 +172,7 @@ export default function FoodCostPage() {
                 </p>
               </div>
               <div className="stat-bar-track h-4 relative mb-2">
-                <div className="absolute top-0 bottom-0 w-0.5 bg-s-teal/60 z-10" style={{ left: '60%' }} />
+                <div className="absolute top-0 bottom-0 w-0.5 bg-accent z-10" style={{ left: '60%' }} />
                 <div
                   className={`stat-bar-fill h-4 ${styles?.bar} transition-all duration-700`}
                   style={{ width: `${Math.min((fc.theoreticalFoodCostPct / 50) * 100, 100)}%` }}
@@ -180,7 +180,7 @@ export default function FoodCostPage() {
               </div>
               <div className="flex justify-between text-[11px] text-s-muted">
                 <span>0%</span>
-                <span className="text-primary-ink">30% target</span>
+                <span className="text-success">30% target</span>
                 <span>35%</span>
                 <span>50%+</span>
               </div>
@@ -198,7 +198,7 @@ export default function FoodCostPage() {
                       onClick={() => setSortKey(k)}
                       className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
                         sortKey === k
-                          ? 'border-s-teal/40 bg-s-teal-dim text-primary-ink'
+                          ? 'border-accent bg-accent-dim text-s-text'
                           : 'border-s-border bg-s-surface text-s-muted hover:text-s-text'
                       }`}>
                       {k === 'totalCost' ? 'By Cost' : k === 'foodCostPct' ? 'By FC%' : 'By Qty'}
@@ -238,10 +238,10 @@ export default function FoodCostPage() {
                           <td className="text-right text-s-muted">{fmtPkrWhole(item.costPerPortion)}</td>
                           <td className="text-right font-semibold text-s-text">{fmtPkrWhole(item.totalCost)}</td>
                           <td className="text-right text-s-muted">{fmtPkrWhole(item.revenue)}</td>
-                          <td className={`text-right font-bold ${fcHigh ? 'text-s-red' : fcWarn ? 'text-s-amber' : 'text-primary-ink'}`}>
+                          <td className={`text-right font-bold ${fcHigh ? 'text-s-red' : fcWarn ? 'text-s-amber' : 'text-success'}`}>
                             {item.foodCostPct}%
                           </td>
-                          <td className={`text-right font-bold ${item.marginPct < 50 ? 'text-s-amber' : 'text-primary-ink'}`}>
+                          <td className={`text-right font-bold ${item.marginPct < 50 ? 'text-s-amber' : 'text-success'}`}>
                             {item.marginPct}%
                           </td>
                         </tr>

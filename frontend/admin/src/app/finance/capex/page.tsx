@@ -135,22 +135,22 @@ const SCOPES = [
 
 const PHASE_META: Record<Phase, { label: string; bg: string; fg: string }> = {
   planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
-  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: '#a15c00' },
+  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: 'var(--erp-warning)' },
   executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary-ink)' },
-  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: 'var(--erp-primary-ink)' },
-  live:      { label: 'Live',       bg: 'rgba(34,197,94,0.15)',   fg: '#3f7d20' },
+  snagging:  { label: 'Snagging',   bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
+  live:      { label: 'Live',       bg: 'rgb(var(--erp-accent-rgb) / 0.15)',   fg: 'var(--erp-success)' },
 }
 
 const STATUS_META: Record<Status, { label: string; fg: string }> = {
   not_quoted:    { label: 'Not quoted',    fg: 'var(--muted)' },
-  quoted:        { label: 'Quoted',        fg: '#a15c00' },
+  quoted:        { label: 'Quoted',        fg: 'var(--erp-warning)' },
   ordered:       { label: 'Ordered',       fg: 'var(--erp-primary-ink)' },
-  partial_paid:  { label: 'Paid',          fg: '#3f7d20' },
-  delivered:     { label: 'Delivered',     fg: '#3f7d20' },
+  partial_paid:  { label: 'Paid',          fg: 'var(--erp-success)' },
+  delivered:     { label: 'Delivered',     fg: 'var(--erp-success)' },
   installed:     { label: 'Installed',     fg: '#7DD3FC' },
-  commissioned:  { label: 'Commissioned',  fg: '#3f7d20' },
-  snag:          { label: 'Snag',          fg: '#b42318' },
-  done:          { label: 'Done',          fg: '#3f7d20' },
+  commissioned:  { label: 'Commissioned',  fg: 'var(--erp-success)' },
+  snag:          { label: 'Snag',          fg: 'var(--erp-danger)' },
+  done:          { label: 'Done',          fg: 'var(--erp-success)' },
 }
 
 const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
@@ -210,12 +210,12 @@ export default function CapexTrackerPage() {
           <button onClick={() => setSelectedId('workforce')}
             className="w-full text-left rounded-xl p-3 transition-colors"
             style={selectedId === 'workforce'
-              ? { background: 'rgba(168,85,247,0.10)', border: '1px solid rgba(168,85,247,0.45)' }
-              : { background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.20)' }}>
+              ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid var(--erp-accent)' }
+              : { background: 'rgb(var(--erp-primary-rgb) / 0.04)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.20)' }}>
             <div className="flex items-start justify-between gap-2">
               <p className="font-bold text-sm" style={{ color: 'var(--erp-primary-ink)' }}>💼 Workforce</p>
               <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
-                style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
+                style={{ background: 'rgb(var(--erp-primary-rgb) / 0.20)', color: 'var(--erp-primary-ink)' }}>
                 Standing
               </span>
             </div>
@@ -240,7 +240,7 @@ export default function CapexTrackerPage() {
               <button key={p.id} onClick={() => setSelectedId(p.id)}
                 className="w-full text-left rounded-xl p-3 transition-colors"
                 style={selectedId === p.id
-                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
+                  ? { background: 'rgb(var(--erp-accent-rgb) / 0.12)', border: '1px solid var(--erp-accent)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-bold text-sm text-white/90 truncate">{p.name}</p>
@@ -258,10 +258,10 @@ export default function CapexTrackerPage() {
                       <div className="h-full"
                         style={{
                           width: `${Math.min(100, (p.rollups.committedCents / p.budgetEnvelopeCents) * 100)}%`,
-                          background: overBudget ? '#b42318' : 'var(--erp-primary)',
+                          background: overBudget ? 'var(--erp-danger)' : 'var(--erp-accent)',
                         }} />
                     </div>
-                    <p className="text-[10px] mt-1" style={{ color: overBudget ? '#b42318' : 'rgb(var(--fg-rgb) / 0.4)' }}>
+                    <p className="text-[10px] mt-1" style={{ color: overBudget ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.4)' }}>
                       {overBudget
                         ? `${PKR(p.rollups.varianceVsEnvelopeCents)} over envelope`
                         : `${PKR(p.rollups.remainingCents)} of ${PKR(p.budgetEnvelopeCents)} remaining`}
@@ -339,7 +339,7 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
               </span>
               {project.isJointVenture && (
                 <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
+                  style={{ background: 'rgb(var(--erp-primary-rgb) / 0.20)', color: 'var(--erp-primary-ink)' }}>
                   Joint venture
                 </span>
               )}
@@ -355,7 +355,7 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
                 <span className="text-[10px] uppercase tracking-wider text-white/45">Partner split:</span>
                 {project.jvPartners.map((p, i) => (
                   <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
+                    style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
                     {p.label} {p.pct}% · {PKR(Math.round(project.rollups.totalAskCents * p.pct / 100))}
                   </span>
                 ))}
@@ -373,14 +373,14 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
         <button onClick={() => setTab('capex')}
           className="px-4 py-2.5 text-sm font-bold transition-colors"
           style={tab === 'capex'
-            ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-primary)', marginBottom: '-1px' }
+            ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
             : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
           🏗 CapEx · build
         </button>
         <button onClick={() => setTab('opex')}
           className="px-4 py-2.5 text-sm font-bold transition-colors"
           style={tab === 'opex'
-            ? { color: '#a15c00', borderBottom: '2px solid #a15c00', marginBottom: '-1px' }
+            ? { color: 'var(--erp-warning)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
             : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
           💸 OpEx · run-rate
         </button>
@@ -425,21 +425,21 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Stat label="Budget envelope" value={PKR(project.budgetEnvelopeCents)} accent="var(--erp-primary-ink)" />
         <Stat label="Budgeted lines"  value={PKR(project.rollups.budgetedCents)} accent="var(--muted)" />
-        <Stat label="Committed"        value={PKR(project.rollups.committedCents)} accent={overBudget ? '#b42318' : 'var(--erp-primary-ink)'} />
-        <Stat label="Paid"             value={PKR(project.rollups.paidCents)} accent="#3f7d20" />
+        <Stat label="Committed"        value={PKR(project.rollups.committedCents)} accent={overBudget ? 'var(--erp-danger)' : 'var(--erp-primary-ink)'} />
+        <Stat label="Paid"             value={PKR(project.rollups.paidCents)} accent="var(--erp-success)" />
         <Stat
           label={overBudget ? 'Over budget' : 'Remaining'}
           value={overBudget
             ? `+ ${PKR(project.rollups.varianceVsEnvelopeCents)}`
             : PKR(project.rollups.remainingCents)}
-          accent={overBudget ? '#b42318' : '#3f7d20'}
+          accent={overBudget ? 'var(--erp-danger)' : 'var(--erp-success)'}
         />
         <Stat
           label="Variance"
           value={overBudget
             ? `+ ${PKR(project.rollups.varianceVsEnvelopeCents)}`
             : `− ${PKR(Math.abs(project.rollups.varianceVsEnvelopeCents))} saved`}
-          accent={overBudget ? '#b42318' : '#3f7d20'}
+          accent={overBudget ? 'var(--erp-danger)' : 'var(--erp-success)'}
         />
       </div>
 
@@ -447,8 +447,8 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
           items are capitalised onto the fixed-asset register. */}
       {project.books && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <Stat label="On the books as assets"     value={PKR(project.books.capitalisedCents)} accent="#3f7d20" />
-          <Stat label="Advanced, not capitalised"  value={PKR(project.books.notYetCapitalisedCents)} accent="#a15c00" />
+          <Stat label="On the books as assets"     value={PKR(project.books.capitalisedCents)} accent="var(--erp-success)" />
+          <Stat label="Advanced, not capitalised"  value={PKR(project.books.notYetCapitalisedCents)} accent="var(--erp-warning)" />
           <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents)} accent="var(--erp-primary-ink)" />
           <Stat label="Fees expensed"              value={PKR(project.books.expensedCents)} accent="var(--muted)" />
         </div>
@@ -524,10 +524,10 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
     <div className="space-y-5">
       {/* OpEx roll-ups */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <Stat label="Monthly run-rate" value={PKR(monthlyTotal)} accent="#a15c00" />
-        <Stat label="Annual run-rate"  value={PKR(annualTotal)}  accent="#a15c00" />
+        <Stat label="Monthly run-rate" value={PKR(monthlyTotal)} accent="var(--erp-warning)" />
+        <Stat label="Annual run-rate"  value={PKR(annualTotal)}  accent="var(--erp-warning)" />
         <Stat label="Categories"        value={String(categories.length)} accent="var(--erp-primary-ink)" />
-        <Stat label="Active lines"      value={String(categories.reduce((s, c) => s + c.lineCount, 0))} accent="#3f7d20" />
+        <Stat label="Active lines"      value={String(categories.reduce((s, c) => s + c.lineCount, 0))} accent="var(--erp-success)" />
       </div>
 
       {/* Empty state */}
@@ -697,7 +697,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
                     placeholder="Category name (e.g. Rent, Utilities)" className={fieldCls} autoFocus />
                 </div>
                 {createCat.error && (
-                  <p className="text-xs text-red-700 mt-2">Could not create: {(createCat.error as Error).message}</p>
+                  <p className="text-xs text-s-red mt-2">Could not create: {(createCat.error as Error).message}</p>
                 )}
                 <div className="flex justify-between gap-2 mt-2">
                   <button onClick={() => { setCreatingCategory(false); setNewCategoryName(''); setNewCategoryEmoji('') }}
@@ -737,7 +737,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
             <label className="text-xs text-white/55">Next due</label>
             <input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
           </div>
-          {save.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
+          {save.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
@@ -745,7 +745,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
             {isEdit && (
               <button onClick={() => { if (confirm(`Delete "${name}"?`)) del.mutate() }}
                 disabled={del.isPending}
-                className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 disabled:opacity-50">
+                className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red disabled:opacity-50">
                 {del.isPending ? 'Deleting…' : 'Delete'}
               </button>
             )}
@@ -853,7 +853,7 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
                   <button onClick={() => move(i, -1)} disabled={i === 0} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↑</button>
                   <button onClick={() => move(i, 1)}  disabled={i === scopes.length - 1} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↓</button>
                 </div>
-                <button onClick={() => remove(i)} className="text-white/30 hover:text-red-700 px-1"
+                <button onClick={() => remove(i)} className="text-white/30 hover:text-s-red px-1"
                   title={used ? 'In use — confirm to remove' : 'Remove section'}>
                   {used ? '⚠' : '✕'}
                 </button>
@@ -929,7 +929,7 @@ function LineRow({ line, onEdit }: { line: Line; onEdit: () => void }) {
 
         <div className="w-24">
           <div className="h-1 rounded-full bg-white/5 overflow-hidden">
-            <div className="h-full bg-primary" style={{ width: `${paidPct}%` }} />
+            <div className="h-full bg-accent" style={{ width: `${paidPct}%` }} />
           </div>
           <p className="text-[10px] text-white/40 mt-0.5">{Math.round(paidPct)}% paid</p>
         </div>
@@ -1013,7 +1013,7 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
         partner-share editor. The split applies to EVERY CapEx + OpEx line
         on this project automatically — set once here, see chips everywhere. */}
     <div className="rounded-xl p-3"
-      style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.20)' }}>
+      style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.20)' }}>
       <label className="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" checked={isJointVenture}
           onChange={(e) => setIsJointVenture(e.target.checked)} />
@@ -1055,11 +1055,11 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
               {jvPartners.length > 2 && (
                 <button type="button"
                   onClick={() => setJvPartners(jvPartners.filter((_, j) => j !== i))}
-                  className="text-red-700 hover:bg-red-400/10 rounded-md px-2 text-sm">×</button>
+                  className="text-s-red hover:bg-red-400/10 rounded-md px-2 text-sm">×</button>
               )}
             </div>
           ))}
-          <p className={`text-[11px] font-mono ${splitOff ? 'text-amber-700' : 'text-white/40'}`}>
+          <p className={`text-[11px] font-mono ${splitOff ? 'text-s-amber' : 'text-white/40'}`}>
             Total: {splitSum}% {splitOff && '(should be 100)'}
           </p>
         </div>
@@ -1146,7 +1146,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
       <button
         onClick={() => { if (confirm(`Delete project "${project.name}"? Lines, quotes and payments will go with it.`)) del.mutate() }}
         disabled={del.isPending}
-        className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 mr-auto disabled:opacity-50">
+        className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto disabled:opacity-50">
         {del.isPending ? 'Deleting…' : 'Delete project'}
       </button>
       <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
@@ -1272,7 +1272,7 @@ function LineModal({ projectId, scope, line, onClose, onSaved }: {
     <ModalFooter onCancel={onClose}>
       {line && (
         <button onClick={() => { if (confirm('Delete this line?')) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 mr-auto">
+          className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">
           Delete line
         </button>
       )}
@@ -1314,7 +1314,7 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
       {line.quotes.map((q) => (
         <div key={q.id} className="rounded-lg p-3 grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 items-center"
           style={q.isWinner
-            ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
+            ? { background: 'rgb(var(--erp-accent-rgb) / 0.12)', border: '1px solid var(--erp-accent)' }
             : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <div>
             <p className="text-sm font-bold text-white/85">{q.vendor}</p>
@@ -1323,11 +1323,11 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
           <span className="text-sm font-mono text-white/85">{PKR(q.totalCents)}</span>
           <span className="text-xs text-white/45">{q.leadTimeDays ? `${q.leadTimeDays}d` : '—'}</span>
           {q.isWinner ? (
-            <span className="text-[10px] font-black uppercase tracking-wider text-primary-ink">★ Winner</span>
+            <span className="text-[10px] font-black uppercase tracking-wider text-success">★ Winner</span>
           ) : (
             <button onClick={() => setWinner.mutate(q.id)} className="text-[11px] text-white/55 hover:text-white">Pick</button>
           )}
-          <button onClick={() => removeQuote.mutate(q.id)} className="text-white/30 hover:text-red-700">✕</button>
+          <button onClick={() => removeQuote.mutate(q.id)} className="text-white/30 hover:text-s-red">✕</button>
         </div>
       ))}
     </div>
@@ -1392,16 +1392,16 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
           <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
           <span className="text-xs text-white/45">
             {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
-            {p.paidAt && <span className="text-primary-ink ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
+            {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
           </span>
           {p.paidAt ? (
             line.ledger?.payments[p.id]?.status === 'posted'
-              ? <span className="text-[10px] font-black text-primary-ink" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
-              : <span className="text-[10px] font-black text-[#a15c00]" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
+              ? <span className="text-[10px] font-black text-success" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
+              : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
           ) : (
             <button onClick={() => markPaid.mutate(p)} className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
           )}
-          <button onClick={() => remove.mutate(p.id)} className="text-white/30 hover:text-red-700">✕</button>
+          <button onClick={() => remove.mutate(p.id)} className="text-white/30 hover:text-s-red">✕</button>
         </div>
       ))}
     </div>
@@ -1462,7 +1462,7 @@ function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void 
   })
   if (line.ledger?.asset) {
     return (
-      <p className="text-[11px] text-[#3f7d20] mt-2">
+      <p className="text-[11px] text-success mt-2">
         On the fixed-asset register at {PKR(line.ledger.asset.costCents)} — <a href="/accounting/fixed-assets" className="underline">view</a>
       </p>
     )
@@ -1473,7 +1473,7 @@ function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void 
     return <p className="text-[11px] text-white/45 mt-2">Delivered — the CEO puts it on the fixed-asset register.</p>
   }
   return (
-    <div className="rounded-xl p-3 mt-2" style={{ background: 'rgba(134,239,172,0.05)', border: '1px solid rgba(134,239,172,0.2)' }}>
+    <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
       <p className="text-xs text-white/70 mb-2">Delivered — put it on the fixed-asset register ({PKR(line.ledger?.advancedCents ?? 0)} advanced so far).</p>
       <div className="grid grid-cols-3 gap-2">
         <label className="sr-only" htmlFor={`cap-cat-${line.id}`}>Asset category</label>
@@ -1526,7 +1526,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
   const msg = error instanceof Error ? error.message : 'Failed'
-  return <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

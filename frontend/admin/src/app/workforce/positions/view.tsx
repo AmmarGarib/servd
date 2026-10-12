@@ -106,10 +106,10 @@ interface Summary {
 }
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
-  open:     { label: 'Open',     color: '#a15c00', bg: 'rgba(245,158,11,0.10)' },
-  filled:   { label: 'Filled',   color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.10)' },
-  frozen:   { label: 'Frozen',   color: '#8E8E93', bg: 'rgba(142,142,147,0.10)' },
-  archived: { label: 'Archived', color: '#6B7280', bg: 'rgba(107,114,128,0.10)' },
+  open:     { label: 'Open',     color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.10)' },
+  filled:   { label: 'Filled',   color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.18)' },
+  frozen:   { label: 'Frozen',   color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.06)' },
+  archived: { label: 'Archived', color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.04)' },
 }
 
 // embedded=true hides:
@@ -277,20 +277,20 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
           const jvSplit = (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
+                style={{ background: 'rgb(var(--erp-primary-rgb) / 0.14)', color: 'var(--erp-primary-ink)' }}>
                 Joint venture
               </span>
               <span className="text-sm text-s-text font-bold">{activeTenant.name}</span>
               <span className="text-xs text-s-muted">- partner split:</span>
               {jvPartners.map((p, i) => (
                 <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
+                  style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', color: 'var(--erp-primary-ink)' }}>
                   {p.label} {p.pct}%
                 </span>
               ))}
             </div>
           )
-          const jvStyle = { background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)' }
+          const jvStyle = { background: 'rgb(var(--erp-primary-rgb) / 0.04)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.2)' }
           // The JV config is company setup (tenant PATCH is admin-only); HR and
           // finance see the split here but get no edit link.
           return isManager ? (
@@ -334,13 +334,13 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                 label="Headcount"
                 value={summary.totalHeadcount.toString()}
                 hint={`${summary.totalPositions} positions`}
-                accent="#a15c00"
+                accent="var(--erp-warning)"
               />
               <StatCard
                 label="Open seats"
                 value={summary.byStatus.open.toString()}
                 hint={`${summary.byStatus.filled} filled, ${summary.byStatus.frozen} frozen`}
-                accent={summary.byStatus.open > 0 ? '#a15c00' : '#8E8E93'}
+                accent={summary.byStatus.open > 0 ? 'var(--erp-warning)' : 'var(--erp-success)'}
               />
             </div>
 
@@ -377,7 +377,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     const line = (<>
                       <div className="flex justify-between text-xs font-mono items-baseline">
                         <span className="text-s-muted flex items-center gap-1.5">
-                          <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
+                          <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                             {c.direction === 'incoming' ? '<--' : '-->'}
                           </span>
                           {c.label}
@@ -387,7 +387,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                           </span>
                         </span>
                         <span className="font-bold"
-                          style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
+                          style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                           {c.direction === 'incoming' ? '-' : '+'} {fmtPkrWhole(c.monthlyCents)}
                         </span>
                       </div>
@@ -550,7 +550,7 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
         <div className="mt-2 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
+              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', color: 'var(--erp-primary-ink)' }}>
               {p.label} {p.pct}%: {fmtPkrWhole(Math.round(valueCents * p.pct / 100))}
             </span>
           ))}

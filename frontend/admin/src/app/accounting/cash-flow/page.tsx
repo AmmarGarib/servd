@@ -73,7 +73,7 @@ export default function CashFlowPage() {
                         <span className="font-mono text-xs text-s-muted mr-2">{r.code}</span>{r.name}
                         {multi && r.companyName && <span className="block text-[11px] text-s-muted">{r.companyName}</span>}
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-primary-ink">{fmtPkr(r.inflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkr(r.inflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">
                         {r.transferInCents === 0 && r.transferOutCents === 0 ? '—' : fmtPkr(r.transferInCents - r.transferOutCents)}
@@ -94,7 +94,7 @@ export default function CashFlowPage() {
                   {data.byCategory.map((r) => (
                     <tr key={r.category} className="border-t border-s-border first:border-0">
                       <td className="px-4 py-2 text-s-text capitalize">{r.category}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-primary-ink">{fmtPkr(r.inflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkr(r.inflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.netCents)}</td>
                     </tr>
@@ -107,7 +107,7 @@ export default function CashFlowPage() {
             <div className="s-card p-4 space-y-2">
               <div className="flex flex-wrap justify-between gap-2 text-sm">
                 <span className="text-s-muted">Cash in</span>
-                <span className="font-mono text-primary-ink">{fmtPkr(data.totals.inflowCents)}</span>
+                <span className="font-mono text-success">{fmtPkr(data.totals.inflowCents)}</span>
               </div>
               <div className="flex flex-wrap justify-between gap-2 text-sm">
                 <span className="text-s-muted">Cash out</span>

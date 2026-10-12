@@ -162,10 +162,10 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               <div className="space-y-1.5">
                 {gw.envStatus.map((e) => (
                   <div key={e.name} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
-                    style={{ background: e.set ? 'rgb(var(--erp-primary-rgb) / 0.05)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgb(var(--erp-primary-rgb) / 0.2)' : 'rgba(245,158,11,0.25)'}` }}>
+                    style={{ background: e.set ? 'var(--erp-accent-dim)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgb(var(--erp-accent-rgb) / 0.45)' : 'rgba(245,158,11,0.25)'}` }}>
                     <code className="text-xs font-mono text-white/85">{e.name}</code>
                     <span className="text-[10px] font-black"
-                      style={{ color: e.set ? 'var(--erp-success)' : '#a15c00' }}>
+                      style={{ color: e.set ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                       {e.set ? '✓ SET' : '⚠ NOT SET'}
                     </span>
                   </div>
@@ -188,7 +188,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
                 <p className="text-sm font-bold text-white/85">Enable {gw.label}</p>
                 <p className="text-xs text-white/45">Show this method on POS + storefront checkout</p>
               </div>
-              <input type="checkbox" checked={isEnabled} onChange={(e) => setIsEnabled(e.target.checked)} className="accent-primary h-5 w-5" />
+              <input type="checkbox" checked={isEnabled} onChange={(e) => setIsEnabled(e.target.checked)} className="accent-accent h-5 w-5" />
             </label>
 
             {gw.envVars.length > 0 && (
@@ -198,7 +198,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
                   <p className="text-sm font-bold text-white/85">Live mode</p>
                   <p className="text-xs text-white/45">Off = sandbox / test transactions only. Flip on once you've reconciled a few sandbox runs.</p>
                 </div>
-                <input type="checkbox" checked={isLive} onChange={(e) => setIsLive(e.target.checked)} disabled={!gw.ready} className="accent-primary h-5 w-5 disabled:opacity-40" />
+                <input type="checkbox" checked={isLive} onChange={(e) => setIsLive(e.target.checked)} disabled={!gw.ready} className="accent-accent h-5 w-5 disabled:opacity-40" />
               </label>
             )}
           </div>
@@ -250,7 +250,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
           </div>
 
           <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
-            <p className="text-[10px] text-white/35">
+            <p className={`text-[10px] ${savedAt && Date.now() - savedAt < 4000 ? 'font-bold text-success' : 'text-white/35'}`}>
               {savedAt && Date.now() - savedAt < 4000 ? '✓ Saved' : gw.config?.updatedAt ? `Last saved ${new Date(gw.config.updatedAt).toLocaleString('en-PK')}` : 'Not saved yet'}
             </p>
             <button

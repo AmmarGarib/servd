@@ -77,7 +77,9 @@ export default function ModifiersPage() {
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {t.options.map((o, i) => (
                       <span key={i} className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.15)' }}>
+                        style={o.isDefault
+                          ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
+                          : { background: 'rgb(var(--erp-primary-rgb) / 0.08)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.15)' }}>
                         {o.name}{o.priceDeltaCents > 0 ? ` +${(o.priceDeltaCents / 100).toFixed(0)}` : o.priceDeltaCents < 0 ? ` ${(o.priceDeltaCents / 100).toFixed(0)}` : ''}
                         {o.isDefault ? ' ★' : ''}
                       </span>
@@ -171,7 +173,7 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
               <input type="number" value={maxSelect} onChange={(e) => setMaxSelect(Math.max(1, parseInt(e.target.value) || 1))} className={fieldCls} />
             </Field>
             <label className="flex items-end gap-2 pb-2 cursor-pointer">
-              <input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-primary" />
+              <input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-accent" />
               <span className="text-xs text-white/65">Required</span>
             </label>
           </div>
@@ -184,7 +186,7 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
                   <input value={o.name} onChange={(e) => update(idx, { name: e.target.value })} placeholder="Option name" className={fieldCls} />
                   <input type="number" value={o.priceDeltaCents} onChange={(e) => update(idx, { priceDeltaCents: parseInt(e.target.value) || 0 })} placeholder="±cents" className={fieldCls} />
                   <label className="flex items-center gap-1 text-[10px] text-white/55 cursor-pointer">
-                    <input type="checkbox" checked={o.isDefault} onChange={(e) => update(idx, { isDefault: e.target.checked })} className="accent-primary" />
+                    <input type="checkbox" checked={o.isDefault} onChange={(e) => update(idx, { isDefault: e.target.checked })} className="accent-accent" />
                     Default
                   </label>
                   <button onClick={() => rm(idx)} className="text-white/30 hover:text-red-700 px-2">✕</button>

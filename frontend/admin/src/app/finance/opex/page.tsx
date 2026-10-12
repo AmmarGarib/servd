@@ -190,18 +190,18 @@ export default function OpexTrackerPage() {
         {activeTenant?.isJointVenture && jvPartners.length > 0 && (
           <Link href="/settings"
             className="block rounded-2xl px-5 py-3 hover:bg-white/[0.03] transition-colors"
-            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)' }}>
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
+                  style={{ background: 'rgb(var(--erp-primary-rgb) / 0.20)', color: 'var(--erp-primary-ink)' }}>
                   Joint venture
                 </span>
                 <span className="text-sm text-white/85 font-bold">{activeTenant.name}</span>
                 <span className="text-xs text-white/40">- every cost line below splits as:</span>
                 {jvPartners.map((p, i) => (
                   <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
+                    style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
                     {p.label} {p.pct}%
                   </span>
                 ))}
@@ -217,8 +217,8 @@ export default function OpexTrackerPage() {
             jvPartners={jvPartners} />
           <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="var(--erp-primary-ink)"
             jvPartners={jvPartners} />
-          <Stat label="Categories over budget" value={`${overBudgetCount} / ${categories.length}`} accent={overBudgetCount > 0 ? '#b42318' : '#3f7d20'} />
-          <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="#a15c00"
+          <Stat label="Categories over budget" value={`${overBudgetCount} / ${categories.length}`} accent={overBudgetCount > 0 ? 'var(--erp-danger)' : 'var(--erp-success)'} />
+          <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="var(--erp-warning)"
             jvPartners={jvPartners} />
         </div>
 
@@ -316,7 +316,7 @@ function Stat({ label, value, accent, jvPartners }: {
         <div className="mt-1.5 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
+              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
               {p.label}: {PKR(Math.round(rawCents * p.pct / 100))}
             </span>
           ))}
@@ -351,7 +351,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             <p className="text-[11px] text-white/45">
               {category.lineCount} line{category.lineCount === 1 ? '' : 's'} · {PKR(category.monthlyExpectedCents)}/mo
               {category.budgetMonthlyCents > 0 && (
-                <span style={{ color: overBudget ? '#b42318' : 'rgb(var(--fg-rgb) / 0.45)' }}>
+                <span style={{ color: overBudget ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
                   {' '}· {variancePct >= 0 ? '+' : ''}{variancePct.toFixed(0)}% vs budget
                 </span>
               )}
@@ -390,7 +390,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             {positionsSummary && positionsSummary.contributions.map((c) => (
               <div key={c.id} className="flex justify-between items-baseline">
                 <span className="text-white/55 flex items-center gap-1.5">
-                  <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
+                  <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                     {c.direction === 'incoming' ? '<--' : '-->'}
                   </span>
                   {c.label}
@@ -400,7 +400,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                   </span>
                 </span>
                 <span className="font-bold"
-                  style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
+                  style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                   {c.direction === 'incoming' ? '-' : '+'} {PKR(c.monthlyCents)}
                 </span>
               </div>
@@ -415,7 +415,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                   <div className="mt-1 flex gap-1.5 flex-wrap justify-end">
                     {jvPartners.map((p, i) => (
                       <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-                        style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
+                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
                         {p.label} {p.pct}%: {PKR(Math.round(payrollSnap.budget!.netMonthlyCents * p.pct / 100))}
                       </span>
                     ))}
@@ -494,7 +494,7 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
         </div>
 
         <div className="text-right whitespace-nowrap">
-          <p className="text-[11px]" style={{ color: dueSoon ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.45)' }}>
+          <p className="text-[11px]" style={{ color: dueSoon ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
             {line.nextDueDate ? `due ${new Date(line.nextDueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
           </p>
         </div>
@@ -539,7 +539,7 @@ function CategoryModal({ category, onClose, onSaved }: { category?: Category; on
     <ModalFooter onCancel={onClose}>
       {category && (
         <button onClick={() => { if (confirm('Archive this category?')) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 mr-auto">Archive</button>
+          className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">Archive</button>
       )}
       <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
         {save.isPending ? 'Saving…' : category ? 'Save' : 'Create category'}
@@ -623,7 +623,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
     <ModalFooter onCancel={onClose}>
       {line && (
         <button onClick={() => { if (confirm('Archive this line?')) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-red-700/70 px-4 py-2.5 text-xs hover:text-red-700 mr-auto">Archive</button>
+          className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">Archive</button>
       )}
       <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
@@ -670,17 +670,17 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
             <div>
               <p className="text-sm font-mono text-white/85">{p.actualCents != null ? PKR(p.actualCents) : <em className="text-white/45">unpaid</em>}</p>
               {p.actualCents != null && Math.abs(variancePct) >= 5 && (
-                <p className="text-[11px]" style={{ color: variance > 0 ? '#b42318' : '#3f7d20' }}>
+                <p className="text-[11px]" style={{ color: variance > 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
                   {variance > 0 ? '+' : ''}{variancePct.toFixed(0)}% vs expected
                 </p>
               )}
             </div>
             {p.paidAt && (
               p.ledger?.status === 'posted'
-                ? <span className="text-[10px] font-black text-primary-ink" title={p.ledger.accountCode ? `Booked to ${p.ledger.accountCode}` : undefined}>PAID · ON THE BOOKS</span>
+                ? <span className="text-[10px] font-black text-success" title={p.ledger.accountCode ? `Booked to ${p.ledger.accountCode}` : undefined}>PAID · ON THE BOOKS</span>
                 : p.ledger?.status === 'payroll'
                   ? <span className="text-[10px] font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
-                  : <span className="text-[10px] font-black text-[#a15c00]" title="Paid before payments posted to the books — an admin can post it">PAID · NOT POSTED</span>
+                  : <span className="text-[10px] font-black text-s-amber" title="Paid before payments posted to the books — an admin can post it">PAID · NOT POSTED</span>
             )}
             {p.paymentRef && <span className="text-[10px] font-mono text-white/45">{p.paymentRef}</span>}
           </div>
@@ -701,7 +701,7 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
               placeholder="e.g. 6040" className={fieldCls} inputMode="numeric" />
           </div>
         )}
-        {addError && <p role="alert" className="text-[11px] text-[#b42318] mt-2">{addError.message}</p>}
+        {addError && <p role="alert" className="text-[11px] text-s-red mt-2">{addError.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => add.mutate()} disabled={add.isPending}
@@ -750,7 +750,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
   const msg = error instanceof Error ? error.message : 'Failed'
-  return <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

@@ -180,7 +180,7 @@ function PayTab({ p }: { p: Profile }) {
         {p.loans.map((l) => (
           <div key={l.id} className="text-sm py-2 border-t border-white/[0.05] first:border-t-0">
             <div className="flex justify-between"><span className="text-white/80">{human(l.type)} · {rs(l.amountCents)} over {l.installments} months from {l.firstPeriod}</span></div>
-            <div className="h-1.5 rounded-full bg-white/5 mt-2"><div className="h-full rounded-full bg-primary" style={{ width: `${l.amountCents ? (l.recoveredCents / l.amountCents) * 100 : 0}%` }} /></div>
+            <div className="h-1.5 rounded-full bg-white/5 mt-2"><div className="h-full rounded-full bg-accent" style={{ width: `${l.amountCents ? (l.recoveredCents / l.amountCents) * 100 : 0}%` }} /></div>
             <p className="text-[11px] text-white/45 mt-1">{rs(l.recoveredCents)} recovered · {rs(l.outstandingCents)} outstanding</p>
           </div>
         ))}

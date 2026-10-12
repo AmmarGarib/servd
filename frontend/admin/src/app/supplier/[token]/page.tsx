@@ -149,7 +149,7 @@ export default function SupplierPortal() {
                 key={c.id}
                 onClick={() => setSelectedConvId(c.id)}
                 className={`w-full p-3 text-left border-b border-s-border hover:bg-s-elevated transition-colors
-                  ${c.id === selectedConvId ? 'bg-s-elevated' : ''}`}
+                  ${c.id === selectedConvId ? 'bg-accent-dim shadow-[inset_3px_0_0_rgb(var(--erp-accent-rgb))]' : ''}`}
               >
                 <p className="text-sm font-medium truncate">{c.subject ?? c.staff.name}</p>
                 <p className="text-xs text-s-muted">with {c.staff.name}</p>

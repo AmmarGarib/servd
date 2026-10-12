@@ -141,7 +141,7 @@ export default function UserAuditLogPage() {
         {([['signins', 'Sign-ins'], ['activity', 'Activity']] as const).map(([k, label]) => (
           <button key={k} onClick={() => { setTab(k); setActionText('') }}
             className="px-4 py-2 text-sm font-bold -mb-px border-b-2"
-            style={{ borderColor: tab === k ? 'var(--erp-primary)' : 'transparent', color: tab === k ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.5)' }}>
+            style={{ borderColor: tab === k ? 'var(--erp-accent)' : 'transparent', color: tab === k ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.5)' }}>
             {label}
           </button>
         ))}
@@ -181,7 +181,7 @@ export default function UserAuditLogPage() {
             <button key={f.key} onClick={() => setGroup(f.key)} aria-pressed={group === f.key}
               className="px-3 py-1.5 rounded-full text-xs font-semibold border"
               style={group === f.key
-                ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', borderColor: 'rgb(var(--erp-primary-rgb) / 0.4)', color: 'var(--erp-primary-ink)' }
+                ? { background: 'var(--erp-accent-dim)', borderColor: 'var(--erp-accent)', color: 'var(--text)' }
                 : { background: 'transparent', borderColor: 'rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>
               {f.label}
             </button>
@@ -273,7 +273,7 @@ function Row({ row, signins, open, onToggle, onUser }: {
         <td className="px-4 py-2 text-xs">
           <span className="font-mono rounded px-1.5 py-0.5"
             style={loud
-              ? { background: 'rgba(245,158,11,0.12)', color: '#a15c00' }
+              ? { background: 'rgba(245,158,11,0.12)', color: 'var(--erp-warning)' }
               : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
             {signins ? (SIGNIN_LABEL[row.action] ?? row.action) : row.action}
           </span>
@@ -382,7 +382,7 @@ function UserDrawer({ userId, onClose, onFilter }: { userId: string; onClose: ()
         {(timeline.data?.data ?? []).map((r) => (
           <div key={r.id} className="py-1.5 border-t border-white/[0.05] first:border-t-0">
             <div className="flex justify-between gap-2 text-xs">
-              <span className="font-mono" style={{ color: LOUD_ACTIONS.has(r.action) ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.75)' }}>{SIGNIN_LABEL[r.action] ?? r.action}</span>
+              <span className="font-mono" style={{ color: LOUD_ACTIONS.has(r.action) ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.75)' }}>{SIGNIN_LABEL[r.action] ?? r.action}</span>
               <span className="text-white/35 shrink-0">{new Date(r.createdAt).toLocaleString()}</span>
             </div>
             {!r.action.startsWith('auth.') && <p className="text-[11px] text-white/40">{r.entity}{r.entityId ? ` #${r.entityId.slice(0, 8)}` : ''}</p>}
@@ -398,7 +398,7 @@ function Mini({ label, value, warn }: { label: string; value: string; warn?: boo
   return (
     <div className="rounded-xl p-2.5" style={card}>
       <p className="text-[9px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
-      <p className="text-sm font-bold mt-0.5" style={{ color: warn ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.85)' }}>{value}</p>
+      <p className="text-sm font-bold mt-0.5" style={{ color: warn ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.85)' }}>{value}</p>
     </div>
   )
 }

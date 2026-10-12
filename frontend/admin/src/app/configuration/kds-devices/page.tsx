@@ -53,7 +53,7 @@ export default function KdsDevicesPage() {
                     {station && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>{station.name}</span>}
                     {concept && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{concept.name}</span>}
                   </div>
-                  <p className="text-xs text-white/40 mt-1">
+                  <p className={`text-xs mt-1 ${d.lastSeenAt && Date.now() - new Date(d.lastSeenAt).getTime() < 5 * 60_000 ? 'text-success font-semibold' : 'text-white/40'}`}>
                     {d.lastSeenAt ? `Last seen ${new Date(d.lastSeenAt).toLocaleString()}` : 'Never connected'}
                   </p>
                   {d.notes && <p className="text-xs text-white/50 mt-1">{d.notes}</p>}

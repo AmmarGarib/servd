@@ -149,7 +149,7 @@ export default function TipPoolsPage() {
             </thead>
             <tbody>
               {list.data?.map((p) => (
-                <tr key={p.id} className={`border-t border-s-border cursor-pointer ${openId === p.id ? 'bg-s-bg-soft' : 'hover:bg-s-bg-soft'}`}
+                <tr key={p.id} className={`border-t border-s-border cursor-pointer ${openId === p.id ? 'bg-accent-dim' : 'hover:bg-s-bg-soft'}`}
                   onClick={() => { setOpenId(p.id); setLeaveOut([]); setLeaveOutReason(''); setWeights({}) }}>
                   <td className="px-4 py-2 text-xs">
                     <p>{p.periodStart.slice(0, 10)} → {p.periodEnd.slice(0, 10)}</p>
@@ -158,7 +158,7 @@ export default function TipPoolsPage() {
                   <td className="px-4 py-2 text-right font-mono text-xs">{fmtPkr(p.totalTipsCents)}</td>
                   <td className="px-4 py-2 text-right text-xs text-s-muted">{p._count.members}</td>
                   <td className="px-4 py-2"><span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
-                    p.status === 'paid' ? 'bg-primary text-primary-on' : p.status === 'posted' ? 'bg-s-amber text-[#fff]' : 'bg-s-elevated text-s-muted'
+                    p.status === 'paid' ? 'bg-accent text-accent-on' : p.status === 'posted' ? 'bg-s-amber text-bone' : 'bg-s-elevated text-s-muted'
                   }`}>{p.status}</span></td>
                 </tr>
               ))}
@@ -277,7 +277,7 @@ export default function TipPoolsPage() {
                 ) : (
                   <span className="text-xs text-s-muted w-full text-center">Posted — the CEO or an owner marks it paid.</span>
                 ))}
-                {detail.data.status === 'paid' && <span className="text-xs text-primary-ink w-full text-center">Paid out</span>}
+                {detail.data.status === 'paid' && <span className="text-xs font-bold text-success w-full text-center">Paid out</span>}
               </div>
               {actionError?.message && <p className="px-4 pb-3 text-xs text-s-red">{actionError.message}</p>}
             </div>

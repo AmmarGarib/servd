@@ -271,7 +271,7 @@ export default function OrdersPage() {
             {(['live', 'history'] as Tab[]).map((t) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
-                  ${tab === t ? 'border-primary text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
+                  ${tab === t ? 'border-accent text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
                 {t === 'live'
                   ? `Live${liveOrders.length > 0 ? ` (${liveOrders.length})` : ''}`
                   : 'History'}
@@ -309,7 +309,7 @@ export default function OrdersPage() {
                           <div key={order.id}
                             onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}
                             className={`rounded-xl border bg-s-surface p-3 cursor-pointer transition-colors ${
-                              expandedId === order.id ? 'border-primary' : 'border-s-border hover:border-primary/50'
+                              expandedId === order.id ? 'border-accent' : 'border-s-border hover:border-primary/50'
                             }`}>
                             <div className="flex items-start justify-between gap-1">
                               <p className="font-mono text-xs text-s-muted">#{orderRef(order.id)}</p>

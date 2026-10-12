@@ -267,7 +267,7 @@ export default function StaffLoginPage() {
         <div className="w-full max-w-xs">
 
           <div className="text-center mb-8">
-            <p className="text-[11px] font-bold text-s-muted uppercase tracking-[0.25em] mb-2">
+            <p className="text-[11px] font-bold text-success uppercase tracking-[0.25em] mb-2">
               Staff Portal
             </p>
             <h1 className="text-2xl font-black text-s-text">
@@ -381,7 +381,7 @@ export default function StaffLoginPage() {
                   placeholder="Email" autoComplete="username" autoFocus
                   className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
                 />
-                {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
+                {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
                   disabled={loading || !pwEmail.trim()}>
                   {loading ? 'Sending…' : 'Send reset link'}
@@ -396,7 +396,7 @@ export default function StaffLoginPage() {
           ) : mode === 'changepw' ? (
             cpDone ? (
               <div className="text-center">
-                <p className="text-sm text-s-text mb-2">Password changed.</p>
+                <p className="text-sm font-bold text-success mb-2">Password changed.</p>
                 <p className="text-xs text-s-dim mb-5 leading-relaxed">
                   Every other device signed in as you has been signed out.
                 </p>
@@ -427,7 +427,7 @@ export default function StaffLoginPage() {
                   className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
                 />
                 <p className="text-[10px] text-s-dim mb-3 text-center">At least 12 characters.</p>
-                {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
+                {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
                   disabled={loading || !pwEmail.trim() || !cpCurrent || cpNew.length < 12}>
                   {loading ? 'Changing…' : 'Change password'}
@@ -451,7 +451,7 @@ export default function StaffLoginPage() {
                 placeholder="Password" autoComplete="current-password"
                 className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
-              {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
+              {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
               <button type="submit" className={cta} style={ctaStyle}
                 disabled={loading || !pwEmail.trim() || pwPassword.length < 8}>
                 {loading ? 'Signing in…' : 'Sign in'}

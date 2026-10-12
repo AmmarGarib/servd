@@ -131,7 +131,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
             <button key={p.id} onClick={() => setActivePhase(p.id)}
               className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-colors"
               style={active
-                ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)' }
+                ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-primary-ink)', border: '1px solid var(--erp-accent)' }
                 : { background: 'transparent', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid transparent' }}>
               <span className="mr-1">{p.emoji}</span>
               {p.label}
@@ -186,7 +186,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
                 </button>
                 <button onClick={() => { if (confirm('Delete this step?')) remove.mutate(s.id) }}
                   className="text-[10px] px-2 py-1 rounded font-bold"
-                  style={{ background: 'rgba(255,77,79,0.08)', color: '#b42318' }}>
+                  style={{ background: 'rgba(255,77,79,0.08)', color: 'var(--erp-danger)' }}>
                   Delete
                 </button>
               </div>
@@ -209,7 +209,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
       </div>
 
       {(create.error || update.error || remove.error) && (
-        <p className="px-4 pb-3 text-xs text-red-700">
+        <p className="px-4 pb-3 text-xs text-s-red">
           {(create.error || update.error || remove.error)?.message}
         </p>
       )}
@@ -289,7 +289,7 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
                 <button key={c.id} type="button" onClick={() => toggleDep(c.id)}
                   className="text-[10px] rounded-full px-2 py-1 font-semibold transition-colors max-w-[260px] truncate"
                   style={on
-                    ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                    ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
                     : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
                   title={c.instruction}>
                   {on ? '✓ ' : '+ '}{c.instruction.slice(0, 36)}{c.instruction.length > 36 ? '…' : ''}

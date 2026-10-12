@@ -143,9 +143,9 @@ const CATEGORIES: Category[] = [
 ]
 
 const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: string; bg: string }> = {
-  active:    { label: 'Active',    color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.10)' },
-  pending:   { label: 'Pending',   color: '#a15c00', bg: 'rgba(245,158,11,0.10)' },
-  suspended: { label: 'Suspended', color: '#b42318', bg: 'rgba(255,77,79,0.10)' },
+  active:    { label: 'Active',    color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.18)' },
+  pending:   { label: 'Pending',   color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.10)' },
+  suspended: { label: 'Suspended', color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.10)' },
 }
 
 // The API derives the status in one place (auth/accountStatus.ts) — including
@@ -314,7 +314,7 @@ function WorkforcePageInner() {
                 <button
                   onClick={() => { setActiveTab('people'); setActiveCategory('all'); setStatusFilter('pending'); router.replace('/workforce?status=pending') }}
                   className="rounded-lg px-3 py-2 text-xs font-bold border transition-colors"
-                  style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.35)', color: '#a15c00' }}>
+                  style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.35)', color: 'var(--erp-warning)' }}>
                   ⏳ Review {pendingCount} pending
                 </button>
               )}
@@ -338,14 +338,14 @@ function WorkforcePageInner() {
           <button onClick={() => { setActiveTab('people'); router.replace('/workforce') }}
             className="px-4 py-2.5 text-sm font-bold transition-colors"
             style={activeTab === 'people'
-              ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-primary)', marginBottom: '-1px' }
+              ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
               : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
             👥 People ({users.length})
           </button>
           <button onClick={() => { setActiveTab('positions'); router.replace('/workforce?tab=positions') }}
             className="px-4 py-2.5 text-sm font-bold transition-colors"
             style={activeTab === 'positions'
-              ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-primary)', marginBottom: '-1px' }
+              ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
               : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
             💼 Positions (budget)
           </button>
@@ -386,7 +386,7 @@ function WorkforcePageInner() {
             return (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider transition-colors ${
-                  active ? 'bg-primary text-primary-on' : 'text-s-muted hover:bg-s-surface hover:text-s-text'
+                  active ? 'bg-accent-dim text-success ring-1 ring-inset ring-accent' : 'text-s-muted hover:bg-s-surface hover:text-s-text'
                 }`}>
                 {s === 'all' ? 'All status' : s}
               </button>
@@ -476,7 +476,7 @@ function CategoryChip({
     <button onClick={onClick}
       className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
         active
-          ? 'bg-primary text-primary-on'
+          ? 'bg-accent-dim border border-accent text-s-text'
           : 'bg-s-surface border border-s-border text-s-text hover:border-primary/40'
       }`}>
       <span>{emoji}</span>
@@ -560,7 +560,7 @@ function StaffRow({
             </span>
             {!user.hasPin && status === 'active' && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}>
+                style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}>
                 No PIN
               </span>
             )}
@@ -568,14 +568,14 @@ function StaffRow({
                 employee record. Open the row for the link to HR. */}
             {status === 'suspended' && user.payroll && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(245,158,11,0.12)', color: '#a15c00' }}
+                style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--erp-warning)' }}
                 title="This login is switched off, but the person is still on payroll in HR. Start a separation in HR to stop pay.">
                 Still on payroll
               </span>
             )}
             {user.usesCodeLogin && !user.phone && status !== 'suspended' && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
+                style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}
                 title="Signs in with a code sent to their phone — with no number on file they cannot sign in.">
                 No phone
               </span>
@@ -595,7 +595,7 @@ function StaffRow({
                 with no company is a data bug; surface it everywhere. */}
             {!user.tenantId && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
+                style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}
                 title="This staff row has no company assigned. Tap to fix.">
                 ⚠ No company
               </span>
@@ -876,8 +876,8 @@ function InlineEditor({
                     onClick={() => toggleTenant(t.id)}
                     className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
                       checked
-                        ? 'bg-indigo-500/20 text-indigo-700 border border-indigo-500/40'
-                        : 'bg-s-surface text-s-muted border border-s-border hover:border-indigo-400/30'
+                        ? 'bg-accent-dim text-success border border-accent'
+                        : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
                     }`}>
                     <span>{checked ? '✓' : '+'}</span>
                     <span>{t.name}</span>
@@ -940,8 +940,8 @@ function InlineEditor({
                         onClick={() => toggleStation(s.id)}
                         className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${
                           checked
-                            ? 'bg-emerald-500/20 text-emerald-700 border border-emerald-500/40'
-                            : 'bg-s-surface text-s-muted border border-s-border hover:border-emerald-400/30'
+                            ? 'bg-accent-dim text-success border border-accent'
+                            : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
                         }`}>
                         <span>{checked ? '✓' : '+'}</span>
                         <span>{s.name}</span>
@@ -993,14 +993,14 @@ function InlineEditor({
           )}
           {status === 'suspended' && (
             <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
-              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-emerald-700 hover:border-emerald-400/40">
+              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-primary-ink hover:border-primary/40">
               Reactivate
             </button>
           )}
           <button onClick={() => {
               if (window.confirm(`Issue a new password for ${user.name}? Their current one stops working immediately and they will be signed out everywhere.`)) reissue.mutate()
             }} disabled={reissue.isPending}
-            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-emerald-700 hover:border-emerald-400/40">
+            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-primary-ink hover:border-primary/40">
             {reissue.isPending ? 'Issuing…' : 'New password'}
           </button>
           <button onClick={() => {
@@ -1014,15 +1014,15 @@ function InlineEditor({
         {/* The reissued password, held on screen until dismissed. Only a hash
             is stored, so this is the only moment it exists in readable form. */}
         {reissued && (
-          <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-emerald-700/80 mb-1">
+          <div className="mt-3 rounded-lg border border-accent/60 bg-accent-dim p-3">
+            <div className="text-[10px] uppercase tracking-wider text-success mb-1">
               New password for {user.name} — shown once
             </div>
-            <div className="font-mono text-sm font-bold text-emerald-700 break-all mb-2">{reissued}</div>
+            <div className="font-mono text-sm font-bold text-success break-all mb-2">{reissued}</div>
             <div className="flex gap-2">
               <button
                 onClick={() => { void navigator.clipboard?.writeText(reissued).catch(() => undefined) }}
-                className="rounded-md px-2 py-1 text-[11px] font-bold border border-s-border text-s-text hover:border-emerald-400/40">
+                className="rounded-md px-2 py-1 text-[11px] font-bold border border-s-border text-s-text hover:border-primary/40">
                 Copy
               </button>
               <button
@@ -1138,7 +1138,7 @@ function AddStaffModal({
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-s-muted mb-0.5">Password</div>
-                <div className="font-mono text-base font-bold text-emerald-700 break-all">{issued.password}</div>
+                <div className="font-mono text-base font-bold text-success break-all">{issued.password}</div>
               </div>
             </div>
             <div className="flex gap-2">
@@ -1147,7 +1147,7 @@ function AddStaffModal({
                   void navigator.clipboard?.writeText(`${issued.email}\n${issued.password}`)
                     .then(() => setCopied(true)).catch(() => undefined)
                 }}
-                className="flex-1 rounded-lg py-2 text-xs font-bold border border-s-border text-s-text hover:border-emerald-400/40">
+                className={`flex-1 rounded-lg py-2 text-xs font-bold border hover:border-primary/40 ${copied ? 'border-accent text-success' : 'border-s-border text-s-text'}`}>
                 {copied ? 'Copied' : 'Copy both'}
               </button>
               <button
@@ -1205,8 +1205,8 @@ function AddStaffModal({
                       onClick={() => toggleTenant(t.id)}
                       className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
                         checked
-                          ? 'bg-indigo-500/20 text-indigo-700 border border-indigo-500/40'
-                          : 'bg-s-surface text-s-muted border border-s-border hover:border-indigo-400/30'
+                          ? 'bg-accent-dim text-success border border-accent'
+                          : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
                       }`}>
                       <span>{checked ? '✓' : '+'}</span>
                       <span>{t.name}</span>

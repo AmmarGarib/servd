@@ -140,10 +140,10 @@ export default function HoursPage() {
               <div className="space-y-2">
                 {days.map((d, i) => (
                   <div key={i} className="rounded-lg p-3 space-y-2"
-                    style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+                    style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: d.isOpen ? '1px solid rgb(var(--erp-accent-rgb) / 0.45)' : '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                     <div className="flex items-center gap-3">
                       <label className="flex items-center gap-2 cursor-pointer w-20">
-                        <input type="checkbox" checked={d.isOpen} onChange={(e) => patch(i, { isOpen: e.target.checked })} className="accent-primary" />
+                        <input type="checkbox" checked={d.isOpen} onChange={(e) => patch(i, { isOpen: e.target.checked })} className="accent-accent" />
                         <span className="text-sm font-bold text-white/85">{DAY_LABELS[i]}</span>
                       </label>
                       {d.isOpen ? (
@@ -165,7 +165,7 @@ export default function HoursPage() {
                         <label className="flex items-center gap-1.5 cursor-pointer">
                           <input type="checkbox" checked={w.isReservable}
                             onChange={(e) => patchWindow(i, wi, { isReservable: e.target.checked })}
-                            className="accent-primary" />
+                            className="accent-accent" />
                           <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Reservable</span>
                         </label>
                         <button onClick={() => removeWindow(i, wi)} className="ml-auto text-xs text-red-700/80 hover:text-red-700">Remove</button>

@@ -77,25 +77,25 @@ interface Project {
 }
 
 const SCOPE_META: Record<string, { emoji: string; label: string; color: string }> = {
-  BOH:        { emoji: '🍳', label: 'Back of House',  color: '#a15c00' },
+  BOH:        { emoji: '🍳', label: 'Back of House',  color: 'var(--erp-warning)' },
   FOH:        { emoji: '🪑', label: 'Front of House', color: 'var(--erp-secondary)' },
   AG:         { emoji: '✨', label: 'AG / Finishing', color: '#be185d' },
   Equipment:  { emoji: '🛠', label: 'Small wares',    color: 'var(--erp-primary-ink)' },
-  MEP:        { emoji: '⚡', label: 'MEP',            color: '#a15c00' },
+  MEP:        { emoji: '⚡', label: 'MEP',            color: 'var(--erp-warning)' },
   Civil:      { emoji: '🏗', label: 'Civil',          color: 'var(--muted)' },
   Tech:       { emoji: '💻', label: 'Tech',           color: '#1d4ed8' },
-  Branding:   { emoji: '🎨', label: 'Branding',       color: '#b42318' },
-  Permits:    { emoji: '📑', label: 'Permits',        color: '#3f7d20' },
-  SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: '#3f7d20' },
+  Branding:   { emoji: '🎨', label: 'Branding',       color: 'var(--erp-danger)' },
+  Permits:    { emoji: '📑', label: 'Permits',        color: 'var(--erp-success)' },
+  SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: 'var(--erp-success)' },
   Other:      { emoji: '📦', label: 'Other',          color: 'var(--muted)' },
 }
 
 const PHASE_META: Record<Project['phase'], { label: string; bg: string; fg: string }> = {
   planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
-  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: '#a15c00' },
+  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: 'var(--erp-warning)' },
   executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary)' },
-  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: 'var(--erp-primary-ink)' },
-  live:      { label: 'Live',       bg: 'rgba(34,197,94,0.15)',   fg: '#3f7d20' },
+  snagging:  { label: 'Snagging',   bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
+  live:      { label: 'Live',       bg: 'rgb(var(--erp-accent-rgb) / 0.15)',   fg: 'var(--erp-success)' },
 }
 
 const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
@@ -256,7 +256,7 @@ export default function InvestmentDashboardPage() {
                 hint={`${pctPaid}% of ask`}
                 value={PKR_LAKHS(agg.paid)}
                 subValue={PKR(agg.paid)}
-                bg="rgba(245,158,11,0.05)" border="rgba(245,158,11,0.22)" color="#a15c00"
+                bg="rgb(var(--erp-accent-rgb) / 0.08)" border="rgb(var(--erp-accent-rgb) / 0.35)" color="var(--erp-success)"
               />
               <KpiTile
                 label="Committed"
@@ -281,21 +281,21 @@ export default function InvestmentDashboardPage() {
                 hint="capitalised onto the fixed-asset register"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
                 subValue={PKR(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
-                bg="rgba(134,239,172,0.05)" border="rgba(134,239,172,0.22)" color="#3f7d20"
+                bg="rgb(var(--erp-accent-rgb) / 0.05)" border="rgb(var(--erp-accent-rgb) / 0.22)" color="var(--erp-success)"
               />
               <KpiTile
                 label="Not yet capitalised"
                 hint="advanced to suppliers, item not on the register yet"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
                 subValue={PKR(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
-                bg="rgba(252,211,77,0.05)" border="rgba(252,211,77,0.22)" color="#a15c00"
+                bg="rgba(252,211,77,0.05)" border="rgba(252,211,77,0.22)" color="var(--erp-warning)"
               />
               <KpiTile
                 label="Prepaid rent · fees expensed"
                 hint="rent advances (1310) · broker / consultant fees (6110)"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0) + (p.books?.expensedCents ?? 0), 0))}
                 subValue={`${PKR(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0), 0))} prepaid · ${PKR(projects.reduce((t, p) => t + (p.books?.expensedCents ?? 0), 0))} fees`}
-                bg="rgba(165,180,252,0.05)" border="rgba(165,180,252,0.22)" color="var(--erp-primary-ink)"
+                bg="rgb(var(--erp-primary-rgb) / 0.05)" border="rgb(var(--erp-primary-rgb) / 0.22)" color="var(--erp-primary-ink)"
               />
             </div>
 
@@ -306,13 +306,13 @@ export default function InvestmentDashboardPage() {
                 <div className="flex justify-between items-baseline mb-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">Deployment vs total ask</p>
                   <p className="text-xs text-white/55">
-                    <span className="text-amber-700 font-bold">{PKR_LAKHS(agg.paid)} paid</span> ·
+                    <span className="text-success font-bold">{PKR_LAKHS(agg.paid)} paid</span> ·
                     <span className="text-primary-ink font-bold ml-1.5">{PKR_LAKHS(agg.committed)} committed</span> ·
                     <span className="text-white/50 ml-1.5">{PKR_LAKHS(agg.totalAsk - agg.committed)} unallocated</span>
                   </p>
                 </div>
                 <div className="h-2.5 rounded-full overflow-hidden flex" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }}>
-                  <div className="h-full" style={{ width: `${Math.min(100, pctPaid)}%`, background: '#a15c00' }} />
+                  <div className="h-full" style={{ width: `${Math.min(100, pctPaid)}%`, background: 'var(--erp-accent)' }} />
                   <div className="h-full" style={{ width: `${Math.min(100, Math.max(0, pctCmttd - pctPaid))}%`, background: 'rgb(var(--erp-primary-rgb) / 0.6)' }} />
                 </div>
               </div>
@@ -336,7 +336,7 @@ export default function InvestmentDashboardPage() {
                           style={{
                             height: `${h}%`,
                             background: m.cents > 0
-                              ? 'linear-gradient(180deg, #a15c00 0%, rgba(245,158,11,0.4) 100%)'
+                              ? 'linear-gradient(180deg, var(--erp-accent) 0%, rgb(var(--erp-accent-rgb) / 0.4) 100%)'
                               : 'rgb(var(--fg-rgb) / 0.04)',
                           }} />
                         <div className="text-[10px] text-white/50 font-bold uppercase">{m.label}</div>
@@ -370,7 +370,7 @@ export default function InvestmentDashboardPage() {
                         <div className="flex items-center gap-2 mt-1.5">
                           <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }}>
                             <div className="h-full"
-                              style={{ width: `${pct}%`, background: over ? '#b42318' : pct > 70 ? '#a15c00' : 'var(--erp-primary)' }} />
+                              style={{ width: `${pct}%`, background: over ? 'var(--erp-danger)' : pct > 70 ? 'var(--erp-warning)' : 'var(--erp-accent)' }} />
                           </div>
                           <p className="text-[10px] text-white/55 shrink-0 font-mono">
                             {PKR_LAKHS(p.rollups.paidCents)} / {PKR_LAKHS(p.budgetEnvelopeCents || p.rollups.totalAskCents)}
@@ -378,7 +378,7 @@ export default function InvestmentDashboardPage() {
                         </div>
                         <p className="text-[10px] text-white/40 mt-1">
                           {p.lines.length} lines · {p.rollups.committedCents > 0 ? `${PKR_LAKHS(p.rollups.committedCents)} committed` : 'no commitments yet'}
-                          {over && <span className="text-red-700 font-bold"> · over by {PKR_LAKHS(p.rollups.varianceVsEnvelopeCents)}</span>}
+                          {over && <span className="text-s-red font-bold"> · over by {PKR_LAKHS(p.rollups.varianceVsEnvelopeCents)}</span>}
                         </p>
                       </Link>
                     )
@@ -432,7 +432,7 @@ export default function InvestmentDashboardPage() {
                             {v.lines} line{v.lines === 1 ? '' : 's'} · {v.projects} project{v.projects === 1 ? '' : 's'}
                           </p>
                         </div>
-                        <p className="text-sm font-mono font-bold text-amber-700 shrink-0">{PKR_LAKHS(v.paid)}</p>
+                        <p className="text-sm font-mono font-bold text-s-amber shrink-0">{PKR_LAKHS(v.paid)}</p>
                       </div>
                     ))}
                   </div>
@@ -452,7 +452,7 @@ export default function InvestmentDashboardPage() {
                         <span className="text-white/45 font-mono text-[10px] w-16 shrink-0">
                           {new Date(r.payment.paidAt!).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}
                         </span>
-                        <span className="font-mono font-bold text-amber-700 shrink-0 w-20 text-right">
+                        <span className="font-mono font-bold text-success shrink-0 w-20 text-right">
                           {PKR_LAKHS(r.payment.paidAmountCents ?? 0)}
                         </span>
                         <span className="text-white/80 truncate flex-1">{r.line.item}</span>
@@ -460,11 +460,11 @@ export default function InvestmentDashboardPage() {
                         <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5 shrink-0"
                           style={{
                             background: r.payment.label === 'deposit' ? 'rgb(var(--ink-rgb) / 0.15)'
-                                      : r.payment.label === 'balance' ? 'rgba(34,197,94,0.15)'
+                                      : r.payment.label === 'balance' ? 'rgb(var(--erp-accent-rgb) / 0.15)'
                                       : 'rgba(245,158,11,0.15)',
                             color:      r.payment.label === 'deposit' ? 'var(--erp-primary-ink)'
-                                      : r.payment.label === 'balance' ? '#3f7d20'
-                                      : '#a15c00',
+                                      : r.payment.label === 'balance' ? 'var(--erp-success)'
+                                      : 'var(--erp-warning)',
                           }}>
                           {r.payment.label}
                         </span>

@@ -154,8 +154,8 @@ function Modal({ field, onClose, onSaved }: { field: Def | null; onClose: () => 
           )}
           <Field label="Help text"><input value={helpText} onChange={(e) => setHelpText(e.target.value)} placeholder="Shown below the field" className={fieldCls} /></Field>
           <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-primary" /><span className="text-xs text-white/65">Required</span></label>
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showInList} onChange={(e) => setShowInList(e.target.checked)} className="accent-primary" /><span className="text-xs text-white/65">Show in list view</span></label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} className="accent-accent" /><span className="text-xs text-white/65">Required</span></label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showInList} onChange={(e) => setShowInList(e.target.checked)} className="accent-accent" /><span className="text-xs text-white/65">Show in list view</span></label>
           </div>
         </div>
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">

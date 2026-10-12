@@ -19,7 +19,7 @@ const config: Config = {
         secondary: { DEFAULT: ch('--erp-secondary-rgb'), on: ch('--erp-on-secondary-rgb') },
         // The servd green from the logo — accents (dots, bars, the sidebar's
         // active item); `text-success` is the readable green on white.
-        accent: { DEFAULT: ch('--erp-accent-rgb'), on: ch('--erp-on-accent-rgb') },
+        accent: { DEFAULT: ch('--erp-accent-rgb'), on: ch('--erp-on-accent-rgb'), dim: ch('--erp-accent-dim-rgb') },
         success: ch('--erp-success-rgb'),
         // Light text on a coloured fill (red/amber/purple buttons).
         bone: '#ffffff',
@@ -36,8 +36,10 @@ const config: Config = {
           text:         ch('--text-rgb'),          // primary text
           muted:        ch('--muted-rgb'),         // secondary text
           dim:          ch('--dim-rgb'),           // disabled / placeholder
-          teal:         ch('--erp-primary-rgb'),   // primary action (legacy name)
-          'teal-dim':   ch('--erp-primary-dim-rgb'),
+          // Legacy "teal" = the accent: the servd green (on / done / live /
+          // good), never a button. Buttons are `primary` (purple).
+          teal:         ch('--erp-accent-rgb'),
+          'teal-dim':   ch('--erp-accent-dim-rgb'),
           indigo:       ch('--erp-secondary-rgb'), // secondary accent (legacy name)
           'indigo-dim': ch('--erp-secondary-dim-rgb'),
           amber:        '#a15c00',

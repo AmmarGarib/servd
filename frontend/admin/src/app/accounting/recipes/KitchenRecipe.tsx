@@ -77,7 +77,7 @@ export function KitchenIngredients({ rows }: { rows: KitchenIngredient[] }) {
                   {r.subRecipeId ? (
                     <span className="inline-flex items-center gap-2 flex-wrap">
                       <Link href={`/accounting/recipes/${r.subRecipeId}`} className="hover:underline">{r.name}</Link>
-                      <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 bg-s-purple-dim text-s-purple">
+                      <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 bg-primary/10 text-primary-ink">
                         Sub-recipe
                       </span>
                     </span>
@@ -309,7 +309,7 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-black">{title}</h1>
             <span className={`text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${
-              recipe.kind === 'plate' ? 'bg-s-green-dim text-s-green' : 'bg-s-purple-dim text-s-purple'}`}>
+              recipe.kind === 'plate' ? 'bg-accent-dim text-success' : 'bg-primary/10 text-primary-ink'}`}>
               {recipe.kind === 'plate' ? 'Plate' : 'Sub-recipe'}
             </span>
             {recipe.status !== 'production' && (

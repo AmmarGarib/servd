@@ -153,7 +153,7 @@ function Modal({ report, concepts, onClose, onSaved }: { report: Report | null; 
                 <button key={p.value} type="button" onClick={() => setCron(p.value)}
                   className="text-[10px] font-semibold px-2 py-1 rounded-full"
                   style={cron === p.value
-                    ? { background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
+                    ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
                     : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                   {p.label}
                 </button>

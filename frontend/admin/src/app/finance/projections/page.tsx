@@ -219,7 +219,7 @@ export default function ProjectionsPage() {
             label="Year-1 combined P&L"
             value={fmtPkrWhole(summary.year1CombinedProfitCents)}
             hint={summary.year1CombinedProfitCents >= 0 ? 'profit (pre-tax)' : 'loss'}
-            color={summary.year1CombinedProfitCents >= 0 ? 'var(--erp-success)' : '#b42318'}
+            color={summary.year1CombinedProfitCents >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)'}
           />
           <SummaryCard
             label="Capital ask"
@@ -231,7 +231,7 @@ export default function ProjectionsPage() {
             label="Payback period"
             value={summary.paybackMonths != null ? `${(summary.paybackMonths / 12).toFixed(1)} yrs` : '—'}
             hint={summary.paybackMonths != null ? `${summary.paybackMonths} months at steady-state` : 'No profit at Month 12'}
-            color="#a15c00"
+            color="var(--erp-warning)"
           />
         </section>
 
@@ -250,7 +250,7 @@ export default function ProjectionsPage() {
                   <th className="text-left px-3 py-2 font-bold min-w-[220px]">Input</th>
                   {brands.map((b) => (
                     <th key={b.conceptId} className="text-right px-3 py-2 font-bold">
-                      <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: b.concept.primaryColor ?? '#888' }}/>
+                      <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: b.concept.primaryColor ?? 'var(--dim)' }}/>
                       {b.concept.name}
                     </th>
                   ))}
@@ -298,7 +298,7 @@ export default function ProjectionsPage() {
         {missingConcepts.map((c) => (
           <div key={c.id} className="rounded-xl border border-s-border bg-s-surface px-4 py-3 flex items-center justify-between">
             <span className="text-sm">
-              <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: c.primaryColor ?? '#888' }}/>
+              <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: c.primaryColor ?? 'var(--dim)' }}/>
               <span className="font-bold">{c.name}</span>
               <span className="text-s-dim ml-2 text-xs">not in this projection</span>
             </span>
@@ -417,7 +417,7 @@ function BrandBlock({ brand: b, months, patchBrand }: {
   return (
     <section>
       <div className="flex items-baseline gap-3 mb-3">
-        <span className="inline-block w-3 h-3 rounded-full" style={{ background: b.concept.primaryColor ?? '#888' }}/>
+        <span className="inline-block w-3 h-3 rounded-full" style={{ background: b.concept.primaryColor ?? 'var(--dim)' }}/>
         <h2 className="text-lg font-black uppercase tracking-wide">{b.concept.name}</h2>
         <span className="text-xs text-s-muted">
           Launches M{b.launchMonth} · Steady state M12: profit {fmtPkr(b.steadyStateMonthlyProfitCents)}/mo
@@ -537,7 +537,7 @@ function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative,
       <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
       {brand.months.map((m) => {
         const v = pick(m)
-        const color = highlightSign ? (v >= 0 ? 'var(--erp-success)' : '#b42318') : negative ? 'var(--muted)' : 'inherit'
+        const color = highlightSign ? (v >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)') : negative ? 'var(--muted)' : 'inherit'
         return (
           <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
             {v === 0 ? <span className="text-s-dim">—</span> : display(v)}
@@ -545,7 +545,7 @@ function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative,
         )
       })}
       <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
-          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-success)' : '#b42318') : 'inherit' }}>
+          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)') : 'inherit' }}>
         {cumulative ? display(brand.months[brand.months.length - 1]!.cumulativeCents) : display(total)}
       </td>
     </tr>
@@ -567,7 +567,7 @@ function CombinedRow({ label, months, pick, negative, bold, cumulative, highligh
       <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
       {months.map((m) => {
         const v = pick(m)
-        const color = highlightSign ? (v >= 0 ? 'var(--erp-success)' : '#b42318') : negative ? 'var(--muted)' : 'inherit'
+        const color = highlightSign ? (v >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)') : negative ? 'var(--muted)' : 'inherit'
         return (
           <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
             {v === 0 ? <span className="text-s-dim">—</span> : fmtPkr(v)}
@@ -575,7 +575,7 @@ function CombinedRow({ label, months, pick, negative, bold, cumulative, highligh
         )
       })}
       <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
-          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-success)' : '#b42318') : 'inherit' }}>
+          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)') : 'inherit' }}>
         {cumulative ? fmtPkr(months[months.length - 1]!.cumulativeCents) : fmtPkr(total)}
       </td>
     </tr>

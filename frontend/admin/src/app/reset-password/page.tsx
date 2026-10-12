@@ -102,7 +102,7 @@ function ResetPasswordInner() {
 
           {state === 'done' && (
             <div className="text-center mt-6">
-              <p className="text-sm text-s-text mb-2">Password set.</p>
+              <p className="text-sm font-bold text-success mb-2">Password set.</p>
               <p className="text-xs text-s-dim mb-5 leading-relaxed">
                 Every other device signed in as you has been signed out.
               </p>
@@ -125,7 +125,7 @@ function ResetPasswordInner() {
                 className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
               <p className="text-[10px] text-s-dim mb-3 text-center">At least {MIN_LENGTH} characters.</p>
-              {error && <p className="text-xs text-center mb-3" style={{ color: '#b42318' }}>{error}</p>}
+              {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
               <button type="submit" className={cta} style={ctaStyle}
                 disabled={loading || pw1.length < MIN_LENGTH}>
                 {loading ? 'Setting…' : 'Set password'}

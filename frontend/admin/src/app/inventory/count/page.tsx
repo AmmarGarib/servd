@@ -82,9 +82,9 @@ export default function PhysicalCountPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-primary-rgb) / 0.1)',
-              color: feedback.startsWith('⚠') ? '#a15c00' : 'var(--erp-primary-ink)',
-              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
+              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
+              color: feedback.startsWith('⚠') ? 'var(--erp-warning)' : 'var(--erp-success)',
+              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
             }}>{feedback}</div>
         )}
 
@@ -110,7 +110,7 @@ export default function PhysicalCountPage() {
                     onChange={(e) => setQty(item, e.target.value === '' ? '' : parseFloat(e.target.value))}
                     placeholder="Counted"
                     className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none" />
-                  <span className="text-xs font-bold" style={{ color: variance == null ? 'rgb(var(--fg-rgb) / 0.3)' : flag ? '#a15c00' : 'var(--erp-primary-ink)' }}>
+                  <span className="text-xs font-bold" style={{ color: variance == null ? 'rgb(var(--fg-rgb) / 0.3)' : flag ? 'var(--erp-warning)' : 'var(--erp-success)' }}>
                     {variance != null ? `${variance > 0 ? '+' : ''}${variance.toFixed(1)}%` : '—'}
                     {flag && <span className="ml-1">⚠</span>}
                   </span>
@@ -130,7 +130,7 @@ export default function PhysicalCountPage() {
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Spot-check Friday morning, line cooks present, freezer #2 inspected." className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 mt-1 focus:border-primary focus:outline-none" />
         </div>
 
-        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
+        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
 
         {!canCount && (
           <p className="text-xs text-white/45">Stock counts are taken by the kitchen and its managers. You can read stock here, but not submit a count.</p>

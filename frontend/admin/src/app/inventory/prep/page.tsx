@@ -145,9 +145,9 @@ export default function PrepBatchPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-primary-rgb) / 0.1)',
-              color: feedback.startsWith('⚠') ? '#a15c00' : 'var(--erp-primary-ink)',
-              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
+              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
+              color: feedback.startsWith('⚠') ? 'var(--erp-warning)' : 'var(--erp-success)',
+              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
             }}>{feedback}</div>
         )}
 
@@ -185,7 +185,7 @@ export default function PrepBatchPage() {
             </div>
           )}
           {missing.length > 0 && (
-            <p className="mt-2 text-xs text-amber-700">
+            <p className="mt-2 text-xs text-s-amber">
               Not in your company&rsquo;s inventory, so not deducted: {missing.map((m) => m.name).join(', ')}.
             </p>
           )}
@@ -205,9 +205,9 @@ export default function PrepBatchPage() {
           {yieldPct != null && (
             <div className="mt-3 rounded-lg p-3 text-sm font-bold"
               style={{
-                background: yieldPct < 85 ? 'rgba(245,158,11,0.08)' : 'rgb(var(--erp-primary-rgb) / 0.08)',
-                color: yieldPct < 85 ? '#a15c00' : 'var(--erp-primary-ink)',
-                border: `1px solid ${yieldPct < 85 ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
+                background: yieldPct < 85 ? 'rgba(245,158,11,0.08)' : 'rgb(var(--erp-accent-rgb) / 0.12)',
+                color: yieldPct < 85 ? 'var(--erp-warning)' : 'var(--erp-success)',
+                border: `1px solid ${yieldPct < 85 ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
               }}>
               Yield: {yieldPct.toFixed(1)}% {yieldPct < 85 && '— will flag (under 85%)'}
             </div>
@@ -227,7 +227,7 @@ export default function PrepBatchPage() {
               <input type="number" step="0.001" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
               {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}
               <span className="text-xs text-white/55">{itemById.get(inp.inventoryItemId)?.unit ?? inp.unit}</span>
-              <button onClick={() => rmInput(i)} className="text-white/30 hover:text-red-700 px-2">✕</button>
+              <button onClick={() => rmInput(i)} className="text-white/30 hover:text-s-red px-2">✕</button>
             </div>
           ))}
           <button onClick={addInput} className="text-xs text-primary-ink hover:underline mt-3">+ Add ingredient</button>
@@ -238,7 +238,7 @@ export default function PrepBatchPage() {
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         </Section>
 
-        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
+        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
 
         <div className="flex justify-end pt-2">
           <button onClick={() => submit.mutate()}
@@ -260,7 +260,7 @@ export default function PrepBatchPage() {
                     <p className="text-xs text-white/45">{b.actualYieldQty} {b.unit} yielded · {new Date(b.createdAt).toLocaleString()}</p>
                   </div>
                   {b.yieldVariancePct != null && (
-                    <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? '#a15c00' : 'var(--erp-primary-ink)' }}>
+                    <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? 'var(--erp-warning)' : 'var(--erp-success)' }}>
                       {(b.yieldVariancePct * 100).toFixed(0)}% yield
                     </span>
                   )}

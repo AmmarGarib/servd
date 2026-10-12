@@ -101,8 +101,8 @@ export default function WebhooksPage() {
                   {h.events.map((e) => (
                     <span key={e} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={FIRING.has(e)
-                        ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }
-                        : { background: 'rgba(245,158,11,0.08)', color: '#a15c00' }}
+                        ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)' }
+                        : { background: 'rgba(245,158,11,0.08)', color: 'var(--erp-warning)' }}
                       title={FIRING.has(e) ? undefined : 'servd does not send this event yet'}>
                       {e}{FIRING.has(e) ? '' : ' · not sent yet'}
                     </span>
@@ -113,7 +113,7 @@ export default function WebhooksPage() {
                   {h.lastSentAt ? <span>Last sent {new Date(h.lastSentAt).toLocaleString()} ({h.lastStatus})</span> : <span>Never sent</span>}
                   {h.failureCount > 0 && <span className="text-red-700"> · {h.failureCount} failures</span>}
                 </p>
-                {pingResult[h.id] && <p className="text-xs font-mono text-white/60 mt-1">Test ping: {pingResult[h.id]}</p>}
+                {pingResult[h.id] && <p className={`text-xs font-mono mt-1 ${pingResult[h.id]!.startsWith('✓') ? 'text-success' : 'text-white/60'}`}>Test ping: {pingResult[h.id]}</p>}
               </div>
               <div className="flex flex-col gap-2 shrink-0">
                 <button onClick={() => ping.mutate(h.id)} disabled={ping.isPending}
@@ -189,7 +189,7 @@ function DeliveryLog({ subscriptionId }: { subscriptionId: string }) {
               <tr key={d.id} className="border-b border-white/[0.04]">
                 <td className="py-1.5 text-white/45 font-mono">{new Date(d.attemptedAt).toLocaleString()}</td>
                 <td className="py-1.5 text-white/75">{d.event}</td>
-                <td className={`py-1.5 font-mono ${d.status === 'success' ? 'text-primary-ink' : 'text-red-700'}`}>{d.status}{d.responseCode ? ` ${d.responseCode}` : ''}</td>
+                <td className={`py-1.5 font-mono ${d.status === 'success' ? 'text-success' : 'text-red-700'}`}>{d.status}{d.responseCode ? ` ${d.responseCode}` : ''}</td>
                 <td className="py-1.5 text-white/40 font-mono text-right">{d.durationMs != null ? `${d.durationMs} ms` : ''}</td>
               </tr>
             ))}
@@ -250,7 +250,7 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
                     title={live ? undefined : 'servd does not send this event yet'}
                     className="text-xs font-semibold px-2 py-1.5 rounded-lg text-left disabled:opacity-35 disabled:cursor-not-allowed"
                     style={on
-                      ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }
+                      ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
                       : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                     {e}{live ? '' : ' · not sent yet'}
                   </button>

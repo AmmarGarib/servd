@@ -99,7 +99,7 @@ export default function BalanceSheetPage() {
               total={data.totals.equityCents + data.totals.currentEarningsCents}
             />
 
-            <div className={`s-card p-4 ${data.totals.differenceCents === 0 ? 'border-s-teal' : 'border-s-red'}`}>
+            <div className={`s-card p-4 ${data.totals.differenceCents === 0 ? 'border-accent' : 'border-s-red'}`}>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-s-muted">Assets</p>

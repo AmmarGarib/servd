@@ -48,12 +48,11 @@ export default function WorkspaceHomePage() {
     <Shell>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">Workspace</p>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-success">Workspace</p>
           <h1 className="text-3xl font-black text-white/90">{ws.title}</h1>
           <p className="text-sm text-white/45 mt-1">
             Owner: <span className="text-white/75 font-semibold">{def ? def.ownerRoles.map(roleLabel).join(' / ') : '—'}</span>
-            {ws.owner && <span className="ml-2 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
-              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>You own this</span>}
+            {ws.owner && <span className="ml-2 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-accent-dim text-success">You own this</span>}
           </p>
         </div>
         {ws.owner && (isCeo || canInvite) && (
@@ -113,7 +112,7 @@ function TeamSummary() {
       ) : (
         <>
           <span className="text-xs text-white/55"><b className="text-white/85">{team.length}</b> {team.length === 1 ? 'person' : 'people'}</span>
-          <span className="text-xs text-white/55"><b className="text-[#3f7d20]">{inToday}</b> in today</span>
+          <span className="text-xs text-white/55"><b className="text-success">{inToday}</b> in today</span>
           <span className="text-xs text-white/55"><b className={pending > 0 ? 'text-amber-700' : 'text-white/85'}>{pending}</b> waiting on you</span>
         </>
       )}

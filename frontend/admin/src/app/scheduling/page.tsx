@@ -110,7 +110,7 @@ export default function SchedulingPage() {
         <button onClick={() => setWeekStart(ymd(mondayOf(new Date())))} className="px-3 py-1.5 rounded-xl text-xs font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.4)' }}>This week</button>
         {conceptId && planner && (
           <button onClick={() => { if (confirm('Copy last week\'s one-off changes to this week? The roster repeats by itself.')) copyWeek.mutate() }} disabled={copyWeek.isPending}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--ink-rgb) / 0.1)', border: '1px solid rgb(var(--ink-rgb) / 0.3)', color: 'rgba(165,168,255,0.9)' }}>
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)', color: 'var(--erp-primary-ink)' }}>
             {copyWeek.isPending ? 'Copying…' : 'Copy last week\'s changes'}
           </button>
         )}
@@ -122,7 +122,7 @@ export default function SchedulingPage() {
         <div className="px-4 py-2.5 rounded-xl text-sm space-y-1" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.06)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
           <p>Rota cost this week: <strong style={{ color: 'rgb(var(--fg-rgb) / 0.85)' }}>{fmtPkrWhole(cost.data.totalCents)}</strong> · {cost.data.totalHours.toFixed(1)} hrs</p>
           <p className="text-[11px]" style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>At each person&apos;s HR rate: {cost.data.basis}.</p>
-          {cost.data.byEmployee.some((u) => u.rateUnset) && <p className="text-xs" style={{ color: '#a15c00' }}>Some rostered people have no gross salary in HR — their hours are costed at zero.</p>}
+          {cost.data.byEmployee.some((u) => u.rateUnset) && <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>Some rostered people have no gross salary in HR — their hours are costed at zero.</p>}
         </div>
       )}
 
@@ -141,7 +141,7 @@ export default function SchedulingPage() {
                 <tr style={{ background: 'rgb(var(--fg-rgb) / 0.03)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider w-[180px]" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Staff</th>
                   {dates.map((d, i) => (
-                    <th key={d} className="text-center px-2 py-3 text-[11px] font-bold" style={{ color: d === today ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
+                    <th key={d} className="text-center px-2 py-3 text-[11px] font-bold" style={{ color: d === today ? 'var(--erp-success)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
                       <div>{DAYS[i]}</div><div className="font-normal">{fmtDay(d)}</div>
                     </th>
                   ))}
@@ -259,7 +259,7 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
         </div>
         )}
 
-        {err && <p className="text-xs" style={{ color: '#b42318' }}>{err}</p>}
+        {err && <p className="text-xs" style={{ color: 'var(--erp-danger)' }}>{err}</p>}
 
         <div className="flex flex-wrap gap-2">
           {!onLeave && (
@@ -268,7 +268,7 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
           )}
           {exceptionIds.length > 0 && (
             <button disabled={backToRoster.isPending} onClick={() => backToRoster.mutate()}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#a15c00' }}>Back to roster</button>
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--erp-warning)' }}>Back to roster</button>
           )}
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>Close</button>
         </div>

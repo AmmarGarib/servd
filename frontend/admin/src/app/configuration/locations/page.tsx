@@ -196,8 +196,8 @@ export default function LocationsPage() {
               <button
                 onClick={() => remove.mutate(confirmDelete)}
                 disabled={remove.isPending}
-                className="rounded-xl px-5 py-2.5 text-sm font-black text-white disabled:opacity-50"
-                style={{ background: '#DC2626' }}
+                className="rounded-xl px-5 py-2.5 text-sm font-black text-bone disabled:opacity-50"
+                style={{ background: 'var(--erp-danger)' }}
               >
                 {remove.isPending ? 'Deleting…' : 'Delete location'}
               </button>
@@ -319,10 +319,10 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
                 <label key={c.id}
                   className="flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors"
                   style={{
-                    background: conceptIds.includes(c.id) ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
-                    border: conceptIds.includes(c.id) ? '1px solid rgb(var(--erp-primary-rgb) / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.05)',
+                    background: conceptIds.includes(c.id) ? 'var(--erp-accent-dim)' : 'rgb(var(--fg-rgb) / 0.025)',
+                    border: conceptIds.includes(c.id) ? '1px solid var(--erp-accent)' : '1px solid rgb(var(--fg-rgb) / 0.05)',
                   }}>
-                  <input type="checkbox" checked={conceptIds.includes(c.id)} onChange={() => toggleConcept(c.id)} className="accent-primary" />
+                  <input type="checkbox" checked={conceptIds.includes(c.id)} onChange={() => toggleConcept(c.id)} className="accent-accent" />
                   <span className="text-xs font-bold text-white/85">
                     {c.name}
                     {inPortfolio && c.tenant && (
@@ -339,7 +339,7 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
 
           {location && (
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
               <span className="text-xs text-white/65">Active (uncheck to pause this location)</span>
             </label>
           )}

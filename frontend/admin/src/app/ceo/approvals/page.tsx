@@ -100,7 +100,7 @@ function ApprovalsInbox() {
 
   return (
     <div className="px-4 sm:px-6 py-6 max-w-6xl mx-auto">
-      <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">CEO</p>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-success">CEO</p>
       <h1 className="text-2xl sm:text-3xl font-black text-white/90">Approvals</h1>
       <p className="text-sm text-white/50 mt-1 max-w-3xl">
         Everything waiting on you, from every module. Each item stays in its own module — approving here does
@@ -145,7 +145,7 @@ function ApprovalsInbox() {
         )}
         {!isLoading && !error && (data?.types.length ?? 0) > 0 && items.length === 0 && (
           <div className="rounded-2xl p-8 text-center" style={card}>
-            <p className="text-sm font-bold text-white/70">Nothing is waiting on you.</p>
+            <p className="text-sm font-bold text-success">Nothing is waiting on you.</p>
           </div>
         )}
         {(data?.types ?? []).filter((t) => t.error && (filter === 'all' || filter === t.type)).map((t) => (
@@ -169,7 +169,7 @@ function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () =
     <button onClick={onClick}
       className="rounded-full px-3 py-1.5 text-xs font-bold flex items-center gap-1.5 transition-colors"
       style={on
-        ? { background: 'var(--erp-secondary)', color: 'var(--erp-on-secondary)' }
+        ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)', color: 'var(--text)' }
         : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
       {label}
       <span className="rounded-full px-1.5 text-[10px] font-black"

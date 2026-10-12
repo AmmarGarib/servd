@@ -40,7 +40,7 @@ export default function BusinessInfoPage() {
   return (
     <main style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)', padding: '1.6rem 1.4rem 5rem' }}>
       <div style={{ maxWidth: '60rem', margin: '0 auto' }}>
-        <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.24em', textTransform: 'uppercase', color: 'var(--muted)', margin: 0 }}>
+        <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.24em', textTransform: 'uppercase', color: 'var(--erp-success)', margin: 0 }}>
           executive
         </p>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.1rem)', letterSpacing: '-0.02em', margin: '0.4rem 0 0' }}>
@@ -135,8 +135,8 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
         </div>
         <span style={{
           fontSize: '0.68rem', fontWeight: 700,
-          color: filled(concept) === 'all' ? '#3f7d20' : filled(concept) === 'some' ? '#a15c00' : '#b42318',
-          background: filled(concept) === 'all' ? 'rgba(34,197,94,0.10)' : filled(concept) === 'some' ? 'rgba(245,158,11,0.10)' : 'rgba(239,68,68,0.10)',
+          color: filled(concept) === 'all' ? 'var(--erp-success)' : filled(concept) === 'some' ? 'var(--erp-warning)' : 'var(--erp-danger)',
+          background: filled(concept) === 'all' ? 'var(--erp-accent-dim)' : filled(concept) === 'some' ? 'rgba(245,158,11,0.10)' : 'rgba(239,68,68,0.10)',
           padding: '0.2rem 0.5rem', borderRadius: '999px',
           letterSpacing: '0.12em', textTransform: 'uppercase',
         }}>
@@ -228,7 +228,7 @@ function BrandInfoCard({ concept, onSaved }: { concept: ConceptRow; onSaved: () 
             )}
             {msg && (
               <span role="alert" style={{
-                color: msg.kind === 'ok' ? '#3f7d20' : '#b42318',
+                color: msg.kind === 'ok' ? 'var(--erp-success)' : 'var(--erp-danger)',
                 fontSize: '0.8rem', fontWeight: 600,
               }}>{msg.text}</span>
             )}
@@ -326,7 +326,7 @@ function ToggleField({
           type="checkbox"
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}
-          style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--erp-primary)' }}
+          style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--erp-accent)' }}
         />
         <span style={{ color: 'var(--text)', fontSize: '0.88rem' }}>{checked ? 'Yes' : 'No'}</span>
       </div>

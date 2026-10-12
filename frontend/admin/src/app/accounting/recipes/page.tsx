@@ -349,7 +349,7 @@ export default function RecipesPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-xs text-s-muted">{kitchenView ? 'Kitchen' : 'Accounting'}</p>
+            <p className="text-xs text-success">{kitchenView ? 'Kitchen' : 'Accounting'}</p>
             <h1 className="text-xl font-bold text-s-text">{kitchenView ? 'Recipes' : 'Recipe Costing'}</h1>
           </div>
           {!kitchenView && (
@@ -387,7 +387,7 @@ export default function RecipesPage() {
                 key={s.key || 'all'}
                 onClick={() => setSeasonFilter(s.key)}
                 className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
-                  seasonFilter === s.key ? 'bg-primary text-primary-on' : 'text-s-muted hover:text-s-text'
+                  seasonFilter === s.key ? 'bg-accent-dim text-s-text' : 'text-s-muted hover:text-s-text'
                 }`}
               >
                 {s.label}
@@ -395,7 +395,7 @@ export default function RecipesPage() {
             ))}
           </div>
           <label className="flex items-center gap-1.5 text-xs text-s-muted cursor-pointer px-2 py-1.5 rounded-lg border border-s-border">
-            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="accent-s-teal" />
+            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="accent-accent" />
             Active only
           </label>
         </div>
@@ -441,7 +441,7 @@ export default function RecipesPage() {
               <button key={k.key || 'all'} type="button"
                 onClick={() => setKindFilter(k.key)}
                 className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
-                  kindFilter === k.key ? 'bg-primary text-primary-on' : 'text-s-muted hover:text-s-text'
+                  kindFilter === k.key ? 'bg-accent-dim text-s-text' : 'text-s-muted hover:text-s-text'
                 }`}>
                 {k.label}
               </button>
@@ -502,7 +502,7 @@ export default function RecipesPage() {
                           </span>
                         ) : (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: '#3f7d20', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)' }}>
+                            style={{ background: 'rgb(var(--erp-accent-rgb) / 0.15)', color: 'var(--erp-success)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.4)' }}>
                             🍽 Plate
                           </span>
                         )}
@@ -541,7 +541,7 @@ export default function RecipesPage() {
                       // Read-only: no costs and no write buttons — just open
                       // the full recipe page.
                       <Link href={`/accounting/recipes/${r.id}`} onClick={(e) => e.stopPropagation()}
-                        className="shrink-0 text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-s-teal-dim transition-colors">
+                        className="shrink-0 text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-primary/10 transition-colors">
                         Open
                       </Link>
                     ) : (
@@ -571,7 +571,7 @@ export default function RecipesPage() {
                             </button>
                           )}
                           <button onClick={() => openEdit(r)}
-                            className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-s-teal-dim transition-colors">
+                            className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-primary/10 transition-colors">
                             Edit
                           </button>
                           <button
@@ -807,7 +807,7 @@ export default function RecipesPage() {
                     <button type="button" onClick={() => setKind('plate')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'plate'
-                        ? { background: 'rgb(var(--erp-primary-rgb) / 0.10)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
+                        ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid var(--erp-accent)' }
                         : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                       <p className="text-sm font-bold text-s-text">🍽 Finished plate</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A menu item — costed as plate cost (margin vs. menu price).</p>
@@ -815,7 +815,7 @@ export default function RecipesPage() {
                     <button type="button" onClick={() => setKind('component')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'component'
-                        ? { background: 'rgb(var(--ink-rgb) / 0.10)', border: '1px solid rgb(var(--ink-rgb) / 0.4)' }
+                        ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid var(--erp-accent)' }
                         : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                       <p className="text-sm font-bold text-s-text">🧩 Component</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A batch sub-recipe (sauce, marinade, dough) used inside plates — costed per gram.</p>
@@ -939,7 +939,7 @@ export default function RecipesPage() {
               {/* Seasonality */}
               <div className="rounded-xl p-4" style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.18)' }}>
                 <div className="flex items-baseline justify-between mb-3">
-                  <p className="text-xs font-black text-amber-700 uppercase tracking-wider">Seasonality</p>
+                  <p className="text-xs font-black text-s-amber uppercase tracking-wider">Seasonality</p>
                   <p className="text-[10px] text-s-muted">Tag the seasons this dish belongs to. Year-round = always available.</p>
                 </div>
 
@@ -958,7 +958,7 @@ export default function RecipesPage() {
                       <button key={s.key} type="button"
                         onClick={() => setSeasons((prev) => prev.includes(s.key) ? prev.filter((x) => x !== s.key) : [...prev, s.key])}
                         className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
-                          active ? 'bg-primary text-primary-on border border-primary' : 'border border-s-border text-s-muted hover:text-s-text'
+                          active ? 'bg-accent-dim text-s-text border border-accent' : 'border border-s-border text-s-muted hover:text-s-text'
                         }`}>
                         {s.label}
                       </button>
@@ -980,7 +980,7 @@ export default function RecipesPage() {
                       className="s-input w-full text-sm" />
                   </div>
                   <label className="flex items-center gap-2 text-xs text-s-muted cursor-pointer pb-2">
-                    <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-s-teal" />
+                    <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
                     <span>Active <span className="text-[10px]">(uncheck to hide off-season)</span></span>
                   </label>
                 </div>

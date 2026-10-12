@@ -34,7 +34,7 @@ export default function LanguagePage() {
             <button key={lang.code} onClick={() => changeLocale(lang.code)}
               className={`rounded-xl p-4 text-center border transition-colors ${
                 locale === lang.code
-                  ? 'border-primary bg-primary/15 text-primary-ink'
+                  ? 'border-accent bg-accent-dim text-s-text'
                   : 'border-white/10 text-white/55 hover:border-white/30'
               }`}>
               <div className="font-bold text-sm">{lang.native}</div>

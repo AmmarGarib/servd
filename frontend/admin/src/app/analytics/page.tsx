@@ -176,7 +176,7 @@ export default function AnalyticsPage() {
                   <div className="flex items-center gap-2">
                     <div className="flex-1 bg-s-elevated rounded-full h-2 overflow-hidden">
                       <div
-                        className="h-full bg-primary rounded-full transition-all"
+                        className="h-full bg-accent rounded-full transition-all"
                         style={{ width: maxFunnelCount > 0 ? `${(step.count / maxFunnelCount) * 100}%` : '0%' }}
                       />
                     </div>
