@@ -368,9 +368,9 @@ summary:focus-visible {
    a full-strength yellow field behind form fields is punishing to read.
    Flipd Blue still does every mark. Same token-swap pattern as the others. */
 .flipd-ordering {
-  --servd-ink:        var(--flipd-ink);
+  --servd-ink:        var(--flipd-blue);
   --servd-mute:       var(--flipd-blue-dim);
-  --servd-line:       rgba(106,13,173,0.16);
+  --servd-line:       rgba(0,99,128,0.16);
   --servd-surface:    #FFFFFF;
   --servd-green:      var(--flipd-blue);
   --servd-green-dark: var(--flipd-blue-deep);
@@ -378,7 +378,7 @@ summary:focus-visible {
   --servd-green-hover: var(--servd-green);  /* hovering must not fall back to servd green under white text */
 
   background: var(--flipd-bone);
-  color: var(--flipd-ink);
+  color: var(--flipd-blue);
   font-family: var(--flipd-body);
   letter-spacing: -0.005em;
 }
@@ -979,7 +979,7 @@ summary:focus-visible {
    line-art and checker, never gradients, glows or drop shadows on type. */
 .flipd-page {
   background: var(--flipd-mustard);
-  color: var(--flipd-ink);
+  color: var(--flipd-blue);
   font-family: var(--flipd-body);
 }
 .flipd-page .flipd-display {
@@ -1046,7 +1046,7 @@ summary:focus-visible {
 /* Menu rows. The book's voice rule is "names the ingredient, skips the
    adjective", so the build line is the hero and the name is just a label. */
 .flipd-page .flipd-item + .flipd-item {
-  border-top: 1px solid rgba(106,13,173,0.16);
+  border-top: 1px solid rgba(0,99,128,0.16);
 }
 .flipd-page .flipd-item-name {
   font-family: var(--flipd-display);
@@ -1070,7 +1070,7 @@ summary:focus-visible {
   text-transform: uppercase;
   padding: 0.26rem 0.6rem;
   border-radius: 999px;
-  border: 1px solid rgba(106,13,173,0.3);
+  border: 1px solid rgba(0,99,128,0.3);
   color: var(--flipd-blue-dim);
   white-space: nowrap;
 }
@@ -1380,7 +1380,7 @@ html:has(.simmer-page) {
   grid-template-columns: auto 1fr;
   gap: 0.15rem 0.6rem;
   padding: 0.5rem 0;
-  border-top: 1px solid rgba(106,13,173,0.16);
+  border-top: 1px solid rgba(0,99,128,0.16);
 }
 .flipd-page .flipd-spec-list .flipd-spec-no { grid-row: span 2; align-self: center; }
 
@@ -1498,25 +1498,22 @@ html:has(.simmer-page) {
        green, optic-ball yellow-green. That directly contradicts the brand
        book's own rule ("Not about padel: we happen to be there, we never
        borrow the court's identity"), so it is gone rather than dimmed. */
-  /* 2026-10-12, owner: Flipd moves to the servd purple / white / green
-     ("I like these colors much better"). The token NAMES stay so every user
-     keeps working; read them as roles: --flipd-blue = the mark colour,
-     --flipd-mustard = the field, --flipd-bone = the quiet surface. The logo
-     artwork is being redrawn in these colours by the owner's designer. */
-  --flipd-blue:         #6A0DAD;  /* purple — marks, rules, line art, buttons (white text on it) */
-  --flipd-blue-deep:    #3B0764;  /* deep purple — dark bands, pressed states */
-  --flipd-mustard:      #FFFFFF;  /* white — the field */
-  --flipd-bone:         #F3EEFA;  /* lavender — the quiet surface */
-  --flipd-green:        #87C540;  /* servd green — the accent; deep-purple text on it, never white */
-  --flipd-ink:          #261038;  /* body text */
-  --flipd-blue-dim:     rgba(106,13,173,0.72);
-  --flipd-blue-faint:   rgba(106,13,173,0.42);
+  /* 2026-10-12, owner: Flipd's colours are three Pantone chips — 18-4530
+     Celestial (the blue: every mark), 13-0850 Aspen Gold (the field) and
+     9180 (the cream: quiet surface, third checker square). Hex = Pantone's
+     published web values; the logo is being redrawn in these by the designer. */
+  --flipd-blue:         #006380;  /* PANTONE 18-4530 Celestial — ink, rules, line art */
+  --flipd-blue-deep:    #004B61;  /* pressed / deeper panels (Celestial, darker) */
+  --flipd-mustard:      #FFD662;  /* PANTONE 13-0850 Aspen Gold — the brand field */
+  --flipd-bone:         #FCE8CE;  /* PANTONE 9180 — the calm surface */
+  --flipd-blue-dim:     rgba(0,99,128,0.72);
+  --flipd-blue-faint:   rgba(0,99,128,0.42);
 
-  /* The checker is the brand's signature edge — purple and servd green, so it
-     reads as a border against the white field rather than dissolving into
-     it. Tiled SVG so it tessellates exactly from the top-left; the old
+  /* The checker is the brand's signature edge — Celestial and cream, never
+     gold, so it reads as a border against the Aspen Gold field rather than
+     dissolving into it. Tiled SVG so it tessellates exactly from the top-left; the old
      four-gradient recipe malformed the first row. */
-  --flipd-checker:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect width='36' height='36' fill='%2387C540'/%3E%3Crect width='18' height='18' fill='%236A0DAD'/%3E%3Crect x='18' y='18' width='18' height='18' fill='%236A0DAD'/%3E%3C/svg%3E");
+  --flipd-checker:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect width='36' height='36' fill='%23FCE8CE'/%3E%3Crect width='18' height='18' fill='%23006380'/%3E%3Crect x='18' y='18' width='18' height='18' fill='%23006380'/%3E%3C/svg%3E");
 
   /* Display is "Bronto Burger" in the book — a Canva face with no webfont
      licence we hold, so it cannot ship. Alfa Slab One is the closest thing

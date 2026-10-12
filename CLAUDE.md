@@ -533,13 +533,11 @@ are switched on in `BrandFallback.tsx`. Live brands:
 - **stackd** — Industrial plum (Pantone 19-2025 Red Plum `#7C2946` + Pantone
   9180 cream `#FCE8CE`, Pantone 635 `#9BD3DD` as the one cool accent). Was
   "stax" / navy-grey; see the 2026-09-09 note above.
-- **flipd** — the servd purple / white / green (owner, 2026-10-12, replacing
-  the mustard `#FED561` / Flipd Blue `#294375` / bone book palette): marks
-  `#6A0DAD`, dark bands `#3B0764` with servd-green `#87C540` type, white
-  field, lavender `#F3EEFA` quiet surface, ink `#261038`, a purple + green
-  checker. The `--flipd-*` token NAMES stay as roles (`--flipd-blue` = the
-  mark colour, `--flipd-mustard` = the field). The logo artwork is being
-  redrawn in these colours by the owner's designer.
+- **flipd** — three Pantone chips (owner, 2026-10-12): 18-4530 Celestial
+  `#006380` (every mark; dark bands with Aspen Gold type), 13-0850 Aspen
+  Gold `#FFD662` (the field) and 9180 `#FCE8CE` (the quiet surface, third
+  checker square). Hex = Pantone's published web values. The logo artwork is
+  being redrawn in these by the owner's designer.
 
 CSS tokens for all three are defined in
 `frontend/storefront/src/app/globals.css` under `:root` (search

@@ -330,7 +330,7 @@ export const specs: SectionSpec[] = [
       kitchens: [
         { name: 'Stackd', href: 'https://stackd.pk/', dot: '#FCE8CE' },
         { name: 'Simmer', href: 'https://simmer.pk/', dot: '#E94E1B' },
-        { name: 'Flipd', href: 'https://flipd.pk/', dot: '#6A0DAD' },
+        { name: 'Flipd', href: 'https://flipd.pk/', dot: '#006380' },
       ],
       customerHeading: 'Customer',
       customerLinks: [
