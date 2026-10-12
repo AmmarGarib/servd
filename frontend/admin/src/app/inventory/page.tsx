@@ -6,10 +6,13 @@ import { api, ApiError } from '../../lib/api'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+import { useKitchenView, useStockActions } from './kitchenView'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
   unitCostCents: number | null; supplierId: string | null; notes: string | null
+  /** Kitchen floor view: the API took cost and supplier out (wave 3). */
+  costsHidden?: boolean
   // Tenant scoping added 2026-05-13. Backfilled via supplier where one
   // exists; legacy rows with no supplier come through with tenantId=null
   // and wear the "⚠ No company" badge until the CEO assigns them.
@@ -146,6 +149,11 @@ export default function InventoryPage() {
     queryFn: () => api.get<InventoryItem[]>('/inventory'),
   })
 
+  // A line cook reads stock and logs waste, but adds no items and sees no cost.
+  const kitchenView = useKitchenView(items)
+  // Waste and count buttons only for the roles the API lets do them.
+  const { canWaste, canCount } = useStockActions()
+
   const { data: alerts = [] } = useQuery({
     queryKey: ['inventory', 'alerts'],
     queryFn: () => api.get<InventoryItem[]>('/inventory/alerts'),
@@ -271,14 +279,18 @@ export default function InventoryPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/inventory/count"
-            className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary hover:text-primary-ink">
-            Stock count
-          </Link>
-          <button onClick={() => setShowAdd(true)}
-            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
-            + Add item
-          </button>
+          {canCount && (
+            <Link href="/inventory/count"
+              className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary hover:text-primary-ink">
+              Stock count
+            </Link>
+          )}
+          {!kitchenView && (
+            <button onClick={() => setShowAdd(true)}
+              className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
+              + Add item
+            </button>
+          )}
         </div>
       </header>
 
@@ -318,7 +330,7 @@ export default function InventoryPage() {
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
           {/* Add form */}
-          {showAdd && (
+          {showAdd && !kitchenView && (
             <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
               <p className="font-bold text-s-text text-sm">Add inventory item</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -370,7 +382,7 @@ export default function InventoryPage() {
           )}
 
           {/* Log Waste inline form */}
-          {wasteItemId && (
+          {wasteItemId && canWaste && (
             <div className="rounded-xl border border-s-red/50 bg-red-100/10 p-4 space-y-3">
               <p className="font-bold text-s-red text-sm">
                 Log waste — {wasteItem?.name}
@@ -450,7 +462,12 @@ export default function InventoryPage() {
           {tab === 'stock' && (
             isLoading ? <p className="text-s-muted text-sm">Loading…</p> :
             Object.keys(grouped).length === 0 ? (
-              <EmptyStateGuide
+              kitchenView ? (
+                <div className="text-center py-16 text-s-muted">
+                  <p className="font-semibold text-s-text">No stock tracked yet</p>
+                  <p className="text-sm mt-1">Your manager adds the ingredients; they appear here once they have a par level or stock on hand.</p>
+                </div>
+              ) : <EmptyStateGuide
                 icon="📦"
                 title="Track what you cook with"
                 description="Inventory drives recipe costing, auto-86, demand forecasting, and reorder alerts. Add raw ingredients first — finished menu items get linked via Recipe Costing."
@@ -468,10 +485,12 @@ export default function InventoryPage() {
                 {/* Stock on hand changes only through a count, a waste log or a
                     delivery (owner decision 28) — there is no +/- or "set to". */}
                 <div className="flex items-center gap-3 flex-wrap">
-                  <Link href="/inventory/count"
-                    className="text-sm rounded-xl border border-s-border px-4 py-2 text-s-muted hover:border-primary hover:text-primary-ink transition-colors font-semibold">
-                    Count stock
-                  </Link>
+                  {canCount && (
+                    <Link href="/inventory/count"
+                      className="text-sm rounded-xl border border-s-border px-4 py-2 text-s-muted hover:border-primary hover:text-primary-ink transition-colors font-semibold">
+                      Count stock
+                    </Link>
+                  )}
                   <button
                     onClick={() => downloadStockCsv(items)}
                     className="text-sm rounded-xl border border-s-border px-4 py-2 text-s-muted hover:border-primary hover:text-primary-ink transition-colors font-semibold">
@@ -506,14 +525,20 @@ export default function InventoryPage() {
                                   {item.currentStock}
                                 </span>
                                 <span className="text-xs text-s-muted w-16">{item.unit} · par {item.parLevel}</span>
-                                <Link href={`/inventory/count?item=${item.id}`}
-                                  className="text-xs px-2 py-1 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
-                                  count
-                                </Link>
-                                <button onClick={() => openWaste(item)}
-                                  className="text-xs px-2 py-1 rounded-lg border border-s-red/30 text-s-red/70 hover:border-s-red hover:text-s-red transition-colors">
-                                  waste
-                                </button>
+                                {canCount && (
+                                  <Link href={`/inventory/count?item=${item.id}`}
+                                    className="text-xs px-2 py-1 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
+                                    count
+                                  </Link>
+                                )}
+                                {/* Company-less legacy rows cannot be wasted
+                                    until a manager assigns them a company. */}
+                                {canWaste && item.tenantId && (
+                                  <button onClick={() => openWaste(item)}
+                                    className="text-xs px-2 py-1 rounded-lg border border-s-red/30 text-s-red/70 hover:border-s-red hover:text-s-red transition-colors">
+                                    waste
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -598,16 +623,23 @@ export default function InventoryPage() {
                 <div>
                   <p className="text-sm font-bold text-s-text">Waste & Spoilage Log</p>
                   <p className="text-xs text-s-muted mt-0.5">
-                    {wasteLogs.length} entries · estimated cost:{' '}
-                    <span className="text-s-red font-semibold">
-                      PKR {Math.round(totalWasteCost / 100).toLocaleString()}
-                    </span>
+                    {wasteLogs.length} entries
+                    {!kitchenView && (
+                      <>
+                        {' '}· estimated cost:{' '}
+                        <span className="text-s-red font-semibold">
+                          PKR {Math.round(totalWasteCost / 100).toLocaleString()}
+                        </span>
+                      </>
+                    )}
                   </p>
                 </div>
-                <button onClick={() => setTab('stock')}
-                  className="text-xs rounded-lg bg-s-red/10 border border-s-red/30 text-s-red px-3 py-1.5 font-semibold hover:bg-s-red/20">
-                  Log waste →
-                </button>
+                {canWaste && (
+                  <button onClick={() => setTab('stock')}
+                    className="text-xs rounded-lg bg-s-red/10 border border-s-red/30 text-s-red px-3 py-1.5 font-semibold hover:bg-s-red/20">
+                    Log waste →
+                  </button>
+                )}
               </div>
 
               {wasteLoading ? (
@@ -616,7 +648,7 @@ export default function InventoryPage() {
                 <div className="text-center py-16 text-s-muted">
                   <p className="text-4xl mb-3">✅</p>
                   <p className="font-semibold text-s-text">No waste logged</p>
-                  <p className="text-sm mt-1">Use the "waste" button on any inventory item to record spoilage</p>
+                  {canWaste && <p className="text-sm mt-1">Use the "waste" button on any inventory item to record spoilage</p>}
                 </div>
               ) : (
                 <div className="rounded-xl border border-s-border overflow-hidden">
@@ -627,7 +659,7 @@ export default function InventoryPage() {
                         <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Item</th>
                         <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Qty</th>
                         <th className="px-4 py-2.5 text-xs text-s-muted font-semibold">Reason</th>
-                        <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Est. Cost</th>
+                        {!kitchenView && <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Est. Cost</th>}
                         <th className="px-4 py-2.5 text-xs text-s-muted font-semibold">Recorded</th>
                       </tr>
                     </thead>
@@ -650,11 +682,13 @@ export default function InventoryPage() {
                               {log.reason.replace('_', ' ')}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right text-s-muted">
-                            {log.estimatedCostCents != null
-                              ? `PKR ${Math.round(log.estimatedCostCents / 100).toLocaleString()}`
-                              : '—'}
-                          </td>
+                          {!kitchenView && (
+                            <td className="px-4 py-3 text-right text-s-muted">
+                              {log.estimatedCostCents != null
+                                ? `PKR ${Math.round(log.estimatedCostCents / 100).toLocaleString()}`
+                                : '—'}
+                            </td>
+                          )}
                           <td className="px-4 py-3 text-xs text-s-muted">
                             {new Date(log.recordedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                             {log.recordedBy && <span className="ml-1 opacity-60">· {log.recordedBy.name}</span>}

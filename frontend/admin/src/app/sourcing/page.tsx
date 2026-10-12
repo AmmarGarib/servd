@@ -17,11 +17,13 @@ import Link from 'next/link'
 import { api } from '../../lib/api'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+import { useKitchenView } from '../inventory/kitchenView'
 
 interface Item {
   id: string; name: string; unit: string
   unitCostCents: number | null; category: string | null; notes: string | null
   costSource?: 'deliveries' | 'opening'
+  costsHidden?: boolean
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
 }
@@ -51,6 +53,10 @@ export default function SourcingPage() {
     queryKey: ['inventory'],
     queryFn: () => api.get<Item[]>('/inventory'),
   })
+
+  // The sheet is the catalogue and its prices — the buyer's and the managers'.
+  // A line cook holds the inventory module for stock, not for this.
+  const kitchenView = useKitchenView(items)
 
   const patch = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch(`/inventory/${id}`, body),
@@ -93,6 +99,19 @@ export default function SourcingPage() {
 
   const pricedCount = filtered.filter((i) => i.unitCostCents != null).length
   const unassignedCount = (items ?? []).filter((i) => !i.tenantId).length
+
+  if (kitchenView) {
+    return (
+      <div className="min-h-screen bg-s-bg px-6 py-10">
+        <h1 className="text-2xl font-black text-s-text">Sourcing Master Sheet</h1>
+        <p className="text-sm text-s-muted mt-2 max-w-xl">
+          The sourcing sheet holds ingredient prices and suppliers, so it is kept by managers and the buyer.
+          Stock on hand, counts, low stock and prep are on{' '}
+          <Link href="/inventory" className="text-primary-ink hover:underline">Inventory</Link>.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-s-bg">

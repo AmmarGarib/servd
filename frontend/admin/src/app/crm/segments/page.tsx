@@ -28,7 +28,6 @@ interface Member {
     email: string | null
     totalSpentCents: number
     lastOrderAt: string | null
-    walletBalance: number
     marketingOptOutAt: string | null
   }
   joinedAt: string

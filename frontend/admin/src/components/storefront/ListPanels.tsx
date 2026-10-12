@@ -6,9 +6,8 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
 import {
-  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, isReservedBrandPage, newPopupKey, seedBlocks, storefrontPath, STOREFRONT_URL,
+  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, isReservedBrandPage, newPopupKey, seedBlocks, storefrontPath, STOREFRONT_BRANDS_KEY, STOREFRONT_URL,
   type ConceptLite, type LayoutSummary, type PopupRules,
 } from '../../lib/content'
 import { StatusBadge } from './panels'
@@ -54,14 +53,14 @@ function Table({ children }: { children: React.ReactNode }) {
 export function PagesPanel() {
   const router = useRouter()
   const qc = useQueryClient()
-  const concepts = useQuery<ConceptLite[]>({ queryKey: ['concepts'], queryFn: () => api.get<ConceptLite[]>('/concepts') })
+  const concepts = useQuery<ConceptLite[]>({ queryKey: STOREFRONT_BRANDS_KEY, queryFn: contentApi.brands })
   const layouts = useQuery<LayoutSummary[]>({ queryKey: ['site-layouts', 'all'], queryFn: () => contentApi.list({ status: 'all' }) })
   const [creating, setCreating] = useState(false)
   const [newSlug, setNewSlug] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [owner, setOwner] = useState('servd')
   // New pages start from the catalogue's starter sections when there are any.
-  useSectionCatalog()
+  const catalog = useSectionCatalog()
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -141,6 +140,16 @@ export function PagesPanel() {
   return (
     <div className="space-y-6">
       {layouts.isError && <p className="text-sm text-s-red">Could not load pages: {(layouts.error as Error).message}</p>}
+      {catalog.isError && (
+        <div role="alert" className="s-card border-s-red/40 p-4 flex flex-wrap items-center gap-3">
+          <p className="flex-1 min-w-[16rem] text-xs text-s-text">
+            {(catalog.error as Error).message} Pages open once it answers again.
+          </p>
+          <button type="button" onClick={() => void catalog.refetch()} disabled={catalog.isFetching} className="s-btn-secondary text-xs shrink-0">
+            {catalog.isFetching ? 'Retrying...' : 'Retry'}
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <p className="text-xs text-s-muted">Every page on servd.pk and the brand sites. A page with nothing published shows its built-in design; edit it to change anything on it.</p>

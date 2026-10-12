@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PositionsView } from '../../workforce/positions/view'
+import { useAuthStore } from '../../../store/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -1449,6 +1450,10 @@ const ASSET_CATEGORY_OPTIONS = [
 const DELIVERED: Status[] = ['delivered', 'installed', 'commissioned', 'done'] as Status[]
 
 function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void }) {
+  // Capitalising books Dr asset / Cr advances — the CEO's (ADMIN_ONLY on the
+  // API). Finance and the managers work the tracker; they don't see a button
+  // the server would refuse.
+  const canCapitalise = useAuthStore((s) => s.isRole('admin'))
   const [category, setCategory] = useState<string>('kitchen_equipment')
   const [lifeMonths, setLifeMonths] = useState(60)
   const cap = useMutation({
@@ -1464,6 +1469,9 @@ function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void 
   }
   if (!DELIVERED.includes(line.status) && !line.actualDeliveryDate) return null
   if ((line.ledger?.prepaidCents ?? 0) > 0 || (line.ledger?.expensedCents ?? 0) > 0) return null
+  if (!canCapitalise) {
+    return <p className="text-[11px] text-white/45 mt-2">Delivered — the CEO puts it on the fixed-asset register.</p>
+  }
   return (
     <div className="rounded-xl p-3 mt-2" style={{ background: 'rgba(134,239,172,0.05)', border: '1px solid rgba(134,239,172,0.2)' }}>
       <p className="text-xs text-white/70 mb-2">Delivered — put it on the fixed-asset register ({PKR(line.ledger?.advancedCents ?? 0)} advanced so far).</p>

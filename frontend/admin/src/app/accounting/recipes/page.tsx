@@ -11,6 +11,8 @@ import { usePermissions } from '../../../hooks/useCan'
 import { isExecutive } from '../../../lib/appRoles'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { fmtPkr } from '../../../lib/money'
+import { useKitchenView } from '../../inventory/kitchenView'
+import { KitchenIngredients, KitchenMethod, KitchenServiceSteps, measureUnit, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
 
 const Q_FACTOR = 0.05
 
@@ -38,8 +40,13 @@ interface RecipeIngredient {
 
 interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
 
+// For the kitchen floor (boh, kitchen, expediter) GET /recipes returns each row
+// with `costsHidden: true` and every cost / margin / pricing field null. Those
+// rows only ever reach the read-only kitchen view below, which reads none of
+// the cost fields typed as numbers here.
 interface Recipe {
   id: string
+  costsHidden?: boolean
   kind: 'plate' | 'component'
   status: 'iteration' | 'pending_approval' | 'production'
   menuItemId: string | null
@@ -51,6 +58,8 @@ interface Recipe {
   notes: string | null
   steps: string | null
   stepsUrdu: string | null
+  // Finished plates: the station-tagged method written by the recipe form.
+  methodSteps?: MethodStep[] | null
   seasons: string[]
   seasonStart: string | null
   seasonEnd: string | null
@@ -137,9 +146,12 @@ export default function RecipesPage() {
   const [ings,         setIngs]         = useState<IngRow[]>([{ ...BLANK_ING }])
   const [formErr,      setFormErr]      = useState('')
 
+  // The brand filter needs id + name only: the picker view, which every
+  // recipe reader may open (the full list is managers / till only and 403s —
+  // with a toast — for the line cook and finance).
   const { data: concepts } = useQuery({
-    queryKey: ['concepts'],
-    queryFn:  () => api.get<Concept[]>('/concepts'),
+    queryKey: ['concepts', 'picker'],
+    queryFn:  () => api.get<Concept[]>('/concepts?view=picker'),
   })
   const queryString = (() => {
     const params = new URLSearchParams()
@@ -154,15 +166,19 @@ export default function RecipesPage() {
     queryKey: ['recipes', seasonFilter, searchQ, activeOnly],
     queryFn:  () => api.get<Recipe[]>(`/recipes${queryString}`),
   })
+  // The line cook's view (wave 3, UI-10): the recipe book read-only — no
+  // create / edit / submit / delete, no costs, no step editor. The server's
+  // costsHidden flag decides when there are rows; the role covers an empty list.
+  const kitchenView = useKitchenView(recipes)
   const { data: menuItems } = useQuery({
     queryKey: ['menu-items-flat'],
     queryFn:  () => api.get<MenuItem[]>('/menu/items'),
-    enabled:  modal !== null,
+    enabled:  modal !== null && !kitchenView,
   })
   const { data: invItems } = useQuery({
     queryKey: ['inventory-items-flat'],
     queryFn:  () => api.get<InventoryItem[]>('/inventory'),
-    enabled:  modal !== null,
+    enabled:  modal !== null && !kitchenView,
   })
   // Component-recipe options for the ingredient picker. Plate recipes can pull
   // any active component; components don't pull other components (no nesting
@@ -170,7 +186,7 @@ export default function RecipesPage() {
   const { data: prepOptions = [] } = useQuery<PrepOption[]>({
     queryKey: ['prep-recipes'],
     queryFn:  () => api.get<PrepOption[]>('/par-sheet/preps?for=recipe'),
-    enabled:  modal !== null && kind === 'plate',
+    enabled:  modal !== null && kind === 'plate' && !kitchenView,
   })
 
   const createMut = useMutation({
@@ -333,16 +349,18 @@ export default function RecipesPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-xs text-s-muted">Accounting</p>
-            <h1 className="text-xl font-bold text-s-text">Recipe Costing</h1>
+            <p className="text-xs text-s-muted">{kitchenView ? 'Kitchen' : 'Accounting'}</p>
+            <h1 className="text-xl font-bold text-s-text">{kitchenView ? 'Recipes' : 'Recipe Costing'}</h1>
           </div>
-          <div className="flex items-center gap-3">
-            <Link href="/accounting" className="text-xs text-primary-ink hover:underline">← Hub</Link>
-            {isCeo && (
-              <Link href="/accounting/recipes/approvals" className="text-xs text-primary-ink hover:underline">Approvals</Link>
-            )}
-            <Link href="/accounting/recipes/new" className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</Link>
-          </div>
+          {!kitchenView && (
+            <div className="flex items-center gap-3">
+              <Link href="/accounting" className="text-xs text-primary-ink hover:underline">← Hub</Link>
+              {isCeo && (
+                <Link href="/accounting/recipes/approvals" className="text-xs text-primary-ink hover:underline">Approvals</Link>
+              )}
+              <Link href="/accounting/recipes/new" className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</Link>
+            </div>
+          )}
         </div>
 
         {/* Search + season filter strip */}
@@ -387,12 +405,13 @@ export default function RecipesPage() {
 
         {/* Summary strip */}
         {(recipes?.length ?? 0) > 0 && (
-          <div className="grid grid-cols-4 gap-3">
+          <div className={`grid gap-3 ${kitchenView ? 'grid-cols-3' : 'grid-cols-4'}`}>
             {[
               { label: 'Total Recipes', value: String(recipes!.length),  color: 'text-s-text' },
               { label: 'Plates',        value: String(plateCount),       color: 'text-primary-ink' },
               { label: 'Components',    value: String(componentCount),   color: 'text-s-text' },
-              { label: 'Q Factor Rate', value: 'per recipe',             color: 'text-s-muted' },
+              // Q factor is a cost uplift — not on the kitchen floor.
+              ...(kitchenView ? [] : [{ label: 'Q Factor Rate', value: 'per recipe', color: 'text-s-muted' }]),
             ].map(({ label, value, color }) => (
               <div key={label} className="s-card px-4 py-3">
                 <p className="text-[10px] text-s-muted uppercase tracking-wider">{label}</p>
@@ -444,7 +463,9 @@ export default function RecipesPage() {
           <div className="s-card text-center py-16">
             <p className="text-s-dim text-sm">
               {(recipes?.length ?? 0) === 0
-                ? 'No recipes yet — click "+ New Recipe" to start building your costing sheet'
+                ? (kitchenView
+                    ? 'No recipes yet.'
+                    : 'No recipes yet — click "+ New Recipe" to start building your costing sheet')
                 : 'No recipes match your filter'}
             </p>
           </div>
@@ -516,49 +537,60 @@ export default function RecipesPage() {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-5 shrink-0">
-                      <Metric label="Ing. Cost"    value={fmtPkr(r.ingredientCostCents)} />
-                      <Metric label="Q Factor"     value={fmtPkr(r.qFactorCents)}        dim />
-                      <Metric label="Total Cost"   value={fmtPkr(r.totalCostCents)}       bold />
-                      {/* The headline number — different per kind. Plate: the
-                          per-portion cost. Component: cost per gram (drives
-                          downstream plate costing). Margins live in Menu Engineering. */}
-                      {r.kind === 'plate' ? (
-                        <Metric label="Plate Cost"   value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
-                      ) : (
-                        <Metric
-                          label="Cost / Gram"
-                          value={r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—'}
-                          teal />
-                      )}
-                      <div className="flex gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
-                        {/* Testing recipes can be pushed straight to the CEO's
-                            approval inbox from here — no need to open the editor. */}
-                        {r.status === 'iteration' && (
-                          <button onClick={() => submitMut.mutate(r.id)} disabled={submitMut.isPending}
-                            className="text-xs px-2 py-1 rounded font-bold text-primary-on bg-primary hover:opacity-90 disabled:opacity-50 transition-opacity"
-                            title="Submit this testing recipe for CEO approval">
-                            Submit
-                          </button>
+                    {kitchenView ? (
+                      // Read-only: no costs and no write buttons — just open
+                      // the full recipe page.
+                      <Link href={`/accounting/recipes/${r.id}`} onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-s-teal-dim transition-colors">
+                        Open
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-5 shrink-0">
+                        <Metric label="Ing. Cost"    value={fmtPkr(r.ingredientCostCents)} />
+                        <Metric label="Q Factor"     value={fmtPkr(r.qFactorCents)}        dim />
+                        <Metric label="Total Cost"   value={fmtPkr(r.totalCostCents)}       bold />
+                        {/* The headline number — different per kind. Plate: the
+                            per-portion cost. Component: cost per gram (drives
+                            downstream plate costing). Margins live in Menu Engineering. */}
+                        {r.kind === 'plate' ? (
+                          <Metric label="Plate Cost"   value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
+                        ) : (
+                          <Metric
+                            label="Cost / Gram"
+                            value={r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—'}
+                            teal />
                         )}
-                        <button onClick={() => openEdit(r)}
-                          className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-s-teal-dim transition-colors">
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            const label = r.menuItem?.name ?? r.name ?? 'this recipe'
-                            if (confirm(`Delete recipe for "${label}"?`)) deleteMut.mutate(r.id)
-                          }}
-                          className="text-xs px-2 py-1 rounded text-s-dim hover:text-s-red hover:bg-s-red-dim transition-colors">
-                          Del
-                        </button>
+                        <div className="flex gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
+                          {/* Testing recipes can be pushed straight to the CEO's
+                              approval inbox from here — no need to open the editor. */}
+                          {r.status === 'iteration' && (
+                            <button onClick={() => submitMut.mutate(r.id)} disabled={submitMut.isPending}
+                              className="text-xs px-2 py-1 rounded font-bold text-primary-on bg-primary hover:opacity-90 disabled:opacity-50 transition-opacity"
+                              title="Submit this testing recipe for CEO approval">
+                              Submit
+                            </button>
+                          )}
+                          <button onClick={() => openEdit(r)}
+                            className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-s-teal-dim transition-colors">
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => {
+                              const label = r.menuItem?.name ?? r.name ?? 'this recipe'
+                              if (confirm(`Delete recipe for "${label}"?`)) deleteMut.mutate(r.id)
+                            }}
+                            className="text-xs px-2 py-1 rounded text-s-dim hover:text-s-red hover:bg-s-red-dim transition-colors">
+                            Del
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
-                  {/* Expanded costing sheet */}
-                  {isOpen && (
+                  {/* Expanded sheet — the kitchen's read-only recipe, or the
+                      managers' costing sheet. */}
+                  {isOpen && kitchenView && <KitchenSheet r={r} />}
+                  {isOpen && !kitchenView && (
                     <div className="border-t border-s-border">
 
                       {/* Spreadsheet header strip */}
@@ -747,7 +779,9 @@ export default function RecipesPage() {
       </div>
 
       {/* ── Create / Edit Modal ─────────────────────────────────────────────── */}
-      {modal !== null && (
+      {/* Managers only — never mounted for the kitchen floor (its saves and the
+          RecipeStepsEditor are refused to them). */}
+      {modal !== null && !kitchenView && (
         <div
           className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 bg-secondary/40 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) closeModal() }}
@@ -1164,6 +1198,59 @@ function Metric({ label, value, bold, teal, dim, className }: {
       <p className={`text-xs ${bold ? 'font-bold' : 'font-semibold'} ${teal ? 'text-primary-ink' : dim ? 'text-s-dim' : className ?? 'text-s-text'}`}>
         {value}
       </p>
+    </div>
+  )
+}
+
+// ─── Kitchen floor: one recipe, read-only ─────────────────────────────────────
+// Yield, ingredients with their quantities, the method and the service steps.
+// No cost, margin or price — the API sends none (costsHidden).
+function KitchenSheet({ r }: { r: Recipe }) {
+  const rows: KitchenIngredient[] = r.ingredients.map((ing) => ing.prepRecipeId
+    ? {
+        id: ing.id, name: ing.prepRecipe?.name ?? 'Sub-recipe', quantity: ing.quantity,
+        unit: 'g', yieldPct: null, notes: ing.notes, subRecipeId: ing.prepRecipeId,
+      }
+    : {
+        id: ing.id, name: ing.inventoryItem?.name ?? '—', quantity: ing.quantity,
+        unit: measureUnit(ing.inventoryItem?.unit), yieldPct: ing.yieldPct,
+        notes: ing.notes, subRecipeId: null,
+      })
+  const fmtG = (g: number) => `${g.toLocaleString('en', { maximumFractionDigits: 1 })}g`
+  // Plates written by the recipe form carry the total yield; older ones a
+  // portion size. Show whichever the recipe has.
+  const totalG   = r.yieldGrams ?? (r.portionSizeG && r.servings ? r.portionSizeG * r.servings : null)
+  const portionG = r.portionSizeG ?? (r.yieldGrams && r.servings > 0 ? r.yieldGrams / r.servings : null)
+  const facts = r.kind === 'plate'
+    ? [
+        { label: 'PORTIONS',     value: String(r.servings) },
+        { label: 'PORTION SIZE', value: portionG ? fmtG(portionG) : '—' },
+        { label: 'TOTAL YIELD',  value: totalG ? fmtG(totalG) : '—' },
+      ]
+    : [
+        { label: 'BATCH YIELD',  value: r.yieldGrams ? fmtG(r.yieldGrams) : '—' },
+      ]
+  return (
+    <div className="border-t border-s-border">
+      <div className="flex flex-wrap gap-8 px-6 py-3 border-b border-s-border/40 bg-s-bg-soft">
+        {facts.map(({ label, value }) => (
+          <div key={label}>
+            <p style={{ fontSize: '8px', letterSpacing: '0.18em' }} className="font-black text-s-muted uppercase">{label}</p>
+            <p className="text-sm font-bold text-s-text mt-0.5">{value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="px-3 py-3">
+        <KitchenIngredients rows={rows} />
+      </div>
+      <div className="px-6 py-4 border-t border-s-border/40 space-y-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wider text-s-muted mb-2">Method</p>
+          <KitchenMethod methodSteps={r.methodSteps} steps={r.steps} stepsUrdu={r.stepsUrdu} />
+        </div>
+        <KitchenServiceSteps recipeId={r.id} />
+        {r.notes && <p className="text-[11px] text-s-dim italic">{r.notes}</p>}
+      </div>
     </div>
   )
 }

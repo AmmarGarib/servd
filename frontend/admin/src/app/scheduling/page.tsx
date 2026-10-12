@@ -3,7 +3,10 @@
 // HR (Shift master + Roster); this week is GENERATED from them. What a manager
 // changes here is a one-off exception for one person on one day — other hours,
 // an extra shift, or a day off — and "Back to roster" removes it. Approved HR
-// shift swaps show up on their own. The week is costed from HR salaries.
+// shift swaps show up on their own. Approved full-day leave (HR) wins over
+// everything planned for the day: the cell reads "Leave", and hours cannot be
+// set on it (the API answers 409 ON_LEAVE) — the leave is changed in HR. The
+// week is costed from HR salaries.
 
 import { useState } from 'react'
 import Link from 'next/link'
@@ -16,16 +19,24 @@ import { fmtPkrWhole } from '../../lib/money'
 interface Concept { id: string; name: string }
 interface StaffMember { id: string; name: string; employeeCode: string; designation: string | null; canHaveExceptions: boolean }
 interface Segment { start: string; end: string; shiftId: string | null; shiftName: string | null; exceptionId: string | null; role: string | null; notes: string | null }
-interface Cell { employeeId: string; date: string; kind: 'shift' | 'off' | 'none'; source: 'roster' | 'swap' | 'exception' | 'none'; segments: Segment[]; offExceptionId: string | null; minutes: number }
+// The shape of GET /scheduling cells (backend hr/rota.ts RotaCell).
+interface Cell {
+  employeeId: string; date: string
+  kind: 'shift' | 'off' | 'leave' | 'none'
+  source: 'roster' | 'swap' | 'exception' | 'leave' | 'none'
+  segments: Segment[]; offExceptionId: string | null; minutes: number
+  /** The approved leave record, on a 'leave' day. */
+  leaveId?: string | null
+}
 interface ShiftDef { id: string; name: string; start: string; end: string }
 interface WeekView { weekStart: string; weekEnd: string; staff: StaffMember[]; cells: Cell[]; shifts: ShiftDef[] }
 interface LaborCost { totalCents: number; totalHours: number; basis: string; byEmployee: Array<{ employeeId: string; name: string; hours: number; totalCents: number; rateUnset: boolean }> }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PLANNERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'hr']
-const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', none: '' }
+const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', leave: 'approved', none: '' }
 const SOURCE_TONE: Record<Cell['source'], string> = {
-  roster: 'rgb(135 197 64 / 0.12)', swap: 'rgb(61 31 59 / 0.18)', exception: 'rgba(245,158,11,0.16)', none: 'transparent',
+  roster: 'rgb(135 197 64 / 0.12)', swap: 'rgb(61 31 59 / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', none: 'transparent',
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -45,7 +56,15 @@ export default function SchedulingPage() {
   const [editing, setEditing] = useState<{ member: StaffMember; cell: Cell } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  const { data: concepts } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
+  // Brand list from GET /concepts?view=picker (every staff role, the active
+  // brands of its own companies, id + name) — plain /concepts is managers /
+  // till only and 403'd for the roles that hold this page (R2-UI-03).
+  // Shares the shell BrandPicker's cache key and shape.
+  const { data: concepts } = useQuery({
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
+  })
   const week = useQuery({
     queryKey: ['scheduling', conceptId, weekStart],
     queryFn: () => api.get<WeekView>(`/scheduling?conceptId=${conceptId}&weekStart=${weekStart}`),
@@ -150,6 +169,7 @@ export default function SchedulingPage() {
                               <div key={i} className="text-xs font-semibold" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>{s.start}–{s.end}{s.shiftName && <span className="font-normal" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}> {s.shiftName}</span>}</div>
                             ))}
                             {c?.kind === 'off' && <div className="text-xs font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.45)' }}>Off</div>}
+                            {c?.kind === 'leave' && <div className="text-xs font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.7)' }}>Leave</div>}
                             {(!c || c.kind === 'none') && <div className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.2)' }}>—</div>}
                             {c && c.source !== 'none' && <div className="text-[10px] mt-0.5" style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>{SOURCE_LABEL[c.source]}</div>}
                           </button>
@@ -181,6 +201,8 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
   const [notes, setNotes] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const exceptionIds = [...cell.segments.map((s) => s.exceptionId), cell.offExceptionId].filter((x): x is string => !!x)
+  // Approved leave wins over the day: no hours, no shift, no day-off here.
+  const onLeave = cell.kind === 'leave'
 
   const add = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/scheduling', { employeeId: member.id, conceptId, date: cell.date, ...body }),
@@ -199,11 +221,22 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
         <div>
           <h2 className="text-base font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{member.name} · {fmtDay(cell.date)}</h2>
           <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>
-            {cell.kind === 'off' ? 'Off' : cell.kind === 'shift' ? cell.segments.map((s) => `${s.start}–${s.end}`).join(', ') : 'Nothing planned'}
-            {cell.source !== 'none' && ` (${SOURCE_LABEL[cell.source]})`}. A change here applies to this day only.
+            {onLeave
+              ? 'On approved leave.'
+              : <>
+                  {cell.kind === 'off' ? 'Off' : cell.kind === 'shift' ? cell.segments.map((s) => `${s.start}–${s.end}`).join(', ') : 'Nothing planned'}
+                  {cell.source !== 'none' && ` (${SOURCE_LABEL[cell.source]})`}. A change here applies to this day only.
+                </>}
           </p>
         </div>
 
+        {onLeave && (
+          <p className="text-xs rounded-xl px-3 py-2" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>
+            Hours cannot be set on a leave day. To roster {member.name} after all, shorten or cancel the leave in <Link href="/hr/s/leave" className="underline">HR → Leave</Link> first.
+          </p>
+        )}
+
+        {!onLeave && (
         <div className="space-y-3">
           {shifts.length > 0 && (
             <div className="flex gap-2">
@@ -223,12 +256,15 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
           </div>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note (optional)" className="s-input w-full text-sm px-3 py-2 rounded-xl" />
         </div>
+        )}
 
         {err && <p className="text-xs" style={{ color: '#b42318' }}>{err}</p>}
 
         <div className="flex flex-wrap gap-2">
-          <button disabled={add.isPending} onClick={() => add.mutate({ off: true, ...(notes && { notes }) })}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.7)' }}>Day off</button>
+          {!onLeave && (
+            <button disabled={add.isPending} onClick={() => add.mutate({ off: true, ...(notes && { notes }) })}
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.7)' }}>Day off</button>
+          )}
           {exceptionIds.length > 0 && (
             <button disabled={backToRoster.isPending} onClick={() => backToRoster.mutate()}
               className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#a15c00' }}>Back to roster</button>

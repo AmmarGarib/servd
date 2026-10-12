@@ -6,6 +6,17 @@ import { api } from '../../lib/api'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { ApAging } from '../../components/finance/ApAging'
 import { fmtPkrWhole } from '../../lib/money'
+import { useAuthStore } from '../../store/auth'
+
+// The API's MANAGERS (backend modules/auth/middleware.ts): only they take a
+// delivery in (owner decision 27, R2-UI-02). The buyer sees the dock read-only.
+const RECEIVING_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager']
+
+// Whoever raised a PO can't receive it; the CEO (role admin) is exempt — the
+// server's assertNotSelfApproval rule (lib/separation-of-duties.ts). A PO with
+// no creator on file predates tracking and is receivable.
+const raisedByMe = (po: { createdBy?: string | null }, me: { id: string; role: string } | null) =>
+  !!me && me.role !== 'admin' && !!po.createdBy && po.createdBy === me.id
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +39,7 @@ interface PurchaseOrder {
   id: string; supplierId: string; status: string; reference?: string | null
   expectedDate?: string | null; notes?: string | null; totalCents: number
   createdAt: string; approvedAt?: string | null; sentAt?: string | null
+  createdBy?: string | null
   cancelReason?: string | null; rejectedReason?: string | null
   supplier?: { name: string; email?: string | null } | null
   lines?: PoLine[]
@@ -392,7 +404,11 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 }
 
 function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: string, body?: unknown) => void }) {
-  const actions: { label: string; action: string; cls: string }[] = []
+  const isManager = useAuthStore((s) => s.isRole(...RECEIVING_ROLES))
+  const me = useAuthStore((s) => s.user)
+  const ownPo = raisedByMe(po, me)
+  const canReceive = isManager && !ownPo
+  const actions: { label: string; action: string; cls: string; title?: string }[] = []
   if (po.status === 'draft') {
     actions.push({ label: 'Submit', action: 'submit', cls: 'text-amber-700 hover:text-amber-700' })
   }
@@ -406,7 +422,14 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
     actions.push({ label: 'Mark sent', action: 'mark-sent', cls: 'text-sky-700 hover:opacity-80' })
   }
   if (po.status === 'sent' || po.status === 'partial') {
-    actions.push({ label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' })
+    // A manager receives; anyone else (the buyer) opens the dock page
+    // read-only. A manager who raised this PO can't receive it (decision 27).
+    actions.push(canReceive
+      ? { label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' }
+      : {
+          label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text',
+          title: ownPo ? 'You raised this PO, so a colleague receives it' : 'A manager takes the delivery in',
+        })
   }
   if (['draft', 'pending_approval', 'approved'].includes(po.status)) {
     actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-zinc-500 hover:text-s-red' })
@@ -415,7 +438,7 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   return (
     <div className="flex gap-2">
       {actions.map((a) => (
-        <button key={a.action} onClick={() => onAction(a.action)}
+        <button key={a.action} onClick={() => onAction(a.action)} title={a.title}
           className={`text-xs font-semibold transition-colors ${a.cls}`}>
           {a.label}
         </button>

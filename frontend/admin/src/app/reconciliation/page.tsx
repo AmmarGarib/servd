@@ -5,6 +5,17 @@ import { api, posApi, type ZReport } from '../../lib/api'
 import { fmtPkr, todayPktIso } from '../../lib/money'
 import { format } from 'date-fns'
 import { BackfillUnposted } from './BackfillUnposted'
+import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseConfirm'
+import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
+import { useAuthStore } from '../../store/auth'
+
+// Who may do what on this page — the API decides; these only hide buttons the
+// API would refuse (wave 3: finance reads and works reconciliation, but a
+// red 403 behind a button it was shown is the bug we are removing).
+//   Closing a drawer is the till's close (POST /pos/shifts/:id/close, CASHIERS).
+//   Booking an adjustment journal is the approvers' (CEO + co-owners).
+const DRAWER_CLOSERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'cashier', 'foh']
+const ADJUSTMENT_BOOKERS = ['admin', 'owner']
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,18 +91,31 @@ function ShiftDetailPanel({
   const [closingFloat, setClosingFloat] = useState('')
   const [notes, setNotes] = useState('')
 
-  const { data, isLoading, error } = useQuery<ZReport>({
+  const { data, isLoading, error } = useQuery<ZReport & ZReportExtras>({
     queryKey: ['recon-shift', shiftId],
     queryFn: () => posApi.getZReport(shiftId),
   })
 
+  // TILL-R1: a drawer with unpaid tickets on it answers 409 OPEN_TICKETS.
+  // The tickets are named (the Z-report above lists them, refreshed on the
+  // refusal) and the manager confirms "Close anyway" (confirmOpenTickets).
+  const [openTicketsBlock, setOpenTicketsBlock] = useState<string | null>(null)
+  const canCloseDrawer = useAuthStore((s) => s.isRole(...DRAWER_CLOSERS))
   const complete = useMutation({
-    mutationFn: () => posApi.closeShift(shiftId, Math.round(parseFloat(closingFloat) * 100), notes || undefined),
+    mutationFn: (confirmOpenTickets: boolean) =>
+      closeDrawer<ZReport>(shiftId, Math.round(parseFloat(closingFloat) * 100), { notes: notes || undefined, confirmOpenTickets }),
     onSuccess: () => {
+      setOpenTicketsBlock(null)
       void qc.invalidateQueries({ queryKey: ['recon-shift', shiftId] })
       void qc.invalidateQueries({ queryKey: ['recon-summary'] })
     },
+    onError: (e) => {
+      if (!isOpenTicketsError(e)) return
+      setOpenTicketsBlock((e as Error).message)
+      void qc.invalidateQueries({ queryKey: ['recon-shift', shiftId] })
+    },
   })
+  const closeError = complete.isError && !isOpenTicketsError(complete.error) ? (complete.error as Error).message : null
 
   const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-s-teal focus:outline-none w-full'
 
@@ -199,8 +223,12 @@ function ShiftDetailPanel({
               </div>
             </div>
 
-            {/* Close — only for a drawer still open */}
-            {data.status === 'open' && (
+            {/* Close — only for a drawer still open, and only for the roles
+                the till's close lets in; finance sees that it is still open. */}
+            {data.status === 'open' && !canCloseDrawer && (
+              <p className="text-xs text-s-muted">This drawer is still open. A manager or the cashier closes it from the till or here.</p>
+            )}
+            {data.status === 'open' && canCloseDrawer && (
               <div className="rounded-xl border border-s-border p-4 space-y-3">
                 <p className="text-sm font-semibold text-s-text">Close this shift</p>
                 <p className="text-xs text-s-muted">
@@ -227,15 +255,29 @@ function ShiftDetailPanel({
                     className={inp}
                   />
                 </div>
-                {complete.isError && (
-                  <p className="text-sm text-s-red">{(complete.error as Error).message}</p>
+                {openTicketsBlock ? (
+                  <OpenTicketsCloseConfirm
+                    tone="admin"
+                    openTickets={data.openTickets ?? null}
+                    message={openTicketsBlock}
+                    confirming={complete.isPending}
+                    error={closeError}
+                    onBack={() => { setOpenTicketsBlock(null); complete.reset() }}
+                    onConfirm={() => complete.mutate(true)}
+                  />
+                ) : (
+                  <>
+                    {closeError && (
+                      <p className="text-sm text-s-red">{closeError}</p>
+                    )}
+                    <button
+                      onClick={() => complete.mutate(false)}
+                      disabled={complete.isPending || !closingFloat}
+                      className="w-full rounded-xl bg-primary text-primary-on font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
+                      {complete.isPending ? 'Closing…' : 'Close shift'}
+                    </button>
+                  </>
                 )}
-                <button
-                  onClick={() => complete.mutate()}
-                  disabled={complete.isPending || !closingFloat}
-                  className="w-full rounded-xl bg-primary text-primary-on font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
-                  {complete.isPending ? 'Closing…' : 'Close shift'}
-                </button>
               </div>
             )}
             {complete.data && (
@@ -314,7 +356,8 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
 // or SPLIT across several (BOOKS-11): a Keenu settlement that lands net of its
 // MDR books Dr bank (the line) + Dr 6080 fee / Cr 1030 gross, so the card
 // receivable clears in full. The split must balance against the line; the
-// API refuses it otherwise. Booking is for the CEO and co-owners.
+// API refuses it otherwise. Booking is for the CEO and co-owners; finance
+// ignores lines and leaves the booking to them.
 
 interface SplitRow { code: string; type: 'debit' | 'credit'; amount: string }
 
@@ -399,6 +442,7 @@ function AdjustForm({ line, onDone, onCancel }: { line: StatementLine; onDone: (
 function StatementLines({ importId }: { importId: string }) {
   const qc = useQueryClient()
   const [adjusting, setAdjusting] = useState<string | null>(null)
+  const canBook = useAuthStore((s) => s.isRole(...ADJUSTMENT_BOOKERS))
   const { data: lines = [], isLoading } = useQuery<StatementLine[]>({
     queryKey: ['bank-lines', importId],
     queryFn: () => api.get(`/reconciliation/bank/imports/${importId}/lines`),
@@ -427,7 +471,7 @@ function StatementLines({ importId }: { importId: string }) {
                     <span className="text-s-muted">booking…</span>
                   ) : (
                     <span className="inline-flex gap-3">
-                      <button onClick={() => setAdjusting(l.id)} className="text-primary-ink">Book adjustment</button>
+                      {canBook && <button onClick={() => setAdjusting(l.id)} className="text-primary-ink">Book adjustment</button>}
                       <button onClick={() => ignore.mutate(l.id)} className="text-s-muted hover:text-s-text">Ignore</button>
                     </span>
                   )}

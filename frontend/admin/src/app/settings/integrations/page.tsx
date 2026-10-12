@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { usePermissions } from '../../../hooks/useCan'
+import { canOpenPath } from '../../../lib/moduleCatalog'
 
 // Mirrors GET /api/v1/integrations/social/status. `configured` tells us
 // whether the backend has FACEBOOK_APP_ID/SECRET set — the operator's
@@ -16,21 +18,6 @@ interface SocialStatus {
   redirectUri: string
 }
 
-// Tax-invoicing status — one payload, two authorities. Each unfolds in
-// three stages: not configured / configured but no concepts registered /
-// fully wired. SRB only applies to restaurants located in Sindh; an
-// operator outside Sindh will leave it not-configured indefinitely and
-// that's correct.
-interface TaxAuthorityStatus {
-  configured:         boolean
-  mode:               'production' | 'sandbox'
-  conceptsRegistered: number
-  invoicesSubmitted:  number
-}
-interface TaxStatus {
-  fbr: TaxAuthorityStatus
-  srb: TaxAuthorityStatus
-}
 
 export default function IntegrationsPage() {
   const [searchParams, setSearchParams] = useState<URLSearchParams | null>(null)
@@ -46,12 +33,14 @@ export default function IntegrationsPage() {
     queryKey: ['social-status'],
     queryFn: () => api.get<SocialStatus>('/integrations/social/status'),
   })
-  const { data: tax } = useQuery<TaxStatus>({
-    queryKey: ['tax-status'],
-    queryFn: () => api.get<TaxStatus>('/integrations/tax/status'),
-  })
-  const fbr = tax?.fbr
-  const srb = tax?.srb
+
+  // The Email (SMTP) screen is the CEO's and IT's (auth/routes.ts:
+  // CONNECTOR_ADMINS read while holding `api_whatsapp`, CEO write; the
+  // sidebar lists it under Dev → API). Other holders of `integrations` would
+  // only meet a 403 there, so the card shows exactly when the page itself
+  // opens — the same rule as the sidebar and the page guard.
+  const { data: me } = usePermissions()
+  const showEmail = !!me && canOpenPath('/configuration/email', me.role, me.modules ?? [])
 
   const [connecting, setConnecting] = useState(false)
   const [connectErr, setConnectErr] = useState<string | null>(null)
@@ -189,68 +178,45 @@ export default function IntegrationsPage() {
           )}
         </div>
 
-        {/* Messaging channels. Configured in ONE place each: the WhatsApp
-            gateway at /configuration/whatsapp and SMTP at /configuration/email
-            (both stored in the database, read by lib/whatsapp.ts and
-            lib/mailer.ts — the same resolvers /health checks). This card used
-            to tell operators to set WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID,
-            which no outbound code reads, and had no email section at all. */}
+        {/* Dev → API holds exactly two connectors (spec §10): the WhatsApp
+            gateway and the POS connector (the fiscal POS that files FBR / SRB,
+            and the card machine). Their status and setup live there only —
+            this page used to carry FBR / SRB direct-filing cards, which are
+            gone with the direct filers. */}
         <div className="rounded-xl border border-s-border bg-s-surface p-5">
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">💬</span>
-            <div>
-              <h2 className="font-bold text-s-text">WhatsApp &amp; email</h2>
-              <p className="text-sm text-s-muted">How servd reaches customers and staff: signup and sign-in codes, password resets, order and reservation messages.</p>
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <Link href="/configuration/whatsapp"
-              className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
-              <p className="text-sm font-semibold text-s-text">WhatsApp gateway →</p>
-              <p className="text-xs text-s-muted mt-0.5">Gateway URL and key, with a test send.</p>
-            </Link>
-            <Link href="/configuration/email"
-              className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
-              <p className="text-sm font-semibold text-s-text">Email (SMTP) →</p>
-              <p className="text-xs text-s-muted mt-0.5">The backup channel when WhatsApp is down, with a test send.</p>
-            </Link>
-          </div>
-          <p className="mt-3 text-xs text-s-muted">
-            Inbound WhatsApp (customers and suppliers messaging you on the Meta Cloud API) is separate: it is verified with
-            <code className="bg-s-border px-1 rounded mx-1">WHATSAPP_VERIFY_TOKEN</code> and
-            <code className="bg-s-border px-1 rounded mx-1">APP_SECRET</code> in the backend environment.
+          <h2 className="font-bold text-s-text">WhatsApp and POS are in Dev → API</h2>
+          <p className="text-sm text-s-muted mt-1">
+            The WhatsApp gateway (signup and sign-in codes, password resets, order messages) and the POS connector
+            (the fiscal POS that files FBR / SRB, and the card machine) each have their own page.
           </p>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <Link href="/connectors/whatsapp" className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
+              <p className="text-sm font-semibold text-s-text">WhatsApp connector</p>
+              <p className="text-xs text-s-muted mt-0.5">Gateway URL and key, delivery check, test send.</p>
+            </Link>
+            <Link href="/connectors/pos" className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
+              <p className="text-sm font-semibold text-s-text">POS connector</p>
+              <p className="text-xs text-s-muted mt-0.5">Fiscal POS (FBR / SRB), POS IDs, submissions, card machine.</p>
+            </Link>
+          </div>
         </div>
 
-        {/* FBR PRAL — federal sales tax on goods. */}
-        {fbr && (
-          <TaxAuthorityCard
-            icon="🧾"
-            title="FBR PRAL (Federal Tax Invoicing)"
-            subtitle="Real-time invoice submission to PRAL on every completed sale."
-            authority="FBR"
-            envPrefix="FBR"
-            portalUrl="https://e.fbr.gov.pk"
-            regulation="Required for Tier-1 businesses under SRO 1307(I)/2022."
-            status={fbr}
-          />
-        )}
-
-        {/* SRB — provincial Sindh sales tax on services. Restaurants in
-            Sindh must report to both FBR (federal) and SRB (provincial).
-            Operators outside Sindh leave this not-configured indefinitely. */}
-        {srb && (
-          <TaxAuthorityCard
-            icon="🏛"
-            title="SRB (Sindh Tax Invoicing)"
-            subtitle="Real-time invoice submission to the Sindh Revenue Board. Required for restaurants located in Sindh."
-            authority="SRB"
-            envPrefix="SRB"
-            portalUrl="https://e.srb.gos.pk"
-            regulation="Required for restaurants in Sindh under the Sindh Sales Tax on Services Act, 2011."
-            status={srb}
-          />
-        )}
+        {/* Email (SMTP) — the backup channel when WhatsApp is down. */}
+        <div className="rounded-xl border border-s-border bg-s-surface p-5">
+          <h2 className="font-bold text-s-text">{showEmail ? 'Email and webhooks' : 'Webhooks'}</h2>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {showEmail && (
+              <Link href="/configuration/email" className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
+                <p className="text-sm font-semibold text-s-text">Email (SMTP)</p>
+                <p className="text-xs text-s-muted mt-0.5">The backup channel when WhatsApp is down, with a test send.</p>
+              </Link>
+            )}
+            <Link href="/configuration/webhooks" className="rounded-lg bg-s-bg p-3 hover:bg-s-border/40 transition-colors">
+              <p className="text-sm font-semibold text-s-text">Webhooks</p>
+              <p className="text-xs text-s-muted mt-0.5">Order events sent to your own systems.</p>
+            </Link>
+          </div>
+        </div>
 
         {/* Supplier Portal — SaaS pitch */}
         <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-5">
@@ -274,95 +240,6 @@ export default function IntegrationsPage() {
           </a>
         </div>
       </div>
-    </div>
-  )
-}
-
-// ─── TaxAuthorityCard ─────────────────────────────────────────────────────────
-//
-// Shared card for FBR and SRB. Same data shape, same UX, only the labels
-// + env-var names + portal URL change. Factored so adding KPRA / PRA / BRA
-// later (for restaurants expanding beyond Sindh) is a 6-line copy of the
-// SRB block above, not 50 lines of duplicated JSX.
-
-function TaxAuthorityCard({
-  icon, title, subtitle, authority, envPrefix, portalUrl, regulation, status,
-}: {
-  icon:       string
-  title:      string
-  subtitle:   string
-  authority:  string                       // 'FBR' | 'SRB' — shown in the empty state
-  envPrefix:  string                       // 'FBR' | 'SRB' — drives env var names
-  portalUrl:  string                       // registration portal
-  regulation: string                       // one-line citation
-  status:     TaxAuthorityStatus
-}) {
-  return (
-    <div className="rounded-xl border border-s-border bg-s-surface p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">{icon}</span>
-          <div>
-            <h2 className="font-bold text-s-text">{title}</h2>
-            <p className="text-sm text-s-muted">{subtitle}</p>
-          </div>
-        </div>
-        {/* Tri-state badge — Not configured (grey) / Sandbox (amber) /
-            Live (green, only when real production creds are set). */}
-        {status.configured ? (
-          <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${
-            status.mode === 'production'
-              ? 'border-primary text-primary-ink'
-              : 'border-s-amber text-s-amber'
-          }`}>
-            {status.mode === 'production' ? '✓ Live' : 'Sandbox'}
-          </span>
-        ) : (
-          <span className="shrink-0 rounded-full border border-s-border px-3 py-1 text-xs text-s-muted font-bold">
-            Not configured
-          </span>
-        )}
-      </div>
-
-      {!status.configured ? (
-        <div className="mt-4 rounded-lg bg-s-bg p-3 text-xs text-s-muted space-y-1">
-          <p className="font-semibold text-s-text">Not registered with {authority} yet</p>
-          <p>
-            Set <code className="bg-s-border px-1 rounded">{envPrefix}_USERNAME</code> and
-            <code className="bg-s-border px-1 rounded ml-1">{envPrefix}_PASSWORD</code> in
-            <code className="bg-s-border px-1 rounded ml-1">backend/.env</code> after registering
-            your business at <a href={portalUrl} target="_blank" rel="noreferrer" className="text-primary-ink underline">{portalUrl}</a>.
-            Defaults to sandbox; set <code className="bg-s-border px-1 rounded">{envPrefix}_ENV=production</code> when you go live.
-          </p>
-          <p className="text-s-muted/80 pt-1">
-            {regulation} Until configured, completed orders skip {authority} submission silently.
-          </p>
-          <p className="text-s-muted/80 pt-1">
-            See <a href="https://github.com/AmmarGarib/servd/blob/main/docs/TAX_SETUP.md"
-              target="_blank" rel="noreferrer" className="text-primary-ink underline">docs/TAX_SETUP.md</a> for the registration runbook.
-          </p>
-        </div>
-      ) : (
-        <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-lg bg-s-bg p-3">
-            <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">Concepts registered</p>
-            <p className="text-lg font-black text-s-text mt-0.5">
-              {status.conceptsRegistered}
-              {status.conceptsRegistered === 0 && <span className="text-xs font-normal text-s-amber ml-2">⚠ none yet</span>}
-            </p>
-            <p className="text-[10px] text-s-muted/70 mt-0.5">
-              Each Concept needs a POSID from {authority} to submit invoices.
-            </p>
-          </div>
-          <div className="rounded-lg bg-s-bg p-3">
-            <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">Invoices submitted</p>
-            <p className="text-lg font-black text-s-text mt-0.5">{status.invoicesSubmitted}</p>
-            <p className="text-[10px] text-s-muted/70 mt-0.5">
-              Lifetime count with an {authority} invoice number.
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

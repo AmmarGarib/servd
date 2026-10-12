@@ -3,7 +3,7 @@
 // with it now. Used by every section page and by the approvals inbox.
 
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import {
   displayValue, human, day, rs, btn, btnGhost, inp, STATUS_COLOR, ROLE_LABEL, withLeaveDays, leaveFields,
@@ -185,6 +185,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       {record.section === 'overtime' && record.status === 'approved' && (
         <p className="text-sm text-white/70">OT amount: <strong className="text-white/90">{rs(record.amountCents)}</strong> — goes into the {day(record.startDate).split(' ').slice(1).join(' ')} payroll.</p>
       )}
+      {record.section === 'leave' && record.status === 'approved' && <LeaveRotaEffects data={record.data} />}
       {record.appliedAt && <p className="text-xs text-primary-ink">Applied to the employee record on {day(record.appliedAt)}.</p>}
       {record.status === 'approved' && !record.appliedAt && ['promotion', 'transfer', 'salary_revision', 'probation_review'].includes(record.section) && record.effectiveDate && (
         <p className="text-xs text-amber-700">Takes effect on {day(record.effectiveDate)}.</p>
@@ -227,6 +228,70 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
             onClick={() => { if (confirm('Cancel this record?')) cancel.mutate() }}>Cancel record</button>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+// What approving a full-day leave did to the rota (backend hr/routes.ts
+// clearShiftsOnLeave / flagSwapsOnLeave): one-off hours set on /scheduling for
+// those days were removed, and approved shift swaps on those days now leave a
+// shift with nobody on it. Listed here so the manager knows what to cover.
+interface RemovedShift { id?: string; date: string; conceptId?: string | null; startTime: string; endTime: string; role?: string | null }
+interface AffectedSwap { swapId?: string; date: string; side?: 'requester' | 'partner'; colleagueName?: string | null; shiftName?: string | null }
+
+const ymdDay = (ymd: string) => {
+  const d = new Date(`${ymd}T00:00:00Z`)
+  return Number.isNaN(d.getTime()) ? ymd : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+}
+
+function LeaveRotaEffects({ data }: { data: Record<string, unknown> }) {
+  const removed = Array.isArray(data['_shiftsRemoved'])
+    ? (data['_shiftsRemoved'] as RemovedShift[]).filter((r) => r && typeof r.date === 'string')
+    : []
+  const swaps = Array.isArray(data['_swapsAffected'])
+    ? (data['_swapsAffected'] as AffectedSwap[]).filter((r) => r && typeof r.date === 'string')
+    : []
+  // Brand names for the removed hours: the shell brand picker's own list (any staff role reads it).
+  const brands = useQuery({
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Array<{ id: string; name: string }>>('/concepts?view=picker'),
+    staleTime: 60_000,
+    enabled: removed.some((r) => !!r.conceptId),
+    meta: { background: true },
+    retry: false,
+  })
+  if (removed.length === 0 && swaps.length === 0) return null
+  const brandName = (id: string | null | undefined) => (id ? brands.data?.find((b) => b.id === id)?.name ?? null : null)
+  return (
+    <div className="rounded-xl p-3 space-y-3 border border-white/10 bg-white/[0.03]">
+      {removed.length > 0 && (
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1.5">Shifts removed from the rota</p>
+          <ul className="space-y-1">
+            {removed.map((r, i) => {
+              const brand = brandName(r.conceptId)
+              return (
+                <li key={r.id ?? i} className="text-xs text-white/75">
+                  {ymdDay(r.date)} · {r.startTime}–{r.endTime}{brand ? ` · ${brand}` : ''}{r.role ? ` · ${r.role}` : ''}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+      {swaps.length > 0 && (
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1.5">Swaps now uncovered</p>
+          <ul className="space-y-1">
+            {swaps.map((s, i) => (
+              <li key={s.swapId ?? i} className="text-xs text-white/75">
+                {ymdDay(s.date)} · {s.shiftName ?? 'the swapped shift'} now has nobody on it{s.colleagueName ? ` (swap with ${s.colleagueName})` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="text-[10px] text-white/35">Cover these on the rota. Cancelling the leave does not put the hours back.</p>
     </div>
   )
 }

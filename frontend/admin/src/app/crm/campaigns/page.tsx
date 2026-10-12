@@ -24,7 +24,7 @@ interface Campaign {
   id: string
   name: string
   channel: Channel | 'sms'
-  status: 'draft' | 'scheduled' | 'sending' | 'sent'
+  status: 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed'
   body: string
   subject: string | null
   sentAt: string | null
@@ -44,6 +44,7 @@ const STATUS_COLORS: Record<string, string> = {
   scheduled: 'bg-s-blue/20 text-s-blue',
   sending: 'bg-s-blue/20 text-s-blue',
   sent: 'bg-primary/20 text-primary-ink',
+  failed: 'bg-s-red/20 text-s-red',
 }
 
 // Special audience: the servd-level new-brand waitlist (not a nightly segment).
@@ -107,8 +108,10 @@ export default function CampaignsPage() {
   })
 
   const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    // The brand picker view (id + name, own companies, any staff role): the
+    // full brand row is managers-only and this page only needs the names.
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
   })
   const conceptName = (id: string) => concepts.find((c) => c.id === id)?.name ?? 'brand'
 
@@ -320,7 +323,10 @@ export default function CampaignsPage() {
                       {c.sentAt && c.recipientCount != null && ` to ${c.recipientCount.toLocaleString()}`}
                     </p>
                   </div>
-                  {c.status !== 'sent' && c.segment?.slug !== 'legacy' && (
+                  {/* A campaign sends once: the server claims it (draft → sent) before the
+                      first message and answers 409 to any second press, so only a draft
+                      (or a never-sent scheduled one) offers the button. */}
+                  {(c.status === 'draft' || c.status === 'scheduled') && c.segment?.slug !== 'legacy' && (
                     <button
                       onClick={() => { if (confirm(`Send "${c.name}" now to all recipients?`)) send.mutate(c.id) }}
                       disabled={send.isPending}

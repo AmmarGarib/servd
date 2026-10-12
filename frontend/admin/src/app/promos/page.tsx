@@ -44,8 +44,10 @@ export default function PromosPage() {
   })
 
   const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    // The brand picker view (id + name, own companies, any staff role): the
+    // full brand row is managers-only and this page only needs the names.
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
   })
 
   const save = useMutation({
@@ -97,6 +99,8 @@ export default function PromosPage() {
       code: form.code.toUpperCase(),
       description: form.description || undefined,
       discountType: form.type,
+      // Units (backend lib/promoEval.ts): a percentage is stored as the
+      // percent; a fixed amount in PAISA. Rupees only exist in this form.
       discountValue: form.type === 'fixed' ? Math.round(valueNum * 100) : valueNum,
       minOrderCents: form.minOrderCents ? Math.round(parseFloat(form.minOrderCents) * 100) : undefined,
       maxUsageCount: form.maxUsages ? parseInt(form.maxUsages) : undefined,
@@ -195,6 +199,11 @@ export default function PromosPage() {
                 className="accent-primary" />
               Active immediately
             </label>
+            {save.isError && (
+              <p role="alert" className="text-sm text-s-red">
+                {(save.error as Error)?.message || 'Could not save the promo'}
+              </p>
+            )}
             <div className="flex gap-3">
               <button type="submit" disabled={save.isPending}
                 className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">

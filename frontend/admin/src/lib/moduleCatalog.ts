@@ -1,7 +1,8 @@
 // ─── Pages and gap notes, per module id ──────────────────────────────────────
 //
-// servd is organised by OWNER into five workspaces — Operations, Finance,
-// Marketing, HR, Dev (owner decision 47). Which workspace and section a module
+// servd is organised by OWNER into six workspaces — CEO, Operations, Finance,
+// Marketing, HR, Dev (owner decision 47; the CEO section is decision D2,
+// 2026-10-11: Operations is the F&B manager's). Which workspace and section a module
 // sits in, who owns it and which roles live there are defined ONLY by the API
 // (backend src/lib/workspaces.ts, served by GET /permissions/me and
 // GET /permissions/workspaces). This file keeps no copy of that.
@@ -18,7 +19,12 @@
 // The 18-module catalogue that used to live here (ordered by cost of defect)
 // is replaced by the workspaces; its still-true notes were carried over.
 
-import type { ModuleId } from './appRoles'
+import type { ModuleId as AppModuleId } from './appRoles'
+
+// 'approvals' (CEO → Approvals, decision D3) is a module id the API serves;
+// until the ModuleId union in appRoles.ts lists it, the catalogue widens the
+// union here so its pages can be declared. Harmless once the union has it.
+type ModuleId = AppModuleId | 'approvals'
 
 export interface ModulePage {
   label: string
@@ -35,7 +41,8 @@ export interface ModulePage {
 }
 
 export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
-  // ── Company
+  // ── CEO (decision D2): approvals, companies, logins & access, company rules
+  approvals:      [{ label: 'Approvals', href: '/ceo/approvals', icon: '✓', hint: 'Everything waiting on you, from every module' }],
   business_info:  [
     { label: 'Locations', href: '/configuration/locations', icon: '📍', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },
@@ -48,7 +55,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ceo_overview:   [{ label: 'Home', href: '/home', icon: '⌂', lead: true }],
   role_management: [{ label: 'Pending logins', href: '/workforce?status=pending', hint: 'The CEO approves every login' }],
   role_modules:   [{ label: 'Module access', href: '/configuration/role-modules', icon: '🗂' }],
-  configuration:  [{ label: 'Configuration hub', href: '/configuration', icon: '⚙️' }],
+  configuration:  [
+    { label: 'Company rules', href: '/configuration/operations', icon: '⚙️', hint: 'Clock-in selfie and geofence, tip split, service charge — CEO only' },
+    { label: 'Configuration hub', href: '/configuration', sub: true },
+  ],
   onboarding:     [{ label: 'Setup wizard', href: '/onboarding' }],
 
   // ── Dashboards (one per workspace, blank until the owner picks the numbers)
@@ -81,7 +91,15 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Prep', href: '/inventory/prep', sub: true },
     { label: 'Sourcing sheet', href: '/sourcing', icon: '🧾' },
   ],
-  par_sheet:      [{ label: 'Par sheet', href: '/par-sheet', icon: '📋' }],
+  // The par sheet's "Log a batch" / per-row "Log batch" open the prep batch
+  // logger, so par_sheet holders (kitchen, expediter) open /inventory/prep too
+  // — its reads (GET /par-sheet/preps, /crosschecks/prep-batches) and the
+  // POST are ALL_STAFF, and the par sheet's "Made" column is filled only by
+  // these batches.
+  par_sheet:      [
+    { label: 'Par sheet', href: '/par-sheet', icon: '📋' },
+    { label: 'Log a prep batch', href: '/inventory/prep', sub: true },
+  ],
   procurement:    [
     { label: 'Procurement', href: '/procurement', icon: '🏭', hint: 'Purchase orders, bills, payments' },
     { label: 'Receiving', href: '/procurement/receiving', sub: true },
@@ -143,6 +161,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
   gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: '🎁' }],
   reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️' }],
+  voided_prebills: [{ label: 'Voided pre bills', href: '/finance/voided-pre-bills', hint: 'Every pre-bill printed — flagged when it never became a full & final bill or the final bill came out lower' }],
   exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: '🚨' }],
   capital:        [
     { label: 'Project tracker', href: '/finance/capex', icon: '🏗', hint: 'CapEx and OpEx' },
@@ -154,7 +173,12 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Reports', href: '/reports', icon: '📈' },
     { label: 'Demand forecast', href: '/analytics/forecast', sub: true },
   ],
-  payroll:        [{ label: 'Tip pools', href: '/tip-pools', icon: '🧾' }],
+  // 'payroll' is the Finance workspace's view of pay: tip pools and the
+  // payroll register (GET /hr/payroll/runs — finance reads it, HR prepares it).
+  payroll:        [
+    { label: 'Tip pools', href: '/tip-pools', icon: '🧾' },
+    { label: 'Payroll register', href: '/hr/payroll', icon: '💵', hint: 'Payroll runs, payslips and the bank file' },
+  ],
 
   // ── Marketing
   marketing_workspace: [{ label: 'Activity log', href: '/marketing/activity', icon: '🚀' }],
@@ -203,10 +227,18 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   scheduling:     [{ label: 'Rota', href: '/scheduling', icon: '📅', hint: 'Generated from the HR roster' }],
 
   // ── Dev
+  // API section (spec §10, D13): exactly two connectors.
+  // Email sits with the WhatsApp connector: both are the message gateways
+  // behind codes and resets, and both answer only CONNECTOR_ADMINS (admin,
+  // it) — the same roles that hold api_whatsapp. Under 'integrations' it was
+  // linked to foh_management and management, who got 403 (UI-15).
+  api_whatsapp:   [
+    { label: 'WhatsApp connector', href: '/connectors/whatsapp', hint: "Hasham's gateway — OTPs, staff codes, order messages" },
+    { label: 'Email', href: '/configuration/email', sub: true, hint: 'SMTP — the backup channel for codes and resets' },
+  ],
+  api_pos:        [{ label: 'POS connector', href: '/connectors/pos', hint: 'Fiscal POS (FBR / SRB) and card machine' }],
   integrations:   [
-    { label: 'Integrations', href: '/settings/integrations', icon: '🔌', hint: 'Meta, WhatsApp, FBR / PRAL, supplier portal' },
-    { label: 'WhatsApp', href: '/configuration/whatsapp', sub: true },
-    { label: 'Email', href: '/configuration/email', sub: true },
+    { label: 'Integrations', href: '/settings/integrations', icon: '🔌', hint: 'Meta, webhooks, supplier portal' },
     { label: 'Webhooks', href: '/configuration/webhooks', sub: true },
   ],
   audit_log:      [{ label: 'User audit log', href: '/configuration/audit-log', hint: 'Sign-ins and what each user did' }],
@@ -217,7 +249,9 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
 /** Pages open to every login, whatever their modules (the API scopes them). */
 export const PERSONAL_PAGES: ModulePage[] = [
   { label: 'My team', href: '/team', hint: 'Who reports to you, and adding a login' },
-  { label: 'My approvals', href: '/hr/approvals', hint: 'Requests waiting on you' },
+  // The one approvals inbox (decision D3) — the same page the CEO section
+  // links; the API lists only what this login can act on.
+  { label: 'Approvals', href: '/ceo/approvals', hint: 'Everything waiting on you' },
   { label: 'My HR', href: '/hr/me', hint: 'Leave, payslips, requests' },
 ]
 
@@ -227,7 +261,7 @@ export const PERSONAL_PAGES: ModulePage[] = [
  */
 export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   pos: 'One refund engine, one comp engine and one settle path, all on the open drawer; GST is cash 15% / card 8% from one pricing function. Offline: sw.js replays queued till orders to the admin origin without a session, so they are lost. No screen to comp an order after it was rung; split bills (/orders/[id]/split) are not linked from the till.',
-  orders: 'Every order is created by ingestOrder and completed by one completeOrder, which issues the invoice and queues FBR and SRB submission. Voids are per line on the order page.',
+  orders: 'Every order is created by ingestOrder and completed by one completeOrder, which issues the invoice; tax filing goes only through the POS connector. Voids are per line on the order page.',
   refunds: 'The one refund engine: caps, manager PIN, cash from the open drawer, its own journal entry; a full refund restores loyalty, wallet and gift-card value.',
   reservations: 'Table state is set by the reservation flow only — POS orders never mark a table occupied. Guest tags have endpoints but no admin screen.',
   dashboard: 'The four workspace dashboards (Operations, Finance, Marketing, HR) are blank until the owner picks their numbers.',
@@ -248,6 +282,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   staff_hr: 'HR is the person master; each company can replace its forms in /hr/formats. Leave counts calendar days (weekly offs and holidays are not skipped); file fields take a link, not an upload.',
   staff_directory: 'A login is access only; one login can be linked to an employee in each company. Team leads add logins for their own roles from My team, and the CEO approves each one.',
   scheduling: 'Generated from the HR roster and approved swaps; managers store only one-off changes. Costed from HR salaries.',
+  api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet.',
   integrations: 'No backup or data export screen. Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport. Meta tokens are global settings, so every company shares one Facebook page.',
   audit_log: 'Sign-ins (success, failure, OTP, 2FA, sign-out) are audited alongside account, access and on-shift actions, per company.',
 }
@@ -271,6 +306,68 @@ export function gapsForModules(modules: readonly string[]): Array<{ module: stri
   return modules
     .map((m) => ({ module: m, note: MODULE_GAPS[m as ModuleId] }))
     .filter((x): x is { module: string; note: string } => !!x.note)
+}
+
+/**
+ * Pages every login may open whatever its modules: the workspace homes, the
+ * personal pages (My team, the approvals inbox, My HR), the account page and
+ * help. Their API reads are scoped to the caller.
+ */
+export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
+  '/w', '/me', '/account', '/help', '/login', '/kds/login', '/reset-password', '/supplier',
+  // The admin's one punch screen (decision 32) — "Me" and kiosk mode. Its API
+  // (/time-clock/status, punch-in/out, kiosk/punch) is ALL_STAFF and punches
+  // only the caller (or the employee whose code + PIN is entered), so every
+  // login opens it; the Workforce sidebar link stays with staff_directory.
+  '/time-clock',
+  ...PERSONAL_PAGES.map((p) => p.href),
+]
+
+function underPrefix(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(href + '/')
+}
+
+/**
+ * The modules that open a path: every module with a page at the LONGEST
+ * matching href (two modules can list the same page — /hr/payroll is both
+ * HR's and Finance's payroll register; /workforce both Staff and Logins).
+ * Empty when no catalogued page covers the path (it is open to every login).
+ *
+ * The Kitchen view (/kds) and its live station pages (/kds/<station>) are
+ * kds_dashboard's, but kds_all holders (the expediter) open them too: the
+ * sidebar lists the stations for kds_all, /kds/login sends every signed-in
+ * user to /kds, and the /kds page serves "every active station" to roles
+ * without an assignment list. Their reads (/kds/my-stations, /kds/unrouted,
+ * /expo/station/:id/queue) admit kds_all.
+ */
+export function modulesForPath(pathname: string): ModuleId[] {
+  let bestLen = -1
+  let best: ModuleId[] = []
+  for (const [mod, pages] of Object.entries(MODULE_PAGES) as Array<[ModuleId, ModulePage[]]>) {
+    for (const p of pages) {
+      const href = p.href.split('?')[0]!
+      if (!underPrefix(pathname, href)) continue
+      if (href.length > bestLen) { bestLen = href.length; best = [mod] }
+      else if (href.length === bestLen && !best.includes(mod)) best.push(mod)
+    }
+  }
+  if (best.length === 1 && best[0] === 'kds_dashboard' && (pathname === '/kds' || pathname.startsWith('/kds/'))) best.push('kds_all')
+  return best
+}
+
+/**
+ * May this login open the page at `pathname`? The CEO (admin) opens
+ * everything; the always-open pages are open to all; otherwise the user needs
+ * one of the modules behind the page (GET /permissions/me `modules`). The API
+ * enforces the same modules on the reads behind the page — this keeps the
+ * page from rendering empty with 403s, it is not the control.
+ */
+export function canOpenPath(pathname: string, role: string | undefined, modules: readonly string[]): boolean {
+  if (role === 'admin') return true
+  if (ALWAYS_OPEN_PREFIXES.some((p) => underPrefix(pathname, p))) return true
+  const need = modulesForPath(pathname)
+  if (need.length === 0) return true
+  return need.some((m) => modules.includes(m))
 }
 
 /** Which module owns a path (longest matching page href). */

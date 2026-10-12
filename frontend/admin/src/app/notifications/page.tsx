@@ -16,6 +16,14 @@ interface TokenEntry {
   }>
 }
 
+// What GET /notifications/tokens actually returns (notifications/routes.ts);
+// mapped to TokenEntry below so the table and the counts read real fields.
+interface RawTokenRow {
+  userId: string
+  userName: string | null
+  tokens: Array<{ id: string; device: string | null; createdAt: string }>
+}
+
 interface Location {
   id: string
   name: string
@@ -39,6 +47,10 @@ interface BroadcastBody {
 interface BroadcastResult {
   sent: number
   failed: number
+  /** The ONE company the broadcast went to (the active / picked company). */
+  company?: { id: string; name: string } | null
+  /** Matching devices in the sender's other companies that were NOT reached. */
+  skippedOtherCompanies?: number
 }
 
 interface BroadcastHistoryEntry {
@@ -204,6 +216,14 @@ function SendBroadcast({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const hasFilters = deviceFilter.size > 0 || locationId !== ''
+
+  // "All companies" view: the device list spans every company the sender
+  // belongs to, but a broadcast reaches ONE company (the one picked when it
+  // is sent). Say so next to the count.
+  const [portfolio, setPortfolio] = useState(false)
+  useEffect(() => {
+    try { setPortfolio(localStorage.getItem('servd_view_all_tenants') === '1') } catch { /* storage blocked */ }
+  }, [])
 
   // Compute recipient count from token data + current filters
   const recipientCount = useMemo(() => {
@@ -417,16 +437,26 @@ function SendBroadcast({
           </span>
         )}
       </div>
+      {portfolio && (
+        <p className="text-xs text-s-muted">
+          Counted across all your companies. A broadcast reaches one company only; you will be asked which.
+        </p>
+      )}
 
       {/* Feedback */}
       {lastResult && (
         <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm">
           <p className="font-semibold text-primary-ink">
-            Broadcast sent — {lastResult.sent} delivered
+            Broadcast sent{lastResult.company ? ` to ${lastResult.company.name}` : ''} — {lastResult.sent} delivered
             {lastResult.failed > 0 && (
               <span className="text-s-amber">, {lastResult.failed} failed</span>
             )}
           </p>
+          {(lastResult.skippedOtherCompanies ?? 0) > 0 && (
+            <p className="text-xs text-s-muted mt-1">
+              {lastResult.skippedOtherCompanies} matching device{lastResult.skippedOtherCompanies !== 1 ? 's' : ''} in your other companies {lastResult.skippedOtherCompanies !== 1 ? 'were' : 'was'} not included. Switch company to send there.
+            </p>
+          )}
         </div>
       )}
       {errorMsg && (
@@ -512,7 +542,18 @@ export default function NotificationsPage() {
 
   const { data: tokens = [], isLoading: tokensLoading } = useQuery({
     queryKey: ['notification-tokens'],
-    queryFn: () => api.get<TokenEntry[]>('/notifications/tokens'),
+    queryFn: async (): Promise<TokenEntry[]> => {
+      const rows = await api.get<RawTokenRow[]>('/notifications/tokens')
+      return rows.map((r) => ({
+        userId: r.userId,
+        staffName: r.userName ?? 'Unnamed',
+        tokens: r.tokens.map((t) => ({
+          id: t.id,
+          deviceType: (t.device ?? 'mobile') as DeviceType,
+          registeredAt: t.createdAt,
+        })),
+      }))
+    },
   })
 
   const { data: locations = [] } = useQuery({

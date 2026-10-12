@@ -5,6 +5,8 @@ import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ReachOutModal } from '../../components/crm/ReachOutModal'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
+import { canOpenPath } from '../../lib/moduleCatalog'
+import { usePermissions } from '../../hooks/useCan'
 
 interface Complaint {
   id: string
@@ -91,6 +93,12 @@ function AgeBadge({ createdAt, now }: { createdAt: string; now: number }) {
 export default function ComplaintsPage() {
   const qc = useQueryClient()
   const { data: tenants = [] } = useMyTenants()
+  // Cross-module links (the CRM profile, the order) only for a login that can
+  // open them — marketing holds complaints but not orders; foh/fnb managers
+  // hold complaints but not always crm.
+  const { data: me } = usePermissions()
+  const canOpenCrm = !!me && canOpenPath('/crm', me.role, me.modules ?? [])
+  const canOpenOrders = !!me && canOpenPath('/orders', me.role, me.modules ?? [])
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [conceptFilter, setConceptFilter] = useState('')
@@ -124,9 +132,14 @@ export default function ComplaintsPage() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
+  // Brand list from GET /concepts?view=picker (every staff role, the active
+  // brands of its own companies, id + name) — plain /concepts is managers /
+  // till only and 403'd for the roles that hold this page (R2-UI-04).
+  // Shares the shell BrandPicker's cache key and shape.
   const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
   })
 
   const { data, isLoading } = useQuery({
@@ -320,18 +333,24 @@ export default function ComplaintsPage() {
                   <TenantChip tenant={c.concept.tenant} tenantId={c.concept.tenantId} tenants={tenants} />
                   <span className="text-xs text-s-muted capitalize">{c.category.replace('_', ' ')}</span>
                   {c.order?.customer ? (
-                    <Link href={`/crm?customer=${c.order.customer.id}`} className="text-xs text-blue-700 hover:text-blue-700 hover:underline transition-colors">
-                      {c.order.customer.name}
-                    </Link>
+                    canOpenCrm ? (
+                      <Link href={`/crm?customer=${c.order.customer.id}`} className="text-xs text-blue-700 hover:text-blue-700 hover:underline transition-colors">
+                        {c.order.customer.name}
+                      </Link>
+                    ) : <span className="text-xs text-s-text">{c.order.customer.name}</span>
                   ) : c.order?.customerName ? (
-                    <Link href={`/crm?search=${encodeURIComponent(c.order.customerName)}`} className="text-xs text-blue-700 hover:text-blue-700 hover:underline transition-colors">
-                      {c.order.customerName}
-                    </Link>
+                    canOpenCrm ? (
+                      <Link href={`/crm?search=${encodeURIComponent(c.order.customerName)}`} className="text-xs text-blue-700 hover:text-blue-700 hover:underline transition-colors">
+                        {c.order.customerName}
+                      </Link>
+                    ) : <span className="text-xs text-s-text">{c.order.customerName}</span>
                   ) : null}
                   {c.orderId && (
-                    <Link href={`/orders?search=${c.orderId.slice(0, 8)}`} className="text-xs text-primary-ink hover:text-primary-ink/80 hover:underline transition-colors font-mono">
-                      #{c.orderId.slice(-6).toUpperCase()} →
-                    </Link>
+                    canOpenOrders ? (
+                      <Link href={`/orders?search=${c.orderId.slice(0, 8)}`} className="text-xs text-primary-ink hover:text-primary-ink/80 hover:underline transition-colors font-mono">
+                        #{c.orderId.slice(-6).toUpperCase()} →
+                      </Link>
+                    ) : <span className="text-xs text-s-muted font-mono">#{c.orderId.slice(-6).toUpperCase()}</span>
                   )}
                   <span className="text-xs text-s-muted">{new Date(c.createdAt).toLocaleDateString()}</span>
                 </div>

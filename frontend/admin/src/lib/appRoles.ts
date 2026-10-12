@@ -57,13 +57,13 @@ export const APP_ROLES: RoleMeta[] = [
   { value: 'kitchen',         label: 'Kitchen (Line)',   emoji: '🔥',  description: 'Single-station KDS view only' },
   { value: 'expediter',       label: 'Expediter',        emoji: '🪧',  description: 'Pass / quality check — all-orders KDS view' },
   { value: 'cashier',         label: 'Cashier',          emoji: '💳',  description: 'POS + curbside + basic dashboard' },
-  { value: 'procurement',     label: 'Procurement',      emoji: '🏭',  description: 'Supplier chat, POs, inventory receipt' },
+  { value: 'procurement',     label: 'Procurement',      emoji: '🏭',  description: 'Supplier chat and POs. Sees deliveries at the dock; a manager receives' },
   { value: 'marketing',       label: 'Marketing',        emoji: '🚀',  description: 'CRM, campaigns, reviews, complaints, content' },
   { value: 'brand_manager',   label: 'Brand Manager',    emoji: '📣',  description: 'Owns the Brand dashboard — ARPU, LTV, AOV, retention. Marketing + growth.' },
   { value: 'fnb_manager',     label: 'F&B Manager',      emoji: '🍽️',  description: 'Owns the F&B dashboard — kitchen throughput, menu, food cost, quality. BOH + FOH.' },
   { value: 'finance',         label: 'Finance',          emoji: '💰',  description: 'P&L, payroll, accounting, reconciliation' },
   { value: 'hr',              label: 'HR / Workforce',   emoji: '👥',  description: 'Staff records, attendance, payroll, scheduling' },
-  { value: 'it',              label: 'IT / developer',   emoji: '',    description: 'Owns the Dev workspace — integrations, the user audit log, notifications, help' },
+  { value: 'it',              label: 'IT / developer',   emoji: '',    description: 'Owns the Dev workspace — the API connectors (WhatsApp, POS), integrations, the user audit log, notifications, help' },
 ]
 
 /** Display label for any role string the backend returns. Maps admin → CEO. */
@@ -78,7 +78,7 @@ export function roleLabel(role: string | undefined | null): string {
 /** Module IDs — must match the `module` tag on every nav item in AppShell. */
 export type ModuleId =
   // Executive (CEO only by default)
-  | 'ceo_overview' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'accounting_audit' | 'tenants'
+  | 'ceo_overview' | 'approvals' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'accounting_audit' | 'tenants'
   // Management — manager-tier dashboards (Brand Manager, F&B Manager)
   | 'brand_dashboard' | 'fnb_dashboard'
   // Live
@@ -91,6 +91,7 @@ export type ModuleId =
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'storefront' | 'analytics'
   // Finance
   | 'finance_pl' | 'payroll' | 'accounting' | 'gift_cards' | 'reconciliation' | 'exceptions' | 'capital' | 'projections' | 'procurement' | 'reports'
+  | 'voided_prebills'
   // Workforce — `staff_directory` is the unified hub; `staff_hr` is the HR
   // back office (enforced by the API on the HR admin routes). The seven
   // per-category ids that used to sit here tagged nothing and were retired.
@@ -98,6 +99,8 @@ export type ModuleId =
   | 'staff_hr'
   // Setup
   | 'settings'  | 'notifications' | 'help' | 'configuration' | 'onboarding' | 'integrations'
+  // Dev → API: the two connectors (spec §10)
+  | 'api_whatsapp' | 'api_pos'
 
 export interface ModuleMeta {
   id: ModuleId
@@ -108,6 +111,7 @@ export interface ModuleMeta {
 
 export const MODULES: ModuleMeta[] = [
   { id: 'ceo_overview',       label: 'CEO Overview',        section: 'Executive' },
+  { id: 'approvals',          label: 'Approvals inbox',     section: 'Executive' },
   { id: 'business_info',      label: 'Business Info',       section: 'Executive' },
   { id: 'role_management',    label: 'Staff approvals',     section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
@@ -165,6 +169,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'projections',        label: 'Projections',         section: 'Finance' },
   { id: 'procurement',        label: 'Procurement',         section: 'Finance' },
   { id: 'reports',            label: 'Reports',             section: 'Finance' },
+  { id: 'voided_prebills',    label: 'Voided pre bills',    section: 'Finance' },
 
   { id: 'staff_directory',    label: 'Staff Directory',     section: 'Workforce' },
   { id: 'staff_hr',           label: 'HR',                  section: 'Workforce' },
@@ -172,6 +177,8 @@ export const MODULES: ModuleMeta[] = [
   // Account config — Integrations / Notifications / Help now live in the
   // Executive sidebar section (the standalone "Setup" group was retired).
   { id: 'integrations',       label: 'Integrations',        section: 'Executive' },
+  { id: 'api_whatsapp',       label: 'WhatsApp connector',  section: 'Executive' },
+  { id: 'api_pos',            label: 'POS connector',       section: 'Executive' },
   { id: 'notifications',      label: 'Notifications',       section: 'Executive' },
   { id: 'help',               label: 'Help & Support',      section: 'Executive' },
   // Still-defined modules that aren't in the primary sidebar: the first-run

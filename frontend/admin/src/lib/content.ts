@@ -15,7 +15,16 @@ export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http
 // widget = servd chrome that floats over every page (servd:feedback, the
 // feedback button): sections only, no SEO or A/B, never in the sitemap.
 export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup'
-export type DraftStatus = 'draft' | 'pending' | 'scheduled'
+// 'none' = no working copy: what the API answers for a page nobody has edited
+// (and for a live page whose draft was published or discarded).
+export type DraftStatus = 'none' | 'draft' | 'pending' | 'scheduled'
+
+/** True when there is a saved draft to submit, approve or discard. NOT
+ *  `!!draftStatus`: the API's 'none' is a truthy string, and treating it as a
+ *  draft sent Submit/Approve on an untouched page straight to a 404. */
+export function hasSavedDraft(status: DraftStatus | null | undefined): boolean {
+  return status === 'draft' || status === 'pending' || status === 'scheduled'
+}
 export type Variant = 'a' | 'b'
 
 export interface PopupRules {
@@ -129,11 +138,20 @@ export interface MediaAssetLite {
 
 export interface ConceptLite { id: string; name: string; slug: string; tenantId?: string | null }
 
+// The Storefront editor's brand list: GET /concepts?view=storefront, which
+// answers anyone holding the 'storefront' module (marketing, brand_manager)
+// and management, with the narrow brand fields only (id, name, slug, company,
+// logo, colour). Its own query key: plain GET /concepts stays management/till
+// only, so a narrow row never lands in a page that edits brands (the Brand
+// Editor at /marketing/brands would show it as a blank brand).
+export const STOREFRONT_BRANDS_KEY = ['concepts', 'storefront'] as const
+
 // ─── API ───────────────────────────────────────────────────────────────────
 
 const enc = encodeURIComponent
 
 export const contentApi = {
+  brands: () => api.get<ConceptLite[]>('/concepts?view=storefront'),
   list: (params: { status?: 'pending' | 'draft' | 'scheduled' | 'all'; kind?: LayoutKind } = {}) => {
     const qs = new URLSearchParams({ status: params.status ?? 'all', ...(params.kind ? { kind: params.kind } : {}) })
     return api.get<LayoutSummary[]>(`/site-layouts?${qs.toString()}`)

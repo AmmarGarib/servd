@@ -13,9 +13,10 @@ import { useMyWorkspaces } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { BrandPicker } from './BrandPicker'
-import { MODULE_PAGES, PERSONAL_PAGES } from '../../lib/moduleCatalog'
+import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
+import { useApprovalCounts } from '../../app/ceo/approvalsData'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -71,6 +72,14 @@ function itemsForModules(modules: readonly string[], seen: Set<string>, lead = f
 }
 
 const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier']
+// Full-screen pages with no signed-in staff user behind them: the page guard
+// below never runs there (it would ask GET /permissions/me without a session).
+const UNGUARDED_PREFIXES = ['/login', '/kds/login', '/supplier', '/reset-password']
+
+/** A workspace's home page: the CEO section has its own (/ceo, decision D2). */
+function wsHome(id: string): string {
+  return id === 'ceo' ? '/ceo' : `/w/${id}`
+}
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + '/')
@@ -126,6 +135,8 @@ function NavLinks({
     queryFn:  () => api.get('/kds/stations'),
     staleTime: 60_000,
     enabled:  allowedModules.has('kds_all'),
+    // A sidebar widget: a 403 just leaves the station list out (UI-13).
+    meta:     { background: true },
   })
 
   // CEO queues — same cache keys as the identity card's badges.
@@ -144,6 +155,12 @@ function NavLinks({
     staleTime: 30_000,
   })
 
+  // The one approvals inbox (decision D3): what is waiting on this login,
+  // from every module — the badge on CEO → Approvals and on the personal
+  // "Approvals" link.
+  const { data: approvalCounts } = useApprovalCounts(Boolean(me))
+  const approvalsWaiting = approvalCounts?.total ?? 0
+
   const groups: NavGroup[] = useMemo(() => {
     return workspaces.map((w) => {
       const seen = new Set<string>()
@@ -157,13 +174,14 @@ function NavLinks({
           }
           if (item.module === 'role_management' && pendingStaff.length > 0) return { ...item, badge: String(pendingStaff.length) }
           if (item.module === 'storefront' && pendingLayouts.length > 0) return { ...item, badge: String(pendingLayouts.length) }
+          if (item.href === '/ceo/approvals' && approvalsWaiting > 0) return { ...item, badge: String(approvalsWaiting) }
           return item
         })
         return { key: sec.key, title: sec.title, items }
       }).filter((s) => s.items.length > 0)
       return { id: w.id, title: w.title, owner: w.owner, sections }
     }).filter((g) => g.sections.length > 0)
-  }, [workspaces, stations, allowedModules, pendingStaff.length, pendingLayouts.length])
+  }, [workspaces, stations, allowedModules, pendingStaff.length, pendingLayouts.length, approvalsWaiting])
 
   // Dashboards — outside the workspaces: the CEO home, then one per
   // department. Each shows only to those with its module (the CEO sees all).
@@ -175,20 +193,24 @@ function NavLinks({
   }, [workspaces])
 
   // The "Me" pages only show when they have something for this login: My team
-  // when people report to you (or you add logins for your workspace), My
-  // approvals when you have a team or requests waiting, My HR when your login
-  // is linked to an employee record. The CEO, unlinked, sees none of them.
+  // when people report to you (or you add logins for your workspace),
+  // Approvals when you have a team or anything is waiting on you (and the CEO
+  // section does not already list it for you), My HR when your login is
+  // linked to an employee record.
   const { data: team } = useTeam()
   const personalItems: NavItem[] = useMemo(() => {
     const hasTeam = (team?.team.length ?? 0) > 0
     const addsLogins = me?.role !== 'admin' && (me?.childRoles?.length ?? 0) > 0
     const show: Record<string, boolean> = {
       '/team': hasTeam || addsLogins,
-      '/hr/approvals': hasTeam || (team?.pendingApprovals ?? 0) > 0,
+      '/ceo/approvals': !allowedModules.has('approvals') && (hasTeam || approvalsWaiting > 0 || (team?.pendingApprovals ?? 0) > 0),
       '/hr/me': Boolean(team?.me),
     }
-    return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({ href: p.href, label: p.label, icon: '·' }))
-  }, [team, me?.role, me?.childRoles])
+    return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
+      href: p.href, label: p.label, icon: '·',
+      ...(p.href === '/ceo/approvals' && approvalsWaiting > 0 && { badge: String(approvalsWaiting) }),
+    }))
+  }, [team, me?.role, me?.childRoles, allowedModules, approvalsWaiting])
 
   // Workspace open/closed — entries "id:1" / "id:0" once the user has chosen;
   // until then the first (own) workspace and any they own start open, and the
@@ -364,9 +386,9 @@ function NavLinks({
                   <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"
                     style={{ color: open ? 'rgb(var(--fg-rgb) / 0.7)' : 'rgb(var(--fg-rgb) / 0.4)' }}>{g.title}</span>
                 </button>
-                <Link href={`/w/${g.id}`} onClick={onNavigate}
+                <Link href={wsHome(g.id)} onClick={onNavigate}
                   className="text-[10px] font-bold px-1.5 py-1 rounded-md hover:bg-white/[0.05]"
-                  style={{ color: isActive(pathname, `/w/${g.id}`) ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.3)' }}
+                  style={{ color: pathname === wsHome(g.id) ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.3)' }}
                   title={`${g.title} home`}>
                   home
                 </Link>
@@ -554,7 +576,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const isFullScreen = FULL_SCREEN_PREFIXES.some((p) => pathname.startsWith(p))
-  if (isFullScreen) return <>{children}</>
+  if (isFullScreen) {
+    if (UNGUARDED_PREFIXES.some((p) => pathname.startsWith(p))) return <>{children}</>
+    return <PageGuard pathname={pathname} fullScreen>{children}</PageGuard>
+  }
 
   const initials = user?.name?.[0]?.toUpperCase() ?? '?'
 
@@ -569,6 +594,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className={`relative z-10 shrink-0 ${c ? 'px-1.5 py-2' : 'px-3 py-3'}`}
         style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         {c ? (
+          <>
+          <Link href="/account/password" title="Change password / PIN" aria-label="Change password / PIN"
+            className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
+            style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+              <rect x="3" y="6.5" width="9" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M5 6.5V4.75a2.5 2.5 0 015 0V6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </Link>
           <button onClick={() => void handleClockOut()} disabled={clockingOut}
             className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
             style={{ color: 'rgb(var(--fg-rgb) / 0.2)' }}
@@ -580,9 +614,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
+          </>
         ) : (
           <div className="space-y-1.5">
             <UserIdentityCard initials={initials} />
+            <Link href="/account/password"
+              className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-colors"
+              style={{ background: 'rgb(var(--fg-rgb) / 0.06)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
+              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                <rect x="3" y="6.5" width="9" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M5 6.5V4.75a2.5 2.5 0 015 0V6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              Change password / PIN
+            </Link>
             <button onClick={() => void handleClockOut()} disabled={clockingOut}
               className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-all disabled:opacity-50"
               style={{ background: 'rgba(255,138,128,0.12)', border: '1px solid rgba(255,138,128,0.3)', color: '#ffb4ab' }}
@@ -607,26 +651,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // Only the CEO (admin) can impersonate other roles + approve new staff.
     const isSuper = me?.role === 'admin'
 
-    // Pending-approvals badge — only fetched for the CEO. Polls every 30s so
-    // a new signup appears in the sidebar without a page refresh.
-    const { data: pending = [] } = useQuery<Array<{ id: string }>>({
-      queryKey: ['staff', 'pending'],
-      queryFn:  () => api.get('/auth/staff/pending'),
-      enabled:  isSuper,
-      refetchInterval: 30_000,
-      staleTime: 15_000,
-    })
-
-    // Storefront changes waiting for CEO approval (decision 41) — same
-    // pattern, 60s poll. Shares its cache key with the hub's Approvals tab.
-    const { data: pendingLayouts = [] } = useQuery<Array<{ id: string }>>({
-      queryKey: PENDING_LAYOUTS_KEY,
-      queryFn:  () => api.get('/site-layouts?status=pending'),
-      enabled:  isSuper,
-      refetchInterval: 60_000,
-      staleTime: 30_000,
-    })
-    const hasQueue = pending.length > 0 || pendingLayouts.length > 0
+    // Everything waiting on this login, from every module (decision D3) —
+    // one link to the approvals inbox, for whoever has something waiting.
+    // It used to be two CEO-only badges (logins, storefront) that vanished at
+    // zero; the inbox is now in the CEO section and the personal pages.
+    const { data: approvalCounts } = useApprovalCounts(Boolean(me))
+    const waitingTotal = approvalCounts?.total ?? 0
+    const hasQueue = waitingTotal > 0
 
     // Drop admin/CEO from impersonation targets — viewing-as-self is the
     // default state, no need to offer it as a discrete option.
@@ -654,30 +685,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* CEO-only: live link to the pending queue on /workforce with a
-            badge showing how many staff are waiting. Hidden when nothing is
-            in the queue so the card stays quiet. */}
-        {isSuper && pending.length > 0 && (
-          <Link href="/workforce?status=pending"
+        {hasQueue && (
+          <Link href="/ceo/approvals"
             className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors"
             onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
-            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#a15c00' }} />
-            <span className="text-[10px] font-bold flex-1" style={{ color: '#a15c00' }}>
-              {pending.length} pending {pending.length === 1 ? 'signup' : 'signups'}
-            </span>
-            <span className="text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>→</span>
-          </Link>
-        )}
-
-        {isSuper && pendingLayouts.length > 0 && (
-          <Link href="/storefront?tab=approvals"
-            className={`${pending.length > 0 ? 'mt-0.5' : 'mt-1.5 pt-1.5 border-t border-white/[0.05]'} flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors`}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
-            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#a15c00' }} />
-            <span className="text-[10px] font-bold flex-1" style={{ color: '#a15c00' }}>
-              {pendingLayouts.length} storefront {pendingLayouts.length === 1 ? 'change' : 'changes'} to approve
+            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--erp-warning)' }} />
+            <span className="text-[10px] font-bold flex-1" style={{ color: 'var(--erp-warning)' }}>
+              {waitingTotal} waiting on you
             </span>
             <span className="text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>→</span>
           </Link>
@@ -833,7 +848,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <PortfolioBanner />
         <ImpersonationBanner />
         <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in">
-          {children}
+          <PageGuard pathname={pathname}>{children}</PageGuard>
         </main>
       </div>
 
@@ -841,6 +856,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           the useEnsureTenant hook. Mounted once at the shell so any page can
           trigger it without a parent component plumbing it through. */}
       <PortfolioWriteGuardModal />
+    </div>
+  )
+}
+
+// ─── Page guard (UI-12) ──────────────────────────────────────────────────────
+//
+// The sidebar only links a page when the user holds one of the modules behind
+// it; typing the URL used to render the page anyway (empty, with 403 toasts —
+// or, before the API gates, with live data). Now a page outside the user's
+// modules (GET /permissions/me — the same resolver the API enforces with)
+// shows a plain "no access" panel instead. Workspace homes, the personal pages
+// (My team, the approvals inbox, My HR), account and help are always open;
+// the CEO opens everything. Fails OPEN if /permissions/me can't be read — the
+// API still refuses the data; this only spares the empty page.
+function PageGuard({ pathname, fullScreen = false, children }: { pathname: string; fullScreen?: boolean; children: React.ReactNode }) {
+  const { data: me, isLoading, isError } = usePermissions()
+  // Pages open to every login (no module behind them) never wait for /me.
+  if (canOpenPath(pathname, undefined, [])) return <>{children}</>
+  if (isError) return <>{children}</>
+  if (!me) return isLoading ? null : <>{children}</>
+  if (canOpenPath(pathname, me.role, me.modules ?? [])) return <>{children}</>
+  const home = me.workspaces?.[0] ? wsHome(me.workspaces[0].id) : '/w'
+  return (
+    <div className={`${fullScreen ? 'min-h-screen' : 'min-h-full'} flex items-center justify-center p-6`} style={{ background: 'var(--bg)' }}>
+      <div className="max-w-md w-full rounded-2xl p-6 text-center"
+        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'var(--text)' }}>
+        <p className="text-base font-bold">You don&rsquo;t have access to this page</p>
+        <p className="text-sm mt-2" style={{ color: 'rgb(var(--fg-rgb) / 0.6)' }}>
+          It belongs to a module your login doesn&rsquo;t hold. If you need it, ask the CEO to add it in Module Access.
+        </p>
+        <Link href={home}
+          className="inline-block mt-5 rounded-xl px-4 py-2 text-sm font-bold"
+          style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+          Go to your workspace
+        </Link>
+      </div>
     </div>
   )
 }

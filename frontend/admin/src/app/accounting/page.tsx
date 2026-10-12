@@ -4,6 +4,12 @@ import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ActivityFeed } from '../../components/ui/ActivityFeed'
 import { fmtPkrShort } from '../../lib/money'
+import { usePermissions } from '../../hooks/useCan'
+import { canOpenPath } from '../../lib/moduleCatalog'
+
+// The books' own audit trail answers only these roles (backend
+// lib/moduleAccess.ts ACCOUNTING_AUDIT_ROLES) — the module alone is not enough.
+const ACCOUNTING_AUDIT_ROLES = ['admin', 'management']
 
 interface FoodCostData {
   period: { from: string; to: string }
@@ -36,6 +42,40 @@ interface Vendor {
   _count: { purchaseOrders: number; inventoryItems: number }
 }
 
+// Hub links, each shown only when the user can open the page (see `can`).
+// Gift cards need 'gift_cards', Tip pools 'payroll', Payroll 'staff_hr' or
+// 'payroll' (the one register), the audit log ACCOUNTING_AUDIT_ROLES too.
+const OPERATIONS_LINKS: Array<{ href: string; label: string }> = [
+  { href: '/orders',           label: '⚡ Live orders' },
+  { href: '/floorplan',        label: '🪑 Floor plan' },
+  { href: '/reservations',     label: '📅 Reservations' },
+  { href: '/gift-cards',       label: '🎁 Gift cards' },
+  { href: '/dispatch',         label: '🛵 Dispatch' },
+  { href: '/tip-pools',        label: '💰 Tip pools' },
+  { href: '/storefront',       label: 'Storefront content' },
+  { href: '/analytics',        label: '📊 Sales analytics' },
+  { href: '/crm',              label: '👥 Customers' },
+  { href: '/refunds',          label: '↩️ Refunds' },
+  { href: '/inventory/alerts', label: '📦 Stock alerts' },
+  { href: '/reviews',          label: '⭐ Reviews' },
+]
+
+const LEDGER_LINKS: Array<{ href: string; label: string }> = [
+  { href: '/accounting/trial-balance',    label: 'Trial Balance' },
+  { href: '/accounting/balance-sheet',    label: 'Balance Sheet' },
+  { href: '/accounting/pl-ledger',        label: 'P&L' },
+  { href: '/accounting/ledger',           label: 'Ledger' },
+  { href: '/accounting/journal',          label: 'Journal Entry' },
+  { href: '/accounting/cash-flow',        label: 'Cash Flow' },
+  { href: '/accounting/period-close',     label: 'Period Close' },
+  { href: '/accounting/ap-aging',         label: 'AP Aging' },
+  { href: '/accounting/sales-tax-return', label: 'Sales Tax Return' },
+  { href: '/accounting/audit-log',        label: 'Audit Log' },
+  { href: '/hr/payroll',                  label: 'Payroll' },
+  { href: '/allocations',                 label: 'Cost Allocation' },
+  { href: '/reconciliation',              label: 'Reconciliation' },
+]
+
 const statusColor = {
   good:     { bar: 'bg-s-teal', text: 'text-primary-ink', badge: 's-badge-teal', label: 'On Target' },
   warning:  { bar: 'bg-s-amber', text: 'text-s-amber', badge: 's-badge-amber', label: 'Watch' },
@@ -54,26 +94,51 @@ export default function AccountingHubPage() {
   const today = new Date()
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString()
 
+  // Every card, link and widget here is shown only when the signed-in user
+  // can open the page behind it — the same module test as the sidebar and the
+  // page guard (HR-R8: finance saw Tip pools, Gift cards, Payroll and the
+  // books' audit log whatever its modules). Nothing shows until GET
+  // /permissions/me answers.
+  const { data: me } = usePermissions()
+  const modules = me?.modules ?? []
+  const can = (href: string): boolean => {
+    if (!me) return false
+    if (href === '/accounting/audit-log' && !ACCOUNTING_AUDIT_ROLES.includes(me.role)) return false
+    return canOpenPath(href, me.role, modules)
+  }
+  const holds = (m: string) => me?.role === 'admin' || modules.includes(m)
+
+  // Summary widgets the user didn't ask for one by one: a read their role
+  // can't make leaves the widget empty rather than toasting (`background`).
   const { data: foodCost } = useQuery({
     queryKey: ['food-cost', 'hub'],
     queryFn: () => api.get<FoodCostData>(`/recipes/food-cost?dateFrom=${monthStart}`),
     refetchInterval: 300_000,
+    enabled: can('/accounting/food-cost'),
+    meta: { background: true },
   })
 
+  // /procurement/* is the Procurement module's (module-gated in the API).
   const { data: vendors } = useQuery({
     queryKey: ['vendors'],
     queryFn: () => api.get<Vendor[]>('/procurement/suppliers'),
+    enabled: holds('procurement'),
+    meta: { background: true },
   })
 
   const { data: recentPOs } = useQuery({
     queryKey: ['purchase-orders', 'recent'],
     queryFn: () => api.get<PurchaseOrder[]>('/procurement/purchase-orders?limit=5'),
     refetchInterval: 60_000,
+    enabled: holds('procurement'),
+    meta: { background: true },
   })
 
   const { data: recipes } = useQuery({
     queryKey: ['recipes', 'count'],
     queryFn: () => api.get<{ id: string }[]>('/recipes'),
+    enabled: holds('recipes'),
+    meta: { background: true },
   })
 
   const fc = foodCost?.cost
@@ -121,7 +186,7 @@ export default function AccountingHubPage() {
               color: 'text-primary-ink',
               href: '/accounting/recipes',
             },
-          ].map((kpi) => (
+          ].filter((kpi) => can(kpi.href)).map((kpi) => (
             <Link key={kpi.label} href={kpi.href}
               className="metric-card s-card-hover group">
               <p className="metric-label">{kpi.label}</p>
@@ -136,18 +201,9 @@ export default function AccountingHubPage() {
           <section className="s-card p-4 lg:col-span-2">
             <p className="text-xs font-semibold text-s-muted uppercase tracking-wider mb-3">Operations</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-              <Link href="/orders"             className="s-card-hover p-3 rounded border border-s-border text-s-text">⚡ Live orders</Link>
-              <Link href="/floorplan"          className="s-card-hover p-3 rounded border border-s-border text-s-text">🪑 Floor plan</Link>
-              <Link href="/reservations"       className="s-card-hover p-3 rounded border border-s-border text-s-text">📅 Reservations</Link>
-              <Link href="/gift-cards"         className="s-card-hover p-3 rounded border border-s-border text-s-text">🎁 Gift cards</Link>
-              <Link href="/dispatch"           className="s-card-hover p-3 rounded border border-s-border text-s-text">🛵 Dispatch</Link>
-              <Link href="/tip-pools"          className="s-card-hover p-3 rounded border border-s-border text-s-text">💰 Tip pools</Link>
-              <Link href="/storefront"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Storefront content</Link>
-              <Link href="/analytics"          className="s-card-hover p-3 rounded border border-s-border text-s-text">📊 Sales analytics</Link>
-              <Link href="/crm"                className="s-card-hover p-3 rounded border border-s-border text-s-text">👥 Customers</Link>
-              <Link href="/refunds"            className="s-card-hover p-3 rounded border border-s-border text-s-text">↩️ Refunds</Link>
-              <Link href="/inventory/alerts"   className="s-card-hover p-3 rounded border border-s-border text-s-text">📦 Stock alerts</Link>
-              <Link href="/reviews"            className="s-card-hover p-3 rounded border border-s-border text-s-text">⭐ Reviews</Link>
+              {OPERATIONS_LINKS.filter((l) => can(l.href)).map((l) => (
+                <Link key={l.href} href={l.href} className="s-card-hover p-3 rounded border border-s-border text-s-text">{l.label}</Link>
+              ))}
             </div>
           </section>
           <ActivityFeed limit={12} />
@@ -157,19 +213,9 @@ export default function AccountingHubPage() {
         <section className="s-card p-4">
           <p className="text-xs font-semibold text-s-muted uppercase tracking-wider mb-3">Ledger Reports</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-            <Link href="/accounting/trial-balance"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Trial Balance</Link>
-            <Link href="/accounting/balance-sheet"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Balance Sheet</Link>
-            <Link href="/accounting/pl-ledger"      className="s-card-hover p-3 rounded border border-s-border text-s-text">P&L</Link>
-            <Link href="/accounting/ledger"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Ledger</Link>
-            <Link href="/accounting/journal"        className="s-card-hover p-3 rounded border border-s-border text-s-text">Journal Entry</Link>
-            <Link href="/accounting/cash-flow"      className="s-card-hover p-3 rounded border border-s-border text-s-text">Cash Flow</Link>
-            <Link href="/accounting/period-close"      className="s-card-hover p-3 rounded border border-s-border text-s-text">Period Close</Link>
-            <Link href="/accounting/ap-aging"          className="s-card-hover p-3 rounded border border-s-border text-s-text">AP Aging</Link>
-            <Link href="/accounting/sales-tax-return"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Sales Tax Return</Link>
-            <Link href="/accounting/audit-log"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Audit Log</Link>
-            <Link href="/hr/payroll"                   className="s-card-hover p-3 rounded border border-s-border text-s-text">Payroll</Link>
-            <Link href="/allocations"               className="s-card-hover p-3 rounded border border-s-border text-s-text">Cost Allocation</Link>
-            <Link href="/reconciliation"            className="s-card-hover p-3 rounded border border-s-border text-s-text col-span-2 sm:col-span-1">Reconciliation</Link>
+            {LEDGER_LINKS.filter((l) => can(l.href)).map((l) => (
+              <Link key={l.href} href={l.href} className="s-card-hover p-3 rounded border border-s-border text-s-text">{l.label}</Link>
+            ))}
           </div>
         </section>
 
@@ -301,7 +347,7 @@ export default function AccountingHubPage() {
               { href: '/accounting/pl-ledger', icon: '💰', label: 'P&L',       desc: 'Profit & Loss (ledger)' },
               { href: '/reports',              icon: '📈', label: 'Reports',   desc: 'Sales & analytics' },
               { href: '/inventory',            icon: '📦', label: 'Inventory', desc: 'Stock & par levels' },
-            ].map((item) => (
+            ].filter((item) => can(item.href)).map((item) => (
               <Link key={item.href} href={item.href}
                 className="s-card p-4 hover:border-s-teal/40 hover:bg-s-elevated transition-all group">
                 <span className="text-2xl group-hover:scale-110 transition-transform block mb-2">{item.icon}</span>
@@ -335,7 +381,7 @@ export default function AccountingHubPage() {
                   )}
                 </div>
               </div>
-              <Link href="/accounting/recipes" className="s-btn text-xs shrink-0">Add Recipes →</Link>
+              {can('/accounting/recipes') && <Link href="/accounting/recipes" className="s-btn text-xs shrink-0">Add Recipes →</Link>}
             </div>
           </section>
         )}

@@ -36,26 +36,53 @@ const SEV_STYLE: Record<Severity, { bg: string; fg: string; label: string }> = {
   critical: { bg: 'rgba(220,38,38,0.18)',  fg: '#FECACA', label: 'CRITICAL' },
 }
 
-const KIND_EMOJI: Record<string, string> = {
-  receiving_variance:    '📦',
-  short_shipment:        '⚠️',
-  price_drift:           '💸',
-  yield_low:             '📉',
-  shrinkage:             '🕳',
-  shrinkage_trend:       '📉',
-  consecutive_voids:     '🔄',
-  high_value_void:       '🚫',
-  comp_above_threshold:  '🎁',
-  refund_above_threshold:'↩️',
-  cash_variance:         '💰',
-  route_variance:        '🛵',
-  lost_package:          '📭',
-  pii_export:            '🔐',
-  self_approval:         '🛑',
-  ghost_employee:        '👻',
-  manual_journal:        '📒',
-  period_reopened:       '🔓',
-  wage_change:           '💼',
+// Plain labels for every ExceptionFlag kind (backend lib/exceptions.ts
+// ExceptionKind). Text, never emoji. A flag written under a stand-in kind
+// before its own kind existed carries the intended one in metadata.realKind,
+// which wins.
+const KIND_LABEL: Record<string, string> = {
+  receiving_variance:      'Receiving variance',
+  price_drift:             'Supplier price drift',
+  short_shipment:          'Short shipment',
+  yield_low:               'Low prep yield',
+  shrinkage:               'Stock shrinkage',
+  shrinkage_trend:         'Shrinkage trend',
+  consecutive_voids:       'Repeated voids',
+  high_value_void:         'High-value void',
+  void_after_fire:         'Void after firing to the kitchen',
+  comp_above_threshold:    'Comp above limit',
+  refund_above_threshold:  'Refund above limit',
+  cash_variance:           'Cash drawer variance',
+  route_variance:          'Rider route variance',
+  lost_package:            'Lost delivery',
+  pii_export:              'Customer data export',
+  self_approval:           'Self-approval attempt',
+  manager_pin_failed:      'Wrong manager PINs (locked)',
+  discount_above_cap:      'Discount above cap',
+  price_override:          'Price override',
+  ghost_employee:          'Payroll with no clock-ins',
+  manual_journal:          'Manual journal entry',
+  period_reopened:         'Period reopened',
+  wage_change:             'Wage change',
+  food_safety_temperature: 'Temperature out of range',
+  posting_failed:          'Ledger posting failed',
+  fiscal_failed:           'Fiscal filing failed',
+  fiscal_rejected:         'Fiscal POS rejected a document',
+  fiscal_auth:             'Fiscal POS refused the API key',
+  fiscal_manual_refund:    'Refund to file by hand',
+  terminal_void_failed:    'Card reversal failed',
+  terminal_unreconciled:   'Card payment does not reconcile',
+}
+
+/** The kind a flag is really about: metadata.realKind when set, else its kind. */
+function kindOf(f: { kind: string; metadata: Record<string, unknown> | null }): string {
+  const real = f.metadata?.['realKind']
+  return typeof real === 'string' && real ? real : f.kind
+}
+
+/** A plain label for a kind, falling back to the code made readable. */
+function kindLabel(kind: string): string {
+  return KIND_LABEL[kind] ?? (kind.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()))
 }
 
 export default function ExceptionInboxPage() {
@@ -88,7 +115,7 @@ export default function ExceptionInboxPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Owner inbox</p>
-        <h1 className="text-2xl font-black text-white/90 mt-1">⚠️ Exceptions</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-1">Exceptions</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Things the system flagged for your eyes. Clean operations stay silent — this list is everything that broke a control rule.
         </p>
@@ -137,13 +164,12 @@ export default function ExceptionInboxPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-2xl shrink-0" aria-hidden="true">{KIND_EMOJI[f.kind] ?? '⚠️'}</span>
                     <h3 className="font-black text-white/90">{f.title}</h3>
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
                       style={{ background: sev.bg, color: sev.fg }}>
                       {sev.label}
                     </span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/40 font-mono">{f.kind}</span>
+                    <span className="text-[11px] font-semibold text-white/50" title={kindOf(f)}>{kindLabel(kindOf(f))}</span>
                   </div>
                   <p className="text-sm text-white/65 mt-2 leading-relaxed">{f.description}</p>
                   {f.amountCents != null && (

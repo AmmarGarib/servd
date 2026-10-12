@@ -5,21 +5,19 @@ import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string }
+// The shape GET /reports/menu-engineering returns (backend
+// reports/menu-engineering.ts): a bare array, one row per item sold.
 interface MenuEngineeringItem {
-  menuItemId: string | null
+  menuItemId: string
   name: string
-  orderCount: number
-  popularity: 'high' | 'low'
+  priceCents: number
+  qtySold: number
   foodCostCents: number
-  revenueCents: number
-  marginPct: number
-  margin: 'high' | 'low'
+  grossMarginPct: number
   quadrant: 'star' | 'plowHorse' | 'puzzle' | 'dog'
-}
-interface MenuEngineeringData {
-  period: { from: string; to: string }
-  totals: { avgPopularity: number; avgMarginPct: number }
-  items: MenuEngineeringItem[]
+  popularityIndex: number
+  marginIndex: number
+  hasRecipe: boolean
 }
 
 const QUADRANT_META = {
@@ -38,9 +36,13 @@ export default function MenuEngineeringPage() {
   const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [activeQ, setActiveQ] = useState<string | null>(null)
 
+  // The picker list (every staff role, id + name): the plain /concepts list
+  // is managers / till only and 403'd for finance. Shares the shell
+  // BrandPicker's cache key and shape.
   const { data: concepts } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
   })
 
   const qs = new URLSearchParams({
@@ -50,11 +52,11 @@ export default function MenuEngineeringPage() {
   })
   const { data, isLoading } = useQuery({
     queryKey: ['menu-engineering', conceptId, dateFrom, dateTo],
-    queryFn: () => api.get<MenuEngineeringData>(`/reports/menu-engineering?${qs}`),
+    queryFn: () => api.get<MenuEngineeringItem[]>(`/reports/menu-engineering?${qs}`),
     enabled: !!conceptId,
   })
 
-  const items = data?.items ?? []
+  const items = data ?? []
   const filtered = activeQ ? items.filter(i => i.quadrant === activeQ) : items
 
   const quadrantCounts = {
@@ -139,7 +141,7 @@ export default function MenuEngineeringPage() {
                           <div key={item.menuItemId ?? item.name} className="flex items-center gap-2">
                             <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: meta.color }} />
                             <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>{item.name}</span>
-                            <span className="text-[10px] ml-auto shrink-0" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>{item.orderCount}</span>
+                            <span className="text-[10px] ml-auto shrink-0" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>{item.qtySold}</span>
                           </div>
                         ))}
                         {qItems.length > 6 && <p className="text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>+{qItems.length - 6} more</p>}
@@ -168,7 +170,7 @@ export default function MenuEngineeringPage() {
                 <tr style={{ background: 'rgb(var(--fg-rgb) / 0.03)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Item</th>
                   <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Quadrant</th>
-                  <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Orders</th>
+                  <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Sold</th>
                   <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Margin %</th>
                   <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Recommendation</th>
                 </tr>
@@ -182,15 +184,19 @@ export default function MenuEngineeringPage() {
                   return (
                     <tr key={item.menuItemId ?? item.name}
                       style={{ borderBottom: idx < filtered.length - 1 ? '1px solid rgb(var(--fg-rgb) / 0.04)' : 'none' }}>
-                      <td className="px-4 py-3 font-medium" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>{item.name}</td>
+                      <td className="px-4 py-3 font-medium" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>
+                        {item.name}
+                        {/* No recipe = no food cost, so its margin reads 100% and skews the quadrant. */}
+                        {!item.hasRecipe && <span className="ml-2 text-[10px] font-normal" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>no recipe</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
                           style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
                           {meta.label}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>{item.orderCount}</td>
-                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: item.marginPct >= 0 ? 'var(--erp-primary-ink)' : '#b42318' }}>{item.marginPct.toFixed(1)}%</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>{item.qtySold}</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: item.grossMarginPct >= 0 ? 'var(--erp-primary-ink)' : '#b42318' }}>{item.hasRecipe ? `${item.grossMarginPct.toFixed(1)}%` : '—'}</td>
                       <td className="px-4 py-3 text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>{rec}</td>
                     </tr>
                   )

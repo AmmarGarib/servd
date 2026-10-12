@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import { useBrandFilter } from '../../store/brandFilter'
 import { formatBrandName } from '../../lib/brandName'
 
@@ -23,10 +23,21 @@ export function BrandPicker({ collapsed }: { collapsed: boolean }) {
 
   // Company-scoped: switching company changes this list, which is what clears
   // a brand that belongs to the previous company (below).
+  // GET /concepts?view=picker: every staff role reads the active brands of its
+  // own companies (id + name only), so the till, KDS, finance and HR logins
+  // get the picker too (UI-13 — the plain list is managers / till only, and
+  // its 403 put a red "Role X is not allowed" toast on every page).
+  // Still a shell widget the user didn't ask for: if the read fails with a 403
+  // the picker just hides — no toast, no retry (the `background` opt-out in
+  // components/ui/Providers.tsx).
+  // Its own cache key: a page's ['concepts'] query (full rows, no opt-out)
+  // must not be overwritten by — or overwrite — this narrow list.
   const { data: concepts } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
     staleTime: 60_000,
+    meta: { background: true },
+    retry: (count, err) => !(err instanceof ApiError && err.status === 403) && count < 1,
   })
 
   const pick = (id: string | null) => {

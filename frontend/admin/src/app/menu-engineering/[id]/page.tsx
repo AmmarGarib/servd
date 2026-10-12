@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { recipeStatusMeta, type RecipeStatus } from '../../accounting/recipes/RecipeForm'
 import { fmtPkrWhole } from '../../../lib/money'
+import { useKitchenRole } from '../../inventory/kitchenView'
 
 interface CostingReadout {
   recipe: {
@@ -86,9 +87,13 @@ export default function PlatePricingPage() {
   const router = useRouter()
   const qc = useQueryClient()
 
+  // The pricing readout is managers' (GET /:id/costing); a line cook is not
+  // sent to ask for it.
+  const role = useKitchenRole()
   const { data, isLoading, isError } = useQuery<CostingReadout>({
     queryKey: ['recipe', id, 'costing'],
     queryFn: () => api.get(`/recipes/${id}/costing`),
+    enabled: role.settled && !role.kitchen,
   })
 
   // Editable pricing state, seeded from the readout once loaded.
@@ -121,7 +126,15 @@ export default function PlatePricingPage() {
     onError: (e: Error) => alert(e.message),
   })
 
-  if (isLoading) return <div className="p-12 text-center text-sm text-s-muted">Loading pricing workspace…</div>
+  if (role.kitchen) {
+    return (
+      <div className="p-12 text-center">
+        <p className="text-sm text-s-muted">Plate pricing is kept by managers.</p>
+        <Link href="/accounting/recipes" className="mt-3 inline-block text-xs text-primary-ink hover:underline">Open the recipe book</Link>
+      </div>
+    )
+  }
+  if (!role.settled || isLoading) return <div className="p-12 text-center text-sm text-s-muted">Loading pricing workspace…</div>
   if (isError || !data) {
     return (
       <div className="p-12 text-center">

@@ -65,6 +65,10 @@ export default function StaffLoginPage() {
   const [codePhone, setCodePhone] = useState('')
   const [codeValue, setCodeValue] = useState('')
   const [codeSent,  setCodeSent]  = useState(false)
+  // The code came from a manager (Workforce → "Sign-in code"), not from
+  // WhatsApp/email — so skip asking for one to be sent. Asking would fail when
+  // sending is down, and when it works it would replace the manager's code.
+  const [codeFromManager, setCodeFromManager] = useState(false)
 
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
@@ -102,10 +106,11 @@ export default function StaffLoginPage() {
       }
 
       setAuth(d.user, d.accessToken, d.refreshToken)
-      // Nudge, never a block: an account created with a generated password is
-      // flagged, but it still signs in. Blocking on this flag is how people get
-      // stranded on deploy day.
-      router.replace(d.user?.mustChangePassword ? '/account/password' : '/w')
+      // Nudge, never a block: an account created with a generated (or
+      // reissued) password is flagged on the login response, and lands on the
+      // page that replaces it — but it is signed in, and can skip it. Blocking
+      // on this flag is how people get stranded on deploy day.
+      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid credentials')
     } finally {
@@ -126,7 +131,7 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
       setAuth(d.user, d.accessToken, d.refreshToken)
-      router.replace('/w')
+      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
     } finally {
@@ -195,7 +200,7 @@ export default function StaffLoginPage() {
   function backToSignIn() {
     setMode('password'); setError(''); setCpDone(false); setFgDone(false)
     setMfaChallenge(''); setMfaCode('')
-    setCodeSent(false); setCodeValue('')
+    setCodeSent(false); setCodeValue(''); setCodeFromManager(false)
   }
 
   async function requestStaffCode(e?: React.FormEvent) {
@@ -273,7 +278,9 @@ export default function StaffLoginPage() {
             </h1>
             <p className="text-xs text-s-dim mt-1">
               {mode === 'password'  ? 'Authorized personnel only'
-                : mode === 'code' ? (codeSent ? 'Same code sent to your WhatsApp and email — use whichever arrives first' : 'For cashiers, servers and kitchen staff')
+                : mode === 'code' ? (codeSent
+                    ? (codeFromManager ? 'Enter the code your manager gave you' : 'Same code sent to your WhatsApp and email — use whichever arrives first')
+                    : 'For cashiers, servers and kitchen staff')
                 : mode === 'twofactor' ? `We sent the same 6-digit code to your WhatsApp (${mfaHint || 'your number'}) and your email — use whichever arrives first`
                 : 'You need your current password to set a new one'}
             </p>
@@ -288,6 +295,12 @@ export default function StaffLoginPage() {
                 {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
                 <button type="submit" disabled={loading || codePhone.replace(/\D/g, '').length < 10} className={cta} style={ctaStyle}>
                   {loading ? 'Sending…' : 'Send me a code'}
+                </button>
+                <button type="button"
+                  disabled={loading || codePhone.replace(/\D/g, '').length < 10}
+                  onClick={() => { setError(''); setCodeFromManager(true); setCodeSent(true) }}
+                  className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors disabled:opacity-40">
+                  I have a code from my manager
                 </button>
                 <button type="button" onClick={backToSignIn} className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
                   ← Sign in with a password instead
@@ -305,9 +318,16 @@ export default function StaffLoginPage() {
                   {loading ? 'Checking…' : 'Sign in'}
                 </button>
                 <div className="mt-3 flex items-center justify-between text-xs">
-                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError('') }} className="text-s-dim hover:text-s-muted">← Change number</button>
-                  <button type="button" disabled={loading} onClick={() => { void requestStaffCode() }} className="text-s-dim hover:text-s-muted">Send again</button>
+                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError(''); setCodeFromManager(false) }} className="text-s-dim hover:text-s-muted">← Change number</button>
+                  {!codeFromManager && (
+                    <button type="button" disabled={loading} onClick={() => { void requestStaffCode() }} className="text-s-dim hover:text-s-muted">Send again</button>
+                  )}
                 </div>
+                {!codeFromManager && (
+                  <p className="text-[10px] text-s-dim mt-4 text-center leading-relaxed">
+                    No code arriving? A manager can give you one from Workforce (&ldquo;Sign-in code&rdquo; next to your name).
+                  </p>
+                )}
               </form>
             )
 

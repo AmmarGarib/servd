@@ -12,12 +12,16 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useStockActions } from '../kitchenView'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftLine { inventoryItemId: string; physicalQty: number | ''; reason: string }
 
 export default function PhysicalCountPage() {
   const qc = useQueryClient()
+  // Counting is managers + boh (POST /crosschecks/physical-counts). Anyone
+  // else who opens this page by URL reads stock but gets no submit button.
+  const { canCount } = useStockActions()
   const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory') })
   const [search, setSearch] = useState('')
   const [lines, setLines] = useState<Record<string, DraftLine>>({})
@@ -128,11 +132,14 @@ export default function PhysicalCountPage() {
 
         {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
 
+        {!canCount && (
+          <p className="text-xs text-white/45">Stock counts are taken by the kitchen and its managers. You can read stock here, but not submit a count.</p>
+        )}
         <div className="flex justify-end pt-2">
-          <button onClick={() => submit.mutate()} disabled={submit.isPending || lineCount === 0}
+          {canCount && <button onClick={() => submit.mutate()} disabled={submit.isPending || lineCount === 0}
             className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : `Submit count (${lineCount} item${lineCount === 1 ? '' : 's'}) →`}
-          </button>
+          </button>}
         </div>
       </div>
     </div>

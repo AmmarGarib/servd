@@ -48,6 +48,9 @@ const nextConfig = {
       { source: '/chain', ...to('/dashboard/operations') },
       { source: '/marketing', ...to('/dashboard/marketing') },
       { source: '/hr', ...to('/dashboard/hr') },
+      // The WhatsApp gateway page moved into Dev → API (spec §10, D13). The
+      // path itself is retired for good, so this one is permanent.
+      { source: '/configuration/whatsapp', destination: '/connectors/whatsapp', permanent: true },
     ]
   },
   async rewrites() {

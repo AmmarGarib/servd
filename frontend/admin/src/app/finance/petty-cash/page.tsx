@@ -5,13 +5,17 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
+import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../../components/pos/pinErrors'
+import { useAuthStore } from '../../../store/auth'
 
 interface User { id: string; name: string }
 interface Box {
   id: string
   name: string
   custodianId: string
+  /** The custodian's name, sent with the box (GET /trustops/petty-cash/boxes). */
+  custodianName?: string | null
   floatCents: number
   topUpLimitCents: number
   isActive: boolean
@@ -31,7 +35,15 @@ interface Movement {
 export default function PettyCashPage() {
   const qc = useQueryClient()
   const { data: boxes = [] } = useQuery<Box[]>({ queryKey: ['petty-cash-boxes'], queryFn: () => api.get('/trustops/petty-cash/boxes') })
-  const { data: users = [] } = useQuery<User[]>({ queryKey: ['users'], queryFn: () => api.get('/auth/users') })
+  // The staff-account list is the managers' (and HR's). Finance works petty
+  // cash without it: the box already carries its custodian's name, and the
+  // picker below falls back to "me" — no 403 toast (meta.background).
+  const me = useAuthStore((s) => s.user)
+  const { data: staff } = useQuery<User[]>({
+    queryKey: ['users'], queryFn: () => api.get('/auth/users'),
+    retry: false, meta: { background: true },
+  })
+  const users: User[] = staff ?? (me ? [{ id: me.id, name: me.name }] : [])
   const [creating, setCreating] = useState(false)
   const [movingFor, setMovingFor] = useState<Box | null>(null)
   const [reconcileFor, setReconcileFor] = useState<Box | null>(null)
@@ -70,7 +82,7 @@ export default function PettyCashPage() {
                   </span>
                 </div>
                 <p className="text-xs text-white/45 mt-1">
-                  Custodian: {users.find((u) => u.id === b.custodianId)?.name ?? '—'} · Top-up limit PKR {(b.topUpLimitCents / 100).toLocaleString()}
+                  Custodian: {b.custodianName ?? users.find((u) => u.id === b.custodianId)?.name ?? '—'} · Top-up limit PKR {(b.topUpLimitCents / 100).toLocaleString()}
                 </p>
                 {b.movements.length > 0 && (
                   <div className="mt-3 space-y-1">
@@ -142,7 +154,9 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
   const { data: bills = [] } = useQuery<OpenBill[]>({
     queryKey: ['procurement-bills-open'],
     queryFn: () => api.get('/procurement/bills'),
-    retry: false,
+    // Not everyone who records a spend reads the payables; without them this
+    // is just a general spend (no 403 toast).
+    retry: false, meta: { background: true },
   })
   const openBills = bills.filter((b) => b.status === 'open' || b.status === 'partially_paid')
 
@@ -203,7 +217,7 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
         <input type="password" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Required — exceeds top-up limit" className={fieldCls} />
       </Field>
     )}
-    {save.error && <ErrorBanner error={save.error} />}
+    {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
     <Footer onCancel={onClose} primary={<button onClick={() => save.mutate()} disabled={save.isPending || amountCents <= 0 || !reason.trim()} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Record movement'}</button>} />
   </Modal>
 }
@@ -256,6 +270,14 @@ function Footer({ onCancel, primary }: { onCancel: () => void; primary: React.Re
   </div>
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
+// A top-up over the box limit is approved with a manager PIN: the same words
+// as every other PIN prompt for a wrong PIN or a lock-out (pinErrors.ts).
+function pinRefusal(e: unknown): Error | null {
+  const locked = managerPinLockedMessage(e)
+  if (locked) return new Error(locked)
+  if (e instanceof ApiError && e.code === 'INVALID_MANAGER_PIN') return new Error(WRONG_PIN_MESSAGE)
+  return null
+}
 function ErrorBanner({ error }: { error: unknown }) { const msg = error instanceof Error ? error.message : 'Failed'; return <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div> }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

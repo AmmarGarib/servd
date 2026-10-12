@@ -12,6 +12,16 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { usePermissions } from '../../../hooks/useCan'
+
+// The API's MANAGERS (backend modules/auth/middleware.ts). Forgiving a strike
+// and lifting a ban stay with managers; the marketing roles (who hold the crm
+// module) read this list but do not get those buttons.
+const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
+function useIsManager(): boolean {
+  const { data: me } = usePermissions()
+  return MANAGER_ROLES.has(me?.role ?? '')
+}
 
 interface Customer {
   id: string; name: string; email: string | null; phone: string | null
@@ -152,6 +162,7 @@ function OffendersList({ bannedOnly, kindFilter }: { bannedOnly: boolean; kindFi
 function OffenderRow({ row }: { row: Row }) {
   const [expanded, setExpanded] = useState(false)
   const { customer, activeStrikes, strikes } = row
+  const isManager = useIsManager()
   const banned = !!customer.bannedAt
 
   return (
@@ -186,7 +197,7 @@ function OffenderRow({ row }: { row: Row }) {
           <div className="space-y-1.5">
             {strikes.map((s) => <StrikeLine key={s.id} strike={s} />)}
           </div>
-          {banned && (
+          {banned && isManager && (
             <div className="mt-3 pt-3 border-t border-rose-500/15">
               <LiftBanForm customerId={customer.id} />
             </div>
@@ -214,6 +225,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
   const [showForgive, setShowForgive] = useState(false)
   const isReversed = !!strike.reversedAt
   const isExpired = !!strike.expiresAt && new Date(strike.expiresAt) <= new Date()
+  const isManager = useIsManager()
 
   const reverse = useMutation({
     mutationFn: () => api.post(`/crm/strikes/${strike.id}/reverse`, { reason }),
@@ -233,7 +245,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
           {isReversed && <span className="ml-2 text-[10px] text-primary-ink">↺ reversed</span>}
           {isExpired && !isReversed && <span className="ml-2 text-[10px] text-white/40">expired</span>}
         </div>
-        {!isReversed && !isExpired && (
+        {isManager && !isReversed && !isExpired && (
           <button onClick={() => setShowForgive(!showForgive)}
             className="text-[10px] text-primary-ink hover:underline whitespace-nowrap">
             forgive
@@ -241,7 +253,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
         )}
       </div>
       {strike.reason && <p className="text-white/55 italic mt-0.5">{strike.reason}</p>}
-      {showForgive && !isReversed && (
+      {isManager && showForgive && !isReversed && (
         <div className="mt-2 flex gap-2 items-center">
           <input value={reason} onChange={(e) => setReason(e.target.value)}
             placeholder="Why are you forgiving this?"

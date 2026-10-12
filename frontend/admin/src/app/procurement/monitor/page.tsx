@@ -5,6 +5,13 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
 import { fmtPkrWhole } from '../../../lib/money'
+import { useAuthStore } from '../../../store/auth'
+
+// Who may read the staff directory (GET /auth/users: management + HR). Any
+// other holder of the procurement module (the buyer) gets the staff already
+// assigned to a supplier plus themselves, without a 403 toast (R2-UI-04).
+const STAFF_DIRECTORY_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'hr']
+type StaffLite = { id: string; name: string; role: string }
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -79,10 +86,25 @@ export default function ProcurementMonitorPage() {
     queryFn: () => api.get('/procurement/suppliers'),
   })
 
-  const { data: staff = [] } = useQuery<{ id: string; name: string; role: string }[]>({
+  const me = useAuthStore((st) => st.user)
+  const canReadDirectory = !!me && STAFF_DIRECTORY_ROLES.includes(me.role)
+  const { data: directory } = useQuery<StaffLite[]>({
     queryKey: ['staff'],
     queryFn: () => api.get('/auth/users'),
+    enabled: canReadDirectory,
+    meta: { background: true },
   })
+  // The buyer's fallback: everyone already assigned to a supplier, and me.
+  const staff: StaffLite[] = directory ?? (() => {
+    const seen = new Map<string, StaffLite>()
+    if (me) seen.set(me.id, { id: me.id, name: me.name, role: me.role })
+    for (const sup of suppliers) {
+      if (sup.assignedStaff && !seen.has(sup.assignedStaff.id)) {
+        seen.set(sup.assignedStaff.id, { id: sup.assignedStaff.id, name: sup.assignedStaff.name, role: '' })
+      }
+    }
+    return [...seen.values()]
+  })()
 
   const { data: posResult } = useQuery<{ data: PurchaseOrder[] }>({
     queryKey: ['purchase-orders'],
@@ -151,7 +173,7 @@ export default function ProcurementMonitorPage() {
               management tiers, and BOH-management (head chef) all touch
               ordering — keep the list permissive so the CEO can assign
               suppliers to whoever actually deals with them. */}
-          {staff.filter((u) => [
+          {staff.filter((u) => !directory || [
             'admin', 'manager', 'management',
             'foh_management', 'boh_management',
             'procurement', 'cashier',
@@ -343,7 +365,7 @@ function SupplierEditDrawer({
             <select value={assignedStaffId} onChange={(e) => setAssignedStaff(e.target.value)}
               className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
               <option value="">— Unassigned —</option>
-              {staff.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+              {staff.map((u) => <option key={u.id} value={u.id}>{u.name}{u.role ? ` (${u.role})` : ''}</option>)}
             </select>
           </div>
           {tenants.length > 0 && (

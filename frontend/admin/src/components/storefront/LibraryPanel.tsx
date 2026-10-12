@@ -9,7 +9,9 @@
 // R2. If the PUT fails the pre-created row is removed so no dead tile appears.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
+import { fetchHealth } from '../../lib/connectorsApi'
+import { contentApi, STOREFRONT_BRANDS_KEY } from '../../lib/content'
 
 export type LibraryAsset = {
   id: string
@@ -29,6 +31,38 @@ type Kind = LibraryAsset['kind']
 const ALL_KINDS: Kind[] = ['image', 'video', 'font', 'copy']
 const KIND_LABEL: Record<Kind, string> = { image: 'Images', video: 'Videos', font: 'Fonts', copy: 'Copy' }
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024
+
+// Upload storage (Cloudflare R2) as the API's public /health reports it
+// (checks.uploadStorage, backend/src/index.ts). 'unknown' when /health can't
+// be read or predates the check — then uploads are simply tried.
+type StorageState = { state: 'ok' | 'missing' | 'unknown'; detail?: string }
+function useUploadStorage() {
+  return useQuery<StorageState>({
+    queryKey: ['health', 'uploadStorage'],
+    queryFn: async () => {
+      const h = await fetchHealth()
+      const c = h?.checks['uploadStorage']
+      if (c === 'ok') return { state: 'ok' }
+      if (c === 'warn' || c === 'error') return { state: 'missing', detail: h?.details['uploadStorage'] }
+      return { state: 'unknown' }
+    },
+    staleTime: 5 * 60_000,
+    meta: { inlineErrors: true },
+  })
+}
+
+const STORAGE_MISSING = 'Uploads are not set up yet: file storage (Cloudflare R2) is not configured on the server. Ask IT to add the R2 settings to the API; existing files and copy snippets still work.'
+
+/** A presigned URL the API made with no R2 account set. The S3 client puts
+ *  the bucket in the host name, so the real shape is
+ *  `<bucket>.undefined.r2.cloudflarestorage.com` (R2_BUCKET_NAME defaults to
+ *  servd-media) — match an `undefined`/`null` label anywhere before
+ *  r2.cloudflarestorage.com, with or without a bucket label in front. */
+function presignedWithoutAccount(uploadUrl: string): boolean {
+  try { return /(^|\.)(undefined|null)\.r2\.cloudflarestorage\.com$/i.test(new URL(uploadUrl).hostname) } catch { return false }
+}
+
+class StorageNotConfiguredError extends Error {}
 
 interface ConceptLite { id: string; name: string; slug: string }
 
@@ -124,8 +158,8 @@ export function LibraryPanel({
   const [copied, setCopied] = useState<string | null>(null)
 
   const { data: concepts = [] } = useQuery<ConceptLite[]>({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<ConceptLite[]>('/concepts'),
+    queryKey: STOREFRONT_BRANDS_KEY,
+    queryFn: contentApi.brands,
   })
   const brandName = useMemo(() => new Map(concepts.map((c) => [c.id, c.name])), [concepts])
 
@@ -392,10 +426,24 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
     if (fontFamily) params.set('fontFamily', fontFamily)
 
     const { uploadUrl, assetId } = await api.get<{ uploadUrl: string; publicUrl: string; assetId?: string }>(`/media/upload-url?${params}`)
+      .catch((err: unknown) => {
+        // An API that checks its R2 settings before signing says so directly.
+        if (err instanceof ApiError && err.code === 'STORAGE_NOT_CONFIGURED') throw new StorageNotConfiguredError(STORAGE_MISSING)
+        throw err
+      })
+    const cleanUp = async () => { if (assetId) await api.delete(`/media/${assetId}`).catch(() => undefined) }
+    if (presignedWithoutAccount(uploadUrl)) {
+      await cleanUp()
+      throw new StorageNotConfiguredError(STORAGE_MISSING)
+    }
     const put = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType } }).catch(() => null)
     if (!put || !put.ok) {
-      if (assetId) await api.delete(`/media/${assetId}`).catch(() => undefined)
-      throw new Error(`${file.name}: upload to storage failed`)
+      await cleanUp()
+      // No answer at all is almost always the storage bucket refusing this
+      // site (its CORS rules) or wrong storage settings — not the file.
+      throw new Error(put
+        ? `${file.name}: file storage refused the upload (HTTP ${put.status}). Ask IT to check the storage (R2) settings.`
+        : `${file.name}: file storage did not accept the upload. Usually the storage bucket is not set up to take uploads from this admin site (CORS) — ask IT.`)
     }
     // Library fields ride on the create step; set them again in case this
     // API build only stores the file fields there.
@@ -413,7 +461,11 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
     const failures: string[] = []
     for (const [i, file] of files.entries()) {
       setBusy(`Uploading ${i + 1} of ${files.length}…`)
-      try { await uploadOne(file) } catch (err) { failures.push((err as Error).message) }
+      try { await uploadOne(file) } catch (err) {
+        // Not configured: every other file fails the same way — say it once.
+        if (err instanceof StorageNotConfiguredError) { failures.length = 0; failures.push(err.message); break }
+        failures.push((err as Error).message)
+      }
     }
     setBusy(null)
     if (failures.length) setError(failures.join(' · '))
@@ -422,12 +474,21 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
   }
 
   const label = kinds.length === 1 ? `Upload ${KIND_LABEL[kinds[0]!].toLowerCase()}` : 'Upload files'
+  const storage = useUploadStorage().data
+  const storageMissing = storage?.state === 'missing'
 
   return (
     <div className="flex flex-1 flex-wrap items-center gap-2 rounded-xl border border-s-border bg-s-surface p-2">
-      <label className={`cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-on hover:opacity-90 ${busy ? 'pointer-events-none opacity-50' : ''}`}>
+      {storageMissing && (
+        <div role="alert" className="basis-full rounded-lg border border-s-amber/40 bg-s-amber-dim px-3 py-2 text-xs text-s-amber">
+          <p className="font-semibold">{STORAGE_MISSING}</p>
+          {storage?.detail && <p className="mt-1 opacity-80">{storage.detail}</p>}
+        </div>
+      )}
+      <label className={`cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-on hover:opacity-90 ${busy || storageMissing ? 'pointer-events-none opacity-50' : ''}`}
+        aria-disabled={storageMissing || undefined}>
         {busy ?? label}
-        <input ref={inputRef} type="file" multiple accept={acceptFor(kinds)} className="sr-only" onChange={(e) => void handleFiles(e)} />
+        <input ref={inputRef} type="file" multiple accept={acceptFor(kinds)} className="sr-only" disabled={storageMissing} onChange={(e) => void handleFiles(e)} />
       </label>
       <select value={brand} onChange={(e) => setBrand(e.target.value)}
         className="rounded-lg border border-s-border bg-s-bg px-2 py-2 text-xs text-s-text focus:border-primary focus:outline-none"

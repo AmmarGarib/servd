@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useParams, useRouter } from 'next/navigation'
 import { api } from '../../../../lib/api'
 import { RecipeForm, type RecipeFormInitial } from '../RecipeForm'
+import { KitchenRecipeView } from '../KitchenRecipe'
+import { useKitchenView } from '../../../inventory/kitchenView'
 
 interface ExistingRecipe {
   id: string
@@ -14,22 +16,31 @@ interface ExistingRecipe {
   menuItemId: string | null
   servings: number
   yieldGrams: number | null
+  portionSizeG: number | null
   category: string | null
   photoUrl: string | null
   steps: string | null
+  stepsUrdu: string | null
+  notes: string | null
   methodSteps: Array<{ station: string; instruction: string }> | null
+  // Null for a kitchen floor role (costsHidden) — the read-only view never
+  // reads them; the form only mounts for a role that gets them.
   qFactorPct: number
   targetProfitPct: number
   packagingPct: number
   actualSellingPriceCents: number | null
-  menuItem: { conceptId: string | null } | null
+  menuItem: { conceptId: string | null; name?: string; concept?: { name: string } | null } | null
   ingredients: Array<{
     id: string
     inventoryItemId: string | null
     prepRecipeId: string | null
     quantity: number
     yieldPct: number | null
+    notes: string | null
+    inventoryItem: { name: string; unit: string } | null
   }>
+  /** Set by the API for the kitchen floor (boh, kitchen, expediter). */
+  costsHidden?: boolean
 }
 
 export default function EditRecipePage() {
@@ -39,6 +50,9 @@ export default function EditRecipePage() {
     queryKey: ['recipe', id],
     queryFn: () => api.get(`/recipes/${id}`),
   })
+  // The line cook reads the recipe book but edits, costs and prices nothing
+  // (the form's writes, test log and costing are managers only): read-only.
+  const kitchenView = useKitchenView(data ? [data] : undefined)
 
   if (isLoading) {
     return <div className="p-12 text-center text-sm text-s-muted">Loading recipe…</div>
@@ -52,6 +66,8 @@ export default function EditRecipePage() {
       </div>
     )
   }
+
+  if (kitchenView) return <KitchenRecipeView recipe={data} />
 
   const initial: RecipeFormInitial = {
     id: data.id,

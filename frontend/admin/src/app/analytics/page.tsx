@@ -78,8 +78,10 @@ export default function AnalyticsPage() {
   const params = `?dateFrom=${dateFrom}&dateTo=${dateTo}${conceptId ? `&conceptId=${conceptId}` : ''}`
 
   const { data: concepts = [] } = useQuery<Concept[]>({
-    queryKey: ['concepts'],
-    queryFn: () => api.get('/concepts'),
+    // The brand picker view (id + name, own companies, any staff role): the
+    // full brand row is managers-only and this page only needs the names.
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get('/concepts?view=picker'),
   })
 
   const { data: overview } = useQuery<OverviewData>({

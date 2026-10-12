@@ -9,11 +9,26 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
+import { usePermissions } from '../../hooks/useCan'
 
 interface Reading { id: string; readingC: number; withinRange: boolean; correctiveAction: string | null; takenAt: string; unit?: { name: string } }
 interface Unit { id: string; name: string; kind: string; minC: number | null; maxC: number | null; lastReading: Reading | null; checkedToday: boolean }
 interface Task { id: string; name: string; area: string | null; frequency: string; lastDoneAt: string | null; due: boolean }
 interface Summary { units: Unit[]; readings: Reading[]; outOfRangeToday: number; cleaning: Task[]; cleaningDue: number }
+
+// Setting up units and the cleaning schedule (POST /food-safety/units/presets,
+// /cleaning/presets) is managers only — mirror of the API's MANAGERS. The
+// kitchen logs readings and marks cleaning done (KITCHEN_STAFF) but does not
+// get the set-up buttons the server would refuse.
+const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
+
+/** Hidden while the role loads; if it fails to load the buttons show and the server decides. */
+function useCanSetUp(): boolean {
+  const { data: me, isFetched } = usePermissions()
+  if (!isFetched) return false
+  if (!me) return true
+  return MANAGER_ROLES.has(me.role)
+}
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 const inp = 'w-full rounded-xl px-3 py-3 text-base bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
@@ -31,6 +46,7 @@ export default function FoodSafetyPage() {
   const { data, error } = useQuery({ queryKey: ['food-safety'], queryFn: () => api.get<Summary>('/food-safety/summary'), refetchInterval: 60_000 })
   const [logging, setLogging] = useState<Unit | null>(null)
   const refresh = () => void qc.invalidateQueries({ queryKey: ['food-safety'] })
+  const canSetUp = useCanSetUp()
 
   const presetUnits = useMutation({ mutationFn: () => api.post('/food-safety/units/presets', {}), onSuccess: refresh })
   const presetTasks = useMutation({ mutationFn: () => api.post('/food-safety/cleaning/presets', {}), onSuccess: refresh })
@@ -58,14 +74,20 @@ export default function FoodSafetyPage() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-black text-white/85">Temperatures</h2>
-            <button onClick={() => presetUnits.mutate()} disabled={presetUnits.isPending} className="text-xs font-bold text-white/50 hover:text-white">
-              + Add standard units
-            </button>
+            {canSetUp && (
+              <button onClick={() => presetUnits.mutate()} disabled={presetUnits.isPending} className="text-xs font-bold text-white/50 hover:text-white">
+                + Add standard units
+              </button>
+            )}
           </div>
           {data && data.units.length === 0 && (
             <div className="rounded-2xl p-8 text-center" style={card}>
               <p className="font-bold text-white/85">No units set up</p>
-              <p className="text-sm text-white/45 mt-1">Add the standard set (chillers, freezer, hot hold, cooking core, deliveries) and adjust the limits to your plan.</p>
+              <p className="text-sm text-white/45 mt-1">
+                {canSetUp
+                  ? 'Add the standard set (chillers, freezer, hot hold, cooking core, deliveries) and adjust the limits to your plan.'
+                  : 'Ask a manager to set up the units to check.'}
+              </p>
             </div>
           )}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -91,9 +113,11 @@ export default function FoodSafetyPage() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-black text-white/85">Cleaning</h2>
-            <button onClick={() => presetTasks.mutate()} disabled={presetTasks.isPending} className="text-xs font-bold text-white/50 hover:text-white">
-              + Add standard schedule
-            </button>
+            {canSetUp && (
+              <button onClick={() => presetTasks.mutate()} disabled={presetTasks.isPending} className="text-xs font-bold text-white/50 hover:text-white">
+                + Add standard schedule
+              </button>
+            )}
           </div>
           <div className="space-y-2">
             {data?.cleaning.map((t) => (

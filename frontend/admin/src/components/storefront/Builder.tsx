@@ -14,12 +14,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
 import { BLOCK_CATALOG, canNest, type Block } from '../../lib/blocks'
-import { makeBlock, SECTION_KEY, sectionPaletteItems, sectionSpec, useSectionCatalog, type PaletteItem } from '../../lib/sections'
+import { makeBlock, SECTION_KEY, SectionCatalogError, sectionPaletteItems, sectionSpec, useSectionCatalog, type PaletteItem } from '../../lib/sections'
 import {
-  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fromLocalInput, kindForSlug, previewUrl, seedBlocks, storefrontPath, STOREFRONT_URL,
+  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fromLocalInput, hasSavedDraft, kindForSlug, previewUrl, seedBlocks, storefrontPath, STOREFRONT_BRANDS_KEY, STOREFRONT_URL,
   type ConceptLite, type LayoutEdit, type PageSettings, type Variant,
 } from '../../lib/content'
 import { Canvas, Palette } from './Canvas'
@@ -65,9 +64,11 @@ export function Builder({ slug }: { slug: string }) {
 
   const edit = useQuery<LayoutEdit>({ queryKey: ['site-layout-edit', slug], queryFn: () => contentApi.edit(slug) })
   // The storefront's section catalogue: palette, forms and the page's design.
-  const catalog = useSectionCatalog()
+  // Pop-ups use no sections, so they never fetch it (or wait on it): a pop-up
+  // opens and works while the storefront host is down.
+  const catalog = useSectionCatalog({ enabled: !isPopup })
   const fonts = useLibraryFonts().data ?? []
-  const concepts = useQuery<ConceptLite[]>({ queryKey: ['concepts'], queryFn: () => api.get<ConceptLite[]>('/concepts'), enabled: isPopup })
+  const concepts = useQuery<ConceptLite[]>({ queryKey: STOREFRONT_BRANDS_KEY, queryFn: contentApi.brands, enabled: isPopup })
 
   const [doc, setDoc] = useState<Doc | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -88,10 +89,11 @@ export function Builder({ slug }: { slug: string }) {
     return { title: row.title ?? defaultTitle(slug), blocks, settings }
   }
 
-  // Load once per slug (after the catalogue, which seeds a page with nothing
-  // saved); later refetches must not clobber local edits.
+  // Load once per slug (a page waits for the catalogue, which seeds a page
+  // with nothing saved; a pop-up doesn't need it); later refetches must not
+  // clobber local edits.
   useEffect(() => {
-    if (edit.data && catalog.data && !doc) setDoc(docFrom(edit.data, true))
+    if (edit.data && (isPopup || catalog.data) && !doc) setDoc(docFrom(edit.data, true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit.data, catalog.data])
 
@@ -169,7 +171,19 @@ export function Builder({ slug }: { slug: string }) {
   })
 
   const row = edit.data
-  const hasDraft = !!row?.draftStatus
+  // A saved working copy exists (draft / pending / scheduled). The API says
+  // 'none' for an untouched page — a truthy string, so never `!!draftStatus`.
+  const hasDraft = hasSavedDraft(row?.draftStatus)
+  // Sent to the CEO (or already approved for later): what Reject acts on.
+  // Approve also takes a plain saved draft (the API accepts 'draft' on
+  // purpose), so the CEO can edit and publish in one step.
+  const submitted = row?.draftStatus === 'pending' || row?.draftStatus === 'scheduled'
+  // Approving a submitted draft approves it AS SUBMITTED: with unsaved edits
+  // on top, the CEO saves them first (that makes them his own draft), so
+  // someone's submission is never silently approved with other content.
+  const approveBlocked = submitted && dirty
+  // Submit, Preview and Approve work from a saved draft: an untouched page
+  // (no draft yet) or unsaved edits are saved first.
   const ensureSaved = async () => { if (dirty || !hasDraft) await save.mutateAsync() }
 
   const run = async (label: string, fn: () => Promise<unknown>, ok?: string) => {
@@ -216,8 +230,11 @@ export function Builder({ slug }: { slug: string }) {
     }, 'Draft discarded.')
   }
 
+  // A submitted draft is approved as submitted (Approve is disabled while
+  // there are unsaved edits on top of it); the CEO's own edits to a plain
+  // draft or an untouched page are saved first, then published.
   const onApprove = (publishAt?: string) => run('approve', async () => {
-    await ensureSaved()
+    if (!approveBlocked) await ensureSaved()
     await contentApi.approve(slug, publishAt)
     setDialog(null)
   }, publishAt ? `Approved. Goes live ${fmtDateTime(publishAt)}.` : 'Approved and live.')
@@ -270,14 +287,22 @@ export function Builder({ slug }: { slug: string }) {
             <button type="button" onClick={onPreview} disabled={!doc || !!busy} className="s-btn-secondary text-xs">{busy === 'preview' ? 'Opening...' : 'Preview'}</button>
             <button type="button" onClick={onDiscard} disabled={(!hasDraft && !dirty) || !!busy} className="s-btn-ghost text-xs">Discard draft</button>
             <button type="button" onClick={onSave} disabled={!doc || !dirty || !!busy} className="s-btn-secondary text-xs">{busy === 'save' ? 'Saving...' : 'Save draft'}</button>
-            <button type="button" onClick={onSubmit} disabled={!doc || !!busy || (row?.draftStatus === 'pending' && !dirty)} className="s-btn-primary text-xs">
+            <button type="button" onClick={onSubmit} disabled={!doc || !!busy || (submitted && !dirty)} className="s-btn-primary text-xs"
+              title={submitted && !dirty
+                ? (row?.draftStatus === 'pending' ? 'Already sent to the CEO. Change something to send a new version.' : 'Already approved. Change something to send a new version.')
+                : !hasDraft && !dirty ? 'Saves this page as a draft, then sends it to the CEO.' : undefined}>
               {busy === 'submit' ? 'Submitting...' : 'Submit for approval'}
             </button>
-            {isAdmin && (row?.draftStatus === 'pending' || row?.draftStatus === 'scheduled') && (
+            {isAdmin && submitted && (
               <button type="button" onClick={() => setDialog('reject')} disabled={!!busy} className="s-btn-danger text-xs">Reject</button>
             )}
             {isAdmin && (
-              <button type="button" onClick={() => setDialog('approve')} disabled={!doc || !!busy || (!hasDraft && !dirty)} className="s-btn-primary text-xs">Approve</button>
+              <button type="button" onClick={() => setDialog('approve')} disabled={!doc || !!busy || (!hasDraft && !dirty) || approveBlocked} className="s-btn-primary text-xs"
+                title={approveBlocked
+                  ? 'This draft was sent for approval and you have unsaved changes on top. Approve it as sent (discard your changes), or save your changes first and approve those.'
+                  : !hasDraft && !dirty ? 'Nothing to approve: no draft and no changes.' : undefined}>
+                Approve
+              </button>
             )}
             {isAdmin && row?.id && (
               <button type="button" onClick={onDelete} disabled={!!busy} className="s-btn-ghost text-xs text-s-red">Delete</button>
@@ -302,8 +327,10 @@ export function Builder({ slug }: { slug: string }) {
         </div>
       )}
 
-      {(edit.isLoading || catalog.isLoading) && <p className="p-6 text-sm text-s-muted">Loading...</p>}
-      {catalog.isError && <p className="p-6 text-sm text-s-red">Could not load the storefront's sections from {STOREFRONT_URL}: {(catalog.error as Error).message}</p>}
+      {(edit.isLoading || (!isPopup && catalog.isLoading)) && <p className="p-6 text-sm text-s-muted">Loading...</p>}
+      {!isPopup && catalog.isError && !doc && (
+        <SectionsUnavailable error={catalog.error} retrying={catalog.isFetching} onRetry={() => void catalog.refetch()} />
+      )}
       {edit.isError && <p className="p-6 text-sm text-s-red">Could not load this {isPopup ? 'pop-up' : 'page'}: {(edit.error as Error).message}</p>}
 
       {doc && (
@@ -367,19 +394,38 @@ export function Builder({ slug }: { slug: string }) {
           onClose={() => setShowVersions(false)}
           onRolledBack={() => { setFlash({ ok: true, text: 'Rolled back. The old version is live again.' }); invalidate() }} />
       )}
-      {dialog === 'approve' && <ApproveDialog busy={busy === 'approve'} dirty={dirty} onCancel={() => setDialog(null)} onApprove={onApprove} />}
+      {dialog === 'approve' && <ApproveDialog busy={busy === 'approve'} savesFirst={dirty || !hasDraft} onCancel={() => setDialog(null)} onApprove={onApprove} />}
       {dialog === 'reject' && <RejectDialog busy={busy === 'reject'} onCancel={() => setDialog(null)} onReject={onReject} />}
     </div>
   )
 }
 
-function ApproveDialog({ busy, dirty, onCancel, onApprove }: { busy: boolean; dirty: boolean; onCancel: () => void; onApprove: (publishAt?: string) => void }) {
+// The page editor can't open without the storefront's section catalogue (its
+// palette, forms and the page's design all come from it). Say what is really
+// wrong — the storefront host, not the API — and what still works.
+function SectionsUnavailable({ error, retrying, onRetry }: { error: unknown; retrying: boolean; onRetry: () => void }) {
+  const detail = error instanceof SectionCatalogError ? error.detail : (error as Error | null)?.message
+  const message = error instanceof SectionCatalogError ? error.message : 'The list of page sections could not load. Pop-ups and the Library still work.'
+  return (
+    <div role="alert" className="m-6 s-card border-s-red/40 p-5 space-y-3 max-w-2xl">
+      <p className="text-sm font-semibold text-s-text">{message}</p>
+      {detail && <p className="text-xs text-s-muted font-mono break-all">{detail}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={onRetry} disabled={retrying} className="s-btn-primary text-xs">{retrying ? 'Retrying...' : 'Retry'}</button>
+        <Link href="/storefront?tab=popups" className="s-btn-ghost text-xs">Pop-ups</Link>
+        <Link href="/storefront?tab=library" className="s-btn-ghost text-xs">Library</Link>
+      </div>
+    </div>
+  )
+}
+
+function ApproveDialog({ busy, savesFirst, onCancel, onApprove }: { busy: boolean; savesFirst: boolean; onCancel: () => void; onApprove: (publishAt?: string) => void }) {
   const [at, setAt] = useState('')
   const iso = fromLocalInput(at)
   const future = iso && new Date(iso).getTime() > Date.now() ? iso : undefined
   return (
     <Modal title="Approve and publish" onClose={onCancel}>
-      {dirty && <p className="text-xs text-s-amber">Your unsaved changes are saved into the draft first.</p>}
+      {savesFirst && <p className="text-xs text-s-amber">Your changes are saved into the draft first.</p>}
       <label className="block">
         <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Publish at (optional)</span>
         <input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} className="s-input" />

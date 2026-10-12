@@ -1,10 +1,11 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
+import { useAuthStore } from '../../store/auth'
 
 interface GiftCard {
   id: string; code: string
@@ -12,6 +13,11 @@ interface GiftCard {
   status: 'active' | 'redeemed_full' | 'expired' | 'voided'
   buyerEmail: string | null; recipientName: string | null
   expiresAt: string | null; createdAt: string
+}
+
+interface CardHistory {
+  card: { id: string; code: string; issuedAmountCents: number; balanceCents: number; status: GiftCard['status']; voidedAt: string | null; voidReason: string | null }
+  redemptions: Array<{ id: string; amountCents: number; balanceAfter: number; redeemedAt: string; reversedAt: string | null; order: { id: string; placedAt: string; status: string } | null }>
 }
 
 const STATUS_COLOR: Record<GiftCard['status'], string> = {
@@ -28,6 +34,10 @@ export default function GiftCardsPage() {
   const [redeemAmt,  setRedeemAmt]  = useState<number | ''>('')
   const [redeemOrder, setRedeemOrder] = useState('')
   const [feedback,   setFeedback]   = useState<{ ok: boolean; msg: string } | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
+  // The books' audit trail is the CEO's and management's (accounting_audit);
+  // everyone else reads a card's history in the row below instead.
+  const canReadBooksTrail = useAuthStore((s) => s.isRole('admin', 'management'))
 
   const { data, isLoading } = useQuery({
     queryKey: ['gift-cards'],
@@ -55,7 +65,7 @@ export default function GiftCardsPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
-          <p className="text-xs text-s-muted">Operations</p>
+          <p className="text-xs text-s-muted">Finance</p>
           <h1 className="text-xl font-bold text-s-text">Gift cards</h1>
         </div>
         <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ Issue card</button>
@@ -107,7 +117,9 @@ export default function GiftCardsPage() {
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-xs text-s-muted">No gift cards issued yet.</td></tr>
               )}
               {(data ?? []).map((c) => (
-                <tr key={c.id} className="border-t border-s-border">
+                <Fragment key={c.id}>
+                <tr className={`border-t border-s-border cursor-pointer ${openId === c.id ? 'bg-s-bg-soft' : 'hover:bg-s-bg-soft'}`}
+                  onClick={() => setOpenId(openId === c.id ? null : c.id)} aria-expanded={openId === c.id}>
                   <td className="px-4 py-2 font-mono text-xs">{c.code}</td>
                   <td className="px-4 py-2 text-xs text-s-text">
                     {c.recipientName ?? '—'}
@@ -118,6 +130,12 @@ export default function GiftCardsPage() {
                   <td className="px-4 py-2"><span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${STATUS_COLOR[c.status]}`}>{c.status.replace('_', ' ')}</span></td>
                   <td className="px-4 py-2 text-xs text-s-muted">{new Date(c.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                 </tr>
+                {openId === c.id && (
+                  <tr className="border-t border-s-border/50">
+                    <td colSpan={6} className="p-0"><CardHistoryPanel id={c.id} /></td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -125,11 +143,41 @@ export default function GiftCardsPage() {
         </div>
 
         <p className="text-xs text-s-muted">
-          See balances + redemptions in <Link href="/accounting/audit-log?action=giftcard" className="text-primary-ink hover:underline">audit log</Link>.
+          Click a card for what was spent from it and what refunds put back.
+          {canReadBooksTrail && <> Who issued or voided it is in the <Link href="/accounting/audit-log?action=giftcard" className="text-primary-ink hover:underline">audit log</Link>.</>}
         </p>
       </div>
 
       {showNew && <NewGiftCardModal onClose={() => setShowNew(false)} onCreated={() => { void qc.invalidateQueries({ queryKey: ['gift-cards'] }); setShowNew(false) }} />}
+    </div>
+  )
+}
+
+// One card's own ledger: GET /gift-cards/:id/redemptions (the card's company
+// only). A reversed line is a redemption a refund put back on the card.
+function CardHistoryPanel({ id }: { id: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['gift-card-history', id],
+    queryFn: () => api.get<CardHistory>(`/gift-cards/${id}/redemptions`),
+  })
+  if (isLoading) return <p className="px-4 py-3 text-xs text-s-muted">Loading history…</p>
+  if (error || !data) return <p className="px-4 py-3 text-xs text-s-red">{(error as Error | null)?.message ?? 'Could not load this card'}</p>
+  return (
+    <div className="px-4 py-3 bg-s-bg-soft/40 text-xs space-y-1">
+      <p className="text-s-muted">
+        Issued {fmtPkr(data.card.issuedAmountCents)} · balance {fmtPkr(data.card.balanceCents)}
+        {data.card.voidedAt && <> · voided {new Date(data.card.voidedAt).toLocaleDateString('en-GB')}{data.card.voidReason ? ` (${data.card.voidReason})` : ''}</>}
+      </p>
+      {data.redemptions.length === 0 && <p className="text-s-muted">Not spent yet.</p>}
+      {data.redemptions.map((r) => (
+        <div key={r.id} className="flex flex-wrap items-center gap-x-3">
+          <span className="font-mono">-{fmtPkr(r.amountCents)}</span>
+          <span className="text-s-muted">{new Date(r.redeemedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+          {r.order && <Link href={`/orders/${r.order.id}`} className="text-primary-ink hover:underline">order</Link>}
+          <span className="text-s-muted">balance after {fmtPkr(r.balanceAfter)}</span>
+          {r.reversedAt && <span className="text-s-muted">· put back by a refund {new Date(r.reversedAt).toLocaleDateString('en-GB')}</span>}
+        </div>
+      ))}
     </div>
   )
 }

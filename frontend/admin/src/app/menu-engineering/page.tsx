@@ -18,6 +18,7 @@ import { api } from '../../lib/api'
 import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
 import { useBrandFilter } from '../../store/brandFilter'
 import { fmtPkrWhole } from '../../lib/money'
+import { useKitchenView } from '../inventory/kitchenView'
 
 interface Concept { id: string; name: string }
 interface EngRecipe {
@@ -50,14 +51,23 @@ export default function MenuEngineeringPage() {
   // Local edit buffer: recipeId → price string being typed. Committed on blur/Enter.
   const [draftPrice, setDraftPrice] = useState<Record<string, string>>({})
 
+  // Brand list from GET /concepts?view=picker (every staff role, the active
+  // brands of its own companies, id + name) — plain /concepts is managers /
+  // till only and 403'd the kitchen roles that hold this page (R2-UI-04).
+  // Shares the shell BrandPicker's cache key and shape.
   const { data: concepts = [] } = useQuery<Concept[]>({
-    queryKey: ['concepts'],
-    queryFn: () => api.get('/concepts'),
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
   })
   const { data: recipes = [], isLoading } = useQuery<EngRecipe[]>({
     queryKey: ['recipes'],
     queryFn: () => api.get('/recipes'),
   })
+
+  // Plate cost against price is money: the line cook reads recipes (the
+  // recipe book) but not this. The API returns their rows without costs.
+  const kitchenView = useKitchenView(recipes as Array<{ costsHidden?: boolean }>)
 
   const savePrice = useMutation({
     mutationFn: ({ id, priceCents }: { id: string; priceCents: number }) =>
@@ -104,6 +114,19 @@ export default function MenuEngineeringPage() {
     ? priced.reduce((s, r) => s + (r.costPerPortionCents! / r.menuItem!.priceCents) * 100, 0) / priced.length
     : null
   const overBudget = priced.filter((r) => (r.costPerPortionCents! / r.menuItem!.priceCents) * 100 > 35).length
+
+  if (kitchenView) {
+    return (
+      <div className="min-h-screen bg-s-bg px-6 py-10">
+        <h1 className="text-xl font-bold text-s-text">Menu Engineering</h1>
+        <p className="text-sm text-s-muted mt-2 max-w-xl">
+          Menu engineering sets prices against plate cost, so it is kept by managers.
+          The recipes themselves — ingredients, quantities and method — are on{' '}
+          <Link href="/accounting/recipes" className="text-primary-ink hover:underline">Recipes</Link>.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-s-bg">

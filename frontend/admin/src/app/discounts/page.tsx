@@ -41,13 +41,21 @@ export default function DiscountsPage() {
   })
 
   const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    // The brand picker view (id + name, own companies, any staff role): the
+    // full brand row is managers-only and this page only needs the names.
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
   })
 
+  // The brand's menu sections, from the one menu read (GET /menu/:conceptId —
+  // every staff role, the brand must be in the operator's company). There is
+  // no /menu/categories route: that URL matched /menu/:conceptId with
+  // conceptId 'categories' and 404'd, so a discount could never be scoped to
+  // a section (W3A-RV-06).
   const { data: categories = [] } = useQuery({
-    queryKey: ['categories', form.conceptId],
-    queryFn: () => api.get<Category[]>(`/menu/categories?conceptId=${form.conceptId}`),
+    queryKey: ['menu', form.conceptId, 'sections'],
+    queryFn: async () => (await api.get<Category[]>(`/menu/${form.conceptId}`))
+      .map((c) => ({ id: c.id, name: c.name, conceptId: c.conceptId })),
     enabled: !!form.conceptId,
   })
 

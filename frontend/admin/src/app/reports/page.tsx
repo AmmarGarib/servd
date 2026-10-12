@@ -7,13 +7,50 @@ import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 // Completed orders (GET /reports/sales): gross = order value incl. GST, before
 // refunds; net = the P&L's net revenue for them (ex-GST, after discounts,
 // comps and refunds).
+//
+// Who sees money (UI-15): every role holding the Reports module reads this
+// page, but company revenue (gross / net / tax / refunds, sales by channel in
+// rupees) is answered only to the finance tier (FINANCIALS_VIEWERS — CEO,
+// co-owner, management, finance, F&B manager). Everyone else gets the
+// VOLUMES — orders, orders by hour, orders by channel (`volumeOnly`) — and the
+// item mix without rupees for roles outside the manager tiers. The money
+// cards and columns below render only when the API sent the money.
 interface SalesData {
-  totals: { gross: number; net: number; tax: number; refunds: number; orders: number }
-  byHour?: Record<string, { orders: number; gross: number }>
+  volumeOnly?: boolean
+  totals: { gross?: number; net?: number; tax?: number; refunds?: number; orders: number }
+  byHour?: Record<string, { orders: number; gross?: number }>
 }
-interface TopItem   { menuItemId: string; name: string; quantity: number; revenueCents: number }
+interface TopItem   { menuItemId: string; name: string; quantity: number; revenueCents?: number }
 interface ByStation { stationId: string; stationName: string; avgMinutes: number; items: number }
-interface BySource  { source: string; orders: number; gross: number; net: number }
+interface BySource  { source: string; orders: number; gross?: number; net?: number }
+
+interface KpiCard { label: string; value: string; color: string; sub?: string; delta: DeltaResult | null; invert?: boolean }
+
+/** The Sales tab's cards: the money ones only when the API sent the money. */
+function salesCards(sales: SalesData, prev: SalesData | undefined, compare: boolean): KpiCard[] {
+  const t = sales.totals
+  const p = compare ? prev?.totals : undefined
+  const d = (curr: number | undefined, before: number | undefined) =>
+    p && curr !== undefined && before !== undefined ? computeDelta(curr, before) : null
+  const orders: KpiCard = {
+    label: 'Total Orders',
+    value: String(t.orders),
+    color: 'text-s-text',
+    sub: t.gross !== undefined && t.orders > 0 ? `avg ${fmtPkrWhole(Math.round(t.gross / t.orders))}` : 'completed orders',
+    delta: d(t.orders, p?.orders),
+  }
+  if (sales.volumeOnly || t.gross === undefined) return [orders]
+  return [
+    // The period's completed orders: order value incl. GST and service
+    // charge, after discounts, before refunds.
+    { label: 'Sales (incl. GST)', value: fmtPkrWhole(t.gross), color: 'text-primary-ink', sub: 'completed orders, before refunds', delta: d(t.gross, p?.gross) },
+    { label: 'Net sales', value: fmtPkrWhole(t.net ?? 0), color: 'text-primary-ink', sub: 'ex-GST, after discounts, comps & refunds — the P&L figure', delta: d(t.net, p?.net) },
+    // more refunds is worse
+    { label: 'Refunds', value: fmtPkrWhole(t.refunds ?? 0), color: 'text-s-red', sub: 'handed back in the period, incl. GST', delta: d(t.refunds, p?.refunds), invert: true },
+    { label: 'GST on orders', value: fmtPkrWhole(t.tax ?? 0), color: 'text-s-amber', sub: 'less refunds — the filed figure is the tax return', delta: d(t.tax, p?.tax) },
+    orders,
+  ]
+}
 
 type Tab = 'sales' | 'items' | 'stations' | 'channel'
 const TAB_LABELS: Record<Tab, string> = { sales: 'Sales', items: 'Top Items', stations: 'By Station', channel: 'By Channel' }
@@ -167,6 +204,8 @@ export default function ReportsPage() {
   })
 
   const slug = `${dateFrom}_${dateTo}`
+  // Rupee columns on By Channel only when the API sent them (finance tier).
+  const channelMoney = (channels ?? []).some((c) => c.gross !== undefined)
 
   // Build hourly chart data combining curr + prev
   function buildHourlyRows() {
@@ -244,12 +283,15 @@ export default function ReportsPage() {
             <div className="flex justify-end">
               <button
                 onClick={() => {
+                  const t = sales.totals
                   const rows: Record<string, unknown>[] = [
-                    { metric: 'Sales incl. GST (completed orders, before refunds)', value: Math.round(sales.totals.gross / 100) },
-                    { metric: 'Refunds (incl. GST)', value: Math.round(sales.totals.refunds / 100) },
-                    { metric: 'Net sales ex-GST (P&L net revenue)', value: Math.round(sales.totals.net / 100) },
-                    { metric: 'GST on these orders, less refunds', value: Math.round(sales.totals.tax / 100) },
-                    { metric: 'Total Orders', value: sales.totals.orders },
+                    ...(t.gross !== undefined ? [
+                      { metric: 'Sales incl. GST (completed orders, before refunds)', value: Math.round(t.gross / 100) },
+                      { metric: 'Refunds (incl. GST)', value: Math.round((t.refunds ?? 0) / 100) },
+                      { metric: 'Net sales ex-GST (P&L net revenue)', value: Math.round((t.net ?? 0) / 100) },
+                      { metric: 'GST on these orders, less refunds', value: Math.round((t.tax ?? 0) / 100) },
+                    ] : []),
+                    { metric: 'Total Orders', value: t.orders },
                   ]
                   exportToCsv(rows, `sales_${slug}.csv`)
                 }}
@@ -259,47 +301,8 @@ export default function ReportsPage() {
             </div>
 
             {/* KPI cards with delta arrows */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {[
-                {
-                  // The period's completed orders: order value incl. GST and
-                  // service charge, after discounts, before refunds.
-                  label: 'Sales (incl. GST)',
-                  value: fmtPkrWhole(sales.totals.gross),
-                  color: 'text-primary-ink',
-                  sub: 'completed orders, before refunds',
-                  delta: compare && prevSales ? computeDelta(sales.totals.gross, prevSales.totals.gross) : null,
-                },
-                {
-                  label: 'Net sales',
-                  value: fmtPkrWhole(sales.totals.net),
-                  color: 'text-primary-ink',
-                  sub: 'ex-GST, after discounts, comps & refunds — the P&L figure',
-                  delta: compare && prevSales ? computeDelta(sales.totals.net, prevSales.totals.net) : null,
-                },
-                {
-                  label: 'Refunds',
-                  value: fmtPkrWhole(sales.totals.refunds),
-                  color: 'text-s-red',
-                  sub: 'handed back in the period, incl. GST',
-                  delta: compare && prevSales ? computeDelta(sales.totals.refunds, prevSales.totals.refunds) : null,
-                  invert: true,   // more refunds is worse
-                },
-                {
-                  label: 'GST on orders',
-                  value: fmtPkrWhole(sales.totals.tax),
-                  color: 'text-s-amber',
-                  sub: 'less refunds — the filed figure is the tax return',
-                  delta: compare && prevSales ? computeDelta(sales.totals.tax, prevSales.totals.tax) : null,
-                },
-                {
-                  label: 'Total Orders',
-                  value: String(sales.totals.orders),
-                  color: 'text-s-text',
-                  sub: sales.totals.orders > 0 ? `avg ${fmtPkrWhole(Math.round(sales.totals.gross / sales.totals.orders))}` : undefined,
-                  delta: compare && prevSales ? computeDelta(sales.totals.orders, prevSales.totals.orders) : null,
-                },
-              ].map((s) => (
+            <div className={`grid grid-cols-2 gap-3 ${sales.totals.gross === undefined ? 'sm:grid-cols-3' : 'sm:grid-cols-3 lg:grid-cols-5'}`}>
+              {salesCards(sales, prevSales, compare).map((s) => (
                 <div key={s.label} className="metric-card">
                   <p className="metric-label">{s.label}</p>
                   <p className={`metric-value ${s.color}`}>{s.value}</p>
@@ -386,7 +389,7 @@ export default function ReportsPage() {
                         rank: i + 1,
                         name: item.name,
                         quantity: item.quantity,
-                        revenue_pkr: Math.round(item.revenueCents / 100),
+                        ...(item.revenueCents !== undefined && { revenue_pkr: Math.round(item.revenueCents / 100) }),
                       }))
                       exportToCsv(rows as Record<string, unknown>[], `top-items_${slug}.csv`)
                     }}
@@ -397,7 +400,7 @@ export default function ReportsPage() {
 
                 {/* Build previous-period rank map for comparison */}
                 {(() => {
-                  const prevRankMap = new Map<string, { rank: number; revenue: number }>()
+                  const prevRankMap = new Map<string, { rank: number; revenue: number | undefined }>()
                   if (compare && prevTopItems) {
                     prevTopItems.forEach((item, i) => {
                       prevRankMap.set(item.menuItemId, { rank: i + 1, revenue: item.revenueCents })
@@ -419,8 +422,10 @@ export default function ReportsPage() {
                           </div>
                           <div className="flex items-center gap-4 text-xs shrink-0">
                             <span className="text-s-muted">{item.quantity} sold</span>
-                            <span className="font-bold text-primary-ink">{fmtPkrWhole(item.revenueCents)}</span>
-                            {compare && prevEntry && (
+                            {item.revenueCents !== undefined && (
+                              <span className="font-bold text-primary-ink">{fmtPkrWhole(item.revenueCents)}</span>
+                            )}
+                            {compare && prevEntry && prevEntry.revenue !== undefined && (
                               <span className="text-s-dim">{fmtPkrWhole(prevEntry.revenue)} prev</span>
                             )}
                           </div>
@@ -508,11 +513,10 @@ export default function ReportsPage() {
               <div className="flex justify-end">
                 <button
                   onClick={() => {
-                    const rows = [...(channels ?? [])].sort((a, b) => b.gross - a.gross).map(c => ({
+                    const rows = [...(channels ?? [])].sort(byChannelSize).map(c => ({
                       channel: c.source,
                       orders: c.orders,
-                      gross_pkr: Math.round(c.gross / 100),
-                      net_pkr: Math.round(c.net / 100),
+                      ...(c.gross !== undefined && { gross_pkr: Math.round(c.gross / 100), net_pkr: Math.round((c.net ?? 0) / 100) }),
                     }))
                     exportToCsv(rows as Record<string, unknown>[], `by-channel_${slug}.csv`)
                   }}
@@ -527,8 +531,8 @@ export default function ReportsPage() {
                       <tr>
                         <th>Channel</th>
                         <th className="text-right">Orders</th>
-                        <th className="text-right">Sales (incl. GST)</th>
-                        <th className="text-right">Net sales</th>
+                        {channelMoney && <th className="text-right">Sales (incl. GST)</th>}
+                        {channelMoney && <th className="text-right">Net sales</th>}
                         {compare && <th className="text-right">vs Prev</th>}
                       </tr>
                     </thead>
@@ -538,17 +542,17 @@ export default function ReportsPage() {
                         if (compare && prevChannels) {
                           prevChannels.forEach((c) => prevMap.set(c.source, c))
                         }
-                        return [...(channels ?? [])].sort((a, b) => b.gross - a.gross).map((c) => {
+                        return [...(channels ?? [])].sort(byChannelSize).map((c) => {
                           const prev = prevMap.get(c.source)
-                          const delta = compare && prev ? computeDelta(c.gross, prev.gross) : null
+                          const delta = compare && prev ? computeDelta(c.gross ?? c.orders, prev.gross ?? prev.orders) : null
                           return (
                             <tr key={c.source}>
                               <td>
                                 <span className="s-badge s-badge-muted text-[10px] uppercase">{c.source}</span>
                               </td>
                               <td className="text-right text-s-muted">{c.orders}</td>
-                              <td className="text-right text-s-text">{fmtPkrWhole(c.gross)}</td>
-                              <td className="text-right font-bold text-primary-ink">{fmtPkrWhole(c.net)}</td>
+                              {channelMoney && <td className="text-right text-s-text">{fmtPkrWhole(c.gross ?? 0)}</td>}
+                              {channelMoney && <td className="text-right font-bold text-primary-ink">{fmtPkrWhole(c.net ?? 0)}</td>}
                               {compare && (
                                 <td className="text-right">
                                   {prev ? <DeltaBadge delta={delta} /> : <span className="text-xs text-s-dim">NEW</span>}
@@ -569,6 +573,11 @@ export default function ReportsPage() {
       </div>
     </div>
   )
+}
+
+/** Biggest channel first: by rupees when sent, else by orders. */
+function byChannelSize(a: BySource, b: BySource): number {
+  return (b.gross ?? b.orders) - (a.gross ?? a.orders)
 }
 
 function Skeleton() {

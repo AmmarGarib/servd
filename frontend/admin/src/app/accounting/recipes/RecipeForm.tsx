@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { RecipeTestLog, type DraftAttempt } from '../../../components/recipe/RecipeTestLog'
 import { fmtPkrWhole } from '../../../lib/money'
+import { useKitchenRole } from '../../inventory/kitchenView'
 
 type Kind = 'plate' | 'component'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
@@ -109,14 +110,37 @@ function invCostPerGramCents(inv: InventoryItem): number {
   return 0
 }
 
-export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
+interface RecipeFormProps {
   initial?: RecipeFormInitial
   // Optional URL-driven pre-selection — used when the Menu Editor's
   // 'Add via Recipe' link is clicked, so the operator lands inside the
   // brand + category they were already looking at.
   prefillBrandId?: string
   prefillCategoryId?: string
-}) {
+}
+
+// The kitchen floor (boh, kitchen, expediter) reads recipes but never creates,
+// edits or costs them — this form's component picker (costed), brand list,
+// save and test log are all managers only. A cook who lands on
+// /accounting/recipes/new by URL gets a plain notice, not a form full of 403s;
+// the [id] page shows them the read-only recipe instead of this form. The page
+// guard has already waited for the role, so managers never see the wait.
+export function RecipeForm(props: RecipeFormProps) {
+  const { settled, kitchen } = useKitchenRole()
+  if (!settled) return <div className="p-12 text-center text-sm text-s-muted">Loading…</div>
+  if (kitchen) {
+    return (
+      <div className="p-12 text-center">
+        <p className="text-sm text-s-muted">Recipes are written and costed by managers. You can read every recipe in the recipe book.</p>
+        <Link href="/accounting/recipes"
+          className="inline-block mt-3 rounded-lg bg-primary text-primary-on px-4 py-2 text-xs font-black">Back to recipes</Link>
+      </div>
+    )
+  }
+  return <RecipeFormBody {...props} />
+}
+
+function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFormProps) {
   const router = useRouter()
   const qc = useQueryClient()
   const isEdit = !!initial

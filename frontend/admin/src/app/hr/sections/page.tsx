@@ -7,7 +7,7 @@ import { HrShell, useHrSections } from '../../../components/hr/HrShell'
 
 const PAGE_HREF: Record<string, string> = {
   dashboard: '/dashboard/hr', org: '/hr/org', employees: '/hr/employees', documents: '/hr/documents',
-  payroll: '/hr/payroll', letters: '/hr/letters', ess: '/hr/me', manager: '/hr/approvals', reports: '/hr/reports',
+  payroll: '/hr/payroll', letters: '/hr/letters', ess: '/hr/me', manager: '/ceo/approvals?type=hr_request', reports: '/hr/reports',
 }
 
 export default function HrSectionsPage() {

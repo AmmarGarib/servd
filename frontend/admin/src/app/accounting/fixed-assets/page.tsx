@@ -37,7 +37,15 @@ const DEFAULT_LIFE: Record<string, number> = { kitchen_equipment: 60, furniture_
 export default function FixedAssetsPage() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['fixed-assets'], queryFn: () => api.get<Register>('/accounting/fixed-assets') })
-  const { data: concepts = [] } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
+  // Brand list from GET /concepts?view=picker (every staff role, the active
+  // brands of its own companies, id + name) — plain /concepts is managers /
+  // till only and 403'd for the roles that hold this page (R2-UI-04).
+  // Shares the shell BrandPicker's cache key and shape.
+  const { data: concepts = [] } = useQuery({
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
+  })
   const [adding, setAdding] = useState(false)
   const [period, setPeriod] = useState<string>('')
   const [runMsg, setRunMsg] = useState('')

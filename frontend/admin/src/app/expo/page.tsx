@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
 import { fmtPkrWhole } from '../../lib/money'
+import { useAuthStore } from '../../store/auth'
 
 /**
  * Expo — the pass-station's screen. Three columns:
@@ -17,6 +18,10 @@ import { fmtPkrWhole } from '../../lib/money'
  *   3. Ready                    — single big handoff button. Copy switches
  *      by fulfilmentType: "Serve to table", "Hand to rider", "Customer
  *      pickup".
+ *
+ * A till sale paid before its hand-off (a counter sale paid up front) sits in
+ * the column its lines put it in with a PAID chip, until expo hands it off;
+ * it has no Reject (the customer has paid — refunds go through the till).
  *
  * Per-station KDS screens (Grill, Fry, Pass) still drive the cook side;
  * Expo lives one level up.
@@ -71,7 +76,58 @@ interface ExpoOrder {
   customer: { id: string; name: string; phone: string | null } | null
   table:    { id: string; label: string } | null
   rider:    { id: string; name: string; phone: string | null } | null
-  items: Array<{ id: string; name: string; quantity: number; notes: string | null; status: string }>
+  /** scheduledFireAt: a PACED line (still pending) the pacing worker fires at that time so the course plates together. */
+  items: Array<{ id: string; name: string; quantity: number; notes: string | null; status: string; scheduledFireAt?: string | null }>
+  /** Already paid at the till (a till sale completes at payment) — not handed off yet. */
+  paid?: boolean
+}
+
+/** A pre-order before its prep window (GET /expo/queue `upcoming`): not the kitchen's yet. */
+interface UpcomingOrder extends ExpoOrder {
+  scheduledFor: string
+  /** When it joins Awaiting Fire (scheduledFor minus the prep window). */
+  kitchenAt: string
+}
+
+/** "Paid" chip for a till sale that was paid before expo handed it off: never send the customer back to the counter. */
+function PaidBadge() {
+  return (
+    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-kds-green/15 text-kds-green border border-kds-green/40"
+      title="Paid at the till — hand it over, don't send the customer back to pay">
+      Paid
+    </span>
+  )
+}
+
+/** Who may override course pacing ("Fire all now") — the server's FIRE_ALL_ROLES (manager tiers + expediter). */
+const FIRE_ALL_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'expediter']
+
+interface PacedLine { id: string; name: string; scheduledFireAt: string }
+
+/** Lines of an order still waiting for their paced fire time, earliest first. */
+function pacedLines(order: ExpoOrder): PacedLine[] {
+  return order.items
+    .filter((i) => i.status === 'pending' && i.scheduledFireAt)
+    .map((i) => ({ id: i.id, name: i.name, scheduledFireAt: i.scheduledFireAt! }))
+    .sort((a, b) => a.scheduledFireAt.localeCompare(b.scheduledFireAt))
+}
+
+/** "14:59" in Pakistan time — when a paced line fires. */
+function fireClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+/** Pakistan calendar day of an instant, for "is it today?". */
+function pkDay(d: Date): string {
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
+}
+
+/** "19:30" today, or "Tue 14 Oct, 19:30" on another day (Pakistan time). */
+function pkWhen(iso: string): string {
+  const d = new Date(iso)
+  if (pkDay(d) === pkDay(new Date())) return fireClock(iso)
+  const day = d.toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', weekday: 'short', day: 'numeric', month: 'short' })
+  return `${day}, ${fireClock(iso)}`
 }
 
 interface StationLoad {
@@ -85,6 +141,8 @@ interface ExpoQueue {
   awaitingFire: ExpoOrder[]
   inProgress:   ExpoOrder[]
   ready:        ExpoOrder[]
+  /** Pre-orders not in their prep window yet (an older API leaves it out). */
+  upcoming?:    UpcomingOrder[]
   stations:     StationLoad[]
 }
 
@@ -120,12 +178,37 @@ export default function ExpoPage() {
     return () => clearTimeout(t)
   }, [heldNotice])
 
+  // Course pacing: Fire starts the longest dish of the course now; shorter
+  // ones come back as `paced` and the pacing worker fires them at their time
+  // so the course plates together. Tell expo when they will fire.
+  const [pacedNotice, setPacedNotice] = useState<{ orderId: string; lines: PacedLine[] } | null>(null)
+  useEffect(() => {
+    if (!pacedNotice) return
+    const t = setTimeout(() => setPacedNotice(null), 10_000)
+    return () => clearTimeout(t)
+  }, [pacedNotice])
+
+  const role = useAuthStore((s) => s.user?.role ?? '')
+  const canFireAll = FIRE_ALL_ROLES.includes(role)
+
+  // An action the server refused (the order moved on — e.g. 409
+  // INVALID_TRANSITION / NOTHING_TO_FIRE / FIRE_ALL_NOT_ALLOWED). Without it
+  // the button just re-enabled and expo believed the dishes went to the line.
+  const [actionError, setActionError] = useState<string | null>(null)
+  const failed = (what: string) => (e: Error) => {
+    setActionError(`${what}: ${e.message || 'the server refused it'}`)
+    void qc.invalidateQueries({ queryKey: ['expo'] })
+  }
+
   const fire = useMutation({
     mutationFn: (orderId: string) =>
-      api.post<{ ok: true; fired: number; course: number | null; heldCourses?: number[]; unroutedItems: Array<{ id: string; name: string }> }>(
+      api.post<{ ok: true; fired: number; course: number | null; paced?: PacedLine[]; heldCourses?: number[]; unroutedItems: Array<{ id: string; name: string }> }>(
         `/expo/orders/${orderId}/fire`, {},
       ),
     onSuccess: (resp, orderId) => {
+      if (resp?.paced && resp.paced.length > 0) {
+        setPacedNotice({ orderId, lines: resp.paced })
+      }
       if (resp?.unroutedItems && resp.unroutedItems.length > 0) {
         setUnroutedToast(resp.unroutedItems)
       }
@@ -134,6 +217,20 @@ export default function ExpoPage() {
       }
       void qc.invalidateQueries({ queryKey: ['expo'] })
     },
+    onMutate: () => setActionError(null),
+    onError: failed('Could not fire the order'),
+  })
+
+  // "Fire all now": override pacing — every pending line of the course fires
+  // at once (manager tiers and the expediter; audited server-side).
+  const fireAll = useMutation({
+    mutationFn: (orderId: string) => api.post(`/expo/orders/${orderId}/fire`, { fireAll: true }),
+    onSuccess: () => {
+      setPacedNotice(null)
+      void qc.invalidateQueries({ queryKey: ['expo'] })
+    },
+    onMutate: () => setActionError(null),
+    onError: failed('Could not fire the paced dishes'),
   })
 
   const reject = useMutation({
@@ -143,17 +240,23 @@ export default function ExpoPage() {
       setRejecting(null); setRejectReason('')
       void qc.invalidateQueries({ queryKey: ['expo'] })
     },
+    onMutate: () => setActionError(null),
+    onError: failed('Could not reject the order'),
   })
 
   const handoff = useMutation({
     mutationFn: (orderId: string) => api.post(`/expo/orders/${orderId}/handoff`, {}),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['expo'] }),
+    onMutate: () => setActionError(null),
+    onError: failed('Could not hand off the order'),
   })
 
   const awaitingFire = data?.awaitingFire ?? []
   const inProgress   = data?.inProgress ?? []
   const ready        = data?.ready ?? []
   const stations     = data?.stations ?? []
+  // Soonest to reach the kitchen first.
+  const upcoming     = [...(data?.upcoming ?? [])].sort((a, b) => a.kitchenAt.localeCompare(b.kitchenAt))
 
   const stationsByConcept = stations.reduce<Record<string, StationLoad[]>>((acc, s) => {
     (acc[s.conceptSlug] ??= []).push(s); return acc
@@ -195,6 +298,32 @@ export default function ExpoPage() {
             className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
         </div>
       )}
+      {actionError && (
+        <div role="alert" className="fixed bottom-4 left-4 z-50 max-w-sm rounded-xl p-4 pr-8 shadow-2xl bg-kds-card border border-kds-red">
+          <p className="text-sm font-black text-kds-red">Not done</p>
+          <p className="text-[11px] text-kds-subtext mt-1">{actionError}</p>
+          <button onClick={() => setActionError(null)} aria-label="Dismiss"
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
+        </div>
+      )}
+      {pacedNotice && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl p-4 shadow-2xl bg-kds-card border border-kds-blue">
+          <p className="text-sm font-black text-kds-text">Fired — paced so the course plates together</p>
+          <ul className="mt-1 space-y-0.5">
+            {pacedNotice.lines.map((l) => (
+              <li key={l.id} className="text-[11px] text-kds-subtext">{l.name} fires at {fireClock(l.scheduledFireAt)}</li>
+            ))}
+          </ul>
+          {canFireAll && (
+            <button onClick={() => fireAll.mutate(pacedNotice.orderId)} disabled={fireAll.isPending}
+              className="mt-2 rounded-lg px-3 py-1.5 text-xs font-black border border-kds-blue text-kds-blue disabled:opacity-40">
+              Fire all now
+            </button>
+          )}
+          <button onClick={() => setPacedNotice(null)}
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
+        </div>
+      )}
       <header className="px-6 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -207,9 +336,48 @@ export default function ExpoPage() {
             <Stat label="Awaiting" count={awaitingFire.length} color="#FCD34D" />
             <Stat label="In progress" count={inProgress.length} color="#A5B4FC" />
             <Stat label="Ready" count={ready.length} color="#5EEAD4" />
+            {upcoming.length > 0 && <Stat label="Pre-orders" count={upcoming.length} color="#C4B5FD" />}
           </div>
         </div>
       </header>
+
+      {/* ── Upcoming pre-orders ─────────────────────────────────────────
+          Scheduled orders before their prep window. The server holds them
+          (no kitchen ticket, no stock taken) and moves them to Awaiting
+          Fire when their time comes — so no Fire button here. */}
+      {upcoming.length > 0 && (
+        <section className="px-6 pt-5 space-y-3">
+          <SectionHeader title="Upcoming pre-orders" count={upcoming.length} color="#C4B5FD" />
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {upcoming.map((order) => {
+              const fm = FULFILMENT_META[order.fulfilmentType]
+              const live = order.items.filter((it) => it.status !== 'voided')
+              return (
+                <article key={order.id} className="rounded-2xl p-3.5"
+                  style={{ background: 'rgba(196,181,253,0.05)', border: '1px solid rgba(196,181,253,0.22)' }}>
+                  <p className="text-sm font-black text-white/90">
+                    Pre-order for {pkWhen(order.scheduledFor)} — reaches the kitchen at {pkWhen(order.kitchenAt)}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md"
+                      style={{ background: fm.bg, color: fm.accent }}>
+                      {fm.label}
+                    </span>
+                    {order.paid && <PaidBadge />}
+                    <span className="text-xs text-white/55">
+                      {order.customer?.name ?? order.customerName ?? 'Walk-in'} · {order.concept.name}
+                    </span>
+                    <span className="text-[10px] text-white/30 font-mono ml-auto">#{order.id.slice(-6).toUpperCase()}</span>
+                  </div>
+                  <p className="text-[11px] text-white/45 mt-1.5">
+                    {live.map((it) => `${it.quantity}× ${it.name}`).join(' · ')}
+                  </p>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="px-6 py-5 grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_280px] gap-4">
 
@@ -248,6 +416,7 @@ export default function ExpoPage() {
                     style={{ background: src.bg, color: src.fg }}>
                     {src.label}
                   </span>
+                  {order.paid && <PaidBadge />}
                   <span className="text-xs text-white/45">{order.concept.name}</span>
                   {order.table && (
                     <span className="text-[10px] font-bold rounded-md px-2 py-0.5"
@@ -276,11 +445,15 @@ export default function ExpoPage() {
 
                 {!isRejecting ? (
                   <div className="flex gap-2">
-                    <button onClick={() => setRejecting(order.id)} disabled={reject.isPending}
-                      className="rounded-xl px-3 py-2.5 text-xs font-bold transition-colors disabled:opacity-40"
-                      style={{ background: 'rgba(255,77,79,0.08)', color: '#FF7B7D', border: '1px solid rgba(255,77,79,0.18)' }}>
-                      Reject
-                    </button>
+                    {/* A paid till sale can't be rejected — the customer has
+                        paid; a refund goes through the till. */}
+                    {!order.paid && (
+                      <button onClick={() => setRejecting(order.id)} disabled={reject.isPending}
+                        className="rounded-xl px-3 py-2.5 text-xs font-bold transition-colors disabled:opacity-40"
+                        style={{ background: 'rgba(255,77,79,0.08)', color: '#FF7B7D', border: '1px solid rgba(255,77,79,0.18)' }}>
+                        Reject
+                      </button>
+                    )}
                     <button onClick={() => fire.mutate(order.id)} disabled={fire.isPending}
                       className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-40"
                       style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
@@ -342,6 +515,7 @@ export default function ExpoPage() {
           {inProgress.map((order) => {
             const fm = FULFILMENT_META[order.fulfilmentType]
             const pct = order.totalSteps > 0 ? Math.round((order.doneSteps / order.totalSteps) * 100) : 0
+            const paced = pacedLines(order)
             return (
               <article key={order.id} className="rounded-2xl p-3.5"
                 style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${fm.accent}25` }}>
@@ -353,6 +527,7 @@ export default function ExpoPage() {
                   {order.table && (
                     <span className="text-[10px] font-bold" style={{ color: '#86EFAC' }}>🪑 {order.table.label}</span>
                   )}
+                  {order.paid && <PaidBadge />}
                   <span className="text-[10px] text-white/40 ml-auto">
                     {formatDistanceToNowStrict(new Date(order.placedAt), { addSuffix: false })}
                   </span>
@@ -377,6 +552,24 @@ export default function ExpoPage() {
                       style={{ width: `${pct}%`, background: fm.accent }} />
                   </div>
                 </div>
+
+                {/* Paced lines: shorter dishes the pacing worker fires later
+                    so the course plates together. */}
+                {paced.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {paced.map((l) => (
+                      <p key={l.id} className="text-[11px] text-white/60">
+                        <span className="font-bold text-white/80">{l.name}</span> fires at {fireClock(l.scheduledFireAt)}
+                      </p>
+                    ))}
+                    {canFireAll && (
+                      <button onClick={() => fireAll.mutate(order.id)} disabled={fireAll.isPending}
+                        className="w-full rounded-lg py-1.5 text-[11px] font-black border border-white/15 text-white/80 disabled:opacity-40">
+                        Fire all now
+                      </button>
+                    )}
+                  </div>
+                )}
               </article>
             )
           })}
@@ -400,7 +593,10 @@ export default function ExpoPage() {
                   <span className="text-sm font-black uppercase tracking-[0.18em]" style={{ color: fm.accent }}>
                     {fm.emoji} {fm.label}
                   </span>
-                  <span className="text-[10px] text-white/40">#{order.id.slice(-5).toUpperCase()}</span>
+                  <span className="flex items-center gap-2">
+                    {order.paid && <PaidBadge />}
+                    <span className="text-[10px] text-white/40">#{order.id.slice(-5).toUpperCase()}</span>
+                  </span>
                 </div>
 
                 <p className="font-bold text-white/95 text-base mb-1">

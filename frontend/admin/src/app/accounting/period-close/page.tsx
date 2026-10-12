@@ -7,9 +7,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
-import { todayPktIso } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import Link from 'next/link'
+
+// The latest day that can be closed is YESTERDAY, Pakistan time — today is
+// still trading, and POST /accounting/period-close refuses it with 422
+// LOCK_IN_FUTURE (BOOKS-R2-01). PKT is a fixed UTC+5 (no daylight saving).
+function yesterdayPktIso(): string {
+  const pkt = new Date(Date.now() + 5 * 3600_000)
+  pkt.setUTCDate(pkt.getUTCDate() - 1)
+  return pkt.toISOString().slice(0, 10)
+}
 
 interface CurrentLock {
   lockedThrough: string | null
@@ -30,7 +38,7 @@ interface HistoryLock {
 export default function PeriodClosePage() {
   const qc = useQueryClient()
   const isAdmin = useAuthStore((s) => s.isRole('admin'))
-  const [lockedThrough, setLockedThrough] = useState(todayPktIso())
+  const [lockedThrough, setLockedThrough] = useState(yesterdayPktIso())
   const [note, setNote] = useState('')
   const [reopenReason, setReopenReason] = useState('')
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
@@ -54,6 +62,8 @@ export default function PeriodClosePage() {
       refresh()
       setNote('')
     },
+    // The API's message is shown as-is — LOCK_IN_FUTURE names the latest
+    // date that can be closed (yesterday, Pakistan time).
     onError: (err: { message?: string }) => {
       setFeedback({ ok: false, msg: err.message ?? 'Failed to close period' })
     },
@@ -68,6 +78,8 @@ export default function PeriodClosePage() {
     },
     onError: (err: { message?: string }) => setFeedback({ ok: false, msg: err.message ?? 'Failed to reopen' }),
   })
+
+  const maxLock = yesterdayPktIso()
 
   const lockedThroughDisplay = current?.lockedThrough
     ? history?.locks[0]?.lockedThroughLabel ?? new Date(current.lockedThrough).toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi' })
@@ -102,11 +114,11 @@ export default function PeriodClosePage() {
           <div className="s-card p-4 space-y-3">
             <h3 className="text-sm font-semibold text-s-text">Close a new period</h3>
             <p className="text-xs text-s-muted">
-              After closing, postings dated on or before the end of this day (Pakistan time) are rejected. Lock dates only move forward, and can be no later than today.
+              After closing, postings dated on or before the end of this day (Pakistan time) are rejected. Lock dates only move forward. Today is still trading, so the latest day you can close is yesterday ({maxLock}).
             </p>
             <div className="space-y-2">
               <label htmlFor="lock-through" className="block text-xs text-s-muted">Lock through (inclusive)</label>
-              <input id="lock-through" type="date" value={lockedThrough} max={todayPktIso()} onChange={(e) => setLockedThrough(e.target.value)}
+              <input id="lock-through" type="date" value={lockedThrough} max={maxLock} onChange={(e) => setLockedThrough(e.target.value)}
                 className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
             </div>
             <div className="space-y-2">
@@ -116,7 +128,7 @@ export default function PeriodClosePage() {
             </div>
             <button
               onClick={() => close.mutate({ lockedThrough, ...(note ? { note } : {}) })}
-              disabled={close.isPending || !lockedThrough || lockedThrough > todayPktIso()}
+              disabled={close.isPending || !lockedThrough || lockedThrough > maxLock}
               className="s-btn-primary text-sm w-full"
             >
               {close.isPending ? 'Closing…' : 'Close Period'}

@@ -1,10 +1,15 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import Link from 'next/link'
 import { useCurrentShift } from '../../../hooks/useCurrentShift'
+import {
+  newIdempotencyKey, isOfflinePlaceholder, preBillErrorMessage, printPreBill, tillErrorMessage,
+  type TillBrand, type TillOrder, type OfflinePlaceholder,
+} from '../../../components/pos/tillApi'
+import { useAuthStore } from '../../../store/auth'
 
 type Step = 'table' | 'menu' | 'confirm' | 'done'
 
@@ -18,17 +23,39 @@ export default function WaiterPage() {
   const [modifierItem, setModifierItem] = useState<MenuItem | null>(null)
   const [orderNote, setOrderNote] = useState('')
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null)
+  const [queuedOffline, setQueuedOffline] = useState(false)
+  // The table's pre-bill (spec §17.1): not a tax invoice, never sent to the POS.
+  const [preBillNote, setPreBillNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [preBillBusy, setPreBillBusy] = useState(false)
+  // FOH-06: one random idempotency key per SUBMISSION. A retry of the same
+  // submission (same brand, table, lines and note — after a timeout or a
+  // double tap) reuses it, so the server returns that one order instead of
+  // firing a second ticket. Any edit is a new submission and a new key, and
+  // the key is dropped once the order is sent, so the next table's identical
+  // round is never deduped onto this one. (The screen used to send no key at
+  // all, and the server keyed it on the current millisecond: two waiters in
+  // the same millisecond got ONE order back — one table's items never
+  // reached the kitchen.)
+  const submission = useRef<{ signature: string; key: string } | null>(null)
 
   const storedConceptId = usePosStore(s => s.conceptId)
   const shiftId = usePosStore(s => s.shiftId)
   // The server, not this browser, says which drawer this user is on.
   useCurrentShift()
 
-  const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<{ id: string; name: string; slug: string }[]>('/concepts'),
+  // FOH-01: the company's brands, readable by waiters (narrow fields).
+  const { data: concepts = [], isError: brandsFailed } = useQuery({
+    queryKey: ['pos', 'brands'],
+    queryFn: () => api.get<TillBrand[]>('/concepts'),
   })
-  const conceptId = storedConceptId || concepts[0]?.id || ''
+  // The remembered brand only if it is still one of ours, else the first.
+  const conceptId = (storedConceptId && concepts.some((c) => c.id === storedConceptId))
+    ? storedConceptId
+    : concepts[0]?.id ?? ''
+  // UI-03: store the auto-selected brand, so the brand shown is the one rung.
+  useEffect(() => {
+    if (conceptId && conceptId !== storedConceptId) usePosStore.getState().setConceptId(conceptId)
+  }, [conceptId, storedConceptId])
 
   const { data: tables = [] } = useQuery({
     queryKey: ['tables', conceptId],
@@ -45,8 +72,10 @@ export default function WaiterPage() {
   const currentCategory = categories.find(c => c.id === selectedCategory) ?? categories[0]
 
   const submitMutation = useMutation({
+    meta: { inlineErrors: true },
     mutationFn: async () => {
-      const order = await api.post<{ id: string }>('/pos/orders', {
+      if (!conceptId) throw new Error('No brand to ring this under — reload, or ask a manager')
+      const body = {
         conceptId,
         tableId: selectedTable?.id ?? null,
         shiftId: shiftId ?? null,
@@ -61,10 +90,20 @@ export default function WaiterPage() {
           }))
         ),
         discountCents: 0,
-      })
-      return order
+      }
+      // The drawer isn't part of what was ordered: a shift re-sync between a
+      // timed-out attempt and its retry must not mint a second key.
+      const { shiftId: _drawer, ...ordered } = body
+      const signature = JSON.stringify(ordered)
+      if (submission.current?.signature !== signature) {
+        submission.current = { signature, key: newIdempotencyKey() }
+      }
+      return api.post<TillOrder | OfflinePlaceholder>('/pos/orders', { ...body, idempotencyKey: submission.current.key })
     },
     onSuccess: (order) => {
+      // Sent: the next submission — even an identical round — is a new order.
+      submission.current = null
+      setQueuedOffline(isOfflinePlaceholder(order))
       setSubmittedOrderId(order.id)
       setStep('done')
     },
@@ -97,12 +136,40 @@ export default function WaiterPage() {
   if (step === 'done') {
     return (
       <div className="erp-kitchen-dark flex flex-col items-center justify-center h-screen gap-6 bg-kds-bg px-6 text-center">
-        <div className="text-6xl">✅</div>
-        <h1 className="text-2xl font-black text-kds-text">Order Sent!</h1>
-        <p className="text-kds-subtext">Table {selectedTable?.label} · {cart.reduce((s, c) => s + c.qty, 0)} items sent to kitchen</p>
+        <div className="text-6xl">{queuedOffline ? '⏳' : '✅'}</div>
+        <h1 className="text-2xl font-black text-kds-text">{queuedOffline ? 'Queued offline' : 'Order Sent!'}</h1>
+        <p className="text-kds-subtext">
+          Table {selectedTable?.label} · {cart.reduce((s, c) => s + c.qty, 0)} items
+          {queuedOffline ? ' will reach the kitchen when the connection returns' : ' sent to kitchen'}
+        </p>
+        {!queuedOffline && submittedOrderId && (
+          <div className="w-full max-w-xs space-y-2">
+            <button
+              type="button"
+              disabled={preBillBusy}
+              onClick={() => {
+                setPreBillNote(null)
+                setPreBillBusy(true)
+                printPreBill(submittedOrderId, 'cash', useAuthStore.getState().token)
+                  .then(() => setPreBillNote({ ok: true, text: 'Pre-bill printed — not a tax invoice. The full & final bill prints after payment.' }))
+                  .catch((e: unknown) => setPreBillNote({ ok: false, text: preBillErrorMessage(e) }))
+                  .finally(() => setPreBillBusy(false))
+              }}
+              className="w-full rounded-xl border border-kds-border py-3 text-sm font-bold text-kds-text disabled:opacity-30">
+              {preBillBusy ? 'Printing pre-bill…' : 'Print pre-bill'}
+            </button>
+            {preBillNote && (
+              <p className={`text-xs ${preBillNote.ok ? 'text-kds-subtext' : 'text-kds-red'}`} role={preBillNote.ok ? 'status' : 'alert'}>
+                {preBillNote.text}
+              </p>
+            )}
+          </div>
+        )}
         <div className="flex gap-3 w-full max-w-xs">
           <button onClick={() => {
-            setCart([]); setStep('table'); setSelectedTable(null); setOrderNote(''); setSubmittedOrderId(null)
+            submission.current = null
+            setCart([]); setStep('table'); setSelectedTable(null); setOrderNote(''); setSubmittedOrderId(null); setQueuedOffline(false)
+            setPreBillNote(null)
           }} className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-white text-sm">
             New Order
           </button>
@@ -115,7 +182,7 @@ export default function WaiterPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-kds-bg overflow-hidden">
+    <div className="erp-kitchen-dark flex flex-col h-screen bg-kds-bg overflow-hidden">
 
       {/* Header */}
       <div className="flex items-center gap-3 h-12 px-4 border-b border-kds-border bg-kds-card shrink-0">
@@ -142,6 +209,27 @@ export default function WaiterPage() {
           {!shiftId && (
             <div className="mb-3 rounded-xl bg-kds-red/15 border border-kds-red/40 px-3 py-2 text-sm font-semibold text-kds-red">
               ⚠ No shift open — orders won't have a shift assigned
+            </div>
+          )}
+          {brandsFailed && (
+            <div className="mb-3 rounded-xl bg-kds-red/15 border border-kds-red/40 px-3 py-2 text-sm font-semibold text-kds-red">
+              Could not load your brands — reload, or ask a manager
+            </div>
+          )}
+          {concepts.length > 1 && (
+            <div className="mb-3 flex gap-2 overflow-x-auto scrollbar-hide">
+              {concepts.map((c) => (
+                <button key={c.id} onClick={() => {
+                  // Another brand's dishes can't go on this brand's ticket.
+                  if (c.id !== conceptId) { setCart([]); setSelectedCategory(null) }
+                  usePosStore.getState().setConceptId(c.id)
+                }}
+                  className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    c.id === conceptId ? 'bg-kds-green text-white' : 'border border-kds-border text-kds-subtext'
+                  }`}>
+                  {c.name}
+                </button>
+              ))}
             </div>
           )}
           <div className="grid grid-cols-3 gap-3">
@@ -252,7 +340,7 @@ export default function WaiterPage() {
           </div>
 
           {submitMutation.isError && (
-            <p className="text-kds-red text-sm">{submitMutation.error instanceof Error ? submitMutation.error.message : 'Failed to send order'}</p>
+            <p className="text-kds-red text-sm">{tillErrorMessage(submitMutation.error, 'Failed to send order')}</p>
           )}
         </div>
       )}
@@ -262,7 +350,9 @@ export default function WaiterPage() {
         <div className="shrink-0 px-4 py-3 border-t border-kds-border bg-kds-card">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-kds-subtext">{cart.reduce((s, c) => s + c.qty, 0)} items · Table {selectedTable?.label}</span>
-            <span className="font-bold text-kds-text">PKR {(cartTotal / 100).toFixed(0)}</span>
+            <span className="font-bold text-kds-text">
+              PKR {(cartTotal / 100).toFixed(0)} <span className="text-xs font-normal text-kds-subtext">before GST</span>
+            </span>
           </div>
           <button onClick={() => submitMutation.mutate()}
             disabled={submitMutation.isPending || cart.length === 0}

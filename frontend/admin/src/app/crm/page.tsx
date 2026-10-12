@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { fmtPkrWhole } from '../../lib/money'
+import { usePermissions } from '../../hooks/useCan'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -14,12 +15,19 @@ import { fmtPkrWhole } from '../../lib/money'
 // owner decision 15: it applies at that company's brands only) and unblocking
 // lifts it; the old isBlacklisted toggle is gone.
 
+// The API's MANAGERS (backend modules/auth/middleware.ts). The marketing roles
+// (marketing, brand_manager) read and work this page, but blocking a customer
+// (POST /crm/bans, /crm/bans/:id/lift) and crediting a wallet (POST
+// /wallet/topup) stay with managers — so those buttons show to managers only.
+const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
+
 interface ActiveBan { id: string; reason: string; bannedAt: string }
 
 interface Customer {
   id: string; name: string; phone: string | null; email: string | null
   totalSpentCents: number; lastOrderAt: string | null; createdAt: string
-  walletBalance: number
+  // One servd-wide balance — the API sends it to managers only (null otherwise).
+  walletBalance: number | null
   activeBan: ActiveBan | null
   loyaltyAccount: { pointsBalance: number; tier: string | null } | null
   // The brand this customer most often orders from. Drives the chip in the
@@ -30,6 +38,8 @@ interface Customer {
 
 export default function CRMPage() {
   const qc = useQueryClient()
+  const { data: me } = usePermissions()
+  const isManager = MANAGER_ROLES.has(me?.role ?? '')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [banModal, setBanModal] = useState<{ id: string; name: string; ban: ActiveBan | null } | null>(null)
@@ -37,6 +47,10 @@ export default function CRMPage() {
   const [banError, setBanError] = useState<string | null>(null)
   const [walletModal, setWalletModal] = useState<{ id: string; name: string } | null>(null)
   const [walletAmount, setWalletAmount] = useState('')
+  // goodwill = the company's own credit (booked as Marketing & Promo);
+  // cash / card / bank = the customer paid for it at that tender (ONL-R2-01).
+  const [walletKind, setWalletKind] = useState<'goodwill' | 'cash' | 'card' | 'bank'>('goodwill')
+  const [walletError, setWalletError] = useState<string | null>(null)
 
   // Deep link: /crm?customer=<id> opens that customer's detail pane. There is
   // no /crm/:id page — orders, complaints and the old /customers list link
@@ -80,12 +94,18 @@ export default function CRMPage() {
 
   const topupWallet = useMutation({
     mutationFn: ({ id, amount }: { id: string; amount: number }) =>
-      api.post('/wallet/topup', { customerId: id, amountCents: amount, note: 'Manual top-up by staff' }),
+      api.post('/wallet/topup', walletKind === 'goodwill'
+        ? { customerId: id, amountCents: amount, kind: 'goodwill', description: 'Goodwill credit by staff' }
+        : { customerId: id, amountCents: amount, kind: 'paid', tender: walletKind, description: `Paid top-up (${walletKind})` }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['customer-detail', selectedId] })
+      void qc.invalidateQueries({ queryKey: ['customers'] })
       setWalletModal(null)
       setWalletAmount('')
+      setWalletKind('goodwill')
+      setWalletError(null)
     },
+    onError: (e: Error) => setWalletError(e.message),
   })
 
   // A deep-linked customer may not be in the first page of the list; the
@@ -161,6 +181,19 @@ export default function CRMPage() {
               <input type="number" min="1" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)}
                 placeholder="500" className={inp} />
             </div>
+            <div>
+              <label className="text-xs text-s-muted mb-1 block">What is it?</label>
+              <select value={walletKind} onChange={(e) => setWalletKind(e.target.value as typeof walletKind)} className={inp}>
+                <option value="goodwill">Goodwill credit (our cost)</option>
+                <option value="cash">Customer paid — cash</option>
+                <option value="card">Customer paid — card</option>
+                <option value="bank">Customer paid — bank transfer</option>
+              </select>
+              <p className="text-xs text-s-muted mt-1">
+                Credited to the customer&apos;s wallet at the company you are working in, and spendable only at its brands.
+              </p>
+            </div>
+            {walletError && <p className="text-xs text-s-red">{walletError}</p>}
             <div className="flex gap-3">
               <button
                 onClick={() => topupWallet.mutate({ id: walletModal.id, amount: Math.round(parseFloat(walletAmount) * 100) })}
@@ -168,7 +201,7 @@ export default function CRMPage() {
                 className="flex-1 rounded-xl bg-primary text-primary-on text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50">
                 {topupWallet.isPending ? 'Crediting…' : 'Credit wallet'}
               </button>
-              <button onClick={() => { setWalletModal(null); setWalletAmount('') }}
+              <button onClick={() => { setWalletModal(null); setWalletAmount(''); setWalletKind('goodwill'); setWalletError(null) }}
                 className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>
@@ -279,11 +312,12 @@ export default function CRMPage() {
                       <p className="text-xs text-s-muted mt-0.5">Loyalty pts</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-lg font-black text-s-blue">{fmtPkrWhole(customerDetail.walletBalance)}</p>
+                      <p className="text-lg font-black text-s-blue">{customerDetail.walletBalance == null ? '—' : fmtPkrWhole(customerDetail.walletBalance)}</p>
                       <p className="text-xs text-s-muted mt-0.5">Wallet</p>
                     </div>
                   </div>
 
+                  {isManager && (
                   <div className="flex gap-2 mt-4 pt-4 border-t border-s-border">
                     <button
                       onClick={() => setWalletModal({ id: customerDetail.id, name: customerDetail.name })}
@@ -300,6 +334,7 @@ export default function CRMPage() {
                       {customerDetail.activeBan ? 'Unblock' : '⛔ Block'}
                     </button>
                   </div>
+                  )}
                 </div>
 
                 {/* Loyalty */}

@@ -1,29 +1,27 @@
 'use client'
-// Staff meal log — every free or staff-rate meal needs manager-PIN approval +
-// is tracked here. Cumulative consumption per staff over 7 days flags above
-// PKR 2,000.
+// Staff meal log — read-only. A staff meal is rung up at the till and comped
+// as a staff meal with a manager PIN (POST /pos/orders/:orderId/comp with
+// staffMealFor, owner decision 11): that takes the stock out and books the
+// food cost. The comp writes the row this log lists, and cumulative weekly
+// consumption over the cap flags for review. The old hand-typed "Log meal"
+// form posted to a retired endpoint (410) and is gone.
+//
+// Who reads it: the manager tiers and HR (GET /trustops/staff-meals). Each row
+// carries the staff member's name, so the page does not need the staff-account
+// list.
 
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import Link from 'next/link'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 
-interface User { id: string; name: string; role: string }
-interface Meal { id: string; staffId: string; description: string; estimatedCostCents: number; reason: string; consumedAt: string }
+interface Meal { id: string; staffId: string; staffName?: string | null; description: string; estimatedCostCents: number; reason: string; consumedAt: string }
 
 export default function StaffMealsPage() {
-  const qc = useQueryClient()
   const { data: meals = [] } = useQuery<Meal[]>({ queryKey: ['staff-meals'], queryFn: () => api.get('/trustops/staff-meals?days=30'), refetchInterval: 30_000 })
-  const { data: users = [] } = useQuery<User[]>({ queryKey: ['users'], queryFn: () => api.get('/auth/users') })
-  const [adding, setAdding] = useState(false)
-
-  const userMap = new Map(users.map((u) => [u.id, u]))
 
   // Group by staff for the leaderboard
   const byStaff = meals.reduce<Record<string, { count: number; cents: number; name: string }>>((acc, m) => {
-    const u = userMap.get(m.staffId)
-    if (!u) return acc
-    const cur = acc[m.staffId] ?? { count: 0, cents: 0, name: u.name }
+    if (!m.staffName) return acc
+    const cur = acc[m.staffId] ?? { count: 0, cents: 0, name: m.staffName }
     cur.count += 1; cur.cents += m.estimatedCostCents
     acc[m.staffId] = cur
     return acc
@@ -37,10 +35,9 @@ export default function StaffMealsPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">🍽 Staff meals</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Free / staff-rate meals consumed by employees. Manager PIN required to log. Cumulative weekly spend over PKR 2,000 per person flags for review.
+              Free / staff-rate meals consumed by employees. A staff meal is rung up at the till and comped as a staff meal with a manager PIN — it shows here. Cumulative weekly spend over the cap per person flags for review.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ Log meal</button>
         </div>
       </header>
 
@@ -69,7 +66,7 @@ export default function StaffMealsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-bold text-white/85">{userMap.get(m.staffId)?.name ?? '—'}</p>
+                      <p className="text-sm font-bold text-white/85">{m.staffName ?? '—'}</p>
                       <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{m.reason.replace('_', ' ')}</span>
                     </div>
                     <p className="text-xs text-white/55 mt-1">{m.description}</p>
@@ -83,62 +80,7 @@ export default function StaffMealsPage() {
         </section>
       </div>
 
-      {adding && <MealModal users={users} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); qc.invalidateQueries({ queryKey: ['staff-meals'] }); qc.invalidateQueries({ queryKey: ['exceptions'] }) }} />}
     </div>
   )
 }
 
-function MealModal({ users, onClose, onSaved }: { users: User[]; onClose: () => void; onSaved: () => void }) {
-  const [staffId, setStaffId] = useState('')
-  const [description, setDescription] = useState('')
-  const [estimatedCostCents, setEstimatedCostCents] = useState(50000)
-  // No 'comp' here: comping a customer's order is the till's comp (reason,
-  // caps, manager PIN, on the drawer). Older 'comp' rows still list below.
-  const [reason, setReason] = useState<'shift_meal' | 'training' | 'tasting'>('shift_meal')
-  const [managerPin, setManagerPin] = useState('')
-
-  const save = useMutation({
-    mutationFn: () => api.post('/trustops/staff-meals', { staffId, description, estimatedCostCents, reason, managerPin }),
-    onSuccess: () => onSaved(),
-  })
-
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
-    <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-        <h2 className="font-black text-white/90">Log a staff meal</h2>
-        <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-      </div>
-      <div className="p-5 space-y-3">
-        <Field label="Staff member *">
-          <select value={staffId} onChange={(e) => setStaffId(e.target.value)} className={fieldCls} autoFocus>
-            <option value="">— pick —</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
-          </select>
-        </Field>
-        <Field label="Description *"><input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Smash burger + fries" className={fieldCls} /></Field>
-        <Field label="Estimated cost (paisa)">
-          <input type="number" value={estimatedCostCents} onChange={(e) => setEstimatedCostCents(parseInt(e.target.value) || 0)} className={fieldCls} />
-          <p className="text-[10px] text-white/30 mt-1">≈ PKR {(estimatedCostCents / 100).toLocaleString()}</p>
-        </Field>
-        <Field label="Reason">
-          <select value={reason} onChange={(e) => setReason(e.target.value as typeof reason)} className={fieldCls}>
-            <option value="shift_meal">Shift meal</option>
-            <option value="training">Training</option>
-            <option value="tasting">Tasting</option>
-          </select>
-        </Field>
-        <Field label="Manager PIN *">
-          <input type="password" value={managerPin} onChange={(e) => setManagerPin(e.target.value)} placeholder="Required" className={fieldCls} />
-        </Field>
-        {save.error && <div className="rounded-xl px-4 py-3 text-sm text-red-700" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
-      </div>
-      <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-        <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-        <button onClick={() => save.mutate()} disabled={save.isPending || !staffId || !description.trim() || !managerPin} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Logging…' : 'Log meal'}</button>
-      </div>
-    </div>
-  </div>
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

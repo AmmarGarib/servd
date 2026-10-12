@@ -24,6 +24,25 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { fmtPkrWhole } from '../../../lib/money'
+import { usePermissions } from '../../../hooks/useCan'
+
+// Who may change what on this page — the same rules the API enforces
+// (backend/src/modules/positions/routes.ts + contributions.ts), so no one is
+// shown a button that answers 403:
+//   - managers (the API's MANAGERS): everything, exactly as before;
+//   - hr holding 'staff_directory' (POSITION_EDITORS + its module gate): add,
+//     edit and archive seats; reads the inter-company contributions;
+//   - finance (staff_directory or capital): reads the budget, changes nothing.
+// Contributions move money between two companies' books, so only managers
+// record or change one. Until /permissions/me answers, nothing is writable.
+const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
+function usePositionAccess(): { isManager: boolean; canEditSeats: boolean } {
+  const { data: me } = usePermissions()
+  if (!me) return { isManager: false, canEditSeats: false }
+  const isManager = MANAGER_ROLES.has(me.role)
+  const hrEditor = me.role === 'hr' && (me.modules ?? []).includes('staff_directory')
+  return { isManager, canEditSeats: isManager || hrEditor }
+}
 
 interface Department {
   id: string
@@ -67,6 +86,7 @@ interface ContributionSummary {
   destinationTenant: { id: string; name: string }
   direction: 'incoming' | 'outgoing'
   internalSplit: Array<{ label: string; cents: number }> | null
+  description?: string | null
 }
 interface Summary {
   totalPositions: number
@@ -98,6 +118,7 @@ const STATUS_META: Record<Position['status'], { label: string; color: string; bg
 // embedded=false renders everything (standalone mode at /workforce/positions).
 export function PositionsView({ embedded = false }: { embedded?: boolean } = {}) {
   const qc = useQueryClient()
+  const { isManager, canEditSeats } = usePositionAccess()
   const { data: positions = [], isLoading } = useQuery<Position[]>({
     queryKey: ['positions'],
     queryFn:  () => api.get('/positions'),
@@ -228,18 +249,20 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                 next load — no manual sync.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setShowAdd(true)}
-                className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
-                + New position
-              </button>
-            </div>
+            {canEditSeats && (
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowAdd(true)}
+                  className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
+                  + New position
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
       )}
 
-      {embedded && (
+      {embedded && canEditSeats && (
         <div className="max-w-6xl mx-auto px-6 pt-4 flex justify-end">
           <button onClick={() => setShowAdd(true)}
             className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
@@ -249,29 +272,39 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
       )}
 
       <div className="max-w-6xl mx-auto px-6 pt-5">
-        {activeTenant?.isJointVenture && jvPartners.length > 0 && (
-          <Link href="/settings"
-            className="block mb-4 rounded-2xl px-4 py-3 hover:bg-white/[0.03] transition-colors"
-            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)' }}>
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
-                  Joint venture
+        {activeTenant?.isJointVenture && jvPartners.length > 0 && (() => {
+          const jvSplit = (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
+                style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
+                Joint venture
+              </span>
+              <span className="text-sm text-s-text font-bold">{activeTenant.name}</span>
+              <span className="text-xs text-s-muted">- partner split:</span>
+              {jvPartners.map((p, i) => (
+                <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
+                  style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+                  {p.label} {p.pct}%
                 </span>
-                <span className="text-sm text-s-text font-bold">{activeTenant.name}</span>
-                <span className="text-xs text-s-muted">- partner split:</span>
-                {jvPartners.map((p, i) => (
-                  <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
-                    {p.label} {p.pct}%
-                  </span>
-                ))}
-              </div>
-              <span className="text-[11px] text-s-muted hover:underline">Edit JV config →</span>
+              ))}
             </div>
-          </Link>
-        )}
+          )
+          const jvStyle = { background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)' }
+          // The JV config is company setup (tenant PATCH is admin-only); HR and
+          // finance see the split here but get no edit link.
+          return isManager ? (
+            <Link href="/settings"
+              className="block mb-4 rounded-2xl px-4 py-3 hover:bg-white/[0.03] transition-colors"
+              style={jvStyle}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                {jvSplit}
+                <span className="text-[11px] text-s-muted hover:underline">Edit JV config →</span>
+              </div>
+            </Link>
+          ) : (
+            <div className="mb-4 rounded-2xl px-4 py-3" style={jvStyle}>{jvSplit}</div>
+          )
+        })()}
 
         {summary && (
           <>
@@ -318,10 +351,12 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     Subtracts incoming, adds outgoing &rarr; gives net P&L
                   </p>
                 </div>
-                <button onClick={() => setContribModal('new')}
-                  className="rounded-lg px-3 py-1.5 text-xs font-bold border border-s-border text-s-text hover:border-primary/40 hover:text-primary-ink transition-colors">
-                  + Add contribution
-                </button>
+                {isManager && (
+                  <button onClick={() => setContribModal('new')}
+                    className="rounded-lg px-3 py-1.5 text-xs font-bold border border-s-border text-s-text hover:border-primary/40 hover:text-primary-ink transition-colors">
+                    + Add contribution
+                  </button>
+                )}
               </div>
               {summary.contributions.length === 0 ? (
                 <div className="px-4 py-6 text-center">
@@ -337,9 +372,8 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     <span className="text-s-muted">Position gross ({summary.totalPositions} seats)</span>
                     <span className="font-bold">{fmtPkrWhole(summary.totalTenantShareMonthlyCents)}</span>
                   </div>
-                  {summary.contributions.map((c) => (
-                    <button key={c.id} type="button" onClick={() => setContribModal(c)}
-                      className="text-left rounded-md px-1 py-1 -mx-1 hover:bg-s-bg/40 transition-colors">
+                  {summary.contributions.map((c) => {
+                    const line = (<>
                       <div className="flex justify-between text-xs font-mono items-baseline">
                         <span className="text-s-muted flex items-center gap-1.5">
                           <span style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
@@ -365,8 +399,18 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                           ))}
                         </div>
                       )}
-                    </button>
-                  ))}
+                    </>)
+                    // Only managers may change a contribution; everyone else
+                    // reads the line.
+                    return isManager ? (
+                      <button key={c.id} type="button" onClick={() => setContribModal(c)}
+                        className="text-left rounded-md px-1 py-1 -mx-1 hover:bg-s-bg/40 transition-colors">
+                        {line}
+                      </button>
+                    ) : (
+                      <div key={c.id} className="rounded-md px-1 py-1 -mx-1">{line}</div>
+                    )
+                  })}
                   <div className="border-t border-s-border mt-1 pt-2 flex justify-between text-sm font-mono">
                     <span className="font-bold">Net to this tenant&apos;s P&L</span>
                     <span className="font-black" style={{ color: 'var(--erp-primary-ink)' }}>
@@ -387,15 +431,23 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
           <div className="rounded-xl border border-s-border bg-s-surface p-12 text-center">
             <p className="text-4xl mb-2">💼</p>
             <p className="text-sm font-semibold">No budgeted positions yet</p>
-            <p className="text-xs text-s-muted mt-1 max-w-md mx-auto">
-              Start with a position for each seat the org pays for. You don't need a
-              named hire — just the designation, shift band, salary and which concept it serves.
-              Designations and departments are set up in HR → Org setup.
-            </p>
-            <button onClick={() => setShowAdd(true)}
-              className="mt-4 rounded-lg px-4 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
-              + Create the first position
-            </button>
+            {canEditSeats ? (
+              <>
+                <p className="text-xs text-s-muted mt-1 max-w-md mx-auto">
+                  Start with a position for each seat the org pays for. You don't need a
+                  named hire — just the designation, shift band, salary and which concept it serves.
+                  Designations and departments are set up in HR → Org setup.
+                </p>
+                <button onClick={() => setShowAdd(true)}
+                  className="mt-4 rounded-lg px-4 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
+                  + Create the first position
+                </button>
+              </>
+            ) : (
+              <p className="text-xs text-s-muted mt-1 max-w-md mx-auto">
+                HR or a manager adds the seats the org pays for in Workforce → Positions.
+              </p>
+            )}
           </div>
         )}
 
@@ -438,7 +490,8 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                       {shift.positions.map((p) => (
                         <PositionRow
                           key={p.id} position={p}
-                          expanded={editingId === p.id}
+                          canEdit={canEditSeats}
+                          expanded={canEditSeats && editingId === p.id}
                           onExpand={() => setEditingId(editingId === p.id ? null : p.id)}
                           onClose={() => setEditingId(null)}
                           onChange={() => {
@@ -458,7 +511,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
         ))}
       </div>
 
-      {showAdd && (
+      {showAdd && canEditSeats && (
         <AddPositionModal
           onClose={() => setShowAdd(false)}
           onCreated={() => { setShowAdd(false); void qc.invalidateQueries({ queryKey: ['positions'] }) }}
@@ -467,7 +520,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
           designations={designations}
         />
       )}
-      {contribModal && (
+      {contribModal && isManager && (
         <ContributionModal
           existing={contribModal === 'new' ? null : contribModal}
           tenants={tenants}
@@ -509,9 +562,11 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
 type Designation = { id: string; name: string }
 
 function PositionRow({
-  position, expanded, onExpand, onClose, onChange, departments, shiftBands, designations,
+  position, canEdit, expanded, onExpand, onClose, onChange, departments, shiftBands, designations,
 }: {
   position: Position
+  /** False = read-only viewer (finance, or while the role loads): no expand-to-edit. */
+  canEdit: boolean
   expanded: boolean
   onExpand: () => void
   onClose: () => void
@@ -521,39 +576,49 @@ function PositionRow({
   designations: Designation[]
 }) {
   const status = STATUS_META[position.status]
+  const summary = (<>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="font-semibold text-sm truncate">{position.title}</p>
+        {position.headcount > 1 && (
+          <span className="text-[10px] font-bold rounded px-1.5 py-0.5"
+            style={{ background: 'rgb(135 197 64 / 0.10)', color: 'var(--erp-primary-ink)' }}>
+            × {position.headcount}
+          </span>
+        )}
+        <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+          style={{ background: status.bg, color: status.color }}>
+          {status.label}
+        </span>
+        {position.filledBy && (
+          <span className="text-[10px] text-s-muted">→ {position.filledBy.name}</span>
+        )}
+      </div>
+      {position.costShareNote && position.tenantCostShareCents !== position.monthlySalaryCents && (
+        <p className="text-[10px] text-s-muted mt-0.5 italic truncate">{position.costShareNote}</p>
+      )}
+    </div>
+    <div className="shrink-0 text-right">
+      <p className="text-sm font-bold font-mono">{fmtPkrWhole(position.tenantCostShareCents)}</p>
+      {position.tenantCostShareCents !== position.monthlySalaryCents && (
+        <p className="text-[10px] text-s-muted font-mono opacity-70">gross {fmtPkrWhole(position.monthlySalaryCents)}</p>
+      )}
+    </div>
+  </>)
+  if (!canEdit) {
+    return (
+      <div className="border-t border-s-border first:border-t-0">
+        <div className="w-full flex items-center gap-3 px-4 py-2.5">{summary}</div>
+      </div>
+    )
+  }
   return (
     <div className="border-t border-s-border first:border-t-0">
       <button onClick={onExpand}
         className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-s-bg/30 ${
           expanded ? 'bg-s-bg/40' : ''
         }`}>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="font-semibold text-sm truncate">{position.title}</p>
-            {position.headcount > 1 && (
-              <span className="text-[10px] font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgb(135 197 64 / 0.10)', color: 'var(--erp-primary-ink)' }}>
-                × {position.headcount}
-              </span>
-            )}
-            <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-              style={{ background: status.bg, color: status.color }}>
-              {status.label}
-            </span>
-            {position.filledBy && (
-              <span className="text-[10px] text-s-muted">→ {position.filledBy.name}</span>
-            )}
-          </div>
-          {position.costShareNote && position.tenantCostShareCents !== position.monthlySalaryCents && (
-            <p className="text-[10px] text-s-muted mt-0.5 italic truncate">{position.costShareNote}</p>
-          )}
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="text-sm font-bold font-mono">{fmtPkrWhole(position.tenantCostShareCents)}</p>
-          {position.tenantCostShareCents !== position.monthlySalaryCents && (
-            <p className="text-[10px] text-s-muted font-mono opacity-70">gross {fmtPkrWhole(position.monthlySalaryCents)}</p>
-          )}
-        </div>
+        {summary}
         <span className="shrink-0 text-s-muted text-xs"
           style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 120ms' }}>▶</span>
       </button>
@@ -807,7 +872,7 @@ function ContributionModal({
   const [category,            setCategory]            = useState<CategoryOption['value']>(existing?.category ?? 'head_office')
   const [monthlyCents,        setMonthlyCents]        = useState(existing?.monthlyCents ?? 0)
   const [label,               setLabel]               = useState(existing?.label ?? '')
-  const [description,         setDescription]         = useState('')
+  const [description,         setDescription]         = useState(existing?.description ?? '')
   const [splitRows, setSplitRows] = useState<Array<{ label: string; cents: number }>>(
     existing?.internalSplit && existing.internalSplit.length > 0
       ? existing.internalSplit

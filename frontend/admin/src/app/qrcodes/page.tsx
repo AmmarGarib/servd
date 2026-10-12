@@ -34,8 +34,10 @@ export default function QrCodesPage() {
   })
 
   const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    // The brand picker view (id + name, own companies, any staff role): the
+    // full brand row is managers-only and this page only needs the names.
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
   })
 
   const { data: tables = [] } = useQuery({

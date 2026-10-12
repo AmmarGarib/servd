@@ -24,9 +24,23 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** The API's `error.details` (e.g. go-live 409 NOT_READY `{ missing }`,
+     *  TERMINAL_CHARGE_ACTIVE `{ chargeId }`), when it sent any. */
+    public details?: unknown,
   ) {
     super(message)
   }
+}
+
+/** Read an error body; a non-JSON answer (a proxy's HTML 502) still becomes an ApiError. */
+async function errorFrom(res: Response, fallbackCode: string, fallbackMessage: string): Promise<ApiError> {
+  const data = await res.json().catch(() => null) as { error?: { code?: string; message?: string; details?: unknown } } | null
+  return new ApiError(
+    res.status,
+    data?.error?.code ?? fallbackCode,
+    data?.error?.message ?? fallbackMessage,
+    data?.error?.details,
+  )
 }
 
 let _refreshing: Promise<string | null> | null = null
@@ -190,7 +204,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
     // no token and the cookie alone authenticates.
     credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      // Only a request that carries a body declares one: an empty body sent as
+      // application/json is a 400 on some servers (Fastify's empty-JSON rule).
+      ...(options.body != null && { 'Content-Type': 'application/json' }),
       ...(token && { Authorization: `Bearer ${token}` }),
       ...(portfolio && { 'x-servd-portfolio': '1' }),
       ...(brand && { 'x-servd-brand': brand }),
@@ -211,8 +227,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   }
 
   if (!res.ok) {
-    const data = (await res.json()) as { error: { code: string; message: string } }
-    throw new ApiError(res.status, data.error.code, data.error.message)
+    throw await errorFrom(res, 'HTTP_' + res.status, `Request failed (${res.status})`)
   }
 
   if (brand && typeof window !== 'undefined') {
@@ -243,8 +258,7 @@ async function download(path: string, filename: string, retry = true): Promise<v
     throw new ApiError(401, 'UNAUTHORIZED', 'Session expired')
   }
   if (!res.ok) {
-    const data = await res.json().catch(() => ({ error: { code: 'DOWNLOAD_FAILED', message: 'Download failed' } })) as { error: { code: string; message: string } }
-    throw new ApiError(res.status, data.error.code, data.error.message)
+    throw await errorFrom(res, 'DOWNLOAD_FAILED', 'Download failed')
   }
   const url = URL.createObjectURL(await res.blob())
   const a = document.createElement('a')

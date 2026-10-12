@@ -21,10 +21,12 @@ type Mode = 'me' | 'kiosk'
 type Stage = 'idle' | 'working' | 'success' | 'error'
 
 interface PresignedUpload { uploadUrl: string; publicUrl: string }
-interface Status { punchedIn: boolean; shift?: { clockInAt: string; clockOutAt: string | null; geofenceOk: boolean } }
+interface Status { punchedIn: boolean; shift?: { clockInAt: string; clockOutAt: string | null; geofenceOk: boolean }; missedClockOut?: { since: string } | null }
 interface PunchResult {
   alreadyClockedIn?: boolean
   notClockedIn?: boolean
+  /** A clock-in left open from an earlier day: flagged for HR, no hours. */
+  missedClockOut?: { since: string; note: string }
   location?: string | null
   hrLinked?: boolean
   attendance?: { status: string | null; lateMinutes: number | null } | null
@@ -120,9 +122,10 @@ export default function TimeClockPage() {
   const punchMe = (dir: 'in' | 'out') => run(async () => {
     const r = await api.post<PunchResult>(`/time-clock/punch-${dir}`, { ...where(), ...(dir === 'in' && { selfieUrl: await selfieUrl() }) })
     if (r.alreadyClockedIn) return 'You are already clocked in.'
-    if (r.notClockedIn) return 'You were not clocked in.'
+    const missed = r.missedClockOut ? ` ${r.missedClockOut.note}` : ''
+    if (r.notClockedIn) return `You were not clocked in.${missed}`
     return dir === 'in'
-      ? `Clocked in${r.location ? ` at ${r.location}` : ''}, ${user?.name ?? ''}.${attendanceLine(r)}`
+      ? `Clocked in${r.location ? ` at ${r.location}` : ''}, ${user?.name ?? ''}.${attendanceLine(r)}${missed}`
       : 'Clocked out. Have a good night.'
   })
 
@@ -169,6 +172,11 @@ export default function TimeClockPage() {
           <div className="space-y-3">
             <p className="text-center text-sm text-white/70">
               {status.isLoading ? '…' : punchedIn ? `On shift since ${new Date(status.data!.shift!.clockInAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : 'Not clocked in'}
+              {!punchedIn && status.data?.missedClockOut && (
+                <span className="block text-xs text-white/50 mt-1">
+                  Your clock-in of {new Date(status.data.missedClockOut.since).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} was never clocked out — HR will correct that day.
+                </span>
+              )}
             </p>
             {punchedIn
               ? <button onClick={() => punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'rgba(239,68,68,0.15)', color: '#b42318', border: '1px solid rgba(239,68,68,0.35)' }}>Clock out</button>

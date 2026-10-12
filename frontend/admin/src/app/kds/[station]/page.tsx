@@ -1,14 +1,16 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../../lib/api'
 import { useKdsSocket } from '../../../hooks/useKdsSocket'
+import { getSocket } from '../../../lib/socket'
 import { useKdsStore } from '../../../store/kds'
 import { KdsHeader } from '../../../components/kds/KdsHeader'
 import { NewOrderFlash } from '../../../components/kds/NewOrderFlash'
+import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../../components/kds/LineActions'
 
 // Recipe payload — matches /recipes/by-item/:menuItemId.
 // Used by the per-card expand panel to show free-text + per-step
@@ -42,6 +44,10 @@ interface RecipeData {
  *   2. Legacy items: menu items that don't have recipe steps yet still flow
  *      through the old per-item routing. Bumping uses the existing item
  *      status endpoint. As recipes get their steps, items naturally migrate.
+ *      A legacy line can be put on Hold (it stays here, marked HELD, until
+ *      Resume); a recalled line comes back marked REMAKE and its Bump starts
+ *      and finishes the remake. Bumped lines can be recalled from the
+ *      "Recently bumped" strip (BOH-04).
  */
 
 type FulfilmentType = 'dine_in' | 'takeout' | 'delivery'
@@ -117,7 +123,7 @@ export default function StationKdsPage() {
 
   const { data, isLoading } = useQuery<QueuePayload>({
     queryKey: ['station-queue', station],
-    queryFn:  () => api.get<QueuePayload>(`/expo/station/${station}/queue`),
+    queryFn:  () => api.get<QueuePayload>(`/expo/station/${station}/queue?states=all`),
     refetchInterval: 5_000,
     staleTime: 2_000,
   })
@@ -129,8 +135,29 @@ export default function StationKdsPage() {
 
   const bumpLegacy = useMutation({
     mutationFn: (itemId: string) => api.patch(`/order-items/${itemId}/status`, { status: 'bumped' }),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['station-queue', station] }),
+    onSuccess:  () => {
+      qc.invalidateQueries({ queryKey: ['station-queue', station] })
+      qc.invalidateQueries({ queryKey: ['station-recent-bumped', station] })
+    },
   })
+  const lineActions = useLineActions(station)
+
+  // Refresh the queue the moment a line is fired / moved for this station
+  // (expo fire, "Fire course", the pacing worker, another screen's bump) —
+  // not only on the next 5-second poll.
+  useEffect(() => {
+    const socket = getSocket()
+    const refresh = (data?: { stationId?: string | null }) => {
+      if (data?.stationId && data.stationId !== station) return
+      qc.invalidateQueries({ queryKey: ['station-queue', station] })
+    }
+    socket.on('item:updated', refresh)
+    socket.on('expo:fire', refresh)
+    return () => {
+      socket.off('item:updated', refresh)
+      socket.off('expo:fire', refresh)
+    }
+  }, [station, qc])
 
   const steps = data?.steps ?? []
   const legacy = data?.legacy ?? []
@@ -207,9 +234,15 @@ export default function StationKdsPage() {
             {cooking.map((t) => {
               const isLegacy = '__legacy' in t
               const id = isLegacy ? t.itemId : t.stepId
-              const onBump = () => isLegacy ? bumpLegacy.mutate(t.itemId) : bumpStep.mutate(t.stepId)
+              const lineStatus = isLegacy ? t.status : 'preparing'
+              const isHeld = lineStatus === 'held'
+              const isRemake = lineStatus === 'recalled'
+              const onBump = () => isLegacy
+                ? (isRemake ? lineActions.bumpRemake.mutate(t.itemId) : bumpLegacy.mutate(t.itemId))
+                : bumpStep.mutate(t.stepId)
               const pending = isLegacy
-                ? bumpLegacy.isPending && bumpLegacy.variables === t.itemId
+                ? (bumpLegacy.isPending && bumpLegacy.variables === t.itemId)
+                  || (lineActions.bumpRemake.isPending && lineActions.bumpRemake.variables === t.itemId)
                 : bumpStep.isPending && bumpStep.variables === t.stepId
               const elapsed = t.firedAt
                 ? formatDistanceToNowStrict(new Date(t.firedAt), { addSuffix: false })
@@ -242,7 +275,8 @@ export default function StationKdsPage() {
                       <span className="text-kds-subtext">{t.order.concept.name} · {t.order.source}</span>
                       <span className="text-kds-amber">{elapsed}</span>
                     </div>
-                    <p className="text-lg font-black text-kds-text leading-tight mb-1">
+                    <LineStateBadge status={lineStatus} />
+                    <p className={`text-lg font-black text-kds-text leading-tight mb-1 ${isHeld ? 'opacity-60' : ''}`}>
                       {t.qty > 1 && <span className="text-kds-amber mr-1">{t.qty}×</span>}
                       {t.itemName}
                     </p>
@@ -283,18 +317,31 @@ export default function StationKdsPage() {
 
                   {/* Bump — always visible at the bottom, never inside the
                       clickable expand surface. */}
-                  <div className="p-4 pt-0">
-                    <button onClick={onBump} disabled={pending}
-                      className="w-full rounded-xl py-3 text-base font-black transition-all disabled:opacity-40"
-                      style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
-                      {pending ? (isUrdu ? 'مکمل ہو رہا ہے…' : 'Bumping…') : (isUrdu ? 'مکمل ✓' : 'Bump ✓')}
-                    </button>
+                  <div className="p-4 pt-0 space-y-2">
+                    {/* A held line resumes before it can be bumped. */}
+                    {!isHeld && (
+                      <button onClick={onBump} disabled={pending}
+                        className="w-full rounded-xl py-3 text-base font-black transition-all disabled:opacity-40"
+                        style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
+                        {pending ? (isUrdu ? 'مکمل ہو رہا ہے…' : 'Bumping…') : (isUrdu ? 'مکمل ✓' : (isRemake ? 'Bump remake ✓' : 'Bump ✓'))}
+                      </button>
+                    )}
+                    {isLegacy && <HoldButton itemId={t.itemId} status={lineStatus} actions={lineActions} />}
                   </div>
                 </div>
               )
             })}
           </div>
         </section>
+
+        {lineActions.error && (
+          <p className="rounded-lg border border-kds-red/50 bg-kds-red/10 px-3 py-2 text-sm font-semibold text-kds-red">
+            {lineActions.error}
+          </p>
+        )}
+
+        {/* Bumped in the last 30 minutes — Recall sends one back as a remake. */}
+        <RecallStrip stationId={station} actions={lineActions} />
 
         {/* Waiting (step deps not yet clear) */}
         {waiting.length > 0 && (

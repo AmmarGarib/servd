@@ -8,14 +8,27 @@
 // Neither shows the drawer's expected cash (blind count, decision 2).
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
+import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../../components/pos/pinErrors'
 
 interface PayoutCategory { key: string; label: string; code: string }
 interface CodDue {
   id: string
   amountCents: number
   order: { id: string; completedAt: string | null; customerName: string | null; concept: { name: string } }
+}
+
+/** A cashier-readable line for a refused pay-out (PIN missing, wrong or locked out). */
+function payoutErrorMessage(e: unknown): string {
+  const locked = managerPinLockedMessage(e)
+  if (locked) return locked
+  if (e instanceof ApiError) {
+    if (e.code === 'MANAGER_OVERRIDE_REQUIRED') return 'A pay-out needs a manager — enter a manager’s PIN.'
+    if (e.code === 'INVALID_MANAGER_PIN') return WRONG_PIN_MESSAGE
+    return e.message || e.code
+  }
+  return e instanceof Error ? e.message : 'The pay-out failed'
 }
 
 const inputCls = 'w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text'
@@ -38,6 +51,8 @@ export function VendorPayoutPanel({ shiftId }: { shiftId: string }) {
       ...(pin && { managerOverridePin: pin }),
     }),
     onSuccess: () => { setDone(`Paid out PKR ${amount} — booked to ${data?.categories.find((c) => c.key === category)?.label ?? category}.`); setAmount(''); setReason(''); setVendorName(''); setPin('') },
+    // A wrong PIN, or the wrong-PIN lock-out: clear the box so it is typed afresh.
+    onError: (e) => { if (e instanceof ApiError && (e.code === 'INVALID_MANAGER_PIN' || e.code === 'MANAGER_PIN_LOCKED')) setPin('') },
   })
   return (
     <div className="rounded-2xl bg-kds-card p-6 space-y-3">
@@ -68,7 +83,7 @@ export function VendorPayoutPanel({ shiftId }: { shiftId: string }) {
           <input id="payout-pin" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} className={inputCls} />
         </div>
       </div>
-      {payout.error && <p role="alert" className="text-xs text-kds-red">{(payout.error as Error).message}</p>}
+      {payout.error && <p role="alert" className="text-xs text-kds-red">{payoutErrorMessage(payout.error)}</p>}
       {done && <p role="status" className="text-xs text-kds-green">{done}</p>}
       <button
         onClick={() => { setDone(null); payout.mutate() }}

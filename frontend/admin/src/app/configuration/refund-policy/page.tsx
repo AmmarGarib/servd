@@ -31,7 +31,12 @@ export default function RefundPolicyPage() {
   useEffect(() => { if (data) setForm(data) }, [data])
 
   const save = useMutation({
-    mutationFn: () => api.patch('/setup/refund-policy', form),
+    // The cashier void limit is not edited here any more (voids always need a
+    // manager), so it is not sent: the stored value is left as it is.
+    mutationFn: () => {
+      const { cashierVoidLimitCents: _unused, ...body } = form
+      return api.patch('/setup/refund-policy', body)
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['refund-policy'] }) },
   })
 
@@ -45,22 +50,31 @@ export default function RefundPolicyPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <h1 className="text-2xl font-black text-white/90 mt-2">⚖️ Refund / void / comp policy</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Refund / void / comp policy</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
-          Per-role caps for voids, comps, and refunds. Anything above the cap requires manager override.
-          Owner notifications fire above the threshold.
+          Per-role caps for comps and refunds — anything above the cashier cap needs a manager&apos;s PIN.
+          Voids always need a manager. Owner notifications fire above the threshold.
         </p>
       </header>
 
       <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
+        <Section title="Voids always need a manager">
+          <p className="text-sm text-white/70">
+            A cashier or server can never void on their own: every void of a line, and every cancel of a rung-up order,
+            is approved by a manager — the manager signed in, or a manager&apos;s PIN at the till. The manager is recorded
+            on the void, and any pre-bill of a cancelled order is listed under Finance → Voided pre bills.
+            There is no cashier void limit.
+          </p>
+        </Section>
+
         <Section title="Cashier limits" desc="What cashiers can do without manager approval">
-          <Money label="Void limit (paisa)" value={form.cashierVoidLimitCents ?? 0} onChange={(v) => patch('cashierVoidLimitCents', v)} />
           <Money label="Comp limit (paisa)" value={form.cashierCompLimitCents ?? 0} onChange={(v) => patch('cashierCompLimitCents', v)} />
           <Money label="Refund limit (paisa)" value={form.cashierRefundLimitCents ?? 0} onChange={(v) => patch('cashierRefundLimitCents', v)} />
         </Section>
 
         <Section title="Manager limits" desc="Higher cap before owner approval kicks in">
           <Money label="Void limit (paisa)" value={form.managerVoidLimitCents ?? 0} onChange={(v) => patch('managerVoidLimitCents', v)} />
+          <p className="text-[11px] text-white/40 -mt-1">The most one manager may approve in a single void; above it the CEO approves.</p>
           <Money label="Comp limit (paisa)" value={form.managerCompLimitCents ?? 0} onChange={(v) => patch('managerCompLimitCents', v)} />
           <Money label="Refund limit (paisa)" value={form.managerRefundLimitCents ?? 0} onChange={(v) => patch('managerRefundLimitCents', v)} />
         </Section>

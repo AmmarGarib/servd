@@ -2,6 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
+import { usePermissions } from '../../../hooks/useCan'
 import Link from 'next/link'
 
 // Email (SMTP) settings — the SECOND delivery channel.
@@ -16,11 +17,20 @@ interface Status {
   configured: boolean
 }
 
+// Who (mirrors auth/routes.ts): the CEO and IT READ it — IT only while it
+// holds module `api_whatsapp` (the sidebar puts Email under it, Dev → API); only the CEO SAVES or sends a test, because
+// whoever sets the host receives the stored SMTP password and every company's
+// reset mail. Everyone else is never sent here, so the page asks nothing of
+// the API and says who to ask instead of a red 403.
 export default function EmailSettingsPage() {
   const qc = useQueryClient()
+  const { data: me, isLoading: meLoading } = usePermissions()
+  const canEdit = me?.role === 'admin'
+  const canRead = canEdit || (me?.role === 'it' && me.modules.includes('api_whatsapp'))
   const { data, isLoading } = useQuery({
     queryKey: ['email-config'],
     queryFn: () => api.get<Status>('/auth/integrations/email'),
+    enabled: canRead,
   })
 
   const [f, setF] = useState<Partial<Record<'host'|'port'|'user'|'from'|'pass', string>>>({})
@@ -58,6 +68,16 @@ export default function EmailSettingsPage() {
     </div>
   )
 
+  if (!meLoading && !canRead) {
+    return (
+      <div className="min-h-screen bg-s-bg p-6">
+        <Link href="/configuration" className="text-xs text-s-muted hover:text-s-text">← Configuration</Link>
+        <h1 className="text-xl font-bold text-s-text">Email</h1>
+        <p className="text-sm text-s-muted mt-2">Email delivery is set up by the CEO and IT. Ask them if password-reset emails are not arriving.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
@@ -83,6 +103,20 @@ export default function EmailSettingsPage() {
           </div>
         )}
 
+        {!canEdit && data && (
+          <div className="s-card p-4 space-y-2">
+            <p className="text-xs text-s-muted">Read-only. Only the CEO can change these settings or send a test email.</p>
+            <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-xs">
+              <dt className="text-s-muted">SMTP host</dt><dd className="font-mono text-s-text">{v('host') || '—'}</dd>
+              <dt className="text-s-muted">Port</dt><dd className="font-mono text-s-text">{v('port') || '—'}</dd>
+              <dt className="text-s-muted">Username</dt><dd className="font-mono text-s-text">{v('user') || '—'}</dd>
+              <dt className="text-s-muted">Password</dt><dd className="text-s-text">{data.passSet ? 'Saved' : 'Not set'}</dd>
+              <dt className="text-s-muted">Send as</dt><dd className="font-mono text-s-text">{v('from') || '—'}</dd>
+            </dl>
+          </div>
+        )}
+
+        {canEdit && (<>
         <div className="s-card p-4 space-y-4">
           <Field k="host" label="SMTP HOST" placeholder="smtp.gmail.com" hint="Your mail provider's server address." />
           <Field k="port" label="PORT" placeholder="587" hint="587 for most providers; 465 if the provider says to use SSL." />
@@ -117,6 +151,7 @@ export default function EmailSettingsPage() {
             </p>
           )}
         </div>
+        </>)}
       </div>
     </div>
   )

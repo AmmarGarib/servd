@@ -3,31 +3,46 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi, api, type Order } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
-import { useRoleModules, modulesForRole } from '../../store/roleModules'
-import type { AppRole } from '../../lib/appRoles'
+import { canOpenPath } from '../../lib/moduleCatalog'
+import { usePermissions } from '../../hooks/useCan'
 import { formatDistanceToNowStrict } from 'date-fns'
 import Link from 'next/link'
 import { fmtPkrWhole } from '../../lib/money'
+import {
+  fetchReceiptHtml, isPreBillRequired, preBillErrorMessage, printHtml, printPreBill, tillErrorMessage,
+} from '../../components/pos/tillApi'
+import { useCanPrintBill } from '../../components/pos/useCanPrintBill'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+// The full & final bill exists only once an order reached it (spec §17.1):
+// completed, or since refunded / cancelled / rejected (bannered so), or paid
+// in full and waiting for its hand-off. Anything else prints a PRE-BILL —
+// the server answers 409 PRE_BILL_REQUIRED, the same rule (pos/receipt.ts
+// isFinalBill).
+const FINAL_STATUSES = new Set(['completed', 'refunded', 'cancelled', 'rejected'])
+function hasFinalBill(order: Order): boolean {
+  if (FINAL_STATUSES.has(order.status)) return true
+  const paid = order.payments
+    .filter((p) => p.status === 'paid' && p.amountCents > 0)
+    .reduce((t, p) => t + p.amountCents, 0)
+  return paid > 0 && paid >= order.totalCents
+}
 
+/** Reprint the full & final bill (a DUPLICATE); an order still open is offered its pre-bill instead. */
 async function reprintReceipt(orderId: string) {
   const token = useAuthStore.getState().token       // F43
-  const res = await fetch(`${API_URL}/api/v1/pos/receipt/${orderId}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) { alert('Receipt not available for this order'); return }
-  const html = await res.text()
-  const blob = new Blob([html], { type: 'text/html' })
-  const url  = URL.createObjectURL(blob)
-  const win  = window.open(url, '_blank', 'width=420,height=600')
-  if (win) {
-    win.addEventListener('load', () => {
-      win.print()
-      URL.revokeObjectURL(url)
-    })
-  } else {
-    URL.revokeObjectURL(url)
+  try {
+    await printHtml(() => fetchReceiptHtml(orderId, token, { duplicate: true }), { width: 420, height: 600 })
+  } catch (e) {
+    if (isPreBillRequired(e)) {
+      if (!window.confirm('This order isn’t paid yet, so it has no full & final bill. Print a pre-bill instead? (Not a tax invoice.)')) return
+      try {
+        await printPreBill(orderId, 'cash', token)
+      } catch (err) {
+        alert(preBillErrorMessage(err))
+      }
+      return
+    }
+    alert(tillErrorMessage(e, 'The bill is not available for this order'))
   }
 }
 
@@ -39,6 +54,7 @@ const STATUS_COLORS: Record<string, string> = {
   completed: 'bg-s-muted/20 text-s-muted',
   cancelled: 'bg-s-red/20 text-s-red',
   rejected:  'bg-s-red/30 text-s-red',
+  refunded:  'bg-s-indigo/20 text-s-indigo',
 }
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -59,7 +75,7 @@ const STATUS_LABEL: Record<string, string> = { received: 'Awaiting Fire', prepar
 // Only the Fire CTA lives on this screen. Preparing/Ready are info-only —
 // progression happens via station bumps on /kds/[station].
 const STATUS_NEXT:  Record<string, string> = { received: 'preparing' }
-const STATUS_CTA:   Record<string, string> = { received: 'Fire 🔥' }
+const STATUS_CTA:   Record<string, string> = { received: 'Fire' }
 
 type Tab = 'live' | 'history'
 interface Concept { id: string; name: string; primaryColor: string | null }
@@ -79,9 +95,14 @@ export default function OrdersPage() {
   // Per-order note state: { [orderId]: { open, draft } }
   const [notes, setNotes] = useState<Record<string, { open: boolean; draft: string }>>({})
 
+  // The brand filter reads the picker list (every staff role; id, name,
+  // colour) — the plain /concepts list is managers / till only, so it 403'd
+  // for expediter and finance, who hold 'orders'. Shares the shell
+  // BrandPicker's cache key and shape.
   const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
   })
 
   const { data: liveData } = useQuery({
@@ -109,11 +130,17 @@ export default function OrdersPage() {
 
   // Sales by channel lives on /reports (GET /reports/by-source) — the one
   // channel breakdown. This page used to carry a second "By channel" tab that
-  // called a route that never existed. The link shows only to roles that can
-  // open /reports.
-  const role = useAuthStore((st) => st.user?.role) as AppRole | undefined
-  const moduleOverrides = useRoleModules((st) => st.overrides)
-  const canSeeReports = !!role && modulesForRole(role, moduleOverrides).includes('reports')
+  // called a route that never existed. Cross-module links (Reports, Expo, the
+  // CRM profile) show only to a login that can open the page behind them —
+  // the same rule as the sidebar and the page guard (GET /permissions/me).
+  const { data: me } = usePermissions()
+  const canOpen = (path: string) => !!me && canOpenPath(path, me.role, me.modules ?? [])
+  const canSeeReports = canOpen('/reports')
+  const canOpenExpo = canOpen('/expo')
+  const canOpenCrm = canOpen('/crm')
+  // The bill routes are the till's (CASHIERS): expediter and finance can read
+  // orders but would only get a 403 from Reprint.
+  const canPrint = useCanPrintBill()
 
   const updateStatus = useMutation({
     mutationFn: ({ id, s }: { id: string; s: string }) => api.patch(`/orders/${id}/status`, { status: s }),
@@ -184,10 +211,12 @@ export default function OrdersPage() {
           <h1 className="text-xl md:text-2xl font-black text-s-text mt-0.5">Orders</h1>
           <p className="text-xs md:text-sm text-s-muted">Live pipeline and history</p>
         </div>
-        <Link href="/expo"
-          className="shrink-0 rounded-xl border border-s-border px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
-          Open Expo ↗
-        </Link>
+        {canOpenExpo && (
+          <Link href="/expo"
+            className="shrink-0 rounded-xl border border-s-border px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
+            Open Expo ↗
+          </Link>
+        )}
       </header>
 
       {/* ── Mobile concept filter strip ── */}
@@ -261,7 +290,6 @@ export default function OrdersPage() {
             {tab === 'live' && (
               liveOrders.length === 0 ? (
                 <div className="text-center py-16">
-                  <p className="text-4xl mb-3">✅</p>
                   <p className="font-semibold text-s-text">Queue is clear</p>
                   <p className="text-sm text-s-muted mt-1">New orders appear here automatically every 8 seconds</p>
                 </div>
@@ -335,7 +363,7 @@ export default function OrdersPage() {
                   </select>
                   <select value={status} onChange={(e) => setStatus(e.target.value)} className={sel}>
                     <option value="">All statuses</option>
-                    {['received','confirmed','preparing','ready','completed','cancelled','rejected'].map((s) => (
+                    {['received','confirmed','preparing','ready','completed','refunded','cancelled','rejected'].map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
@@ -392,12 +420,14 @@ export default function OrdersPage() {
                                 <td className="px-4 py-3 text-s-text">{order.concept.name}</td>
                                 <td className="px-4 py-3">
                                   {order.customerName ? (
-                                    <Link
-                                      href={`/crm?search=${encodeURIComponent(order.customerName)}`}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="text-blue-700 hover:text-blue-700 hover:underline transition-colors text-sm">
-                                      {order.customerName}
-                                    </Link>
+                                    canOpenCrm ? (
+                                      <Link
+                                        href={`/crm?search=${encodeURIComponent(order.customerName)}`}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-blue-700 hover:text-blue-700 hover:underline transition-colors text-sm">
+                                        {order.customerName}
+                                      </Link>
+                                    ) : <span className="text-s-text text-sm">{order.customerName}</span>
                                   ) : (
                                     <span className="text-s-muted">{order.table?.label ?? '—'}</span>
                                   )}
@@ -422,12 +452,12 @@ export default function OrdersPage() {
                                       className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
                                       {order.deliveryNotes ? 'Edit note' : '+ Note'}
                                     </button>
-                                    {(order.source === 'pos' || order.status === 'completed' || order.status === 'cancelled') && (
+                                    {canPrint && hasFinalBill(order) && (
                                       <button
                                         onClick={() => void reprintReceipt(order.id)}
-                                        title="Reprint receipt"
-                                        className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-purple-400 hover:text-purple-700 transition-colors whitespace-nowrap">
-                                        🖨 Reprint
+                                        title="Reprint the full & final bill (marked DUPLICATE)"
+                                        className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
+                                        Reprint
                                       </button>
                                     )}
                                   </div>
@@ -481,7 +511,7 @@ export default function OrdersPage() {
                                       ))}
                                       {order.deliveryNotes && (
                                         <p className="text-xs text-s-muted pt-2 border-t border-s-border/50 mt-1">
-                                          📍 {order.deliveryNotes}
+                                          Note: {order.deliveryNotes}
                                         </p>
                                       )}
                                     </div>

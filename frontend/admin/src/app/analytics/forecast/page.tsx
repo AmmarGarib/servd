@@ -21,9 +21,13 @@ export default function ForecastPage() {
   const [days, setDays] = useState(7)
   const [sortBy, setSortBy] = useState<'total' | 'name'>('total')
 
+  // The picker list (every staff role, id + name): the plain /concepts list
+  // is managers / till only and 403'd for finance. Shares the shell
+  // BrandPicker's cache key and shape.
   const { data: concepts } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
   })
 
   const { data, isLoading } = useQuery({

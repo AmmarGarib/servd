@@ -52,16 +52,56 @@ function setCatalog(c: SectionCatalog) {
   BY_VARIANT = new Map(c.specs.map((s) => [s.variant, s]))
 }
 
-export function useSectionCatalog() {
+/** The storefront host the catalogue comes from, for messages ("servd.pk").
+ *  A function, not a constant: content.ts and this file import each other. */
+export function storefrontHost(): string {
+  try { return new URL(STOREFRONT_URL).host } catch { return STOREFRONT_URL }
+}
+
+/** What the editor says when the catalogue can't be fetched. The storefront
+ *  host serves it, not the API, so this must never read as "the API is down". */
+export function sectionsUnavailableMessage(): string {
+  return `The storefront (${storefrontHost()}) didn't answer, so the list of page sections can't load. Pop-ups and the Library still work.`
+}
+
+/** The catalogue fetch failed. `message` is the plain-words cause for the
+ *  screen; `detail` the technical reason (network error, HTTP status). */
+export class SectionCatalogError extends Error {
+  constructor(readonly detail: string) {
+    super(sectionsUnavailableMessage())
+    this.name = 'SectionCatalogError'
+  }
+}
+
+/** The storefront's section catalogue. Errors are shown where it is used
+ *  (meta.inlineErrors keeps the global toast out of it — that toast is about
+ *  the API, and this request goes to the storefront host). Pop-ups use no
+ *  sections: pass `enabled: false` there so they never wait on it. */
+export function useSectionCatalog(opts: { enabled?: boolean } = {}) {
   return useQuery<SectionCatalog>({
     queryKey: ['storefront-section-catalog'],
     queryFn: async () => {
-      const res = await fetch(`${STOREFRONT_URL}/api/storefront-sections`, { cache: 'no-store' })
-      if (!res.ok) throw new Error(`The storefront did not return its sections (${res.status})`)
-      const c = (await res.json()) as SectionCatalog
+      let res: Response
+      try {
+        res = await fetch(`${STOREFRONT_URL}/api/storefront-sections`, { cache: 'no-store' })
+      } catch (e) {
+        throw new SectionCatalogError(`No answer from ${STOREFRONT_URL} (${(e as Error).message || 'network error'})`)
+      }
+      if (!res.ok) throw new SectionCatalogError(`${STOREFRONT_URL}/api/storefront-sections answered HTTP ${res.status}`)
+      let c: SectionCatalog
+      try {
+        c = (await res.json()) as SectionCatalog
+      } catch {
+        throw new SectionCatalogError(`${STOREFRONT_URL}/api/storefront-sections did not return JSON`)
+      }
+      if (!c || !Array.isArray(c.specs) || !Array.isArray(c.pages)) {
+        throw new SectionCatalogError(`${STOREFRONT_URL}/api/storefront-sections returned an unexpected shape`)
+      }
       setCatalog(c)
       return c
     },
+    enabled: opts.enabled ?? true,
+    meta: { inlineErrors: true },
     staleTime: 5 * 60_000,
   })
 }

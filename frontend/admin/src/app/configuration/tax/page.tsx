@@ -1,9 +1,9 @@
 import { redirect } from 'next/navigation'
 
-// Placeholder retired (D14): it showed a hardcoded 17% GST that the till
-// never charges. FBR / SRB setup and submission status live on Settings →
-// Integrations; the cash / card GST rates are per brand in Storefront →
-// Brands → Tax & FBR.
+// Tax filing setup moved to Dev → API → POS connector (spec §10): FBR / SRB
+// are filed by the external fiscal POS through servd's POS connector, and the
+// brand POS ids are edited there. The cash / card GST rates stay per brand in
+// Marketing → Brands → Tax registration.
 export default function TaxConfigRedirect() {
-  redirect('/settings/integrations')
+  redirect('/connectors/pos')
 }

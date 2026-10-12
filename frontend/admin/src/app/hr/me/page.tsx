@@ -21,7 +21,7 @@ interface Me {
 
 const REQUEST_LABEL: Record<string, string> = {
   leave: 'Apply for leave', overtime: 'Submit overtime', attendance_correction: 'Correct attendance',
-  training_request: 'Request training', loan: 'Request an advance or loan', resignation: 'Resign',
+  shift_swap: 'Swap a shift', training_request: 'Request training', loan: 'Request an advance or loan', resignation: 'Resign',
 }
 
 export default function MyHrPage() {

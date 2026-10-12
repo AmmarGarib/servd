@@ -27,6 +27,11 @@ interface Invite {
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 const input = 'w-full rounded-lg px-3 py-2 text-sm bg-s-surface border border-white/10 text-white/85 focus:outline-none focus:border-primary/60'
 
+// Roles that sign in with a code sent to their phone instead of a password —
+// the server's OTP_LOGIN_ROLES (auth/middleware.ts). A login in one of these
+// needs a mobile number; the API refuses one without (PHONE_REQUIRED).
+const CODE_LOGIN_ROLES = new Set(['cashier', 'foh', 'boh', 'kitchen', 'expediter'])
+
 const INVITE_STATUS: Record<Invite['status'], { label: string; color: string }> = {
   pending:   { label: 'Waiting for the CEO', color: '#a15c00' },
   active:    { label: 'Approved',            color: '#3f7d20' },
@@ -56,7 +61,7 @@ export default function MyTeamPage() {
           <div className="grid grid-cols-3 gap-3 max-w-xl">
             <Stat label="People" value={data.team.length} />
             <Stat label="In today" value={inToday} color="#3f7d20" />
-            <Link href="/hr/approvals"><Stat label="Waiting on you" value={pending} color={pending > 0 ? '#a15c00' : undefined} /></Link>
+            <Link href="/ceo/approvals?type=hr_request"><Stat label="Waiting on you" value={pending} color={pending > 0 ? '#a15c00' : undefined} /></Link>
           </div>
         )}
 
@@ -127,6 +132,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
   const [employeeId, setEmployeeId] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  const needsPhone = CODE_LOGIN_ROLES.has(role)
 
   const invite = useMutation({
     mutationFn: () => api.post('/auth/staff/invite', {
@@ -156,6 +162,9 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
     if (!name.trim()) return setErr('Type their name.')
     if (!email.trim()) return setErr('An email is required — it is how they sign in.')
     if (!role || !childRoles.includes(role)) return setErr('Pick a role.')
+    if (needsPhone && phone.replace(/\D/g, '').length < 10) {
+      return setErr('Add their mobile number — cashiers, servers and kitchen staff sign in with a code sent to it.')
+    }
     invite.mutate()
   }
 
@@ -182,8 +191,10 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={input} />
         </label>
         <label className="block">
-          <span className="text-[11px] text-white/45">Phone (optional)</span>
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} className={input} />
+          <span className="text-[11px] text-white/45">
+            {needsPhone ? 'Mobile number (required — they sign in with a code sent here)' : 'Mobile number (optional for this role; required for cashiers, servers and kitchen staff)'}
+          </span>
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" required={needsPhone} className={input} />
         </label>
         <label className="block">
           <span className="text-[11px] text-white/45">Role</span>

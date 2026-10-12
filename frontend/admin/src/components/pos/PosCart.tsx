@@ -1,17 +1,24 @@
 'use client'
 import { usePosStore } from '../../store/pos'
 import { fmtPkrWhole } from '../../lib/money'
+import { useCartQuote } from './tillApi'
 
 interface PosCartProps {
-  taxRate: number
+  conceptId: string | null
   onCheckout: () => void
 }
 
-export function PosCart({ taxRate, onCheckout }: PosCartProps) {
-  const { cart, removeItem, updateItemQty, updateItemNotes, discountCents, subtotalCents, totalCents } = usePosStore()
-  const sub = subtotalCents()
-  const total = totalCents(taxRate)
-  const tax = total - sub
+// The cart shows the food value and, when the API can quote a cart, the
+// server's bill for cash and card. It never works out GST itself (FOH-02):
+// the bill that is charged is the one the server returns at ring-up.
+export function PosCart({ conceptId, onCheckout }: PosCartProps) {
+  const { cart, removeItem, updateItemQty, updateItemNotes, discountCents, itemTotalCents, lines } = usePosStore()
+  const items = itemTotalCents()
+  const cartLines = lines()
+  const cashQuote = useCartQuote(conceptId, cartLines, discountCents, 'cash')
+  const cardQuote = useCartQuote(conceptId, cartLines, discountCents, 'card')
+  const cash = cashQuote.data ?? null
+  const card = cardQuote.data ?? null
 
   return (
     <div className="flex h-full flex-col">
@@ -84,11 +91,11 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
         )}
       </div>
 
-      {/* Totals */}
+      {/* Totals — food value here; GST and service charge are the server's */}
       <div className="border-t border-kds-border px-4 py-3 space-y-1">
         <div className="flex justify-between text-sm text-kds-subtext">
-          <span>Subtotal</span>
-          <span>{fmtPkrWhole(sub)}</span>
+          <span>Items</span>
+          <span>{fmtPkrWhole(items)}</span>
         </div>
         {discountCents > 0 && (
           <div className="flex justify-between text-sm text-kds-amber">
@@ -96,24 +103,53 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
             <span>−{fmtPkrWhole(discountCents)}</span>
           </div>
         )}
-        <div className="flex justify-between text-sm text-kds-subtext">
-          <span>Tax (GST {taxRate}%)</span>
-          <span>{fmtPkrWhole(tax)}</span>
-        </div>
-        <div className="flex justify-between font-bold text-kds-text text-base">
-          <span>Total</span>
-          <span className="text-kds-green">{fmtPkrWhole(total)}</span>
-        </div>
+        {cart.length > 0 && cash && (
+          <>
+            <div className="flex justify-between text-sm text-kds-subtext">
+              <span>GST, cash ({cash.taxRatePct}%)</span>
+              <span>{fmtPkrWhole(cash.taxCents)}</span>
+            </div>
+            {cash.serviceChargeCents > 0 && (
+              <div className="flex justify-between text-sm text-kds-subtext">
+                <span>Service charge</span>
+                <span>{fmtPkrWhole(cash.serviceChargeCents)}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-bold text-kds-text text-base">
+              <span>Total, cash</span>
+              <span className="text-kds-green">{fmtPkrWhole(cash.totalCents)}</span>
+            </div>
+            {card && (
+              <div className="flex justify-between text-sm text-kds-subtext">
+                <span>Total, card ({card.taxRatePct}% GST)</span>
+                <span>{fmtPkrWhole(card.totalCents)}</span>
+              </div>
+            )}
+          </>
+        )}
+        {cart.length > 0 && !cash && (
+          cashQuote.isError ? (
+            <p className="pt-1 text-xs font-semibold text-kds-amber">
+              {cashQuote.error instanceof Error ? cashQuote.error.message : 'The server could not price this order'}
+            </p>
+          ) : (
+            <p className="pt-1 text-xs text-kds-subtext">
+              {cashQuote.isFetching
+                ? 'Getting the bill from the server…'
+                : 'GST (cash or card rate) and any service charge are added by the server when you ring this up.'}
+            </p>
+          )
+        )}
       </div>
 
       {/* Checkout */}
       <div className="border-t border-kds-border p-4">
         <button
           onClick={onCheckout}
-          disabled={cart.length === 0}
+          disabled={cart.length === 0 || !conceptId}
           className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
         >
-          Charge {fmtPkrWhole(total)}
+          {cash ? `Charge ${fmtPkrWhole(cash.totalCents)}` : 'Charge'}
         </button>
       </div>
     </div>

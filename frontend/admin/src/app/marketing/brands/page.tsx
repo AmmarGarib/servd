@@ -58,13 +58,29 @@ interface Concept {
   invoiceLegalName: string | null
   invoiceAddress: string | null
   invoicePrefix: string | null
-  fbrPosId: number | null
-  srbPosId: number | null
+  // fbrPosId / srbPosId still exist on the brand (the ledger reads srbPosId),
+  // but their one editor is Dev → API → POS connector (/connectors/pos).
   // Surfaced by the backend in portfolio mode so the operator can tell which
   // company each brand belongs to without bouncing out of "All companies".
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
+  // Which form the caller gets (GET /concepts?view=brand). 'full' =
+  // management, the whole brand. 'marketing' = a 'brands' module holder
+  // (marketing, brand_manager): copy, artwork, colour and the brief only —
+  // the row carries no tax, legal, POS id or forecast fields at all.
+  brandEditorAccess?: 'full' | 'marketing'
 }
+
+/** The fields the marketing tier saves — the backend's
+ *  BRAND_MARKETING_FIELDS allow-list (concepts/routes.ts). Anything else in
+ *  the PATCH is refused whole (403 FIELD_NOT_ALLOWED). */
+const MARKETING_FIELDS = [
+  'description', 'heroTagline',
+  'logoUrl', 'wordmarkUrl', 'mascotUrl', 'primaryColor',
+  'conceptStatement', 'cuisine', 'heroProduct', 'anchoringExperience',
+  'targetCustomer', 'priceTier', 'daypartFocus', 'competitors',
+  'differentiator', 'brandVoice',
+] as const
 
 interface LocationRow {
   id: string
@@ -114,10 +130,12 @@ export default function BrandEditorPage() {
   const { data: tenants = [] } = useMyTenants()
   // includeInactive: this is the ONE brand editor, so it is also where a
   // retired brand (isActive=false) is seen and reactivated. Everywhere else
-  // in the admin retired brands are hidden.
+  // in the admin retired brands are hidden. view=brand: management gets the
+  // full rows, a 'brands' module holder (marketing, brand_manager) the
+  // editor's marketing rows (R2-UI-03 — plain /concepts is managers/till only).
   const { data: concepts = [], isLoading } = useQuery<Concept[]>({
-    queryKey: ['concepts', 'all'],
-    queryFn: () => api.get('/concepts?includeInactive=1'),
+    queryKey: ['concepts', 'brand-editor'],
+    queryFn: () => api.get('/concepts?view=brand&includeInactive=1'),
   })
 
   // /marketing/brands?id=<conceptId> opens that brand (the "new brand" flow
@@ -199,10 +217,12 @@ export default function BrandEditorPage() {
               </div>
             </button>
           ))}
-          <Link href="/onboarding"
-            className="block rounded-xl border border-dashed border-white/10 p-3 text-center text-xs text-white/45 hover:text-white hover:border-white/30">
-            + Add brand
-          </Link>
+          {!concepts.some((c) => c.brandEditorAccess === 'marketing') && (
+            <Link href="/onboarding"
+              className="block rounded-xl border border-dashed border-white/10 p-3 text-center text-xs text-white/45 hover:text-white hover:border-white/30">
+              + Add brand
+            </Link>
+          )}
         </aside>
 
         {/* Editor */}
@@ -224,6 +244,9 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const qc = useQueryClient()
   const [tab, setTab] = useState<TabKey>('identity')
   const palette = brandPalette(concept.slug)
+  // Marketing tier: copy, artwork, colour and brief are editable; name,
+  // status, contact, storefront switches and tax stay with management.
+  const marketingOnly = concept.brandEditorAccess === 'marketing'
 
   // Form state. The component is keyed on the brand id, so picking another
   // brand remounts it with fresh state — no re-sync effect needed.
@@ -264,8 +287,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [invoiceLegalName, setInvoiceLegalName] = useState(concept.invoiceLegalName ?? '')
   const [invoiceAddress, setInvoiceAddress] = useState(concept.invoiceAddress ?? '')
   const [invoicePrefix, setInvoicePrefix] = useState(concept.invoicePrefix ?? '')
-  const [fbrPosId, setFbrPosId] = useState(concept.fbrPosId !== null ? String(concept.fbrPosId) : '')
-  const [srbPosId, setSrbPosId] = useState(concept.srbPosId != null ? String(concept.srbPosId) : '')
 
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [saveError, setSaveError] = useState('')
@@ -278,8 +299,29 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
     return Number.isFinite(n) ? n : fallback
   }
 
+  const marketingBody = () => {
+    const body: Record<string, unknown> = {
+      description: description || null, logoUrl: logoUrl || null,
+      primaryColor: primaryColor || null,
+      conceptStatement: conceptStatement || null,
+      cuisine: cuisine || null,
+      priceTier: priceTier || null,
+      heroProduct: heroProduct || null,
+      anchoringExperience: anchoringExperience || null,
+      targetCustomer: targetCustomer || null,
+      differentiator: differentiator || null,
+      brandVoice: brandVoice || null,
+      daypartFocus,
+      competitors: competitors.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
+      heroTagline: heroTagline || null,
+      wordmarkUrl: wordmarkUrl || null, mascotUrl: mascotUrl || null,
+    }
+    // Belt and braces: never send a key outside the allow-list.
+    return Object.fromEntries(Object.entries(body).filter(([k]) => (MARKETING_FIELDS as readonly string[]).includes(k)))
+  }
+
   const save = useMutation({
-    mutationFn: () => api.patch(`/concepts/${concept.id}`, {
+    mutationFn: () => marketingOnly ? api.patch(`/concepts/${concept.id}`, marketingBody()) : api.patch(`/concepts/${concept.id}`, {
       name, description: description || null, logoUrl: logoUrl || null,
       primaryColor: primaryColor || null, isActive,
       phone: phone.trim() || null,
@@ -307,8 +349,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       strn: strn || null, ntn: ntn || null, province: province || null,
       invoiceLegalName: invoiceLegalName || null, invoiceAddress: invoiceAddress || null,
       invoicePrefix: invoicePrefix || null,
-      fbrPosId: fbrPosId ? parseInt(fbrPosId, 10) : null,
-      srbPosId: srbPosId ? parseInt(srbPosId, 10) : null,
+      // POS ids are NOT sent from here — the POS connector page owns them.
     }),
     onSuccess: () => {
       setSavedAt(Date.now()); setSaveError('')
@@ -375,14 +416,16 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => uploadBrandImage(e, setLogoUrl)
 
-  const TABS: Array<{ key: TabKey; label: string; emoji: string }> = [
+  const ALL_TABS: Array<{ key: TabKey; label: string; emoji: string }> = [
     { key: 'identity',   label: 'Identity',   emoji: '🏷' },
     { key: 'contact',    label: 'Contact',    emoji: '📞' },
     { key: 'brief',      label: 'Brief',      emoji: '🧭' },
     { key: 'storefront', label: 'Storefront', emoji: '🛍' },
     { key: 'delivery',   label: 'Kitchen & delivery', emoji: '📍' },
-    { key: 'tax',        label: 'Tax & FBR',  emoji: '🧾' },
+    { key: 'tax',        label: 'Tax registration', emoji: '🧾' },
   ]
+  // The marketing tier never sees the tax tab (the row has no tax fields).
+  const TABS = marketingOnly ? ALL_TABS.filter((t) => t.key !== 'tax') : ALL_TABS
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -409,6 +452,12 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
         <p className="text-xs text-primary-ink">✓ Saved</p>
       )}
       {saveError && <p className="text-xs text-s-red">{saveError}</p>}
+      {marketingOnly && (
+        <p className="text-xs text-white/50">
+          You can edit the description, tagline, artwork, colour and brand brief. The name, status, contact details,
+          storefront switches and tax registration are changed by management.
+        </p>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-white/[0.05] overflow-x-auto">
@@ -453,8 +502,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               {/* Name + description */}
               <div className="sm:col-span-2 space-y-3">
                 <Field label="Display name *">
-                  <input value={name} onChange={(e) => setName(e.target.value)}
-                    className="s-input w-full" />
+                  <input value={name} onChange={(e) => setName(e.target.value)} disabled={marketingOnly}
+                    className="s-input w-full disabled:opacity-60" />
                 </Field>
                 <Field label="Description" hint="Shown in page titles, JSON-LD and cross-brand cards on the storefront.">
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
@@ -480,7 +529,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                   </Field>
                   <Field label="Status" hint="Off = retired: hidden from the POS, pickers and the storefront. History is kept.">
                     <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
-                      <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
+                      <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} disabled={marketingOnly} className="accent-primary" />
                       Brand is active
                     </label>
                   </Field>
@@ -489,7 +538,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             </div>
           </Section>
 
-          <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">
+          {!marketingOnly && <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">
             {confirmDelete ? (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-amber-700">Delete <span className="font-bold">{concept.name}</span>?</span>
@@ -507,14 +556,14 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 Delete brand
               </button>
             )}
-          </Section>
+          </Section>}
         </div>
       )}
 
       {/* ── Contact ──────────────────────────────────────────────────────── */}
       {tab === 'contact' && (
         <Section title="Public contact" subtitle="Per brand. Feeds schema.org rich results, the microsite footer, the WhatsApp buttons and /press — no deploy needed.">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <fieldset disabled={marketingOnly} className="grid grid-cols-1 sm:grid-cols-2 gap-3 disabled:opacity-60">
             <Field label="Phone (E.164)" hint="The number Google lists. Keep it identical to the Google Business Profile.">
               <input value={phone} onChange={(e) => setPhone(e.target.value)}
                 placeholder="+923001234567" className="s-input w-full font-mono text-sm" />
@@ -531,7 +580,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               <input value={addressLocality} onChange={(e) => setAddressLocality(e.target.value)}
                 className="s-input w-full" />
             </Field>
-          </div>
+          </fieldset>
           <p className="text-[11px] text-white/40">
             Street address and map pin belong to the kitchen, not the brand — see the Kitchen &amp; delivery tab.
             Social links (Instagram, TikTok, Facebook) are set on this brand&apos;s <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink hover:underline">footer page</Link> in the storefront hub.
@@ -604,6 +653,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 <input value={heroTagline} onChange={(e) => setHeroTagline(e.target.value)} maxLength={120}
                   className="s-input w-full" />
               </Field>
+              <fieldset disabled={marketingOnly} className="space-y-4 disabled:opacity-60">
               <Field label="Storefront visibility">
                 <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
                   <input type="checkbox" checked={storefrontVisible} onChange={(e) => setStorefrontVisible(e.target.checked)} className="accent-primary" />
@@ -618,6 +668,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 </label>
                 <p className="text-[10px] text-white/35 mt-1">Uncheck for takeaway-only / ghost-kitchen brands. Hides the "Book a table" CTA on the storefront and brand microsite. Staff can still take phone bookings via the admin.</p>
               </Field>
+              </fieldset>
             </div>
           </Section>
           <Section
@@ -667,11 +718,11 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       )}
 
       {/* ── Kitchen & delivery (read-only here) ──────────────────────────── */}
-      {tab === 'delivery' && <KitchenAndDelivery concept={concept} />}
+      {tab === 'delivery' && <KitchenAndDelivery concept={concept} showZones={!marketingOnly} />}
 
-      {/* ── Tax & FBR ────────────────────────────────────────────────────── */}
-      {tab === 'tax' && (
-        <Section title="Tax & FBR invoicing" subtitle="Required for Tier-1 businesses under SRO 1307(I)/2022">
+      {/* ── Tax registration ─────────────────────────────────────────────── */}
+      {tab === 'tax' && !marketingOnly && (
+        <Section title="Tax registration" subtitle="GST rates and the details printed on tax invoices. Filing goes through the fiscal POS (Dev → API → POS connector).">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="GST — cash tender %" hint="Charged on cash and cash-on-delivery sales.">
               <input value={taxRateCash} onChange={(e) => setTaxRateCash(e.target.value)}
@@ -692,7 +743,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 placeholder="1234567-8" className="s-input w-full font-mono text-sm" />
             </Field>
           </div>
-          <Field label="Province" hint="Used for provincial sales tax + FBR routing.">
+          <Field label="Province" hint="Required for Sindh tax routing (the ledger books SRB tax by province).">
             <select value={province} onChange={(e) => setProvince(e.target.value)}
               className="s-input w-full max-w-md">
               <option value="">Select province…</option>
@@ -708,29 +759,22 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             <textarea value={invoiceAddress} onChange={(e) => setInvoiceAddress(e.target.value)} rows={2}
               className="s-input w-full resize-none" />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Invoice prefix" hint="Brand-scoped sequence prefix, e.g. STK-">
-              <input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value)}
-                placeholder="STK-" maxLength={10}
-                className="s-input w-full font-mono text-sm" />
-            </Field>
-            <Field label="FBR POS ID" hint="POSID assigned by FBR PRAL. Required for real-time submission.">
-              <input value={fbrPosId} onChange={(e) => setFbrPosId(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="123456" className="s-input w-full font-mono text-sm" />
-            </Field>
-            <Field label="SRB POS ID" hint="POSID assigned by the Sindh Revenue Board. Sindh restaurants only.">
-              <input value={srbPosId} onChange={(e) => setSrbPosId(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="123456" className="s-input w-full font-mono text-sm" />
-            </Field>
-          </div>
+          <Field label="Invoice prefix" hint="Brand-scoped sequence prefix, e.g. STK-">
+            <input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value)}
+              placeholder="STK-" maxLength={10}
+              className="s-input w-full max-w-[180px] font-mono text-sm" />
+          </Field>
+          <p className="text-xs text-s-muted">
+            POS IDs (FBR / SRB) are set in Dev → API →{' '}
+            <Link href="/connectors/pos" className="text-primary-ink underline">POS connector</Link>.
+          </p>
           <Field label="Forecast portions / month" hint="Steady-state portions — the denominator for opex per portion on recipes and menu engineering.">
             <input value={forecastPortions} onChange={(e) => setForecastPortions(e.target.value.replace(/[^0-9]/g, ''))}
               className="s-input w-full max-w-[180px] font-mono text-sm" />
           </Field>
           {(!strn || !ntn || !invoiceLegalName) && (
-            <div className="rounded-xl p-3 text-xs text-amber-700"
-              style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
-              ⚠ FBR submission requires STRN, NTN, and Legal name. Until those are filled, completed orders skip the invoicing worker.
+            <div className="rounded-xl p-3 text-xs text-s-amber bg-s-amber-dim border border-s-amber/30">
+              Tax invoices need the STRN, NTN and legal name. The fiscal POS files with whatever is set here, so fill them before the company goes live.
             </div>
           )}
         </Section>
@@ -746,14 +790,17 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
  * and coverage is the delivery-zone bands (decision 19: beyond the last zone,
  * delivery is refused).
  */
-function KitchenAndDelivery({ concept }: { concept: Concept }) {
+function KitchenAndDelivery({ concept, showZones }: { concept: Concept; showZones: boolean }) {
   const { data: locations = [], isLoading: locLoading } = useQuery<LocationRow[]>({
     queryKey: ['locations'],
     queryFn: () => api.get('/locations'),
   })
+  // Delivery zones are a management read (GET /setup/delivery-zones); the
+  // marketing tier is told where they live instead of getting a 403 toast.
   const { data: zones = [], isLoading: zoneLoading } = useQuery<ZoneRow[]>({
     queryKey: ['delivery-zones'],
     queryFn: () => api.get('/setup/delivery-zones'),
+    enabled: showZones,
   })
   const mine = locations
     .filter((l) => l.concepts.some((c) => c.conceptId === concept.id))
@@ -797,7 +844,9 @@ function KitchenAndDelivery({ concept }: { concept: Concept }) {
       </Section>
 
       <Section title="Delivery coverage" subtitle="Delivery zones decide the fee, the minimum order and how far this brand delivers. Beyond the last zone, delivery is refused.">
-        {zoneLoading ? <p className="text-xs text-white/40">Loading…</p> : myZones.length === 0 ? (
+        {!showZones ? (
+          <p className="text-xs text-white/45">Delivery zones are set by management on Configuration → Delivery zones.</p>
+        ) : zoneLoading ? <p className="text-xs text-white/40">Loading…</p> : myZones.length === 0 ? (
           <p className="text-xs text-amber-700">No active delivery zone covers this brand — the storefront refuses delivery orders for it (pickup still works).</p>
         ) : (
           <div className="space-y-1.5">
@@ -817,9 +866,11 @@ function KitchenAndDelivery({ concept }: { concept: Concept }) {
             )}
           </div>
         )}
-        <Link href="/configuration/delivery-zones" className="inline-block text-xs font-bold text-primary-ink hover:underline">
-          Edit delivery zones →
-        </Link>
+        {showZones && (
+          <Link href="/configuration/delivery-zones" className="inline-block text-xs font-bold text-primary-ink hover:underline">
+            Edit delivery zones →
+          </Link>
+        )}
       </Section>
     </div>
   )

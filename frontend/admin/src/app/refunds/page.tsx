@@ -5,15 +5,25 @@
 // refund (a sold order — any amount up to what is still refundable, caps and
 // a manager PIN above your limit, cash out of the drawer open now), or the
 // one staff cancel, /orders/:id/cancel (not sold yet). The refund's own
-// journal entry, the SRB return and — once refunded in full — the restores
-// and the credit note all happen server-side.
+// journal entry, the fiscal refund document (filed through the POS
+// connector) and — once refunded in full — the restores and the credit note
+// all happen server-side. A refund goes back only on a tender the order was
+// paid with; a card taken on the card machine goes back on the machine
+// (RefundOptions).
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api, ordersApi } from '../../lib/api'
+import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
-import { refundThroughEngine } from './refundEngine'
+import type { RefundPayment } from './refundEngine'
+import type { TerminalChargeView } from '../../components/pos/tillApi'
+import {
+  RefundOptions, defaultRefundChoice, performRefund, refundChoiceReady, refundErrorMessage, refundOutcomeText, useRefundPolicy,
+  type RefundChoice,
+} from './RefundOptions'
+import { approvalErrorMessage, cancelOrderWithApproval, keepFollowingTerminalRefund, terminalRefundFinal, terminalRefundText } from './refundEngine'
+import { useIsManager } from '../../components/pos/managerRole'
 
 interface Order {
   id: string
@@ -25,6 +35,7 @@ interface Order {
   completedAt: string | null
   concept: { name: string; slug: string }
   items: Array<{ name: string; quantity: number }>
+  payments: RefundPayment[]
 }
 
 const REASON_PRESETS = [
@@ -43,8 +54,44 @@ export default function RefundsPage() {
   const [reason, setReason] = useState('')
   const [mode, setMode] = useState<'refund' | 'cancel'>('refund')
   const [amount, setAmount] = useState('')
-  const [method, setMethod] = useState<'' | 'cash' | 'card'>('')
+  const [choice, setChoice] = useState<RefundChoice>({ method: '', viaMachine: false, photoUrl: null })
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  const policy = useRefundPolicy()
+  // Cancelling a rung-up order needs a manager (spec §17.4): a non-manager enters a manager's PIN.
+  const isManager = useIsManager()
+  const [cancelPin, setCancelPin] = useState('')
+  // A card-machine refund that had not answered when the engine stopped
+  // waiting: still in flight — keep following it, keep the form, and never
+  // offer a second refund beside it (spec §7.3).
+  const [following, setFollowing] = useState<{ orderId: string; paymentId: string; charge: TerminalChargeView } | null>(null)
+
+  const selectedRef = useRef<string | null>(null)
+  selectedRef.current = selectedId
+
+  function resetForm() {
+    setSelectedId(null); setReason(''); setAmount(''); setChoice({ method: '', viaMachine: false, photoUrl: null }); setCancelPin('')
+  }
+
+  useEffect(() => {
+    if (!following) return
+    let cancelled = false
+    void (async () => {
+      let c = following.charge
+      while (!cancelled && !terminalRefundFinal(c)) {
+        c = await keepFollowingTerminalRefund(c, following.paymentId, (p) => {
+          if (!cancelled && !terminalRefundFinal(p)) setFeedback({ ok: false, msg: stillInFlight(p) })
+        }, 120_000, () => cancelled)
+      }
+      if (cancelled) return
+      const t = terminalRefundText(c)
+      setFeedback({ ok: t.ok, msg: t.text })
+      setFollowing(null)
+      if (c.status === 'recorded' && selectedRef.current === following.orderId) resetForm()
+      void qc.invalidateQueries({ queryKey: ['refundable-orders'] })
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [following?.charge.id])
 
   const { data, isLoading } = useQuery({
     queryKey: ['refundable-orders'],
@@ -53,23 +100,31 @@ export default function RefundsPage() {
 
   const refund = useMutation({
     mutationFn: async (order: Order) => {
-      if (mode === 'cancel') { await ordersApi.cancel(order.id, reason); return null }
+      if (mode === 'cancel') { await cancelOrderWithApproval(order.id, reason.trim(), isManager ? undefined : cancelPin.trim()); return null }
       const amountCents = amount.trim() ? Math.round(parseFloat(amount) * 100) : order.totalCents
-      return refundThroughEngine(order.id, { amountCents, reason: reason.trim(), ...(method && { method }) })
+      const outcome = await performRefund(order.id, order.payments, { amountCents, reason: reason.trim(), choice }, (c) => {
+        const t = terminalRefundText(c)
+        setFeedback({ ok: t.ok, msg: t.text })
+      })
+      return { orderId: order.id, outcome }
     },
     onSuccess: (r) => {
-      setFeedback({
-        ok: true,
-        msg: mode === 'cancel'
-          ? 'Order cancelled — wallet, gift card and points given back.'
-          : r?.orderRefunded
-            ? `Refunded in full (${fmtPkr(r.amountCents * -1)}) and booked. Credit note and customer restores issued.`
-            : `Refunded ${fmtPkr((r?.amountCents ?? 0) * -1)} and booked. The rest of the order still stands.`,
-      })
-      setSelectedId(null); setReason(''); setAmount(''); setMethod('')
+      if (r && r.outcome.kind === 'machine' && !terminalRefundFinal(r.outcome.charge)) {
+        // Not answered yet: the money may still move. Keep the form and keep following.
+        setFeedback({ ok: false, msg: stillInFlight(r.outcome.charge) })
+        setFollowing({ orderId: r.orderId, paymentId: r.outcome.paymentId, charge: r.outcome.charge })
+        return
+      }
+      if (mode === 'cancel' || !r) {
+        setFeedback({ ok: true, msg: 'Order cancelled — wallet, gift card and points given back.' })
+      } else {
+        const t = refundOutcomeText(r.outcome)
+        setFeedback({ ok: t.ok, msg: t.text })
+      }
+      resetForm()
       void qc.invalidateQueries({ queryKey: ['refundable-orders'] })
     },
-    onError: (err: { message?: string }) => setFeedback({ ok: false, msg: err.message ?? 'Refund failed' }),
+    onError: (err: unknown) => setFeedback({ ok: false, msg: mode === 'cancel' ? approvalErrorMessage(err, 'cancel') : refundErrorMessage(err) }),
   })
 
   const orders = (data?.data ?? []).filter((o) => !['refunded', 'cancelled'].includes(o.status))
@@ -118,7 +173,11 @@ export default function RefundsPage() {
                   <tr
                     key={o.id}
                     className={`border-t border-s-border cursor-pointer ${selectedId === o.id ? 'bg-s-bg-soft' : 'hover:bg-s-bg-soft'}`}
-                    onClick={() => { setSelectedId(o.id); setFeedback(null) }}
+                    onClick={() => {
+                      setSelectedId(o.id)
+                      if (!following) setFeedback(null)
+                      setChoice(defaultRefundChoice(o.payments ?? [], o.source))
+                    }}
                   >
                     <td className="px-4 py-2">
                       <p className="text-s-text">{o.customerName ?? 'Walk-in'}</p>
@@ -164,11 +223,11 @@ export default function RefundsPage() {
                   <label className="text-xs font-semibold text-s-muted">Mode</label>
                   <div className="flex gap-2">
                     <button onClick={() => setMode('refund')} aria-pressed={mode === 'refund'}
-                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'refund' ? 'bg-s-red text-[#fff] border-s-red' : 'border-s-border text-s-text bg-s-surface'}`}>
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'refund' ? 'bg-s-red text-bone border-s-red' : 'border-s-border text-s-text bg-s-surface'}`}>
                       Refund (paid)
                     </button>
                     <button onClick={() => setMode('cancel')} aria-pressed={mode === 'cancel'}
-                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'cancel' ? 'bg-s-amber text-[#fff] border-s-amber' : 'border-s-border text-s-text bg-s-surface'}`}>
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold border ${mode === 'cancel' ? 'bg-s-amber text-bone border-s-amber' : 'border-s-border text-s-text bg-s-surface'}`}>
                       Cancel (unpaid)
                     </button>
                   </div>
@@ -178,7 +237,7 @@ export default function RefundsPage() {
                   <p className="text-xs text-s-amber">This order has not been sold yet — cancel it instead.</p>
                 )}
                 {mode === 'refund' && (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-2">
                     <div className="space-y-1">
                       <label htmlFor="refund-amount" className="text-xs font-semibold text-s-muted">Amount (PKR)</label>
                       <input id="refund-amount" type="number" min="1" step="1" inputMode="decimal"
@@ -186,15 +245,22 @@ export default function RefundsPage() {
                         placeholder={(selectedOrder.totalCents / 100).toFixed(0)}
                         className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text" />
                     </div>
-                    <div className="space-y-1">
-                      <label htmlFor="refund-method" className="text-xs font-semibold text-s-muted">Give back as</label>
-                      <select id="refund-method" value={method} onChange={(e) => setMethod(e.target.value as '' | 'cash' | 'card')}
-                        className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text">
-                        <option value="">Same as paid</option>
-                        <option value="cash">Cash (from my open drawer)</option>
-                        <option value="card">Card reversal</option>
-                      </select>
-                    </div>
+                    <RefundOptions
+                      payments={selectedOrder.payments ?? []}
+                      source={selectedOrder.source}
+                      amountCents={amount.trim() ? Math.round(parseFloat(amount) * 100) || 0 : selectedOrder.totalCents}
+                      value={choice}
+                      onChange={setChoice}
+                    />
+                  </div>
+                )}
+
+                {mode === 'cancel' && !isManager && (
+                  <div className="space-y-1">
+                    <label htmlFor="cancel-pin" className="text-xs font-semibold text-s-muted">Manager PIN (a manager approves every cancel)</label>
+                    <input id="cancel-pin" type="password" inputMode="numeric" autoComplete="off"
+                      value={cancelPin} onChange={(e) => setCancelPin(e.target.value)}
+                      className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text" />
                   </div>
                 )}
 
@@ -219,10 +285,14 @@ export default function RefundsPage() {
 
                 <button
                   onClick={() => refund.mutate(selectedOrder)}
-                  disabled={refund.isPending || reason.trim().length < 3 || (mode === 'refund' && selectedOrder.status !== 'completed')}
-                  className="w-full py-2 rounded font-bold text-sm bg-s-red text-[#fff] disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={
+                    refund.isPending || following?.orderId === selectedOrder.id || reason.trim().length < 3 ||
+                    (mode === 'cancel' && !isManager && !cancelPin.trim()) ||
+                    (mode === 'refund' && (selectedOrder.status !== 'completed' || !refundChoiceReady(selectedOrder.payments ?? [], choice, !!policy.data?.requirePhotoEvidence, selectedOrder.source)))
+                  }
+                  className="w-full py-2 rounded font-bold text-sm bg-s-red text-bone disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {refund.isPending ? 'Processing…' : `${mode === 'cancel' ? 'Cancel' : 'Refund'} this order`}
+                  {refund.isPending ? 'Processing…' : following?.orderId === selectedOrder.id ? 'Refund in flight on the card machine…' : `${mode === 'cancel' ? 'Cancel' : 'Refund'} this order`}
                 </button>
                 <p className="text-[10px] text-s-dim">
                   {mode === 'refund'
@@ -240,4 +310,9 @@ export default function RefundsPage() {
       </div>
     </div>
   )
+}
+
+/** The line shown while a card-machine refund has not answered: never refund again beside it. */
+function stillInFlight(c: TerminalChargeView): string {
+  return `Refund of ${fmtPkr(c.amountCents)} is still in flight on ${c.terminalLabel} — do not refund again. servd keeps following it here (also under Dev → API → POS connector → Card charges).`
 }

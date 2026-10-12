@@ -26,8 +26,8 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: 'The forecast uses 28 days of completed-order history, grouped by day-of-week, then overlays weather (rainy = +20%, hot = +5%). If you\'ve been live less than 2 weeks, confidence will be "low" and numbers are directional only. Two factors not yet modelled: month-end paydays and Ramadan/holiday spikes.',
   },
   {
-    q: 'Where do I configure tax / FBR?',
-    a: 'Configuration → Tax & FBR. Per-item override is set in Menu Editor → Edit item → Tax Classification (standard / reduced / zero / exempt / custom). Submission to FBR runs every 5 minutes via a background worker.',
+    q: 'Where do I configure tax / FBR / SRB?',
+    a: 'Cash and card GST rates, STRN, NTN and the invoice legal name are per brand in Marketing → Brands → Tax registration. Filing goes through the fiscal POS: Dev → API → POS connector holds the driver, the brand POS IDs, go-live and every submission. Each completed (full & final) sale is sent to the fiscal POS through the POS connector; a pre-bill is never sent. Anything not filed yet stays visible on that page and is retried automatically.',
   },
   {
     q: 'Can I run the KDS in Urdu?',

@@ -12,7 +12,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
+import { canOpenPath } from '../../../lib/moduleCatalog'
+import { usePermissions } from '../../../hooks/useCan'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftInput { inventoryItemId: string; qtyDrawn: number; unit: string }
@@ -27,7 +29,22 @@ const AD_HOC = '__ad_hoc__'
 
 export default function PrepBatchPage() {
   const qc = useQueryClient()
-  const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory') })
+  // This page is reached from Inventory (inventory) and from the par sheet
+  // (par_sheet — kitchen, expediter): link back only to the pages this login
+  // can open.
+  const { data: me } = usePermissions()
+  const canOpen = (path: string) => !!me && canOpenPath(path, me.role, me.modules ?? [])
+  // The stock list needs the inventory module; kitchen and expediter open this
+  // page from the par sheet (par_sheet) without it, so GET /inventory 403s for
+  // them — no toast, no retry. Their batches still work: the sub-recipe fills
+  // the ingredients, and the ingredient list falls back to the ones the
+  // company's sub-recipes draw (below).
+  const { data: items = [] } = useQuery<InventoryItem[]>({
+    queryKey: ['inventory'],
+    queryFn: () => api.get('/inventory'),
+    meta: { background: true },
+    retry: (count, err) => !(err instanceof ApiError && err.status === 403) && count < 1,
+  })
   const { data: preps = [] } = useQuery<PrepOption[]>({ queryKey: ['par-sheet', 'preps'], queryFn: () => api.get('/par-sheet/preps') })
   const { data: batches = [] } = useQuery<PrepBatch[]>({ queryKey: ['prep-batches'], queryFn: () => api.get('/crosschecks/prep-batches'), refetchInterval: 30_000 })
 
@@ -41,7 +58,19 @@ export default function PrepBatchPage() {
   const [notes, setNotes] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
 
-  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items])
+  // Ingredient choices: the stock list when this login can read it, else the
+  // ingredients of the company's sub-recipes (name + stock unit, no on-hand).
+  const ingredients = useMemo<Array<{ id: string; label: string; unit: string }>>(() => {
+    if (items.length > 0) return items.map((i) => ({ id: i.id, label: `${i.name} (${i.currentStock} ${i.unit})`, unit: i.unit }))
+    const seen = new Map<string, { id: string; label: string; unit: string }>()
+    for (const p of preps) {
+      for (const i of p.inputs) {
+        if (i.inventoryItemId && !seen.has(i.inventoryItemId)) seen.set(i.inventoryItemId, { id: i.inventoryItemId, label: i.name, unit: i.unit })
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
+  }, [items, preps])
+  const itemById = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients])
   const prep = preps.find((p) => p.id === recipeId)
   const adHoc = recipeId === AD_HOC
 
@@ -89,7 +118,7 @@ export default function PrepBatchPage() {
   })
 
   function addInput() {
-    const first = items[0]
+    const first = ingredients[0]
     setInputs([...inputs, { inventoryItemId: first?.id ?? '', qtyDrawn: 0, unit: first?.unit ?? '' }])
   }
   function patchInput(i: number, p: Partial<DraftInput>) { setInputs(inputs.map((x, idx) => idx === i ? { ...x, ...p } : x)) }
@@ -102,8 +131,8 @@ export default function PrepBatchPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex gap-4 text-xs">
-          <Link href="/inventory" className="text-white/40 hover:text-white/70">← Inventory</Link>
-          <Link href="/par-sheet" className="text-white/40 hover:text-white/70">Par sheet</Link>
+          {canOpen('/inventory') && <Link href="/inventory" className="text-white/40 hover:text-white/70">← Inventory</Link>}
+          {canOpen('/par-sheet') && <Link href="/par-sheet" className="text-white/40 hover:text-white/70">Par sheet</Link>}
         </div>
         <h1 className="text-2xl font-black text-white/90 mt-2">🥣 Prep batch log</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
@@ -193,7 +222,7 @@ export default function PrepBatchPage() {
                 onChange={(e) => patchInput(i, { inventoryItemId: e.target.value, unit: itemById.get(e.target.value)?.unit ?? '' })}
                 className={fieldCls}>
                 <option value="">— ingredient —</option>
-                {items.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.currentStock} {it.unit})</option>)}
+                {ingredients.map((it) => <option key={it.id} value={it.id}>{it.label}</option>)}
               </select>
               <input type="number" step="0.001" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
               {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}

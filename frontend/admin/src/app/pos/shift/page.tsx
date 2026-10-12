@@ -7,13 +7,28 @@ import { useAuthStore } from '../../../store/auth'
 import { useCurrentShift } from '../../../hooks/useCurrentShift'
 import { fmtPkrWhole } from '../../../lib/money'
 import { VendorPayoutPanel, CodPayInPanel } from './DrawerPanels'
+import { OpenTicketsCloseConfirm } from '../../../components/pos/OpenTicketsCloseConfirm'
+import {
+  closeDrawer, fetchDrawerOpenTickets, isOpenTicketsError, tillErrorMessage,
+  zReportLines, type DrawerOpenTickets, type ZReportExtras, type ZTone,
+} from '../../../components/pos/tillApi'
+
+type ClosedZReport = ZReport & ZReportExtras
+
+/** The close was refused (409 OPEN_TICKETS): the tickets holding it. */
+interface CloseBlock {
+  message: string
+  openTickets: DrawerOpenTickets | null
+  loading: boolean
+}
 
 export default function ShiftPage() {
   const { shiftId, setShiftId } = usePosStore()
   const user = useAuthStore((s) => s.user)
   const [openingFloat, setOpeningFloat] = useState('')
   const [closingFloat, setClosingFloat] = useState('')
-  const [zReport, setZReport] = useState<ZReport | null>(null)
+  const [zReport, setZReport] = useState<ClosedZReport | null>(null)
+  const [closeBlock, setCloseBlock] = useState<CloseBlock | null>(null)
 
   // The server says which drawer this user is on (hooks/useCurrentShift).
   const current = useCurrentShift()
@@ -23,16 +38,35 @@ export default function ShiftPage() {
     onSuccess: (shift) => { setShiftId(shift.id); void current.refetch() },
   })
 
+  // TILL-R1: the close names the unpaid tickets still on the drawer (409
+  // OPEN_TICKETS) instead of failing silently; "Close anyway" resends with
+  // confirmOpenTickets.
   const closeMutation = useMutation({
-    mutationFn: () => posApi.closeShift(shiftId!, Math.round(parseFloat(closingFloat || '0') * 100)),
+    mutationFn: (confirmOpenTickets: boolean) =>
+      closeDrawer<ClosedZReport>(shiftId!, Math.round(parseFloat(closingFloat || '0') * 100), { confirmOpenTickets }),
     onSuccess: (report) => {
+      setCloseBlock(null)
       setZReport(report)
       setShiftId(null)
       void current.refetch()
     },
-    // Closed elsewhere already: drop the stale id and pick up the truth.
-    onError: () => { void current.refetch() },
+    onError: (e) => {
+      if (isOpenTicketsError(e) && shiftId) {
+        const id = shiftId
+        setCloseBlock({ message: (e as Error).message, openTickets: null, loading: true })
+        fetchDrawerOpenTickets(id)
+          .then((openTickets) => setCloseBlock((b) => b && { ...b, openTickets, loading: false }))
+          .catch(() => setCloseBlock((b) => b && { ...b, loading: false }))
+        return
+      }
+      // Closed elsewhere already (SHIFT_CLOSED): drop the stale id and pick
+      // up the truth. Any other error is shown under the button.
+      void current.refetch()
+    },
   })
+  const closeError = closeMutation.isError && !isOpenTicketsError(closeMutation.error)
+    ? tillErrorMessage(closeMutation.error, 'Could not close the shift — try again')
+    : null
 
   if (zReport) {
     return <ZReportView report={zReport} onClose={() => setZReport(null)} />
@@ -95,13 +129,29 @@ export default function ShiftPage() {
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-xl font-bold text-kds-text"
               />
             </div>
-            <button
-              onClick={() => closeMutation.mutate()}
-              disabled={closeMutation.isPending || !closingFloat}
-              className="w-full rounded-xl bg-kds-red py-4 font-bold text-white disabled:opacity-50"
-            >
-              {closeMutation.isPending ? 'Closing…' : 'Close Shift & Print Z-Report'}
-            </button>
+            {closeBlock ? (
+              <OpenTicketsCloseConfirm
+                tone="till"
+                openTickets={closeBlock.openTickets}
+                message={closeBlock.message}
+                loading={closeBlock.loading}
+                confirming={closeMutation.isPending}
+                error={closeError}
+                onBack={() => { setCloseBlock(null); closeMutation.reset() }}
+                onConfirm={() => closeMutation.mutate(true)}
+              />
+            ) : (
+              <>
+                <button
+                  onClick={() => closeMutation.mutate(false)}
+                  disabled={closeMutation.isPending || !closingFloat}
+                  className="w-full rounded-xl bg-kds-red py-4 font-bold text-white disabled:opacity-50"
+                >
+                  {closeMutation.isPending ? 'Closing…' : 'Close Shift & Print Z-Report'}
+                </button>
+                {closeError && <p className="text-sm text-kds-red" role="alert">{closeError}</p>}
+              </>
+            )}
           </div>
         )}
 
@@ -116,23 +166,19 @@ export default function ShiftPage() {
   )
 }
 
-function ZReportView({ report, onClose }: { report: ZReport; onClose: () => void }) {
-  const rows: Array<[string, string, string?]> = [
-    ['Cash Sales', fmtPkrWhole(report.cashSales), 'text-kds-text'],
-    ['Card Sales', fmtPkrWhole(report.cardSales), 'text-kds-text'],
-    ['Wallet Sales', fmtPkrWhole(report.walletSales), 'text-kds-text'],
-    ['Discounts', fmtPkrWhole(report.totalDiscounts), 'text-kds-amber'],
-    ['Tax (GST)', fmtPkrWhole(report.totalTax), 'text-kds-subtext'],
-    ['Total Sales', fmtPkrWhole(report.totalSales), 'text-kds-green'],
-    ['Orders', String(report.totalOrders)],
-    ['Expected Cash', fmtPkrWhole(report.expectedCashInDrawer)],
-    ['Actual Cash', fmtPkrWhole(report.actualCashInDrawer ?? 0)],
-    ['Variance', fmtPkrWhole(Math.abs(report.cashVariance ?? 0)),
-      (report.cashVariance ?? 0) === 0 ? 'text-kds-green' : 'text-kds-red'],
-  ]
+function ZReportView({ report, onClose }: { report: ClosedZReport; onClose: () => void }) {
+  // R2-UI-05: takings, money taken on cancelled tickets, refunds, net sales
+  // and a signed short/over variance — the rows come from zReportLines so the
+  // screen reconciles the way /reconciliation and the shift email do.
+  const lines = zReportLines(report, fmtPkrWhole)
+  const toneClass: Record<ZTone, string> = {
+    text: 'text-kds-text', subtext: 'text-kds-subtext', green: 'text-kds-green', amber: 'text-kds-amber', red: 'text-kds-red',
+  }
+  const open = report.openTickets
+  const refundDue = report.refundDueCents ?? 0
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-kds-bg p-6">
+    <div className="erp-kitchen-dark flex min-h-screen flex-col items-center justify-center bg-kds-bg p-6">
       <div className="w-full max-w-md rounded-2xl bg-kds-card p-6 space-y-4">
         <div className="text-center">
           <h1 className="text-2xl font-black text-kds-text">Z-Report</h1>
@@ -140,13 +186,38 @@ function ZReportView({ report, onClose }: { report: ZReport; onClose: () => void
         </div>
 
         <div className="divide-y divide-kds-border">
-          {rows.map(([label, value, colorClass]) => (
-            <div key={label} className="flex justify-between py-2">
-              <span className="text-kds-subtext">{label}</span>
-              <span className={`font-bold ${colorClass ?? 'text-kds-text'}`}>{value}</span>
+          {lines.map((l) => (
+            <div key={l.label} className="flex justify-between gap-3 py-2">
+              <span className="text-kds-subtext">{l.label}</span>
+              <span className={`font-bold ${toneClass[l.tone]}`}>{l.value}</span>
             </div>
           ))}
         </div>
+
+        {refundDue > 0 && (
+          <div className="rounded-lg border border-kds-amber bg-kds-amber/10 px-4 py-3 text-sm">
+            <p className="font-bold text-kds-amber">Refund due: {fmtPkrWhole(refundDue)}</p>
+            <p className="text-xs text-kds-subtext">
+              Taken on {report.cancelledPaid?.count ?? 0} ticket(s) that were then cancelled. Owed back to the customer, not a sale.
+            </p>
+          </div>
+        )}
+
+        {open && open.count > 0 && (
+          <div className="rounded-lg border border-kds-red px-4 py-3 text-sm">
+            <p className="font-bold text-kds-red">
+              {open.count} unpaid ticket{open.count === 1 ? '' : 's'} left open · {fmtPkrWhole(open.dueCents)} due
+            </p>
+            <ul className="mt-2 space-y-1">
+              {open.tickets.map((t) => (
+                <li key={t.id} className="flex justify-between text-xs text-kds-subtext">
+                  <span>{t.table ? `Table ${t.table}` : 'Counter'} · #{t.ref}</span>
+                  <span className="font-semibold text-kds-text">{fmtPkrWhole(t.dueCents)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <button
           onClick={onClose}

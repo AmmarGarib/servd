@@ -2,6 +2,8 @@
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
+import { usePermissions } from '../../hooks/useCan'
+import { canOpenPath } from '../../lib/moduleCatalog'
 
 // ─── Configuration Hub ────────────────────────────────────────────────────────
 //
@@ -67,7 +69,7 @@ export default function ConfigurationHubPage() {
   const tiles: Tile[] = [
     // ── Core ──────────────────────────────────────────────────────────────
     { href: '/marketing/brands',  icon: '🏷', title: 'Brands',
-      desc: 'The one brand editor — identity, contact, brief, storefront copy, cash / card GST, FBR / SRB.',
+      desc: 'The one brand editor — identity, contact, brief, storefront copy, cash / card GST, tax registration.',
       category: 'core', status: conceptsReady ? 'ready' : 'incomplete',
       hint: conceptsReady ? `${concepts.length} concepts configured` : 'Add at least one concept' },
 
@@ -110,19 +112,18 @@ export default function ConfigurationHubPage() {
       desc: 'Library, pages (landing hero, brand pages, brand footers and social links), pop-ups and approvals.',
       category: 'channels', status: 'unknown' },
 
-    { href: '/configuration/whatsapp',  icon: '💬', title: 'WhatsApp',
-      desc: 'The gateway that sends signup codes, password resets, staff sign-in codes and customer messages.',
-      category: 'channels', status: 'unknown' },
+    // One tile for Dev → API: the WhatsApp gateway and the POS connector
+    // (fiscal POS for FBR / SRB + the card machine). Replaces the separate
+    // "WhatsApp" and "Tax Rates & FBR" tiles.
+    { href: '/connectors',  icon: '⇄', title: 'API connectors',
+      desc: 'The WhatsApp gateway (codes, resets, customer messages) and the POS connector — the fiscal POS that files FBR / SRB, and the card machine.',
+      category: 'platform', status: 'unknown' },
 
     { href: '/qrcodes',  icon: '📱', title: 'QR Codes / Table Ordering',
       desc: 'Per-table scan-to-order links.',
       category: 'channels', status: 'optional' },
 
     // ── Finance ───────────────────────────────────────────────────────────
-    { href: '/settings/integrations',  icon: '🧾', title: 'Tax Rates & FBR',
-      desc: 'FBR / SRB credentials and e-invoice status. Cash and card GST rates and the POS IDs are set per brand in Storefront → Brands.',
-      category: 'finance', status: 'incomplete', hint: 'FBR submission worker active' },
-
     { href: '/configuration/payment-methods',  icon: '💳', title: 'Payment Methods',
       desc: 'Cash, Keenu, JazzCash, EasyPaisa toggles + processing fees.',
       category: 'finance', status: 'incomplete' },
@@ -151,7 +152,7 @@ export default function ConfigurationHubPage() {
 
     // ── Platform ──────────────────────────────────────────────────────────
     { href: '/settings/integrations',  icon: '🔌', title: 'Integrations',
-      desc: 'Meta (Facebook + Instagram), FBR / SRB e-invoicing, the supplier portal. WhatsApp and email have their own screens.',
+      desc: 'Meta (Facebook + Instagram), email, webhooks, the supplier portal. WhatsApp and the POS connector are in API connectors.',
       category: 'platform', status: 'incomplete', hint: 'Most are optional' },
 
     // B07: API tokens tile removed — no third-party integrations need them in v1.
@@ -230,10 +231,18 @@ export default function ConfigurationHubPage() {
       category: 'operations', status: 'optional' },
   ]
 
+  // Only the tiles this login can open (UI-15): the same module test as the
+  // sidebar and the page guard (lib/moduleCatalog.ts canOpenPath). Email is a
+  // Dev → API page (CONNECTOR_ADMINS: admin, it), so management and the
+  // co-owner no longer see a tile that answers 403; Module Access is the
+  // CEO's. Nothing shows until GET /permissions/me answers.
+  const { data: me } = usePermissions()
+  const visible = me ? tiles.filter((t) => canOpenPath(t.href, me.role, me.modules ?? [])) : []
+
   // ── Counts for the header summary ──────────────────────────────────────
-  const totalCount = tiles.length
-  const readyCount = tiles.filter((t) => t.status === 'ready').length
-  const incompleteCount = tiles.filter((t) => t.status === 'incomplete').length
+  const totalCount = visible.length
+  const readyCount = visible.filter((t) => t.status === 'ready').length
+  const incompleteCount = visible.filter((t) => t.status === 'incomplete').length
   const setupPct = totalCount > 0 ? Math.round((readyCount / totalCount) * 100) : 0
 
   return (
@@ -270,7 +279,7 @@ export default function ConfigurationHubPage() {
       {/* Categories */}
       <div className="px-7 py-7 space-y-9 max-w-[1200px] mx-auto">
         {(Object.keys(CATEGORY_META) as Array<keyof typeof CATEGORY_META>).map((cat) => {
-          const catTiles = tiles.filter((t) => t.category === cat)
+          const catTiles = visible.filter((t) => t.category === cat)
           if (catTiles.length === 0) return null
           const meta = CATEGORY_META[cat]
           return (

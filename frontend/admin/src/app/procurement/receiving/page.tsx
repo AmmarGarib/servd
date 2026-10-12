@@ -8,11 +8,28 @@
 // Owner decision 27: manager tiers only; a delivery without a PO needs the
 // unit cost entered here; whoever raised a PO can't receive it (CEO exempt).
 // The Procurement "Receive" action opens this page with ?poId=.
+//
+// R2-UI-02: the buyer (role procurement) can open this page — the reads admit
+// PROCUREMENT_TEAM — but taking the delivery in (POST /crosschecks/receiving)
+// is MANAGERS only. Non-managers see it read-only: what is due at the dock and
+// what has come in, with the note "A manager takes the delivery in".
 
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useAuthStore } from '../../../store/auth'
+
+// The API's MANAGERS (backend modules/auth/middleware.ts) — the roles that may
+// take a delivery in (owner decision 27).
+const MANAGER_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager']
+
+// Whoever raised a PO can't receive it; the CEO (role admin) is exempt — the
+// server's assertNotSelfApproval rule (lib/separation-of-duties.ts), which
+// also raises a high-severity exception flag on every blocked attempt, so the
+// page must not offer it. A PO with no creator on file predates tracking.
+const raisedByMe = (po: { createdBy?: string | null }, me: { id: string; role: string } | null) =>
+  !!me && me.role !== 'admin' && !!po.createdBy && po.createdBy === me.id
 
 interface Supplier { id: string; name: string }
 interface OpenPoLine {
@@ -21,6 +38,7 @@ interface OpenPoLine {
 }
 interface OpenPo {
   id: string; reference: string | null; supplierId: string; status: string; createdAt: string
+  createdBy?: string | null
   supplier: { id: string; name: string }
   lines: OpenPoLine[]
 }
@@ -48,10 +66,13 @@ const nextKey = () => `l${++keySeq}`
 
 export default function ReceivingPage() {
   const qc = useQueryClient()
-  const { data: pos = [] } = useQuery<OpenPo[]>({ queryKey: ['receiving', 'open-pos'], queryFn: () => api.get('/crosschecks/receiving/open-pos') })
+  const canReceive = useAuthStore((s) => s.isRole(...MANAGER_ROLES))
+  const me = useAuthStore((s) => s.user)
+  const { data: pos = [], error: posError } = useQuery<OpenPo[]>({ queryKey: ['receiving', 'open-pos'], queryFn: () => api.get('/crosschecks/receiving/open-pos') })
   const { data: suppliers = [] } = useQuery<Supplier[]>({ queryKey: ['receiving', 'suppliers'], queryFn: () => api.get('/crosschecks/receiving/suppliers') })
-  const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory') })
-  const { data: receipts = [] } = useQuery<Receipt[]>({ queryKey: ['receipts'], queryFn: () => api.get('/crosschecks/receiving'), refetchInterval: 30_000 })
+  // Only the receiving form needs the item list (deliveries without a PO).
+  const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory'), enabled: canReceive })
+  const { data: receipts = [], error: receiptsError } = useQuery<Receipt[]>({ queryKey: ['receipts'], queryFn: () => api.get('/crosschecks/receiving'), refetchInterval: 30_000 })
 
   const [supplierId, setSupplierId] = useState('')
   const [poId, setPoId] = useState<string | null>(null)
@@ -73,10 +94,11 @@ export default function ReceivingPage() {
     try { setWantedPo(new URLSearchParams(window.location.search).get('poId')) } catch { /* no window */ }
   }, [])
   useEffect(() => {
-    if (!wantedPo || poId) return
+    if (!wantedPo || poId || !canReceive) return
     const po = pos.find((p) => p.id === wantedPo)
-    if (po) { loadFromPo(po); setWantedPo(null) }
-  }, [wantedPo, pos, poId])
+    // Your own PO stays unselected (and wantedPo stays set, for the note).
+    if (po && !raisedByMe(po, me)) { loadFromPo(po); setWantedPo(null) }
+  }, [wantedPo, pos, poId, canReceive, me])
 
   function loadFromPo(po: OpenPo) {
     setPoId(po.id)
@@ -151,6 +173,11 @@ export default function ReceivingPage() {
   })
 
   const selectedPo = pos.find((p) => p.id === poId) ?? null
+  // The PO the Procurement "Receive" link pointed at, when it is one the
+  // signed-in manager raised themselves.
+  const ownWantedPo = canReceive && !poId && wantedPo
+    ? pos.find((p) => p.id === wantedPo && raisedByMe(p, me)) ?? null
+    : null
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -175,6 +202,48 @@ export default function ReceivingPage() {
           </div>
         )}
 
+        {posError && <ErrorBanner label="Couldn't load the purchase orders due at the dock:" error={posError} />}
+        {receiptsError && <ErrorBanner label="Couldn't load recent deliveries:" error={receiptsError} />}
+
+        {!canReceive && (
+          <>
+            <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
+              style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
+              A manager takes the delivery in.
+              <span className="block text-xs font-normal text-white/55 mt-1">
+                You can see what is due at the dock and what has arrived. Whoever orders the goods does not also sign for them.
+              </span>
+            </div>
+            <Section title="Due at the dock">
+              {pos.length === 0 && !posError && <p className="text-xs text-white/35 italic">No purchase orders waiting to be received.</p>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {pos.map((po) => {
+                  const outstanding = po.lines.filter((l) => l.quantityOrdered - l.quantityReceived > 0)
+                  return (
+                    <div key={po.id} className="rounded-lg p-3"
+                      style={{
+                        background: 'rgb(var(--fg-rgb) / 0.025)',
+                        border: `1px solid ${po.id === wantedPo ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
+                      }}>
+                      <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
+                      <p className="text-xs text-white/45">{po.supplier.name}{po.status === 'partial' ? ' · part-received' : ''}</p>
+                      <ul className="mt-2 space-y-0.5">
+                        {outstanding.map((l) => (
+                          <li key={l.id} className="text-xs text-white/65 flex justify-between gap-2">
+                            <span>{l.inventoryItem.name}</span>
+                            <span className="font-mono text-white/45 whitespace-nowrap">Due: {Math.max(0, l.quantityOrdered - l.quantityReceived)} {l.inventoryItem.unit}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })}
+              </div>
+            </Section>
+          </>
+        )}
+
+        {canReceive && (<>
         <Section title="Step 1 — Match to a PO (or take a delivery without one)">
           {selectedPo ? (
             <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.35)' }}>
@@ -186,16 +255,27 @@ export default function ReceivingPage() {
             </div>
           ) : (
             <>
+              {ownWantedPo && (
+                <div role="status" className="rounded-lg px-3 py-2 mb-3 text-xs font-bold"
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
+                  You raised {poLabel(ownWantedPo)}, so a colleague receives it.
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {pos.length === 0 && <p className="text-xs text-white/35 italic">No purchase orders waiting to be received.</p>}
-                {pos.map((po) => (
-                  <button key={po.id} onClick={() => loadFromPo(po)}
-                    className="rounded-lg p-3 text-left transition-colors"
-                    style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                    <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
-                    <p className="text-xs text-white/45">{po.supplier.name} · {po.lines.length} lines{po.status === 'partial' ? ' · part-received' : ''}</p>
-                  </button>
-                ))}
+                {pos.length === 0 && !posError && <p className="text-xs text-white/35 italic">No purchase orders waiting to be received.</p>}
+                {pos.map((po) => {
+                  const own = raisedByMe(po, me)
+                  return (
+                    <button key={po.id} onClick={() => { if (!own) loadFromPo(po) }} disabled={own}
+                      title={own ? 'You raised this PO, so a colleague receives it' : undefined}
+                      className="rounded-lg p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+                      <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
+                      <p className="text-xs text-white/45">{po.supplier.name} · {po.lines.length} lines{po.status === 'partial' ? ' · part-received' : ''}</p>
+                      {own && <p className="text-[11px] text-white/55 mt-1">You raised this, a colleague receives it</p>}
+                    </button>
+                  )
+                })}
               </div>
               <div className="mt-3">
                 <label className="text-xs text-white/55">Or a delivery without a PO (market run, ad-hoc) from</label>
@@ -271,7 +351,7 @@ export default function ReceivingPage() {
           </div>
         </Section>
 
-        {submit.error && <ErrorBanner error={submit.error} />}
+        {submit.error && <ErrorBanner label="Save failed:" error={submit.error} />}
 
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={() => submit.mutate()}
@@ -280,9 +360,10 @@ export default function ReceivingPage() {
             {submit.isPending ? 'Saving…' : 'Accept delivery →'}
           </button>
         </div>
+        </>)}
 
         <div className="pt-6 mt-6 border-t border-white/[0.05]">
-          <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">Recent deliveries · {receipts.length}</h2>
+          <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">Recent deliveries{receiptsError ? '' : ` · ${receipts.length}`}</h2>
           <div className="space-y-1.5">
             {receipts.slice(0, 20).map((r) => (
               <div key={r.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-xs"
@@ -307,8 +388,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </div>
   )
 }
-function ErrorBanner({ error }: { error: unknown }) {
+function ErrorBanner({ label, error }: { label: string; error: unknown }) {
   const msg = error instanceof Error ? error.message : 'Something went wrong'
-  return <div className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#b42318' }}><strong>Save failed:</strong> {msg}</div>
+  return <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#b42318' }}><strong>{label}</strong> {msg}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

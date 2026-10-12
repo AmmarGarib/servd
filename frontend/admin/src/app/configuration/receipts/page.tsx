@@ -67,7 +67,8 @@ export default function ReceiptsPage() {
 
         <Section title="Tax compliance">
           <Toggle label="Show tax breakdown" checked={!!form.showTaxBreakdown} onChange={(v) => patch('showTaxBreakdown', v)} />
-          <Toggle label="Show FBR invoice number" checked={!!form.showFbrInvoice} onChange={(v) => patch('showFbrInvoice', v)} />
+          {/* Same setting (showFbrInvoice): the number and QR now come from the fiscal POS, whichever authority it files with. */}
+          <Toggle label="Show fiscal invoice number and QR" checked={!!form.showFbrInvoice} onChange={(v) => patch('showFbrInvoice', v)} />
         </Section>
 
         <Section title="Printer (ESC/POS)">

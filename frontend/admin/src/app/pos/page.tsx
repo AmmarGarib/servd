@@ -5,6 +5,8 @@ import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Mo
 import { usePosStore } from '../../store/pos'
 import { PosCart } from '../../components/pos/PosCart'
 import { PaymentModal } from '../../components/pos/PaymentModal'
+import { OpenTickets } from '../../components/pos/OpenTickets'
+import { useOpenTickets, type TillBrand, type TillOrder } from '../../components/pos/tillApi'
 import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
 import Link from 'next/link'
 import { useCurrentShift } from '../../hooks/useCurrentShift'
@@ -12,7 +14,9 @@ import { useCurrentShift } from '../../hooks/useCurrentShift'
 export default function PosPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [modifierItem, setModifierItem] = useState<MenuItem | null>(null)
-  const [showPayment, setShowPayment] = useState(false)
+  // The payment step: the cart (ticket undefined) or an open ticket (FOH-20).
+  const [payment, setPayment] = useState<{ ticket?: TillOrder } | null>(null)
+  const [showTickets, setShowTickets] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
   const [queuedCount, setQueuedCount] = useState(0)
@@ -56,13 +60,28 @@ export default function PosPage() {
   useCurrentShift()
   const cartCount = usePosStore((s) => s.cart.reduce((n, i) => n + i.quantity, 0))
 
-  const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<{ id: string; name: string; slug: string; taxRate: number }[]>('/concepts'),
+  // The brands this user may ring — the company's active brands, scoped by
+  // the server (FOH-01: till roles read GET /concepts with narrow fields).
+  const { data: concepts = [], isError: brandsFailed, isLoading: brandsLoading } = useQuery({
+    queryKey: ['pos', 'brands'],
+    queryFn: () => api.get<TillBrand[]>('/concepts'),
   })
 
-  // Auto-select first concept — no env var needed
-  const conceptId = storedConceptId || concepts[0]?.id || ''
+  // The remembered brand only if it is still one of ours (another company's
+  // brand left in this browser is ignored), else the first brand.
+  const conceptId = (storedConceptId && concepts.some((c) => c.id === storedConceptId))
+    ? storedConceptId
+    : concepts[0]?.id ?? ''
+
+  // UI-03: the brand shown is the brand rung — store the auto-selected one so
+  // every screen of the till (cart, payment, waiter) works from the same id
+  // without the cashier having to tap the tab first.
+  useEffect(() => {
+    if (conceptId && conceptId !== storedConceptId) usePosStore.getState().setConceptId(conceptId)
+  }, [conceptId, storedConceptId])
+
+  const openTickets = useOpenTickets(conceptId || null)
+  const ticketCount = openTickets.data?.length ?? 0
 
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ['menu', conceptId],
@@ -70,8 +89,9 @@ export default function PosPage() {
     enabled: !!conceptId,
   })
 
-  const activeConcept = concepts?.find((c) => c.id === conceptId)
-  const taxRate = activeConcept?.taxRate ?? 17
+  // No tax maths on this page (FOH-02): the cart, the ring-up and the
+  // payment step show and charge the bill the SERVER prices.
+  const activeConcept = concepts.find((c) => c.id === conceptId)
 
   const currentCategory = categories.find((c) => c.id === selectedCategory) ?? categories[0]
 
@@ -106,7 +126,7 @@ export default function PosPage() {
           <button onClick={() => setCartOpen(false)} className="text-kds-subtext hover:text-kds-text text-xl leading-none">✕</button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <PosCart taxRate={taxRate} onCheckout={() => { setCartOpen(false); setShowPayment(true) }} />
+          <PosCart conceptId={conceptId || null} onCheckout={() => { setCartOpen(false); setPayment({}) }} />
         </div>
       </div>
 
@@ -147,15 +167,27 @@ export default function PosPage() {
           </div>
         )}
 
-        {/* Concept selector */}
-        <div className="flex h-12 items-center gap-2 border-b border-kds-border bg-kds-card px-3">
-          <Link href="/w" className="text-kds-subtext text-xs hover:text-kds-text mr-2">← Back</Link>
-          <span className="text-sm text-kds-subtext">Concept:</span>
+        {/* Brand selector */}
+        <div className="flex h-12 items-center gap-2 overflow-x-auto border-b border-kds-border bg-kds-card px-3 scrollbar-hide">
+          <Link href="/w" className="text-kds-subtext text-xs hover:text-kds-text mr-2 shrink-0">← Back</Link>
+          <span className="text-sm text-kds-subtext shrink-0">Brand:</span>
+          {brandsFailed && <span className="text-sm font-semibold text-kds-red">Could not load your brands — reload, or ask a manager</span>}
+          {!brandsFailed && !brandsLoading && concepts.length === 0 && <span className="text-sm text-kds-subtext">No brands in your company yet</span>}
           {concepts.map((c) => (
             <button
               key={c.id}
-              onClick={() => usePosStore.getState().setConceptId(c.id)}
-              className={`rounded px-3 py-1 text-sm font-semibold ${
+              onClick={() => {
+                const st = usePosStore.getState()
+                // Another brand's dishes can't go on this brand's ticket (the
+                // server refuses them): switching brand starts a fresh order.
+                if (c.id !== conceptId && st.cart.length > 0) {
+                  if (!window.confirm('Switching brand clears the current order. Continue?')) return
+                  st.clearCart()
+                }
+                st.setConceptId(c.id)
+                setSelectedCategory(null)
+              }}
+              className={`shrink-0 rounded px-3 py-1 text-sm font-semibold ${
                 c.id === conceptId
                   ? 'bg-kds-green text-white'
                   : 'text-kds-subtext hover:text-kds-text'
@@ -164,6 +196,17 @@ export default function PosPage() {
               {c.name}
             </button>
           ))}
+          {/* FOH-20: tables a waiter sent, paid here in one go */}
+          <button
+            onClick={() => setShowTickets(true)}
+            disabled={!conceptId}
+            className="ml-auto flex shrink-0 items-center gap-2 rounded-lg border border-kds-border px-3 py-1 text-sm font-semibold text-kds-text hover:border-kds-green disabled:opacity-30"
+          >
+            Open tickets
+            {ticketCount > 0 && (
+              <span className="rounded-full bg-kds-amber px-2 text-xs font-black text-black">{ticketCount}</span>
+            )}
+          </button>
         </div>
 
         {/* Category tabs */}
@@ -215,7 +258,7 @@ export default function PosPage() {
 
       {/* Right — cart side-rail (landscape tablet / desktop only; portrait uses the drawer) */}
       <div className="hidden lg:flex w-80 flex-col border-l border-kds-border bg-kds-card">
-        <PosCart taxRate={taxRate} onCheckout={() => setShowPayment(true)} />
+        <PosCart conceptId={conceptId || null} onCheckout={() => setPayment({})} />
       </div>
 
       {/* Modifier modal */}
@@ -227,9 +270,26 @@ export default function PosPage() {
         />
       )}
 
-      {/* Payment modal */}
-      {showPayment && (
-        <PaymentModal taxRate={taxRate} onClose={() => setShowPayment(false)} />
+      {/* Open tickets */}
+      {showTickets && (
+        <OpenTickets
+          brandName={activeConcept?.name}
+          tickets={openTickets.data ?? []}
+          loading={openTickets.isLoading}
+          error={openTickets.error}
+          onPick={(ticket) => { setShowTickets(false); setPayment({ ticket }) }}
+          onClose={() => setShowTickets(false)}
+        />
+      )}
+
+      {/* Payment — the cart, or an open ticket */}
+      {payment && (
+        <PaymentModal
+          key={payment.ticket?.id ?? 'cart'}
+          brand={payment.ticket ? concepts.find((c) => c.id === payment.ticket!.conceptId) : activeConcept}
+          ticket={payment.ticket}
+          onClose={() => { setPayment(null); void openTickets.refetch() }}
+        />
       )}
     </div>
   )

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
+import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../components/kds/LineActions'
 
 /**
  * Kitchen dashboard — the line cook's home page.
@@ -95,7 +96,9 @@ export default function KdsKitchenDashboard() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <UnroutedPanel />
+        <BackInStockPanel />
         {isLoading ? (
           <p className="rounded-xl border border-kds-border bg-kds-card px-4 py-10 text-center text-sm text-kds-subtext">
             Loading your stations…
@@ -109,9 +112,9 @@ export default function KdsKitchenDashboard() {
           restricted ? (
             <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
               <p className="text-3xl mb-2">🍳</p>
-              <p className="text-base font-bold text-kds-text">No stations assigned to you yet</p>
+              <p className="text-base font-bold text-kds-text">Your stations are switched off</p>
               <p className="text-sm text-kds-subtext mt-1">
-                Ask your manager to add you in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.
+                The stations on your roster aren&apos;t active. Ask your manager to update them in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.
               </p>
             </div>
           ) : (
@@ -258,7 +261,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery<QueuePayload>({
     queryKey: ['station-queue', stationId],
-    queryFn:  () => api.get<QueuePayload>(`/expo/station/${stationId}/queue`),
+    queryFn:  () => api.get<QueuePayload>(`/expo/station/${stationId}/queue?states=all`),
     refetchInterval: 5_000,
     staleTime: 2_000,
   })
@@ -274,9 +277,11 @@ function StationLivePanel({ stationId }: { stationId: string }) {
     mutationFn: (itemId: string) => api.patch(`/order-items/${itemId}/status`, { status: 'bumped' }),
     onSuccess:  () => {
       qc.invalidateQueries({ queryKey: ['station-queue', stationId] })
+      qc.invalidateQueries({ queryKey: ['station-recent-bumped', stationId] })
       qc.invalidateQueries({ queryKey: ['kds-my-stations'] })
     },
   })
+  const lineActions = useLineActions(stationId)
 
   const steps  = data?.steps ?? []
   const legacy = data?.legacy ?? []
@@ -296,10 +301,13 @@ function StationLivePanel({ stationId }: { stationId: string }) {
 
   if (cooking.length === 0 && waiting.length === 0) {
     return (
-      <div className="border-t border-kds-border bg-black/20 px-4 py-6 text-center">
-        <p className="text-2xl mb-1">✓</p>
-        <p className="text-sm font-bold text-kds-text">All clear</p>
-        <p className="text-[11px] text-kds-subtext mt-0.5">New tickets appear here when expo fires them.</p>
+      <div className="border-t border-kds-border bg-black/20 px-4 py-6 text-center space-y-3">
+        <div>
+          <p className="text-2xl mb-1">✓</p>
+          <p className="text-sm font-bold text-kds-text">All clear</p>
+          <p className="text-[11px] text-kds-subtext mt-0.5">New tickets appear here when expo fires them.</p>
+        </div>
+        <div className="text-left"><RecallStrip stationId={stationId} actions={lineActions} /></div>
       </div>
     )
   }
@@ -311,11 +319,15 @@ function StationLivePanel({ stationId }: { stationId: string }) {
           {cooking.map((t) => {
             const isLegacy = '__legacy' in t
             const id = isLegacy ? t.itemId : (t as StepTicket).stepId
+            const lineStatus = isLegacy ? t.status : 'preparing'
+            const isHeld = lineStatus === 'held'
+            const isRemake = lineStatus === 'recalled'
             const onBump = () => isLegacy
-              ? bumpLegacy.mutate(t.itemId)
+              ? (isRemake ? lineActions.bumpRemake.mutate(t.itemId) : bumpLegacy.mutate(t.itemId))
               : bumpStep.mutate((t as StepTicket).stepId)
             const pending = isLegacy
-              ? bumpLegacy.isPending && bumpLegacy.variables === t.itemId
+              ? (bumpLegacy.isPending && bumpLegacy.variables === t.itemId)
+                || (lineActions.bumpRemake.isPending && lineActions.bumpRemake.variables === t.itemId)
               : bumpStep.isPending && bumpStep.variables === (t as StepTicket).stepId
             const elapsed = t.firedAt
               ? formatDistanceToNowStrict(new Date(t.firedAt), { addSuffix: false })
@@ -335,7 +347,8 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                     <span className="text-kds-subtext">{t.order.concept.name}</span>
                     <span className="text-kds-amber">{elapsed}</span>
                   </div>
-                  <p className="text-sm font-black text-kds-text leading-tight">
+                  <LineStateBadge status={lineStatus} small />
+                  <p className={`text-sm font-black text-kds-text leading-tight ${isHeld ? 'opacity-60' : ''}`}>
                     {t.qty > 1 && <span className="text-kds-amber mr-1">{t.qty}×</span>}
                     {t.itemName}
                   </p>
@@ -352,19 +365,31 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                   <p className="text-[10px] text-kds-subtext mt-1">
                     {t.order.customerName ?? 'Walk-in'} · #{t.order.id.slice(-5).toUpperCase()}
                   </p>
-                  <button
-                    onClick={onBump}
-                    disabled={pending}
-                    className="mt-2 w-full rounded-lg py-1.5 text-xs font-black transition-all disabled:opacity-40"
-                    style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
-                    {pending ? 'Bumping…' : 'Bump ✓'}
-                  </button>
+                  {!isHeld && (
+                    <button
+                      onClick={onBump}
+                      disabled={pending}
+                      className="mt-2 w-full rounded-lg py-1.5 text-xs font-black transition-all disabled:opacity-40"
+                      style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
+                      {pending ? 'Bumping…' : (isRemake ? 'Bump remake ✓' : 'Bump ✓')}
+                    </button>
+                  )}
+                  {isLegacy && (
+                    <div className="mt-1.5"><HoldButton itemId={t.itemId} status={lineStatus} actions={lineActions} small /></div>
+                  )}
                 </div>
               </div>
             )
           })}
         </div>
       )}
+
+      {lineActions.error && (
+        <p className="rounded-lg border border-kds-red/50 bg-kds-red/10 px-3 py-1.5 text-xs font-semibold text-kds-red">
+          {lineActions.error}
+        </p>
+      )}
+      <RecallStrip stationId={stationId} actions={lineActions} />
 
       {waiting.length > 0 && (
         <div>
@@ -386,5 +411,138 @@ function StationLivePanel({ stationId }: { stationId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── UnroutedPanel ────────────────────────────────────────────────────────────
+//
+// Open tickets no station screen shows (BOH-03): a line with no station, or
+// one routed to a station that has since been retired. Listed here with a
+// Bump so the order can still reach expo's ready column; the routing itself
+// is fixed in /menu. Hidden when there are none.
+
+interface UnroutedLine {
+  itemId: string
+  itemName: string
+  qty: number
+  status: string
+  retiredStation: string | null
+  order: {
+    id: string; customerName: string | null; tableLabel: string | null
+    concept: { id: string; name: string; slug: string }
+  }
+}
+
+function UnroutedPanel() {
+  const qc = useQueryClient()
+  const { data } = useQuery<{ items: UnroutedLine[] }>({
+    queryKey: ['kds-unrouted'],
+    queryFn:  () => api.get<{ items: UnroutedLine[] }>('/kds/unrouted'),
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+  })
+  const bump = useMutation({
+    mutationFn: async (line: UnroutedLine) => {
+      // A held or recalled line is started again before it is bumped.
+      if (line.status === 'held' || line.status === 'recalled') {
+        await api.patch(`/order-items/${line.itemId}/status`, { status: 'preparing' })
+      }
+      return api.patch(`/order-items/${line.itemId}/status`, { status: 'bumped' })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kds-unrouted'] }),
+  })
+  const items = data?.items ?? []
+  if (items.length === 0) return null
+  return (
+    <section className="rounded-xl border border-kds-red/50 bg-kds-red/10 p-4">
+      <p className="text-sm font-black text-kds-red">
+        {items.length} ticket{items.length === 1 ? '' : 's'} not on any station screen
+      </p>
+      <p className="text-xs text-kds-subtext mt-0.5 mb-3">
+        Cook these from here and bump them, then fix the item&apos;s station in Menu.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+        {items.map((it) => (
+          <div key={it.itemId} className="flex items-center gap-3 rounded-lg border border-kds-border bg-kds-card px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-kds-text truncate">
+                {it.qty > 1 && <span className="text-kds-amber mr-1">{it.qty}×</span>}
+                {it.itemName}
+              </p>
+              <p className="text-[11px] text-kds-subtext truncate">
+                {it.order.concept.name} · {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{it.order.id.slice(-5).toUpperCase()}
+              </p>
+              <p className="text-[10px] text-kds-subtext/80">
+                {it.retiredStation ? `Routed to retired station "${it.retiredStation}"` : 'No station set'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => bump.mutate(it)}
+              disabled={bump.isPending && bump.variables?.itemId === it.itemId}
+              className="shrink-0 rounded-lg border border-kds-green/60 px-3 py-1.5 text-xs font-black text-kds-green hover:bg-kds-green/10 disabled:opacity-40">
+              Bump
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// ─── BackInStockPanel ─────────────────────────────────────────────────────────
+//
+// Dishes the stock switched off (auto-86) that can be cooked again now the
+// delivery is in (BOH-15). Nothing turns them back on by itself — a chef may
+// have 86'd one for another reason — so each gets a one-tap "Back on".
+// Hidden when there are none.
+
+interface BackInStock {
+  menuItemId: string
+  name: string
+  conceptName: string
+  eightySixedAt: string
+}
+
+function BackInStockPanel() {
+  const qc = useQueryClient()
+  const { data } = useQuery<{ items: BackInStock[] }>({
+    queryKey: ['kds-back-in-stock'],
+    queryFn:  () => api.get<{ items: BackInStock[] }>('/kds/auto-86/back-in-stock'),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+  const backOn = useMutation({
+    mutationFn: (menuItemId: string) => api.patch(`/menu/items/${menuItemId}/availability`, { isAvailable: true }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kds-back-in-stock'] }),
+  })
+  const items = data?.items ?? []
+  if (items.length === 0) return null
+  return (
+    <section className="rounded-xl border border-kds-green/50 bg-kds-green/10 p-4">
+      <p className="text-sm font-black text-kds-green">Back in stock — put back on the menu?</p>
+      <p className="text-xs text-kds-subtext mt-0.5 mb-3">
+        These ran out and were switched off automatically. Their ingredients are in stock again.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((it) => (
+          <div key={it.menuItemId} className="flex items-center gap-3 rounded-lg border border-kds-border bg-kds-card px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-kds-text">{it.name}</p>
+              <p className="text-[11px] text-kds-subtext">
+                {it.conceptName} · off since {formatDistanceToNowStrict(new Date(it.eightySixedAt))} ago
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => backOn.mutate(it.menuItemId)}
+              disabled={backOn.isPending && backOn.variables === it.menuItemId}
+              className="shrink-0 rounded-lg border border-kds-green/60 px-3 py-1.5 text-xs font-black text-kds-green hover:bg-kds-green/10 disabled:opacity-40">
+              Back on
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }

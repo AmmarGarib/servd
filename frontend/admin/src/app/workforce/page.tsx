@@ -47,7 +47,19 @@ interface StaffUser {
   // empty array = "not station-restricted" (admin/management/expediter
   // get every active station).
   stationIds?:      string[]
+  // The login also belongs to a company the viewer is not in — only someone
+  // in all of its companies can change it (the API answers 403).
+  inOtherCompanies?: boolean
+  // The linked HR employee record payroll would still pay (not separated),
+  // in the viewer's companies. Switching a login off does not stop pay.
+  payroll?: { employeeId: string; status: string; tenantId: string } | null
+  // Floor roles sign in with a code to their phone, not a password (server's list).
+  usesCodeLogin?: boolean
 }
+
+// Categories whose roles sign in with a code sent to their phone — so a new
+// login there needs a mobile number (the API enforces it: PHONE_REQUIRED).
+const CODE_LOGIN_CATEGORIES = new Set(['foh', 'boh'])
 
 // Category → which AppRole values fall under it. A single user has one role
 // enum value, but the directory groups them so the CEO picks "Front of House"
@@ -97,7 +109,7 @@ const CATEGORIES: Category[] = [
     key: 'procurement',
     label: 'Procurement',
     emoji: '🏭',
-    blurb: 'Supplier chat, POs, inventory receiving.',
+    blurb: 'Supplier chat and POs. Sees deliveries at the dock; a manager receives.',
     roles: ['procurement'],
   },
   {
@@ -181,6 +193,11 @@ function WorkforcePageInner() {
   const { data: me } = usePermissions()
   const canEdit = me?.role === 'admin'
   const viewAll = useViewAllTenants()
+  // Roles this viewer manages (server: lib/workspaces.ts childRoles). A manager
+  // may hand one of them a one-time sign-in code when WhatsApp/email cannot
+  // deliver one (POST /auth/staff/:id/sign-in-code).
+  const childRoles = useMemo(() => new Set(me?.childRoles ?? []), [me?.childRoles])
+  const [codeFor, setCodeFor] = useState<StaffUser | null>(null)
 
   // Tenants the operator belongs to — drives the "transfer" dropdown in the
   // inline editor and lets the page show the brand chip even outside portfolio
@@ -401,6 +418,10 @@ function WorkforcePageInner() {
           {filtered.map((u) => (
             <StaffRow
               key={u.id} user={u} canEdit={canEdit}
+              onSignInCode={
+                u.usesCodeLogin && statusOf(u) === 'active' && !!u.phone && childRoles.has(u.role)
+                  ? () => setCodeFor(u) : undefined
+              }
               tenants={tenants}
               invitedBy={invitedBy.has(u.id) ? (invitedBy.get(u.id) ?? null) : undefined}
               // Chip is mostly noise in single-tenant view (every row belongs
@@ -417,6 +438,8 @@ function WorkforcePageInner() {
         </div>
       </div>
       )}
+
+      {codeFor && <SignInCodeModal user={codeFor} onClose={() => setCodeFor(null)} />}
 
       {addOpen && (
         <AddStaffModal
@@ -481,10 +504,12 @@ function CategoryBlurb({ category }: { category: Category }) {
 // ─── Staff row + inline editor ──────────────────────────────────────────────
 
 function StaffRow({
-  user, canEdit, tenants, showTenantChip, invitedBy,
+  user, canEdit, tenants, showTenantChip, invitedBy, onSignInCode,
   expanded, onExpand, onClose, onChange,
 }: {
   user: StaffUser; canEdit: boolean
+  /** Set when the viewer may hand this person a one-time sign-in code. */
+  onSignInCode?: () => void
   tenants: TenantLite[]
   /** Pending rows only: who added the login (null = self sign-up). */
   invitedBy?: { id: string; name: string } | null
@@ -507,11 +532,12 @@ function StaffRow({
 
   return (
     <div className="border-b border-s-border last:border-b-0">
+      <div className="flex items-stretch">
       <button
         type="button"
         onClick={canEdit ? onExpand : undefined}
         disabled={!canEdit}
-        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+        className={`flex-1 min-w-0 flex items-center gap-3 px-4 py-3 text-left transition-colors ${
           canEdit ? 'hover:bg-s-bg/30 cursor-pointer' : 'cursor-default'
         } ${expanded ? 'bg-s-bg/40' : ''}`}>
         <div className="h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-black"
@@ -536,6 +562,22 @@ function StaffRow({
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
                 style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}>
                 No PIN
+              </span>
+            )}
+            {/* Switched off here, still paid there: HR payroll reads only the
+                employee record. Open the row for the link to HR. */}
+            {status === 'suspended' && user.payroll && (
+              <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+                style={{ background: 'rgba(245,158,11,0.12)', color: '#a15c00' }}
+                title="This login is switched off, but the person is still on payroll in HR. Start a separation in HR to stop pay.">
+                Still on payroll
+              </span>
+            )}
+            {user.usesCodeLogin && !user.phone && status !== 'suspended' && (
+              <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+                style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
+                title="Signs in with a code sent to their phone — with no number on file they cannot sign in.">
+                No phone
               </span>
             )}
             {/* Brand chips — one per tenant the staff member is a member of.
@@ -589,6 +631,18 @@ function StaffRow({
           </span>
         )}
       </button>
+      {/* Manager-assisted sign-in: when WhatsApp/email cannot deliver a code,
+          the till tells the cashier to ask a manager for one — this is it. */}
+      {onSignInCode && (
+        <div className="shrink-0 flex items-center pr-3">
+          <button type="button" onClick={onSignInCode}
+            title="Give them a one-time code to sign in with, when the WhatsApp/email code does not arrive."
+            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-s-text hover:border-primary/40">
+            Sign-in code
+          </button>
+        </div>
+      )}
+      </div>
 
       {expanded && canEdit && (
         <InlineEditor user={user} status={status} tenants={tenants}
@@ -704,17 +758,24 @@ function InlineEditor({
     onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to save'),
   })
 
+  // Every lifecycle action shows the API's reason when it is refused — e.g.
+  // approve without a phone (PHONE_REQUIRED), a number already on another
+  // login (PHONE_IN_USE), or a login shared with another company (403).
+  const showErr = (e: unknown) => setErr(e instanceof Error ? e.message : 'That did not work')
   const remove = useMutation({
     mutationFn: () => api.delete(`/auth/users/${user.id}`),
     onSuccess:  () => { onChange(); onClose() },
+    onError:    showErr,
   })
   const approve = useMutation({
     mutationFn: () => api.patch(`/auth/staff/${user.id}/approve`, {}),
     onSuccess:  () => onChange(),
+    onError:    showErr,
   })
   const reject = useMutation({
     mutationFn: () => api.patch(`/auth/staff/${user.id}/reject`, {}),
     onSuccess:  () => onChange(),
+    onError:    showErr,
   })
   // Reissuing a password is the ONLY remedy for a forgotten one: self-service
   // change needs the current password, and there is no email reset flow. The
@@ -724,15 +785,40 @@ function InlineEditor({
   const reissue = useMutation({
     mutationFn: () => api.post<{ temporaryPassword: string }>(`/auth/users/${user.id}/reissue-password`, {}),
     onSuccess: (r) => setReissued(r?.temporaryPassword ?? null),
+    onError:   showErr,
   })
 
   const toggleActive = useMutation({
     mutationFn: () => api.patch(`/auth/users/${user.id}`, { isActive: !user.isActive }),
     onSuccess:  () => onChange(),
+    onError:    showErr,
   })
+
+  function suspend() {
+    // Switching a login off does not stop pay — HR payroll reads only the
+    // employee record. Say so at the moment it matters.
+    if (user.payroll && !window.confirm(
+      `${user.name} is still on payroll in HR. Suspending this login stops them signing in, but they will keep being paid until HR records a separation.\n\nSuspend the login anyway?`,
+    )) return
+    toggleActive.mutate()
+  }
 
   return (
     <div className="bg-s-bg/30 border-t border-s-border px-4 py-4 space-y-3">
+      {user.inOtherCompanies && (
+        <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-800">
+          This login also works for a company you are not part of. Its role, status and password apply there too,
+          so only someone in all of its companies can change it.
+        </p>
+      )}
+      {status === 'suspended' && user.payroll && (
+        <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-800">
+          Switched off here, but still on payroll in HR (status: {user.payroll.status}). Suspending a login does not stop pay.{' '}
+          <Link href={`/hr/employees/${user.payroll.employeeId}`} className="font-bold underline">
+            Open their HR record to start a separation
+          </Link>
+        </p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)}
@@ -746,7 +832,7 @@ function InlineEditor({
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
             placeholder="staff@gsfoods.pk" className={inputCls} />
         </Field>
-        <Field label="Phone">
+        <Field label="Phone" hint={user.usesCodeLogin ? 'Required — they sign in with a code sent here.' : 'One number per login.'}>
           <input value={phone} onChange={(e) => setPhone(e.target.value)}
             placeholder="03XX-XXXXXXX" className={inputCls} />
         </Field>
@@ -900,7 +986,7 @@ function InlineEditor({
             </>
           )}
           {status === 'active' && (
-            <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
+            <button onClick={suspend} disabled={toggleActive.isPending}
               className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-amber-700 hover:border-amber-400/40">
               Suspend
             </button>
@@ -965,7 +1051,9 @@ function AddStaffModal({
 }) {
   const [name, setName]         = useState('')
   const [email, setEmail]       = useState('')
+  const [phone, setPhone]       = useState('')
   const [category, setCategory] = useState<string>('management')
+  const needsPhone = CODE_LOGIN_CATEGORIES.has(category)
   const [jobTitle, setJobTitle] = useState('')
   // The generated password, shown ONCE after creation. It is never
   // retrievable again — only the bcrypt hash is stored — so if this screen
@@ -999,6 +1087,7 @@ function AddStaffModal({
     mutationFn: () => api.post<StaffUser & { temporaryPassword?: string }>('/auth/users', {
       ...(name.trim() ? { name: name.trim() } : {}),
       email: email.trim().toLowerCase(),
+      ...(phone.trim() ? { phone: phone.trim() } : {}),
       role: primaryRole,
       ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
       ...(primaryTenantId ? { tenantId: primaryTenantId } : {}),
@@ -1008,7 +1097,9 @@ function AddStaffModal({
       // Hold the modal open on the password. Closing straight to the list —
       // which is what it used to do — would throw away the only copy of the
       // credential that exists.
-      if (created?.temporaryPassword) {
+      // Till and kitchen staff have no password to hand over — they sign in
+      // with a code sent to the number just entered — so no password screen.
+      if (created?.temporaryPassword && !needsPhone) {
         setIssued({ name: created.name ?? name, email: created.email ?? email, password: created.temporaryPassword })
       } else {
         onCreated(created ?? null)
@@ -1022,6 +1113,9 @@ function AddStaffModal({
     if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
     if (!email.trim()) return setErr('An email is required — it is how they sign in.')
     if (!/@gsfoods\.pk$/i.test(email.trim())) return setErr('Staff sign in with an @gsfoods.pk address.')
+    if (needsPhone && phone.replace(/\D/g, '').length < 10) {
+      return setErr('Add their mobile number — till and kitchen staff sign in with a code sent to it.')
+    }
     if (tenants.length > 0 && tenantIds.length === 0) return setErr('Pick at least one company this hire works for.')
     create.mutate()
   }
@@ -1063,7 +1157,7 @@ function AddStaffModal({
               </button>
             </div>
             <p className="text-[10px] text-s-muted/70 mt-3">
-              They can change it themselves from the &ldquo;Change my password&rdquo; link on the sign-in page.
+              The first time they sign in they are asked to choose their own, so you stop knowing it.
             </p>
           </>
         ) : (
@@ -1130,6 +1224,11 @@ function AddStaffModal({
               ))}
             </select>
           </Field>
+          <Field label={needsPhone ? 'Mobile number' : 'Mobile number (optional)'}
+            hint={needsPhone ? 'Required — they sign in with a code sent here' : 'One number per login'}>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel"
+              placeholder="03XX-XXXXXXX" className={inputCls} />
+          </Field>
           <Field label="Role / job title" hint="Free text — what you actually call this role.">
             <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} autoFocus
               placeholder="e.g. Sous Chef — Bukhari, Floor Manager — Clifton, Procurement Officer"
@@ -1159,6 +1258,78 @@ function AddStaffModal({
           </button>
         </div>
         </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Manager-issued sign-in code ─────────────────────────────────────────────
+//
+// For when a cashier / server / cook's WhatsApp and email code does not arrive.
+// The manager asks for a code here and reads it to the person standing in
+// front of them, who types their own mobile number and this code on the
+// sign-in screen ("Sign in with a code" → "I have a code from my manager").
+// Same code row as the WhatsApp one: works once, for five minutes. Audited.
+
+function SignInCodeModal({ user, onClose }: { user: StaffUser; onClose: () => void }) {
+  const [result, setResult] = useState<{ code: string; expiresAt: string; phoneHint: string } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const issue = useMutation({
+    mutationFn: () => api.post<{ code: string; expiresAt: string; phoneHint: string }>(`/auth/staff/${user.id}/sign-in-code`, {}),
+    onSuccess:  (r) => { setErr(null); setResult(r) },
+    onError:    (e: unknown) => setErr(e instanceof Error ? e.message : 'Could not get a code'),
+  })
+  useEffect(() => {
+    if (!result) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [result])
+  const left = result ? Math.max(0, Math.floor((new Date(result.expiresAt).getTime() - now) / 1000)) : 0
+
+  return (
+    <div className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-s-surface border border-s-border rounded-2xl p-5 w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-black text-lg mb-1">Sign-in code for {user.name}</h2>
+        {!result ? (
+          <>
+            <p className="text-xs text-s-muted mb-4">
+              Use this only when their WhatsApp/email code does not arrive, and only with {user.name} in
+              front of you. The code signs them in as themselves; it is recorded against your name.
+            </p>
+            {err && <p className="mb-3 text-xs font-bold text-red-700">{err}</p>}
+            <div className="flex justify-end gap-2">
+              <button onClick={onClose}
+                className="rounded-lg px-3 py-2 text-xs font-bold border border-s-border text-s-muted hover:text-s-text">
+                Cancel
+              </button>
+              <button onClick={() => issue.mutate()} disabled={issue.isPending}
+                className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
+                {issue.isPending ? 'Getting code…' : 'Get a code'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-s-muted mb-3">
+              On the sign-in screen they tap <strong>Sign in with a code</strong>, then <strong>I have a code from my manager</strong>,
+              and enter their own mobile number (ending {result.phoneHint}) with this code.
+            </p>
+            <div className="rounded-lg border border-s-border bg-s-bg p-4 text-center mb-3">
+              <div className="font-mono text-3xl font-black tracking-[0.3em] text-s-text">{result.code}</div>
+              <div className="text-[11px] text-s-muted mt-1">
+                {left > 0 ? `Works once · expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Expired — get a new one'}
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={onClose}
+                className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
+                Done
+              </button>
+            </div>
+          </>
         )}
       </div>
     </div>

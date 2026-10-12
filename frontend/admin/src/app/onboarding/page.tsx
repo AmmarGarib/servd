@@ -38,6 +38,9 @@ interface Concept {
   primaryColor?: string | null
   heroTagline?: string | null
   province?: string | null
+  /** The tender GST split the till charges (Brands → Tax registration). */
+  taxRateCash?: number | string | null
+  taxRateCard?: number | string | null
   conceptStatement?: string | null
   cuisine?: string | null
   heroProduct?: string | null
@@ -314,14 +317,14 @@ function CompanyForm({ tenant, onSaved, onCancel }: {
   return (
     <Card title={isEditing ? `Editing ${tenant.name}` : 'Add a new company'}
       hint={isEditing
-        ? 'The name you give here goes on receipts, FBR invoices, and customer emails for this company.'
-        : 'A new company = its own legal entity, billing, FBR registration, and isolated data.'}>
+        ? 'The name you give here goes on receipts, tax invoices, and customer emails for this company.'
+        : 'A new company = its own legal entity, billing, tax registration (filed through its own POS connector), and isolated data.'}>
       <Field label="Company name *">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="GS Foods (Pvt) Ltd" className={fieldCls} autoFocus />
       </Field>
       <Field label="Owner email">
         <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="ali@gsfoods.pk" className={fieldCls} />
-        <Hint>Where critical alerts go: refund threshold breaches, FBR submission failures, daily digests.</Hint>
+        <Hint>Where critical alerts go: refund threshold breaches, fiscal POS (FBR / SRB) filing problems, daily digests.</Hint>
       </Field>
       <Field label="What you run">
         <select value={industry} onChange={(e) => setIndustry(e.target.value)} className={selectCls}>
@@ -568,12 +571,16 @@ const PRICE_TIERS: { value: 'budget' | 'mid' | 'premium' | 'luxury'; label: stri
   { value: 'luxury',  label: 'Luxury',  hint: 'PKR 4,000+ · destination dining' },
 ]
 
-// Pakistan sales-tax rates per provincial revenue authority. Source: SRB/PRA/
-// KPRA/BRA published rate cards as of 2025. Restaurants are services so they
-// fall under the provincial regimes (not federal FBR sales tax on goods).
+// Pakistan sales-tax rates per provincial revenue authority. Restaurants are
+// services so they fall under the provincial regimes (not federal FBR sales
+// tax on goods). Every order is charged at the brand's TENDER split —
+// Concept.taxRateCash / taxRateCard — so these are only the defaults a new
+// brand starts with (cash = `rate`, card = `cardRate` when the province has a
+// reduced card rate, else the same). The legacy single Concept.taxRate is no
+// longer written. Rates stay editable per brand in Brands → Tax registration.
 type ProvinceCode = 'SD' | 'PB' | 'KP' | 'BL' | 'ICT' | 'GB' | 'AJK'
 const PROVINCES: { value: ProvinceCode; name: string; authority: string; rate: number; cardRate?: number; note?: string }[] = [
-  { value: 'SD',  name: 'Sindh',                  authority: 'SRB',  rate: 13, note: 'Karachi, Hyderabad' },
+  { value: 'SD',  name: 'Sindh',                  authority: 'SRB',  rate: 15, cardRate: 8, note: 'Karachi, Hyderabad. Card / digital payments at 8%.' },
   { value: 'PB',  name: 'Punjab',                 authority: 'PRA',  rate: 16, cardRate: 5, note: 'Lahore, Faisalabad. Card / digital payments at 5%.' },
   { value: 'KP',  name: 'Khyber Pakhtunkhwa',     authority: 'KPRA', rate: 8,  note: 'Peshawar, Mardan' },
   { value: 'BL',  name: 'Balochistan',            authority: 'BRA',  rate: 15, note: 'Quetta' },
@@ -581,9 +588,11 @@ const PROVINCES: { value: ProvinceCode; name: string; authority: string; rate: n
   { value: 'GB',  name: 'Gilgit-Baltistan',       authority: 'GBRA', rate: 15 },
   { value: 'AJK', name: 'Azad Jammu & Kashmir',   authority: 'AJK',  rate: 15 },
 ]
-function provinceRate(p: ProvinceCode | null | undefined): number {
-  if (!p) return 13
-  return PROVINCES.find((x) => x.value === p)?.rate ?? 13
+/** Default tender split for a new brand in this province: cash / card GST %. */
+function provinceTenderRates(p: ProvinceCode | null | undefined): { taxRateCash: number; taxRateCard: number } {
+  const row = PROVINCES.find((x) => x.value === p)
+  if (!row) return { taxRateCash: 15, taxRateCard: 8 }
+  return { taxRateCash: row.rate, taxRateCard: row.cardRate ?? row.rate }
 }
 
 interface BrandBriefFormProps {
@@ -619,7 +628,21 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
   // Tax — operator picks province, we derive the default rate. Per-payment-
   // method, per-channel and per-item overrides are applied at transaction
   // time (POS, storefront, ingestion) and during P&L computation — not here.
-  const [province, setProvince] = useState<ProvinceCode>((existingBrand?.province as ProvinceCode) ?? 'SD')
+  //
+  // Editing a brand whose province was never set: the field opens on "Not
+  // set" (not a silent 'SD'), and nothing about the province or the GST
+  // split is sent unless the operator actually changes the province — so
+  // re-saving the brief never resets rates set in Brands → Tax registration.
+  const storedProvince = (PROVINCES.some((p) => p.value === existingBrand?.province) ? existingBrand?.province : null) as ProvinceCode | null
+  const [province, setProvince] = useState<ProvinceCode | ''>(isEdit ? (storedProvince ?? '') : 'SD')
+  const [provinceTouched, setProvinceTouched] = useState(false)
+  const provinceChanged = !isEdit || (provinceTouched && province !== '' && province !== storedProvince)
+  const currentRates = isEdit && existingBrand?.taxRateCash != null && existingBrand?.taxRateCard != null
+    ? { taxRateCash: Number(existingBrand.taxRateCash), taxRateCard: Number(existingBrand.taxRateCard) }
+    : null
+  const nextRates = province ? provinceTenderRates(province) : null
+  const ratesWillChange = !!(isEdit && provinceChanged && nextRates && currentRates
+    && (currentRates.taxRateCash !== nextRates.taxRateCash || currentRates.taxRateCard !== nextRates.taxRateCard))
 
   // Visual / setup (auto-derived; hidden in advanced)
   const [primaryColor, setPrimaryColor] = useState(existingBrand?.primaryColor ?? defaultColor ?? '#D4581A')
@@ -649,8 +672,10 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
       const payload = {
         name, type,
         primaryColor,
-        taxRate: provinceRate(province),    // base rate; transaction-time rules can override
-        province,
+        // The province and the tender split the till charges. On edit they
+        // are only sent when the operator changed the province, so rates set
+        // in Brands → Tax registration are never overwritten by re-saving.
+        ...(provinceChanged && province ? { province, ...provinceTenderRates(province) } : {}),
         heroTagline: heroTagline || conceptStatement || null,
         isActive: true, storefrontVisible: true,
         conceptStatement: conceptStatement || null,
@@ -738,7 +763,8 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
 
       <Section heading="Tax jurisdiction">
         <Field label="Province *">
-          <select value={province} onChange={(e) => setProvince(e.target.value as ProvinceCode)} className={selectCls}>
+          <select value={province} onChange={(e) => { setProvince(e.target.value as ProvinceCode | ''); setProvinceTouched(true) }} className={selectCls}>
+            {province === '' && <option value="">Not set — pick the province</option>}
             {PROVINCES.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.name} — {p.authority} · {p.rate}%{p.cardRate ? ` (card ${p.cardRate}%)` : ''}
@@ -746,19 +772,28 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
             ))}
           </select>
           <Hint>
-            Sets the base sales-tax rate. Transaction-time rules — card vs cash, dine-in vs delivery, zero-rated items — apply automatically at the till and on P&L. You don't manage rates per item here.
+            Sets the brand's starting GST rates for cash and for card / digital payments; the till charges by tender automatically. Change them later in Brands → Tax registration.
           </Hint>
         </Field>
-        <div className="rounded-xl px-4 py-3 text-xs"
-          style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
-          <strong className="text-primary-ink">{PROVINCES.find((p) => p.value === province)?.name}</strong>
-          {' · '}{PROVINCES.find((p) => p.value === province)?.authority}{' authority · '}
-          base rate <strong>{provinceRate(province)}%</strong>
-          {PROVINCES.find((p) => p.value === province)?.cardRate &&
-            <> · card payments <strong>{PROVINCES.find((p) => p.value === province)?.cardRate}%</strong></>
-          }
-          {PROVINCES.find((p) => p.value === province)?.note && <span className="block text-white/50 mt-1">{PROVINCES.find((p) => p.value === province)?.note}</span>}
-        </div>
+        {province !== '' && nextRates && (
+          <div className="rounded-xl px-4 py-3 text-xs"
+            style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
+            <strong className="text-primary-ink">{PROVINCES.find((p) => p.value === province)?.name}</strong>
+            {' · '}{PROVINCES.find((p) => p.value === province)?.authority}{' authority · '}
+            {isEdit && !provinceChanged && currentRates
+              ? <>current GST: cash <strong>{currentRates.taxRateCash}%</strong>{' · '}card / digital <strong>{currentRates.taxRateCard}%</strong> (kept as set in Brands → Tax registration)</>
+              : <>cash <strong>{nextRates.taxRateCash}%</strong>{' · '}card / digital <strong>{nextRates.taxRateCard}%</strong></>}
+            {PROVINCES.find((p) => p.value === province)?.note && <span className="block text-white/50 mt-1">{PROVINCES.find((p) => p.value === province)?.note}</span>}
+          </div>
+        )}
+        {isEdit && province === '' && currentRates && (
+          <p className="text-xs text-white/60">Current GST: cash {currentRates.taxRateCash}% · card / digital {currentRates.taxRateCard}%. Saving without a province keeps them.</p>
+        )}
+        {ratesWillChange && currentRates && nextRates && (
+          <p role="alert" className="rounded-xl px-4 py-3 text-xs font-semibold text-s-amber bg-s-amber-dim border border-s-amber/40">
+            Changing the province resets this brand&rsquo;s GST from cash {currentRates.taxRateCash}% / card {currentRates.taxRateCard}% to cash {nextRates.taxRateCash}% / card {nextRates.taxRateCard}% for every order from now on. You will be asked to confirm.
+          </p>
+        )}
       </Section>
 
       <Section heading="Competitive landscape">
@@ -847,7 +882,12 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
 
       <Footer>
         {onCancel && <button onClick={onCancel} className="text-xs text-white/55 hover:text-white mr-auto">Cancel</button>}
-        <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || !conceptStatement.trim()}
+        <button onClick={() => {
+          if (ratesWillChange && currentRates && nextRates && !confirm(
+            `Change ${name.trim() || 'this brand'}'s GST?\n\nCash ${currentRates.taxRateCash}% → ${nextRates.taxRateCash}%\nCard / digital ${currentRates.taxRateCard}% → ${nextRates.taxRateCard}%\n\nEvery order from now on is charged at the new rates.`,
+          )) return
+          save.mutate()
+        }} disabled={save.isPending || !name.trim() || !conceptStatement.trim() || (!isEdit && province === '')}
           className={primaryBtn}>
           {save.isPending
             ? (isEdit ? 'Saving changes…' : 'Saving brief…')
@@ -1292,7 +1332,7 @@ function DoneStep({ onGo }: { onGo: () => void }) {
         <p className="text-sm font-bold text-primary-ink mb-3">Recommended next steps:</p>
         <ul className="text-sm text-white/80 space-y-2">
           <li>· Add staff under <Link href="/settings" className="text-primary-ink hover:underline">Settings → Staff</Link></li>
-          <li>· Configure tax invoice numbering at <Link href="/configuration/tax" className="text-primary-ink hover:underline">Configuration → Tax</Link></li>
+          <li>· Set up FBR / SRB filing at <Link href="/connectors/pos" className="text-primary-ink hover:underline">Dev → API → POS connector</Link></li>
           <li>· Connect a payment gateway at <Link href="/configuration/payment-methods" className="text-primary-ink hover:underline">Payment Methods</Link></li>
           <li>· Set delivery zones at <Link href="/configuration/delivery-zones" className="text-primary-ink hover:underline">Delivery Zones</Link></li>
           <li>· Customise email/SMS at <Link href="/configuration/templates" className="text-primary-ink hover:underline">Notification Templates</Link></li>
