@@ -15,6 +15,15 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   confirmed: ['preparing', 'ready', 'cancelled'],
   preparing: ['ready', 'cancelled'],
   ready:     ['completed', 'cancelled'],
+  // NOT listed on purpose: ready → preparing. A kitchen RECALL (an item sent
+  // back for a remake) moves a 'ready' order back to 'preparing' so expo can't
+  // hand it off until the remake is bumped — but that is done by
+  // reopenOrderForRemake() in modules/orders/service.ts as a conditional update
+  // (only from 'ready'), deliberately outside this table and outside
+  // transitionOrder: no caller may request it through PATCH /orders/:id/status,
+  // and it must not re-run the 'preparing' side effects (the customer's "being
+  // prepared" notice, the order.confirmed webhook). Bumping the remake moves
+  // the order back to 'ready' through the normal path.
   // Terminal-with-one-exit states: completed orders may still be refunded.
   // Refunded / cancelled / rejected are absorbing — no further transitions.
   completed: ['refunded'],
@@ -37,6 +46,11 @@ export const ITEM_TRANSITIONS: Record<ItemStatus, ItemStatus[]> = {
   preparing: ['ready', 'bumped', 'held', 'voided'],
   ready:     ['bumped', 'recalled', 'voided'],
   bumped:    ['recalled'],
+  // recalled → bumped is not a direct move; updateItemStatus() walks a Bump on
+  // a recalled line through 'preparing' (two legal steps) so a screen with
+  // only a Bump button can still clear a remake. A Bump on a HELD line is
+  // refused (ITEM_ON_HOLD) — it is resumed first, so a hold is never bumped
+  // straight through.
   held:      ['preparing', 'voided'],
   recalled:  ['preparing', 'voided'],
   voided:    [],

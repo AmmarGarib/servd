@@ -269,7 +269,25 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     const scope = await resolveTenantScope(req)
     if (scope.tenantIds.length === 0) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
     const { backfillUnpostedShifts } = await import('../accounting/shiftPosting.js')
-    const result = await backfillUnpostedShifts({ tenantIds: scope.tenantIds, dryRun: body.dryRun, postedBy: req.staffUser!.id })
+    const { backfillUnpostedOrders, withBackfillSlot, BackfillRunningError } = await import('./backfillOrders.js')
+    const runAll = async () => {
+      const result = await backfillUnpostedShifts({ tenantIds: scope.tenantIds, dryRun: body.dryRun, postedBy: req.staffUser!.id })
+      // BOOKS-R2-01: order completions, loyalty earns / redemptions and refund
+      // restores the ledger refused are re-posted too (backfillOrders.ts) —
+      // into their own day only; a locked one is listed, never moved.
+      const orders = await backfillUnpostedOrders({ tenantIds: scope.tenantIds, dryRun: body.dryRun })
+      return { result, orders }
+    }
+    // A real run is single-flight per company (RB-1); a dry run writes
+    // nothing and never waits.
+    let ran: Awaited<ReturnType<typeof runAll>>
+    try {
+      ran = body.dryRun ? await runAll() : await withBackfillSlot(scope.tenantIds, runAll)
+    } catch (err) {
+      if (err instanceof BackfillRunningError) throw new AppError('BACKFILL_RUNNING', err.message, 409)
+      throw err
+    }
+    const { result, orders } = ran
     if (!body.dryRun) {
       await audit({
         category: 'accounting',
@@ -278,10 +296,15 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         userId: req.staffUser!.id,
         userEmail: req.staffUser!.email,
         tenantId: req.staffUser!.tenantId ?? null,
-        after: result.summary,
-        metadata: { shiftIds: result.rows.filter((r) => r.outcome.startsWith('posted')).map((r) => r.shiftId) },
+        after: { shifts: result.summary, orders: orders.summary },
+        metadata: {
+          shiftIds: result.rows.filter((r) => r.outcome.startsWith('posted')).map((r) => r.shiftId),
+          posted: orders.rows.filter((r) => r.outcome === 'posted').map((r) => `${r.kind}:${r.id}`),
+        },
       })
     }
-    return { dryRun: body.dryRun, ...result }
+    // `rows` / `summary` stay the shifts' (the admin page reads them);
+    // `orders` carries the order / loyalty / refund rows.
+    return { dryRun: body.dryRun, ...result, orders }
   })
 }

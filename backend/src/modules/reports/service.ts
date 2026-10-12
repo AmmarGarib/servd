@@ -19,11 +19,24 @@
 // ledger posts with (accounting/orderPosting.ts computeSaleAccounting and
 // refundShareOf, shiftPosting.ts for the till):
 //
-//   net = order value (charged + wallet credit)
+//   net = order value (charged + wallet credit + gift card)
 //         − GST − tips (a liability to staff, never revenue)
 //         − till comps (7030)
 //         + discount funded by loyalty points (7020, paid from the 2060 liability)
-//         − refunds, less the GST and tip share of each refund
+//         − refunds, less the GST and tip share of each refund — tender
+//           refunds, and the wallet credit and gift-card balance given back
+//           when an order is refunded in full
+//
+// A gift card lowers Order.totalCents by what it paid (giftCards/service.ts),
+// but the ledger credits revenue and GST on the PRE-card value and debits
+// 2080 for the card's share (ONL-05) — so the register adds each redemption
+// back to the order value, and values every refund against the full order
+// (LEDGER-R6), or its GST would disagree with the P&L. A sale the ledger booked
+// BEFORE ONL-05 (no 2080 debit naming the order — orderPosting.saleBookingOf
+// .legacyGiftCard) took revenue on the post-card total instead, and its refunds
+// and card restore are valued that way too, so for those orders the register
+// does the same: no add-back, refunds valued without the card, and the card
+// restore (which books nothing) is not a refund (R6-A).
 //
 // i.e. revenue (4xxx incl. 4100 service charge) − contra revenue (7xxx), the
 // figure /accounting/pl-ledger shows. What it can't see: postings that are not
@@ -36,7 +49,7 @@ import { AppError } from '../../lib/errors.js'
 import type { TenantIdWhere } from '../../lib/tenantScope.js'
 import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../accounting/dates.js'
-import { refundShareOf, type SaleOrderFields } from '../accounting/orderPosting.js'
+import { refundShareOf, giftCardAppliedOf, saleBookingOf, type SaleOrderFields } from '../accounting/orderPosting.js'
 
 export interface SalesQuery {
   /** Company scope — scopeTenantWhere(req, 'read'), or `{ tenantId }` in a worker. */
@@ -137,7 +150,7 @@ export function roundMinutes(ms: number, count: number): number {
 export interface SalesTotals {
   /** Orders sold in the period (completed, incl. those refunded since). */
   orders: number
-  /** Order value: Σ charged + wallet credit — incl. GST, service charge and tip, after discounts, before refunds. */
+  /** Order value: Σ charged + wallet credit + gift card — incl. GST, service charge and tip, after discounts, before refunds. */
   gross: number
   /** Discounts and promos given on these orders. */
   discount: number
@@ -164,6 +177,37 @@ function finish(t: SalesTotals): SalesTotals {
 
 type BucketBy = 'all' | 'channel' | 'pktDay' | 'pktHour'
 
+/**
+ * R6-A: is this order's sale on the books WITHOUT its gift cards (booked before
+ * ONL-05: revenue on the post-card total, no 2080 debit naming the order)? The
+ * ledger's own test (saleBookingOf), so the register values the order exactly
+ * as the ledger's refunds do. Memoised per call of salesBuckets; only orders a
+ * gift card paid part of are ever asked.
+ */
+function legacyCardSaleCheck(): (orderId: string) => Promise<boolean> {
+  const memo = new Map<string, Promise<boolean>>()
+  return (orderId) => {
+    let p = memo.get(orderId)
+    if (!p) {
+      p = (async () => {
+        const o = await prisma.order.findUnique({
+          where: { id: orderId },
+          select: {
+            id: true, conceptId: true, source: true,
+            concept: { select: { tenantId: true } },
+            payments: { select: { id: true, shiftId: true, method: true, status: true, gatewayRef: true, createdAt: true } },
+            giftCardRedemptions: { select: { amountCents: true } },
+          },
+        })
+        if (!o?.concept.tenantId || giftCardAppliedOf(o.giftCardRedemptions) <= 0) return false
+        return (await saleBookingOf(prisma, o.concept.tenantId, o)).legacyGiftCard
+      })()
+      memo.set(orderId, p)
+    }
+    return p
+  }
+}
+
 const pktHour = (d: Date) => String((d.getUTCHours() + 5) % 24)
 
 function keyAt(by: BucketBy, at: Date, source: string): string {
@@ -188,6 +232,12 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   const slot = (k: string) => buckets.get(k) ?? (buckets.set(k, emptyTotals()), buckets.get(k)!)
   const where = soldOrderWhere(q)
   const soldAt = (o: { completedAt: Date | null; placedAt: Date }) => o.completedAt ?? o.placedAt
+  // R6-A: a sale booked before ONL-05 is valued without its gift cards, as the ledger does.
+  const isLegacyCardSale = legacyCardSaleCheck()
+  const valued = async <T extends SaleOrderFields & { id: string; giftCardRedemptions: Array<{ amountCents: number }> }>(o: T) => {
+    const applied = giftCardAppliedOf(o.giftCardRedemptions)
+    return { ...o, giftCardAppliedCents: applied > 0 && await isLegacyCardSale(o.id) ? 0 : applied }
+  }
 
   const addSale = (t: SalesTotals, count: number, s: Partial<Record<keyof typeof SALE_FIELDS, number | null>>) => {
     t.orders   += count
@@ -208,6 +258,18 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   } else {
     const rows = await prisma.order.findMany({ where, select: { ...SALE_FIELDS, completedAt: true, placedAt: true, source: true } })
     for (const o of rows) addSale(slot(keyAt(by, soldAt(o), o.source)), 1, o)
+  }
+  //    What gift cards paid of those orders: the bill came down by it, but the
+  //    ledger credits revenue on the pre-card value (ONL-05). Every redemption
+  //    counts — a card given back on a refund is a refund (step 6) — except on
+  //    a sale booked before ONL-05, whose revenue was the post-card total (R6-A).
+  const cardsPaid = await prisma.giftCardRedemption.findMany({
+    where: { amountCents: { gt: 0 }, order: where },
+    select: { amountCents: true, order: { select: { id: true, completedAt: true, placedAt: true, source: true } } },
+  })
+  for (const r of cardsPaid) {
+    if (!r.order || await isLegacyCardSale(r.order.id)) continue
+    slot(keyAt(by, soldAt(r.order), r.order.source)).gross += r.amountCents
   }
 
   // 2. Till comps on those orders — the shift close books them to 7030.
@@ -237,7 +299,15 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   // 4. Refunds handed back in the period — each refund row is its own ledger
   //    entry (orderPosting.ts postRefundPayment), split into revenue, service
   //    charge, tip and GST by the same cumulative pro-rata rule.
-  const refundOrder = { select: { ...SALE_FIELDS, source: true, payments: { where: { status: 'refunded' as const }, select: { id: true, amountCents: true, createdAt: true } } } }
+  //    The order is valued with its gift cards, as postRefundPayment values it
+  //    (without them for a sale booked before ONL-05 — asBooked, R6-A).
+  const refundOrder = {
+    select: {
+      ...SALE_FIELDS, id: true, source: true,
+      payments: { where: { status: 'refunded' as const }, select: { id: true, amountCents: true, createdAt: true } },
+      giftCardRedemptions: { select: { amountCents: true } },
+    },
+  }
   const refunds = await prisma.payment.findMany({
     where: {
       status: 'refunded', amountCents: { lt: 0 },
@@ -261,7 +331,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     const before = (r: { id: string; createdAt: Date }) =>
       r.createdAt.getTime() < p.createdAt.getTime() || (r.createdAt.getTime() === p.createdAt.getTime() && r.id < p.id)
     const prior = p.order.payments.filter((r) => r.id !== p.id && before(r)).reduce((s, r) => s + Math.abs(r.amountCents), 0)
-    addRefund(p.processedAt ?? p.createdAt, p.order, prior, Math.abs(p.amountCents))
+    addRefund(p.processedAt ?? p.createdAt, await valued(p.order), prior, Math.abs(p.amountCents))
   }
 
   // 5. Wallet credit given back when an order is refunded in full ('order.
@@ -273,13 +343,49 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   if (restores.length > 0) {
     const restored = await prisma.order.findMany({
       where: { AND: [orderScope(q), { id: { in: restores.map((w) => w.orderId!) }, status: 'refunded', walletAmountCents: { gt: 0 } }] },
-      select: { id: true, ...refundOrder.select },
+      select: refundOrder.select,
     })
     const at = new Map(restores.map((w) => [w.orderId!, w.createdAt]))
     for (const o of restored) {
       const prior = o.payments.reduce((s, r) => s + Math.abs(r.amountCents), 0)
-      addRefund(at.get(o.id)!, o, prior, o.walletAmountCents)
+      addRefund(at.get(o.id)!, await valued(o), prior, o.walletAmountCents)
     }
+  }
+
+  // 6. Gift-card balance given back when an order is refunded in full ('order.
+  //    refund_giftcard': Dr revenue / GST shares, Cr 2080), on the day it went
+  //    back — mirrors orderPosting.postOrderRefund step 4: each card's slice
+  //    comes after the tender refunds, the wallet restore and the order's
+  //    earlier redemptions. A sale booked before ONL-05 never discharged 2080,
+  //    so its card restore books nothing (postOrderRefund) and is no refund here.
+  const cardRestores = await prisma.giftCardRedemption.findMany({
+    where: {
+      reversedAt: { gte: q.from, lte: q.to },
+      amountCents: { gt: 0 },
+      order: { AND: [orderScope(q), { status: 'refunded' }] },
+    },
+    select: {
+      id: true, amountCents: true, reversedAt: true, redeemedAt: true,
+      order: {
+        select: {
+          ...refundOrder.select,
+          walletAmountCents: true,
+          giftCardRedemptions: { orderBy: [{ redeemedAt: 'asc' }, { id: 'asc' }], select: { id: true, amountCents: true } },
+        },
+      },
+    },
+  })
+  for (const r of cardRestores) {
+    const o = r.order
+    if (!o || !r.reversedAt) continue
+    if (await isLegacyCardSale(o.id)) continue
+    const tenderRefunded = o.payments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
+    let prior = tenderRefunded + (o.walletAmountCents > 0 ? o.walletAmountCents : 0)
+    for (const e of o.giftCardRedemptions) {
+      if (e.id === r.id) break
+      prior += Math.max(0, e.amountCents)
+    }
+    addRefund(r.reversedAt, await valued(o), prior, r.amountCents)
   }
 
   for (const t of buckets.values()) finish(t)

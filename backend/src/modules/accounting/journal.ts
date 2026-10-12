@@ -67,6 +67,25 @@ export const CONCEPT_REVENUE_CODE: Record<string, string> = {
   'bukhari':         '4007',
 }
 
+// ─── Line amount ceiling (BOOKS-06) ─────────────────────────────────────────
+//
+// JournalLine.amountCents is a Postgres INT4: the largest line it can hold is
+// 2,147,483,647 paisa (PKR 21,474,836.47). A bigger line (a PKR 25m opening
+// balance) used to reach the insert and come back as a 500. Every posting is
+// checked here — and the manual journal route checks the operator's lines
+// before anything else — so it is a clear 422 instead. The real fix is a
+// BigInt migration of journal_lines.amountCents; until then a bigger amount
+// is posted as several lines.
+export const MAX_LINE_CENTS = 2_147_483_647
+
+export function amountTooLarge(where?: string): AppError {
+  return new AppError(
+    'AMOUNT_TOO_LARGE',
+    `${where ? `${where}: ` : ''}a single ledger line can hold at most PKR 21,474,836.47 — split this amount into lines of at most PKR 21,474,836.47`,
+    422,
+  )
+}
+
 export function revenueCodeForConcept(slug: string): string {
   return CONCEPT_REVENUE_CODE[slug] ?? '4090' // Other/Catering fallback
 }
@@ -164,6 +183,9 @@ export async function postJournalEntry(
     if (!Number.isInteger(l.amountCents)) {
       throw new AppError('JOURNAL_NOT_INTEGER', `Line amount must be integer cents: ${l.accountCode} ${l.amountCents}`, 422)
     }
+    if (l.amountCents > MAX_LINE_CENTS) {
+      throw amountTooLarge(`${input.sourceType}:${input.sourceId} account ${l.accountCode}`)
+    }
   }
   if (lines.length < 2) {
     throw new AppError('JOURNAL_TOO_FEW_LINES', 'After dropping zero lines, fewer than two remained', 422)
@@ -183,6 +205,16 @@ export async function postJournalEntry(
   const entryDate = input.entryDate ?? new Date()
 
   const run = async (tx: Tx): Promise<PostJournalEntryResult> => {
+    // One posting of a (company, reference) at a time (RB-1). The idempotency
+    // check below is a read followed by an insert under READ COMMITTED, and
+    // journal_entries.reference has no unique index — so two callers racing
+    // (two backfill runs, a backfill and the async completion posting, a
+    // webhook retry) both saw "nothing posted" and both inserted, booking the
+    // sale, its GST and its points twice. A transaction-scoped advisory lock
+    // on (company, reference) makes the second caller wait for the first to
+    // commit and then find its entry. Released with the transaction.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.tenantId}::text), hashtext(${idempotencyRef}::text))`
+
     // Idempotency check — an entry with the same reference is treated as a
     // no-op. Scoped to the company so one company's books can never suppress
     // a posting in another's.
@@ -285,4 +317,72 @@ export async function reverseJournalEntry(
     },
     { tx: options.tx },
   )
+}
+
+// ─── A posting the ledger refused is never silent (BOOKS-07 / BOOKS-R2-01) ──
+//
+// The till close was the only posting whose refusal reached anyone: online
+// order completions, refunds and loyalty postings were console.error'd, so a
+// lock through today (or any other refusal) left a sale filed with the fiscal
+// POS and missing from the books with nobody told. Every such refusal now
+// raises ONE open high 'posting_failed' exception per (entity, posting) in the
+// source document's company; POST /reconciliation/backfill-unposted re-posts
+// it and resolves the flag.
+
+export interface PostingFailure {
+  /** The source document's company. Null → the flag falls back to the brand's company. */
+  tenantId:    string | null
+  /** The posting that was refused: 'order.complete', 'order.refund', 'loyalty.earn', … */
+  sourceType:  string
+  sourceId:    string
+  /** What the operator looks up: 'Order', 'LoyaltyTransaction', … */
+  entityType:  string
+  entityId:    string
+  reason:      string
+  title:       string
+  conceptId?:  string | null
+  amountCents?: number | null
+}
+
+/** Raise (once) a high posting_failed exception. Never throws. */
+export async function flagPostingFailed(f: PostingFailure): Promise<void> {
+  try {
+    console.error(`[journal] ${f.sourceType}:${f.sourceId} did not post: ${f.reason}`)
+    const open = await defaultPrisma.exceptionFlag.findFirst({
+      where: {
+        kind: 'posting_failed', entityType: f.entityType, entityId: f.entityId,
+        status: { in: ['open', 'acknowledged'] },
+        metadata: { path: ['sourceType'], equals: f.sourceType },
+      },
+      select: { id: true },
+    })
+    if (open) return
+    const { flagException } = await import('../../lib/exceptions.js')
+    await flagException({
+      tenantId: f.tenantId,
+      kind: 'posting_failed',
+      severity: 'high',
+      title: f.title,
+      description: `${f.entityType} ${f.entityId.slice(0, 8)}: its ${f.sourceType} journal entry was refused (${f.reason.slice(0, 300)}). Fix the cause (e.g. reopen the period), then re-post it from Reconciliation → Backfill unposted.`,
+      entityType: f.entityType,
+      entityId: f.entityId,
+      conceptId: f.conceptId ?? null,
+      amountCents: f.amountCents != null && Math.abs(f.amountCents) <= MAX_LINE_CENTS ? f.amountCents : null,
+      metadata: { reason: f.reason, sourceType: f.sourceType, sourceId: f.sourceId },
+    })
+  } catch (err) {
+    console.error(`[journal] could not flag the refused ${f.sourceType}:${f.sourceId}:`, (err as Error).message)
+  }
+}
+
+/** Close the open posting_failed flags of an entity once its posting is on the books. */
+export async function resolvePostingFailed(entityType: string, entityId: string, sourceType: string, resolution: string): Promise<void> {
+  await defaultPrisma.exceptionFlag.updateMany({
+    where: {
+      kind: 'posting_failed', entityType, entityId,
+      status: { in: ['open', 'acknowledged'] },
+      metadata: { path: ['sourceType'], equals: sourceType },
+    },
+    data: { status: 'resolved', resolvedAt: new Date(), resolution },
+  }).catch((err) => console.error(`[journal] could not resolve posting_failed for ${entityType} ${entityId}:`, (err as Error).message))
 }

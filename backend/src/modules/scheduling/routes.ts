@@ -23,7 +23,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
-import { rotaFor, shiftMaster, cellMinutes, toMinutes, segmentMinutes, ymd, OFF_MARK } from '../hr/rota.js'
+import { rotaFor, shiftMaster, cellMinutes, toMinutes, segmentMinutes, ymd, OFF_MARK, approvedLeaveOn, leaveSpan, isHalfDayLeave as isHalfDay } from '../hr/rota.js'
 import { employeeLabels, getSettings } from '../hr/service.js'
 import { hourlyRateCents } from '../hr/logic.js'
 
@@ -68,6 +68,14 @@ async function gridEmployees(tenantId: string, conceptId: string) {
   ])
   const locs = new Set(links.map((l) => l.locationId))
   return emps.filter((e) => !e.locationId || locs.size === 0 || locs.has(e.locationId))
+}
+
+// approvedLeaveOn (hr/rota.ts) — the one leave check the rota and a shift
+// swap share (audit PPL-12 / HR-R5).
+
+function onLeave(name: string, leave: { id: string; startDate: Date | null; endDate: Date | null }) {
+  const span = leaveSpan(leave)
+  return new AppError('ON_LEAVE', `${name} is on approved leave (${span}) — shorten or cancel the leave in HR before rostering them that day`, 409, { leaveId: leave.id })
 }
 
 /** An exception row, or 404 when it is not in the operator's companies. */
@@ -135,6 +143,8 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     }
     if (!start || !end) throw new AppError('TIMES_REQUIRED', 'Give a start and end time, pick a shift, or mark the day off', 400)
     if (start === end) throw new AppError('BAD_TIMES', 'A shift cannot start and end at the same time', 400)
+    const leave = await approvedLeaveOn(concept.tenantId!, emp.id, date)
+    if (leave) throw onLeave(emp.fullName, leave)
     const clash = sameDay.find((x) => x.role !== OFF_MARK && overlaps(start!, end!, x.startTime, x.endTime))
     if (clash) throw new AppError('SHIFT_CONFLICT', `${emp.fullName} is already down for ${clash.startTime}–${clash.endTime} that day`, 409)
     const offRows = sameDay.filter((x) => x.role === OFF_MARK).map((x) => x.id)
@@ -155,7 +165,12 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     if (row.role === OFF_MARK) throw new AppError('DAY_OFF', 'This is a day off — remove it and add hours instead', 409)
     const start = body.startTime ?? row.startTime, end = body.endTime ?? row.endTime
     if (start === end) throw new AppError('BAD_TIMES', 'A shift cannot start and end at the same time', 400)
-    const others = await prisma.scheduledShift.findMany({ where: { userId: row.userId, date: row.date, id: { not: row.id }, role: { not: OFF_MARK }, concept: { tenantId: row.concept.tenantId } } })
+    // The person behind the login, in the shift's company: their leave
+    // refuses a change of hours too.
+    const emp = row.concept.tenantId ? await prisma.hrEmployee.findFirst({ where: { tenantId: row.concept.tenantId, userId: row.userId }, select: { id: true, fullName: true } }) : null
+    const leave = emp ? await approvedLeaveOn(row.concept.tenantId!, emp.id, row.date) : null
+    if (emp && leave) throw onLeave(emp.fullName, leave)
+    const others = await prisma.scheduledShift.findMany({ where: { userId: row.userId, date: row.date, id: { not: row.id }, OR: [{ role: null }, { role: { not: OFF_MARK } }], concept: { tenantId: row.concept.tenantId } } })
     const clash = others.find((x) => overlaps(start, end, x.startTime, x.endTime))
     if (clash) throw new AppError('SHIFT_CONFLICT', `Already down for ${clash.startTime}–${clash.endTime} that day`, 409)
     return prisma.scheduledShift.update({
@@ -189,11 +204,19 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     ])
     const taken = new Set(existing.map((x) => `${x.userId}:${ymd(x.date)}`))
     // Only people still employed here.
-    const current = new Set((await prisma.hrEmployee.findMany({ where: { tenantId: concept.tenantId ?? '', status: { in: ['active', 'on_leave'] }, userId: { not: null } }, select: { userId: true } })).map((e) => e.userId!))
+    const currentEmps = await prisma.hrEmployee.findMany({ where: { tenantId: concept.tenantId ?? '', status: { in: ['active', 'on_leave'] }, userId: { not: null } }, select: { id: true, userId: true } })
+    const current = new Set(currentEmps.map((e) => e.userId!))
+    // …and never onto someone's approved leave: a copied shift is skipped.
+    const empOfUser = new Map(currentEmps.map((e) => [e.userId!, e.id]))
+    const leaves = await prisma.hrRecord.findMany({
+      where: { tenantId: concept.tenantId ?? '', section: 'leave', status: 'approved', employeeId: { in: currentEmps.map((e) => e.id) }, startDate: { lte: dst.sun }, endDate: { gte: dst.mon } },
+      select: { employeeId: true, startDate: true, endDate: true, quantity: true },
+    })
+    const onLeaveDay = (userId: string, date: Date) => leaves.some((l) => l.employeeId === empOfUser.get(userId) && !isHalfDay(l) && l.startDate! <= date && l.endDate! >= date)
     let created = 0, skipped = 0
     for (const r of rows) {
       const date = new Date(r.date.getTime() + offset)
-      if (!current.has(r.userId) || taken.has(`${r.userId}:${ymd(date)}`)) { skipped++; continue }
+      if (!current.has(r.userId) || taken.has(`${r.userId}:${ymd(date)}`) || (r.role !== OFF_MARK && onLeaveDay(r.userId, date))) { skipped++; continue }
       await prisma.scheduledShift.create({ data: { userId: r.userId, conceptId: r.conceptId, date, startTime: r.startTime, endTime: r.endTime, role: r.role, notes: r.notes } })
       created++
     }

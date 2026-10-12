@@ -14,7 +14,7 @@
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { requireTenantId } from '../../lib/tenantScope.js'
-import { recordPunch, attendanceKeys, type PunchEntry, type PunchResult } from '../hr/attendance.js'
+import { recordPunch, attendanceKeys, closeMissedDays, isMissedClockOut, lastInOf, type PunchEntry, type PunchResult } from '../hr/attendance.js'
 import { verifyKioskPin } from '../hr/kioskPin.js'
 import { getFormat, STANDING_ATTENDANCE } from '../hr/service.js'
 import { pktToday } from '../hr/logic.js'
@@ -27,14 +27,39 @@ const activeCompany = (actor: Actor): string => requireTenantId(actor.tenantId, 
 
 const attendanceOut = (r: PunchResult | null) => r && r.recordId ? { recordId: r.recordId, status: r.status, lateMinutes: r.lateMinutes, ...(r.skipped && { note: r.skipped }) } : null
 
+/**
+ * This login's open clock-in — the last punch-log row when it is an in — and
+ * whether it is a forgotten clock-out by now (hr/attendance isMissedClockOut).
+ * clockIn, clockOut and GET /time-clock/status all read it, so the status
+ * the tablet shows and what a punch does always agree.
+ */
+export async function openClockIn(userId: string, now = new Date()): Promise<{ since: Date; missed: boolean } | null> {
+  const last = await prisma.clockLog.findFirst({ where: { userId }, orderBy: { recordedAt: 'desc' }, select: { type: true, recordedAt: true } })
+  if (last?.type !== 'in') return null
+  return { since: last.recordedAt, missed: isMissedClockOut(last.recordedAt, now) }
+}
+
+/** Close the day a forgotten clock-out left open, in every company this
+ *  login is an employee of: missing_punch, no hours, for HR to correct. */
+async function closeMissedOutFor(userId: string, at: Date) {
+  const emps = await prisma.hrEmployee.findMany({ where: { userId, status: { in: ['active', 'on_leave'] } }, select: { id: true, tenantId: true } })
+  for (const e of emps) await closeMissedDays(e.tenantId, e.id, at)
+}
+
+const MISSED_OUT_NOTE = 'Your last clock-in was never clocked out. That day is flagged for HR as a missed punch and counts no hours until it is corrected.'
+
 export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   const tenantId = activeCompany(actor)
   // Already clocked in? Return the open punch rather than stacking a second
-  // 'in', which would leave an unpaired record and skew the hours pairing.
-  const last = await prisma.clockLog.findFirst({ where: { userId: actor.id }, orderBy: { recordedAt: 'desc' }, select: { type: true, recordedAt: true } })
-  if (last?.type === 'in') return { alreadyClockedIn: true, since: last.recordedAt }
+  // 'in', which would leave an unpaired record and skew the hours pairing —
+  // unless that in is a forgotten clock-out (yesterday's, say): then it is
+  // closed as a missed punch and today's in goes ahead.
+  const now = new Date()
+  const open = await openClockIn(actor.id, now)
+  if (open && !open.missed) return { alreadyClockedIn: true, since: open.since }
 
   const verdict = await enforceClockInPolicy(tenantId, actor.role, body)
+  if (open?.missed) await closeMissedOutFor(actor.id, now)
   const log = await prisma.clockLog.create({
     data: {
       userId: actor.id, type: 'in', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null,
@@ -51,12 +76,20 @@ export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   return {
     clockedInAt: log.recordedAt, geofenceMatched: verdict.geofenceMatched, geofenceDistanceM: verdict.geofenceDistanceM,
     location: verdict.locationName, hrLinked: !!emp, attendance: attendanceOut(att),
+    ...(open?.missed && { missedClockOut: { since: open.since, note: MISSED_OUT_NOTE } }),
   }
 }
 
 export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) {
-  const last = await prisma.clockLog.findFirst({ where: { userId: actor.id }, orderBy: { recordedAt: 'desc' }, select: { type: true } })
-  if (last?.type !== 'in') return { notClockedIn: true }
+  const now = new Date()
+  const open = await openClockIn(actor.id, now)
+  if (!open) return { notClockedIn: true }
+  if (open.missed) {
+    // Pairing this out with an in from yesterday would book a 25-hour shift.
+    // No out is written; the open day is closed as a missed punch for HR.
+    await closeMissedOutFor(actor.id, now)
+    return { notClockedIn: true, missedClockOut: { since: open.since, note: MISSED_OUT_NOTE } }
+  }
   const log = await prisma.clockLog.create({
     data: { userId: actor.id, type: 'out', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null, ipAddress: ip ?? null },
   })
@@ -72,25 +105,43 @@ export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) 
   return { clockedOutAt: log.recordedAt, attendance: attendanceOut(att) }
 }
 
-/** Is this employee's day open (in, no out) in this company? */
-async function dayIsOpen(tenantId: string, employeeId: string): Promise<boolean> {
-  const today = pktToday()
+/**
+ * This employee's day in this company, as the kiosk sees it:
+ *   open    an in with no out that is still a shift — the next punch is the out;
+ *   missed  an in with no out that isMissedClockOut() calls forgotten;
+ *   none    nothing open — the next punch is the in.
+ */
+async function openDayState(tenantId: string, employeeId: string, now = new Date()): Promise<'open' | 'missed' | 'none'> {
+  const today = pktToday(now)
   const k = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
   const rows = await prisma.hrRecord.findMany({
     where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { in: [today, new Date(today.getTime() - 86_400_000)] } },
   })
-  return rows.some((r) => {
+  const open = rows.filter((r) => {
     const d = r.data as Record<string, unknown>
-    return ['clock', 'kiosk'].includes(String(d['_source'])) && !d[k.checkOut]
+    return ['clock', 'kiosk'].includes(String(d['_source'])) && !d[k.checkOut] && !d['_missedOut']
   })
+  if (open.some((r) => !isMissedClockOut(lastInOf(r), now))) return 'open'
+  return open.length ? 'missed' : 'none'
 }
 
-/** A kiosk punch by someone without a login: in if their day is not open, out if it is. */
+const KIOSK_MISSED_OUT = 'Your last clock-in was never clocked out, so this punch cannot close it — that day is flagged for HR to correct. If you are starting a shift now, punch again to clock in.'
+
+/**
+ * A kiosk punch by someone without a login: in if their day is not open, out
+ * if it is. The kiosks send no action, so the server decides — and it never
+ * turns a refused clock-out into a clock-in (audit HR-R2: the closer's 02:05
+ * punch became an in, and every shift after that was booked as the hours
+ * between shifts). When the open in is a forgotten clock-out, the punch is
+ * taken as the out it most likely is: the day is closed as a missed punch for
+ * HR and the person is told to punch again if they are starting a shift. Only
+ * when nothing is open is the punch an in.
+ */
 export async function kioskPunch(device: Actor, body: PunchBody & { employeeCode: string; pin: string; action?: 'in' | 'out' }) {
   const tenantId = activeCompany(device)
   const emp = await verifyKioskPin(tenantId, body.employeeCode, body.pin)
   if (emp.userId) throw new AppError('HAS_LOGIN', 'You have a servd login — clock in with it instead of the kiosk PIN', 409)
-  const kind = body.action ?? ((await dayIsOpen(tenantId, emp.id)) ? 'out' : 'in')
+  const kind = body.action ?? ((await openDayState(tenantId, emp.id)) === 'none' ? 'in' : 'out')
   const verdict = kind === 'in' ? await enforceClockInPolicy(tenantId, null, body) : null
   const r = await recordPunch({
     tenantId, employeeId: emp.id, kind, source: 'kiosk', actorUserId: device.id,
@@ -98,6 +149,7 @@ export async function kioskPunch(device: Actor, body: PunchBody & { employeeCode
     locationId: verdict?.locationId ?? null, selfieUrl: body.selfieUrl ?? null,
   })
   if (kind === 'out' && r.skipped === 'no_open_day') throw new AppError('NOT_CLOCKED_IN', 'You are not clocked in today', 409)
+  if (kind === 'out' && r.skipped === 'missed_out') throw new AppError('MISSED_CLOCK_OUT', KIOSK_MISSED_OUT, 409, { recordId: r.recordId })
   return { employee: { id: emp.id, fullName: emp.fullName, employeeCode: emp.employeeCode }, action: kind, at: new Date(), attendance: attendanceOut(r), location: verdict?.locationName ?? null }
 }
 

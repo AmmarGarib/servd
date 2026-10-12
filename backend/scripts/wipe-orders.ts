@@ -37,6 +37,10 @@ async function main() {
     groupOrders: await prisma.groupOrder.count(),
     groupOrderItems: await prisma.groupOrderItem.count(),
     groupOrderMembers: await prisma.groupOrderMember.count(),
+    fiscalAttempts: await prisma.fiscalAttempt.count(),
+    fiscalDocuments: await prisma.fiscalDocument.count(),
+    terminalCharges: await prisma.terminalCharge.count(),
+    preBills: await prisma.preBill.count(),
   }
 
   console.log('Current row counts:')
@@ -56,6 +60,16 @@ async function main() {
     // OrderItem children
     prisma.orderItemModifier.deleteMany({}),
     prisma.orderItemStep.deleteMany({}),
+
+    // POS connector + pre-bills (FKs to Order, RESTRICT) — BEFORE payments and
+    // orders. Attempts cascade from documents but are dropped explicitly so a
+    // dry-run count and the wipe agree. Pre-bill numbering restarts at PB-1
+    // with the orders it numbered.
+    prisma.fiscalAttempt.deleteMany({}),
+    prisma.fiscalDocument.deleteMany({}),
+    prisma.terminalCharge.deleteMany({}),
+    prisma.preBill.deleteMany({}),
+    prisma.preBillCounter.deleteMany({}),
 
     // Order children — required orderId: drop everything
     prisma.orderReview.deleteMany({}),
@@ -85,12 +99,12 @@ async function main() {
   ])
 
   if (resetCustomers) {
-    console.log('Resetting customer order rollups (totalSpent / totalOrders / loyaltyPoints)…')
+    // The rollups recomputeCustomerRollups writes (lib/customerRollups).
+    console.log('Resetting customer order rollups (totalSpentCents / firstOrderAt / lastOrderAt)…')
     await prisma.customer.updateMany({
       data: {
-        totalSpent: 0,
-        totalOrders: 0,
-        loyaltyPoints: 0,
+        totalSpentCents: 0,
+        firstOrderAt: null,
         lastOrderAt: null,
       },
     })

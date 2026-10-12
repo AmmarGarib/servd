@@ -8,7 +8,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, ADMIN_ONLY, FINANCE_TEAM } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope } from '../../lib/tenantScope.js'
@@ -18,8 +18,20 @@ import { liveRevisionsFor } from '../accounting/sourcePosting.js'
 import { isPayrollCategory } from '../accounting/expenseCategories.js'
 import { profitAndLoss } from '../accounting/reports.js'
 import { monthlyLabourCents } from '../projections/labour.js'
+import { moduleGateForNewRoles } from './moduleGate.js'
 
 const cadenceEnum = z.enum(['monthly', 'quarterly', 'annual', 'per_use'])
+
+// Who works the OpEx tracker (wave 3, UI-07): the manager tiers plus finance.
+// OpEx is a page of the 'capital' module, which finance holds by default and
+// whose workspace (Finance) it owns — it got 403 on every /opex call. Recording
+// a recurring bill as paid posts it to the books (owner decision 23); that is
+// finance's normal job. The backfill of old payments stays the CEO's.
+// /opex is not a central module-gated prefix, so finance (newly let in) must
+// also hold 'capital' — the CEO's Module Access untick closes every route here,
+// writes and ledger postings included (W3B-RV-1). Manager tiers unchanged.
+const OPEX_TEAM = FINANCE_TEAM
+const OPEX_GUARD = [requireAuth(...OPEX_TEAM), moduleGateForNewRoles(['capital'])]
 
 // Every id an opex line points at — its category, brand, capex project and
 // paying bank account — must belong to the line's own company (its
@@ -56,7 +68,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // â”€â”€â”€ Categories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.get<{ Querystring: { projectId?: string; scope?: string } }>('/categories',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: OPEX_GUARD },
     async (req) => {
       const { projectId, scope } = req.query
       // Filter lines by project: 'project' = lines with this projectId,
@@ -106,7 +118,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/categories', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/categories', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object({
       name:               z.string().min(1).max(80),
       emoji:              z.string().max(8).nullable().optional(),
@@ -129,7 +141,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(cat)
   })
 
-  fastify.patch<{ Params: { id: string } }>('/categories/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.patch<{ Params: { id: string } }>('/categories/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object({
       name:               z.string().min(1).max(80).optional(),
       emoji:              z.string().max(8).nullable().optional(),
@@ -145,7 +157,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return prisma.opexCategory.update({ where: { id: req.params.id }, data: body })
   })
 
-  fastify.delete<{ Params: { id: string } }>('/categories/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/categories/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const owned = await prisma.opexCategory.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     })
@@ -159,7 +171,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  fastify.post('/lines', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/lines', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = lineSchema.parse(req.body)
     // A new line binds to the ACTIVE company: its category must be one of the
     // active company's, and everything else it names must be that company's.
@@ -178,7 +190,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(line)
   })
 
-  fastify.patch<{ Params: { id: string } }>('/lines/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.patch<{ Params: { id: string } }>('/lines/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = lineSchema.partial().parse(req.body)
     const owned = await prisma.opexLine.findFirst({
       where: {
@@ -207,7 +219,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.delete<{ Params: { id: string } }>('/lines/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/lines/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const owned = await prisma.opexLine.findFirst({
       where: {
         id: req.params.id,
@@ -236,7 +248,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     expenseAccountCode: z.string().regex(/^6\d{3}$/).nullable().optional(),
   }
 
-  fastify.post('/payments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/payments', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object({
       lineId:        z.string().min(1),
       periodStart:   z.string(),
@@ -294,7 +306,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ ...p, ledger })
   })
 
-  fastify.patch<{ Params: { id: string } }>('/payments/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.patch<{ Params: { id: string } }>('/payments/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object(paymentBody).parse(req.body)
     const owned = await prisma.opexPayment.findFirst({
       where: {
@@ -352,7 +364,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // 23): the P&L's operating-expense accounts for the period, and per OpEx
   // category what its posted payments put on the books. The tracker's own
   // "paid" rows are only a view of these entries.
-  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string } }>('/actuals', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string } }>('/actuals', { preHandler: OPEX_GUARD }, async (req) => {
     const to = req.query.dateTo ? new Date(req.query.dateTo) : new Date()
     const from = req.query.dateFrom ? new Date(req.query.dateFrom) : new Date(to.getFullYear(), to.getMonth(), 1)
     const tenantIds = (await resolveTenantScope(req)).tenantIds
@@ -383,7 +395,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Live data: payroll snapshot for the Payroll category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  fastify.get('/payroll-snapshot', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/payroll-snapshot', { preHandler: OPEX_GUARD }, async (req) => {
     // Last 6 months of HR payroll runs for the companies in view; the UI
     // renders them as a "live" line under the Payroll category instead of
     // manual entry.
@@ -452,7 +464,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Cash-flow forecast (next 90 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  fastify.get('/cashflow', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/cashflow', { preHandler: OPEX_GUARD }, async (req) => {
     const now = new Date()
     const horizon = new Date(now); horizon.setDate(horizon.getDate() + 90)
 

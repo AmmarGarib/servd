@@ -17,17 +17,28 @@ import { initWebSocket } from './lib/ws.js'
 import { serviceClient as prisma } from './lib/prisma.js'
 import { runWithRlsContext } from './lib/rlsContext.js'
 import { redis, redisFast } from './lib/redis.js'
+import { redisHealthProbe, staffCodeLoginHealth } from './lib/healthProbes.js'
 import { AppError, errorResponse } from './lib/errors.js'
 import { ZodError } from 'zod'
 import { startCartReleaseWorker } from './lib/reservation.js'
 import { startCoursePacingWorker } from './workers/coursePacing.js'
+import { startPreOrderReleaseWorker } from './workers/preOrderRelease.js'
 import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
 import { startReservationReminderWorker } from './workers/reservationReminders.js'
 import { startDeliveryWatch } from './workers/deliveryWatch.js'
 import { startReviewPromptWorker } from './workers/reviewPrompt.js'
-import { startFbrSubmissionWorker } from './workers/fbrSubmission.js'
-import { startSrbSubmissionWorker } from './workers/srbSubmission.js'
+// Fiscal filing goes ONLY through the POS connector (connectors/, spec §12):
+// the direct FBR/SRB workers are gone. drainLegacyTaxQueues empties their old
+// BullMQ queues once, before the connector workers start.
+import { startFiscalConnectorWorker } from './workers/fiscalConnector.js'
+import { startTerminalConnectorWorker } from './workers/terminalConnector.js'
+import { drainLegacyTaxQueues } from './connectors/legacyDrain.js'
+import { connectorHealthChecks } from './connectors/health.js'
+import { registerConnectorPlugins } from './modules/connectors/index.js'
+import { registerPreBillPlugins } from './modules/prebills/index.js'
+import { registerApprovalsPlugin } from './modules/approvals/index.js'
+import { CONNECTOR_ADMINS } from './lib/connectorRoles.js'
 import { startWebhookDeliveryWorker } from './workers/webhookDelivery.js'
 import { startScheduledReportsWorker, carryOverDigestRecipient } from './workers/scheduledReports.js'
 import { startShrinkageTrendWorker } from './workers/shrinkageTrend.js'
@@ -119,9 +130,10 @@ import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
 import { ensureChartOfAccounts, retireAggregatorAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
 import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
-import { whatsappConfigured as isWhatsappConfigured } from './lib/whatsapp.js'
+import { whatsappConfigured as isWhatsappConfigured, whatsappSecretHealth } from './lib/whatsapp.js'
 import { emailConfigured as isEmailConfigured } from './lib/mailer.js'
 import { registerBrandScope } from './lib/brandScope.js'
+import { registerEmptyJsonBody } from './lib/jsonBody.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -205,6 +217,10 @@ async function build() {
   fastify.addHook('onRequest', (_req, _reply, done) => {
     runWithRlsContext({}, () => done())
   })
+
+  // A JSON content type with no body (the admin's DELETEs) is a body-less
+  // request, not a 400 FST_ERR_CTP_EMPTY_JSON_BODY. See lib/jsonBody.ts.
+  registerEmptyJsonBody(fastify)
 
   // CORS allowlist lives in lib/corsAllowlist.ts — handles the canonical
   // servd hosts AND each brand's custom domain (stackd.pk, simmer.pk,
@@ -330,6 +346,18 @@ async function build() {
       await api.register(orderCourseRoutes, { prefix: '/orders' })
       await api.register(menuRoutes, { prefix: '/menu' })
       await api.register(posRoutes, { prefix: '/pos' })
+      // POS connector (spec §8): /connectors (config, module api_pos), /pos
+      // (card machine + an order's fiscal documents), /webhooks/pos (vendor
+      // events, own raw-body parser).
+      await registerConnectorPlugins(api)
+      // Pre-bills (§17): /pos/orders/:id/pre-bill + /pos/pre-bills/:id/html
+      // (till) and /pre-bills (Finance → Voided pre bills, module-gated).
+      await registerPreBillPlugins(api)
+      // CEO → Approvals (owner decision D3): GET /approvals + /approvals/counts.
+      // Reads each module's own queue by injecting GET requests as the caller
+      // (modules/approvals/README.md); approving goes through each module's
+      // existing route.
+      await registerApprovalsPlugin(api)
       await api.register(inventoryRoutes, { prefix: '/inventory' })
       await api.register(tableRoutes, { prefix: '/tables' })
       await api.register(reportRoutes, { prefix: '/reports' })
@@ -408,47 +436,13 @@ async function build() {
       // attach an Authorization header when navigating top-level — so the
       // frontend fetches the OAuth URL with its bearer token, then
       // window.location.hrefs the browser to Facebook directly.
-      // GET /api/v1/integrations/tax/status — honest state for FBR + SRB cards.
-      // Both authorities are reported in one payload so the integrations page
-      // can render parallel cards without two round-trips. Per authority:
-      //   - configured: env vars present?
-      //   - mode: 'production' | 'sandbox' (defaults sandbox)
-      //   - conceptsRegistered: how many Concepts have a POSID for that authority
-      //   - invoicesSubmitted: how many Orders have an invoice number recorded
-      //     (fbrInvoiceNumber / srbInvoiceNumber lives on Order, not TaxInvoice
-      //     — the earlier draft of this endpoint had the wrong model)
-      api.get('/integrations/tax/status', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-        const tenantFilter = req.staffUser!.tenantFilter
-        const conceptScope = { tenantId: tenantFilter, deletedAt: null } as const
-        const orderConcept = { concept: { tenantId: tenantFilter } } as const
+      // (GET /integrations/tax/status is gone with direct FBR/SRB filing — the
+      // POS connector page reads GET /connectors instead, spec §8.4.)
 
-        const fbrConfigured = Boolean(process.env['FBR_USERNAME'] && process.env['FBR_PASSWORD'])
-        const srbConfigured = Boolean(process.env['SRB_USERNAME'] && process.env['SRB_PASSWORD'])
-
-        const [fbrConcepts, fbrInvoices, srbConcepts, srbInvoices] = await Promise.all([
-          fbrConfigured ? prisma.concept.count({ where: { ...conceptScope, fbrPosId: { not: null } } }) : 0,
-          fbrConfigured ? prisma.order.count({ where: { ...orderConcept, fbrInvoiceNumber: { not: null } } }) : 0,
-          srbConfigured ? prisma.concept.count({ where: { ...conceptScope, srbPosId: { not: null } } }) : 0,
-          srbConfigured ? prisma.order.count({ where: { ...orderConcept, srbInvoiceNumber: { not: null } } }) : 0,
-        ])
-
-        return {
-          fbr: {
-            configured: fbrConfigured,
-            mode:               process.env['FBR_ENV'] === 'production' ? 'production' : 'sandbox',
-            conceptsRegistered: fbrConcepts,
-            invoicesSubmitted:  fbrInvoices,
-          },
-          srb: {
-            configured: srbConfigured,
-            mode:               process.env['SRB_ENV'] === 'production' ? 'production' : 'sandbox',
-            conceptsRegistered: srbConcepts,
-            invoicesSubmitted:  srbInvoices,
-          },
-        }
-      })
-
-      api.get('/integrations/social/status', { preHandler: requireAuth(...MANAGERS) }, async () => {
+      // Status (no secrets: page/ig names + flags) is also IT's — the Dev
+      // workspace's Integrations page (wave 3, UI-08). Connecting the Meta page
+      // token stays with the managers.
+      api.get('/integrations/social/status', { preHandler: requireAuth(...MANAGERS, ...CONNECTOR_ADMINS) }, async () => {
         // env-config check is what the operator forgets first — surfacing
         // it explicitly lets the UI tell them "go fill .env" instead of
         // hiding the failure behind a generic auth screen.
@@ -517,7 +511,9 @@ async function build() {
   // ─── Health check ──────────────────────────────────────────────────────────
 
   fastify.get('/health', async (_req, reply) => {
-    const checks: Record<string, 'ok' | 'error' | 'warn'> = {}
+    // 'off' = a feature nobody has switched on yet (POS connector); it neither
+    // warns nor degrades.
+    const checks: Record<string, 'ok' | 'error' | 'warn' | 'off'> = {}
     const details: Record<string, string> = {}
 
     try {
@@ -535,7 +531,14 @@ async function build() {
       // /health then hangs instead of reporting the outage, which is precisely
       // backwards: the endpoint goes silent at the moment its answer matters,
       // and the deploy webhook that polls it hangs with it.
-      await redisFast.ping()
+      //
+      // And not a bare PING (ONL-R2-08): with an out-of-range DB index in
+      // REDIS_URL the connect-time SELECT fails, the socket stays on db 0 and
+      // PING / GET still answer — while BullMQ's connections, which re-SELECT,
+      // fail every command. So re-issue the SELECT this connection was
+      // configured with (a no-op when it is valid) and read a sentinel key, all
+      // under a short timeout so a wedged server reports instead of hanging.
+      await redisHealthProbe(redisFast)
       checks.redis = 'ok'
     } catch (err) {
       checks.redis = 'error'
@@ -598,40 +601,46 @@ async function build() {
         'WhatsApp (WHATSAPP_API_URL/WHATSAPP_API_KEY) is not configured. Customer signup is DOWN: the verification code cannot be sent, so nobody can create an account on the storefront.'
     }
 
-    // Floor staff have NO password — a WhatsApp code is their whole credential.
-    // So an unset WHATSAPP_API_URL is not an inconvenience for them the way it
-    // is for password recovery: it is the difference between a cashier being
-    // able to open a till at the start of a shift and not. Reported separately
-    // from passwordRecovery, and only as an error once there is somebody it can
-    // actually strand — a count, not a guess.
+    // Floor staff have NO password — a code is their whole credential. Without
+    // WhatsApp the code cannot be SENT, but a manager can hand one over in
+    // person (POST /auth/staff/:id/sign-in-code), so that is 'warn' naming the
+    // way in, not an outage (PPL-R2-05). A floor login with no phone is
+    // 'error': both paths key the code on the phone. lib/healthProbes.ts.
     try {
-      const floorStaff = await prisma.user.count({
-        where: { role: { in: OTP_LOGIN_ROLES }, isActive: true, deletedAt: null, accountStatus: 'active' },
-      })
-      if (whatsappConfigured) {
-        checks.staffCodeLogin = 'ok'
-      } else if (floorStaff === 0) {
-        checks.staffCodeLogin = 'warn'
-        details.staffCodeLogin =
-          'WhatsApp is not configured, so code sign-in cannot deliver. No floor-role staff exist yet, so nobody is locked out — but the first cashier created will be.'
-      } else {
-        checks.staffCodeLogin = 'error'
-        details.staffCodeLogin =
-          `WhatsApp (WHATSAPP_API_URL/WHATSAPP_API_KEY) is not configured and ${floorStaff} floor-role staff have no other way in. They cannot sign in at all.`
-      }
-      // A floor account with no phone can never receive a code, whatever the
-      // gateway is doing.
-      const noPhone = await prisma.user.count({
-        where: { role: { in: OTP_LOGIN_ROLES }, isActive: true, deletedAt: null, accountStatus: 'active', phone: null },
-      })
-      if (noPhone > 0) {
-        checks.staffCodeLogin = 'error'
-        details.staffCodeLogin =
-          `${noPhone} floor-role staff have no phone number on file, so no sign-in code can reach them.`
-      }
+      const floorWhere = { role: { in: OTP_LOGIN_ROLES }, isActive: true, deletedAt: null, accountStatus: 'active' as const }
+      const [floorStaff, floorStaffWithoutPhone] = await Promise.all([
+        prisma.user.count({ where: floorWhere }),
+        prisma.user.count({ where: { ...floorWhere, phone: null } }),
+      ])
+      const s = staffCodeLoginHealth({ whatsappConfigured, floorStaff, floorStaffWithoutPhone })
+      checks.staffCodeLogin = s.check
+      if (s.detail) details.staffCodeLogin = s.detail
     } catch (err) {
       checks.staffCodeLogin = 'error'
       details.staffCodeLogin = 'Could not determine floor-staff sign-in readiness.'
+    }
+
+    // WhatsApp key at rest (lib/secretBox): warn when it is plaintext because
+    // SERVD_SECRET_KEY is missing, or encrypted but unreadable here.
+    try {
+      const wa = await whatsappSecretHealth()
+      if (wa.check !== 'off') { checks.whatsappKeyAtRest = wa.check; details.whatsappKeyAtRest = wa.detail }
+    } catch {
+      checks.whatsappKeyAtRest = 'warn'
+      details.whatsappKeyAtRest = 'Could not check how the WhatsApp gateway key is stored.'
+    }
+
+    // POS connector (spec §8.4): fiscal POS, card machine, the secret key for
+    // stored connector secrets. ok / warn / off — never an error: a fiscal POS
+    // or card machine being down must not mark the API unhealthy (sales keep
+    // working; filing catches up).
+    try {
+      const conn = await connectorHealthChecks()
+      Object.assign(checks, conn.checks)
+      Object.assign(details, conn.details)
+    } catch (err) {
+      checks.fiscalConnector = 'warn'
+      details.fiscalConnector = `POS connector check failed: ${(err as Error).message}`
     }
 
 
@@ -674,6 +683,25 @@ async function build() {
     } catch (err) {
       checks.ledger = 'error'
       details.ledger = (err as Error).message
+    }
+
+    // Upload storage. Every upload (menu photos, the Storefront Library, brand
+    // artwork) goes straight from the browser to Cloudflare R2 via a URL the
+    // API presigns (lib/storage.ts). With the R2 settings unset the presigner
+    // still answers, so the first sign of trouble is "upload to storage
+    // failed" in the Library. A warning, never an error: nothing else depends
+    // on it. (Whether the bucket's CORS lets admin.servd.pk PUT can't be seen
+    // from here.)
+    {
+      const missing = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_URL']
+        .filter((k) => !process.env[k]?.trim())
+      if (missing.length === 0) {
+        checks.uploadStorage = 'ok'
+      } else {
+        checks.uploadStorage = 'warn'
+        details.uploadStorage =
+          `Upload storage (Cloudflare R2) is not configured: ${missing.join(', ')} unset. File uploads (menu photos, the Storefront Library, brand artwork) will fail.`
+      }
     }
 
     const hasError = Object.values(checks).some((v) => v === 'error')
@@ -782,6 +810,26 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
+  // New default modules reach saved Module Access rows once (MODULE_GRANTS),
+  // so GET /permissions/role-modules shows them from the first request. The
+  // lazy run in roleOverrides() covers it if this fails.
+  try {
+    const { applyModuleGrants } = await import('./lib/moduleAccess.js')
+    const g = await applyModuleGrants()
+    if (g.applied.length) fastify.log.info(`[access] module grants ${g.applied.join(', ')} applied to saved rows: ${g.roles.join(', ') || 'none'}`)
+  } catch (err) {
+    fastify.log.warn(`[access] module grants skipped: ${(err as Error).message}`)
+  }
+  // Completion recovery (W4-FISCAL-2) counts only orders completed after this
+  // marker — written once, by the first boot of this code — so history from
+  // before the fiscal outbox is never re-completed or late-filed.
+  try {
+    const { completionRecoverySince } = await import('./modules/orders/service.js')
+    const since = await completionRecoverySince()
+    fastify.log.info(`[complete] completion recovery counts orders completed since ${since.toISOString()}`)
+  } catch (err) {
+    fastify.log.warn(`[complete] completion recovery marker skipped: ${(err as Error).message}`)
+  }
   // Supplier opening balances live in the ledger (Dr 3020 / Cr 2010). Post any
   // that predate this, so AP aging and the ledger agree from the first boot.
   try {
@@ -804,11 +852,42 @@ async function build() {
       .catch((err: Error) => fastify.log.warn(`[scheduledReports] digest carry-over skipped: ${err.message}`))
     startDeliveryWatch()
     startReviewPromptWorker()
-    startFbrSubmissionWorker()
-    startSrbSubmissionWorker()
+    // POS connector (spec §9): empty the old FBR/SRB queues ONCE (idempotent,
+    // never blocks boot — every step is try/catch inside), THEN start the
+    // fiscal sender/sweeper and the card-machine reconciler, so no legacy job
+    // can ever run next to the connector.
+    void drainLegacyTaxQueues()
+      .then((r) => {
+        if (r.ran) fastify.log.info(`[fiscal] legacy tax queues drained: ${r.jobs} job(s), ${r.held} order(s) held${r.errors.length ? `, errors: ${r.errors.join('; ')}` : ''}`)
+      })
+      .catch((err: Error) => fastify.log.warn(`[fiscal] legacy drain failed: ${err.message}`))
+      .finally(() => {
+        startFiscalConnectorWorker()
+        startTerminalConnectorWorker()
+      })
+    // W4-FISCAL-2: a completed order whose completion claim (or its fiscal
+    // sale document) never committed is completed / enqueued now — never
+    // left silent. Every two minutes; one run at a time per process (the
+    // order lock + claim make concurrent runs on several boxes harmless).
+    let recovering = false
+    cron.schedule('*/2 * * * *', () => {
+      if (recovering) return
+      recovering = true
+      import('./modules/orders/service.js')
+        .then((m) => m.recoverIncompleteCompletions())
+        .then((s) => {
+          if (s.completed || s.saleEnqueued || s.flagged) {
+            fastify.log.warn(`[complete] recovery: ${s.completed} completion(s) run, ${s.saleEnqueued} sale document(s) queued, ${s.flagged} flagged`)
+          }
+        })
+        .catch((err: Error) => fastify.log.warn(`[complete] recovery sweep failed: ${err.message}`))
+        .finally(() => { recovering = false })
+    })
     startSegmentComputationWorker()
     startSocialPublishWorker()
     startCoursePacingWorker()
+    // Pre-orders reach the kitchen (order:new + stock) at their prep window.
+    startPreOrderReleaseWorker()
     startWebhookDeliveryWorker()
     startScheduledReportsWorker()
     startShrinkageTrendWorker()

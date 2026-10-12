@@ -18,6 +18,13 @@
 //
 // Usage claiming (the atomic usedCount increment and the per-customer lock) is
 // not evaluation — it stays with checkout, which holds the order.
+//
+// UNITS (ONL-01). `discountValue` is a percentage (0–100) for a 'percentage'
+// promo and an amount in PAISA (cents, like every other money field) for a
+// 'fixed' one. Rupees exist only at the admin form's edge, which multiplies by
+// 100 before saving and divides by 100 to show. This file used to read a fixed
+// value as rupees (×100 again), so "PKR 150 off" (stored 15000) took PKR 15,000
+// — in practice the whole food bill — off every order it touched.
 
 import type { PromoCode } from '@prisma/client'
 import { prisma } from './prisma.js'
@@ -52,15 +59,23 @@ export function promoDiscountCents(
     discount = Math.round(base * (promo.discountValue / 100))
     if (promo.maxDiscountCents != null) discount = Math.min(discount, promo.maxDiscountCents)
   } else {
-    discount = Math.round(promo.discountValue * 100)
+    // A fixed promo's value is already in paisa (see UNITS above).
+    discount = Math.round(promo.discountValue)
   }
   return Math.max(0, Math.min(discount, base))
 }
 
-function describe(promo: PromoCode): string {
+/** "PKR 150" for 15000 paisa; "PKR 150.50" only when there are paisa to show. */
+export function fmtPkrCents(cents: number): string {
+  const rupees = Math.round(cents) / 100
+  return `PKR ${Number.isInteger(rupees) ? rupees.toLocaleString('en-PK') : rupees.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/** The customer-facing line for a promo with no description of its own. */
+export function describePromo(promo: Pick<PromoCode, 'description' | 'discountType' | 'discountValue' | 'endAt'>): string {
   if (promo.description) return promo.description
-  const expiry = promo.endAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-  const type = promo.discountType === 'percentage' ? `${promo.discountValue}% off food` : `PKR ${promo.discountValue.toFixed(0)} off`
+  const expiry = promo.endAt.toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', year: 'numeric' })
+  const type = promo.discountType === 'percentage' ? `${promo.discountValue}% off food` : `${fmtPkrCents(promo.discountValue)} off`
   return `${type} · expires ${expiry}`
 }
 
@@ -78,7 +93,7 @@ export async function evaluatePromo(input: PromoEvalInput): Promise<PromoEval> {
     return fail('PROMO_WRONG_CONCEPT', 'Promo code not valid for this brand')
   }
   if (promo.minOrderCents != null && input.foodSubtotalCents < promo.minOrderCents) {
-    return fail('PROMO_MIN_ORDER', `Minimum order of PKR ${(promo.minOrderCents / 100).toFixed(0)} required`)
+    return fail('PROMO_MIN_ORDER', `Minimum order of ${fmtPkrCents(promo.minOrderCents)} required`)
   }
   if (promo.maxUsageCount != null && promo.usedCount >= promo.maxUsageCount) {
     return fail('PROMO_EXHAUSTED', 'Promo code usage limit reached')
@@ -87,5 +102,5 @@ export async function evaluatePromo(input: PromoEvalInput): Promise<PromoEval> {
     const used = await prisma.promoCodeUsage.count({ where: { promoCodeId: promo.id, customerId: input.customerId } })
     if (used >= promo.perCustomerLimit) return fail('PROMO_LIMIT_REACHED', 'You have already used this promo code')
   }
-  return { ok: true, promo, discountCents: promoDiscountCents(promo, input.foodSubtotalCents), description: describe(promo) }
+  return { ok: true, promo, discountCents: promoDiscountCents(promo, input.foodSubtotalCents), description: describePromo(promo) }
 }

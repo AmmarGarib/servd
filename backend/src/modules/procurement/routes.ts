@@ -5,6 +5,7 @@ import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, PROCUREMENT
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
 import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './scope.js'
+import type { UserRole } from '@prisma/client'
 
 // Company scope: every procurement row belongs to its supplier's company, so
 // every route below scopes through the supplier (./scope.ts). Reads use
@@ -22,6 +23,15 @@ import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './sc
 //     paying and allocating, a supplier's opening balance or company move —
 //     money moves and the books, kept apart from whoever raised the order.
 //   ADMIN_ONLY: approve / reject, the approval threshold, the backfill.
+//   AP_READERS (PROCUREMENT_TEAM + finance, wave 3 UI-07): READ the payables
+//     — supplier list (every supplier of the company, not just assigned
+//     ones), supplier statements, POs, bills, the 3-way match and supplier
+//     payments. Finance owns the books (Accounting → AP aging, petty cash
+//     paying a bill) but holds no 'procurement' module; the module gate on
+//     these read paths must admit 'accounting' as well (lib/moduleAccess.ts
+//     GATED_PREFIXES — as /procurement/ap-aging already does). Finance
+//     raises, approves, receives, bills and pays NOTHING here — those stay
+//     with the roles above.
 import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, markPoSent,
   createBill, voidBill, matchBill,
@@ -32,6 +42,8 @@ import {
 import { receiveGoods } from './receiving.js'
 import { syncSupplierOpeningBalance } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
+
+const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
 
 // Post a supplier's opening balance to its company's ledger (a delta — see
 // openingBalance.ts). A failure (e.g. the month is locked) is logged; the AP
@@ -103,7 +115,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get('/suppliers', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const user = req.staffUser!
-    const isManager = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'procurement'].includes(user.role)
+    // Finance reads every supplier of its companies (AP), as the buyer does.
+    const isManager = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'procurement', 'finance'].includes(user.role)
     const tenantWhere = await supplierScopeWhere(req, 'read')
     const scopeWhere = isManager
       ? { deletedAt: null, ...tenantWhere }
@@ -250,7 +263,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/suppliers/:id/statement',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const supplier = await findSupplierInScope(req, req.params.id, 'read')
       const [bills, payments, aging] = await Promise.all([
@@ -280,7 +293,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { supplierId?: string; status?: string; limit?: string } }>(
     '/purchase-orders',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '50', 10), 200)
       // Scope by supplier.tenantId — that's the single tenant anchor for
@@ -305,7 +318,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/purchase-orders/:id',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const po = await prisma.purchaseOrder.findFirst({
         where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
@@ -444,7 +457,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { supplierId?: string; status?: string; overdue?: string } }>(
     '/bills',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.supplierBill.findMany({
@@ -466,7 +479,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/bills/:id',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const bill = await prisma.supplierBill.findFirst({
         where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
@@ -524,7 +537,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/bills/:id/match',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => { await guardBillRead(req, req.params.id); return matchBill(req.params.id) },
   )
 
@@ -532,7 +545,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { supplierId?: string } }>(
     '/payments',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.supplierPayment.findMany({

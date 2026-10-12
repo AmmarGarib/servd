@@ -47,7 +47,7 @@ export interface HrField {
   group?: string
   help?: string
   columns?: HrField[]
-  /** number / percent: the smallest value accepted. */
+  /** number / percent / money: the smallest value accepted. */
   min?: number
   /** number / percent: whole numbers only. */
   integer?: boolean
@@ -152,18 +152,18 @@ export const EMPLOYEE_MASTER_FIELDS: HrField[] = [
   f('contractEnd', 'Contract end date', 'date', { group: 'Employment information', bind: 'employee.contractEnd' }),
   f('noticePeriodDays', 'Notice period (days)', 'number', { group: 'Employment information', bind: 'employee.noticePeriodDays' }),
   // Compensation
-  f('basicSalaryCents', 'Basic salary', 'money', { group: 'Compensation', bind: 'employee.basicSalaryCents' }),
-  f('grossSalaryCents', 'Gross salary', 'money', { group: 'Compensation', bind: 'employee.grossSalaryCents' }),
+  f('basicSalaryCents', 'Basic salary', 'money', { group: 'Compensation', bind: 'employee.basicSalaryCents', min: 0, help: 'Cannot be more than gross' }),
+  f('grossSalaryCents', 'Gross salary', 'money', { group: 'Compensation', bind: 'employee.grossSalaryCents', min: 0 }),
   f('allowances', 'Allowances', 'table', {
     group: 'Compensation',
-    columns: [t('name', 'Allowance'), f('amountCents', 'Amount', 'money')],
+    columns: [t('name', 'Allowance'), f('amountCents', 'Amount', 'money', { min: 0 })],
     help: 'Part of gross — listed for the payslip breakdown',
   }),
   t('salaryStructure', 'Salary structure', { group: 'Compensation' }),
   sel('paymentMethod', 'Payment method', ['bank', 'cash', 'cheque'], { group: 'Compensation', bind: 'employee.paymentMethod' }),
   t('bankName', 'Bank name', { group: 'Compensation', bind: 'employee.bankName' }),
   t('iban', 'Account / IBAN', { group: 'Compensation', bind: 'employee.iban' }),
-  f('monthlyTaxCents', 'Monthly income tax', 'money', { group: 'Compensation', bind: 'employee.monthlyTaxCents', help: 'Deducted each payroll until slab-based tax is built' }),
+  f('monthlyTaxCents', 'Monthly income tax', 'money', { group: 'Compensation', bind: 'employee.monthlyTaxCents', min: 0, help: 'Deducted each payroll until slab-based tax is built' }),
   // Statutory
   t('eobiNo', 'EOBI no.', { group: 'Statutory', bind: 'employee.eobiNo' }),
   t('sessiNo', 'SESSI no.', { group: 'Statutory', bind: 'employee.sessiNo' }),
@@ -407,7 +407,7 @@ export const HR_SECTIONS: HrSection[] = [
       emp(),
       f('month', 'Payroll month', 'date', { required: true, bind: 'effectiveDate', help: 'Any date in the month' }),
       sel('kind', 'Type', ['bonus', 'incentive', 'allowance', 'arrears', 'deduction', 'other_deduction'], { required: true, bind: 'category' }),
-      f('amount', 'Amount', 'money', { required: true, bind: 'amountCents' }),
+      f('amount', 'Amount', 'money', { required: true, bind: 'amountCents', min: 0, help: 'Always a positive amount — the type says whether it is paid or deducted' }),
       f('reason', 'Reason', 'textarea'),
     ] },
 
@@ -638,8 +638,37 @@ export function sectionByKey(key: string): HrSection | undefined {
 
 export const RECORD_SECTIONS = HR_SECTIONS.filter((s) => s.kind === 'record')
 
-/** What an employee may raise for themselves through self-service. */
-export const ESS_SECTIONS = ['leave', 'overtime', 'attendance_correction', 'training_request', 'resignation', 'loan']
+/** What an employee may raise for themselves through self-service. A shift
+ *  swap is always of their OWN shift (the employee field is filled in for
+ *  them) and goes to their reporting manager (audit PPL-13). */
+export const ESS_SECTIONS = ['leave', 'overtime', 'attendance_correction', 'shift_swap', 'training_request', 'resignation', 'loan']
+
+/**
+ * Money in HR is never negative: a deduction is its own kind, not a minus
+ * sign. A negative salary was accepted and payroll paid it (audit PPL-07).
+ * Enforced whatever a format says (formats are data); the exceptions are the
+ * figures logic computes (readOnly) and the few values that are signed by
+ * nature, listed here by section.
+ */
+export const SIGNED_MONEY: Record<string, string[]> = { final_settlement: ['otherAdjustments'] }
+
+/** Labels of money values below zero in a record's data — table cells too. */
+export function negativeMoney(section: string, fields: HrField[], data: Record<string, unknown>): string[] {
+  const signed = SIGNED_MONEY[section] ?? []
+  const bad: string[] = []
+  for (const fl of fields) {
+    if (fl.readOnly || signed.includes(fl.key)) continue
+    const v = data[fl.key]
+    if (fl.type === 'money' && typeof v === 'number' && v < 0) bad.push(fl.label)
+    if (fl.type === 'table' && Array.isArray(v)) {
+      for (const col of fl.columns ?? []) {
+        if (col.type !== 'money') continue
+        if (v.some((row) => typeof (row as Record<string, unknown> | null)?.[col.key] === 'number' && ((row as Record<string, unknown>)[col.key] as number) < 0)) bad.push(`${fl.label}: ${col.label}`)
+      }
+    }
+  }
+  return bad
+}
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
@@ -686,6 +715,7 @@ function coerce(field: HrField, raw: unknown): { value: unknown; error?: string 
       // Money is integer paisa everywhere in servd. The admin converts rupees.
       const n = typeof raw === 'number' ? raw : Number(raw)
       if (!Number.isFinite(n)) return { value: null, error: 'must be an amount' }
+      if (field.min !== undefined && n < field.min) return { value: null, error: field.min === 0 ? 'cannot be negative' : `must be at least ${field.min}` }
       return { value: Math.round(n) }
     }
     case 'date': case 'datetime': {

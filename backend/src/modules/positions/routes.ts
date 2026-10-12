@@ -21,15 +21,46 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, HR_TEAM } from '../auth/middleware.js'
+import type { UserRole } from '@prisma/client'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { budgetedLabour } from '../../lib/labour-budget.js'
 import { contributionRoutes } from './contributions.js'
+import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 
 // Position.tenantId is non-nullable so we can't pass `null` through to
 // Prisma's where clause (TS rejects it). In practice tenantFilter is only
 // null for orphan users without any tenant â€” in that case we fail closed by
 // returning a filter that matches nothing (`{ in: [] }`).
+
+// Who (wave 3, UI-07 / UI-09):
+//   POSITION_READERS — the manager tiers, HR and finance. Positions (budget)
+//     is a page of HR's 'staff_directory' module, and the same seats are the
+//     budgeted payroll on Finance's OpEx and CapEx → Workforce pages (THE
+//     labour rule, projections/labour.ts). Both roles got 403 on every read.
+//   POSITION_EDITORS — the manager tiers plus HR: the Positions page lives in
+//     the HR workspace HR owns, a seat's title is an HR designation and its
+//     department comes from HR → Org setup. Finance reads the budget; it does
+//     not set headcount or salaries.
+//   Inter-company contributions (./contributions.ts) move money between two
+//     companies' books — reads follow POSITION_READERS, writes stay MANAGERS.
+export const POSITION_READERS = Array.from(new Set([...MANAGERS, 'hr', 'finance'])) as UserRole[]
+export const POSITION_EDITORS = HR_TEAM
+// /positions is not a central module-gated prefix, so the roles newly let in
+// must also hold the module whose page they use (W3B-RV-1): HR
+// 'staff_directory' (Workforce → Positions), finance 'capital' (CapEx →
+// Workforce, OpEx's budgeted payroll). Editing is HR's page only. Manager
+// tiers pass exactly as before.
+export const POSITION_READ_MODULES = ['staff_directory', 'capital'] as const
+const POSITION_READ_GUARD = [requireAuth(...POSITION_READERS), moduleGateForNewRoles(POSITION_READ_MODULES)]
+const POSITION_EDIT_GUARD = [requireAuth(...POSITION_EDITORS), moduleGateForNewRoles(['staff_directory'])]
+
+/** The active company, or 422 — department / shift-band lists are per company. */
+function activeCompany(req: FastifyRequest): string {
+  const t = req.staffUser!.tenantId
+  if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+  return t
+}
 
 const positionSchema = z.object({
   conceptId:            z.string().uuid().nullable().optional(),
@@ -54,8 +85,9 @@ export async function positionRoutes(fastify: FastifyInstance) {
 
   // ─── Departments ───────────────────────────────────────────────────────────
 
-  fastify.get('/departments', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const tenantId = req.staffUser!.tenantId!
+  fastify.get('/departments', { preHandler: POSITION_READ_GUARD }, async (req) => {
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) return []
     return prisma.department.findMany({
       where: { tenantId, archivedAt: null },
       orderBy: [{ order: 'asc' }, { name: 'asc' }],
@@ -69,17 +101,20 @@ export async function positionRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Shift bands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  fastify.get('/shift-bands', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/shift-bands', { preHandler: POSITION_READ_GUARD }, async (req) => {
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) return []
     return prisma.shiftBand.findMany({
-      where: { tenantId: req.staffUser!.tenantId!, archivedAt: null },
+      where: { tenantId, archivedAt: null },
       orderBy: [{ order: 'asc' }, { startTime: 'asc' }],
     })
   })
 
   fastify.post<{ Body: { name: string; startTime: string; endTime: string; order?: number } }>(
     '/shift-bands',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: POSITION_EDIT_GUARD },
     async (req) => {
+      const tenantId = activeCompany(req)
       const body = z.object({
         name: z.string().min(1).max(40),
         startTime: z.string().regex(/^\d{2}:\d{2}$/),
@@ -87,14 +122,14 @@ export async function positionRoutes(fastify: FastifyInstance) {
         order: z.number().int().default(0),
       }).parse(req.body)
       return prisma.shiftBand.create({
-        data: { ...body, tenantId: req.staffUser!.tenantId! },
+        data: { ...body, tenantId },
       })
     },
   )
 
   fastify.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
     '/shift-bands/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: POSITION_EDIT_GUARD },
     async (req) => {
       const body = z.object({
         name: z.string().optional(),
@@ -103,8 +138,12 @@ export async function positionRoutes(fastify: FastifyInstance) {
         order: z.number().int().optional(),
         archivedAt: z.string().nullable().optional(),
       }).parse(req.body)
+      // Foreign or missing → 404 (an update on a non-matching where threw
+      // P2025, which surfaced as a 500).
+      const band = await prisma.shiftBand.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true } })
+      if (!band) throw new NotFoundError('ShiftBand', req.params.id)
       return prisma.shiftBand.update({
-        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
+        where: { id: band.id },
         data: {
           ...body,
           archivedAt: body.archivedAt === undefined ? undefined : body.archivedAt ? new Date(body.archivedAt) : null,
@@ -117,7 +156,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { conceptId?: string; departmentId?: string; status?: string } }>(
     '/',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: POSITION_READ_GUARD },
     async (req) => {
       const { conceptId, departmentId, status } = req.query
       return prisma.position.findMany({
@@ -148,7 +187,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
   // from budgetedLabour() (lib/labour-budget.ts), the same function OpEx, the
   // pro-forma and projections use: frozen seats are left out of the budget and
   // inter-company contributions net off.
-  fastify.get('/summary', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/summary', { preHandler: POSITION_READ_GUARD }, async (req) => {
     const f = (await scopeTenantWhere(req, 'read')).tenantId
     const tenantIds = typeof f === 'string' ? [f] : f.in
     // One labour rule (projections/labour.ts): open + filled seats at the
@@ -193,8 +232,22 @@ export async function positionRoutes(fastify: FastifyInstance) {
     return unit.name
   }
 
-  /** The department and the filling login must be this company's. */
-  async function checkSeatRefs(tenantId: string, body: { departmentId?: string | null; filledByUserId?: string | null; conceptId?: string | null }) {
+  /**
+   * The department, brand, shift band and filling login must be this
+   * company's. `keepShiftBandId` is the seat's current band: re-sending it
+   * unchanged (the edit form always sends it) is not refused if it has since
+   * been archived — only a NEW band must be a live band of this company.
+   */
+  async function checkSeatRefs(tenantId: string, body: { departmentId?: string | null; filledByUserId?: string | null; conceptId?: string | null; shiftBandId?: string | null }, keepShiftBandId?: string | null) {
+    // Another company's band attached here would come back through GET
+    // /positions (include shiftBand) — a cross-company attach is 422
+    // (W3B-RV-3).
+    if (body.shiftBandId) {
+      const band = await prisma.shiftBand.findFirst({ where: { id: body.shiftBandId, tenantId }, select: { archivedAt: true } })
+      if (!band || (band.archivedAt && body.shiftBandId !== keepShiftBandId)) {
+        throw new AppError('SHIFT_BAND_NOT_IN_COMPANY', 'That shift band is not in this company', 422)
+      }
+    }
     if (body.departmentId && !await prisma.department.findFirst({ where: { id: body.departmentId, OR: [{ tenantId }, { tenantId: null }] }, select: { id: true } })) {
       throw new AppError('DEPARTMENT_NOT_IN_COMPANY', 'That department is not in this company', 422)
     }
@@ -208,7 +261,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
     }
   }
 
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.post('/', { preHandler: POSITION_EDIT_GUARD }, async (req) => {
     const { designationId, ...body } = positionSchema.parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before adding a position', 422)
@@ -229,12 +282,12 @@ export async function positionRoutes(fastify: FastifyInstance) {
 
   fastify.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: POSITION_EDIT_GUARD },
     async (req) => {
       const { designationId, ...body } = positionSchema.partial().parse(req.body)
-      const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) }, select: { id: true, tenantId: true } })
+      const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true, tenantId: true, shiftBandId: true } })
       if (!seat) throw new NotFoundError('Position', req.params.id)
-      await checkSeatRefs(seat.tenantId, body)
+      await checkSeatRefs(seat.tenantId, body, seat.shiftBandId)
       const title = await seatTitle(seat.tenantId, { title: body.title, designationId })
       return prisma.position.update({
         where: { id: seat.id },
@@ -243,10 +296,13 @@ export async function positionRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: POSITION_EDIT_GUARD }, async (req) => {
     // Soft-archive so historical reports still resolve names/salaries.
+    // Another company's seat (or a missing one) is 404, not a P2025 500.
+    const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true } })
+    if (!seat) throw new NotFoundError('Position', req.params.id)
     await prisma.position.update({
-      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
+      where: { id: seat.id },
       data: { status: 'archived' },
     })
     return { ok: true }

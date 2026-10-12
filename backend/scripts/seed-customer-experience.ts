@@ -47,7 +47,7 @@ async function main() {
 
   const concepts = await prisma.concept.findMany({
     where: { isActive: true, deletedAt: null },
-    select: { id: true, slug: true, name: true },
+    select: { id: true, slug: true, name: true, tenantId: true },
     take: 8,
   })
   if (concepts.length === 0) {
@@ -69,17 +69,23 @@ async function main() {
     },
   })
 
-  await prisma.loyaltyAccount.upsert({
-    where: { customerId: power.id },
-    create: {
-      customerId: power.id,
-      pointsBalance: 1850,
-      lifetimePoints: 4200,
-      tier: 'silver',
-      stampCounts: { [concepts[0]!.slug]: 8 } as object,
-    },
-    update: {},
-  })
+  // One loyalty account per company (@@unique([tenantId, customerId])), in
+  // the company of the brand whose stamps it carries; none without a company.
+  const loyaltyTenantId = concepts[0]!.tenantId
+  if (loyaltyTenantId) {
+    await prisma.loyaltyAccount.upsert({
+      where: { tenantId_customerId: { tenantId: loyaltyTenantId, customerId: power.id } },
+      create: {
+        tenantId: loyaltyTenantId,
+        customerId: power.id,
+        pointsBalance: 1850,
+        lifetimePoints: 4200,
+        tier: 'silver',
+        stampCounts: { [concepts[0]!.slug]: 8 } as object,
+      },
+      update: {},
+    })
+  }
 
   // 25 completed orders — spread across concepts and time
   console.info('  · creating 25 demo orders for power user…')

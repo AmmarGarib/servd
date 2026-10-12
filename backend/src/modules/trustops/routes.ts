@@ -11,8 +11,9 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { verifyManagerPin } from '../auth/managerPin.js'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM, HR_TEAM } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
+import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { audit } from '../../lib/audit.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import type { FastifyRequest } from 'fastify'
@@ -66,6 +67,27 @@ async function isMemberOf(userId: string, tenantId: string): Promise<boolean> {
   return !!u
 }
 
+// Who (wave 3, UI-07 / UI-09):
+//   CASH_KEEPERS — petty-cash boxes (list, open a box, count/reconcile one)
+//     and deposit drops (list, record the cash taken to the bank): the
+//     manager tiers plus finance. Both pages sit in the 'accounting' module of
+//     the Finance workspace that finance owns; they used to 403 finance.
+//     A top-up over a box's limit still needs an approver's PIN of the box's
+//     company (verifyManagerPin), whoever records it.
+//   MEAL_READERS — the staff-meal log: the manager tiers plus HR. The page is
+//     in HR's 'staff_directory' (Workforce); HR reads it, nobody writes here
+//     (meals are rung through the till).
+const CASH_KEEPERS = FINANCE_TEAM
+const MEAL_READERS = HR_TEAM
+// /trustops is not a central module-gated prefix (and must not be wholesale:
+// /petty-cash/movements is ALL_STAFF), so the roles newly let in must also
+// hold the module whose page this is — finance 'accounting', HR
+// 'staff_directory' — or the CEO's Module Access untick closes nothing
+// (W3B-RV-1). The deposit-drop POST posts Dr bank / Cr cash. Manager tiers
+// pass exactly as before.
+const CASH_GUARD = [requireAuth(...CASH_KEEPERS), moduleGateForNewRoles(['accounting'])]
+const MEAL_GUARD = [requireAuth(...MEAL_READERS), moduleGateForNewRoles(['staff_directory'])]
+
 type MealRow = { id: string; conceptId: string | null; shiftId: string | null; staffId: string }
 
 /**
@@ -101,6 +123,18 @@ async function mealCompanies(meals: MealRow[]): Promise<Map<string, string | nul
       : (byStaff.get(m.staffId) ?? null))
   }
   return out
+}
+
+/**
+ * Attach a person's display name to each row (`key` → name or null). Only the
+ * name is read, and only for users the rows already point at — rows that are
+ * themselves in the operator's scope.
+ */
+async function withNames<T, K extends string>(rows: T[], idOf: (r: T) => string, key: K): Promise<Array<T & Record<K, string | null>>> {
+  const ids = [...new Set(rows.map(idOf))]
+  const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : []
+  const byId = new Map(users.map((u) => [u.id, u.name]))
+  return rows.map((r) => ({ ...r, [key]: byId.get(idOf(r)) ?? null }) as T & Record<K, string | null>)
 }
 
 export async function trustopsRoutes(fastify: FastifyInstance) {
@@ -208,17 +242,20 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // 2. PETTY CASH — float boxes
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/petty-cash/boxes', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.pettyCashBox.findMany({
+  fastify.get('/petty-cash/boxes', { preHandler: CASH_GUARD }, async (req) => {
+    const boxes = await prisma.pettyCashBox.findMany({
       where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       include: {
         movements: { orderBy: { createdAt: 'desc' }, take: 10 },
       },
       orderBy: { name: 'asc' },
     })
+    // The custodian's name rides on the box (names only), so the page does
+    // not need the staff-account list (/auth/users) — finance cannot read it.
+    return withNames(boxes, (b) => b.custodianId, 'custodianName')
   })
 
-  fastify.post('/petty-cash/boxes', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/petty-cash/boxes', { preHandler: CASH_GUARD }, async (req, reply) => {
     const body = z.object({
       name:          z.string().min(1).max(80),
       conceptId:     z.string().uuid().nullable().optional(),
@@ -302,7 +339,15 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     let approvedById: string | null = null
     if (body.type === 'topup' && absAmount > box.topUpLimitCents) {
       // Only an approver of the box's own company may lift its limit.
-      const approver = await verifyManagerPin(body.managerOverridePin, box.tenantId)
+      const approver = await verifyManagerPin(body.managerOverridePin, box.tenantId, undefined, {
+        actorId: req.staffUser!.id, action: 'petty_cash_topup',
+      })
+      // A PIN was sent and did not verify (wrong, or not a manager of the
+      // box's company): say so, the way every till override does — "PIN
+      // required" would read as if none had been entered.
+      if (!approver && body.managerOverridePin?.trim()) {
+        throw new AppError('INVALID_MANAGER_PIN', 'That PIN does not belong to an active manager of this company', 403)
+      }
       if (!approver) {
         throw new AppError(
           'TOPUP_OVER_LIMIT',
@@ -361,12 +406,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       return { movement: m, supplierPaymentId }
     })
 
-    if (supplierPaymentId) {
-      const { postSupplierPayment } = await import('../accounting/supplierPosting.js')
-      postSupplierPayment(supplierPaymentId).catch((err) =>
-        req.log.error({ err: (err as Error).message, supplierPaymentId }, 'postSupplierPayment failed (petty cash)'),
-      )
-    }
+    // The supplier payment's entry (Dr 2010 / Cr 1010) was posted inside the
+    // transaction above by procurement createPaymentTx.
 
     await audit({ category: 'identity',
       action: `petty_cash.${body.type}`,
@@ -383,7 +424,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
 
   // GET /trustops/petty-cash/boxes/:id/reconcile — show variance vs physical count
   fastify.post<{ Params: { id: string } }>('/petty-cash/boxes/:id/reconcile',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: CASH_GUARD },
     async (req, reply) => {
       const body = z.object({ countedCents: z.number().int().min(0), notes: z.string().max(500).optional() }).parse(req.body)
       const box = await findBoxInScope(req, req.params.id)
@@ -424,7 +465,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // 3. DEPOSIT DROP — cash to bank
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/deposit-drops', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/deposit-drops', { preHandler: CASH_GUARD }, async (req) => {
     const { conceptId } = req.query as { conceptId?: string }
     const rows = await prisma.depositDrop.findMany({
       where: {
@@ -450,7 +491,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // counted close less the float kept in the drawer (accounting/
   // depositPosting.ts); the drop posts Dr <bank's code> / Cr the cash
   // accounts it came from, so the bank statement can match it.
-  fastify.post('/deposit-drops', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/deposit-drops', { preHandler: CASH_GUARD }, async (req, reply) => {
     const body = z.object({
       shiftId:       z.string().uuid().nullable().optional(),
       conceptId:     z.string().uuid().nullable().optional(),
@@ -548,16 +589,17 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // checked (foreign → 404); without one, brand-tagged meals are narrowed to
   // the brands in scope and brand-less meals to their company by the
   // mealCompanies precedence chain — never "every company's meals".
-  fastify.get('/staff-meals', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/staff-meals', { preHandler: MEAL_GUARD }, async (req) => {
     const { conceptId, days } = req.query as { conceptId?: string; days?: string }
     const d = Math.min(Math.max(parseInt(days ?? '30', 10) || 30, 1), 366)
     const since = new Date(Date.now() - d * 86400_000)
     if (conceptId) {
-      return prisma.staffMeal.findMany({
+      const meals = await prisma.staffMeal.findMany({
         where: { consumedAt: { gte: since }, ...(await conceptWhere(req, conceptId, 'read')) },
         orderBy: { consumedAt: 'desc' },
         take: 200,
       })
+      return withNames(meals, (m) => m.staffId, 'staffName')
     }
     const scope = await resolveTenantScope(req)
     if (scope.tenantIds.length === 0) return []
@@ -572,9 +614,11 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     })
     const brandless = rows.filter((m) => !m.conceptId)
     const company = await mealCompanies(brandless)
-    return rows
+    const visible = rows
       .filter((m) => m.conceptId || inScope.has(company.get(m.id) ?? ''))
       .slice(0, 200)
+    // Who ate (names only) — so the log reads without the staff-account list.
+    return withNames(visible, (m) => m.staffId, 'staffName')
   })
 
   // POST /trustops/staff-meals — retired (owner decision 11). A staff meal is

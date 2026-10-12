@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import type { UserRole } from '@prisma/client'
+import { requireAuth, MANAGERS, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { belowParWhere, isBelowPar } from '../../lib/recipeCost.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
@@ -28,12 +29,58 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 // a prep batch / sale deduction. The +/- and bulk "set to" adjust route is gone
 // and neither create nor PATCH accepts currentStock.
 
-// Tenant filter for inventory reads. NULL tenantId items still come through
-// so legacy / orphan rows stay visible — frontend tags them "No company".
-// Fails closed: an operator with no company sees no company's stock.
+// ─── Who does what here (wave 3, audit UI-10) ───────────────────────────────
+//
+// The sidebar and the API agree: a role that holds the `inventory` module by
+// default (lib/moduleAccess.ts) can use the Inventory pages.
+//   • boh (line cook) — reads stock, the low-stock list and the waste log,
+//     and logs waste. Counts and prep batches are /crosschecks. It sees NO
+//     cost and NO supplier: those fields come back null with costsHidden.
+//   • procurement (the buyer) — reads stock with costs, and keeps the item
+//     master: the Sourcing sheet's add / edit (name, unit, supplier, par,
+//     opening cost of a never-delivered item). It does not log waste.
+//   • managers — everything, including the waste cost dashboard and the
+//     company-less legacy rows (seeing them, assigning them a company).
+//   boh and procurement never see, edit or waste a company-less row (see
+//   inventoryTenantWhere / assertInventoryAccess), and nobody wastes one
+//   until it has a company — its waste could not reach any ledger.
+// kitchen / expediter hold no inventory module and stay out.
+export const STOCK_READERS = [...PROCUREMENT_TEAM, 'boh'] as UserRole[]
+export const ITEM_MASTER_EDITORS = PROCUREMENT_TEAM
+export const WASTE_LOGGERS = [...MANAGERS, 'boh'] as UserRole[]
+
+// Kitchen floor roles see stock and recipes without what they cost, what
+// they sell for against cost, or who supplies them — the same rule as the
+// KDS recipe card (GET /recipes/by-item). Exported for the recipe routes.
+const COSTS_HIDDEN_ROLES = new Set<string>(['boh', 'kitchen', 'expediter'])
+export function costsHiddenFor(req: FastifyRequest): boolean {
+  return COSTS_HIDDEN_ROLES.has(req.staffUser!.role)
+}
+
+/** An inventory row with cost and supplier taken out, for a kitchen floor role. */
+function withoutCosts<T extends object>(item: T) {
+  return {
+    ...item,
+    unitCostCents: null, listPriceCents: null, supplierId: null, supplier: null, costSource: null,
+    costsHidden: true as const,
+  }
+}
+
+// Company-less legacy rows are a manager's clean-up worklist (assign a company
+// via PATCH, see GET /inventory/unassigned). The roles let in by wave 3 — boh
+// and procurement — never see, edit or waste them: those rows are shared stock
+// another company's recipes may draw on, and a write to one reaches no ledger.
+function isInventoryManager(req: FastifyRequest): boolean {
+  return (MANAGERS as string[]).includes(req.staffUser!.role)
+}
+
+// Tenant filter for inventory reads (GET /inventory, GET /inventory/waste-logs).
+// View-aware company scope; managers also get the company-less legacy rows
+// (tagged "No company" in the UI). An empty scope DENIES for everyone.
 async function inventoryTenantWhere(req: FastifyRequest) {
   const scope = await resolveTenantScope(req)
-  if (scope.tenantIds.length === 0) return { tenantId: null }
+  if (scope.tenantIds.length === 0) return { tenantId: { in: [] as string[] } }
+  if (!isInventoryManager(req)) return { tenantId: { in: scope.tenantIds } }
   return {
     OR: [
       { tenantId: { in: scope.tenantIds } },
@@ -42,9 +89,12 @@ async function inventoryTenantWhere(req: FastifyRequest) {
   }
 }
 
+const NO_COMPANY_MESSAGE = 'This ingredient has no company yet. A manager assigns it one first (Inventory → Unassigned).'
+
 // Editing an existing item: allowed for any company the operator belongs to
-// ('write' mode). Company-less legacy rows are editable so they can be
-// assigned. A foreign item is a 404 so its id isn't confirmed.
+// ('write' mode). A foreign item is a 404 so its id isn't confirmed.
+// Company-less legacy rows are editable by managers only, so they can be
+// assigned; anyone else gets 422 ITEM_HAS_NO_COMPANY.
 async function assertInventoryAccess(req: FastifyRequest, itemId: string) {
   const item = await prisma.inventoryItem.findFirst({
     where: { id: itemId, deletedAt: null },
@@ -52,6 +102,9 @@ async function assertInventoryAccess(req: FastifyRequest, itemId: string) {
   if (!item) throw new NotFoundError('InventoryItem', itemId)
   if (item.tenantId && !req.staffUser!.memberTenantIds.includes(item.tenantId)) {
     throw new NotFoundError('InventoryItem', itemId)
+  }
+  if (!item.tenantId && !isInventoryManager(req)) {
+    throw new AppError('ITEM_HAS_NO_COMPANY', NO_COMPANY_MESSAGE, 422)
   }
   return item
 }
@@ -145,7 +198,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // GET /inventory — list with low-stock alerts. Scoped to the operator's
   // visible tenants. Items with no tenant assigned (legacy orphan rows)
   // come through tagged with a "⚠ No company" chip in the UI.
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/', { preHandler: requireAuth(...STOCK_READERS) }, async (req) => {
     const tenantWhere = await inventoryTenantWhere(req)
     const items = await prisma.inventoryItem.findMany({
       where: { deletedAt: null, ...tenantWhere },
@@ -155,24 +208,28 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       },
       orderBy: { name: 'asc' },
     })
-    const delivered = await deliveredItemIds(items.map((i) => i.id))
+    const hide = costsHiddenFor(req)
+    const delivered = hide ? new Set<string>() : await deliveredItemIds(items.map((i) => i.id))
 
-    return items.map((item) => ({
-      ...item,
-      // 'deliveries' = the moving average of what deliveries cost, moved only
-      // by receiving; 'opening' = a typed estimate for a never-delivered item.
-      costSource: delivered.has(item.id) ? 'deliveries' as const : 'opening' as const,
-      // THE below-par rule (lib/recipeCost.ts) — no par set is never low.
-      isLowStock: isBelowPar(item),
-      stockPercentage: item.parLevel > 0 ? (item.currentStock / item.parLevel) * 100 : 100,
-    }))
+    return items.map((item) => {
+      const row = {
+        ...item,
+        // 'deliveries' = the moving average of what deliveries cost, moved only
+        // by receiving; 'opening' = a typed estimate for a never-delivered item.
+        costSource: delivered.has(item.id) ? 'deliveries' as const : 'opening' as const,
+        // THE below-par rule (lib/recipeCost.ts) — no par set is never low.
+        isLowStock: isBelowPar(item),
+        stockPercentage: item.parLevel > 0 ? (item.currentStock / item.parLevel) * 100 : 100,
+      }
+      return hide ? withoutCosts(row) : row
+    })
   })
 
   // POST /inventory — the ONE way to add an ingredient (Sourcing sheet and
   // Inventory page both call it). Bound to one company: the active company,
   // or the portfolio picker's choice when it is a company the operator
   // belongs to. Never company-less.
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/', { preHandler: requireAuth(...ITEM_MASTER_EDITORS) }, async (req, reply) => {
     rejectStockWrites(req.body, { allowZero: true })
     if (req.body && typeof req.body === 'object' && 'shared' in req.body) {
       throw new AppError('NO_SHARED_ITEMS', 'Ingredients belong to one company. Add it in each company that buys it.', 422)
@@ -217,7 +274,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // company-less item. Stock on hand is NOT editable here.
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...ITEM_MASTER_EDITORS) },
     async (req) => {
       rejectStockWrites(req.body, { allowZero: false })
       const item = await assertInventoryAccess(req, req.params.id)
@@ -229,6 +286,12 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         // and recipes across — that is a reviewed merge, not an edit.
         if (item.tenantId) {
           throw new AppError('ITEM_HAS_COMPANY', 'This ingredient already belongs to a company.', 422)
+        }
+        // Giving a legacy row a company is the managers' clean-up job, never
+        // the buyer's (assertInventoryAccess already refuses it company-less
+        // rows; this keeps the rule explicit).
+        if (!isInventoryManager(req)) {
+          throw new ForbiddenError('Only a manager assigns a company to an ingredient.')
         }
         if (!req.staffUser!.memberTenantIds.includes(tenantId)) {
           throw new NotFoundError('Tenant', tenantId)
@@ -328,9 +391,9 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // isBelowPar / belowParWhere — par set and stock at or under it), scoped by
   // the ITEM's company. Company-less legacy rows belong to nobody's par sheet
   // (decision 30); they surface on GET /inventory for assignment instead.
-  fastify.get('/alerts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/alerts', { preHandler: requireAuth(...STOCK_READERS) }, async (req) => {
     const scope = await resolveTenantScope(req)
-    return prisma.inventoryItem.findMany({
+    const rows = await prisma.inventoryItem.findMany({
       where: { deletedAt: null, tenantId: { in: scope.tenantIds }, ...belowParWhere() },
       include: {
         supplier: { select: { name: true, phone: true } },
@@ -338,22 +401,25 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       },
       orderBy: { name: 'asc' },
     })
+    return costsHiddenFor(req) ? rows.map(withoutCosts) : rows
   })
 
   // GET /inventory/waste-logs — waste history with optional filters
   fastify.get<{ Querystring: { inventoryItemId?: string; dateFrom?: string; dateTo?: string; limit?: string } }>(
     '/waste-logs',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...STOCK_READERS) },
     async (req) => {
-      const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
+      const limit = Math.min(parseInt(req.query.limit ?? '100', 10) || 100, 500)
       const from = req.query.dateFrom ? new Date(req.query.dateFrom) : undefined
       const to = req.query.dateTo ? new Date(req.query.dateTo) : undefined
-      return prisma.wasteLog.findMany({
+      const logs = await prisma.wasteLog.findMany({
         where: {
           ...(req.query.inventoryItemId && { inventoryItemId: req.query.inventoryItemId }),
           ...(from || to ? { recordedAt: { ...(from && { gte: from }), ...(to && { lte: to }) } } : {}),
-          // Company scoping via the wasted item's tenant (null = shared item).
-          inventoryItem: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
+          // Company scoping via the wasted item's tenant — the same view-aware
+          // scope as GET /inventory: an empty scope denies, and company-less
+          // legacy items show to managers only.
+          inventoryItem: await inventoryTenantWhere(req),
         },
         include: {
           inventoryItem: { select: { name: true, unit: true, unitCostCents: true } },
@@ -362,6 +428,13 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         orderBy: { recordedAt: 'desc' },
         take: limit,
       })
+      if (!costsHiddenFor(req)) return logs
+      return logs.map((l) => ({
+        ...l,
+        estimatedCostCents: null,
+        inventoryItem: { ...l.inventoryItem, unitCostCents: null },
+        costsHidden: true as const,
+      }))
     },
   )
 
@@ -444,10 +517,13 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // POST /inventory/:id/waste — record spoilage / wastage
   fastify.post<{ Params: { id: string } }>(
     '/:id/waste',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...WASTE_LOGGERS) },
     async (req, reply) => {
       const body = wasteSchema.parse(req.body)
       const item = await assertInventoryAccess(req, req.params.id)
+      // Waste on a company-less item would drop shared stock with no journal
+      // entry (postWasteLog has no company to post to). Assign it first.
+      if (!item.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', NO_COMPANY_MESSAGE, 422)
       // The quantity is taken straight off currentStock, which is held in the
       // item's own unit — 500 "g" off a kg item would remove 500 kg.
       if (body.unit.trim().toLowerCase() !== item.unit.trim().toLowerCase()) {
@@ -466,11 +542,15 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const { getOperationsConfig } = await import('../../lib/setup-config.js')
       const ops = await getOperationsConfig(item.tenantId ?? req.staffUser!.tenantId)
       const threshold = ops?.photoRequiredAboveCents ?? 50000
+      const hide = costsHiddenFor(req)
       if (cost != null && cost >= threshold && !body.photoUrl) {
         throw new AppError(
           'PHOTO_REQUIRED',
-          `Waste of ${body.quantity} ${item.unit} of ${item.name} is worth PKR ${Math.round(cost / 100).toLocaleString('en-PK')}. `
-            + `Waste above PKR ${(threshold / 100).toFixed(0)} requires a photo. Snap the wasted product before logging.`,
+          hide
+            // A line cook is not told what the item costs — only that a photo is needed.
+            ? `Waste of ${body.quantity} ${item.unit} of ${item.name} needs a photo. Snap the wasted product before logging.`
+            : `Waste of ${body.quantity} ${item.unit} of ${item.name} is worth PKR ${Math.round(cost / 100).toLocaleString('en-PK')}. `
+              + `Waste above PKR ${(threshold / 100).toFixed(0)} requires a photo. Snap the wasted product before logging.`,
           400,
         )
       }
@@ -511,7 +591,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         req.log.error({ err: (err as Error).message, wasteLogId: wasteLog.id }, 'postWasteLog failed'),
       )
 
-      return reply.status(201).send(wasteLog)
+      return reply.status(201).send(hide ? { ...wasteLog, estimatedCostCents: null, costsHidden: true } : wasteLog)
     },
   )
 }

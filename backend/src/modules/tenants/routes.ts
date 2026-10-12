@@ -64,32 +64,37 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       where: { id: req.staffUser!.id },
       select: { tenantId: true },
     })
-    // Admins (owners) manage the whole portfolio — surface EVERY company, not
-    // just ones they hold an explicit TenantMember row for. Otherwise the CEO
-    // can't see (or assign staff to) a company they own but never formally
-    // "joined" — e.g. GS Foods shows but GSX Viva doesn't.
-    if (req.staffUser!.role === 'admin') {
-      const all = await prisma.tenant.findMany({
-        where: { deletedAt: null },
+    // Only the companies this person belongs to — the CEO role included
+    // (UI-11). This used to hand every admin EVERY company, with its name,
+    // slug, brand count and staff count, so each company's CEO could read the
+    // others' and was offered them in Add staff. Belonging is the auth
+    // middleware's memberTenantIds (TenantMember rows + the primary company),
+    // the same set every write is scoped to — so a company that shows here is
+    // exactly one the operator can act in. A CEO who runs several companies is
+    // a member of each (POST /tenants makes the creator one). An empty set
+    // lists nothing.
+    const ids = req.staffUser!.memberTenantIds
+    if (ids.length === 0) return []
+    const [tenants, memberships] = await Promise.all([
+      prisma.tenant.findMany({
+        where: { id: { in: ids }, deletedAt: null },
         include: { _count: { select: { concepts: true, users: true } } },
-        orderBy: { createdAt: 'asc' },
-      })
-      return all.map((t) => ({ ...t, role: 'admin', isActive: t.id === user?.tenantId }))
-    }
-    const memberships = await prisma.tenantMember.findMany({
-      where: { userId: req.staffUser!.id, tenant: { deletedAt: null } },
-      include: {
-        tenant: {
-          include: { _count: { select: { concepts: true, users: true } } },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    })
-    return memberships.map((m) => ({
-      ...m.tenant,
-      role:     m.role,
-      isActive: m.tenantId === user?.tenantId,
-    }))
+      }),
+      prisma.tenantMember.findMany({
+        where: { userId: req.staffUser!.id, tenantId: { in: ids } },
+        select: { tenantId: true, role: true, createdAt: true },
+      }),
+    ])
+    const membership = new Map(memberships.map((m) => [m.tenantId, m]))
+    // Membership order first (as before), then a primary with no member row.
+    const order = (id: string) => membership.get(id)?.createdAt.getTime() ?? Number.MAX_SAFE_INTEGER
+    return tenants
+      .sort((a, b) => order(a.id) - order(b.id) || a.createdAt.getTime() - b.createdAt.getTime())
+      .map((t) => ({
+        ...t,
+        role:     membership.get(t.id)?.role ?? 'member',
+        isActive: t.id === user?.tenantId,
+      }))
   })
 
   // ── Create a new tenant (authenticated operator only — used by the
@@ -127,13 +132,39 @@ export async function tenantRoutes(fastify: FastifyInstance) {
   })
 
   // ── Switch active tenant (verifies membership) ──────────────────────────
+  //
+  // Belonging = a TenantMember row OR the caller's own current users.tenantId
+  // (the auth middleware's memberTenantIds). Switching overwrites
+  // users.tenantId, so the company being switched AWAY from is first written
+  // down as a real membership: a login tied to its company only through
+  // users.tenantId used to lose that company on its first switch, with no
+  // in-app way back (AUTH-R1). Records a company the caller already belongs
+  // to — grants nothing new.
   fastify.post<{ Params: { id: string } }>('/switch/:id', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const userId = req.staffUser!.id
+    const target = req.params.id
+    const me = await prisma.user.findUnique({ where: { id: userId }, select: { tenantId: true } })
     const membership = await prisma.tenantMember.findUnique({
-      where: { userId_tenantId: { userId: req.staffUser!.id, tenantId: req.params.id } },
+      where: { userId_tenantId: { userId, tenantId: target } },
+      select: { id: true },
     })
-    if (!membership) return reply.status(403).send({ error: { code: 'NOT_A_MEMBER', message: 'You are not a member of this tenant' } })
-    await prisma.user.update({ where: { id: req.staffUser!.id }, data: { tenantId: req.params.id } })
-    return { activeTenantId: req.params.id }
+    if (!membership && me?.tenantId !== target) {
+      return reply.status(403).send({ error: { code: 'NOT_A_MEMBER', message: 'You are not a member of this tenant' } })
+    }
+    const live = await prisma.tenant.findFirst({ where: { id: target, deletedAt: null }, select: { id: true } })
+    if (!live) return reply.status(403).send({ error: { code: 'NOT_A_MEMBER', message: 'You are not a member of this tenant' } })
+    await prisma.$transaction(async (tx) => {
+      for (const tid of new Set([me?.tenantId, target])) {
+        if (!tid) continue
+        await tx.tenantMember.upsert({
+          where:  { userId_tenantId: { userId, tenantId: tid } },
+          create: { userId, tenantId: tid, role: 'member' },
+          update: {},
+        })
+      }
+      await tx.user.update({ where: { id: userId }, data: { tenantId: target } })
+    })
+    return { activeTenantId: target }
   })
 
   // ── Combine companies — moves everything from `sourceId` into `targetId`,

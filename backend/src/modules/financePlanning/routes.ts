@@ -13,7 +13,21 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, ADMIN_ONLY, FINANCE_TEAM } from '../auth/middleware.js'
+
+// Capital (the CapEx tracker and the old capital ledger) is the Finance
+// workspace's: finance reads it as well as the manager tiers. Every /finance
+// route is narrowed by the 'capital' module (lib/moduleAccess.ts), so a
+// FOH/BOH manager without it is refused.
+const CAPITAL_READERS = FINANCE_TEAM
+// Working the tracker — projects, lines, quotes, instalments — is finance's
+// normal job too (wave 3, UI-07: finance owns the Finance workspace and holds
+// 'capital'). An instalment marked paid posts as an advance / prepayment / fee
+// in the same transaction (capexPosting.ts): recording a supplier payment in
+// the books is the finance role's work. What stays the CEO's: putting old
+// instalments on the books (post-payments) and capitalising onto the
+// fixed-asset register (capitalise) — ADMIN_ONLY below.
+const CAPITAL_WRITERS = FINANCE_TEAM
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope, assertConceptOwned } from '../../lib/tenantScope.js'
 import { syncSourcePosting } from '../accounting/sourcePosting.js'
@@ -169,7 +183,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // payments (posted as advances) and the fixed-asset register.
   fastify.get<{ Querystring: { conceptId?: string; projectId?: string; days?: string } }>(
     '/capital-ledger',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_READERS) },
     async (req) => {
       const { conceptId, projectId } = req.query
       if (conceptId) await assertConceptOwned(req, conceptId, 'read')
@@ -194,7 +208,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // CapEx projects
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-  fastify.get('/capex', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/capex', { preHandler: requireAuth(...CAPITAL_READERS) }, async (req) => {
     const projects = await prisma.capexProject.findMany({
       where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       include: { lines: { orderBy: { sortOrder: 'asc' }, include: { quotes: true, payments: true } }, _count: { select: { lines: true } } },
@@ -205,7 +219,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>(
     '/capex/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_READERS) },
     async (req) => {
       const p = await prisma.capexProject.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
@@ -221,7 +235,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/capex', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/capex', { preHandler: requireAuth(...CAPITAL_WRITERS) }, async (req, reply) => {
     const body = z.object({
       name:       z.string().min(1).max(120),
       conceptId:  z.string().uuid().optional(),
@@ -263,7 +277,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   fastify.patch<{ Params: { id: string } }>(
     '/capex/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = z.object({
         name:                z.string().min(1).max(120).optional(),
@@ -327,7 +341,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // out of the list. Recoverable by clearing deletedAt on the row directly.
   fastify.delete<{ Params: { id: string } }>(
     '/capex/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const owned = await prisma.capexProject.findFirst({
         where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
@@ -343,7 +357,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/capex/:id/lines',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = lineSchema.parse(req.body)
       const project = await prisma.capexProject.findFirst({
@@ -373,7 +387,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   fastify.patch<{ Params: { lineId: string } }>(
     '/capex/lines/:lineId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = lineSchema.partial().parse(req.body)
       const owned = await prisma.capexLine.findFirst({
@@ -405,7 +419,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   fastify.delete<{ Params: { lineId: string } }>(
     '/capex/lines/:lineId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const owned = await prisma.capexLine.findFirst({
         where: {
@@ -422,7 +436,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // â”€â”€â”€ Quotes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/quotes',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = z.object({
         vendor:       z.string().min(1).max(120),
@@ -453,7 +467,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   )
 
   fastify.patch<{ Params: { quoteId: string } }>('/capex/quotes/:quoteId/winner',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req) => {
       const q = await prisma.capexQuote.findFirst({
         where: {
@@ -481,7 +495,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   )
 
   fastify.delete<{ Params: { quoteId: string } }>('/capex/quotes/:quoteId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const owned = await prisma.capexQuote.findFirst({
         where: {
@@ -513,7 +527,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   }
 
   fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/payments',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = z.object({
         label:       z.enum(['deposit', 'midpoint', 'balance', 'extra']).default('deposit'),
@@ -548,7 +562,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   )
 
   fastify.patch<{ Params: { paymentId: string } }>('/capex/payments/:paymentId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = z.object(capexPaymentBody).parse(req.body)
       const ownedPayment = await prisma.capexPayment.findFirst({
@@ -576,7 +590,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   )
 
   fastify.delete<{ Params: { paymentId: string } }>('/capex/payments/:paymentId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const p = await prisma.capexPayment.findFirst({
         where: {

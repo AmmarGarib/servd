@@ -89,12 +89,36 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
   }, { tx })
 }
 
+/** What the run's accrual credited to Wages Payable (2020), net of any debit
+ *  to it, or null when the run has no accrual entry at all. */
+async function accruedWagesPayable(tx: Tx, tenantId: string, runId: string): Promise<number | null> {
+  const entry = await tx.journalEntry.findFirst({ where: { tenantId, reference: `hr.payroll.accrual:${runId}` }, select: { id: true } })
+  if (!entry) return null
+  const lines = await tx.journalLine.findMany({
+    where: { journalEntryId: entry.id, account: { code: ACCT.WAGES_PAYABLE } },
+    select: { type: true, amountCents: true },
+  })
+  return lines.reduce((a, l) => a + (l.type === 'credit' ? l.amountCents : -l.amountCents), 0)
+}
+
 export async function postPayrollPayment(runId: string, paidBy: string, fromAccount: string) {
   return prisma.$transaction(async (tx) => {
     const n = await tx.hrPayrollRun.updateMany({ where: { id: runId, status: 'locked', paidAt: null }, data: { paidAt: new Date() } })
     if (n.count === 0) throw new AppError('NOT_PAYABLE', 'Only a locked payroll that has not been paid can be marked paid', 409)
     const run = await tx.hrPayrollRun.findUniqueOrThrow({ where: { id: runId } })
-    const net = (await tx.hrPayslip.aggregate({ where: { runId, netCents: { gt: 0 } }, _sum: { netCents: true } }))._sum.netCents ?? 0
+    // Pay exactly what the lock accrued to Wages Payable — never a separate
+    // sum. Summing only the positive nets paid PKR 5,000 more than was accrued
+    // when one payslip was negative, and left 2020 in debit (audit PPL-07).
+    let net = await accruedWagesPayable(tx, run.tenantId, run.id)
+    if (net == null) {
+      // Locked before locking posted the accrual (before 2026-09-24): book it
+      // now, in this transaction, so the payment clears a real liability
+      // instead of marking the run paid with nothing reaching the ledger
+      // (audit HR-R6). An empty month posts nothing and pays nothing.
+      await postPayrollAccrual(tx, run.id, paidBy)
+      net = (await accruedWagesPayable(tx, run.tenantId, run.id)) ?? 0
+    }
+    if (net < 0) throw new AppError('PAYROLL_UNBALANCED', `Payroll ${run.period} accrued a negative wages payable — reopen and recalculate it`, 409)
     if (net > 0) {
       await postJournalEntry({
         tenantId: run.tenantId,

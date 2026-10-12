@@ -5,6 +5,7 @@
 import type { Prisma, HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
+import { accountStateOf } from '../auth/accountStatus.js'
 import {
   HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS,
   type HrField, type HrSection, type WorkflowStep,
@@ -560,6 +561,32 @@ function payslipData(r: ReturnType<typeof computePayslip>) {
   }
 }
 
+/**
+ * Warnings about WHO is being paid, by name (audit PPL-10): a login switched
+ * off in Workforce while HR still has the person as current — a leaver handled
+ * only in Workforce kept being paid in full with no word — and a termination
+ * with no last working day, which pays the whole month.
+ */
+export async function staffingWarnings(emps: Array<Pick<HrEmployee, 'id' | 'userId' | 'fullName' | 'status' | 'lastWorkingDay'>>): Promise<Map<string, string[]>> {
+  const userIds = emps.map((e) => e.userId).filter((u): u is string => !!u)
+  const users = userIds.length
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, isActive: true, accountStatus: true, deletedAt: true } })
+    : []
+  const switchedOff = new Set(users.filter((u) => u.deletedAt || accountStateOf(u) === 'suspended').map((u) => u.id))
+  const out = new Map<string, string[]>()
+  for (const e of emps) {
+    const w: string[] = []
+    if (e.userId && switchedOff.has(e.userId) && ['active', 'on_leave'].includes(e.status)) {
+      w.push(`${e.fullName}: their login is switched off in Workforce but HR still has them as ${e.status.replace('_', ' ')} — if they have left, record the separation in HR before paying`)
+    }
+    if (e.status === 'terminated' && !e.lastWorkingDay) {
+      w.push(`${e.fullName}: terminated with no last working day, so paid for the whole month — set the last working day`)
+    }
+    if (w.length) out.set(e.id, w)
+  }
+  return out
+}
+
 export async function calculateRun(tenantId: string, runId: string, actorId?: string) {
   const run = await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: runId } })
   if (run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'Only a draft payroll can be recalculated', 409)
@@ -568,6 +595,7 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
   await applyDueEffects(tenantId)
   const s = await getSettings(tenantId)
   const emps = await payableEmployees(tenantId, run.period)
+  const staffing = await staffingWarnings(emps)
   const slips: Prisma.HrPayslipCreateManyInput[] = []
   for (const emp of emps) {
     const inputs = await prefillInputs(tenantId, emp, run.period, s, runId)
@@ -575,7 +603,7 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
     const r = computePayslip({ ...emp, grossSalaryCents: salaryCents }, run.period, inputs, s)
     slips.push({
       runId, tenantId, employeeId: emp.id,
-      inputs: { ...inputs, salaryCents, warnings: r.warnings } as unknown as Prisma.InputJsonValue,
+      inputs: { ...inputs, salaryCents, warnings: [...r.warnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
       ...payslipData(r),
     })
   }
@@ -610,7 +638,14 @@ export async function refreshRunTotals(runId: string, s?: HrSettings, tx?: Tx) {
 /** Why a run can't be approved or locked yet, or null. */
 export async function runBlocker(runId: string): Promise<string | null> {
   const run = await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: runId }, select: { tenantId: true, period: true } })
-  const slips = await prisma.hrPayslip.findMany({ where: { runId }, select: { inputs: true, employeeId: true } })
+  const slips = await prisma.hrPayslip.findMany({ where: { runId }, select: { inputs: true, employeeId: true, netCents: true, lines: true, employee: { select: { fullName: true } } } })
+  // A payslip that pays less than nothing — a negative salary, or deductions
+  // above earnings — is never approved, locked or paid (audit PPL-07: one was,
+  // and the ledger's Wages Payable ended up wrong).
+  const negative = slips.filter((sl) => sl.netCents < 0 || ((sl.lines as unknown as Array<{ amountCents: number }> | null) ?? []).some((l) => l.amountCents < 0))
+  if (negative.length > 0) {
+    return `${negative.length} payslip(s) come to less than nothing (${negative.map((sl) => sl.employee.fullName).join(', ')}) — correct the salary or the deductions and recalculate`
+  }
   const noEobi = slips.filter((sl) => (((sl.inputs as Record<string, unknown>)['warnings'] as string[] | undefined) ?? []).includes(EOBI_NOT_CALCULATED)).length
   if (noEobi > 0) return `EOBI is not calculated on ${noEobi} payslip(s) — set the EOBI wage base in HR settings and recalculate`
   // Calculated before their full & final was approved: the settlement pays it.
@@ -648,11 +683,12 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
     inputs.loans = split
   }
   const r = computePayslip({ ...slip.employee, grossSalaryCents: salaryCents }, slip.run.period, inputs, s)
+  const staffing = (await staffingWarnings([slip.employee])).get(slip.employeeId) ?? []
   await prisma.$transaction(async (tx) => {
     await claimDraft(tx, slip.runId, actorId)
     await tx.hrPayslip.update({
       where: { id: payslipId },
-      data: { inputs: { ...inputs, salaryCents, warnings: r.warnings } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
+      data: { inputs: { ...inputs, salaryCents, warnings: [...r.warnings, ...staffing] } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
     })
     await refreshRunTotals(slip.runId, undefined, tx)
   })

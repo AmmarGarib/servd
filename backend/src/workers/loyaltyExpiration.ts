@@ -18,7 +18,6 @@ import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { postLoyaltyExpire } from '../modules/accounting/loyaltyPosting.js'
 import { loadLoyaltySettings } from '../lib/loyaltySettings.js'
-import { loyaltyCompanyOf } from '../modules/loyalty/service.js'
 const QUEUE_NAME = 'loyalty-expiration'
 const RUN_EVERY_MS = 24 * 60 * 60 * 1000  // daily
 
@@ -50,14 +49,15 @@ export function startLoyaltyExpirationWorker() {
 async function runExpirationSweep(): Promise<void> {
   const accounts = await prisma.loyaltyAccount.findMany({
     where: { pointsBalance: { gt: 0 } },
-    select: { id: true, customerId: true, pointsBalance: true },
+    select: { id: true, tenantId: true, customerId: true, pointsBalance: true },
   })
 
   for (const account of accounts) {
     try {
-      // The account's company (where the customer last ordered — the same one
-      // the books use) decides how long points live. 0 = never expire.
-      const months = (await loadLoyaltySettings(await loyaltyCompanyOf(account.customerId)))['loyalty.expiry_months']
+      // The account's company — accounts are per company (ONL-04), and that
+      // company's books carry the liability the expiry releases — decides how
+      // long points live. 0 = never expire.
+      const months = (await loadLoyaltySettings(account.tenantId))['loyalty.expiry_months']
       if (!months || months <= 0) continue
       const cutoff = new Date()
       cutoff.setMonth(cutoff.getMonth() - months)

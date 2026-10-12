@@ -1,11 +1,41 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, FINANCIALS_VIEWERS } from '../auth/middleware.js'
+import type { UserRole } from '@prisma/client'
+import { requireAuth, MANAGERS, FINANCE_TEAM, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
 import { salesTotals, salesByHour, salesByChannel, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
+
+// Who reads the OPERATIONAL reports — sales volume (orders, orders by hour,
+// orders by channel), item mix, ticket times by station and the demand
+// forecast: every role whose default modules hold 'reports'
+// (lib/moduleAccess.ts) — the manager tiers, finance and procurement (UI-15:
+// foh_management / boh_management held the Reports module and got 403 on its
+// first tab). The '/reports' module gate then narrows it to whoever actually
+// holds the module, so the CEO's Module Access switch is the control. Every
+// figure is scoped to the caller's companies (salesQuery → scopeTenantWhere /
+// assertConceptOwned).
+//
+// Company-level REVENUE stays with FINANCIALS_VIEWERS (owner policy, see
+// auth/middleware.ts: "revenue reports … operational managers deliberately
+// excluded"): /sales and /by-source answer everyone in REPORT_READERS, but the
+// money fields (gross, net, tax, refunds, tips, discount) only to
+// FINANCIALS_VIEWERS — the others get the order counts. Item revenue on
+// /top-items stays with the manager tiers + finance, as before. The P&L,
+// ledger, labour % and exec dashboards live in their own modules
+// (accounting, management) and are not touched here.
+export const REPORT_READERS = [...MANAGERS, 'finance', 'procurement'] as UserRole[]
+
+/** May this caller see company-level revenue (not just volumes)? */
+function seesRevenue(req: FastifyRequest): boolean {
+  return FINANCIALS_VIEWERS.includes(req.staffUser!.role)
+}
+/** Item revenue on the item mix: the manager tiers and finance, as before. */
+function seesItemRevenue(req: FastifyRequest): boolean {
+  return FINANCE_TEAM.includes(req.staffUser!.role)
+}
 
 export async function reportRoutes(fastify: FastifyInstance) {
 
@@ -40,35 +70,47 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/sales — sales totals + by-hour (PKT) breakdown
   fastify.get<{
     Querystring: { conceptId?: string; locationId?: string; channel?: string; dateFrom?: string; dateTo?: string }
-  }>('/sales', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+  }>('/sales', { preHandler: requireAuth(...REPORT_READERS) }, async (req) => {
     const q = await salesQuery(req, req.query)
     const [totals, byHour] = await Promise.all([salesTotals(q), salesByHour(q)])
-    return { totals, byHour }
+    if (seesRevenue(req)) return { totals, byHour }
+    // Volume only — the orders, and the orders by hour (see REPORT_READERS).
+    return {
+      volumeOnly: true,
+      totals: { orders: totals.orders },
+      byHour: Object.fromEntries(Object.entries(byHour).map(([h, b]) => [h, { orders: b.orders }])),
+    }
   })
 
   // GET /reports/top-items — top-selling items by quantity in period
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; limit?: string } }>(
     '/top-items',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...REPORT_READERS) },
     async (req) => {
       const asked = parseInt(req.query.limit ?? '20', 10)
       const limit = Math.min(Number.isFinite(asked) && asked > 0 ? asked : 20, 50)
-      return topItems(await salesQuery(req, req.query), limit)
+      const items = await topItems(await salesQuery(req, req.query), limit)
+      if (seesItemRevenue(req)) return items
+      return items.map(({ revenueCents: _revenue, ...rest }) => rest)
     },
   )
 
   // GET /reports/stations — avg ticket time by station
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/stations',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...REPORT_READERS) },
     async (req) => (await stationTimes(await salesQuery(req, req.query))).stations,
   )
 
   // GET /reports/by-source — sales by order source
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/by-source',
-    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
-    async (req) => salesByChannel(await salesQuery(req, req.query)),
+    { preHandler: requireAuth(...REPORT_READERS) },
+    async (req) => {
+      const rows = await salesByChannel(await salesQuery(req, req.query))
+      if (seesRevenue(req)) return rows
+      return rows.map((r) => ({ source: r.source, orders: r.orders })).sort((a, b) => b.orders - a.orders)
+    },
   )
 
   // Both quadrant analysis + demand forecast take a REQUIRED conceptId and hand
@@ -83,10 +125,13 @@ export async function reportRoutes(fastify: FastifyInstance) {
     return conceptId
   }
 
-  // GET /reports/menu-engineering — Stars/Plowhorses/Puzzles/Dogs quadrant analysis
+  // GET /reports/menu-engineering — Stars/Plowhorses/Puzzles/Dogs quadrant analysis.
+  // Margin data. Its one page is Accounting → Sales quadrants, so finance (the
+  // Finance workspace owner, which holds 'accounting') is let in; the manager
+  // tiers keep what they had. Module gate: 'accounting' or 'reports'.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/menu-engineering',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCE_TEAM) },
     async (req) => {
       const conceptId = await requiredConcept(req, req.query.conceptId)
       const { from, to } = reportDateRange(req.query.dateFrom, req.query.dateTo, 30)
@@ -97,7 +142,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/demand-forecast — rolling-average demand forecast for next N days
   fastify.get<{ Querystring: { conceptId?: string; days?: string } }>(
     '/demand-forecast',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...REPORT_READERS) },
     async (req) => {
       const conceptId = await requiredConcept(req, req.query.conceptId)
       const dStr = req.query.days

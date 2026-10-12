@@ -501,12 +501,16 @@ async function main() {
         lastVisitAt: lastOrderAt,
       },
     })
-    // Loyalty account
-    await prisma.loyaltyAccount.upsert({
-      where: { customerId: c.id },
-      update: {},
-      create: { customerId: c.id, pointsBalance: pts, lifetimePoints: pts, stampCounts: {} },
-    })
+    // Loyalty account — one per company (@@unique([tenantId, customerId])),
+    // in the seeded brands' company; none when the brand has no company.
+    const tenantId = simmer.tenantId
+    if (tenantId) {
+      await prisma.loyaltyAccount.upsert({
+        where: { tenantId_customerId: { tenantId, customerId: c.id } },
+        update: {},
+        create: { tenantId, customerId: c.id, pointsBalance: pts, lifetimePoints: pts, stampCounts: {} },
+      })
+    }
     return c
   }
 

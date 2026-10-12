@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { postJournalEntry, reverseJournalEntry } from './journal.js'
+import { postJournalEntry, reverseJournalEntry, MAX_LINE_CENTS, amountTooLarge } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate, pktToday } from './dates.js'
@@ -146,7 +146,13 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   fastify.post('/journal', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = journalEntrySchema.parse(req.body)
 
-    const debits = body.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
+    // BOOKS-06: a line above the ledger's INT4 ceiling was a 500 at the insert.
+    // Refuse it up front with what to do instead (postJournalEntry checks again
+    // for every other posting path).
+    const tooBig = body.lines.findIndex((l) => l.amountCents > MAX_LINE_CENTS)
+    if (tooBig >= 0) throw amountTooLarge(`Line ${tooBig + 1}`)
+
+    const debits =body.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
     const credits = body.lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
     if (debits !== credits) {
       return reply.status(422).send({
@@ -231,7 +237,9 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       entityType: 'JournalEntry',
       entityId: entry.id,
       actorId: req.staffUser!.id,
-      amountCents: debits,
+      // ExceptionFlag.amountCents is INT4 too: a total above it rides in the
+      // metadata only, or the flag itself would fail to save.
+      amountCents: debits <= MAX_LINE_CENTS ? debits : null,
       metadata: { reference, debits, credits, lineCount: body.lines.length, ip: req.ip },
     })
 
@@ -324,8 +332,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       entityType: 'JournalEntry',
       entityId: reversal.id,
       actorId: req.staffUser!.id,
-      amountCents,
-      metadata: { reversedEntryId: original.id, reason: body.reason, ip: req.ip },
+      amountCents: amountCents <= MAX_LINE_CENTS ? amountCents : null,
+      metadata: { reversedEntryId: original.id, reason: body.reason, ip: req.ip, amountCents },
     })
 
     return reply.status(201).send({ ...reversal, reverses: { id: original.id, reference: original.reference } })
@@ -645,7 +653,42 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const c of report.taxableValueByConceptCents) {
           flat.push({ section: 'Sales',    code: c.conceptSlug,                name: c.conceptName,         value: fmtPkr(c.revenueCents) })
         }
-        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE / (REFUND)', value: fmtPkr(report.netPayableCents) })
+        // Per authority (F3 / BOOKS-10): each files its own return — its own
+        // output less its own input, never one authority's input against
+        // another's output.
+        for (const a of report.byAuthority) {
+          const sec = `By authority — ${a.authority}`
+          flat.push({ section: sec, code: a.output.code, name: `Output tax (${a.output.name})`, value: fmtPkr(a.output.totalCents) })
+          flat.push({ section: sec, code: a.input.code,  name: `Input tax (${a.input.name})`,   value: fmtPkr(a.input.totalCents) })
+          flat.push({ section: sec, code: '', name: a.netPayableCents >= 0 ? 'Net payable' : 'Excess input carried forward', value: fmtPkr(Math.abs(a.netPayableCents)) })
+          if (a.otherOutputCents !== 0) {
+            flat.push({ section: sec, code: '', name: 'Output tax not from order sales (manual journals, B2B invoices, older entries)', value: fmtPkr(a.otherOutputCents) })
+          }
+          flat.push({ section: sec, code: '', name: 'Brands', value: a.brands.join(' ') })
+        }
+        // Per rate: the brand's cash (15%) and card (8%) rates, refunds netted.
+        for (const r of report.byRate) {
+          const rate = r.ratePct == null ? 'rate not stored' : `${r.ratePct}%`
+          const label = `${r.authority} ${r.tender} ${rate}`
+          flat.push({ section: 'By rate', code: r.authority, name: `${label} — orders`,                    value: r.orders })
+          flat.push({ section: 'By rate', code: r.authority, name: `${label} — sales value / tax`,         value: `${fmtPkr(r.salesValueCents)} / ${fmtPkr(r.salesTaxCents)}` })
+          flat.push({ section: 'By rate', code: r.authority, name: `${label} — refunds value / tax`,       value: `${fmtPkr(r.refundValueCents)} / ${fmtPkr(r.refundTaxCents)}` })
+          flat.push({ section: 'By rate', code: r.authority, name: `${label} — taxable value to declare`,  value: fmtPkr(r.taxableValueCents) })
+          flat.push({ section: 'By rate', code: r.authority, name: `${label} — output tax to declare`,     value: fmtPkr(r.taxCents) })
+        }
+        // Tax still in 2030 for provincially-taxed brands: the manual journal to post.
+        for (const r of report.reclassification) {
+          flat.push({
+            section: 'Reclassify', code: r.conceptSlug,
+            name: r.amountCents >= 0
+              ? `${r.conceptName}: Dr ${r.fromAccount} / Cr ${r.toAccount}`
+              : `${r.conceptName}: Dr ${r.toAccount} / Cr ${r.fromAccount} (refund)`,
+            value: fmtPkr(Math.abs(r.amountCents)),
+          })
+        }
+        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (sum of each authority\'s own net)', value: fmtPkr(report.netPayableCents) })
+        flat.push({ section: 'Result',     code: '',                          name: 'EXCESS INPUT CARRIED FORWARD (per authority)',   value: fmtPkr(report.carryForwardCents) })
+        for (const n of report.notes) flat.push({ section: 'Notes', code: '', name: n, value: '' })
         return sendCsv(reply, `sales-tax-return-${report.period.from}-${report.period.to}.csv`, toCsv(flat))
       }
       return report
@@ -744,12 +787,16 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     // A close is of days that have happened. Locking a future date (a typo for
     // last year) silently refused every till close, bill and payment dated
     // before it — the shift closed, its sales never reached the ledger, and
-    // nobody was told (BOOKS-07). The latest a period can close is today, PKT.
+    // nobody was told (BOOKS-07). Today is still trading too: a lock through
+    // today refused every online completion, refund and loyalty posting for
+    // the rest of the day while their sales were filed with the fiscal POS
+    // (BOOKS-R2-01). The latest a period can close is YESTERDAY, PKT.
     const today = pktToday()
-    if (newLock.getTime() > today.to.getTime()) {
+    if (newLock.getTime() >= today.from.getTime()) {
+      const yesterday = new Date(today.from.getTime() - 1)
       throw new AppError(
         'LOCK_IN_FUTURE',
-        `Cannot close the books through ${fmtPktDate(newLock)} — that is after today (${fmtPktDate(today.to)}, Pakistan time). Close a date that has already happened.`,
+        `Cannot close the books through ${fmtPktDate(newLock)} — today (${fmtPktDate(today.to)}, Pakistan time) is still trading. The latest date you can close is yesterday, ${fmtPktDate(yesterday)}.`,
         422,
       )
     }

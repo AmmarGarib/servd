@@ -18,6 +18,12 @@
 //   - moves stock and the moving-average unit cost through applyReceiptLine
 //     (owner decision 30: ingredient cost = moving average of actual
 //     deliveries), with ItemPriceHistory when the cost moves
+//   - against a PO line a supplier bill was booked for before this delivery:
+//     applies the bill's carried price variance to the received quantity
+//     (applyCarriedBillVarianceTx, RB-3) — the share still on hand after the
+//     receipt re-averages the item, the share that only filled stock already
+//     sold below zero goes to 5060 in the bill's company (BK2-RV-1), so a
+//     closed period refuses the receipt the way it refuses the bill
 // After commit it raises the variance / short-shipment exception flags.
 //
 // Owner decision 27 (2026-09-27):
@@ -33,6 +39,7 @@ import { flagException, type ExceptionKind } from '../../lib/exceptions.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
 import { MANAGERS } from '../auth/middleware.js'
+import { applyCarriedBillVarianceTx } from '../accounting/supplierPosting.js'
 
 /** Line variance above this (either way) raises an exception flag. */
 export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
@@ -286,6 +293,7 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
         lines: {
           create: prepared.map((l) => ({
             inventoryItemId: l.inventoryItemId,
+            poLineId:        l.poLineId,      // the PO line it was matched to (traceable; null without a PO)
             description:     l.description,
             poQty:           l.expectedQty,
             receivedQty:     l.quantityReceived,
@@ -316,6 +324,20 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
         await tx.purchaseOrderLine.update({
           where: { id: l.poLineId },
           data:  { quantityReceived: { increment: l.quantityReceived } },
+        })
+        // A supplier bill booked before this delivery carried its price
+        // variance for the not-yet-received quantity (RB-3). Apply that slice
+        // now, in the same transaction, after the stock moved: what of it is
+        // still on hand is valued at the billed price as it lands; what only
+        // covered stock already sold below zero goes to 5060 (BK2-RV-1), the
+        // same split as a bill booked after the goods. Idempotent per receipt
+        // (keyed on receipt.id). A closed period (PERIOD_LOCKED) refuses the
+        // whole receipt rather than leave 1210 holding variance with no stock.
+        await applyCarriedBillVarianceTx(tx, {
+          poLineId:   l.poLineId,
+          quantity:   l.quantityReceived,
+          supplierId: supplier.id,
+          receiptId:  receipt.id,
         })
       }
       const cumulative = l.alreadyReceived + l.quantityReceived

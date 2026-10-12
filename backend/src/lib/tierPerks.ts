@@ -70,25 +70,33 @@ export function invalidateTierPerksCache(): void {
   cache.clear()
 }
 
-// Returns the perks for whichever tier the customer is currently on. Bronze
-// (or no loyalty account) → no perks.
+// Returns the perks for whichever tier the customer is currently on AT
+// `tenantId` — the company whose brand is being booked / ordered from. Bronze
+// (or no loyalty account there, or no company given) → no perks.
+//
+// The perks are the company's ladder, and the tier is the one held on the
+// customer's account AT that company (accounts are per company — ONL-04). The
+// company is never guessed: falling back to the company the customer last
+// ordered from gave one company's gold perks at another company's brand
+// (LEDGER-R7). A caller that omits it gets the bronze default.
 export async function getCustomerPerks(customerId: string | null, tenantId?: string | null): Promise<ResolvedPerks> {
-  if (!customerId) return { tier: 'bronze', ...NO_PERKS }
+  if (!customerId || !tenantId) {
+    if (customerId && !tenantId) console.warn('[tierPerks] getCustomerPerks called without a company — no perks applied')
+    return { tier: 'bronze', ...NO_PERKS }
+  }
   const account = await prisma.loyaltyAccount.findUnique({
-    where: { customerId },
+    where: { tenantId_customerId: { tenantId, customerId } },
     select: { tier: true },
   })
   const tier = (account?.tier as TierName | undefined) ?? 'bronze'
-  // The perks are the company's ladder; resolve it from the customer when
-  // the caller does not know it (the loyalty account is one across companies).
-  const company = tenantId ?? await (await import('../modules/loyalty/service.js')).loyaltyCompanyOf(customerId)
-  return getTierPerks(tier, company)
+  return getTierPerks(tier, tenantId)
 }
 
-// True if this customer's tier qualifies them for free delivery on an order
-// of `subtotalCents`. Used by the order checkout flow to set deliveryFee=0.
-export async function qualifiesForFreeDelivery(customerId: string | null, subtotalCents: number): Promise<boolean> {
-  const perks = await getCustomerPerks(customerId)
+// True if this customer's tier AT `tenantId` qualifies them for free delivery
+// on an order of `subtotalCents`. Used by the order checkout flow to set
+// deliveryFee=0.
+export async function qualifiesForFreeDelivery(customerId: string | null, tenantId: string | null, subtotalCents: number): Promise<boolean> {
+  const perks = await getCustomerPerks(customerId, tenantId)
   if (perks.alwaysFreeDelivery) return true
   if (perks.freeDeliveryAboveCents != null && subtotalCents >= perks.freeDeliveryAboveCents) return true
   return false

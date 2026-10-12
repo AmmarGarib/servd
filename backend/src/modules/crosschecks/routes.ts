@@ -2,14 +2,16 @@
 // Bundled in one file because they all share the ExceptionFlag spine.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { flagException, acknowledgeException, resolveException, type ExceptionKind } from '../../lib/exceptions.js'
 import { receiveGoods } from '../procurement/receiving.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { conceptIdsInScope, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
 
 // Variance thresholds. Hardcoded for now; later config-driven.
 const PRICE_DRIFT_THRESHOLD        = 0.03    // 3%
@@ -25,6 +27,12 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // one transaction, variance flags after commit. Manager tiers only (owner
   // decision 27) and deliberately not behind the procurement module, so a
   // kitchen manager can take a delivery at the door.
+  //
+  // The buyer (role procurement) holds the module whose sidebar links this
+  // page (/procurement/receiving), so the page's READS admit PROCUREMENT_TEAM
+  // (R2-UI-02, wave 3: a role with the module gets every read 200) — scoped
+  // exactly as for a manager. Taking the delivery in (POST) stays MANAGERS:
+  // whoever orders the goods does not also sign for them (decision 27).
   // ════════════════════════════════════════════════════════════════════════
 
   // Suppliers the operator can see: their companies' plus company-less ones
@@ -39,7 +47,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     return rows.map((r) => r.id)
   }
 
-  fastify.get('/receiving', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/receiving', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
     const { status } = req.query as { status?: string }
     return prisma.goodsReceipt.findMany({
       where: { supplierId: { in: await receivingSupplierIds(req) }, ...(status && { status }) },
@@ -50,7 +58,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   })
 
   // Suppliers a delivery WITHOUT a PO can come from: the active company's.
-  fastify.get('/receiving/suppliers', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/receiving/suppliers', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) return []
     return prisma.supplier.findMany({
@@ -61,7 +69,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   })
 
   // POs waiting at the dock: approved and sent, or part-received.
-  fastify.get('/receiving/open-pos', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/receiving/open-pos', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
     return prisma.purchaseOrder.findMany({
       where: { supplierId: { in: await receivingSupplierIds(req) }, status: { in: ['sent', 'partial'] } },
       include: {
@@ -178,17 +186,31 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     // ingredients when the plates using it sell (the same explosion the ledger
     // costs COGS on), so taking the inputs out here as well would count them
     // twice. Ad-hoc batches (no recipe) still draw their inputs from stock.
-    const subRecipe = body.recipeId
-      ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true } })
-      : null
+    //
+    // The recipe is resolved inside the ACTIVE company (BOH-R2-04): a batch may
+    // cite only a sub-recipe the company's brands use — the list the par sheet
+    // and the prep page offer (subRecipeIdsForCompany). Any other id (another
+    // company's sub-recipe, a plate, an id that does not exist) is refused 422
+    // rather than stored: citing a foreign sub-recipe used to log a batch that
+    // drew none of this company's stock.
+    let subRecipe: { id: string } | null = null
+    if (body.recipeId) {
+      const companySubRecipes = await subRecipeIdsForCompany(tenantId)
+      subRecipe = companySubRecipes.has(body.recipeId)
+        ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true } })
+        : null
+      if (!subRecipe) {
+        throw new AppError('RECIPE_NOT_IN_COMPANY', 'That sub-recipe is not one of this company\'s — pick one from the prep list, or log the batch without a recipe', 422)
+      }
+    }
 
     const batch = await prisma.$transaction(async (tx) => {
       const created = await tx.prepBatch.create({
         data: {
           tenantId,
-          recipeId: body.recipeId ?? null,
+          recipeId: subRecipe?.id ?? null,
           itemName: body.itemName,
-          inputs: inputs as never,
+          inputs,
           expectedYieldQty: body.expectedYieldQty ?? null,
           actualYieldQty: body.actualYieldQty,
           unit: body.unit,
@@ -236,7 +258,13 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // PHYSICAL COUNT — periodic spot-checks
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/physical-counts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // Counting is line-cook work (the Count page sits in boh's inventory
+  // module; wave 3). Procurement is left out on purpose: the buyer would be
+  // certifying stock it orders itself, which hides shrinkage. Variances past
+  // the threshold still raise a shrinkage exception for the managers.
+  const STOCK_COUNTERS = [...MANAGERS, 'boh'] as UserRole[]
+
+  fastify.get('/physical-counts', { preHandler: requireAuth(...STOCK_COUNTERS) }, async (req) => {
     return prisma.physicalCount.findMany({
       where: await scopeTenantWhere(req, 'read'),
       include: { lines: true },
@@ -245,7 +273,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.post('/physical-counts', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/physical-counts', { preHandler: requireAuth(...STOCK_COUNTERS) }, async (req, reply) => {
     const body = z.object({
       lines: z.array(z.object({
         inventoryItemId: z.string().uuid(),

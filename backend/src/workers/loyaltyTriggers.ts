@@ -4,7 +4,7 @@ import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail, sendPhoneMessage } from '../lib/notify.js'
 import { reachableCustomer, reachableAtCompany } from '../lib/marketingAudience.js'
 import { calculatePointsValue } from '../lib/loyaltySettings.js'
-import { creditPoints, creditPointsTx, bookEarn, loyaltyCompanyOf, loyaltyProgram } from '../modules/loyalty/service.js'
+import { creditPoints, creditPointsTx, bookEarn, loyaltyProgram } from '../modules/loyalty/service.js'
 import { formatBrandName } from '../lib/brandName.js'
 
 // Automated customer messages and point bonuses.
@@ -18,11 +18,36 @@ import { formatBrandName } from '../lib/brandName.js'
 //   - Points: every bonus goes through the loyalty service (creditPoints), so
 //     the liability is booked and the value quoted is the company's (owner
 //     decision 12: PKR 0.10 a point).
+//   - Company: every bonus names the company GIVING it (LEDGER-R8 — loyalty
+//     stays inside the company that issued it). Birthday: each company the
+//     customer has points, orders or a preferred brand with. Milestone: spend
+//     at ONE company's brands, credited by that company. Referral: the
+//     company of the referee's first completed order. Never a guessed company
+//     (latest order, oldest company) — no company, no bonus.
 
-/** PKR text for what `points` are worth at the customer's company. */
-async function pointsWorth(points: number, customerId: string): Promise<string> {
-  const cents = await calculatePointsValue(points, await loyaltyCompanyOf(customerId))
+/** PKR text for what `points` are worth at `tenantId`. */
+async function pointsWorth(points: number, tenantId: string): Promise<string> {
+  const cents = await calculatePointsValue(points, tenantId)
   return `PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
+}
+
+/** reachableAtCompany, cached per company for one run. */
+function reachabilityCache() {
+  const cache = new Map<string, Awaited<ReturnType<typeof reachableAtCompany>>>()
+  return async (customerId: string, tenantId: string): Promise<boolean> => {
+    if (!cache.has(tenantId)) cache.set(tenantId, await reachableAtCompany(tenantId))
+    return (await prisma.customer.count({ where: { AND: [{ id: customerId }, cache.get(tenantId)!] } })) > 0
+  }
+}
+
+/** Customers (of `ids`) who already hold an earn described `description` at `tenantId`. */
+async function alreadyCredited(ids: string[], tenantId: string, description: string): Promise<Set<string>> {
+  if (ids.length === 0) return new Set()
+  const rows = await prisma.loyaltyTransaction.findMany({
+    where: { type: 'earn', description: { startsWith: description }, loyaltyAccount: { tenantId, customerId: { in: ids } } },
+    select: { loyaltyAccount: { select: { customerId: true } } },
+  })
+  return new Set(rows.map((r) => r.loyaltyAccount.customerId))
 }
 
 /** Email when we have one, else WhatsApp. */
@@ -74,33 +99,60 @@ export function startLoyaltyTriggerWorker() {
 }
 
 // Birthday — owner decision 12: the reward is the company's birthday bonus in
-// points (loyalty.birthday_bonus_points, default 500), credited once a year.
-async function runBirthdayTriggers() {
-  const today = new Date()
+// points (loyalty.birthday_bonus_points, default 500), credited once a year BY
+// EACH COMPANY the customer belongs to — one they hold points with, have
+// ordered from, or signed up through (preferred brand) — at that company's
+// own rate and on its books. A customer who belongs to no company gets none
+// (it used to land at the oldest company on the system).
+export async function runBirthdayTriggers(today = new Date()) {
   const mm = String(today.getMonth() + 1).padStart(2, '0')
   const dd = String(today.getDate()).padStart(2, '0')
+  const year = today.getFullYear()
+  const yearStart = new Date(year, 0, 1)
+  const reachable = reachabilityCache()
 
   const customers = await prisma.customer.findMany({
-    where: { birthdayMmDd: `${mm}-${dd}`, ...reachableCustomer },
-    select: { id: true, name: true, email: true, phone: true },
+    where: { birthdayMmDd: `${mm}-${dd}`, deletedAt: null },
+    select: {
+      id: true, name: true, email: true, phone: true,
+      preferredConcept: { select: { tenantId: true } },
+      loyaltyAccounts: { select: { tenantId: true } },
+    },
   })
+  const tenantNames = new Map((await prisma.tenant.findMany({ select: { id: true, name: true } })).map((t) => [t.id, t.name]))
 
   for (const customer of customers) {
-    const alreadySent = await prisma.triggerLog.findFirst({
-      where: { customerId: customer.id, triggerType: 'birthday', createdAt: { gte: new Date(today.getFullYear(), 0, 1) } },
+    const ordered = await prisma.order.findMany({
+      where: { customerId: customer.id, deletedAt: null, concept: { tenantId: { not: null } } },
+      select: { concept: { select: { tenantId: true } } },
+      distinct: ['conceptId'],
     })
-    if (alreadySent) continue
+    const companies = [...new Set([
+      ...customer.loyaltyAccounts.map((a) => a.tenantId),
+      ...ordered.map((o) => o.concept.tenantId),
+      customer.preferredConcept?.tenantId,
+    ].filter((t): t is string => !!t))]
 
-    const program = await loyaltyProgram(await loyaltyCompanyOf(customer.id))
-    const bonus = program.birthdayBonusPoints
-    if (bonus > 0) {
-      await creditPoints({ customerId: customer.id, points: bonus, description: `Birthday bonus ${today.getFullYear()}` })
+    for (const tenantId of companies) {
+      const triggerType = `birthday.${tenantId}`
+      const sent = await prisma.triggerLog.findFirst({ where: { customerId: customer.id, triggerType, createdAt: { gte: yearStart } } })
+      if (sent) continue
+      // A bonus this year already on this company's account (incl. one the
+      // old company-less trigger credited here) counts as sent.
+      const description = `Birthday bonus ${year}`
+      if ((await alreadyCredited([customer.id], tenantId, description)).size > 0) continue
+      if (!(await reachable(customer.id, tenantId))) continue
+
+      const program = await loyaltyProgram(tenantId)
+      const bonus = program.birthdayBonusPoints
+      if (bonus <= 0) continue
+      await creditPoints({ customerId: customer.id, tenantId, points: bonus, description })
+      const company = tenantNames.get(tenantId) ?? 'servd'
+      const worth = `PKR ${((bonus * program.pointValueCents) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
+      const msg = `Happy birthday, ${customer.name ?? 'there'}! ${company} has added ${bonus} loyalty points to your account — ${worth} off your next order with us.`
+      await reach(customer, `Happy birthday from ${company}`, `<p>${msg}</p>`, msg).catch(() => {})
+      await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType } })
     }
-    const worth = `PKR ${((bonus * program.pointValueCents) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
-    const msg = `Happy birthday, ${customer.name ?? 'there'}! We've added ${bonus} loyalty points to your account — ${worth} off your next order.`
-    await reach(customer, 'Happy birthday from servd', `<p>${msg}</p>`, msg).catch(() => {})
-
-    await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType: 'birthday' } })
   }
 }
 
@@ -280,51 +332,62 @@ async function runComplaintFollowUpTrigger() {
   }
 }
 
-// Spend milestone — celebrate when a customer crosses a meaningful lifetime
-// threshold (PKR 25k / 50k / 100k / 250k): bonus loyalty points, credited
-// through the loyalty service (liability booked), plus a thank-you note to
-// customers marketing may reach. Once per threshold per customer (TriggerLog
-// `milestone_<amount>`).
-async function runSpendMilestoneTrigger() {
+// Spend milestone — celebrate when a customer crosses a lifetime threshold
+// (PKR 25k / 50k / 100k / 250k) AT ONE COMPANY's brands: bonus loyalty points
+// from that company, credited through the loyalty service (liability booked
+// in its books), plus a thank-you note when that company may reach them. Once
+// per threshold per customer per company (TriggerLog
+// `milestone_<amount>.<tenantId>`, and the earn itself). It used to read
+// Customer.totalSpentCents — spend at EVERY company — and credit whichever
+// company the customer last ordered from.
+export async function runSpendMilestoneTrigger() {
   const MILESTONES_CENTS = [
     { threshold: 2_500_000,  label: 'PKR 25,000',  bonus: 100 },
     { threshold: 5_000_000,  label: 'PKR 50,000',  bonus: 200 },
     { threshold: 10_000_000, label: 'PKR 100,000', bonus: 500 },
     { threshold: 25_000_000, label: 'PKR 250,000', bonus: 1500 },
   ] as const
+  const reachable = reachabilityCache()
+  const companies = await prisma.tenant.findMany({ select: { id: true, name: true } })
 
-  for (const m of MILESTONES_CENTS) {
-    const triggerKey = `milestone_${m.threshold}`
-    const customers = await prisma.customer.findMany({
-      where: {
-        deletedAt: null,
-        totalSpentCents: { gte: m.threshold },
-        triggerLogs: { none: { triggerType: triggerKey } },
-      },
-      select: { id: true, name: true, email: true, phone: true },
-      take: 100,
-    })
-    const reachable = new Set((await prisma.customer.findMany({
-      where: { id: { in: customers.map((c) => c.id) }, ...reachableCustomer },
-      select: { id: true },
-    })).map((c) => c.id))
+  for (const { id: tenantId, name: company } of companies) {
+    for (const m of MILESTONES_CENTS) {
+      const triggerKey = `milestone_${m.threshold}.${tenantId}`
+      // Lifetime spend at this company's brands: what its completed orders charged.
+      const spenders = await prisma.order.groupBy({
+        by: ['customerId'],
+        where: { status: 'completed', deletedAt: null, customerId: { not: null }, concept: { tenantId } },
+        _sum: { totalCents: true },
+        having: { totalCents: { _sum: { gte: m.threshold } } },
+      })
+      const ids = spenders.map((r) => r.customerId).filter((x): x is string => !!x)
+      if (ids.length === 0) continue
+      const description = `Milestone: ${m.label} lifetime spend`
+      const [logged, credited, live] = await Promise.all([
+        prisma.triggerLog.findMany({ where: { customerId: { in: ids }, triggerType: triggerKey }, select: { customerId: true } }),
+        alreadyCredited(ids, tenantId, description),
+        prisma.customer.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, name: true, email: true, phone: true } }),
+      ])
+      const done = new Set([...logged.map((l) => l.customerId), ...credited])
+      const due = live.filter((c) => !done.has(c.id)).slice(0, 100)
 
-    for (const c of customers) {
-      await creditPoints({ customerId: c.id, points: m.bonus, description: `Milestone: ${m.label} lifetime spend` })
+      for (const c of due) {
+        await creditPoints({ customerId: c.id, tenantId, points: m.bonus, description })
 
-      if (reachable.has(c.id)) {
-        const name = c.name ?? 'there'
-        const worth = await pointsWorth(m.bonus, c.id)
-        const msg = `${name} — you've spent ${m.label} with us. That's not nothing. Here's ${m.bonus} bonus loyalty points (${worth} off) and a thank-you that means it.`
-        const html = `<p>Hi ${name},</p>
-          <p>Quietly, we noticed: you've spent <strong>${m.label}</strong> with us.</p>
-          <p>That's the kind of loyalty restaurants don't earn lightly. Thank you.</p>
-          <p>We've credited <strong>${m.bonus} loyalty points</strong> to your account — that's ${worth} off whenever you next order.</p>
-          <p>Genuinely,<br/>The servd team</p>`
-        await reach(c, `Thanks for ${m.label}`, html, msg).catch(() => {})
+        if (await reachable(c.id, tenantId)) {
+          const name = c.name ?? 'there'
+          const worth = await pointsWorth(m.bonus, tenantId)
+          const msg = `${name} — you've spent ${m.label} with ${company}. That's not nothing. Here's ${m.bonus} bonus loyalty points (${worth} off) and a thank-you that means it.`
+          const html = `<p>Hi ${name},</p>
+            <p>Quietly, we noticed: you've spent <strong>${m.label}</strong> with ${company}.</p>
+            <p>That's the kind of loyalty restaurants don't earn lightly. Thank you.</p>
+            <p>We've credited <strong>${m.bonus} loyalty points</strong> to your account — that's ${worth} off whenever you next order with us.</p>
+            <p>Genuinely,<br/>${company}</p>`
+          await reach(c, `Thanks for ${m.label}`, html, msg).catch(() => {})
+        }
+
+        await prisma.triggerLog.create({ data: { customerId: c.id, triggerType: triggerKey } })
       }
-
-      await prisma.triggerLog.create({ data: { customerId: c.id, triggerType: triggerKey } })
     }
   }
 }
@@ -395,12 +458,15 @@ export async function runReferralRewardTrigger() {
     if (!referee.phoneVerifiedAt) continue
 
     // The order that triggered this has to be worth more than the reward.
+    // Its company gives both bonuses (F1 / LEDGER-R8): the referral paid off
+    // for that company, whose books carry the liability.
     const firstOrder = await prisma.order.findFirst({
       where: { customerId: referee.id, status: 'completed', deletedAt: null },
-      select: { totalCents: true },
+      select: { totalCents: true, concept: { select: { tenantId: true } } },
       orderBy: { completedAt: 'asc' },
     })
-    if (!firstOrder || firstOrder.totalCents < MIN_FIRST_ORDER_CENTS) {
+    const tenantId = firstOrder?.concept.tenantId ?? null
+    if (!firstOrder || !tenantId || firstOrder.totalCents < MIN_FIRST_ORDER_CENTS) {
       // Not a fraud signal on its own — someone may just have bought a drink.
       // Leave it unstamped so a later, larger first order isn't needed; the
       // referral simply doesn't pay on this one.
@@ -427,11 +493,13 @@ export async function runReferralRewardTrigger() {
     const [refereeTx, referrerTx] = await prisma.$transaction(async (tx) => {
       const a = await creditPointsTx(tx, {
         customerId: referee.id,
+        tenantId,
         points: REFEREE_BONUS,
         description: `Welcome bonus: signed up via ${referrer.name}'s referral`,
       })
       const b = await creditPointsTx(tx, {
         customerId: referrer.id,
+        tenantId,
         points: REFERRER_BONUS,
         description: `Referral bonus: ${referee.name} completed their first order`,
       })
@@ -446,7 +514,7 @@ export async function runReferralRewardTrigger() {
 
     // Notify the referrer, when marketing may reach them.
     if (referrer.bannedAt || referrer.marketingOptOutAt) continue
-    const msg = `${referee.name ?? 'Your friend'} just placed their first order using your code — you've got ${REFERRER_BONUS} loyalty points (${await pointsWorth(REFERRER_BONUS, referrer.id)} off your next order). Thanks for the love.`
+    const msg = `${referee.name ?? 'Your friend'} just placed their first order using your code — you've got ${REFERRER_BONUS} loyalty points (${await pointsWorth(REFERRER_BONUS, tenantId)} off your next order). Thanks for the love.`
     await reach(referrer, `Your friend ordered — points credited`, `<p>${msg}</p>`, msg).catch(() => {})
   }
 }

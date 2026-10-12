@@ -12,8 +12,13 @@
 //                  'off' on a weekly off
 //   2. swap        an approved shift_swap for that day (either side of it)
 //   3. exception   the manager's dated rows on /scheduling for that day
+//   4. leave       approved full-day leave covering the day: the person is
+//                  away, whatever was planned (audit PPL-R2-02) — 0 minutes,
+//                  so labour cost, attendance and the tip-pool fallback agree
+//                  with the leave record payroll reads. A half day is not
+//                  overlaid: the other half is still worked.
 
-import type { HrEmployee } from '@prisma/client'
+import type { HrEmployee, Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 
 export const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
@@ -82,11 +87,13 @@ export interface RotaSegment {
 export interface RotaCell {
   employeeId: string
   date: string // YYYY-MM-DD
-  kind: 'shift' | 'off' | 'none'
-  source: 'roster' | 'swap' | 'exception' | 'none'
+  kind: 'shift' | 'off' | 'leave' | 'none'
+  source: 'roster' | 'swap' | 'exception' | 'leave' | 'none'
   segments: RotaSegment[]
   /** The day-off exception row, when an exception took the day off. */
   offExceptionId: string | null
+  /** The approved leave record, on a 'leave' day. */
+  leaveId?: string | null
 }
 
 type Emp = Pick<HrEmployee, 'id' | 'userId'>
@@ -132,7 +139,7 @@ export async function rotaFor(tenantId: string, emps: Emp[], from: string, to: s
   }
   const rosterIds = Array.from(new Set([...emps.map((e) => e.id), ...partnerIds]))
   const userIds = emps.map((e) => e.userId).filter((u): u is string => !!u)
-  const [shifts, rosters, exceptions] = await Promise.all([
+  const [shifts, rosters, exceptions, leaves] = await Promise.all([
     shiftMaster(tenantId),
     prisma.hrRecord.findMany({
       where: {
@@ -147,7 +154,15 @@ export async function rotaFor(tenantId: string, emps: Emp[], from: string, to: s
           orderBy: { startTime: 'asc' },
         })
       : Promise.resolve([]),
+    prisma.hrRecord.findMany({
+      where: {
+        tenantId, section: 'leave', status: 'approved', employeeId: { in: emps.map((e) => e.id) },
+        startDate: { lte: hi }, endDate: { gte: lo },
+      },
+      select: { id: true, employeeId: true, startDate: true, endDate: true, quantity: true },
+    }),
   ])
+  const fullDayLeaves = leaves.filter((l) => !isHalfDayLeave(l))
 
   const baseCell = (employeeId: string, date: string): RotaCell => {
     const d = dayDate(date)
@@ -194,6 +209,9 @@ export async function rotaFor(tenantId: string, emps: Emp[], from: string, to: s
               })),
             }
       }
+      // Approved leave wins over everything planned for the day.
+      const leave = fullDayLeaves.find((l) => l.employeeId === e.id && l.startDate && l.endDate && ymd(l.startDate) <= date && ymd(l.endDate) >= date)
+      if (leave) cell = { employeeId: e.id, date, kind: 'leave', source: 'leave', segments: [], offExceptionId: null, leaveId: leave.id }
       out.push(cell)
     }
   }
@@ -204,4 +222,29 @@ export async function rotaFor(tenantId: string, emps: Emp[], from: string, to: s
 export async function rotaDay(tenantId: string, emp: Emp, date: string): Promise<RotaCell> {
   const [cell] = await rotaFor(tenantId, [emp], date, date)
   return cell ?? { employeeId: emp.id, date, kind: 'none', source: 'none', segments: [], offExceptionId: null }
+}
+
+export const isHalfDayLeave = (l: { startDate: Date | null; endDate: Date | null; quantity: number | null }) =>
+  l.quantity != null && l.quantity < 1 && !!l.startDate && !!l.endDate && ymd(l.startDate) === ymd(l.endDate)
+
+/**
+ * Approved leave covering this day, if any (a half day leaves the other half
+ * to work, so it does not count). The rota never puts someone on a day HR has
+ * them away — not a /scheduling shift (audit PPL-12) and not a shift swap
+ * (HR-R5): leave balance and payroll read the leave record, so the rota must
+ * not quietly disagree.
+ */
+export async function approvedLeaveOn(tenantId: string, employeeId: string, date: Date, db: Prisma.TransactionClient = prisma) {
+  const rows = await db.hrRecord.findMany({
+    where: { tenantId, section: 'leave', status: 'approved', employeeId, startDate: { lte: date }, endDate: { gte: date } },
+    select: { id: true, startDate: true, endDate: true, quantity: true },
+  })
+  return rows.find((l) => !isHalfDayLeave(l)) ?? null
+}
+
+/** "2026-10-12" or "2026-10-12 to 2026-10-14" for a leave's dates. */
+export function leaveSpan(leave: { startDate: Date | null; endDate: Date | null }): string {
+  return leave.startDate && leave.endDate && ymd(leave.startDate) !== ymd(leave.endDate)
+    ? `${ymd(leave.startDate)} to ${ymd(leave.endDate)}`
+    : leave.startDate ? ymd(leave.startDate) : 'that day'
 }

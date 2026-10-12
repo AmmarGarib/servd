@@ -7,7 +7,11 @@
 // THE SALE SIDE uses the one sale-to-ledger formula, computeSaleAccounting
 // (orderPosting.ts), applied to every till order the shift books and summed
 // per brand: item revenue to the brand's 4xxx, service charge to 4100, tips to
-// 2095, GST to 2030, discounts to 7010, wallet to 2050. This shift close used
+// 2095 (FOH-14: the till puts a tip on Order.tipCents and its total), output
+// tax to the brand's authority (2032 SRB for a Sindh kitchen, else 2030 —
+// outputTaxCodeFor, BOOKS-10), discounts to 7010, wallet to 2050, and what a
+// gift card paid to 2080 (ONL-05 — one line per order, naming it, so a refund
+// can tell the card was booked). This shift close used
 // to carry its own inline copy, which credited POS service charge to food
 // revenue, and which balanced only when an order's payments on the drawer
 // equalled its total to the paisa — a card still awaiting the gateway, a
@@ -31,6 +35,13 @@
 //   • An online / non-till order paid at the drawer is already booked by its
 //     own order.complete entry, so the shift books only the cash moving into
 //     the drawer (Dr 1015 / Cr 1010) — it used to book that sale a second time.
+//   • A CANCELLED or REJECTED order was never sold (FOH-09): money taken on
+//     one is not revenue or tax. It is debited where it sits (1015 / 1030) and
+//     credited to 1110 Customer accounts receivable — a credit balance there is
+//     the customer's money we owe back ("refund due"), one line per order
+//     naming it — until it is handed back: the refund row on the cancelled
+//     order books Dr 1110 / Cr 1015 or 1030 (postRefundPayment, LEDGER-R5).
+//     It used to be booked as a sale and its tax.
 //
 // The drawer side uses the ONE expected-cash formula (lib/drawer.ts), the same
 // figure the cashier counted against. Every movement of cash in or out of the
@@ -58,7 +69,10 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
-import { computeSaleAccounting, type SaleOrderFields } from './orderPosting.js'
+import {
+  computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, outputTaxCodeFor, withTenderTips,
+  GIFT_CARD_LIABILITY, REFUND_DUE_PREFIX, refundDueMemo, type SaleOrderFields, type TaxJurisdiction,
+} from './orderPosting.js'
 import { drawerExpectationOf } from '../../lib/drawer.js'
 import { cogsForSoldLines } from '../../lib/recipeCost.js'
 import { SHIFT_COMPANY_INCLUDE, shiftTenantId } from '../../lib/tenantScope.js'
@@ -76,15 +90,21 @@ export interface ShiftOrderPaymentRow {
   amountCents: number
   gatewayRef: string | null
   createdAt: Date
+  /** The till records a tender's tip here as { tipCents } (FOH-14). */
+  gatewayMeta?: unknown
 }
 
 export interface ShiftSaleOrder extends SaleOrderFields {
   id: string
   source: string
+  /** Order status — a cancelled / rejected order is never a sale (FOH-09). */
+  status?: string
   conceptId: string
-  concept: { id: string; slug: string }
+  concept: { id: string; slug: string } & TaxJurisdiction
   /** Every payment of the order, on any drawer. */
   payments: ShiftOrderPaymentRow[]
+  /** What gift cards paid of the bill (ONL-05). */
+  giftCardRedemptions?: Array<{ amountCents: number }>
 }
 
 export interface ShiftPaymentRow extends ShiftOrderPaymentRow {
@@ -96,41 +116,32 @@ export interface ShiftPaymentRow extends ShiftOrderPaymentRow {
 export const SHIFT_SALE_PAYMENT_INCLUDE = {
   order: {
     select: {
-      id: true, source: true, conceptId: true,
+      id: true, source: true, status: true, conceptId: true,
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
       promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
-      concept: { select: { id: true, slug: true } },
-      payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true } },
+      concept: { select: { id: true, slug: true, province: true, srbPosId: true } },
+      payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
+      giftCardRedemptions: { select: { amountCents: true } },
     },
   },
 } as const
 
-const GATEWAY_METHODS = new Set(['card', 'keenu_qr'])
+// The receipt rule and the home-drawer rule live with the sale formula
+// (orderPosting.ts) so the refund engine can use them too.
+export { isShiftReceipt, homeShiftOf }
 
-/**
- * Is this payment money received (or receivable from a processor)? Paid, or a
- * card / QR tender the till took (it carries the terminal's reference) that
- * the gateway has not confirmed yet. Refund rows, failed tenders and open
- * check-split portions (pending, no reference) are not.
- */
-export function isShiftReceipt(p: { method: string; status: string; gatewayRef: string | null }): boolean {
-  if (p.status === 'paid') return true
-  return p.status === 'pending' && GATEWAY_METHODS.has(p.method) && !!p.gatewayRef
-}
-
-/** The drawer that books a till order: the one holding its earliest receipt. */
-export function homeShiftOf(order: { payments: ShiftOrderPaymentRow[] }): string | null {
-  const receipts = order.payments
-    .filter((p) => p.shiftId && isShiftReceipt(p))
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
-  return receipts[0]?.shiftId ?? null
-}
+/** Order statuses that were never a sale: money taken on them is owed back. */
+const NEVER_SOLD = new Set(['cancelled', 'rejected'])
 
 export interface ShiftBrandSales {
   conceptId: string
   conceptSlug: string
+  /** The output-tax account this brand's tax is owed on (outputTaxCodeFor). */
+  taxAccountCode: string
   /** Till orders this drawer books for the brand — what its COGS is costed from. */
   orderIds: string[]
+  /** Gift-card value per order (Dr 2080, one line each). */
+  giftCards: Array<{ orderId: string; cents: number }>
   orders: number
   revenueCents: number
   serviceChargeCents: number
@@ -138,11 +149,12 @@ export interface ShiftBrandSales {
   taxCents: number
   discountCents: number
   walletAppliedCents: number
+  giftCardAppliedCents: number
 }
 
 export interface ShiftSales {
   byConcept: Map<string, ShiftBrandSales>
-  totals: Omit<ShiftBrandSales, 'conceptId' | 'conceptSlug' | 'orderIds'>
+  totals: Omit<ShiftBrandSales, 'conceptId' | 'conceptSlug' | 'orderIds' | 'giftCards' | 'taxAccountCode'>
   /** Receipts on this drawer for the till orders it books or clears. */
   cashCents: number
   cardPaidCents: number
@@ -156,6 +168,17 @@ export interface ShiftSales {
   roundingCents: number
   /** Cash for non-till orders, already booked on their own entries (Dr 1015 / Cr 1010). */
   nonTillCashCents: number
+  /**
+   * Money taken here on cancelled / rejected orders (FOH-09) — not a sale:
+   * Dr 1015 (cash) / 1030 (card, QR), Cr 1110 refund due to the customer.
+   */
+  cancelledPaid: {
+    cashCents: number
+    cardCents: number
+    orderIds: string[]
+    /** Per order — one Cr 1110 line each, naming the order (the refund engine looks for it). */
+    byOrder: Array<{ orderId: string; cents: number }>
+  }
 }
 
 /**
@@ -166,9 +189,10 @@ export interface ShiftSales {
 export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]): ShiftSales {
   const out: ShiftSales = {
     byConcept: new Map(),
-    totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0 },
+    totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
     cashCents: 0, cardPaidCents: 0, cardAwaitingCents: 0, compCents: 0,
     unsettledCents: 0, settledElsewhereCents: 0, roundingCents: 0, nonTillCashCents: 0,
+    cancelledPaid: { cashCents: 0, cardCents: 0, orderIds: [], byOrder: [] },
   }
 
   const orders = new Map<string, ShiftSaleOrder>()
@@ -177,6 +201,24 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
   for (const order of orders.values()) {
     const here = order.payments.filter((p) => p.shiftId === shiftId && isShiftReceipt(p))
     if (here.length === 0) continue
+
+    if (order.status && NEVER_SOLD.has(order.status)) {
+      // FOH-09: a cancelled ticket that took money is not a sale — every
+      // drawer holds its own receipts for it as a refund due. (A comp is not
+      // money; there is nothing to give back.)
+      let cents = 0
+      for (const p of here) {
+        if (p.method === 'comp') continue
+        if (p.method === 'cash') out.cancelledPaid.cashCents += p.amountCents
+        else out.cancelledPaid.cardCents += p.amountCents
+        cents += p.amountCents
+      }
+      if (cents > 0) {
+        out.cancelledPaid.orderIds.push(order.id)
+        out.cancelledPaid.byOrder.push({ orderId: order.id, cents })
+      }
+      continue
+    }
 
     if (order.source !== 'pos') {
       // Booked by its own order.complete entry; only its cash moved into
@@ -200,10 +242,16 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
       continue
     }
 
-    const sa = computeSaleAccounting(order)
+    // A tip found only on the tenders is folded into the order (FOH-14), and
+    // what a gift card paid is added back to the sale (ONL-05).
+    const sa = computeSaleAccounting(withTenderTips(
+      { ...order, giftCardAppliedCents: giftCardAppliedOf(order.giftCardRedemptions) },
+      order.payments,
+    ))
     const brand = out.byConcept.get(order.conceptId) ?? {
-      conceptId: order.conceptId, conceptSlug: order.concept.slug, orderIds: [], orders: 0,
-      revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0,
+      conceptId: order.conceptId, conceptSlug: order.concept.slug, taxAccountCode: outputTaxCodeFor(order.concept),
+      orderIds: [], giftCards: [], orders: 0,
+      revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0,
     }
     brand.orders             += 1
     brand.orderIds.push(order.id)
@@ -213,6 +261,8 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     brand.taxCents           += sa.taxCents
     brand.discountCents      += sa.discountCents
     brand.walletAppliedCents += sa.walletAppliedCents
+    brand.giftCardAppliedCents += sa.giftCardAppliedCents
+    if (sa.giftCardAppliedCents > 0) brand.giftCards.push({ orderId: order.id, cents: sa.giftCardAppliedCents })
     out.byConcept.set(order.conceptId, brand)
 
     const gap = sa.totalChargedCents - receivedHere
@@ -229,6 +279,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     out.totals.taxCents           += b.taxCents
     out.totals.discountCents      += b.discountCents
     out.totals.walletAppliedCents += b.walletAppliedCents
+    out.totals.giftCardAppliedCents += b.giftCardAppliedCents
   }
   return out
 }
@@ -327,6 +378,20 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     lines.push({ accountCode: ACCT.CASH_DRAWER,  type: 'debit',  amountCents: sales.nonTillCashCents, memo })
     lines.push({ accountCode: ACCT.CASH_ON_HAND, type: 'credit', amountCents: sales.nonTillCashCents, memo })
   }
+  // Money taken on cancelled / rejected orders (FOH-09): not revenue, not tax
+  // — held as a refund due to the customer (credit 1110) until handed back.
+  // One 1110 line per order, naming it in full: handing the money back (a
+  // refund row on the cancelled order) clears exactly that line — Dr 1110 /
+  // Cr drawer or card (orderPosting.ts postRefundPayment, LEDGER-R5).
+  const cp = sales.cancelledPaid
+  if (cp.cashCents + cp.cardCents > 0) {
+    const memo = `${REFUND_DUE_PREFIX} — paid on cancelled order(s) ${cp.orderIds.map((id) => `#${id.slice(0, 8)}`).join(', ')}, not a sale ${tag}`.slice(0, 250)
+    if (cp.cashCents > 0) lines.push({ accountCode: ACCT.CASH_DRAWER,     type: 'debit', amountCents: cp.cashCents, memo })
+    if (cp.cardCents > 0) lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: cp.cardCents, memo })
+    for (const o of cp.byOrder) {
+      lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'credit', amountCents: o.cents, memo: refundDueMemo(o.orderId, tag) })
+    }
+  }
 
   // ── Cost of sales: what the till's orders took out of stock, per brand ──
   // Online orders book COGS as each completes (orderPosting.ts); till sales
@@ -351,6 +416,10 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     }
     if (b.discountCents > 0) {
       lines.push({ accountCode: ACCT.DISCOUNTS, type: 'debit', amountCents: b.discountCents, memo: `Discounts @ ${b.conceptSlug}`, conceptId: b.conceptId })
+    }
+    // One 2080 line per order, naming it (the refund engine looks for it).
+    for (const g of b.giftCards) {
+      lines.push({ accountCode: GIFT_CARD_LIABILITY, type: 'debit', amountCents: g.cents, memo: giftCardSaleMemo(b.conceptSlug, g.orderId), conceptId: b.conceptId })
     }
   }
 
@@ -402,10 +471,11 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     if (b.tipCents > 0) {
       lines.push({ accountCode: ACCT.TIPS_PAYABLE, type: 'credit', amountCents: b.tipCents, memo: `Tips @ ${b.conceptSlug}`, conceptId: b.conceptId })
     }
-    // GST per brand, tagged like an order's own entry, so tax is measurable
-    // per brand as well as per company.
+    // Output tax per brand, to the brand's authority (BOOKS-10), tagged like
+    // an order's own entry, so tax is measurable per brand as well as per
+    // company.
     if (b.taxCents > 0) {
-      lines.push({ accountCode: ACCT.GST_OUTPUT, type: 'credit', amountCents: b.taxCents, memo: `GST output @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
+      lines.push({ accountCode: b.taxAccountCode, type: 'credit', amountCents: b.taxCents, memo: `Sales tax output @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
     }
   }
 
@@ -419,7 +489,8 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     `nonTillCash=${sales.nonTillCashCents} variance=${cashVariance} drops=${drawer.dropsCents} in=${cashIn} ` +
     `cashRefunds=${cashRefundsToBook} cardRefunds=${cardRefundsToBook} payouts=${payoutsToBook} ` +
     `tax=${sales.totals.taxCents} revenue=${sales.totals.revenueCents} svc=${sales.totals.serviceChargeCents} ` +
-    `tips=${sales.totals.tipCents} discounts=${sales.totals.discountCents} wallet=${sales.totals.walletAppliedCents}`
+    `tips=${sales.totals.tipCents} discounts=${sales.totals.discountCents} wallet=${sales.totals.walletAppliedCents} ` +
+    `giftCards=${sales.totals.giftCardAppliedCents} cancelledPaid=${cp.cashCents + cp.cardCents}`
   return { ok: true, tenantId, entryDate: shift.closedAt ?? new Date(), lines, debits, credits, diagnostics }
 }
 

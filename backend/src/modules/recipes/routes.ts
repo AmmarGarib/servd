@@ -2,7 +2,9 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF } from '../auth/middleware.js'
+import type { UserRole } from '@prisma/client'
+import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
+import { costsHiddenFor } from '../inventory/routes.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import {
@@ -363,6 +365,69 @@ async function recipeCompanies(req: FastifyRequest, plateTenantId: string | null
   return typeof where.tenantId === 'string' ? [where.tenantId] : where.tenantId.in
 }
 
+// ─── Who reads what here (wave 3, audit UI-10 / UI-07) ───────────────────────
+//
+// The sidebar and the API agree (lib/moduleAccess.ts defaults):
+//   • boh (line cook, holds `recipes`) READS the recipe book — the list and a
+//     recipe's detail — with every cost, margin and supplier price taken out
+//     (costsHidden; same rule as the KDS card). It does not create, edit,
+//     submit, delete, approve or cost recipes, and opens no costing page.
+//   • finance (holds `accounting`) reads the recipe list and the food-cost
+//     analysis behind Finance → Food cost, with costs: it is a cost viewer.
+//     It edits nothing here.
+// Writes, the pricing readout (/:id/costing, /costing-preview) and the test
+// log stay with managers; approval stays with APPROVERS.
+const RECIPE_LIST_READERS = [...FINANCE_TEAM, 'boh'] as UserRole[]
+const RECIPE_DETAIL_READERS = [...MANAGERS, 'boh'] as UserRole[]
+
+// A recipe's pricing inputs — what it should earn and sell for. A kitchen floor
+// role reads none of them, on the recipe itself or on any sub-recipe it uses.
+const RECIPE_PRICING_NULLED = {
+  qFactorPct:              null,
+  targetProfitPct:         null,
+  targetFoodCostPct:       null,
+  packagingPct:            null,
+  actualSellingPriceCents: null,
+} as const
+
+/** A GET /recipes row for a kitchen floor role: the method and quantities, no money. */
+function recipeRowWithoutCosts<R extends { ingredients: Array<Record<string, unknown>> }>(r: R) {
+  return {
+    ...r,
+    ingredients: r.ingredients.map((ing) => {
+      const inv = ing.inventoryItem as Record<string, unknown> | null | undefined
+      const prep = ing.prepRecipe as { ingredients?: Array<Record<string, unknown>> } & Record<string, unknown> | null | undefined
+      return {
+        ...ing,
+        inventoryItem: inv ? { ...inv, unitCostCents: null } : inv ?? null,
+        prepRecipe: prep
+          ? {
+              ...prep,
+              ...RECIPE_PRICING_NULLED,
+              ingredients: (prep.ingredients ?? []).map((pi) => {
+                const pinv = pi.inventoryItem as Record<string, unknown> | null | undefined
+                return { ...pi, inventoryItem: pinv ? { ...pinv, unitCostCents: null } : pinv ?? null }
+              }),
+            }
+          : prep ?? null,
+        costPerUnit: null,
+        ingredientCostCents: null,
+      }
+    }),
+    ingredientCostCents: null,
+    qFactorCents:        null,
+    laborCostCents:      null,
+    totalCostCents:      null,
+    costPerPortionCents: null,
+    grossMarginPct:      null,
+    foodCostPct:         null,
+    costPerGramCents:    null,
+    batchCostCents:      null,
+    ...RECIPE_PRICING_NULLED,
+    costsHidden:         true as const,
+  }
+}
+
 export async function recipeRoutes(fastify: FastifyInstance) {
 
   // ── Recipes ────────────────────────────────────────────────────────────────
@@ -376,7 +441,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   //   ?activeOnly=true      — exclude isActive=false (off-season seasonal items)
   fastify.get<{ Querystring: { conceptId?: string; season?: string; q?: string; activeOnly?: string } }>(
     '/',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...RECIPE_LIST_READERS) },
     async (req) => {
       const { conceptId, q, activeOnly } = req.query
       let { season } = req.query
@@ -465,8 +530,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // at any depth, one memo so shared sub-recipes are costed once.
       const { graph } = await loadRecipeGraph({ id: { in: recipes.map((r) => r.id) } })
       const memo = new Map<string, RecipeCost>()
+      const hideCosts = costsHiddenFor(req)
 
-      return recipes.map((r) => {
+      const rows = recipes.map((r) => {
         const cost = recipeCost(graph, r.id, memo)
         const byLine = linesById(cost)
         const ingDetails = r.ingredients.map((ing) => {
@@ -524,6 +590,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           batchCostCents: r.kind === 'component' ? totalCostCents : null,
         }
       })
+      return hideCosts ? rows.map(recipeRowWithoutCosts) : rows
     },
   )
 
@@ -609,7 +676,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // GET /recipes/:id
   fastify.get<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...RECIPE_DETAIL_READERS) },
     async (req) => {
       const recipe = await prisma.recipe.findUnique({
         where: { id: req.params.id },
@@ -623,7 +690,16 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
       // Cross-company guard — 404 (not 403) so ids don't leak existence.
       if (!(await recipeInScope(recipe, await recipeScope(req)))) throw new NotFoundError('Recipe', req.params.id)
-      return recipe
+      if (!costsHiddenFor(req)) return recipe
+      return {
+        ...recipe,
+        ingredients: recipe.ingredients.map((ing) => ({
+          ...ing,
+          inventoryItem: ing.inventoryItem ? { ...ing.inventoryItem, unitCostCents: null } : null,
+        })),
+        ...RECIPE_PRICING_NULLED,
+        costsHidden: true as const,
+      }
     },
   )
 
@@ -1280,7 +1356,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // GET /recipes/food-cost?conceptId&dateFrom&dateTo
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/food-cost',
-    { preHandler: requireAuth(...MANAGERS) },
+    // Finance → Food cost (audit UI-07): finance reads it, scoped per company
+    // exactly as managers are (scopedConceptIdSet / resolveTenantScope below).
+    { preHandler: requireAuth(...FINANCE_TEAM) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 86_400_000)

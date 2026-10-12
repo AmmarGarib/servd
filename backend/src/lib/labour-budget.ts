@@ -44,7 +44,7 @@ export interface LabourBudget {
   byConcept: Array<{ id: string | null; name: string; grossCents: number; shareCents: number; count: number }>
   byDepartment: Array<{ id: string; name: string; emoji: string | null; isHeadOffice: boolean; grossCents: number; shareCents: number; count: number }>
   contributions: Array<{
-    id: string; label: string; category: string; monthlyCents: number; internalSplit: unknown
+    id: string; label: string; category: string; monthlyCents: number; internalSplit: unknown; description: string | null
     direction: 'incoming' | 'outgoing'
     sourceTenant: { id: string; name: string }; destinationTenant: { id: string; name: string }
   }>
@@ -114,6 +114,8 @@ export async function budgetedLabour(tenantIds: string[], opts: LabourBudgetOpti
       if (outbound) out.outgoingContributionMonthlyCents += c.monthlyCents
       out.contributions.push({
         id: c.id, label: c.label, category: c.category, monthlyCents: c.monthlyCents, internalSplit: c.internalSplit,
+        // The edit form opens from this row; without it a save wiped the note.
+        description: c.description,
         direction: inbound ? 'incoming' : 'outgoing', sourceTenant: c.sourceTenant, destinationTenant: c.destinationTenant,
       })
     }

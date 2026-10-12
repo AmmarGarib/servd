@@ -14,7 +14,13 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, FINANCE_TEAM } from '../auth/middleware.js'
+
+// Projections live in the Finance workspace (lib/workspaces.ts), so finance
+// works them as well as the manager tiers. Who actually gets in is narrowed by
+// the 'projections' module (lib/moduleAccess.ts gates /projections): by
+// default the CEO, owners, management and finance — not the FOH/BOH managers.
+const PROJECTION_TEAM = FINANCE_TEAM
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { requireActiveCompany, assertConceptAttachable, assertConceptOfCompany } from '../financePlanning/companyRefs.js'
@@ -79,7 +85,7 @@ async function findProjectionInScope(req: FastifyRequest, id: string, mode: 'rea
 
 export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── List all scenarios ────────────────────────────────────────────────
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/', { preHandler: requireAuth(...PROJECTION_TEAM) }, async (req) => {
     const scenarios = await prisma.projection.findMany({
       where: await scopeTenantWhere(req, 'read'),
       include: {
@@ -99,7 +105,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── Get one scenario with full computed 12-month matrix ───────────────
   fastify.get<{ Params: { id: string } }>(
     '/:id/computed',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROJECTION_TEAM) },
     async (req, reply) => {
       const projection = await prisma.projection.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
@@ -301,7 +307,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   )
 
   // ── Create a new scenario, optionally seeding all brand inputs ────────
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.post('/', { preHandler: requireAuth(...PROJECTION_TEAM) }, async (req) => {
     const body = z.object({
       name:   z.string().min(1).max(120).default('Default scenario'),
       brands: z.array(brandInputSchema).default([]),
@@ -325,7 +331,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   })
 
   // ── Update scenario meta (name, ramp curve) ───────────────────────────
-  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...PROJECTION_TEAM) }, async (req) => {
     const body = z.object({
       name:      z.string().min(1).max(120).optional(),
       rampCurve: z.array(z.number().min(0).max(5)).length(12).optional(),
@@ -337,7 +343,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── Upsert one brand's inputs ─────────────────────────────────────────
   fastify.put<{ Params: { id: string; conceptId: string } }>(
     '/:id/brands/:conceptId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROJECTION_TEAM) },
     async (req) => {
       const body = brandInputUpdateSchema.parse(req.body)
       const projection = await findProjectionInScope(req, req.params.id, 'write')
@@ -355,7 +361,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── Remove one brand from the scenario ────────────────────────────────
   fastify.delete<{ Params: { id: string; conceptId: string } }>(
     '/:id/brands/:conceptId',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...PROJECTION_TEAM) },
     async (req) => {
       const projection = await findProjectionInScope(req, req.params.id, 'write')
       const { count } = await prisma.projectionBrandInput.deleteMany({
@@ -367,7 +373,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   )
 
   // ── Delete a scenario ─────────────────────────────────────────────────
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...PROJECTION_TEAM) }, async (req) => {
     const projection = await findProjectionInScope(req, req.params.id, 'write')
     await prisma.projection.delete({ where: { id: projection.id } })
     return { ok: true }

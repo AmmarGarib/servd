@@ -91,6 +91,13 @@ export async function reviewRoutes(fastify: FastifyInstance) {
       : false
     const bonusPoints = within24h ? 50 : 0
 
+    // Points are per company (ONL-04): the bonus is in the programme of the
+    // reviewed order's brand's company, through THE earn (loyalty/service),
+    // which creates that company's account if needed and lets the liability
+    // be booked once the review commits.
+    const { creditPointsTx, bookEarn } = await import('../loyalty/service.js')
+    const orderCompany = (await prisma.concept.findUnique({ where: { id: order.conceptId }, select: { tenantId: true } }))?.tenantId ?? null
+    let bonusTxId: string | null = null
     const review = await prisma.$transaction(async (tx) => {
       const r = await tx.orderReview.create({
         data: {
@@ -106,29 +113,21 @@ export async function reviewRoutes(fastify: FastifyInstance) {
           bonusPointsAwarded: bonusPoints,
         },
       })
-      if (bonusPoints > 0) {
-        const account = await tx.loyaltyAccount.findUnique({ where: { customerId: req.customer!.id } })
-        if (account) {
-          await tx.loyaltyAccount.update({
-            where: { id: account.id },
-            data: {
-              pointsBalance: { increment: bonusPoints },
-              lifetimePoints: { increment: bonusPoints },
-            },
-          })
-          await tx.loyaltyTransaction.create({
-            data: {
-              loyaltyAccountId: account.id,
-              orderId: body.orderId,
-              type: 'earn',
-              pointsDelta: bonusPoints,
-              description: 'Bonus: posted review within 24h',
-            },
-          })
-        }
+      if (bonusPoints > 0 && orderCompany) {
+        const credited = await creditPointsTx(tx, {
+          customerId: req.customer!.id,
+          tenantId: orderCompany,
+          orderId: body.orderId,
+          points: bonusPoints,
+          description: 'Bonus: posted review within 24h',
+        })
+        bonusTxId = credited.txId
       }
       return r
     })
+    // The bonus is a liability like any earn (Dr 6060 / Cr 2060), in the
+    // order's company — it used to move points with no entry.
+    await bookEarn(bonusTxId)
 
     // Cross-module: refresh customer rollups so reviewCount/avgRating are
     // accurate everywhere immediately.

@@ -6,7 +6,10 @@
 // corporate client wants 30 days.
 //
 // Postings (idempotent on sourceType + sourceId):
-//   issue    Dr 1110 receivable (total) / Cr revenue (net) / Cr 2030 GST output (tax)
+//   issue    Dr 1110 receivable (total) / Cr revenue (net) / Cr output tax (tax)
+//            — the brand's authority, the same rule as a sale (outputTaxCodeFor:
+//            2032 SRB for a Sindh kitchen, 2031 PRA, …; 2030 FBR for a brand
+//            with no province, or an invoice with no brand), tagged with it
 //   payment  Dr 1020 bank or 1010 cash  / Cr 1110
 //   void     reversal of the issue entry — only while nothing has been paid
 
@@ -18,9 +21,9 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, reverseJournalEntry } from '../accounting/journal.js'
+import { outputTaxCodeFor } from '../accounting/orderPosting.js'
 
 const RECEIVABLE = '1110'
-const GST_OUTPUT = '2030'
 const PAYMENT_ACCOUNT: Record<string, string> = { bank: '1020', cheque: '1020', card: '1030', cash: '1010' }
 
 const activeTenant = (req: { staffUser?: { tenantId: string | null } }): string => activeTenantId(req, 'the ledger is per company')
@@ -99,6 +102,12 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     // The number is max+1 per company; two invoices raised at the same instant
     // can pick the same one, and the unique index rejects the second. Retry the
     // whole transaction — it rolls back cleanly, ledger entry included.
+    // Output tax follows the brand's province, like every sale (BOOKS-10).
+    const brand = body.conceptId
+      ? await prisma.concept.findUnique({ where: { id: body.conceptId }, select: { province: true, srbPosId: true } })
+      : null
+    const taxAccountCode = outputTaxCodeFor(brand)
+
     const createOnce = () => prisma.$transaction(async (tx) => {
       const inv = await tx.receivableInvoice.create({
         data: {
@@ -129,9 +138,9 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         lines: [
           { accountCode: RECEIVABLE, type: 'debit', amountCents: inv.amountCents + inv.taxCents, conceptId: inv.conceptId },
           { accountCode: inv.revenueAccountCode, type: 'credit', amountCents: inv.amountCents, conceptId: inv.conceptId },
-          { accountCode: GST_OUTPUT, type: 'credit', amountCents: inv.taxCents },
+          ...(inv.taxCents > 0 ? [{ accountCode: taxAccountCode, type: 'credit' as const, amountCents: inv.taxCents, conceptId: inv.conceptId }] : []),
         ],
-      }, { tx: tx as never })
+      }, { tx })
       return inv
     })
     let invoice: Awaited<ReturnType<typeof createOnce>> | undefined
@@ -196,7 +205,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
           { accountCode: PAYMENT_ACCOUNT[body.method]!, type: 'debit', amountCents: body.amountCents },
           { accountCode: RECEIVABLE, type: 'credit', amountCents: body.amountCents, conceptId: inv.conceptId },
         ],
-      }, { tx: tx as never })
+      }, { tx })
       return p
     })
     await audit({
@@ -222,7 +231,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         throw new AppError('CANNOT_VOID', 'Only an unpaid invoice can be voided', 409)
       }
       await reverseJournalEntry(inv.tenantId, 'receivable.issue', inv.id, body.reason, {
-        tx: tx as never, postedBy: req.staffUser!.id,
+        tx, postedBy: req.staffUser!.id,
       })
     })
     await audit({

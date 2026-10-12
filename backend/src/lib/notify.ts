@@ -31,13 +31,35 @@ const isProd = process.env['NODE_ENV'] === 'production'
 // into the database, this path kept reading env and silently skipped email while
 // /health — reading the new resolver — reported everything fine. A health check
 // that disagrees with the code it is reporting on is worse than no health check.
-export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+// ─── What a skipped send may log ─────────────────────────────────────────────
+//
+// When a channel is not configured the message is dropped, and the drop is
+// logged. Only ever the channel, a masked recipient and what KIND of message it
+// was — never the body or subject. Bodies carry sign-in links, booking
+// confirm/cancel tokens and tracking URLs; logged in plain text they were a
+// working credential for anyone who could read the server log (a customer
+// session from one grep). Anything that needs the token in development reads
+// it from the database (magic_links, reservations), which is where it lives.
+
+/** `…4567` — enough to tell two recipients apart, not enough to message one. */
+export function maskPhoneForLog(raw: string): string {
+  const digits = raw.replace(/\D/g, '')
+  return digits.length >= 4 ? `…${digits.slice(-4)}` : '…'
+}
+
+/** `s***@example.com` */
+export function maskEmailForLog(raw: string): string {
+  const [local = '', domain = ''] = raw.trim().split('@')
+  return `${local.slice(0, 1) || '?'}***@${domain || '?'}`
+}
+
+export async function sendEmail(to: string, subject: string, html: string, purpose = 'message'): Promise<void> {
   if (!(await emailConfigured())) {
     if (isProd) {
       // In production a missing transport is an outage, not a benign skip.
       throw new AppError('NOTIFY_NOT_CONFIGURED', 'Email is not configured (set it in admin → Configuration → Email)', 503)
     }
-    console.log(`[notify] EMAIL (no SMTP configured) to ${to}: ${subject}`)
+    console.log(`[notify] email not sent (no SMTP configured) — to ${maskEmailForLog(to)}, ${purpose}`)
     return
   }
   await sendMail({ to, subject, html })
@@ -60,10 +82,11 @@ export function whatsappNumber(raw: string): string {
   return digits
 }
 
-export async function sendPhoneMessage(to: string, body: string): Promise<void> {
+export async function sendPhoneMessage(to: string, body: string, purpose = 'message'): Promise<void> {
   const { sendText, whatsappConfigured } = await import('./whatsapp.js')
   if (!(await whatsappConfigured())) {
-    console.log(`[notify] WhatsApp (not configured) to ${to}: ${body}`)
+    // Never the body: see "What a skipped send may log" above.
+    console.log(`[notify] WhatsApp not sent (not configured) — to ${maskPhoneForLog(to)}, ${purpose}`)
     return
   }
   await sendText(whatsappNumber(to), body)
@@ -83,7 +106,7 @@ export async function sendMagicLink(
   token: string,
 ): Promise<void> {
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
-  const link = `${baseUrl}/auth/verify?token=${token}`
+  const link = `${baseUrl}/auth/verify?token=${encodeURIComponent(token)}`
 
   if (isEmail) {
     await sendEmail(
@@ -92,9 +115,10 @@ export async function sendMagicLink(
       `<p>Click to sign in — this link expires in 15 minutes and can only be used once.</p>
        <p><a href="${link}" style="font-size:18px;font-weight:bold;">Sign in to servd</a></p>
        <p style="color:#888;font-size:12px;">If you didn't request this, ignore this email.</p>`,
+      'magic_link',
     )
   } else {
-    await sendPhoneMessage(emailOrPhone, `Your servd login link: ${link}`)
+    await sendPhoneMessage(emailOrPhone, `Your servd login link: ${link}`, 'magic_link')
   }
 }
 
@@ -185,10 +209,10 @@ export async function sendOrderStatusUpdate(opts: {
     const tpl = (await renderTemplate({ event, channel: 'whatsapp', conceptId: opts.conceptId, vars }))
       ?? (await renderTemplate({ event, channel: 'sms', conceptId: opts.conceptId, vars }))
     if (tpl) {
-      await sendPhoneMessage(opts.phone, tpl.body)
+      await sendPhoneMessage(opts.phone, tpl.body, event)
     } else {
       const fmt = (s: string) => s.toLowerCase()
-      await sendPhoneMessage(opts.phone, `${opts.conceptName}: ${fmt(copy.headline)}. Track: ${trackUrl}`)
+      await sendPhoneMessage(opts.phone, `${opts.conceptName}: ${fmt(copy.headline)}. Track: ${trackUrl}`, event)
     }
   }
 }
@@ -225,6 +249,6 @@ export async function sendOrderReceipt(opts: {
   if (opts.email) {
     await sendEmail(opts.email, `Order confirmed — ${opts.conceptName}`, html)
   } else if (opts.phone) {
-    await sendPhoneMessage(opts.phone, `Order confirmed at ${opts.conceptName}. Total ${fmt(opts.totalCents)}. Track: ${trackUrl}`)
+    await sendPhoneMessage(opts.phone, `Order confirmed at ${opts.conceptName}. Total ${fmt(opts.totalCents)}. Track: ${trackUrl}`, 'order.receipt')
   }
 }

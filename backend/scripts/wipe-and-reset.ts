@@ -31,6 +31,16 @@ async function main() {
     ['orderReviews',                  () => prisma.orderReview.deleteMany()],
     ['orderComplaints',               () => prisma.orderComplaint.deleteMany()],
 
+    // ── POS connector + pre-bills (FKs to Order) — before payments/orders ──
+    ['fiscalAttempts',                () => prisma.fiscalAttempt.deleteMany()],
+    ['fiscalDocuments',               () => prisma.fiscalDocument.deleteMany()],
+    ['terminalCharges',               () => prisma.terminalCharge.deleteMany()],
+    ['preBills',                      () => prisma.preBill.deleteMany()],
+    ['preBillCounters',               () => prisma.preBillCounter.deleteMany()],
+    // Per-company connector config (driver, keys, go-live) — after the charges
+    // that reference it. Recreated lazily, switched off, on first use.
+    ['posConnectors',                 () => prisma.posConnector.deleteMany()],
+
     // ── Order graph (children → parents) ────────────────────────────
     ['orderItemModifiers',            () => prisma.orderItemModifier.deleteMany()],
     ['payments',                      () => prisma.payment.deleteMany()],
@@ -82,7 +92,6 @@ async function main() {
     // ── Bank reconciliation ────────────────────────────────────────
     ['bankStatementLines',            () => prisma.bankStatementLine.deleteMany()],
     ['bankStatementImports',          () => prisma.bankStatementImport.deleteMany()],
-    ['foodpandaSettlements',          () => prisma.foodpandaSettlement.deleteMany()],
 
     // ── Inventory / recipes / components ───────────────────────────
     ['wasteLogs',                     () => prisma.wasteLog.deleteMany()],
@@ -114,6 +123,7 @@ async function main() {
     ['customerSegments',              () => prisma.customerSegment.deleteMany()],
     ['guestTags',                     () => prisma.guestTag.deleteMany()],
     ['walletTransactions',            () => prisma.walletTransaction.deleteMany()],
+    ['customerWallets',               () => prisma.customerWallet.deleteMany()],  // BEFORE customers (FK, ON DELETE RESTRICT)
     ['loyaltyTransactions',           () => prisma.loyaltyTransaction.deleteMany()],
     ['loyaltyAccounts',               () => prisma.loyaltyAccount.deleteMany()],
     ['promoCodeUsages',               () => prisma.promoCodeUsage.deleteMany()],
@@ -169,7 +179,6 @@ async function main() {
     ['reservationPolicies',           () => prisma.reservationPolicy.deleteMany()],
     ['receiptConfigs',                () => prisma.receiptConfig.deleteMany()],
     ['operationsConfigs',             () => prisma.operationsConfig.deleteMany()],
-    ['apiTokens',                     () => prisma.apiToken.deleteMany()],
 
     // ── Audit (fresh slate) ────────────────────────────────────────
     ['auditLogs',                     () => prisma.auditLog.deleteMany()],

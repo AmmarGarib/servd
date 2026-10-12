@@ -30,6 +30,10 @@ import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
 import { formatBrandName } from '../../lib/brandName.js'
+import { planSeat, unverifiedCap, isUnverifiedOnline } from './capacity.js'
+import { requireManagerApproval } from '../pos/service.js'
+import { isOverrideApprover } from '../../lib/roles.js'
+import { pktDayStart, pktDayOfWeek, reservableWindows, sittingInHours } from './hours.js'
 
 const DEFAULT_DURATION_MIN = 90
 
@@ -41,6 +45,10 @@ const DEFAULT_DURATION_MIN = 90
 // than enough to correct a mistake and retry.
 const MAX_UPCOMING_PER_PHONE = 6
 const MAX_BOOKINGS_PER_PHONE_PER_HOUR = 3
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
 
 // ─── Company boundary ────────────────────────────────────────────────────────
 // `assertConceptAccess` is a per-user brand whitelist that no-ops for every
@@ -146,6 +154,16 @@ const createSchema = z.object({
   waitlist:   z.boolean().optional(),
 })
 
+// Staff create only (ONL-R2-04): book past capacity on purpose — tables pushed
+// together for a big group, a regular squeezed in. A manager decision: the
+// signed-in user is a manager, or the host sends a manager's PIN. Reason
+// required and audited.
+const staffCreateSchema = createSchema.extend({
+  overbook:          z.boolean().optional(),
+  overbookReason:    z.string().trim().min(3).max(300).optional(),
+  managerOverridePin: z.string().min(4).max(8).optional(),
+})
+
 async function checkTableConflict(
   tableId: string,
   startTime: Date,
@@ -166,6 +184,77 @@ async function checkTableConflict(
   return overlap
     ? { conflict: true, with: overlap }
     : { conflict: false }
+}
+
+// ─── Capacity, with bookings already past it set aside (O-RV-1, O-RV-2) ─────
+//
+// planSeat (capacity.ts) places every overlapping booking without a table on
+// paper and answers "full" as soon as ONE of them fits no free table. A
+// booking that fits no table is already past capacity on purpose — a manager's
+// overbook (a party of 12 on two six-tops pushed together), or an older staff
+// booking — so it closed the brand's whole book, host stand and online, for the
+// window around it, although most tables were free.
+//
+// So the existing bookings without a table are placed largest first, and one
+// that fits nothing left is SET ASIDE: it holds no table on paper (it cannot
+// sit at any one table anyway). Only the new party's placement decides.
+
+interface SeatRow { tableId: string | null; partySize: number; waitlist?: boolean }
+type SeatTable = { id: string; capacity: number }
+
+function placeableRows<T extends SeatRow>(tables: SeatTable[], rows: T[]): T[] {
+  const kept: T[] = rows.filter((r) => r.tableId || r.waitlist)
+  const unplaced = rows.filter((r) => !r.tableId && !r.waitlist).sort((a, b) => b.partySize - a.partySize)
+  for (const r of unplaced) {
+    // Every row kept so far is at least as large, so this asks "does r still
+    // fit once the kept ones are placed?" — the same greedy order planSeat uses.
+    if (planSeat(tables, kept, r.partySize).tableId) kept.push(r)
+  }
+  return kept
+}
+
+/** planSeat over the overlapping bookings, ignoring any already past capacity. */
+export function seatPlan(tables: SeatTable[], overlapping: SeatRow[], partySize: number) {
+  return planSeat(tables, placeableRows(tables, overlapping), partySize)
+}
+
+/**
+ * Would putting a booking on `tableId` leave an overlapping booking WITHOUT a
+ * table — one that can be seated now — with nowhere to sit? A named table is
+ * not only "is nobody on it": a tableless booking may be counting on it.
+ */
+export function strandsTableless(tables: SeatTable[], overlapping: SeatRow[], tableId: string): boolean {
+  const before = placeableRows(tables, overlapping).filter((r) => !r.tableId && !r.waitlist)
+  const after = new Set<SeatRow>(placeableRows(tables, [...overlapping, { tableId, partySize: 0 }]))
+  return before.some((r) => !after.has(r))
+}
+
+/** Every active booking of the brand overlapping [start, end), optionally minus one. */
+function overlappingWhere(conceptId: string, startTime: Date, endTime: Date, excludeId?: string): Prisma.ReservationWhereInput {
+  return {
+    conceptId,
+    status: { in: ['booked', 'confirmed', 'seated'] },
+    ...(excludeId && { id: { not: excludeId } }),
+    startTime: { lt: endTime },
+    endTime:   { gt: startTime },
+  }
+}
+
+function slotFullError(req: FastifyRequest, message: string): AppError {
+  return new AppError('SLOT_FULL', message, 409, { overbookAllowed: true, managerRequired: !isOverrideApprover(req.staffUser!.role) })
+}
+
+/** The 409 for a party with no table that fits nowhere in the window. */
+function noTableError(req: FastifyRequest, tables: SeatTable[], partySize: number): AppError {
+  return slotFullError(req, tables.some((t) => t.capacity >= partySize)
+    ? `No table for ${partySize} is free at that time. Pick another time, put the guest on the waiting list, or ask a manager to overbook.`
+    : `No table seats ${partySize}. Put the guest on the waiting list, or ask a manager to overbook (tables pushed together).`)
+}
+
+/** The 409 for a named table that a booking without a table needs. */
+function strandsError(req: FastifyRequest): AppError {
+  return slotFullError(req,
+    'That table is free, but a booking without a table at that time needs it — there is no other table for that party. Pick another table or time, or ask a manager to overbook.')
 }
 
 export async function reservationRoutes(fastify: FastifyInstance) {
@@ -202,12 +291,16 @@ export async function reservationRoutes(fastify: FastifyInstance) {
 
   // Create reservation
   fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
-    const body = createSchema.parse(req.body)
-    await assertConceptAccess(req.staffUser!, body.conceptId)
+    const body = staffCreateSchema.parse(req.body)
     // A new booking binds to a brand of the ACTIVE company only, and any
-    // table it names must be that brand's own.
+    // table it names must be that brand's own. Company check first, so a
+    // foreign brand is 404 (never a 403 that confirms it exists).
     await assertConceptOwned(req, body.conceptId, 'create')
+    await assertConceptAccess(req.staffUser!, body.conceptId)
     if (body.tableId) await assertTableInConcept(body.tableId, body.conceptId)
+    if (body.overbook && body.waitlist) {
+      throw new AppError('VALIDATION_ERROR', 'A waiting-list entry holds no table, so it never needs an overbook.', 400)
+    }
 
     const startTime = new Date(body.startTime)
     const endTime   = new Date(startTime.getTime() + body.durationMin * 60_000)
@@ -221,6 +314,24 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           409,
         )
       }
+    }
+
+    // An overbook is a manager's call (ONL-R2-04): resolved up front so a
+    // refused PIN never leaves anything behind. The PIN must be a manager of
+    // the brand's own company.
+    let overbookApproval: { approverId: string; viaPin: boolean } | null = null
+    if (body.overbook) {
+      if (!body.overbookReason) {
+        throw new AppError('VALIDATION_ERROR', 'Say why this booking goes past capacity (overbookReason).', 400)
+      }
+      const owner = await prisma.concept.findUnique({ where: { id: body.conceptId }, select: { tenantId: true } })
+      overbookApproval = await requireManagerApproval({
+        actorId: req.staffUser!.id,
+        actorRole: req.staffUser!.role,
+        managerOverridePin: body.managerOverridePin,
+        tenantId: owner?.tenantId ?? null,
+        action: 'Booking past capacity',
+      })
     }
 
     // Reservation policy enforcement — owner-controlled rules from /setup/reservation-policy.
@@ -295,28 +406,68 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       if (match) customerId = match.id
     }
 
+    // ── Capacity (ONL-R2-04) ────────────────────────────────────────────
+    // The host stand is held to the same rule as the public form (ONL-08,
+    // capacity.ts), under the same per-brand booking lock so a phone booking
+    // and a web booking for one slot are counted one after the other. A
+    // booking with no table is given the table seatPlan picks; when nothing
+    // fits, 409 SLOT_FULL — unless a manager overbooks (above). A booking on
+    // a named table (O-RV-2) takes the same lock and must not strand an
+    // overlapping booking without a table that needs that table — the
+    // conflict check above only saw bookings already ON it. Bookings already
+    // past capacity (an earlier overbook) are set aside, never block (O-RV-1).
+    // The exclusion constraint still guards a race on the table itself. A
+    // waiting-list entry holds no table, so no check.
     const r = await withTableOverlapGuard(() =>
-      prisma.reservation.create({
-        data: {
-          conceptId:  body.conceptId,
-          tableId:    body.tableId ?? null,
-          customerId,
-          partySize:  body.partySize,
-          startTime,
-          endTime,
-          guestName:  body.guestName,
-          guestPhone: body.guestPhone ?? null,
-          guestEmail: body.guestEmail ?? null,
-          notes:      body.notes ?? null,
-          isVip:      body.isVip ?? false,
-          source:     body.source as never,
-          waitlist:   body.waitlist ?? false,
-          createdById: req.staffUser?.id ?? null,
-        },
-        include: {
-          concept: { select: { name: true } },
-          table:   { select: { id: true, label: true } },
-        },
+      prisma.$transaction(async (tx) => {
+        let tableId = body.tableId ?? null
+        let overbooked = false
+        if (!body.waitlist) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reservations:${body.conceptId}`}::text))`
+          const [tables, overlapping] = await Promise.all([
+            tx.table.findMany({ where: { conceptId: body.conceptId, deletedAt: null }, select: { id: true, capacity: true } }),
+            tx.reservation.findMany({
+              where: overlappingWhere(body.conceptId, startTime, endTime),
+              select: { tableId: true, partySize: true, waitlist: true },
+            }),
+          ])
+          if (tableId) {
+            if (strandsTableless(tables, overlapping, tableId)) {
+              if (!overbookApproval) throw strandsError(req)
+              overbooked = true
+            }
+          } else {
+            const plan = seatPlan(tables, overlapping, body.partySize)
+            if (plan.tableId) tableId = plan.tableId
+            else if (overbookApproval) overbooked = true
+            else throw noTableError(req, tables, body.partySize)
+          }
+        }
+        const created = await tx.reservation.create({
+          data: {
+            conceptId:  body.conceptId,
+            tableId,
+            customerId,
+            partySize:  body.partySize,
+            startTime,
+            endTime,
+            guestName:  body.guestName,
+            guestPhone: body.guestPhone ?? null,
+            guestEmail: body.guestEmail ?? null,
+            notes:      overbooked
+              ? (body.notes ? body.notes + ' · ' : '') + `Overbooked: ${body.overbookReason}`
+              : body.notes ?? null,
+            isVip:      body.isVip ?? false,
+            source:     body.source,
+            waitlist:   body.waitlist ?? false,
+            createdById: req.staffUser?.id ?? null,
+          },
+          include: {
+            concept: { select: { name: true, tenantId: true } },
+            table:   { select: { id: true, label: true } },
+          },
+        })
+        return Object.assign(created, { overbooked })
       }),
     )
 
@@ -324,11 +475,22 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       action: 'reservation.create',
       entity: 'Reservation',
       entityId: r.id,
-      userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
+      userId: req.staffUser?.id ?? null, tenantId: r.concept.tenantId ?? req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser?.email ?? null,
-      after: { partySize: r.partySize, startTime: r.startTime, status: r.status, guestName: r.guestName },
-      metadata: { source: r.source, ip: req.ip },
+      after: { partySize: r.partySize, startTime: r.startTime, status: r.status, guestName: r.guestName, tableId: r.tableId },
+      metadata: { source: r.source, ip: req.ip, ...(r.overbooked && { overbooked: true }) },
     })
+    if (r.overbooked && overbookApproval) {
+      await audit({ category: 'identity',
+        action: 'reservation.overbook',
+        entity: 'Reservation',
+        entityId: r.id,
+        userId: req.staffUser?.id ?? null, tenantId: r.concept.tenantId ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        after: { partySize: r.partySize, startTime: r.startTime, endTime: r.endTime, tableId: r.tableId },
+        metadata: { reason: body.overbookReason, approverId: overbookApproval.approverId, viaPin: overbookApproval.viaPin },
+      })
+    }
 
     emitReservationEvent('reservation:created', {
       reservationId: r.id,
@@ -361,8 +523,12 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const body = createSchema.partial().parse(req.body)
-      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
+      const body = staffCreateSchema.partial().parse(req.body)
+      // Editing an existing row: any company the operator belongs to; a
+      // foreign or missing id is 404. (An empty scope denies.)
+      const r = await prisma.reservation.findFirst({
+        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+      })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       // Reseating may only target a table of the booking's own brand.
@@ -373,8 +539,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         ? new Date(startTime.getTime() + body.durationMin * 60_000)
         : (body.startTime ? new Date(startTime.getTime() + (r.endTime.getTime() - r.startTime.getTime())) : r.endTime)
       const tableId   = body.tableId === undefined ? r.tableId : body.tableId
+      const partySize = body.partySize ?? r.partySize
+      const waitlist  = body.waitlist ?? r.waitlist
 
-      if (tableId && !(body.waitlist ?? r.waitlist)) {
+      if (tableId && !waitlist) {
         const c = await checkTableConflict(tableId, startTime, endTime, r.id)
         if (c.conflict) {
           throw new AppError(
@@ -385,22 +553,83 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Capacity (O-RV-2): a change of time, length, party size or table on a
+      // live booking is held to the same rule as a new one, under the brand's
+      // booking lock. A booking with no table must still fit somewhere; one on
+      // a named table must not strand a tableless booking that needs it. A
+      // manager may overbook, as on create. A change that touches none of
+      // these (a name, a note) is never refused, even on an overbooked row.
+      const capacityChange = !waitlist
+        && ['booked', 'confirmed', 'seated'].includes(r.status)
+        && (startTime.getTime() !== r.startTime.getTime()
+          || endTime.getTime() !== r.endTime.getTime()
+          || partySize !== r.partySize
+          || tableId !== r.tableId
+          || waitlist !== r.waitlist)
+      if (body.overbook && !body.overbookReason) {
+        throw new AppError('VALIDATION_ERROR', 'Say why this booking goes past capacity (overbookReason).', 400)
+      }
+      const owner = await prisma.concept.findUnique({ where: { id: r.conceptId }, select: { tenantId: true } })
+      const overbookApproval = body.overbook && capacityChange
+        ? await requireManagerApproval({
+            actorId: req.staffUser!.id,
+            actorRole: req.staffUser!.role,
+            managerOverridePin: body.managerOverridePin,
+            tenantId: owner?.tenantId ?? null,
+            action: 'Booking past capacity',
+          })
+        : null
+
+      const baseNotes = body.notes !== undefined ? body.notes : r.notes
       const updated = await withTableOverlapGuard(() =>
-        prisma.reservation.update({
-          where: { id: r.id },
-          data: {
-            ...(body.partySize  !== undefined && { partySize:  body.partySize }),
-            ...(body.guestName  !== undefined && { guestName:  body.guestName }),
-            ...(body.guestPhone !== undefined && { guestPhone: body.guestPhone }),
-            ...(body.guestEmail !== undefined && { guestEmail: body.guestEmail }),
-            ...(body.notes      !== undefined && { notes:      body.notes }),
-            ...(body.isVip      !== undefined && { isVip:      body.isVip }),
-            ...(body.waitlist   !== undefined && { waitlist:   body.waitlist }),
-            ...(body.startTime  !== undefined && { startTime,  endTime }),
-            tableId,
-          },
+        prisma.$transaction(async (tx) => {
+          let overbooked = false
+          if (capacityChange) {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reservations:${r.conceptId}`}::text))`
+            const [tables, overlapping] = await Promise.all([
+              tx.table.findMany({ where: { conceptId: r.conceptId, deletedAt: null }, select: { id: true, capacity: true } }),
+              tx.reservation.findMany({
+                where: overlappingWhere(r.conceptId, startTime, endTime, r.id),
+                select: { tableId: true, partySize: true, waitlist: true },
+              }),
+            ])
+            const fits = tableId
+              ? !strandsTableless(tables, overlapping, tableId)
+              : seatPlan(tables, overlapping, partySize).tableId != null
+            if (!fits) {
+              if (!overbookApproval) throw tableId ? strandsError(req) : noTableError(req, tables, partySize)
+              overbooked = true
+            }
+          }
+          const row = await tx.reservation.update({
+            where: { id: r.id },
+            data: {
+              ...(body.partySize  !== undefined && { partySize:  body.partySize }),
+              ...(body.guestName  !== undefined && { guestName:  body.guestName }),
+              ...(body.guestPhone !== undefined && { guestPhone: body.guestPhone }),
+              ...(body.guestEmail !== undefined && { guestEmail: body.guestEmail }),
+              ...(body.notes      !== undefined && { notes:      body.notes }),
+              ...(overbooked && { notes: (baseNotes ? baseNotes + ' · ' : '') + `Overbooked: ${body.overbookReason}` }),
+              ...(body.isVip      !== undefined && { isVip:      body.isVip }),
+              ...(body.waitlist   !== undefined && { waitlist:   body.waitlist }),
+              ...((body.startTime !== undefined || body.durationMin !== undefined) && { startTime, endTime }),
+              tableId,
+            },
+          })
+          return Object.assign(row, { overbooked })
         }),
       )
+      if (updated.overbooked && overbookApproval) {
+        await audit({ category: 'identity',
+          action: 'reservation.overbook',
+          entity: 'Reservation',
+          entityId: updated.id,
+          userId: req.staffUser?.id ?? null, tenantId: owner?.tenantId ?? null,
+          userEmail: req.staffUser?.email ?? null,
+          after: { partySize: updated.partySize, startTime: updated.startTime, endTime: updated.endTime, tableId: updated.tableId },
+          metadata: { reason: body.overbookReason, approverId: overbookApproval.approverId, viaPin: overbookApproval.viaPin, via: 'edit' },
+        })
+      }
       emitReservationEvent('reservation:updated', {
         reservationId: updated.id,
         conceptId: updated.conceptId,
@@ -471,6 +700,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         throw new AppError('RESERVATION_CLOSED', `This reservation is already marked ${r.status}.`, 422)
       }
 
+      const { creditPointsTx, bookEarn } = await import('../loyalty/service.js')
+      let bonusTxId: string | null = null
       const completed = await prisma.$transaction(async (tx) => {
         // Claim the transition conditionally so two simultaneous completes
         // can't both award the bonus.
@@ -489,29 +720,29 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         // 100 loyalty points. Distinct from order-driven points (which scale
         // with spend). This is a "thank you for showing up" gesture and a
         // hook into the same loyalty currency.
+        //
+        // Through THE earn (loyalty/service creditPointsTx), the same path the
+        // review bonus uses: the account at THIS brand's company (never
+        // another company's), and the liability booked after commit
+        // (bookEarn → Dr 6060 / Cr 2060). It used to bump the balance by hand
+        // and never book the liability, so the books under-stated what the
+        // company owed in points.
         if (r.customerId) {
-          const account = await tx.loyaltyAccount.findUnique({ where: { customerId: r.customerId } })
-          if (account) {
+          const brand = await tx.concept.findUnique({ where: { id: r.conceptId }, select: { tenantId: true } })
+          if (brand?.tenantId) {
             const RES_BONUS = 100
-            await tx.loyaltyAccount.update({
-              where: { id: account.id },
-              data: {
-                pointsBalance:  { increment: RES_BONUS },
-                lifetimePoints: { increment: RES_BONUS },
-              },
+            const credited = await creditPointsTx(tx, {
+              customerId: r.customerId,
+              points: RES_BONUS,
+              tenantId: brand.tenantId,
+              description: `Completed reservation ${r.id.slice(0, 8)}`,
             })
-            await tx.loyaltyTransaction.create({
-              data: {
-                loyaltyAccountId: account.id,
-                type: 'earn',
-                pointsDelta: RES_BONUS,
-                description: `Completed reservation at ${r.conceptId}`,
-              },
-            })
+            bonusTxId = credited.txId
           }
         }
         return updated
       })
+      await bookEarn(bonusTxId)
       emitReservationEvent('reservation:updated', {
         reservationId: completed.id, conceptId: completed.conceptId,
         startTime: completed.startTime.toISOString(), status: completed.status,
@@ -770,20 +1001,37 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         )
       }
 
-      // Day in PKT
-      const day = new Date(`${req.query.date.slice(0, 10)}T00:00:00+05:00`)
-      const dow = day.getUTCDay()
-      const dayEnd = new Date(day.getTime() + 86_400_000)
+      // The Karachi calendar day asked for, and ITS weekday (ONLINE-R3: this
+      // used to read the previous day's hours — see hours.ts).
+      const date = req.query.date.slice(0, 10)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new AppError('BAD_DATE', 'date must be YYYY-MM-DD', 400)
+      const day = pktDayStart(date)
+      const dow = pktDayOfWeek(date)
 
-      // Service hours for this day-of-week. Fallback: a default 11:00–23:00 window
-      // if nothing's configured yet.
+      // Bookable windows for that weekday. The default 11:00–23:00 window only
+      // when the brand has set no hours at all; a day without hours is closed.
       const hours = await prisma.serviceHours.findMany({
-        where: { conceptId: concept.id, dayOfWeek: dow, isReservable: true },
-        orderBy: { openMin: 'asc' },
+        where: { conceptId: concept.id },
+        select: { dayOfWeek: true, openMin: true, closeMin: true, isReservable: true },
       })
-      const windows = hours.length > 0
-        ? hours.map((h) => ({ openMin: h.openMin, closeMin: h.closeMin }))
-        : [{ openMin: 11 * 60, closeMin: 23 * 60 }]
+      const windows = reservableWindows(hours, dow)
+      const dayEnd = new Date(day.getTime() + 2 * 86_400_000) // overnight sittings end tomorrow
+
+      // Optional customer session: an online booking from a signed-in guest
+      // with a verified phone or email is not held to the unverified share
+      // (capacity.ts, ONLINE-R2) — the same test POST /public applies.
+      let trusted = false
+      const bearer = req.headers.authorization
+      if (bearer?.startsWith('Bearer ')) {
+        try {
+          const payload = verifyCustomerToken(bearer.slice(7))
+          const self = await prisma.customer.findFirst({
+            where: { id: payload.sub, deletedAt: null },
+            select: { phoneVerifiedAt: true, emailVerifiedAt: true },
+          })
+          trusted = !!(self?.phoneVerifiedAt || self?.emailVerifiedAt)
+        } catch { /* not a customer token: a guest */ }
+      }
 
       // Pull operator-configured time parameters from ReservationPolicy.
       // The restaurant sets these on /configuration/reservation-policy.
@@ -796,14 +1044,15 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // fit a full sitting before the close time.
       const candidateSlots: Date[] = []
       for (const w of windows) {
-        for (let m = w.openMin; m + defaultDurationMin <= w.closeMin; m += slotIntervalMin) {
+        for (let m = w.openMin; m < 1440 && m + defaultDurationMin <= w.closeMin; m += slotIntervalMin) {
           candidateSlots.push(new Date(day.getTime() + m * 60_000))
         }
       }
 
-      // Pull capacity once: tables that fit the party
+      // Pull capacity once: every live table (a booking without a table may
+      // need a smaller one than this party — see capacity.ts).
       const tables = await prisma.table.findMany({
-        where: { conceptId: concept.id, deletedAt: null, capacity: { gte: partySize } },
+        where: { conceptId: concept.id, deletedAt: null },
         select: { id: true, capacity: true },
       })
 
@@ -821,8 +1070,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           startTime: { lt: dayEnd },
           endTime:   { gt: day },
         },
-        select: { startTime: true, endTime: true, tableId: true },
+        select: {
+          startTime: true, endTime: true, tableId: true, partySize: true, waitlist: true,
+          source: true, status: true,
+          customer: { select: { phoneVerifiedAt: true, emailVerifiedAt: true } },
+        },
       })
+      const guestCap = unverifiedCap(tables.length)
 
       const slotDuration = defaultDurationMin * 60_000
       const slots = candidateSlots.map((s) => {
@@ -830,17 +1084,20 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         // Closed by blockout?
         const blocked = blockouts.find((b) => b.startTime < e && b.endTime > s && b.kind === 'closure')
         if (blocked) return { time: s.toISOString(), available: false, reason: 'closed' }
-        // Capacity: count tables whose schedule has room for this slot
-        const fitting = tables.filter((t) => {
-          const taken = existingRes.find((r) =>
-            r.tableId === t.id && r.startTime < e && r.endTime > s,
-          )
-          return !taken
-        })
+        // Capacity — the same rule the booking itself is held to (ONL-08):
+        // bookings WITHOUT a table count too. This used to count only bookings
+        // already on a table, so public bookings never filled a slot.
+        const overlapping = existingRes.filter((r) => r.startTime < e && r.endTime > s)
+        const plan = seatPlan(tables, overlapping, partySize)
+        // A guest without a verified account is held to the unverified share
+        // (ONLINE-R2): the slot may have tables, but not for them.
+        if (plan.tableId != null && !trusted && overlapping.filter(isUnverifiedOnline).length >= guestCap) {
+          return { time: s.toISOString(), available: false, reason: 'sign_in', tablesAvailable: plan.tablesAvailable }
+        }
         return {
           time: s.toISOString(),
-          available: fitting.length > 0,
-          tablesAvailable: fitting.length,
+          available: plan.tableId != null,
+          tablesAvailable: plan.tablesAvailable,
         }
       })
 
@@ -873,9 +1130,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         conceptSlug: z.string().min(1),
         partySize:   z.number().int().min(1).max(20),
         startTime:   z.string().datetime(),
-        // Optional — defaults to whatever the operator set on
-        // ReservationPolicy.defaultDurationMin. The storefront shouldn't
-        // hardcode a number.
+        // Accepted for older clients and IGNORED (ONLINE-R2): a public sitting
+        // is always ReservationPolicy.defaultDurationMin — the window the
+        // availability search checked. A caller-chosen 240 let one fake
+        // booking hold a table all evening, and a client value longer than
+        // the policy made POST refuse a slot availability had shown free.
         durationMin: z.number().int().min(30).max(240).optional(),
         guestName:   z.string().min(1).max(120),
         guestPhone:  z.string().min(7).max(20),
@@ -910,7 +1169,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
 
       const { getReservationPolicy: getPolicyForBook } = await import('../../lib/setup-config.js')
       const bookPolicy = await getPolicyForBook(concept.tenantId)
-      const durationMin = body.durationMin ?? bookPolicy?.defaultDurationMin ?? DEFAULT_DURATION_MIN
+      const durationMin = bookPolicy?.defaultDurationMin ?? DEFAULT_DURATION_MIN
 
       const startTime = new Date(body.startTime)
       const endTime   = new Date(startTime.getTime() + durationMin * 60_000)
@@ -1011,6 +1270,18 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       })
       if (closure) throw new AppError('CLOSED', 'We are closed for this time slot', 409)
 
+      // Inside the brand's bookable hours for that Karachi day (ONLINE-R3) —
+      // this route never checked them, so a slot offered on the wrong day (or
+      // any time at all, by direct call) booked without error. A brand that
+      // has set no hours has no rule here, as for online ordering.
+      const bookHours = await prisma.serviceHours.findMany({
+        where: { conceptId: concept.id },
+        select: { dayOfWeek: true, openMin: true, closeMin: true, isReservable: true },
+      })
+      if (!sittingInHours(bookHours, startTime, durationMin)) {
+        throw new AppError('CLOSED', `${formatBrandName(concept.name)} isn't taking bookings at that time. Please pick another time.`, 409)
+      }
+
       // Link to a customer account ONLY when the caller has proved they are
       // that customer.
       //
@@ -1026,67 +1297,146 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // A booking with no linked account still works perfectly — guestName,
       // guestPhone and guestEmail are stored on the row and are what the host
       // stand actually reads.
+      //
+      // ── Who may be MESSAGED (ONL-09) ────────────────────────────────────
+      // This route is unauthenticated, and it used to WhatsApp and email
+      // whatever number and address it was handed — then remind them again
+      // before the booking. Anyone could make servd message any number in
+      // Pakistan, on GS Foods' account, without limit worth the name (the caps
+      // above are per typed phone, which the caller chooses). CLAUDE.md:
+      // contact details for messages come from the session.
+      //
+      // So a booking is still RECORDED for anyone (the host stand reads the
+      // typed name and phone, and the guest gets the confirm / cancel link in
+      // this response), but servd only messages a phone or email the signed-in
+      // customer has VERIFIED on their own account and typed into this
+      // booking. Nothing else is ever messaged — not now, not as a reminder.
       let customerId: string | null = null
+      let notifyPhone = false
+      let notifyEmail = false
+      const typedEmail = body.guestEmail?.trim().toLowerCase() || null
       const bearer = req.headers.authorization
       if (bearer?.startsWith('Bearer ')) {
         try {
           const payload = verifyCustomerToken(bearer.slice(7))
           const self = await prisma.customer.findFirst({
             where: { id: payload.sub, deletedAt: null },
-            select: { id: true, phone: true, email: true },
+            select: { id: true, phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
           })
+          // Same number however it is spelled (0300…, +92300…, 92300…).
+          const phoneMatches = !!self?.phone && (
+            self.phone === body.guestPhone
+            || (phoneKey.length >= 10 && normalisePhone(self.phone).slice(-10) === phoneKey.slice(-10))
+          )
+          const emailMatches = !!typedEmail && self?.email?.toLowerCase() === typedEmail
           // Only link to the signed-in account, and only if the booking is
           // actually in that person's own contact details.
-          const typedEmail = body.guestEmail?.toLowerCase() ?? null
-          if (
-            self &&
-            ((typedEmail && self.email?.toLowerCase() === typedEmail) ||
-             (self.phone && self.phone === body.guestPhone))
-          ) {
-            customerId = self.id
-          }
+          if (self && (phoneMatches || emailMatches)) customerId = self.id
+          notifyPhone = phoneMatches && !!self?.phoneVerifiedAt
+          notifyEmail = emailMatches && !!self?.emailVerifiedAt
         } catch {
           // Not a valid customer token — book as a guest.
         }
       }
+      // Reminders (workers/reservationReminders.ts) go to every contact on the
+      // row and skip a row whose reminder24hSentAt is set. A booking carrying
+      // any contact that is not verified gets that flag at creation, so the
+      // worker never messages it. (A dedicated "contact verified" column
+      // read by the worker would be cleaner; this needs neither.)
+      const remindable = notifyPhone && (!typedEmail || notifyEmail)
+      // Someone the restaurant can hold to account: a signed-in customer who
+      // booked with their own verified phone or email. Everyone else is held
+      // to the unverified share of the tables (capacity.ts, ONLINE-R2).
+      const trusted = notifyPhone || notifyEmail
 
       // Generate confirmation token — CSPRNG, not Math.random (xorshift128+
       // state is recoverable from a single 32-char emission, which would let
       // an attacker predict and cancel any subsequent guest's reservation).
       const confirmToken = randomBytes(16).toString('hex')
 
-      const r = await withTableOverlapGuard(() =>
-        prisma.reservation.create({
-          data: {
-            conceptId:  concept.id,
-            customerId,
-            partySize:  body.partySize,
-            startTime, endTime,
-            guestName:  body.guestName,
-            guestPhone: body.guestPhone,
-            guestEmail: body.guestEmail ?? null,
-            notes:      body.notes ?? null,
-            source:     'website',
-            status:     'booked',
-            confirmToken,
-            // Public bookings start without a table assignment — host assigns.
-            waitlist: false,
-          },
-          include: { concept: { select: { name: true } } },
-        }),
-      )
+      // ── Capacity (ONL-08) ───────────────────────────────────────────────
+      // A public booking is given a table when it is made, inside a
+      // transaction holding this brand's booking lock — so two guests booking
+      // the same slot at once are counted one after the other — and only if a
+      // table fits the party once every overlapping booking (with or without a
+      // table) is placed (capacity.ts). It used to be stored with no table and
+      // no check at all. The table can still be changed by the host; the
+      // exclusion constraint guards against a staff write racing this one.
+      let r: Prisma.ReservationGetPayload<{ include: { concept: { select: { name: true } } } }>
+      try {
+        r = await withTableOverlapGuard(() =>
+          prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reservations:${concept.id}`}::text))`
+            const [tables, overlapping] = await Promise.all([
+              tx.table.findMany({ where: { conceptId: concept.id, deletedAt: null }, select: { id: true, capacity: true } }),
+              tx.reservation.findMany({
+                where: {
+                  conceptId: concept.id,
+                  status: { in: ['booked', 'confirmed', 'seated'] },
+                  startTime: { lt: endTime },
+                  endTime:   { gt: startTime },
+                },
+                select: {
+                  tableId: true, partySize: true, waitlist: true, source: true, status: true,
+                  customer: { select: { phoneVerifiedAt: true, emailVerifiedAt: true } },
+                },
+              }),
+            ])
+            const plan = seatPlan(tables, overlapping, body.partySize)
+            if (!plan.tableId) {
+              throw new AppError('SLOT_FULL', 'That time is fully booked for your party. Please pick another time.', 409)
+            }
+            if (!trusted && overlapping.filter(isUnverifiedOnline).length >= unverifiedCap(tables.length)) {
+              throw new AppError(
+                'SLOT_FULL',
+                'Online bookings without an account are full at that time. Sign in with a verified phone to book it, pick another time, or call us.',
+                409,
+                { signInToBook: true },
+              )
+            }
+            return tx.reservation.create({
+              data: {
+                conceptId:  concept.id,
+                tableId:    plan.tableId,
+                customerId,
+                partySize:  body.partySize,
+                startTime, endTime,
+                guestName:  body.guestName,
+                guestPhone: body.guestPhone,
+                guestEmail: body.guestEmail ?? null,
+                notes:      body.notes ?? null,
+                source:     'website',
+                status:     'booked',
+                confirmToken,
+                waitlist:   false,
+                reminder24hSentAt: remindable ? null : new Date(),
+              },
+              include: { concept: { select: { name: true } } },
+            })
+          }),
+        )
+      } catch (err) {
+        // A staff write took the planned table a moment ago: the slot is as
+        // good as full for this request.
+        if (err instanceof AppError && err.code === 'TABLE_CONFLICT') {
+          throw new AppError('SLOT_FULL', 'That time was just booked. Please pick another time.', 409)
+        }
+        throw err
+      }
 
       const storefrontUrl = process.env['STOREFRONT_URL'] ?? 'https://order.servd.pk'
       const confirmUrl = `${storefrontUrl}/reserve/confirm/${confirmToken}`
       const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-      void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
-        .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking SMS failed'))
-      if (body.guestEmail) {
-        const html = `<p>Hi ${body.guestName},</p>
+      if (notifyPhone) {
+        void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
+          .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking WhatsApp failed'))
+      }
+      if (notifyEmail && body.guestEmail) {
+        const html = `<p>Hi ${escapeHtml(body.guestName)},</p>
           <p>Your reservation at <strong>${formatBrandName(r.concept.name)}</strong> for <strong>${body.partySize} on ${when} PKT</strong> is pending confirmation.</p>
           <p><a href="${confirmUrl}" style="background:#22c55e;color:#000;padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:bold">Confirm or cancel</a></p>
-          <p>You'll get a reminder 24 hours and 2 hours before your booking.</p>`
+          ${remindable ? '<p>We’ll send you a reminder before your booking.</p>' : ''}`
         void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} — confirm your reservation`, html)
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking email failed'))
       }
@@ -1096,7 +1446,16 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         startTime: r.startTime.toISOString(), status: r.status,
       })
 
-      return reply.status(201).send({ id: r.id, confirmToken, startTime: r.startTime, status: r.status })
+      return reply.status(201).send({
+        id: r.id,
+        confirmToken,
+        // The guest's own confirm / cancel page. When nothing was sent (a
+        // booking without a verified contact), the page shows this link.
+        confirmUrl,
+        startTime: r.startTime,
+        status: r.status,
+        notified: { whatsapp: notifyPhone, email: notifyEmail, reminders: remindable },
+      })
     },
   )
 

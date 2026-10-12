@@ -16,7 +16,7 @@ import { z } from 'zod'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { pktToday } from '../hr/logic.js'
-import { clockIn, clockOut, kioskPunch, punchReport, spans, type Actor } from './service.js'
+import { clockIn, clockOut, kioskPunch, openClockIn, punchReport, spans, type Actor } from './service.js'
 
 const PUNCH_REPORT_ROLES = Array.from(new Set([...MANAGERS, 'hr'])) as UserRole[]
 
@@ -59,10 +59,20 @@ export async function timeClockRoutes(fastify: FastifyInstance) {
     }))
     const mine = rows.find((r) => r.userId === me.id)
     const myShifts = mine ? shiftsOf(mine) : []
-    const open = myShifts.find((s) => !s.clockOutAt)
+    // Punched in = what a clock-in would see (service.ts openClockIn): an in
+    // from last night still counts, a forgotten one from yesterday does not
+    // — then clock-in opens today and the missed day is flagged for HR.
+    const openIn = await openClockIn(me.id)
+    const punchedIn = !!openIn && !openIn.missed
+    const since = openIn?.since.toISOString()
+    const open = punchedIn
+      ? myShifts.find((s) => !s.clockOutAt && s.clockInAt === since)
+        ?? { id: `${me.id}:open`, staffId: me.id, staffName: me.name ?? '', clockInAt: since!, clockOutAt: null, geofenceOk: true, selfieUrl: null }
+      : undefined
     return {
-      punchedIn: !!open,
-      shift: open ?? myShifts[myShifts.length - 1],
+      punchedIn,
+      shift: open ?? myShifts.filter((s) => s.clockOutAt).pop() ?? myShifts[myShifts.length - 1],
+      missedClockOut: openIn?.missed ? { since: openIn.since } : null,
       todayShifts: (seeAll ? rows.flatMap(shiftsOf) : myShifts).sort((a, b) => b.clockInAt.localeCompare(a.clockInAt)),
     }
   })

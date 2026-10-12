@@ -2,40 +2,43 @@
 //
 // Points are a real liability — every point we issue is a deferred discount we
 // owe to the customer. The first time we recognise that liability is when the
-// points are EARNED; we discharge it when they're REDEEMED (or expired —
-// future work).
+// points are EARNED; we discharge it when they're REDEEMED or EXPIRE, and a
+// refund or cancellation unwinds whichever of those the order caused.
 //
-// Posting rules (1 point = 1 paisa per loyalty/routes.ts config):
-//   EARN:    Dr Marketing & Promo (6060)         / Cr Loyalty Liability (2060)
-//   REDEEM:  Dr Loyalty Liability (2060)          / Cr Loyalty Redemptions (7020)
-//   EXPIRE:  Dr Loyalty Liability (2060)          / Cr Marketing & Promo (6060) — reverse of accrual
+// Posting rules (a point is worth the company's loyalty.point_value_cents):
+//   EARN:     Dr Marketing & Promo (6060)    / Cr Loyalty Liability (2060)
+//   REDEEM:   Dr Loyalty Liability (2060)    / Cr Loyalty Redemptions (7020)
+//   EXPIRE:   Dr Loyalty Liability (2060)    / Cr Marketing & Promo (6060) — reverse of accrual
+//   REVERSAL: the mirror of the earn or redeem it undoes (postLoyaltyReversal)
+//             — an earn clawed back on a refund: Dr 2060 / Cr 6060; points
+//             given back on a cancel or refund: Dr 7020 / Cr 2060.
 //
 // The redemption JE pairs with the order completion JE (which already books
 // the redeemed amount as part of `discountCents`); together they net the
 // liability discharge against the contra-revenue line so total revenue and
 // expense recognition stays correct.
+//
+// Every posting is in the books of the company the points belong to: a
+// loyalty account is ONE company's (LoyaltyAccount.tenantId, ONL-04), so its
+// earns, redemptions, expiries and reversals all land in that company's 2060.
 
 import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { prisma } from '../../lib/prisma.js'
-import { ACCT, postJournalEntry } from './journal.js'
+import type { Prisma, PrismaClient } from '@prisma/client'
+import { ACCT, postJournalEntry, reverseJournalEntry } from './journal.js'
 import { primaryTenantId } from '../../lib/setup-config.js'
 
-// Loyalty is a customer-facing programme rather than a brand's own ledger
-// event, so the company comes from the order the points were earned or spent
-// on.
-//
-// Expiry carries no order, and the fallback was primaryTenantId() — the OLDEST
-// company on the system. So every expiry reversal landed in one company's books
-// regardless of where the customer had actually earned the points, crediting a
-// liability that company never raised and leaving the real one carrying an
-// accrual that never unwinds. With one company that was invisible; with two it
-// is a standing misstatement in both sets of books.
-//
-// A customer who has ordered tells us where their points came from: the company
-// behind their most recent order. primaryTenantId() stays as the last resort
-// for a customer with no order history at all, where there is genuinely nothing
-// better to go on.
-async function loyaltyTenantId(orderId: string | null, customerId?: string | null): Promise<string | null> {
+// The company whose books carry a loyalty transaction: the company of the
+// account it moved (accounts are per company). The order's brand and then the
+// customer's most recent order remain as fallbacks for an account row that
+// somehow has no company — never the "oldest company on the system" by default
+// unless there is genuinely nothing else to go on.
+async function loyaltyTenantId(
+  orderId: string | null,
+  customerId?: string | null,
+  accountTenantId?: string | null,
+): Promise<string | null> {
+  if (accountTenantId) return accountTenantId
   if (orderId) {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -54,18 +57,19 @@ async function loyaltyTenantId(orderId: string | null, customerId?: string | nul
   return primaryTenantId()
 }
 
+const ACCOUNT_SELECT = { loyaltyAccount: { select: { customerId: true, tenantId: true } } } as const
 
 const LOYALTY_MARKETING_ACCOUNT = '6060'  // Marketing & Promo
 
 export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const tx = await prisma.loyaltyTransaction.findUnique({
     where: { id: loyaltyTxId },
-    include: { loyaltyAccount: { select: { customerId: true } } },
+    include: ACCOUNT_SELECT,
   })
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'earn' || tx.pointsDelta <= 0) return { posted: false, entryId: null, reason: 'not_earn_tx' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   // A point is worth what the company's loyalty setting says (owner decision 12).
   const valueCents = await calculatePointsValue(tx.pointsDelta, tenantId)
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
@@ -90,12 +94,12 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
 export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const tx = await prisma.loyaltyTransaction.findUnique({
     where: { id: loyaltyTxId },
-    include: { loyaltyAccount: { select: { customerId: true } } },
+    include: ACCOUNT_SELECT,
   })
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'redeem' || tx.pointsDelta >= 0) return { posted: false, entryId: null, reason: 'not_redeem_tx' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
   // A point is worth what the company's loyalty setting says (owner decision 12).
   const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
@@ -119,12 +123,12 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
 export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const tx = await prisma.loyaltyTransaction.findUnique({
     where: { id: loyaltyTxId },
-    include: { loyaltyAccount: { select: { customerId: true } } },
+    include: ACCOUNT_SELECT,
   })
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'expire' || tx.pointsDelta >= 0) return { posted: false, entryId: null, reason: 'not_expire_tx' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
   // A point is worth what the company's loyalty setting says (owner decision 12).
   const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
@@ -142,5 +146,67 @@ export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: 
       { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'credit', amountCents: valueCents, memo: 'Breakage recovered' },
     ],
   })
+  return { posted: result.posted, entryId: result.entryId }
+}
+
+type Tx = Prisma.TransactionClient | PrismaClient
+
+/**
+ * Undo the ledger side of an earn or a redeem (BOOKS-08 / ONL-06 / FOH-17 /
+ * ONL-07). Mirrors the entry the original transaction booked — the same
+ * accounts and the same value, whatever the point value is today — in the
+ * same company:
+ *   earn   'loyalty.earn:<id>'   → 'loyalty.earn.reversal:<id>'   Dr 2060 / Cr 6060
+ *   redeem 'loyalty.redeem:<id>' → 'loyalty.redeem.reversal:<id>' Dr 7020 / Cr 2060
+ * Idempotent per original transaction (the reversal's key is the original's
+ * id). When the original was never booked (no value, or before the posting
+ * existed) there is nothing to reverse — the liability never moved — and this
+ * is a no-op rather than an entry that would push 2060 the wrong way. Pass
+ * `tx` to book it in the same database transaction as the points move.
+ */
+export async function postLoyaltyReversal(
+  originalTxId: string,
+  options: { tx?: Tx; reason?: string; postedBy?: string } = {},
+): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+  const db = (options.tx ?? prisma) as typeof prisma
+  const orig = await db.loyaltyTransaction.findUnique({
+    where: { id: originalTxId },
+    include: ACCOUNT_SELECT,
+  })
+  if (!orig) return { posted: false, entryId: null, reason: 'tx_not_found' }
+  if (orig.type !== 'earn' && orig.type !== 'redeem') return { posted: false, entryId: null, reason: 'not_reversible' }
+
+  // The reversal goes in the books the ORIGINAL was booked in. That is the
+  // account's company — except for a redemption made at another company
+  // before accounts were split per company (ONL-04): the migration keeps such
+  // a redeem on the issuing company's account (so restored points go back to
+  // the company that issued them, LEDGER-R9), while its 'loyalty.redeem'
+  // entry sits in the spending company's books, where the reversal must
+  // unwind it.
+  const accountTenant = await loyaltyTenantId(orig.orderId, orig.loyaltyAccount?.customerId ?? null, orig.loyaltyAccount?.tenantId ?? null)
+  const orderTenant = orig.orderId
+    ? (await db.order.findUnique({ where: { id: orig.orderId }, select: { concept: { select: { tenantId: true } } } }))?.concept.tenantId ?? null
+    : null
+  const candidates = [...new Set([accountTenant, orderTenant].filter((t): t is string => !!t))]
+  if (candidates.length === 0) return { posted: false, entryId: null, reason: 'no_company' }
+
+  const sourceType = orig.type === 'earn' ? 'loyalty.earn' : 'loyalty.redeem'
+  const booked = await db.journalEntry.findFirst({
+    where: { tenantId: { in: candidates }, reference: `${sourceType}:${orig.id}` },
+    select: { id: true, tenantId: true },
+  })
+  if (!booked?.tenantId) return { posted: false, entryId: null, reason: 'original_not_booked' }
+  const tenantId = booked.tenantId
+
+  const what = orig.type === 'earn'
+    ? `${orig.pointsDelta} pts clawed back`
+    : `${Math.abs(orig.pointsDelta)} pts given back`
+  const result = await reverseJournalEntry(
+    tenantId,
+    sourceType,
+    orig.id,
+    `${what}${options.reason ? ` — ${options.reason}` : ''}`,
+    { tx: options.tx, postedBy: options.postedBy ?? 'system' },
+  )
   return { posted: result.posted, entryId: result.entryId }
 }

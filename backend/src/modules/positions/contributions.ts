@@ -14,8 +14,10 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import type { UserRole } from '@prisma/client'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 
 // Companies whose contributions this request may SEE (view-aware: the active
 // company, or every member company in "All companies" view).
@@ -76,10 +78,19 @@ const contributionSchema = z.object({
   isActive: z.boolean().default(true),
 })
 
+// Reading the contributions follows the Positions page (wave 3): the manager
+// tiers, HR and finance — the figures net into the budgeted payroll they all
+// read. Recording or changing one moves money between two companies' books,
+// so writes stay with MANAGERS (and assertBothSidesOwned below).
+const CONTRIBUTION_READERS = Array.from(new Set([...MANAGERS, 'hr', 'finance'])) as UserRole[]
+// Same module rule as the Positions reads (HR 'staff_directory', finance
+// 'capital'); manager tiers unchanged (W3B-RV-1).
+const CONTRIBUTION_READ_GUARD = [requireAuth(...CONTRIBUTION_READERS), moduleGateForNewRoles(['staff_directory', 'capital'])]
+
 export async function contributionRoutes(fastify: FastifyInstance) {
 
   // List both directions for the active tenant.
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/', { preHandler: CONTRIBUTION_READ_GUARD }, async (req) => {
     const tenants = await readableTenantIds(req)
     if (tenants.length === 0) return { incoming: [], outgoing: [] }
 
