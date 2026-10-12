@@ -751,6 +751,49 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   20261012140000_money_bigint` in the api image before redeploying either
   image (P3009 blocks both) — runbook in the migration's header.
 
+### Raast QR (2026-10-12, owner decisions)
+
+- **Tenders:** tills take exactly Cash, Card – Keenu and Raast QR
+  (`backend/src/lib/tenders.ts` is the ONE list). `keenu_qr` is RETIRED:
+  kept in the enum, old rows read and refund the way they were paid, new
+  payments / settles / splits / intents answer 422 `KEENU_QR_RETIRED`
+  (ring-up and quotes map it to `raast` so an old offline ring-up never 400s).
+- **Tax:** card + Raast = the one digital group (`lib/pricing.ts`
+  CARD_TENDERS → `taxRateCard`). Never `concept.taxRate`.
+- **The rule at the till:** money is checked on the COUNTER device (bank SMS
+  / merchant app), never the customer's screen; the cashier types the bank
+  reference and ticks the attestation (`raastVerified: true`, server
+  enforced). A reference is normalised, validated and unique per company
+  (`RaastReceipt @@unique([tenantId, bankRef])`) — the same transfer never
+  pays two bills; references of dismissed / debit / older / other-account
+  credits are refused.
+- **Sale vs truth:** a Raast payment completes the sale like card
+  (`completeOrder`, one fiscal document, PaymentMode 3 by default — confirm
+  with the POS vendor). Its `RaastReceipt` is `provisional` until a
+  bank-statement line matches it (`modules/reconciliation/raast.ts`, by
+  reference + amount + date, one-sided window — never a credit from before
+  the bill); finance matches, fixes references (approvers), writes off
+  "not received" (balanced, the receipt's company and bank code) or resolves
+  a needs-attention receipt in Finance → Reconciliation → Raast.
+- **Ledger:** Raast money debits the receiving BANK's chart code (snapshot
+  `RaastReceipt.ledgerCode` from `connectors/raast/accounts.ts` — brand
+  override, else the company default; never another company's), never 1030;
+  refunds credit it; memo prefix `RAAST_RECEIPTS_MEMO`, which the generic
+  bank matcher never pairs. A Raast row with no code refuses the posting.
+- **Bank SMS:** the `raast` POS-connector kind (`enabled` = SMS matching ON;
+  OFF by default; only the CEO switches it on after the readiness check).
+  Counter-phone tokens: sha256 lookup + secretBox, shown once, rotate kills
+  the old one. Only listed bank senders are stored; OTPs never. A credit
+  settles a bill only when EXACTLY ONE live intent fits — otherwise
+  `unmatched` / `ambiguous` for a person: NEVER a guess. Every Raast write
+  path takes `lockRaastTx` (connectors/raast/lock.ts) first, then the order
+  lock; never hold a transaction across `processPayment`. A future bank /
+  aggregator API is a driver feeding `applyBankCredit` (no rework).
+- **Gates:** `/pos/raast/*` ungated (till cashiers), `/connectors/raast/*`
+  under `api_pos` (no new module — Dev → API stays two), `/reconciliation/raast/*`
+  under `reconciliation`, receiving accounts on `/setup` (finance).
+  Runbooks: `docs/raast.md` (finance + cashier), `docs/raast-sms-forwarder.md` (IT).
+
 ## Claude Code operating policy — model routing & parallel agents
 
 Per the product owner (2026-09-27): optimize for **speed AND efficiency
