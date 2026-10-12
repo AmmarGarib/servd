@@ -23,6 +23,12 @@ export function ScrollHero({ fields }: SectionProps) {
   const conclusion = str(fields.conclusion)
   const primary = link(fields.primaryCta)
   const secondary = link(fields.secondaryCta)
+  const title = str(fields.title)
+  const Heading = fields.headingLevel === 'h2' ? 'h2' : 'h1'
+  // Hidden title: nothing over the media, but the page keeps its heading for
+  // search engines and screen readers. Saved layouts from before the toggle
+  // had the title on show.
+  const showTitle = fields.showTitle !== false
 
   return (
     <ScrollExpandMedia
@@ -30,13 +36,14 @@ export function ScrollHero({ fields }: SectionProps) {
       mediaSrc={mediaSrc}
       {...(poster && { posterSrc: poster })}
       bgImageSrc={safeSrc(fields.bgImageSrc)}
-      title={str(fields.title)}
-      headingLevel={fields.headingLevel === 'h2' ? 'h2' : 'h1'}
+      title={showTitle ? title : ''}
+      headingLevel={Heading}
       mediaAlt={str(fields.mediaAlt).trim()}
       {...(date && { date })}
       scrollToExpand={str(fields.scrollToExpand)}
       textBlend={fields.textBlend === true}
     >
+      {!showTitle && title && <Heading className="sr-only">{title}</Heading>}
       <div className="container" style={{ maxWidth: '52rem', margin: '0 auto', textAlign: 'center' }}>
         {overview && (
           <p style={{

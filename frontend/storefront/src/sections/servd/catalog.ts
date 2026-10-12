@@ -42,8 +42,9 @@ export const specs: SectionSpec[] = [
       { key: 'mediaImage', label: 'Expanding image', kind: 'image', hint: 'Used when Media type is Image.' },
       { key: 'posterSrc', label: 'Video poster', kind: 'image', hint: 'Shown until the video starts, and instead of it for visitors who prefer less motion or save data. The default is a still of the default video: replace or clear it when you change the video. Empty = none.' },
       { key: 'mediaAlt', label: 'Media description (alt text)', kind: 'text', hint: 'What the video/photo shows (the default describes the default video — rewrite it when you change it). Empty = decorative' },
-      { key: 'bgImageSrc', label: 'Background image', kind: 'image', hint: 'Empty = plain servd purple.' },
-      { key: 'title', label: 'Title', kind: 'text', hint: 'The first word slides left, the rest slides right.' },
+      { key: 'bgImageSrc', label: 'Background image', kind: 'image', hint: 'The photo behind the media; it fades out as the media opens. Empty = plain servd purple.' },
+      { key: 'title', label: 'Title', kind: 'text', hint: 'The page heading. Shown on the media only when “Show the title” is on (the first word slides left, the rest slides right); otherwise search engines and screen readers still get it.' },
+      { key: 'showTitle', label: 'Show the title on the media', kind: 'toggle', hint: 'Off = no words over the media.' },
       { key: 'headingLevel', label: 'Title tag', kind: 'select', hint: 'H1 = the page’s main title (one per page). Use H2 on a page that already has an H1.', options: [
         { value: 'h1', label: 'H1 (page title)' }, { value: 'h2', label: 'H2 (section heading)' },
       ] },
@@ -63,13 +64,17 @@ export const specs: SectionSpec[] = [
       // food from the first paint instead of an empty purple panel.
       posterSrc: '/brand/servd-hero-poster.webp',
       mediaAlt: 'Garlic and spring onion stirred in a hot wok with a wooden spatula',
-      bgImageSrc: '',
+      // The dining-room photo behind the hero (owner, 2026-10-12: "I had a
+      // photo behind this"). Self-hosted 1600px WebP.
+      bgImageSrc: '/brand/servd-hero-bg.webp',
       // Each kitchen has its own basket and checkout, so no "one order" /
       // "check out once" promise.
       title: 'Every kitchen, one place to order.',
+      // No words over the media (owner, 2026-10-12: "kill all this text").
+      showTitle: false,
       headingLevel: 'h1',
-      date: 'order · explore · insiders',
-      scrollToExpand: 'Scroll to explore',
+      date: '',
+      scrollToExpand: '',
       textBlend: false,
       overview: 'Simmer, Stackd and Flipd. Pick a kitchen, see the menu, and order.',
       conclusion: 'Join Insiders for rewards on every order.',
@@ -251,8 +256,9 @@ export const specs: SectionSpec[] = [
       { key: 'cta', label: 'Button', kind: 'link', hint: 'Empty label = no button.' },
     ],
     defaults: {
-      logo: '',
-      logoHeight: 28,
+      // The servd logo (green circle), not the text wordmark (owner, 2026-10-12).
+      logo: '/brand/servd-logo.png',
+      logoHeight: 34,
       logoAlt: 'servd',
       wordmark: 'servd',
       links: [

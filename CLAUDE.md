@@ -63,17 +63,33 @@ rewritten, trust these corrections:
 - **Storefront visual migration is DONE**, not "in progress." The legacy
   "premium" system (`#00D4B1` teal → `#6366F1` indigo, `#18160f` ink,
   `PremiumInput`) is fully removed from `frontend/storefront/src`. The whole
-  storefront is on `--servd-*` tokens. **servd colours (owner, 2026-10-05):
-  bone `#f3e7cd` background, green `#87c540` primary, purple `#5a2156`
-  secondary (sidebar, bands, purple buttons; deep shade `#3f1640`) and
-  `#3d1f3b` as the ink/text colour** — on BOTH the servd storefront and the admin/ERP. Text on
-  green is purple (never white); green as text on bone is `#4f7a1c`. Legacy
-  token names stay (`--servd-green` holds the primary). Admin: tokens in
-  `frontend/admin/src/app/globals.css`; Tailwind `white` = the area's
-  foreground (`--fg-rgb`), so `text-white/40` is ink on bone; the sidebar is
-  `.erp-on-secondary` (bone on purple); KDS, expo and the POS till stay dark
-  (`.erp-kitchen-dark` / `kds-*`). The brand microsites keep their own palettes.
-  Never hard-code a colour in a page — use the tokens.
+  storefront is on `--servd-*` tokens. **servd storefront colours (owner,
+  2026-10-05): bone `#f3e7cd` background, green `#87c540` primary, purple
+  `#5a2156` secondary (bands, purple buttons; deep shade `#3f1640`) and
+  `#3d1f3b` as the ink/text colour.** Text on green is purple (never white);
+  green as text on bone is `#4f7a1c`. Legacy token names stay
+  (`--servd-green` holds the primary). The brand microsites keep their own
+  palettes.
+  **Admin/ERP colours (owner, 2026-10-12): deep vibrant purple on white, with
+  the servd logo green as the accent** — primary `#6a0dad` (buttons, links,
+  selected; white text on it), sidebar `#3b0764`, page `#f9f7fc`, cards
+  white, ink `#261038`, muted `#6b5b7c`; servd green `#87c540`
+  (`--erp-accent`: the logo, accents, the sidebar's active item — purple text
+  on green, never body text on white) and `#4f7a1c` (`--erp-success`,
+  `text-success`, `s-badge-green`: profit / on target / paid — green vs red
+  for good vs bad). The top-left is the logo (`/brand/servd-logo.png`), not a
+  wordmark. ONE definition: channel variables (`--x-rgb` + `--x`) in
+  `frontend/admin/src/app/globals.css`, read by `tailwind.config.ts`
+  (`rgb(var(--x-rgb) / <alpha-value>)`), so opacity modifiers work. Tailwind
+  `white` = the area's foreground (`--fg-rgb`), so `text-white/40` is ink on
+  white; `--ink-rgb` is ink everywhere. Areas redefine colours by setting
+  BOTH channel and colour: the sidebar is `.erp-on-secondary` (white on deep
+  purple, primary = servd green inside it), a light card popping out of it
+  is `.erp-on-surface`, and KDS, expo and the POS till stay dark with their
+  green "go" accent (`.erp-kitchen-dark` / `kds-*`). Never hard-code a colour
+  in a page — use the tokens (`var(--erp-primary)`, `rgb(var(--erp-primary-rgb)
+  / 0.1)`, `color-mix(in srgb, <token> 10%, transparent)` for tints of a
+  variable colour; never append hex alpha to a colour string).
 - **The three "404 routes" are fixed** (`/<concept>/menu`, `/<concept>/order`,
   `/reserve` all exist/redirect).
 - **Deploy reality is unsettled.** A `.github/workflows/build-and-push.yml` and
@@ -279,7 +295,11 @@ hero (`LandingScrollHero` → `ui/scroll-expansion-hero.tsx`) — keep it; a jum
 far down the page (an `Order` link to `#kitchens`) finishes the expansion
 instead of snapping back to the top. Search is the nav's `SearchSheet`
 (`openSearch()`), not a page. Link to `/home` or `/home#kitchens`, never
-`/browse`. The hero is the `servd.scrollHero` section on `servd:home`.
+`/browse`. The hero is the `servd.scrollHero` section on `servd:home`: the
+dining-room photo behind it (`/brand/servd-hero-bg.webp`) and NO words over
+the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
+`sr-only` h1; eyebrow and scroll hint are empty. The nav shows the logo
+(`/brand/servd-logo.png`), not the text wordmark.
 
 ## Recent additions (2026-09-09)
 
