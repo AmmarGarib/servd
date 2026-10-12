@@ -233,10 +233,13 @@ export async function sendInteractiveList(
   _buttonLabel: string,
   sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>,
 ) {
+  // Rows are numbered across sections in order, so a customer on the text-only
+  // gateway can reply with the number (adapters/whatsapp matchOption reads it).
   const lines = [headerText, '', bodyText, '']
+  let n = 0
   for (const s of sections) {
     lines.push(s.title)
-    for (const r of s.rows) lines.push(`• ${r.title}${r.description ? ` — ${r.description}` : ''}`)
+    for (const r of s.rows) lines.push(`${++n}. ${r.title}${r.description ? ` — ${r.description}` : ''}`)
     lines.push('')
   }
   return send(to, lines.join('\n').trim())
