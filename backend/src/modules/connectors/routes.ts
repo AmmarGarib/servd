@@ -28,9 +28,10 @@ import { activeTenantId, assertConceptOwned, scopeTenantWhere } from '../../lib/
 import type { UserRole } from '@prisma/client'
 import type { ConnectorKindT, FiscalPayload } from '../../connectors/types.js'
 import {
-  assertUrlAllowed, fiscalSettingsSchema, terminalSettingsSchema, parseFiscalSettings, parseTerminalSettings,
+  assertUrlAllowed, fiscalSettingsSchema, terminalSettingsSchema, parseFiscalSettings, parseTerminalSettings, parseRaastSettings,
   reportingRequiredOf, AUTHORITIES, terminalEntrySchema,
 } from '../../connectors/config.js'
+import { raastOverview } from './raastRoutes.js'
 import {
   buildCtx, ensureConnectorRow, getConnectorFresh, invalidateConnector, isKnownDriver, listDrivers, newWebhookToken,
   fiscalDriverOf, terminalDriverOf, connectorNow,
@@ -87,7 +88,7 @@ function viewOf(row: PosConnector): ConnectorView {
     apiKeyHint: row.apiKeyHint,
     webhookSecretHint: row.webhookSecretHint,
     webhookUrl: webhookUrl(row.webhookToken),
-    settings: row.kind === 'fiscal' ? parseFiscalSettings(row.settings) : parseTerminalSettings(row.settings),
+    settings: row.kind === 'fiscal' ? parseFiscalSettings(row.settings) : row.kind === 'raast' ? parseRaastSettings(row.settings) : parseTerminalSettings(row.settings),
     lastTestAt: row.lastTestAt?.toISOString() ?? null,
     lastTestOk: row.lastTestOk,
     lastTestDetail: row.lastTestDetail,
@@ -176,14 +177,16 @@ export async function connectorRoutes(fastify: FastifyInstance) {
   // GET /connectors/drivers
   fastify.get('/drivers', { preHandler: requireAuth(...ADMINS) }, async () => listDrivers())
 
-  // GET /connectors — the ACTIVE company's two connectors, POS ids and backlog.
+  // GET /connectors — the ACTIVE company's connectors (fiscal, card machine,
+  // Raast QR bank alerts), POS ids and backlog.
   fastify.get('/', { preHandler: requireAuth(...VIEWERS) }, async (req) => {
     const tenantId = activeTenantId(req, 'the POS connector belongs to one company')
     const [fiscal, terminal] = await Promise.all([ensureConnectorRow(tenantId, 'fiscal'), ensureConnectorRow(tenantId, 'terminal')])
-    const [counts, brands, terminalAttention] = await Promise.all([
+    const [counts, brands, terminalAttention, raast] = await Promise.all([
       fiscalCounts([tenantId]),
       brandPosIds(tenantId),
       prisma.terminalCharge.count({ where: { tenantId, status: { in: ['needs_attention', 'unknown', 'unverified', 'void_pending'] } } }),
+      raastOverview(tenantId),
     ])
     const reportingRequired = reportingRequiredOf(fiscal.settings)
     return {
@@ -197,6 +200,7 @@ export async function connectorRoutes(fastify: FastifyInstance) {
       brandPosIds: brands,
       counts,
       terminalAttention,
+      raast,
     }
   })
 

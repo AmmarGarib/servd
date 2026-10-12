@@ -50,6 +50,7 @@ import type { TenantIdWhere } from '../../lib/tenantScope.js'
 import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../accounting/dates.js'
 import { refundShareOf, giftCardAppliedOf, saleBookingOf, type SaleOrderFields } from '../accounting/orderPosting.js'
+import { tenderLabel } from '../../lib/tenders.js'
 
 export interface SalesQuery {
   /** Company scope — scopeTenantWhere(req, 'read'), or `{ tenantId }` in a worker. */
@@ -502,5 +503,120 @@ export async function stationTimes(q: SalesQuery): Promise<StationTimes> {
       .map((s) => ({ stationId: s.stationId, stationName: s.stationName, items: s.items, avgMinutes: roundMinutes(s.totalMs, s.items) }))
       .sort((a, b) => b.avgMinutes - a.avgMinutes),
     avgTicketMinutes: allItems > 0 ? roundMinutes(allMs, allItems) : null,
+  }
+}
+
+// ─── Sales by tender (Raast QR, spec §7.6) ───────────────────────────────────
+//
+// How the period's sold orders (the same soldOrderWhere as every sales
+// figure) were paid: the paid receipts by method — Cash (incl. cash on
+// delivery still pending on a non-till order), Card – Keenu, Raast QR and the
+// retired Keenu QR's old rows — plus wallet credit (Order.walletAmountCents)
+// and gift cards (redemptions). Comps are not money: reported apart, never in
+// a share. sharePct is each tender's share of the money tenders (everything
+// but comp). Raast is split by its reconciliation state: provisional (no bank
+// statement has shown it yet), matched, written off as not received. Refunds
+// by tender are the money handed back in the period (refund rows, processedAt),
+// on sold orders — as salesTotals counts refunds.
+
+export interface TenderRow {
+  tender: string
+  label: string
+  amountCents: number
+  /** Receipts (payment rows / redemptions). */
+  payments: number
+  /** Orders that used the tender. */
+  orders: number
+  /** Share of the money tenders' total, one decimal. */
+  sharePct: number
+}
+
+export interface SalesByTender {
+  from: Date
+  to: Date
+  tenders: TenderRow[]
+  totalCents: number
+  comp: { amountCents: number; orders: number }
+  raast: { provisionalCents: number; provisionalCount: number; matchedCents: number; matchedCount: number; unreceivedCents: number; unreceivedCount: number }
+  refunds: Array<{ tender: string; label: string; amountCents: number; count: number }>
+}
+
+const TENDER_ORDER = ['cash', 'card', 'raast', 'keenu_qr', 'wallet', 'gift_card'] as const
+
+export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
+  const where = soldOrderWhere(q)
+  const rows = await prisma.payment.findMany({
+    where: {
+      order: where,
+      amountCents: { gt: 0 },
+      method: { not: 'split' },
+      OR: [
+        { status: 'paid' },
+        // Cash on delivery collected by the rider: still 'pending' on a sold non-till order.
+        { status: 'pending', method: 'cash', order: { source: { not: 'pos' } } },
+      ],
+    },
+    select: { method: true, amountCents: true, orderId: true, raastReceipt: { select: { status: true } } },
+  })
+  const by = new Map<string, { amountCents: number; payments: number; orders: Set<string> }>()
+  const add = (tender: string, cents: number, orderId: string, receipts = 1) => {
+    const s = by.get(tender) ?? { amountCents: 0, payments: 0, orders: new Set<string>() }
+    s.amountCents += cents
+    s.payments += receipts
+    s.orders.add(orderId)
+    by.set(tender, s)
+  }
+  const raast = { provisionalCents: 0, provisionalCount: 0, matchedCents: 0, matchedCount: 0, unreceivedCents: 0, unreceivedCount: 0 }
+  for (const p of rows) {
+    add(p.method, p.amountCents, p.orderId)
+    if (p.method === 'raast') {
+      const st = p.raastReceipt?.status
+      if (st === 'matched') { raast.matchedCents += p.amountCents; raast.matchedCount++ }
+      else if (st === 'unreceived') { raast.unreceivedCents += p.amountCents; raast.unreceivedCount++ }
+      else { raast.provisionalCents += p.amountCents; raast.provisionalCount++ }
+    }
+  }
+  const wallets = await prisma.order.findMany({ where: { AND: [where, { walletAmountCents: { gt: 0 } }] }, select: { id: true, walletAmountCents: true } })
+  for (const o of wallets) add('wallet', o.walletAmountCents, o.id)
+  const cards = await prisma.giftCardRedemption.findMany({ where: { amountCents: { gt: 0 }, order: where }, select: { amountCents: true, orderId: true } })
+  for (const c of cards) if (c.orderId) add('gift_card', c.amountCents, c.orderId)
+
+  const comp = by.get('comp')
+  by.delete('comp')
+  const totalCents = [...by.values()].reduce((s, t) => s + t.amountCents, 0)
+  const known = new Set<string>(TENDER_ORDER)
+  const keys = [...TENDER_ORDER.filter((k) => by.has(k)), ...[...by.keys()].filter((k) => !known.has(k)).sort()]
+  const tenders: TenderRow[] = keys.map((k) => {
+    const t = by.get(k)!
+    return {
+      tender: k, label: tenderLabel(k), amountCents: t.amountCents, payments: t.payments, orders: t.orders.size,
+      sharePct: totalCents > 0 ? Math.round((t.amountCents / totalCents) * 1000) / 10 : 0,
+    }
+  })
+
+  const refundRows = await prisma.payment.findMany({
+    where: {
+      status: 'refunded', amountCents: { lt: 0 },
+      order: { AND: [orderScope(q), { status: { in: SOLD_STATUSES } }] },
+      OR: [
+        { processedAt: { gte: q.from, lte: q.to } },
+        { processedAt: null, createdAt: { gte: q.from, lte: q.to } },
+      ],
+    },
+    select: { method: true, amountCents: true },
+  })
+  const refundBy = new Map<string, { amountCents: number; count: number }>()
+  for (const r of refundRows) {
+    const s = refundBy.get(r.method) ?? { amountCents: 0, count: 0 }
+    s.amountCents += Math.abs(r.amountCents)
+    s.count++
+    refundBy.set(r.method, s)
+  }
+
+  return {
+    from: q.from, to: q.to, tenders, totalCents,
+    comp: { amountCents: comp?.amountCents ?? 0, orders: comp?.orders.size ?? 0 },
+    raast,
+    refunds: [...refundBy].map(([tender, s]) => ({ tender, label: tenderLabel(tender), ...s })).sort((a, b) => b.amountCents - a.amountCents),
   }
 }

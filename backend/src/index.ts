@@ -33,9 +33,14 @@ import { startReviewPromptWorker } from './workers/reviewPrompt.js'
 // BullMQ queues once, before the connector workers start.
 import { startFiscalConnectorWorker } from './workers/fiscalConnector.js'
 import { startTerminalConnectorWorker } from './workers/terminalConnector.js'
+// Raast QR (spec §6, §7.3): intent expiry / bank-SMS backstop, and the daily
+// unmatched-receipt flag. Both run without Redis.
+import { startRaastConnectorWorker } from './workers/raastConnector.js'
+import { startRaastStatementFlagsWorker } from './workers/raastStatementFlags.js'
 import { drainLegacyTaxQueues } from './connectors/legacyDrain.js'
 import { connectorHealthChecks } from './connectors/health.js'
 import { registerConnectorPlugins } from './modules/connectors/index.js'
+import { maskSmsTokenInUrl } from './modules/connectors/webhookRoutes.js'
 import { registerPreBillPlugins } from './modules/prebills/index.js'
 import { registerApprovalsPlugin } from './modules/approvals/index.js'
 import { CONNECTOR_ADMINS } from './lib/connectorRoles.js'
@@ -179,9 +184,10 @@ async function build() {
       serializers: {
         // Default serializer leaks request/response headers; override to keep
         // method+url+status only. Detailed bodies are captured separately when
-        // needed.
+        // needed. A counter phone's bank-SMS token in the path
+        // (/webhooks/pos/sms/<token>, Raast S2) is masked, never logged.
         req(req: { method: string; url: string; remoteAddress?: string }) {
-          return { method: req.method, url: req.url, ip: req.remoteAddress }
+          return { method: req.method, url: maskSmsTokenInUrl(req.url), ip: req.remoteAddress }
         },
         res(res: { statusCode: number }) {
           return { statusCode: res.statusCode }
@@ -878,6 +884,10 @@ async function build() {
         startFiscalConnectorWorker()
         startTerminalConnectorWorker()
       })
+    // Raast QR: expiry + bank-SMS backstop every 30 s, escalation flags every
+    // 10 min, SMS-text retention daily; unmatched-receipt flag daily 09:05 PKT.
+    startRaastConnectorWorker()
+    startRaastStatementFlagsWorker()
     // W4-FISCAL-2: a completed order whose completion claim (or its fiscal
     // sale document) never committed is completed / enqueued now — never
     // left silent. Every two minutes; one run at a time per process (the

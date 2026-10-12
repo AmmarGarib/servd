@@ -1,10 +1,13 @@
-// Active card-machine charge guards (spec §7.10).
+// Active tender guards (spec §7.10; Raast QR 2026-10-12, spec §2 [A]).
 //
-// While the card machine is working on a bill, nothing else may settle it:
-// another tender, a comp, a gift card, a check split or the shift close would
-// race the machine and could take the money twice. W4 calls these under the
-// order lock in processPayment, settlePayment('till'), compOrder,
-// applyGiftCardTender, checkSplit and the shift close handler.
+// While the card machine works on a bill, or a Raast QR intent waits for the
+// customer's transfer, nothing else may settle it: another tender, a comp, a
+// gift card, loyalty, a check split, a cancel / void or the shift close would
+// race the machine / the bank SMS and could take the money twice. W4 calls
+// these under the order lock in processPayment, settlePayment('till'),
+// compOrder, applyGiftCardTender, checkSplit and the shift close handler —
+// every one of those call sites is now blocked by a waiting Raast intent too,
+// with no change at the call site.
 
 import type { Prisma, TerminalChargeStatus } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -15,8 +18,19 @@ type Tx = Prisma.TransactionClient
 /** Statuses during which a charge may still take money (the partial unique index's set). */
 export const ACTIVE_CHARGE_STATUSES: TerminalChargeStatus[] = ['pending', 'sent', 'approved', 'cancel_requested', 'unknown']
 
-/** 409 TERMINAL_CHARGE_ACTIVE {chargeId} when the order has an active card-machine charge (other than `exceptChargeId`). */
-export async function assertNoActiveTerminalChargeTx(tx: Tx, orderId: string, exceptChargeId?: string | null): Promise<void> {
+/**
+ * 409 TERMINAL_CHARGE_ACTIVE {chargeId} when the order has an active
+ * card-machine charge (other than `exceptChargeId`), and 409 RAAST_AWAITING
+ * {receiptId} when a Raast QR intent of the order is still 'awaiting' the
+ * customer's transfer (other than `exceptRaastReceiptId` — the intent being
+ * paid).
+ */
+export async function assertNoActiveTerminalChargeTx(
+  tx: Tx,
+  orderId: string,
+  exceptChargeId?: string | null,
+  exceptRaastReceiptId?: string | null,
+): Promise<void> {
   const active = await tx.terminalCharge.findFirst({
     where: { orderId, kind: 'charge', status: { in: ACTIVE_CHARGE_STATUSES }, ...(exceptChargeId && { id: { not: exceptChargeId } }) },
     select: { id: true },
@@ -29,9 +43,28 @@ export async function assertNoActiveTerminalChargeTx(tx: Tx, orderId: string, ex
       { chargeId: active.id },
     )
   }
+  const raast = await tx.raastReceipt.findFirst({
+    where: { orderId, status: 'awaiting', ...(exceptRaastReceiptId && { id: { not: exceptRaastReceiptId } }) },
+    select: { id: true },
+  })
+  if (raast) {
+    throw new AppError(
+      'RAAST_AWAITING',
+      'This bill is waiting for a Raast QR transfer — wait for the bank SMS, enter the reference by hand, or cancel Raast before doing anything else with it',
+      409,
+      { receiptId: raast.id },
+    )
+  }
 }
 
-/** 409 SHIFT_HAS_ACTIVE_CHARGE {charges} when a drawer still has card-machine charges (or refunds) in flight. */
+/** The same guard under its tender-neutral name. */
+export const assertNoActiveTenderTx = assertNoActiveTerminalChargeTx
+
+/**
+ * 409 SHIFT_HAS_ACTIVE_CHARGE {charges} when a drawer still has card-machine
+ * charges (or refunds) in flight; 409 SHIFT_HAS_AWAITING_RAAST {receipts}
+ * when a Raast QR intent on it still waits for the customer's transfer.
+ */
 export async function assertShiftHasNoActiveCharges(shiftId: string): Promise<void> {
   const rows = await prisma.terminalCharge.findMany({
     where: { shiftId, status: { in: ACTIVE_CHARGE_STATUSES } },
@@ -44,6 +77,19 @@ export async function assertShiftHasNoActiveCharges(shiftId: string): Promise<vo
       `${rows.length} card-machine charge(s) on this drawer are not finished — finish, cancel or resolve them before closing`,
       409,
       { charges: rows },
+    )
+  }
+  const raast = await prisma.raastReceipt.findMany({
+    where: { shiftId, status: 'awaiting' },
+    select: { id: true, orderId: true, status: true, amountCents: true },
+    take: 20,
+  })
+  if (raast.length > 0) {
+    throw new AppError(
+      'SHIFT_HAS_AWAITING_RAAST',
+      `${raast.length} Raast QR payment(s) on this drawer are still waiting for the customer's transfer — confirm or cancel them before closing`,
+      409,
+      { receipts: raast },
     )
   }
 }

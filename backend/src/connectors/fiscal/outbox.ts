@@ -227,7 +227,11 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
   refundPaymentId: string | null
   amountCents: number
   reason?: string
-  /** How the money went back (cash / card / keenu_qr); defaults from the sale. */
+  /**
+   * How the money went back: cash / card / raast (Raast QR, sent back by bank
+   * transfer) / keenu_qr (an old sale refunded the way it was paid); omitted,
+   * it defaults from the sale (payload.ts buildRefundPayload).
+   */
   method?: string | null
   /** The refund's tip share when known (0 for a voided line's refund — W4-FISCAL-1); omitted → pro rata. */
   tipShareCents?: number

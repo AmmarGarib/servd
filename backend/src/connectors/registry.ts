@@ -1,7 +1,7 @@
 // POS connector — the driver registry and the per-company connector rows
 // (spec §3, D1, D2).
 //
-// One PosConnector row per company per kind (fiscal / terminal). Rows are
+// One PosConnector row per company per kind (fiscal / terminal / raast). Rows are
 // created lazily as driver 'none', disabled, with a random webhook token.
 // A real vendor is one file in drivers/ plus one line in each map below.
 
@@ -9,8 +9,8 @@ import { randomBytes } from 'node:crypto'
 import { Prisma, type PosConnector } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import { decryptSecret } from '../lib/secretBox.js'
-import type { ConnectorCtx, ConnectorKindT, FiscalDriver, FiscalSettings, TerminalDriver, TerminalSettings } from './types.js'
-import { parseFiscalSettings, parseTerminalSettings } from './config.js'
+import type { ConnectorCtx, ConnectorKindT, FiscalDriver, FiscalSettings, RaastDriver, RaastSettings, TerminalDriver, TerminalSettings } from './types.js'
+import { parseFiscalSettings, parseRaastSettings, parseTerminalSettings } from './config.js'
 import { testFiscalDriver, testTerminalDriver } from './drivers/test.js'
 import { httpFiscalDriver, httpTerminalDriver } from './drivers/http.js'
 
@@ -24,6 +24,18 @@ export const TERMINAL_DRIVERS: Readonly<Record<string, TerminalDriver>> = {
   http: httpTerminalDriver,
 }
 
+/**
+ * Raast QR (2026-10-12, spec D6): a future bank / aggregator API (dynamic QR
+ * with the bill reference, a 'raast.credit' webhook) is one file in drivers/
+ * plus one line here. v1 registers none — bank-SMS matching needs no driver
+ * (PosConnector(raast).driver stays 'none'; `enabled` = SMS matching ON).
+ */
+export const RAAST_DRIVERS: Readonly<Record<string, RaastDriver>> = {}
+
+export function raastDriverOf(id: string | null | undefined): RaastDriver | null {
+  return id && Object.prototype.hasOwnProperty.call(RAAST_DRIVERS, id) ? RAAST_DRIVERS[id]! : null
+}
+
 export function fiscalDriverOf(id: string | null | undefined): FiscalDriver | null {
   return id && Object.prototype.hasOwnProperty.call(FISCAL_DRIVERS, id) ? FISCAL_DRIVERS[id]! : null
 }
@@ -33,7 +45,10 @@ export function terminalDriverOf(id: string | null | undefined): TerminalDriver 
 }
 
 export function isKnownDriver(kind: ConnectorKindT, id: string): boolean {
-  return id === 'none' || (kind === 'fiscal' ? !!fiscalDriverOf(id) : !!terminalDriverOf(id))
+  if (id === 'none') return true
+  if (kind === 'fiscal') return !!fiscalDriverOf(id)
+  if (kind === 'terminal') return !!terminalDriverOf(id)
+  return !!raastDriverOf(id)
 }
 
 export interface DriverInfo {
@@ -50,6 +65,8 @@ export function listDrivers(): DriverInfo[] {
     ...Object.values(FISCAL_DRIVERS).map((d) => ({ kind: 'fiscal' as const, id: d.id, label: d.label, needs: d.needs })),
     { kind: 'terminal', id: 'none', ...none },
     ...Object.values(TERMINAL_DRIVERS).map((d) => ({ kind: 'terminal' as const, id: d.id, label: d.label, needs: d.needs })),
+    { kind: 'raast', id: 'none', label: 'Bank SMS from the counter phone', needs: none.needs },
+    ...Object.values(RAAST_DRIVERS).map((d) => ({ kind: 'raast' as const, id: d.id, label: d.label, needs: d.needs })),
   ]
 }
 
@@ -78,6 +95,8 @@ export interface LoadedConnector {
   secretError: string | null
   fiscalSettings: FiscalSettings
   terminalSettings: TerminalSettings
+  /** kind 'raast' only meaningful; always parsed (lenient) so callers never see a raw blob. */
+  raastSettings: RaastSettings
 }
 
 const CACHE_TTL_MS = 30_000
@@ -105,6 +124,7 @@ function load(row: PosConnector): LoadedConnector {
     secretError,
     fiscalSettings: parseFiscalSettings(row.settings),
     terminalSettings: parseTerminalSettings(row.settings),
+    raastSettings: parseRaastSettings(row.settings),
   }
 }
 
@@ -161,7 +181,7 @@ export function buildCtx(c: LoadedConnector, budgetMs: number, log?: ConnectorCt
     baseUrl: c.row.baseUrl,
     apiKey: c.apiKey,
     webhookSecret: c.webhookSecret,
-    settings: c.kind === 'fiscal' ? c.fiscalSettings : c.terminalSettings,
+    settings: c.kind === 'fiscal' ? c.fiscalSettings : c.kind === 'raast' ? c.raastSettings : c.terminalSettings,
     signal: AbortSignal.timeout(Math.max(1, Math.round(budgetMs))),
     now: connectorNow,
     log: log ?? ((obj, msg) => console.info(`[connector:${c.kind}] ${msg}`, obj)),

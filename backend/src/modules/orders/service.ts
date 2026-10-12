@@ -1230,7 +1230,13 @@ export async function getOrder(id: string, scope: Prisma.OrderWhereInput = {}) {
       concept: true,
       table: true,
       customer: true,
-      payments: true,
+      // A Raast QR payment carries its reconciliation state: 'provisional'
+      // until a bank-statement line matches it (spec §7.6).
+      payments: {
+        include: {
+          raastReceipt: { select: { status: true, bankRef: true, confirmedVia: true, smsConfirmedAt: true, matchedAt: true } },
+        },
+      },
       posStaff: { select: { name: true } },
       // The numbered legal documents (tax invoice, credit notes) — the order
       // page links each to /invoices/:id/html.

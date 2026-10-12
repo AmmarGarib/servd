@@ -74,6 +74,10 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // 20261010210100_pos_connector — at most one live card-machine charge per order.
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "terminal_charges_one_active_per_order" ON "terminal_charges" ("orderId")
     WHERE "kind" = 'charge' AND "status" IN ('pending','sent','approved','cancel_requested','unknown')`)
+  // 20261013090100_raast_tender — one awaiting Raast intent per order; one
+  // default Raast receiving account per company.
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "raast_receipts_one_awaiting_per_order" ON "raast_receipts" ("orderId") WHERE "status" = 'awaiting'`)
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "bank_accounts_one_raast_default_per_company" ON "bank_accounts" ("tenantId") WHERE "raastDefault" = true AND "deletedAt" IS NULL`)
 }
 
 async function seedTestAccounts(prisma: PrismaClient): Promise<void> {

@@ -1,6 +1,7 @@
 # connectors/ — the POS connector
 
-servd's only path to FBR/SRB filing and to the card machine. The vendor
+servd's only path to FBR/SRB filing, to the card machine, and to Raast QR
+bank alerts (bank SMS from a counter phone, 2026-10-12). The vendor
 contract is in `docs/pos-connector-api.md` and the design is in the
 2026-10-10 spec.
 
@@ -21,15 +22,27 @@ order goes through `completeOrder`, which inserts the sale document.
 | `fiscal/view.ts` | `FiscalView`, `fiscalViewForOrder`, `legacySrbAlias` |
 | `fiscal/qr.ts` | `renderQrSvg` (synchronous inline SVG) |
 | `terminal/service.ts` | Card-machine charges: start (re-quote), the forward-only `applyChargeState`, `recordApprovedCharge` (via processPayment / settlePayment / refundOrder), `reverseCharge`, cancel, resolve, refunds, the reconciler |
-| `terminal/guard.ts` | `assertNoActiveTerminalChargeTx`, `assertShiftHasNoActiveCharges` |
+| `terminal/guard.ts` | `assertNoActiveTerminalChargeTx` (alias `assertNoActiveTenderTx`) and `assertShiftHasNoActiveCharges` — they also refuse while a Raast intent is `awaiting` (409 `RAAST_AWAITING` / `SHIFT_HAS_AWAITING_RAAST`) |
+| `raast/reference.ts` | Bank reference normalise / validate / `refInText` (pure) |
+| `raast/accounts.ts` | `resolveRaastAccount` (brand override → company default → null; never another company's) |
+| `raast/lock.ts` | `lockRaastTx` — the ONE per-company Raast lock, taken FIRST by every Raast write |
+| `raast/sms.ts` | The SMS template DSL (never a user regex), `parseSms`, sender normalising, ignore keywords (pure) |
+| `raast/devices.ts` | Counter-phone tokens: `sms_<64 hex>`, SHA-256 lookup hash + secretBox ciphertext, format check before any lookup |
+| `raast/intake.ts` | Webhook intake (only listed bank senders, never an OTP) and `processAlert` (parse → unparsed / debit / off / match) |
+| `raast/match.ts` | `applyBankCredit` (confirm by reference, settle the ONE awaiting intent, else unmatched / ambiguous — never a guess), `matchOnIntentCreated`, `findSmsForRefTx`, `linkAlertTx`, `assertRefNotClaimedTx`, `raiseRaastAttentionTx`, the Raast flags |
+| `raast/intents.ts` | The till: config, intents (create / confirm / cancel / expire), bank alerts (list / attach / dismiss / reference fix) |
+| `raast/sweeper.ts` | Worker steps: backstop processing, stuck claims, expiry, `raast_unconfirmed` / `raast_sms_unmatched`, SMS text retention |
 | `alerts.ts` | ExceptionFlags (connector kinds) plus a best-effort WhatsApp message to the people who can fix the problem |
 | `health.ts` | `connectorHealthChecks()` for `/health` (ok / warn / off, never fail) |
 | `inbound.ts` | Parses webhook events and applies them to the connector's own company |
 | `legacyDrain.ts` | One-off drain of the old `fbr-submission` / `srb-submission` queues. Remove it one release after the cutover. |
 
-Routes are in `modules/connectors/` (`/connectors`, `/pos/terminal/*`,
-`/pos/orders/:id/fiscal*`, `/webhooks/pos/:token`). The workers are
-`workers/fiscalConnector.ts` and `workers/terminalConnector.ts`.
+Routes are in `modules/connectors/` (`/connectors`, `/connectors/raast/*`,
+`/pos/terminal/*`, `/pos/raast/*`, `/pos/orders/:id/fiscal*`,
+`/webhooks/pos/:token`, `/webhooks/pos/sms`). The workers are
+`workers/fiscalConnector.ts`, `workers/terminalConnector.ts` and
+`workers/raastConnector.ts`. The forwarder runbook is
+`docs/raast-sms-forwarder.md`.
 
 Rules:
 
@@ -57,3 +70,40 @@ Rules:
   polled on `<chargeId>-rev…`); a same-day void is final at once.
 - **The test driver** produces `TEST-…` numbers with `isTest=true`, and
   receipts say `TEST — NOT A FISCAL INVOICE`.
+
+Raast QR (2026-10-12):
+
+- **The connector row is `kind 'raast'`**, one per company; `enabled` =
+  bank-SMS matching ON. Default OFF; only the CEO switches it on, after the
+  readiness check (`POST /connectors/raast/sms-on`). No new module id: the
+  routes live under `/connectors` (api_pos) and `/pos/raast` (the till).
+- **Never a guess.** A bank credit settles an intent only when it is the ONE
+  awaiting intent of the same company, bank account and amount (±2 paisa)
+  that was still live when the money arrived (`expiresAt > occurredAt`, put
+  up no later than `clockSkewMin` after it — however old: RV-FRAUD-2). Two
+  candidates → `ambiguous`; none → `unmatched`; a person attaches it at the
+  till. The same rule from the intent's side (`matchOnIntentCreated`): another
+  live intent that fits the SMS → `ambiguous` (RV-FRAUD-3). An SMS from
+  before the intent (older than `clockSkewMin`) is only shown as "possible
+  earlier payment" (S1). A till attach refuses a credit from before the bill
+  (its waiting request, else the order, minus `matchWindowMin`) → 422
+  `RAAST_ALERT_TOO_OLD` (RV-FRAUD-4), and a reference typed at the till that a
+  stored credit SMS from before the order or into another account carries →
+  409 `RAAST_REF_TOO_OLD`, SMS matching on or off.
+- **Short transactions only (M3).** The matcher leases the intent
+  (`settlingUntil` + `smsAlertId`) under `lockRaastTx`, commits, calls
+  processPayment / settlePayment, then finishes under the lock again. It
+  re-reads before any refusal write and writes `needs_attention` only from
+  `awaiting` (M2) — a paid receipt is never demoted.
+- **Reference claims (M4).** An SMS reference confirms a receipt only on the
+  receipt's own bank account, as a credit, in an open status, not older than
+  the receipt minus `matchWindowMin`. A dismissed ("not a sale") or debit
+  reference is claimed (`BankSmsAlert.claimedRef`) and can never pay a bill.
+- **The counter device is the evidence**, never the customer's screen. The
+  SMS endpoint keeps only listed bank senders and never stores an OTP / PIN
+  SMS. A device token is shown once; a path token only when the device
+  allows it (S2). The per-address throttle counts FAILED auths only and never
+  refuses a token that resolves to an active device (RV-FRAUD-5 / RV-CO-1: a
+  stale phone or another company behind the same NAT cannot lock it out).
+- **A future bank API** is one `RaastDriver` in `RAAST_DRIVERS` producing a
+  `BankCredit` into `applyBankCredit` — no rework of intents or matching.

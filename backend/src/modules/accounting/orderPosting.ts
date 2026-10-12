@@ -15,6 +15,7 @@ import { postLoyaltyReversal } from './loyaltyPosting.js'
 import { restoreOrderWallet } from '../wallet/service.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { sumCents } from '../../lib/money.js'
+import { AppError } from '../../lib/errors.js'
 
 /** Gift Card Liability — credited when a card is sold (giftCards/routes.ts). */
 export const GIFT_CARD_LIABILITY = '2080'
@@ -71,14 +72,92 @@ export function refundDueMemo(orderId: string, tag: string): string {
 // (Here rather than in shiftPosting.ts so the refund engine below can use them
 // without a circular import; shiftPosting re-exports both.)
 
-/** Tenders settled through a card processor (they carry the terminal's reference). */
+/**
+ * Tenders settled through a card processor (they carry the terminal's
+ * reference): a pending row of one may still be confirmed by the processor.
+ * NOT Raast QR (2026-10-12): a Raast transfer lands straight in the
+ * company's bank and is recorded 'paid' at the till (reference typed on the
+ * counter device, or the bank SMS) or not at all — no processor ever
+ * confirms it, so a pending Raast row (an open check-split portion) is not a
+ * receipt. The retired Keenu QR stays here for its old rows.
+ */
 export const GATEWAY_METHODS: ReadonlySet<string> = new Set(['card', 'keenu_qr'])
 
+// ─── Raast QR: the receiving bank's own chart code (2026-10-12) ────────────
+//
+// A Raast payment is money in the company's BANK account, not money a card
+// processor owes: the ledger debits the receiving account's chart code
+// (BankAccount.accountCode, snapshotted on the RaastReceipt as ledgerCode
+// when the tender was recorded), and a Raast refund credits that code
+// (gatewayMeta.raast.ledgerCode on the refund row, from the receipt it went
+// back against). Never 1030. A Raast row whose code is not on record is
+// refused (RAAST_ACCOUNT_UNKNOWN) — the posting fails loudly and is flagged
+// posting_failed, it is never booked to a guessed account.
+
 /**
- * Is this payment money received (or receivable from a processor)? Paid, or a
- * card / QR tender the till took (it carries the terminal's reference) that
- * the gateway has not confirmed yet. Refund rows, failed tenders and open
- * check-split portions (pending, no reference) are not.
+ * Memo prefix of every line that books Raast money on a receiving bank's code
+ * from a sale-side posting (the shift close's per-bank totals, a non-till
+ * order's receipt, a cancelled ticket's refund due) and of finance's Raast
+ * write-offs. Bank reconciliation never pairs a statement line with a journal
+ * line whose memo starts with it: a Raast credit is matched to its
+ * RaastReceipt (one transfer, one bill), never to an aggregate.
+ */
+export const RAAST_RECEIPTS_MEMO = 'RAAST RECEIPTS'
+
+/** What the ledger reads a Raast row's bank code from. */
+export interface RaastCodeSource {
+  id?: string
+  method: string
+  /** A Raast REFUND row carries { raast: { receiptId, bankAccountId, ledgerCode } }. */
+  gatewayMeta?: unknown
+  /** A Raast RECEIPT row's RaastReceipt (Payment.raastReceipt) — its ledgerCode snapshot. */
+  raastReceipt?: { ledgerCode?: string | null } | null
+}
+
+/** The receiving bank's chart code of a Raast row, or null when none is on record. */
+export function raastLedgerCodeOrNull(p: RaastCodeSource): string | null {
+  const snapshot = p.raastReceipt?.ledgerCode?.trim()
+  if (snapshot) return snapshot
+  const meta = p.gatewayMeta
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    const raast = (meta as Record<string, unknown>)['raast']
+    if (raast && typeof raast === 'object' && !Array.isArray(raast)) {
+      const code = (raast as Record<string, unknown>)['ledgerCode']
+      if (typeof code === 'string' && code.trim()) return code.trim()
+    }
+  }
+  return null
+}
+
+/** The refusal for a Raast row with no bank code on record. */
+export function raastAccountUnknown(paymentIds: string[]): AppError {
+  const ids = paymentIds.filter(Boolean)
+  return new AppError(
+    'RAAST_ACCOUNT_UNKNOWN',
+    `Raast QR payment${ids.length === 1 ? '' : 's'}${ids.length ? ` ${ids.join(', ')}` : ''} ha${ids.length === 1 ? 's' : 've'} no receiving bank account on record, ` +
+    'so the ledger does not know which bank it went to. Nothing was booked (never to 1030) — check the Raast receipt in Finance → Reconciliation → Raast.',
+    422,
+    { paymentIds: ids },
+  )
+}
+
+/**
+ * The bank code a Raast row books to: the receipt's ledgerCode snapshot
+ * (a sale), else gatewayMeta.raast.ledgerCode (a refund row) — else 422
+ * RAAST_ACCOUNT_UNKNOWN. Never 1030.
+ */
+export function raastLedgerCodeOf(p: RaastCodeSource): string {
+  const code = raastLedgerCodeOrNull(p)
+  if (code) return code
+  throw raastAccountUnknown(p.id ? [p.id] : [])
+}
+
+/**
+ * Is this payment money received (or receivable from a processor)? Paid
+ * (cash, card, Raast QR, comp), or a card tender the till took (it carries
+ * the terminal's reference) that the gateway has not confirmed yet. Refund
+ * rows, failed tenders and open check-split portions (pending, no reference
+ * — a pending Raast portion included) are not.
  */
 export function isShiftReceipt(p: { method: string; status: string; gatewayRef: string | null }): boolean {
   if (p.status === 'paid') return true
@@ -99,7 +178,8 @@ export function homeShiftOf(order: { payments: Array<{ id: string; shiftId: stri
  * shift, comps excluded — a comp is not money) less the refunds already
  * handed back on it. 0 for any other status. This is what the refund engine
  * may refund on a cancelled ticket (postRefundPayment books it Dr 1110 refund
- * due / Cr drawer or card, never revenue and tax), and what a cancel must not
+ * due / Cr drawer, card or the Raast receiving bank, never revenue and tax),
+ * and what a cancel must not
  * leave stranded: the shift close holds it in 1110 until it is handed back.
  * (Money an online gateway took is not here — it never reached a drawer, and
  * goes back through the gateway's own refund.)
@@ -154,9 +234,12 @@ export function withTenderTips<T extends SaleOrderFields>(
   return { ...order, tipCents: (order.tipCents ?? 0) + extra, totalCents: order.totalCents + extra }
 }
 
+/** A payment as the sale posting reads it: a Raast tender carries its receipt's bank-code snapshot. */
+type PostingPayment = Payment & { raastReceipt: { ledgerCode: string; status: string } | null }
+
 interface OrderForPosting extends Order {
   concept:  Concept
-  payments: Payment[]
+  payments: PostingPayment[]
   items: OrderItem[]
   giftCardRedemptions: Array<{ id: string; amountCents: number; reversedAt: Date | null }>
 }
@@ -165,7 +248,9 @@ async function loadOrderForPosting(orderId: string): Promise<OrderForPosting | n
   return prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: true, payments: true, items: true,
+      concept: true, items: true,
+      // A Raast tender's receipt: the receiving bank's code it is debited to.
+      payments: { include: { raastReceipt: { select: { ledgerCode: true, status: true } } } },
       giftCardRedemptions: { select: { id: true, amountCents: true, reversedAt: true } },
     },
   })
@@ -295,14 +380,34 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsCents: n
       p.method === 'cash' && (p.status === 'paid' || (order.source !== 'pos' && p.status === 'pending'))
     const cashPayments = order.payments.filter(isCashReceipt)
     const cashTotal = Math.min(sa.totalChargedCents, cashPayments.reduce((s, p) => s + p.amountCents, 0))
-    const cardTotal = sa.totalChargedCents - cashTotal
+    let left = sa.totalChargedCents - cashTotal
 
     if (cashTotal > 0) {
       const cashAccount = order.source === 'pos' ? ACCT.CASH_DRAWER : ACCT.CASH_ON_HAND
       lines.push({ accountCode: cashAccount, type: 'debit', amountCents: cashTotal, memo: conceptMemo })
     }
-    if (cardTotal > 0) {
-      lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: cardTotal, memo: conceptMemo })
+
+    // Raast QR: a transfer straight into the company's receiving bank account
+    // — debited to that bank's chart code (the receipt's snapshot), grouped
+    // per code, never 1030. A paid Raast row with no code refuses the whole
+    // posting (raastLedgerCodeOf throws; postCompletionOrFlag flags it).
+    // Capped at what is left of the charged total, like cash.
+    const raastByCode = new Map<string, number>()
+    for (const p of order.payments) {
+      if (p.method !== 'raast' || p.status !== 'paid' || p.amountCents <= 0) continue
+      const code = raastLedgerCodeOf(p)
+      raastByCode.set(code, (raastByCode.get(code) ?? 0) + p.amountCents)
+    }
+    for (const code of [...raastByCode.keys()].sort()) {
+      const cents = Math.min(left, raastByCode.get(code)!)
+      if (cents <= 0) continue
+      lines.push({ accountCode: code, type: 'debit', amountCents: cents, memo: `${RAAST_RECEIPTS_MEMO} — ${conceptMemo}` })
+      left -= cents
+    }
+
+    // The rest: card / gateway money a processor owes (1030).
+    if (left > 0) {
+      lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: left, memo: conceptMemo })
     }
   }
 
@@ -413,7 +518,11 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
 //                             outputTaxCodeFor), the account the sale credited
 //   Cr 1015 drawer            cash handed back at a till (the drawer it left)
 //      1010 cash on hand      cash handed back with no drawer
-//      1030 card receivable   card / QR reversed through the processor
+//      1030 card receivable   card (and the retired Keenu QR) reversed
+//                             through the processor
+//      the receiving bank     a Raast QR refund: sent back from the bank the
+//                             money came into (gatewayMeta.raast.ledgerCode
+//                             on the refund row) — never 1030
 //
 // Shares are pro rata on the order's full value (charged + wallet + gift
 // card) and are CUMULATIVE — each refund takes round(X·(prior+this)/V) −
@@ -591,9 +700,15 @@ function asBooked<T extends SaleOrderFields>(order: T, giftCardAppliedCents: num
   return { ...order, giftCardAppliedCents: booking?.legacyGiftCard ? 0 : giftCardAppliedCents }
 }
 
-/** The account a refund's money leaves from. */
-export function refundCreditAccount(p: { method: string; shiftId: string | null }): string {
+/**
+ * The account a refund's money leaves from: the drawer (or cash on hand) for
+ * cash; the receiving bank's code for Raast QR (raastLedgerCodeOf — 422
+ * RAAST_ACCOUNT_UNKNOWN when the refund row carries none, never 1030); 1030
+ * for card and the retired Keenu QR.
+ */
+export function refundCreditAccount(p: { id?: string; method: string; shiftId: string | null; gatewayMeta?: unknown; raastReceipt?: { ledgerCode?: string | null } | null }): string {
   if (p.method === 'cash') return p.shiftId ? ACCT.CASH_DRAWER : ACCT.CASH_ON_HAND
+  if (p.method === 'raast') return raastLedgerCodeOf(p)
   return ACCT.CARD_RECEIVABLE
 }
 
@@ -609,6 +724,8 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
     where: { id: refundPaymentId },
     select: {
       id: true, orderId: true, method: true, status: true, amountCents: true, shiftId: true, processedAt: true, createdAt: true,
+      // A Raast refund names the bank it was sent back from (gatewayMeta.raast.ledgerCode).
+      gatewayMeta: true,
       order: {
         select: {
           id: true, status: true, conceptId: true, source: true, totalCents: true, walletAmountCents: true, taxCents: true,
@@ -635,7 +752,8 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
 
   // LEDGER-R5: money taken on a cancelled / rejected ticket was never a sale.
   // The shift close holds it as a refund due (Cr 1110); handing it back clears
-  // that, not revenue and tax. The same when its drawer has not closed yet —
+  // that, not revenue and tax — Cr the account it leaves by (refundCreditAccount:
+  // a Raast hand-back is Cr the receiving bank). The same when its drawer has not closed yet —
   // that close will hold it as a refund due. A cancelled order whose sale WAS
   // booked (cancelled after its drawer closed) is refunded like any sale.
   if (order.status === 'cancelled' || order.status === 'rejected') {

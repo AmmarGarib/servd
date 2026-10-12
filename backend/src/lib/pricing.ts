@@ -15,8 +15,9 @@
 //     (receipt, tax invoice, FBR, SRB) — never a recomputation
 //
 // Rules (owner decision 9, CEO/SRB policy):
-//   - GST is split by tender: cash → Concept.taxRateCash (15%), card / paid
-//     online → Concept.taxRateCard (8%). Cash on delivery is cash. A group
+//   - GST is split by tender: cash → Concept.taxRateCash (15%), card / Raast
+//     QR / paid online (the digital group, Tender 'card') →
+//     Concept.taxRateCard (8%). Cash on delivery is cash. A group
 //     order takes the rate of the tender used at the till. A tender we cannot
 //     classify (split, not yet chosen) takes the cash rate — the customer is
 //     never billed less than they owe. Concept.taxRate (legacy 17%) is never
@@ -39,7 +40,14 @@ import { AppError } from './errors.js'
 import { computeServiceCharge, computeDeliveryFee } from './setup-config.js'
 import { haversineKm } from './geo.js'
 
-/** The tax-relevant class of a tender: which of the two GST rates applies. */
+/**
+ * The tax-relevant class of a tender: which of the two GST rates applies.
+ * 'card' IS the digital tax group — card (Card – Keenu), Raast QR (an instant
+ * bank transfer, owner 2026-10-12) and every online gateway — billed at
+ * Concept.taxRateCard. The name stays 'card' (PreBill.tender, the fiscal
+ * payment mode and the pre-bill's two totals read it); screens say
+ * "Card / Raast".
+ */
 export type Tender = 'cash' | 'card'
 
 /**
@@ -57,14 +65,16 @@ const SERVICE_CHARGE_CHANNEL: Record<PricingChannel, string> = {
   whatsapp: 'whatsapp',
 }
 
-// Card, QR and every online gateway (Keenu, JazzCash, EasyPaisa, the servd
-// wallet) are "paid online / by card" → the card rate.
-const CARD_TENDERS = new Set(['card', 'keenu_qr', 'keenu', 'jazzcash', 'easypaisa', 'wallet', 'online'])
+// The digital tax group ('card'): card, Raast QR, the retired Keenu QR (kept
+// so old rows still read at the rate they were billed) and every online
+// gateway (Keenu, JazzCash, EasyPaisa, the servd wallet) → the card rate.
+const CARD_TENDERS = new Set(['card', 'raast', 'keenu_qr', 'keenu', 'jazzcash', 'easypaisa', 'wallet', 'online'])
 
 /**
  * Map a payment method / gateway name to its tax tender. 'cash' (till cash,
- * cash on delivery) is cash; card / QR / online gateways are card; anything
- * else — 'split', 'comp', a tender not chosen yet — takes the cash rate.
+ * cash on delivery) is cash; card, Raast QR and online gateways are the
+ * digital group ('card'); anything else — 'split', 'comp', a tender not
+ * chosen yet — takes the cash rate.
  */
 export function tenderOf(method: string | null | undefined): Tender {
   if (method && CARD_TENDERS.has(method)) return 'card'

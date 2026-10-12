@@ -4,6 +4,10 @@
 // best-effort WhatsApp notice to the people who can fix it:
 //   fiscal   → active users of the company with role admin / it
 //   terminal → active users of the company with role admin / foh_management
+//   raast_finance → admin / it / finance (bank SMS that don't parse, debits,
+//                   unmatched bank alerts, statement mismatches)
+//   raast_floor   → admin / foh_management / fnb_manager (a Raast bill that
+//                   needs a person at the till)
 // Messages name the cause AND the fix. Deduped per entity through the row's
 // own alertedAt, so a document retried 60 times raises one flag.
 //
@@ -21,6 +25,14 @@ export type ConnectorExceptionKind =
   | 'fiscal_manual_refund'
   | 'terminal_void_failed'
   | 'terminal_unreconciled'
+  // Raast QR (2026-10-12, spec §6.9)
+  | 'raast_unmatched'          // provisional receipts not on a bank statement after N days (finance, per bank account)
+  | 'raast_unconfirmed'        // a cashier-typed Raast reference with no bank SMS after smsConfirmMin (SMS matching ON)
+  | 'raast_needs_attention'    // an SMS / settle could not complete a Raast bill cleanly
+  | 'raast_sms_unparsed'       // a listed bank sender's SMS matched no template (one open flag per sender)
+  | 'raast_sms_unmatched'      // a bank credit SMS no bill claimed after unmatchedAlertEscalateMin
+  | 'raast_statement_mismatch' // a statement line names a Raast reference but the amount differs
+  | 'raast_debit_alert'        // money LEFT a Raast receiving account (bank SMS)
 
 export interface ConnectorFlagInput {
   tenantId: string
@@ -28,7 +40,7 @@ export interface ConnectorFlagInput {
   severity: ExceptionSeverity
   title: string
   description: string
-  entityType: 'FiscalDocument' | 'TerminalCharge' | 'PosConnector'
+  entityType: 'FiscalDocument' | 'TerminalCharge' | 'PosConnector' | 'RaastReceipt' | 'BankSmsAlert' | 'BankAccount'
   entityId: string
   conceptId?: string | null
   amountCents?: number | null
@@ -59,13 +71,19 @@ export async function flagConnectorException(input: ConnectorFlagInput): Promise
   }
 }
 
-const FISCAL_ROLES = ['admin', 'it'] as const
-const TERMINAL_ROLES = ['admin', 'foh_management'] as const
+const AUDIENCE_ROLES = {
+  fiscal: ['admin', 'it'],
+  terminal: ['admin', 'foh_management'],
+  raast_finance: ['admin', 'it', 'finance'],
+  raast_floor: ['admin', 'foh_management', 'fnb_manager'],
+} as const
+
+export type ConnectorAudience = keyof typeof AUDIENCE_ROLES
 
 /** WhatsApp the company's people who can fix it. Best effort, never throws, never awaited by money paths. */
-export async function notifyConnectorPeople(tenantId: string, audience: 'fiscal' | 'terminal', text: string): Promise<number> {
+export async function notifyConnectorPeople(tenantId: string, audience: ConnectorAudience, text: string): Promise<number> {
   try {
-    const roles = audience === 'fiscal' ? [...FISCAL_ROLES] : [...TERMINAL_ROLES]
+    const roles = [...AUDIENCE_ROLES[audience]]
     const users = await prisma.user.findMany({
       where: {
         role: { in: roles },

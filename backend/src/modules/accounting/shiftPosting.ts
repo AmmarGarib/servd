@@ -21,12 +21,21 @@
 // Which orders a shift books, and how the money side is debited:
 //   • A till order (source 'pos') is booked ONCE, by its home shift: the
 //     drawer that holds its earliest receipt. Receipts on this drawer are
-//     debited — cash 1015, card / QR 1030, comp 7030. Every till card / QR
+//     debited — cash 1015, card (and the retired Keenu QR) 1030, Raast QR
+//     the receiving bank's own chart code, comp 7030. Every till card
 //     tender carries the terminal's reference and settles at the till (owner
 //     decision 4), so it is 1030 from the moment of sale; an older row still
 //     'pending' with a reference is debited to 1030 too (memo'd "awaiting
 //     gateway confirmation"), and postPosCardFailure moves a tender the
 //     gateway fails after the close to 1110.
+//   • Raast QR (2026-10-12) is a transfer straight into the company's bank:
+//     one debit per receiving-bank code (the RaastReceipt's ledgerCode
+//     snapshot), memo'd RAAST_RECEIPTS_MEMO so bank reconciliation matches
+//     the statement line to its receipt, never to this aggregate. Never
+//     1030. A Raast row with no code on record refuses the whole close
+//     (RAAST_ACCOUNT_UNKNOWN → the posting_failed flag) — it is never booked
+//     to a guessed account. A Raast refund always posts its own entry (Cr
+//     the bank), so the close never books one.
 //   • Whatever of the order was NOT received on its home drawer (a split
 //     still open, a failed card, a part paid on another drawer) is debited to
 //     1110 Customer receivable; a receipt for that order on another drawer
@@ -36,12 +45,13 @@
 //     own order.complete entry, so the shift books only the cash moving into
 //     the drawer (Dr 1015 / Cr 1010) — it used to book that sale a second time.
 //   • A CANCELLED or REJECTED order was never sold (FOH-09): money taken on
-//     one is not revenue or tax. It is debited where it sits (1015 / 1030) and
-//     credited to 1110 Customer accounts receivable — a credit balance there is
-//     the customer's money we owe back ("refund due"), one line per order
-//     naming it — until it is handed back: the refund row on the cancelled
-//     order books Dr 1110 / Cr 1015 or 1030 (postRefundPayment, LEDGER-R5).
-//     It used to be booked as a sale and its tax.
+//     one is not revenue or tax. It is debited where it sits (1015 / 1030 /
+//     the Raast receiving bank) and credited to 1110 Customer accounts
+//     receivable — a credit balance there is the customer's money we owe back
+//     ("refund due"), one line per order naming it — until it is handed back:
+//     the refund row on the cancelled order books Dr 1110 / Cr 1015, 1030 or
+//     the bank (postRefundPayment, LEDGER-R5). It used to be booked as a sale
+//     and its tax.
 //
 // The drawer side uses the ONE expected-cash formula (lib/drawer.ts), the same
 // figure the cashier counted against. Every movement of cash in or out of the
@@ -52,6 +62,7 @@
 //   add, pay-in     Dr 1015 Drawer            / Cr 1010 Cash on hand
 //   cash refund     Dr 7040 Refunds issued    / Cr 1015 Drawer
 //   card refund     Dr 7040 Refunds issued    / Cr 1030 Card receivable
+//                   (legacy rows only; a Raast refund always has its own entry)
 //   pay-out         Dr 8010 (unclassified)    / Cr 1015 Drawer
 //   over / short    Dr/Cr 8010                / Cr/Dr 1015
 //
@@ -68,10 +79,12 @@
 // to reclassify — so a legacy drawer still balances.
 
 import { prisma } from '../../lib/prisma.js'
+import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
 import {
   computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, outputTaxCodeFor, withTenderTips,
-  GIFT_CARD_LIABILITY, REFUND_DUE_PREFIX, refundDueMemo, type SaleOrderFields, type TaxJurisdiction,
+  GIFT_CARD_LIABILITY, REFUND_DUE_PREFIX, refundDueMemo, RAAST_RECEIPTS_MEMO, raastLedgerCodeOrNull, raastAccountUnknown,
+  type SaleOrderFields, type TaxJurisdiction,
 } from './orderPosting.js'
 import { drawerExpectationOf } from '../../lib/drawer.js'
 import { cogsForSoldLines } from '../../lib/recipeCost.js'
@@ -93,6 +106,8 @@ export interface ShiftOrderPaymentRow {
   createdAt: Date
   /** The till records a tender's tip here as { tipCents } (FOH-14). */
   gatewayMeta?: unknown
+  /** A Raast tender's receipt: the receiving bank's chart code it is debited to (its ledgerCode snapshot). */
+  raastReceipt?: { ledgerCode?: string | null; status?: string | null } | null
 }
 
 export interface ShiftSaleOrder extends SaleOrderFields {
@@ -121,7 +136,13 @@ export const SHIFT_SALE_PAYMENT_INCLUDE = {
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
       promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
       concept: { select: { id: true, slug: true, province: true, srbPosId: true } },
-      payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
+      payments: {
+        select: {
+          id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true,
+          // Raast QR: the receiving bank's code (the ledger debits it) and the reconciliation state.
+          raastReceipt: { select: { ledgerCode: true, status: true } },
+        },
+      },
       giftCardRedemptions: { select: { amountCents: true } },
     },
   },
@@ -153,13 +174,31 @@ export interface ShiftBrandSales {
   giftCardAppliedCents: number
 }
 
+/** Raast QR money on one receiving-bank chart code. */
+export interface RaastCodeTotals {
+  cents: number
+  /** Raast tenders (payment rows). */
+  count: number
+  /** The orders they paid (each once). */
+  orderIds: string[]
+}
+
 export interface ShiftSales {
   byConcept: Map<string, ShiftBrandSales>
   totals: Omit<ShiftBrandSales, 'conceptId' | 'conceptSlug' | 'orderIds' | 'giftCards' | 'taxAccountCode'>
   /** Receipts on this drawer for the till orders it books or clears. */
   cashCents: number
+  /** Card – Keenu (and the retired Keenu QR) — 1030. Never Raast. */
   cardPaidCents: number
   cardAwaitingCents: number
+  /** Raast QR receipts per receiving-bank chart code (the receipt's ledgerCode snapshot) — debited to that bank, never 1030. */
+  raastByCode: Map<string, RaastCodeTotals>
+  /**
+   * Raast rows on this drawer (sales or cancelled tickets) with no bank code on
+   * record. The Z-report still reads; the ledger close is REFUSED for them
+   * (RAAST_ACCOUNT_UNKNOWN) — never booked to 1030.
+   */
+  raastUnknown: Array<{ paymentId: string; orderId: string; cents: number }>
   compCents: number
   /** Home orders not fully received on this drawer (Dr 1110). */
   unsettledCents: number
@@ -171,15 +210,48 @@ export interface ShiftSales {
   nonTillCashCents: number
   /**
    * Money taken here on cancelled / rejected orders (FOH-09) — not a sale:
-   * Dr 1015 (cash) / 1030 (card, QR), Cr 1110 refund due to the customer.
+   * Dr 1015 (cash) / 1030 (card, the retired Keenu QR) / the receiving bank
+   * (Raast QR, per code), Cr 1110 refund due to the customer.
    */
   cancelledPaid: {
     cashCents: number
+    /** Card and the retired Keenu QR — never Raast (raastByCode). */
     cardCents: number
+    /** Raast QR per receiving-bank code. */
+    raastByCode: Map<string, RaastCodeTotals>
     orderIds: string[]
     /** Per order — one Cr 1110 line each, naming the order (the refund engine looks for it). */
     byOrder: Array<{ orderId: string; cents: number }>
   }
+}
+
+/** Sum of the cents on every code. */
+export function raastTotalCents(byCode: Map<string, RaastCodeTotals>): number {
+  let t = 0
+  for (const v of byCode.values()) t += v.cents
+  return t
+}
+
+/**
+ * Adds one Raast row to its bank code — or, with no code on record, to the
+ * unknown list (the ledger refuses the close for it; never 1030).
+ */
+function addRaast(
+  byCode: Map<string, RaastCodeTotals>,
+  unknown: ShiftSales['raastUnknown'],
+  orderId: string,
+  p: ShiftOrderPaymentRow,
+): void {
+  const code = raastLedgerCodeOrNull(p)
+  if (!code) {
+    unknown.push({ paymentId: p.id, orderId, cents: p.amountCents })
+    return
+  }
+  const cur = byCode.get(code) ?? { cents: 0, count: 0, orderIds: [] }
+  cur.cents += p.amountCents
+  cur.count += 1
+  if (!cur.orderIds.includes(orderId)) cur.orderIds.push(orderId)
+  byCode.set(code, cur)
 }
 
 /**
@@ -191,9 +263,9 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
   const out: ShiftSales = {
     byConcept: new Map(),
     totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
-    cashCents: 0, cardPaidCents: 0, cardAwaitingCents: 0, compCents: 0,
+    cashCents: 0, cardPaidCents: 0, cardAwaitingCents: 0, raastByCode: new Map(), raastUnknown: [], compCents: 0,
     unsettledCents: 0, settledElsewhereCents: 0, roundingCents: 0, nonTillCashCents: 0,
-    cancelledPaid: { cashCents: 0, cardCents: 0, orderIds: [], byOrder: [] },
+    cancelledPaid: { cashCents: 0, cardCents: 0, raastByCode: new Map(), orderIds: [], byOrder: [] },
   }
 
   const orders = new Map<string, ShiftSaleOrder>()
@@ -211,6 +283,8 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
       for (const p of here) {
         if (p.method === 'comp') continue
         if (p.method === 'cash') out.cancelledPaid.cashCents += p.amountCents
+        // Raast: held on the receiving bank it went into, never 1030.
+        else if (p.method === 'raast') addRaast(out.cancelledPaid.raastByCode, out.raastUnknown, order.id, p)
         else out.cancelledPaid.cardCents += p.amountCents
         cents += p.amountCents
       }
@@ -233,6 +307,9 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
       receivedHere += p.amountCents
       if (p.method === 'cash') out.cashCents += p.amountCents
       else if (p.method === 'comp') out.compCents += p.amountCents
+      // Raast QR (always 'paid' here — a pending Raast portion is not a
+      // receipt): the receiving bank's code, before the card branch.
+      else if (p.method === 'raast') addRaast(out.raastByCode, out.raastUnknown, order.id, p)
       else if (p.status === 'paid') out.cardPaidCents += p.amountCents
       else out.cardAwaitingCents += p.amountCents
     }
@@ -312,6 +389,10 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   if (!tenantId) return { ok: false, reason: 'shift_has_no_company' }
 
   const sales = summariseShiftSales(shiftId, shift.payments)
+  // A Raast row with no receiving-bank code on record: the close is refused
+  // (RAAST_ACCOUNT_UNKNOWN — closeShift flags it posting_failed), never
+  // booked to 1030 or any other guessed account.
+  if (sales.raastUnknown.length > 0) throw raastAccountUnknown(sales.raastUnknown.map((r) => r.paymentId))
 
   // Expected drawer — the one formula (lib/drawer.ts). Positive variance = over.
   const drawer       = drawerExpectationOf(shift)
@@ -336,11 +417,25 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     }
   }
   const refundsToBook = refundRows.filter((p) => !ownPosted.has(p.id))
+  // A Raast refund always posts its own entry, in the refund's own
+  // transaction (Cr the receiving bank — orderPosting refundCreditAccount);
+  // one without it is never booked here as a card refund to 1030: the close
+  // is refused, so it is flagged and fixed.
+  const raastRefundsUnbooked = refundsToBook.filter((p) => p.method === 'raast')
+  if (raastRefundsUnbooked.length > 0) {
+    throw new AppError(
+      'RAAST_REFUND_NOT_BOOKED',
+      `Raast QR refund${raastRefundsUnbooked.length === 1 ? '' : 's'} ${raastRefundsUnbooked.map((p) => p.id).join(', ')} on drawer ${shiftId.slice(0, 8)} ` +
+      'ha' + (raastRefundsUnbooked.length === 1 ? 's' : 've') + ' no journal entry of its own — the close is not booked until it has one (never as a card refund to 1030).',
+      422,
+      { paymentIds: raastRefundsUnbooked.map((p) => p.id) },
+    )
+  }
   const cashRefundsToBook = refundsToBook
     .filter((p) => p.method === 'cash')
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
   const cardRefundsToBook = refundsToBook
-    .filter((p) => p.method !== 'cash' && p.method !== 'comp')
+    .filter((p) => p.method !== 'cash' && p.method !== 'comp' && p.method !== 'raast')
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
   const payoutsToBook = payoutRows
     .filter((m) => !ownPosted.has(m.id))
@@ -358,6 +453,16 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   }
   if (sales.cardAwaitingCents > 0) {
     lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: sales.cardAwaitingCents, memo: `POS card sales awaiting gateway confirmation ${tag}` })
+  }
+  // Raast QR: one debit per receiving bank's chart code — the money is in
+  // that bank, not with a card processor. RAAST_RECEIPTS_MEMO keeps bank
+  // reconciliation from pairing a statement line with this aggregate (each
+  // transfer is matched to its own RaastReceipt).
+  for (const code of [...sales.raastByCode.keys()].sort()) {
+    const r = sales.raastByCode.get(code)!
+    if (r.cents > 0) {
+      lines.push({ accountCode: code, type: 'debit', amountCents: r.cents, memo: `${RAAST_RECEIPTS_MEMO} — POS Raast sales (${r.count}) ${tag}` })
+    }
   }
   if (sales.compCents > 0) {
     lines.push({ accountCode: ACCT.COMPS, type: 'debit', amountCents: sales.compCents, memo: `POS comps ${tag}` })
@@ -383,12 +488,20 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   // — held as a refund due to the customer (credit 1110) until handed back.
   // One 1110 line per order, naming it in full: handing the money back (a
   // refund row on the cancelled order) clears exactly that line — Dr 1110 /
-  // Cr drawer or card (orderPosting.ts postRefundPayment, LEDGER-R5).
+  // Cr drawer, card or the Raast bank (orderPosting.ts postRefundPayment,
+  // LEDGER-R5). Raast money is debited to the bank it went into, per code.
   const cp = sales.cancelledPaid
-  if (cp.cashCents + cp.cardCents > 0) {
+  const cancelledRaastCents = raastTotalCents(cp.raastByCode)
+  if (cp.cashCents + cp.cardCents + cancelledRaastCents > 0) {
     const memo = `${REFUND_DUE_PREFIX} — paid on cancelled order(s) ${cp.orderIds.map((id) => `#${orderRefOf(id)}`).join(', ')}, not a sale ${tag}`.slice(0, 250)
     if (cp.cashCents > 0) lines.push({ accountCode: ACCT.CASH_DRAWER,     type: 'debit', amountCents: cp.cashCents, memo })
     if (cp.cardCents > 0) lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: cp.cardCents, memo })
+    for (const code of [...cp.raastByCode.keys()].sort()) {
+      const r = cp.raastByCode.get(code)!
+      if (r.cents <= 0) continue
+      const raastMemo = `${RAAST_RECEIPTS_MEMO} — ${REFUND_DUE_PREFIX} — Raast paid on cancelled order(s) ${r.orderIds.map((id) => `#${orderRefOf(id)}`).join(', ')}, not a sale ${tag}`.slice(0, 250)
+      lines.push({ accountCode: code, type: 'debit', amountCents: r.cents, memo: raastMemo })
+    }
     for (const o of cp.byOrder) {
       lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'credit', amountCents: o.cents, memo: refundDueMemo(o.orderId, tag) })
     }
@@ -484,14 +597,17 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
 
   const debits  = lines.filter((l) => l.type === 'debit').reduce((t, l) => t + l.amountCents, 0)
   const credits = lines.filter((l) => l.type === 'credit').reduce((t, l) => t + l.amountCents, 0)
+  const perCode = (m: Map<string, RaastCodeTotals>) => [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([c, v]) => `${c}:${v.cents}`).join(',')
   const diagnostics =
-    `cash=${sales.cashCents} card=${sales.cardPaidCents} cardAwaiting=${sales.cardAwaitingCents} comps=${sales.compCents} ` +
+    `cash=${sales.cashCents} card=${sales.cardPaidCents} cardAwaiting=${sales.cardAwaitingCents} ` +
+    `raast=${raastTotalCents(sales.raastByCode)}[${perCode(sales.raastByCode)}] comps=${sales.compCents} ` +
     `unsettled=${sales.unsettledCents} settledElsewhere=${sales.settledElsewhereCents} rounding=${sales.roundingCents} ` +
     `nonTillCash=${sales.nonTillCashCents} variance=${cashVariance} drops=${drawer.dropsCents} in=${cashIn} ` +
     `cashRefunds=${cashRefundsToBook} cardRefunds=${cardRefundsToBook} payouts=${payoutsToBook} ` +
     `tax=${sales.totals.taxCents} revenue=${sales.totals.revenueCents} svc=${sales.totals.serviceChargeCents} ` +
     `tips=${sales.totals.tipCents} discounts=${sales.totals.discountCents} wallet=${sales.totals.walletAppliedCents} ` +
-    `giftCards=${sales.totals.giftCardAppliedCents} cancelledPaid=${cp.cashCents + cp.cardCents}`
+    `giftCards=${sales.totals.giftCardAppliedCents} cancelledPaid=${cp.cashCents + cp.cardCents + cancelledRaastCents} ` +
+    `cancelledRaast=${cancelledRaastCents}[${perCode(cp.raastByCode)}]`
   return { ok: true, tenantId, entryDate: shift.closedAt ?? new Date(), lines, debits, credits, diagnostics }
 }
 
@@ -566,7 +682,7 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
   const { fmtPktDate } = await import('./dates.js')
   const closed = await prisma.shift.findMany({
     where: { status: 'closed', ...shiftOfCompany({ tenantId: { in: opts.tenantIds } }) },
-    select: { id: true, closedAt: true },
+    select: { id: true, closedAt: true, tenantId: true, locationId: true, ...SHIFT_COMPANY_INCLUDE },
     orderBy: { closedAt: 'asc' },
   })
   const posted = new Set(
@@ -588,7 +704,18 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
   for (const s of closed) {
     if (posted.has(s.id)) continue
     const closedAt = s.closedAt?.toISOString() ?? null
-    const entry = await buildShiftCloseEntry(s.id)
+    // A close the ledger refuses outright (e.g. a Raast row with no bank code
+    // on record — RAAST_ACCOUNT_UNKNOWN) is listed, never forced, and never
+    // stops the rest of the run.
+    let entry: ShiftCloseEntry
+    try {
+      entry = await buildShiftCloseEntry(s.id)
+    } catch (err) {
+      const tenantId = shiftTenantId(s)
+      if (!tenantId || !opts.tenantIds.includes(tenantId)) continue
+      rows.push({ shiftId: s.id, closedAt, tenantId, outcome: 'error', detail: (err as Error).message })
+      continue
+    }
     if (!entry.ok) { rows.push({ shiftId: s.id, closedAt, tenantId: null, outcome: entry.reason, detail: '' }); continue }
     // Only this call's companies — the shift→company precedence can differ
     // from the query's OR in an edge case, so check the resolved company.

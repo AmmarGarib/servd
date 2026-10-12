@@ -57,8 +57,12 @@ import { isoPkt, sha256Hex, stableStringify } from '../util.js'
 type Tx = Prisma.TransactionClient
 
 const CASH = new Set(['cash'])
-// The servd wallet is paid online — the card rate (lib/pricing CARD_TENDERS).
-const CARD = new Set(['card', 'keenu_qr', 'wallet'])
+// The digital tax group (lib/pricing CARD_TENDERS → Concept.taxRateCard):
+// card (Card – Keenu), Raast QR (an instant bank transfer to the seller's
+// account, 2026-10-12), the retired Keenu QR (old sales) and the servd wallet
+// (paid online). A Raast-only sale is mode 'card'; any cash with it is
+// 'mixed', exactly as for card.
+const CARD = new Set(['card', 'raast', 'keenu_qr', 'wallet'])
 // Not money tendered at this sale: a comp, and a gift card (its money was
 // taken when the card was sold). Neither decides cash / card.
 const NOT_MONEY = new Set(['comp', 'gift_card'])
@@ -147,7 +151,11 @@ export function resolveRegistrations(
   return out
 }
 
-/** cash / card / mixed from the tenders (comps and gift cards are not money tendered now and do not decide the mode). */
+/**
+ * cash / card / mixed from the tenders (comps and gift cards are not money
+ * tendered now and do not decide the mode). 'card' is the digital group:
+ * card, Raast QR, the retired Keenu QR and the servd wallet.
+ */
 export function paymentModeOf(methods: string[]): 'cash' | 'card' | 'mixed' {
   const money = methods.filter((m) => !NOT_MONEY.has(m))
   if (money.length === 0) return 'cash'
@@ -284,8 +292,10 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
   const remainder = billCents - (taxableTotal + order.taxCents + order.serviceChargeCents + tipCents - billDiscountCents)
   const deliveryChargeCents = order.fulfilmentType === 'delivery' && remainder > 0 ? remainder : 0
 
-  // Tenders: the paid rows, then what is still pending (COD cash) up to the
-  // charged amount, then the wallet and gift cards.
+  // Tenders: the paid rows (cash, card, raast — Raast QR — and the retired
+  // keenu_qr on old sales, each by its stored amount), then what is still
+  // pending (COD cash) up to the charged amount, then the wallet and gift
+  // cards.
   const tenders = new Map<string, number>()
   const addTender = (method: string, cents: number) => { if (cents > 0) tenders.set(method, (tenders.get(method) ?? 0) + cents) }
   let left = valued.totalCents
@@ -364,6 +374,18 @@ export interface RefundOriginal {
   fiscalNumber: string
   authority?: string
   issuedAt?: string
+}
+
+/**
+ * The tender a return defaults to when the refund engine names none (a
+ * whole-order void): Raast QR when the sale's money was all Raast — the
+ * money goes back by bank transfer — else card for a card-mode sale, else
+ * cash (the rule before Raast, unchanged).
+ */
+function defaultRefundMethod(sale: FiscalPayload): string {
+  const money = sale.payment.tenders.map((t) => t.method).filter((m) => !NOT_MONEY.has(m))
+  if (money.length > 0 && money.every((m) => m === 'raast')) return 'raast'
+  return sale.payment.mode === 'card' ? 'card' : 'cash'
 }
 
 /**
@@ -489,7 +511,7 @@ export function buildRefundPayload(sale: FiscalPayload, opts: {
     ...(refundBillDiscount > 0 && { billDiscountCents: refundBillDiscount }),
     totalCents: amount,
   }
-  const method = opts.method ?? (sale.payment.mode === 'card' ? 'card' : 'cash')
+  const method = opts.method ?? defaultRefundMethod(sale)
   return {
     version: 1,
     documentId: opts.documentId,
@@ -552,12 +574,17 @@ export function toSrbInvoiceFields(p: FiscalPayload) {
     taxAmount,
     discountAmount,
     netAmount: round2(saleValue + taxAmount - discountAmount),
+    // SRB has two modes: Cash only when every tender is cash; card, Raast QR,
+    // the wallet and any mix are 'Card'.
     modeOfPay: tenders.length > 0 && tenders.every((m) => m === 'cash') ? 'Cash' : 'Card',
     consumerName: na(p.buyer?.legalName),
     consumerNTN: na(p.buyer?.ntn ?? p.buyer?.cnic),
     cpcCode: 'N/A',
   }
 }
+
+/** QR bank transfers in FBR's PaymentMode 3: Raast QR, and the retired Keenu QR's old sales. */
+const RAAST_OR_QR = new Set(['raast', 'keenu_qr'])
 
 /** FBR PRAL POS invoice figures for this document (token / credentials excluded). */
 export function toFbrInvoiceFields(p: FiscalPayload) {
@@ -579,7 +606,11 @@ export function toFbrInvoiceFields(p: FiscalPayload) {
     TotalTaxCharged: toPkr(p.totals.taxCents),
     Discount: toPkr(p.totals.discountCents + (totalsOf(p).billDiscountCents ?? 0)),
     FurtherTax: 0,
-    PaymentMode: methods.includes('cash') ? 2 : methods.includes('keenu_qr') ? 3 : 1, // 1 card, 2 cash, 3 wallet/QR
+    // 1 card, 2 cash, 3 wallet/QR. Any cash → 2; else a QR bank transfer
+    // (Raast QR, or the retired Keenu QR on old sales) → 3; else 1. Raast as 3
+    // is servd's default reading of PRAL's modes — to be confirmed with the
+    // fiscal POS vendor (docs/pos-connector-api.md §5).
+    PaymentMode: methods.includes('cash') ? 2 : methods.some((m) => RAAST_OR_QR.has(m)) ? 3 : 1,
     InvoiceType: p.kind === 'refund' ? 3 : 1, // 3 = credit note
     Items: p.lines.map((l) => ({
       ItemCode: 'POS-ITEM',

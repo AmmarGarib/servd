@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
-import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer } from './service.js'
+import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer, keenuQrRetired } from './service.js'
 import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -10,6 +10,8 @@ import { scopeTenantWhere, assertConceptOwned, shiftWhere, findShiftInScope, ass
 import { buildReceiptHtml, buildReceiptData } from './receipt.js'
 import { assertShiftHasNoActiveCharges } from '../../connectors/terminal/guard.js'
 import { audit } from '../../lib/audit.js'
+import { REFUND_TENDERS, legacyRingUpTender } from '../../lib/tenders.js'
+import type { RaastTenderMeta } from './raastTender.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -41,9 +43,34 @@ const posItemSchema = z.object({
     .default([]),
 })
 
-// The tender the bill is priced for (decision 9: cash 15% / card 8%). Not
-// chosen → cash; the payment re-prices if the customer pays the other way.
-const tillTenderSchema = z.enum(['cash', 'card', 'keenu_qr'])
+// The tender the bill is priced for (decision 9: cash 15% / card or Raast QR —
+// the digital group — 8%). Not chosen → cash; the payment re-prices if the
+// customer pays the other way. Ring-up and the ring-up quote accept the
+// retired 'keenu_qr' ONLY as a legacy alias of the digital rate, so an
+// offline-queued pre-deploy ring-up never 400s: it is priced as 'raast'.
+const ringUpTenderSchema = z.enum(['cash', 'card', 'raast', 'keenu_qr']).transform((m): 'cash' | 'card' | 'raast' => {
+  const t = legacyRingUpTender(m)
+  return t === 'keenu_qr' ? 'raast' : t
+})
+
+// A tender money is taken with (payments, settles, the quote for a payment).
+// 'keenu_qr' parses, so the service can answer 422 KEENU_QR_RETIRED rather
+// than a bare validation error.
+const tillTenderSchema = z.enum(['cash', 'card', 'raast', 'keenu_qr'])
+
+/**
+ * Raast QR (spec D9): the cashier checked the money arrived on the COUNTER
+ * device (bank SMS / merchant app — never the customer's screen) and ticks it.
+ * Required with every Raast reference the till types (400 RAAST_NOT_VERIFIED
+ * without it). Only `true` is accepted.
+ */
+const raastVerifiedSchema = z.literal(true).optional()
+
+/** The server-side Raast meta of a cashier-typed reference (never a client body's own `raast`). */
+function cashierRaast(raastVerified: true | undefined): RaastTenderMeta {
+  return { via: 'cashier', cashierVerified: raastVerified === true }
+}
+
 
 const posOrderSchema = z.object({
   conceptId: z.string().uuid(),
@@ -61,14 +88,14 @@ const posOrderSchema = z.object({
   // double-tap or an offline-queue resend dedupes to ONE order instead of
   // firing duplicate tickets. Absent → the server generates a UUID (FOH-06).
   idempotencyKey: z.string().min(8).max(100).optional(),
-  paymentMethod: tillTenderSchema.optional(),
+  paymentMethod: ringUpTenderSchema.optional(),
 })
 
 const posQuoteSchema = z.object({
   conceptId: z.string().uuid(),
   items: z.array(posItemSchema).min(1),
   discountCents: z.number().int().min(0).default(0),
-  paymentMethod: tillTenderSchema.optional(),
+  paymentMethod: ringUpTenderSchema.optional(),
 })
 
 const paymentSchema = z.object({
@@ -84,9 +111,14 @@ const paymentSchema = z.object({
       // What this tender takes: its share of the bill PLUS its tip.
       amountCents: z.number().int().min(0),
       tenderedCents: z.number().int().min(0).optional(),
-      // The card terminal's reference number — required for card / QR
-      // (owner decision 4).
+      // The card terminal's reference number — required for card (owner
+      // decision 4); for Raast QR the bank reference (transaction ID) from
+      // the bank SMS / merchant app on the counter phone — required,
+      // validated, unique per company.
       gatewayRef: z.string().trim().max(120).optional(),
+      // Raast QR: "I saw it arrive on the counter phone" — required with a
+      // Raast reference (spec D9).
+      raastVerified: raastVerifiedSchema,
       gateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'none']).optional(),
       // FOH-14: the part of amountCents that is a tip (→ Order.tipCents).
       tipCents: z.number().int().min(0).optional(),
@@ -155,8 +187,12 @@ export async function posRoutes(fastify: FastifyInstance) {
 
   // POST /pos/payments — take tenders at the till for what is due. Returns
   // `fiscal` (the sale's FiscalView once the bill completes; the till's
-  // bounded attempt to file it) and the deprecated `srb` alias (spec §8.4).
-  // 409 TERMINAL_CHARGE_ACTIVE while the card machine works on this bill.
+  // bounded attempt to file it), the deprecated `srb` alias (spec §8.4) and
+  // `raast` ([{receiptId, status, bankRef, confirmedVia, smsConfirmed}] for a
+  // Raast QR tender — 'provisional' until the bank statement matches it).
+  // 409 TERMINAL_CHARGE_ACTIVE while the card machine works on this bill;
+  // 409 RAAST_AWAITING while a Raast request waits for the customer's
+  // transfer; 422 KEENU_QR_RETIRED for the retired Keenu QR.
   fastify.post('/payments', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
     const body = paymentSchema.parse(req.body)
     const order = await prisma.order.findFirst({
@@ -171,7 +207,18 @@ export async function posRoutes(fastify: FastifyInstance) {
     // caller's own unless they are a manager (FOH-15).
     await assertShiftOf(order.concept.tenantId, body.shiftId, true)
     await assertDrawerOperator(body.shiftId, req.staffUser!)
-    const result = await processPayment(body)
+    const result = await processPayment({
+      orderId: body.orderId,
+      shiftId: body.shiftId,
+      idempotencyKey: body.idempotencyKey,
+      actorId: req.staffUser!.id,
+      // A Raast reference typed at the till is the cashier's, with their
+      // counter-device tick — the server sets the tender's Raast meta.
+      payments: body.payments.map(({ raastVerified, ...p }) => ({
+        ...p,
+        ...(p.method === 'raast' && { raast: cashierRaast(raastVerified) }),
+      })),
+    })
     // A card slip keyed by hand while the card machine is offline (spec §7.13): audited.
     const keyed = body.payments.filter((p) => p.manualReason)
     if (keyed.length > 0 && !result.replayed) {
@@ -184,15 +231,17 @@ export async function posRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(result)
   })
 
-  // GET /pos/orders/:orderId/quote?method=cash|card|keenu_qr — what POST
+  // GET /pos/orders/:orderId/quote?method=cash|card|raast — what POST
   // /pos/payments will demand for this order paid that way (re-priced for the
-  // tender while nothing is paid yet). Read-only; the same function the
-  // payment prices with (quoteOrderForTender / tenderPriceOf).
+  // tender while nothing is paid yet; Raast QR at the card rate). Read-only;
+  // the same function the payment prices with (quoteOrderForTender /
+  // tenderPriceOf). keenu_qr → 422 KEENU_QR_RETIRED (a quote for a payment).
   fastify.get<{ Params: { orderId: string }; Querystring: { method?: string } }>(
     '/orders/:orderId/quote',
     { preHandler: requireAuth(...CASHIERS) },
     async (req, reply) => {
       const { method } = z.object({ method: tillTenderSchema.default('cash') }).parse(req.query)
+      if (method === 'keenu_qr') throw keenuQrRetired()
       const order = await prisma.order.findFirst({
         where: { id: req.params.orderId, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         select: { id: true },
@@ -224,7 +273,9 @@ export async function posRoutes(fastify: FastifyInstance) {
   // on an open drawer: a check-split portion, or a storefront cash-on-delivery
   // amount the rider pays into the till (owner decision 4 — it lands on this
   // drawer's Z-report). The one settle (settlePayment), shared with
-  // /check-split and the Keenu webhook.
+  // /check-split and the Keenu webhook. A Raast QR portion takes its bank
+  // reference and `raastVerified: true` (the counter-device tick); a pending
+  // Keenu QR portion → 422 KEENU_QR_RETIRED (take the rest with Pay).
   fastify.post<{ Params: { id: string } }>(
     '/payments/:id/settle',
     { preHandler: requireAuth(...CASHIERS) },
@@ -233,6 +284,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         shiftId: z.string().uuid(),
         gatewayRef: z.string().trim().max(120).optional(),
         tenderedCents: z.number().int().min(0).optional(),
+        raastVerified: raastVerifiedSchema,
       }).parse(req.body)
       const payment = await prisma.payment.findFirst({
         where: { id: req.params.id, order: { concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } },
@@ -245,7 +297,10 @@ export async function posRoutes(fastify: FastifyInstance) {
       await assertShiftOf(payment.order.concept.tenantId, body.shiftId, true)
       // FOH-15: onto the caller's own drawer, unless a manager.
       await assertDrawerOperator(body.shiftId, req.staffUser!)
-      return settlePayment({ paymentId: payment.id, via: 'till', shiftId: body.shiftId, gatewayRef: body.gatewayRef, tenderedCents: body.tenderedCents })
+      return settlePayment({
+        paymentId: payment.id, via: 'till', shiftId: body.shiftId, gatewayRef: body.gatewayRef, tenderedCents: body.tenderedCents,
+        actorId: req.staffUser!.id, raast: cashierRaast(body.raastVerified),
+      })
     },
   )
 
@@ -371,7 +426,10 @@ export async function posRoutes(fastify: FastifyInstance) {
   // §17.4: EVERY void needs a manager — the signed-in user is one, or a valid
   // manager PIN of the order's company is sent (403 MANAGER_OVERRIDE_REQUIRED
   // / INVALID_MANAGER_PIN). The manager cap (RefundPolicy.managerVoidLimitCents)
-  // still applies; the approver is always recorded.
+  // still applies; the approver is always recorded. On a paid, still-open bill
+  // whose line goes back by Raast QR, the manager sends it from the bank first
+  // and `refundReference` is that outgoing transfer's reference (409
+  // RAAST_REFUND_REFERENCE_REQUIRED {amountCents} without it).
   fastify.post<{ Params: { orderId: string } }>(
     '/orders/:orderId/void',
     { preHandler: requireAuth(...CASHIERS) },
@@ -380,6 +438,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         orderItemId: z.string().uuid(),
         reason: z.string().min(1).max(200),
         managerOverridePin: z.string().optional(),     // required unless the signed-in user is a manager
+        refundReference: z.string().trim().max(120).optional(),
       }).parse(req.body)
       // Company scope through the shared helper — a null tenantFilter would
       // otherwise match every company-less brand.
@@ -397,6 +456,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
+        refundReference: body.refundReference,
       })
       return reply.status(200).send(result)
     },
@@ -563,7 +623,10 @@ export async function posRoutes(fastify: FastifyInstance) {
   // up to what is still refundable, the cash out of an OPEN drawer (owner
   // decision 3), its own journal entry, the fiscal return document
   // (`fiscalRefund`; `srbReturnInvoiceNo` is deprecated, always null), and
-  // status 'refunded' once in full.
+  // status 'refunded' once in full. A Raast QR refund is sent from the bank
+  // first: `gatewayRef` is the outgoing transfer's reference (400
+  // RAAST_REFUND_REF_REQUIRED) and a manager always approves it. An old Keenu
+  // QR sale is refunded by keenu_qr, exactly as before.
   fastify.post<{ Params: { orderId: string } }>(
     '/orders/:orderId/refund',
     { preHandler: requireAuth(...CASHIERS) },
@@ -575,7 +638,9 @@ export async function posRoutes(fastify: FastifyInstance) {
         managerOverridePin: z.string().optional(),
         // How the money goes back (defaults to the tender of the sale). Only
         // a tender the order was actually paid with (ONL-16).
-        method: tillTenderSchema.optional(),
+        method: z.enum(REFUND_TENDERS).optional(),
+        // Raast QR: the outgoing bank transfer's reference.
+        gatewayRef: z.string().trim().max(120).optional(),
         // The open drawer a cash refund leaves from (defaults to the
         // refunder's own open drawer).
         shiftId: z.string().uuid().optional(),
@@ -606,6 +671,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
         method: body.method,
+        gatewayRef: body.gatewayRef,
         shiftId: body.shiftId ?? null,
       })
       return reply.status(200).send(result)

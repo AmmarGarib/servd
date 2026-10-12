@@ -46,6 +46,18 @@ import { formatBrandName } from '../../lib/brandName.js'
 import { fiscalViewForOrder, type FiscalView } from '../../connectors/fiscal/view.js'
 import { renderQrSvg } from '../../connectors/fiscal/qr.js'
 import { fiscalReportingRequired } from '../../connectors/config.js'
+import { tenderLabel } from '../../lib/tenders.js'
+import { orderRefOf } from '../../lib/orderRef.js'
+
+/**
+ * How a tender prints (lib/tenders TENDER_LABEL): "Cash", "Card – Keenu",
+ * "Keenu QR (retired)" — and a Raast QR transfer with its bank reference,
+ * "Raast QR — Ref <bankRef>", so the customer and the till can trace it.
+ */
+export function paymentLabelOf(p: { method: string; gatewayRef: string | null }): { label: string; reference: string | null } {
+  const reference = p.method === 'raast' && p.gatewayRef ? p.gatewayRef : null
+  return { label: reference ? `${tenderLabel(p.method)} — Ref ${reference}` : tenderLabel(p.method), reference }
+}
 
 /** Statuses that have had their full & final bill (or ended, bannered CANCELLED). */
 const FINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'refunded', 'cancelled', 'rejected'])
@@ -153,7 +165,12 @@ export interface ReceiptData {
   totalCents: number
   paidCents: number
   tenderType: string | null
-  payments: Array<{ method: string; amountCents: number; tenderedCents: number | null }>
+  /**
+   * The tenders. `label` is how the tender prints ("Cash", "Card – Keenu",
+   * "Raast QR — Ref <bankRef>"); `reference` is a Raast transfer's bank
+   * reference (null for the others).
+   */
+  payments: Array<{ method: string; amountCents: number; tenderedCents: number | null; label: string; reference: string | null }>
   /** The order's status — a receipt for a refunded / cancelled order is not a valid bill. */
   status: string
   /**
@@ -162,8 +179,8 @@ export interface ReceiptData {
    * normal receipt.
    */
   banner: 'REFUNDED' | 'PARTLY REFUNDED' | 'CANCELLED' | null
-  /** Money handed back (refund rows), oldest first; amounts positive. */
-  refunds: Array<{ method: string; amountCents: number; at: string }>
+  /** Money handed back (refund rows), oldest first; amounts positive. `label` as the payments' (a Raast refund with its outgoing transfer's reference). */
+  refunds: Array<{ method: string; amountCents: number; at: string; label: string; reference: string | null }>
   refundedCents: number
   placedAt: string
   /**
@@ -233,12 +250,12 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
       modifiers: it.modifiers.map((m) => m.name).filter(Boolean),
     }
   })
-  const orderRef = order.id.slice(-8).toUpperCase()
+  const orderRef = orderRefOf(order.id)
   const invoiceNumber = order.taxInvoices[0]?.invoiceNumber ?? null
   const paid = order.payments.filter((p) => p.status === 'paid')
   const refunds = order.payments
     .filter((p) => p.status === 'refunded')
-    .map((p) => ({ method: p.method, amountCents: Math.abs(p.amountCents), at: (p.processedAt ?? p.createdAt).toISOString() }))
+    .map((p) => ({ method: p.method, amountCents: Math.abs(p.amountCents), at: (p.processedAt ?? p.createdAt).toISOString(), ...paymentLabelOf(p) }))
   const refundedCents = refunds.reduce((s, r) => s + r.amountCents, 0)
   const banner: ReceiptData['banner'] =
     order.status === 'refunded' ? 'REFUNDED'
@@ -317,7 +334,7 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
     totalCents: order.totalCents,
     paidCents: paid.reduce((s, p) => s + p.amountCents, 0),
     tenderType: paid[0]?.method ?? null,
-    payments: paid.map((p) => ({ method: p.method, amountCents: p.amountCents, tenderedCents: p.tenderedCents ?? null })),
+    payments: paid.map((p) => ({ method: p.method, amountCents: p.amountCents, tenderedCents: p.tenderedCents ?? null, ...paymentLabelOf(p) })),
     status: order.status,
     banner,
     refunds,
@@ -388,8 +405,10 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   const bannerHtml = banners.length > 0
     ? `<div class="center bold" style="font-size:16px;border:2px solid #000;padding:4px;margin:6px 0">${banners.map(esc).join(' · ')}</div>`
     : ''
+  // A Raast refund prints with its outgoing transfer's reference; the other
+  // tenders keep their established refund line.
   const refundRows = r.refunds.length > 0
-    ? `<div class="divider"></div>${r.refunds.map((x) => `<div>REFUND ${esc(x.method.replace(/_/g, ' '))} -${fmtPkr(x.amountCents)} (${fmtDate(x.at)})</div>`).join('')}<div class="bold">Refunded: -${fmtPkr(r.refundedCents)}</div>`
+    ? `<div class="divider"></div>${r.refunds.map((x) => `<div>REFUND ${esc(x.method === 'raast' ? x.label : x.method.replace(/_/g, ' '))} -${fmtPkr(x.amountCents)} (${fmtDate(x.at)})</div>`).join('')}<div class="bold">Refunded: -${fmtPkr(r.refundedCents)}</div>`
     : ''
   const authorityRows = await fiscalBlockHtml(r, cfg.showFbrInvoice)
   const cardRow = r.card && (r.card.last4 || r.card.authCode)
@@ -445,7 +464,7 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   </table>
   ${r.payments.length > 0 ? `
   <div class="divider"></div>
-  ${r.payments.map((p) => `<div>${esc(p.method.replace(/_/g, ' '))} ${fmtPkr(p.amountCents)}${p.tenderedCents && p.tenderedCents > p.amountCents ? ` / Change: ${fmtPkr(p.tenderedCents - p.amountCents)}` : ''}</div>`).join('')}
+  ${r.payments.map((p) => `<div>${esc(p.label)} ${fmtPkr(p.amountCents)}${p.tenderedCents && p.tenderedCents > p.amountCents ? ` / Change: ${fmtPkr(p.tenderedCents - p.amountCents)}` : ''}</div>`).join('')}
   ` : ''}
   ${cardRow}
   ${refundRows}

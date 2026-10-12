@@ -1,4 +1,5 @@
-// /health checks for the POS connector (spec §8.4). Each is ok / warn / off —
+// /health checks for the POS connector (spec §8.4) and Raast QR bank SMS
+// (raast spec §6.11). Each is ok / warn / off —
 // never fail: a fiscal POS or card machine being down must not mark the API
 // unhealthy (sales keep working; filing catches up).
 //
@@ -11,7 +12,7 @@
 import { prisma } from '../lib/prisma.js'
 import { secretKeyConfigured } from '../lib/secretBox.js'
 import { connectorNow } from './registry.js'
-import { reportingRequiredOf } from './config.js'
+import { parseRaastSettings, reportingRequiredOf } from './config.js'
 
 /** Companies whose CEO switched "Fiscal reporting required" OFF. */
 export async function reportingOffTenantIds(): Promise<string[]> {
@@ -22,13 +23,13 @@ export async function reportingOffTenantIds(): Promise<string[]> {
 export type ConnectorCheck = 'ok' | 'warn' | 'off'
 
 export interface ConnectorHealth {
-  checks: { fiscalConnector: ConnectorCheck; cardTerminal: ConnectorCheck; connectorSecretKey: ConnectorCheck }
+  checks: { fiscalConnector: ConnectorCheck; cardTerminal: ConnectorCheck; connectorSecretKey: ConnectorCheck; raastSms: ConnectorCheck }
   details: Record<string, string>
 }
 
 export async function connectorHealthChecks(): Promise<ConnectorHealth> {
   const details: Record<string, string> = {}
-  const checks: ConnectorHealth['checks'] = { fiscalConnector: 'off', cardTerminal: 'off', connectorSecretKey: 'off' }
+  const checks: ConnectorHealth['checks'] = { fiscalConnector: 'off', cardTerminal: 'off', connectorSecretKey: 'off', raastSms: 'off' }
   const now = connectorNow()
 
   // ── Fiscal ──
@@ -87,10 +88,39 @@ export async function connectorHealthChecks(): Promise<ConnectorHealth> {
     details['cardTerminal'] = `check failed: ${(err as Error).message}`
   }
 
+  // ── Raast QR bank SMS (spec §6.11) ──
+  // off: no company has SMS matching on. warn: an SMS from a listed bank
+  // sender was not understood in 24 h, a Raast bill needs a person, or an
+  // intent has waited past twice its TTL (the expiry sweep is not running).
+  try {
+    const on = await prisma.posConnector.findMany({ where: { kind: 'raast', enabled: true }, select: { tenantId: true, settings: true } })
+    const reasons: string[] = []
+    const dayAgo = new Date(now.getTime() - 86_400_000)
+    const [unparsed, attention] = await Promise.all([
+      prisma.bankSmsAlert.count({ where: { status: 'unparsed', receivedAt: { gte: dayAgo } } }),
+      prisma.raastReceipt.count({ where: { status: 'needs_attention' } }),
+    ])
+    let stale = 0
+    for (const c of on) {
+      const ttl = parseRaastSettings(c.settings).intentTtlMin
+      stale += await prisma.raastReceipt.count({ where: { tenantId: c.tenantId, status: 'awaiting', createdAt: { lt: new Date(now.getTime() - 2 * ttl * 60_000) } } })
+    }
+    if (on.length > 0 || unparsed > 0 || attention > 0) checks.raastSms = 'ok'
+    if (unparsed > 0) reasons.push(`${unparsed} bank SMS not understood in 24 h (check the Raast QR templates)`)
+    if (attention > 0) reasons.push(`${attention} Raast payment(s) need a person`)
+    if (stale > 0) reasons.push(`${stale} Raast intent(s) waiting past twice their time limit (is the Raast worker running?)`)
+    if (reasons.length > 0) checks.raastSms = 'warn'
+    details['raastSms'] = reasons.length > 0 ? reasons.join('; ') : (on.length > 0 ? `${on.length} compan${on.length === 1 ? 'y' : 'ies'} matching bank SMS` : 'Bank-SMS matching is off everywhere')
+  } catch (err) {
+    checks.raastSms = 'warn'
+    details['raastSms'] = `check failed: ${(err as Error).message}`
+  }
+
   // ── Secret key ──
   try {
     const encrypted = await prisma.posConnector.count({ where: { OR: [{ apiKeyEnc: { startsWith: 'enc:v1:' } }, { webhookSecretEnc: { startsWith: 'enc:v1:' } }] } })
       + await prisma.setting.count({ where: { value: { startsWith: 'enc:v1:' } } })
+      + await prisma.bankSmsDevice.count({ where: { tokenEnc: { startsWith: 'enc:v1:' } } })
     if (secretKeyConfigured()) {
       checks.connectorSecretKey = 'ok'
       details['connectorSecretKey'] = 'SERVD_SECRET_KEY is set'

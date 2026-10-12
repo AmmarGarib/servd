@@ -80,7 +80,7 @@ export function caller(app: FastifyInstance) {
 }
 
 /** Configure a company's connector directly (tests only). */
-export async function setConnector(tenantId: string, kind: 'fiscal' | 'terminal', data: {
+export async function setConnector(tenantId: string, kind: 'fiscal' | 'terminal' | 'raast', data: {
   driver?: string; enabled?: boolean; settings?: Record<string, unknown>; webhookSecret?: string | null; liveSince?: Date | null
 }): Promise<void> {
   const existing = await prisma.posConnector.findUnique({ where: { tenantId_kind: { tenantId, kind } } })
@@ -113,7 +113,7 @@ export interface OrderSpec {
   promoDiscountCents?: number
   serviceChargeCents?: number
   tipCents?: number
-  payments?: Array<{ method: 'cash' | 'card' | 'keenu_qr' | 'comp'; amountCents: number; status?: 'paid' | 'pending' }>
+  payments?: Array<{ method: 'cash' | 'card' | 'keenu_qr' | 'raast' | 'comp'; amountCents: number; status?: 'paid' | 'pending' }>
   status?: 'completed' | 'received'
   locationId?: string | null
   srbInvoiceNumber?: string | null
@@ -183,4 +183,34 @@ export async function ringKheer(app: FastifyInstance, who: Who, co: Company, qua
   const r = await caller(app)(who, 'POST', '/pos/orders', { conceptId: co.conceptId, items: [{ menuItemId: co.items.kheer, name: 'Kheer', quantity, unitPriceCents: 55_000, modifiers: [] }] })
   if (r.statusCode !== 201) throw new Error(`ring failed ${r.statusCode} ${r.body}`)
   return r.json()
+}
+
+/**
+ * A Raast receiving account for a company (Raast suites — A, B, C, D share it).
+ * Creates a BankAccount linked to a chart code of THAT company (an active
+ * 102x bank account in its chart, created if missing), optionally the
+ * company's default and/or a brand's override.
+ */
+export async function mkRaastAccount(co: Company, opts: {
+  code?: string; name?: string; raastId?: string | null; isDefault?: boolean; forConceptId?: string | null
+  accountNumber?: string; isActive?: boolean
+} = {}): Promise<{ bankAccountId: string; ledgerCode: string }> {
+  const code = opts.code ?? '1021'
+  await prisma.account.upsert({
+    where: { tenantId_code: { tenantId: co.tenantId, code } },
+    update: { isActive: true },
+    create: { tenantId: co.tenantId, code, name: `Bank — Raast ${code}`, type: 'asset' },
+  })
+  const isDefault = opts.isDefault ?? !opts.forConceptId
+  if (isDefault) await prisma.bankAccount.updateMany({ where: { tenantId: co.tenantId, raastDefault: true }, data: { raastDefault: false } })
+  const bank = await prisma.bankAccount.create({
+    data: {
+      tenantId: co.tenantId, name: opts.name ?? `Raast ${code}`, bankName: 'Meezan', accountTitle: `Co ${co.tenantId.slice(-4)}`,
+      accountNumber: opts.accountNumber ?? `0101${randomBytes(4).toString('hex').replace(/[^0-9]/g, '7').slice(0, 8)}`,
+      raastId: opts.raastId === undefined ? `03${randomBytes(4).toString('hex').replace(/[^0-9]/g, '1').slice(0, 9)}` : opts.raastId,
+      raastDefault: isDefault, accountCode: code, isActive: opts.isActive ?? true,
+    },
+  })
+  if (opts.forConceptId) await prisma.concept.update({ where: { id: opts.forConceptId }, data: { raastBankAccountId: bank.id } })
+  return { bankAccountId: bank.id, ledgerCode: code }
 }

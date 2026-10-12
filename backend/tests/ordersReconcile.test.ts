@@ -27,6 +27,7 @@ import { priceOrder, tenderOf, tenderOfPayments, allocateTaxCents, gstRatePct } 
 import { completeOrder, completionDoor, updateOrderStatus, ingestOrder } from '../src/modules/orders/service.js'
 import { createPosOrder, processPayment } from '../src/modules/pos/service.js'
 import { markDelivered } from '../src/modules/dispatch/service.js'
+import { mkRaastAccount } from './connectorsFixtures.js'
 import { expoRoutes } from '../src/modules/expo/routes.js'
 import { orderRoutes } from '../src/modules/orders/routes.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
@@ -136,11 +137,14 @@ afterAll(async () => {
 // ─── Pricing ──────────────────────────────────────────────────────────────────
 
 describe('priceOrder — the one GST rule', () => {
-  it('maps tenders: cash (incl. cash on delivery) 15%, card / QR / online 8%, unknown → cash', () => {
+  it('maps tenders: cash (incl. cash on delivery) 15%, card / Raast QR / online 8% (the digital group), unknown → cash', () => {
     expect(tenderOf('cash')).toBe('cash')
-    for (const m of ['card', 'keenu_qr', 'keenu', 'jazzcash', 'easypaisa', 'wallet']) expect(tenderOf(m)).toBe('card')
+    // Raast QR is the digital group with card; the retired Keenu QR still reads at the card rate.
+    for (const m of ['card', 'raast', 'keenu_qr', 'keenu', 'jazzcash', 'easypaisa', 'wallet']) expect(tenderOf(m)).toBe('card')
     for (const m of ['split', 'comp', null, undefined]) expect(tenderOf(m)).toBe('cash')
     expect(tenderOfPayments(['card', 'keenu_qr'])).toBe('card')
+    expect(tenderOfPayments(['card', 'raast'])).toBe('card')
+    expect(tenderOfPayments(['raast', 'cash'])).toBe('cash')
     expect(tenderOfPayments(['card', 'cash'])).toBe('cash')
   })
 
@@ -231,6 +235,10 @@ describe('the till — priced by tender, complete at payment, once', () => {
 
   it('a group order is priced at the cash rate and re-priced to the tender used at the till', async () => {
     const c = await concept()
+    // Raast QR (the digital group) replaced Keenu QR at the till: the brand's
+    // company needs a Raast receiving account, and the cashier types the bank
+    // reference after checking the counter phone.
+    const raast = await mkRaastAccount({ tenantId: tenantA, conceptId, locationId: '', items: { nihari: burgerId, kheer: burgerId, water: waterId } })
     const price = await priceOrder([{ menuItemId: burgerId, unitPriceCents: 100_000, quantity: 1 }], 'cash', 'group', c)
     const { order: o } = await ingestOrder({
       source: 'servd', external_id: `group-RC${Date.now()}`, concept_id: conceptId, placed_at: new Date().toISOString(),
@@ -240,11 +248,24 @@ describe('the till — priced by tender, complete at payment, once', () => {
       fulfilment_type: 'dine_in', raw_payload: { channel: 'group_order', shareCode: 'RC' },
     }, { price })
     expect(completionDoor(o)).toBe('payment')
-    await processPayment({ orderId: o.id, shiftId, payments: [{ method: 'keenu_qr', amountCents: 108_000, gatewayRef: 'QR-9' }] })
-    const done = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
+    // The retired Keenu QR is refused, nothing written.
+    await expect(processPayment({ orderId: o.id, shiftId, payments: [{ method: 'keenu_qr', amountCents: 108_000, gatewayRef: 'QR-9' }] }))
+      .rejects.toMatchObject({ code: 'KEENU_QR_RETIRED', statusCode: 422 })
+    await processPayment({
+      orderId: o.id, shiftId, actorId: cashierId,
+      payments: [{ method: 'raast', amountCents: 108_000, gatewayRef: 'RC-RAAST-9001', raast: { via: 'cashier', cashierVerified: true } }],
+    })
+    const done = await prisma.order.findUniqueOrThrow({ where: { id: o.id }, include: { payments: true, raastReceipts: true } })
     expect(done.taxRatePct).toBe(8)
     expect(done.status).toBe('completed')
     expect(await claims(o.id)).toBe(1)
+    const paid = done.payments.find((p) => p.status === 'paid')!
+    expect(paid).toMatchObject({ method: 'raast', gateway: 'raast', gatewayRef: 'RCRAAST9001', amountCents: 108_000 })
+    expect(done.raastReceipts).toHaveLength(1)
+    expect(done.raastReceipts[0]).toMatchObject({
+      tenantId: tenantA, status: 'provisional', paymentId: paid.id, bankRef: 'RCRAAST9001',
+      bankAccountId: raast.bankAccountId, ledgerCode: raast.ledgerCode, amountCents: 108_000, confirmedVia: 'cashier', cashierVerified: true,
+    })
   })
 })
 

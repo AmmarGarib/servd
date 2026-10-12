@@ -56,6 +56,14 @@ export type ExceptionKind =
   | 'fiscal_manual_refund'   // a refund must be filed by hand (sale filed directly pre-cutover, or the POS cannot file refunds)
   | 'terminal_void_failed'   // card charged, servd refused it, and the automatic reversal failed
   | 'terminal_unreconciled'  // the card outcome disagrees with what servd recorded, or unknown > 24 h
+  // Raast QR (2026-10-12; connectors/raast, reconciliation/raast)
+  | 'raast_unmatched'          // provisional Raast receipts not on a bank statement after N days (per bank account)
+  | 'raast_unconfirmed'        // a cashier-typed Raast reference with no bank SMS (SMS matching ON)
+  | 'raast_needs_attention'    // a Raast bill an SMS or a settle could not complete cleanly
+  | 'raast_sms_unparsed'       // a listed bank sender's SMS matched no template
+  | 'raast_sms_unmatched'      // a bank credit SMS no bill claimed
+  | 'raast_statement_mismatch' // a statement line names a Raast reference but the amount differs
+  | 'raast_debit_alert'        // money left a Raast receiving account
   // Kinds that were filed as a stand-in 'high_value_void' until 2026-10-12
   // (migration 20261012120000 re-kinds the old rows by title). A de-dup query
   // over one of them must match the stand-in too — see STAND_IN_KINDS.

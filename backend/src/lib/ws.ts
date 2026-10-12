@@ -1,7 +1,8 @@
 // WebSocket server — Socket.io with Redis adapter for multi-process fanout
 // Rooms: station:{id}, concept:{id} (both ownership-checked at join),
-// tenant:{id}, tenant:{id}:orders, tenant:{id}:reservations (company-wide
-// fan-out). There is no global room any more: the old `all-orders` room
+// tenant:{id}, tenant:{id}:orders, tenant:{id}:reservations,
+// tenant:{id}:till (company-wide fan-out; till = Raast QR intents and bank
+// alerts, managers + cashier + foh). There is no global room any more: the old `all-orders` room
 // carried every company's order/item ids and statuses to every expediter and
 // manager socket, so each event now resolves its company and goes to
 // `tenant:{id}:orders` only.
@@ -22,6 +23,9 @@ import { MANAGEMENT_TIER } from './roles.js'
 const MANAGER_TIER: readonly string[] = MANAGEMENT_TIER
 
 let io: SocketIOServer | null = null
+
+/** Non-manager roles that work a till and join `tenant:{id}:till`. */
+const TILL_ROLES: readonly string[] = ['cashier', 'foh']
 
 interface SocketPrincipal {
   id: string
@@ -312,6 +316,12 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
       for (const t of tenantIds) void socket.join(`tenant:${t}:reservations`)
     }
 
+    // The till room (Raast QR, 2026-10-12): an SMS completing a bill, an
+    // intent expiring, a bank alert to attach. Per company, never global.
+    if (MANAGER_TIER.includes(role ?? '') || TILL_ROLES.includes(role ?? '')) {
+      for (const t of tenantIds) void socket.join(`tenant:${t}:till`)
+    }
+
     // Allow clients to opt-into a specific reservation room from the page
     // they're on (e.g. the admin reservation editor wants `concept:{id}`).
     socket.on('reservations:join', (data: { conceptId?: string }) => {
@@ -549,5 +559,37 @@ export function emitReservationEvent(
       if (tenantId) ws.to(`tenant:${tenantId}:reservations`).emit(event, payload)
       ws.to(`concept:${payload.conceptId}`).emit(event, payload)
     })
+  })
+}
+
+// ─── Till events (Raast QR, 2026-10-12) ───────────────────────────────────────
+//
+// `raast:intent` {receiptId, orderId, status, amountCents, refLast4?, reason?}
+// and `raast:alert` {alertId, status, amountCents, occurredAt, locationId} go
+// to `tenant:{id}:till` of the company that owns the receipt / the SMS — never
+// another company's till. Best effort: the till also polls.
+
+export type TillEvent = 'raast:intent' | 'raast:alert'
+
+/** Rooms a till event for `tenantId` goes to (pure). */
+export function tillRooms(tenantId: string | null | undefined): string[] {
+  return tenantId ? [`tenant:${tenantId}:till`] : []
+}
+
+type TillSpy = (rooms: string[], event: TillEvent, payload: Record<string, unknown>) => void
+let tillSpy: TillSpy | null = null
+
+/** Tests only: observe till emits (null removes the spy). */
+export function setTillEmitSpy(fn: TillSpy | null): void {
+  tillSpy = fn
+}
+
+export function emitTill(tenantId: string | null | undefined, event: TillEvent, payload: Record<string, unknown>) {
+  const rooms = tillRooms(tenantId)
+  if (rooms.length === 0) return
+  tillSpy?.(rooms, event, payload)
+  if (!io) return // no socket server (scripts, tests) — the till polls
+  safeEmit(event, (ws) => {
+    ws.to(rooms).emit(event, payload)
   })
 }

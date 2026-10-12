@@ -13,7 +13,7 @@ import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import { AppError } from '../lib/errors.js'
-import type { FiscalSettings, TerminalSettings } from './types.js'
+import type { FiscalSettings, RaastSettings, TerminalSettings } from './types.js'
 
 type Db = Prisma.TransactionClient | typeof prisma
 
@@ -99,6 +99,77 @@ export function parseFiscalSettings(raw: unknown): FiscalSettings {
 
 export function parseTerminalSettings(raw: unknown): TerminalSettings {
   return lenient(terminalSettingsSchema, raw)
+}
+
+// ─── Raast QR bank alerts (2026-10-12, spec §6.1) ─────────────────────────────
+// PosConnector(kind 'raast').settings. `enabled` on the row = bank-SMS
+// matching ON (the CEO switches it on after a readiness check). A template is
+// servd's own DSL (connectors/raast/sms.ts compileTemplate), never a user
+// regex.
+
+export const RAAST_IGNORE_KEYWORDS = ['OTP', 'one time', 'one-time', 'password', 'PIN', 'verification code']
+
+export const raastSenderSchema = z.object({
+  id: z.string().min(1).max(64),
+  senderId: z.string().trim().min(2).max(40),
+  bankAccountId: z.string().min(1).max(64),
+  accountLast4: z.string().regex(/^[0-9]{4}$/, '4 digits').optional(),
+  templateIds: z.array(z.string().min(1).max(64)).min(1).max(10),
+  active: z.boolean().default(true),
+})
+
+export const raastTemplateSchema = z.object({
+  id: z.string().min(1).max(64),
+  label: z.string().trim().min(1).max(80),
+  kind: z.enum(['credit', 'debit']),
+  template: z.string().min(1).max(500),
+  dateFormat: z.string().trim().min(1).max(20).optional(),
+  timeFormat: z.string().trim().min(1).max(20).optional(),
+  active: z.boolean().default(true),
+})
+
+export const raastSettingsSchema = z.object({
+  matchWindowMin: z.number().int().min(2).max(60).default(10),
+  intentTtlMin: z.number().int().min(5).max(120).default(30),
+  clockSkewMin: z.number().int().min(0).max(10).default(2),
+  smsConfirmMin: z.number().int().min(5).max(240).default(30),
+  unmatchedAlertEscalateMin: z.number().int().min(15).max(1440).default(120),
+  statementMatchDays: z.number().int().min(1).max(10).default(3),
+  provisionalFlagDays: z.number().int().min(1).max(30).default(3),
+  refMinLength: z.number().int().min(4).max(20).default(6),
+  refMaxLength: z.number().int().min(8).max(64).default(35),
+  ignoreKeywords: z.array(z.string().trim().min(1).max(40)).max(30).default(RAAST_IGNORE_KEYWORDS),
+  senders: z.array(raastSenderSchema).max(20).default([]),
+  templates: z.array(raastTemplateSchema).max(50).default([]),
+})
+
+export const DEFAULT_RAAST_SETTINGS: RaastSettings = raastSettingsSchema.parse({})
+
+/**
+ * Lenient read of the stored Raast settings: scalar fields fall back to their
+ * default one by one, and a sender / template entry that no longer validates
+ * is dropped on its own (never the whole list — one bad entry must not switch
+ * every bank's matching off).
+ */
+export function parseRaastSettings(raw: unknown): RaastSettings {
+  const obj = asObject(raw)
+  const { senders, templates, ...rest } = obj
+  const base = lenient(raastSettingsSchema.omit({ senders: true, templates: true }), rest)
+  const keep = <T>(schema: z.ZodType<T>, list: unknown, max: number): T[] => {
+    if (!Array.isArray(list)) return []
+    const out: T[] = []
+    for (const item of list) {
+      const one = schema.safeParse(item)
+      if (one.success) out.push(one.data)
+      if (out.length >= max) break
+    }
+    return out
+  }
+  return {
+    ...base,
+    senders: keep(raastSenderSchema, senders, 20) as RaastSettings['senders'],
+    templates: keep(raastTemplateSchema, templates, 50) as RaastSettings['templates'],
+  }
 }
 
 /** The company switch from a stored fiscal settings blob (default TRUE). */

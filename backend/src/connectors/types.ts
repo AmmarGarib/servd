@@ -4,12 +4,14 @@
 //   fiscal   — the external fiscal POS that files FBR / SRB (the ONLY filer
 //              since 2026-10-10; servd no longer files directly), and
 //   terminal — the payment processor's card machine at the till.
+//   raast    — Raast QR bank alerts (2026-10-12): bank-SMS matching now
+//              (enabled = SMS matching ON), a bank / aggregator API later.
 // A vendor is one file in connectors/drivers/ plus one line in registry.ts.
 // Every driver call returns a classified Outcome and never throws on a vendor
 // answer; 'unknown' means the vendor MAY have acted, so the caller looks the
 // document/charge up before any resubmit.
 
-export type ConnectorKindT = 'fiscal' | 'terminal'
+export type ConnectorKindT = 'fiscal' | 'terminal' | 'raast'
 export type FiscalAuthority = 'fbr' | 'srb' | 'pra' | 'kpra' | 'bra'
 
 export type Outcome<T> =
@@ -26,7 +28,7 @@ export interface ConnectorCtx {
   baseUrl: string | null
   apiKey: string | null          // decrypted in memory for this call only
   webhookSecret: string | null
-  settings: FiscalSettings | TerminalSettings
+  settings: FiscalSettings | TerminalSettings | RaastSettings
   signal: AbortSignal            // every call bounded by the caller's budget
   now: () => Date                // injectable (tests)
   log: (obj: Record<string, unknown>, msg: string) => void
@@ -160,4 +162,68 @@ export interface TerminalSettings {
   apiKeyHeader?: string
   paths?: Partial<Record<'charges' | 'refunds' | 'health', string>>
   test?: { scenario: 'approve' | 'decline' | 'never' | 'unknown_start' | 'late_approve' | 'void_fails' | 'offline' | 'by_amount' }
+}
+
+// ── raast (2026-10-12) ────────────────────────────────────────────────────
+// Matching consumes a normalised BankCredit. The SMS parser
+// (connectors/raast/sms.ts) is one producer; a later bank / aggregator API
+// driver ('http', registered in RAAST_DRIVERS, webhook event 'raast.credit'
+// on /webhooks/pos/:token with HMAC) is another — no rework of intents,
+// receipts, matching, ledger or UI. v1 registers no driver.
+export interface RaastSender {
+  id: string
+  senderId: string                 // normalised sender (connectors/raast/sms.ts normalizeSender)
+  bankAccountId: string            // the company's receiving account this sender reports on
+  accountLast4?: string            // when several accounts share one sender
+  templateIds: string[]            // 1..10
+  active: boolean
+}
+export interface RaastTemplate {
+  id: string
+  label: string
+  kind: 'credit' | 'debit'
+  // servd's template DSL, never a user regex: literal text, whitespace -> \s+,
+  // placeholders {amount} {ref} {date} {time} {account} {payer} {*}.
+  // Credit templates must contain {amount} and {ref}. <= 500 chars.
+  template: string
+  dateFormat?: string
+  timeFormat?: string
+  active: boolean
+}
+export interface RaastSettings {
+  matchWindowMin: number           // 2..60, default 10
+  intentTtlMin: number             // 5..120, default 30
+  clockSkewMin: number             // 0..10, default 2
+  smsConfirmMin: number            // 5..240, default 30
+  unmatchedAlertEscalateMin: number // 15..1440, default 120
+  statementMatchDays: number       // 1..10, default 3
+  provisionalFlagDays: number      // 1..30, default 3
+  refMinLength: number             // default 6
+  refMaxLength: number             // default 35
+  ignoreKeywords: string[]         // default ['OTP','one time','one-time','password','PIN','verification code']
+  senders: RaastSender[]           // max 20
+  templates: RaastTemplate[]       // max 50
+}
+
+/** One money-in event on a company's receiving account, from any producer. */
+export interface BankCredit {
+  tenantId: string
+  bankAccountId: string | null     // known from the sender entry / the API account
+  amountCents: number
+  bankRef: string                  // normalised (connectors/raast/reference.ts)
+  occurredAt: Date
+  payer?: string
+  accountLast4?: string
+  receiptId?: string | null        // future dynamic QR: the bill reference = RaastReceipt.id
+}
+
+/** A future bank / aggregator API (dynamic QR with the amount + bill reference). */
+export interface RaastDriver {
+  readonly id: string
+  readonly label: string
+  readonly needs: { baseUrl: boolean; apiKey: boolean; webhookSecret: boolean }
+  capabilities(ctx: ConnectorCtx): { dynamicQr: boolean; webhooks: boolean; lookup: boolean }
+  createPaymentRequest?(ctx: ConnectorCtx, r: { receiptId: string; amountCents: number; billRef: string; expiresAt: Date }): Promise<Outcome<{ qrPayload: string; providerRef?: string }>>
+  getPaymentStatus?(ctx: ConnectorCtx, r: { receiptId: string; providerRef?: string }): Promise<Outcome<{ state: 'pending' | 'paid' | 'expired' | 'not_found'; bankRef?: string; amountCents?: number; occurredAt?: string }>>
+  health(ctx: ConnectorCtx): Promise<Outcome<{ latencyMs: number; detail?: string }>>
 }

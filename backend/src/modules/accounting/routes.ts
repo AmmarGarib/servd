@@ -13,6 +13,7 @@ import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
+import { raastOpenThrough } from '../reconciliation/raast.js'
 
 const journalEntrySchema = z.object({
   reference: z.string().optional(),
@@ -754,21 +755,34 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     return { reopened: { lockedThrough: latest.lockedThrough }, lockedThrough: now?.lockedThrough ?? null }
   })
 
-  fastify.get('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+  fastify.get<{ Querystring: { lockedThrough?: string } }>('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     // Each company closes its own books, so this reports the ACTIVE company's
     // close — a lock elsewhere never shows here.
+    const tenantId = req.staffUser!.tenantId
     const lock = await prisma.periodLock.findFirst({
-      where: { tenantId: req.staffUser!.tenantId },
+      where: { tenantId },
       orderBy: { lockedThrough: 'desc' },
       select: { lockedThrough: true, lockedAt: true, lockedBy: true, note: true },
     })
-    return { lockedThrough: lock?.lockedThrough ?? null, lockedAt: lock?.lockedAt ?? null, lockedBy: lock?.lockedBy ?? null, note: lock?.note ?? null }
+    // Raast payments finance has not cleared (S6) through the date being
+    // closed (?lockedThrough=YYYY-MM-DD), else through yesterday — the
+    // latest date a close can take.
+    let raastUnmatched = { count: 0, cents: 0, through: null as string | null }
+    if (tenantId) {
+      const asked = req.query.lockedThrough ? parsePktEndOfDay(req.query.lockedThrough) : null
+      const through = asked && !Number.isNaN(asked.getTime()) ? asked : new Date(pktToday().from.getTime() - 1)
+      raastUnmatched = { ...(await raastOpenThrough(prisma, tenantId, through)), through: fmtPktDate(through) }
+    }
+    return { lockedThrough: lock?.lockedThrough ?? null, lockedAt: lock?.lockedAt ?? null, lockedBy: lock?.lockedBy ?? null, note: lock?.note ?? null, raastUnmatched }
   })
 
   fastify.post('/period-close', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
       lockedThrough: z.string(),
       note: z.string().optional(),
+      // Close even though Raast payments up to the date are still not matched
+      // to a bank statement (S6). The CEO's explicit choice, audited.
+      closeWithUnmatchedRaast: z.boolean().optional(),
     }).parse(req.body)
 
     const tenantId = req.staffUser!.tenantId
@@ -803,6 +817,21 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       )
     }
 
+    // Raast QR (spec §7.4, S6): a Raast payment still 'provisional' (no bank
+    // statement has shown it) or 'needs_attention' (a customer transfer the
+    // till could not book cleanly) dated up to the close — by its
+    // confirmation, else its creation — means the period's bank money is not
+    // proven. Refused unless the CEO closes with them on purpose.
+    const raastOpen = await raastOpenThrough(prisma, tenantId, newLock)
+    if (raastOpen.count > 0 && body.closeWithUnmatchedRaast !== true) {
+      throw new AppError(
+        'RAAST_UNMATCHED',
+        `${raastOpen.count} Raast payment(s), PKR ${(raastOpen.cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}, up to ${fmtPktDate(newLock)} are not matched to a bank statement yet. Match them on Finance → Reconciliation → Raast (or mark them not received), or close anyway.`,
+        409,
+        { count: raastOpen.count, cents: raastOpen.cents },
+      )
+    }
+
     const created = await prisma.periodLock.create({
       data: {
         tenantId,
@@ -821,6 +850,17 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       after: created,
       metadata: { ip: req.ip },
     })
+    if (raastOpen.count > 0) {
+      await audit({ category: 'accounting',
+        action: 'period.close_with_unmatched_raast',
+        entity: 'PeriodLock',
+        entityId: created.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        after: { lockedThrough: created.lockedThrough, raastUnmatchedCount: raastOpen.count, raastUnmatchedCents: raastOpen.cents },
+        metadata: { ip: req.ip, note: body.note ?? null },
+      })
+    }
     return reply.status(201).send(created)
   })
 }

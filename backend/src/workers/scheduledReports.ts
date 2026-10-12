@@ -238,7 +238,10 @@ export async function buildShiftSummaryReport(tenantId: string, since: Date | nu
       <h3>${esc(z.staffName)} — closed ${closed}</h3>
       <table cellpadding="6" border="1" style="border-collapse:collapse">
         <tr><td>Orders</td><td>${z.ordersCount}</td></tr>
-        <tr><td>Gross (cash + card)</td><td>${fmt(z.grossCents)}</td></tr>
+        <tr><td>Gross (all tenders)</td><td>${fmt(z.grossCents)}</td></tr>
+        <tr><td>Cash</td><td>${fmt(z.cashSales)}</td></tr>
+        <tr><td>Card – Keenu</td><td>${fmt(z.cardSales)}</td></tr>
+        <tr><td>Raast QR</td><td>${fmt(z.raastSales)}${z.raastCount > 0 ? ` (${z.raastCount} payment(s)${z.raastProvisionalCents > 0 ? `, ${fmt(z.raastProvisionalCents)} provisional — not on a bank statement yet` : ''})` : ''}</td></tr>
         <tr><td>Refunds</td><td>${fmt(z.refundsCents)}</td></tr>
         <tr><td>Comps</td><td>${fmt(z.compCents)}</td></tr>
         <tr><td>Discounts</td><td>${fmt(z.discountCents)}</td></tr>

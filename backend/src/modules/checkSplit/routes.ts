@@ -21,9 +21,16 @@
 //
 // Card machine (spec §7.10): a split and a settle are refused (409
 // TERMINAL_CHARGE_ACTIVE) while a card-machine charge is working on the bill
-// — prepareSplitTx and settlePayment check it under the lock. The settle
-// returns the sale's `fiscal` view once the last portion completes the bill
-// (and the deprecated `srb` alias, spec §8.4).
+// — prepareSplitTx and settlePayment check it under the lock; likewise (409
+// RAAST_AWAITING) while a Raast QR request waits for the customer's transfer.
+// The settle returns the sale's `fiscal` view once the last portion completes
+// the bill (and the deprecated `srb` alias, spec §8.4).
+//
+// Raast QR (2026-10-12): portions are paid with cash, Card – Keenu or Raast
+// QR. A Raast portion is settled with its bank reference and the cashier's
+// counter-device tick (`raastVerified: true` — spec D9), and gets its own
+// RaastReceipt (pos/raastTender.ts). Keenu QR is retired: a split or an
+// even split by it → 422 KEENU_QR_RETIRED.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
@@ -32,7 +39,15 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, CASHIERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertShiftOf } from '../../lib/tenantScope.js'
-import { settlePayment, prepareSplitTx, assertDrawerOperator } from '../pos/service.js'
+import { settlePayment, prepareSplitTx, assertDrawerOperator, keenuQrRetired } from '../pos/service.js'
+import { releaseRaastTargetsTx } from '../pos/raastTender.js'
+
+/** A split portion's tender. 'keenu_qr' parses so it can be refused with 422 KEENU_QR_RETIRED. */
+const portionMethodSchema = z.enum(['cash', 'card', 'raast', 'keenu_qr'])
+
+function assertNotKeenuQr(methods: string[]): void {
+  if (methods.includes('keenu_qr')) throw keenuQrRetired()
+}
 
 /** The order, in the operator's companies (write scope) — never the raw tenantFilter. */
 async function orderInScope(req: FastifyRequest, id: string) {
@@ -83,9 +98,10 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
           // F-PAY02. No 'comp': a comp is not a split tender — it goes through
           // POST /pos/orders/:id/comp (caps, manager PIN, audit, drawer). No
           // 'split': a portion is paid with a real tender.
-          method:      z.enum(['cash', 'card', 'keenu_qr']).default('card'),
+          method:      portionMethodSchema.default('card'),
         })).min(2).max(20),
       }).parse(req.body)
+      assertNotKeenuQr(body.splits.map((s) => s.method))
 
       const order = await orderInScope(req, req.params.id)
       if (!order) throw new NotFoundError('Order', req.params.id)
@@ -113,7 +129,9 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
   )
 
   // POST /check-split/payments/:id/settle — take the money for one portion,
-  // through the one settle. The drawer is the operator's open shift.
+  // through the one settle. The drawer is the operator's open shift. A Raast
+  // portion: `gatewayRef` is the bank reference and `raastVerified: true` the
+  // cashier's counter-device tick; `raast` in the answer is its receipt.
   fastify.post<{ Params: { id: string } }>(
     '/payments/:id/settle',
     { preHandler: requireAuth(...CASHIERS) },
@@ -122,6 +140,7 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
         shiftId: z.string().uuid(),
         gatewayRef: z.string().trim().max(120).optional(),
         tenderedCents: z.number().int().min(0).optional(),
+        raastVerified: z.literal(true).optional(),
       }).parse(req.body)
       const p = await prisma.payment.findFirst({
         where: {
@@ -139,8 +158,11 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
       await assertDrawerOperator(body.shiftId, req.staffUser!)
       const result = await settlePayment({
         paymentId: p.id, via: 'till', shiftId: body.shiftId, gatewayRef: body.gatewayRef, tenderedCents: body.tenderedCents,
+        actorId: req.staffUser!.id,
+        // The server sets the Raast meta of a cashier-typed reference (spec D9).
+        raast: { via: 'cashier', cashierVerified: body.raastVerified === true },
       })
-      return { ...result.payment, orderCompleted: result.orderCompleted, fiscal: result.fiscal, srb: result.srb }
+      return { ...result.payment, orderCompleted: result.orderCompleted, fiscal: result.fiscal, srb: result.srb, raast: result.raast }
     },
   )
 
@@ -152,8 +174,9 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = z.object({
         ways:   z.number().int().min(2).max(20),
-        method: z.enum(['cash', 'card', 'keenu_qr']).default('card'),   // F-PAY02
+        method: portionMethodSchema.default('card'),   // F-PAY02
       }).parse(req.body)
+      assertNotKeenuQr([body.method])
       const order = await orderInScope(req, req.params.id)
       if (!order) throw new NotFoundError('Order', req.params.id)
 
@@ -173,12 +196,19 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
   )
 }
 
-/** Replace the pending rows (the group placeholder, an earlier split) with these portions. */
+/**
+ * Replace the pending rows (the group placeholder, an earlier split) with
+ * these portions. A Raast receipt that pointed at a replaced portion (one
+ * that needs attention — an awaiting Raast request blocks the re-split) has
+ * no portion to settle any more: its target is cleared (S6).
+ */
 async function writePortions(
   tx: Prisma.TransactionClient,
   orderId: string,
   portions: Portion[],
 ) {
+  const replaced = await tx.payment.findMany({ where: { orderId, status: 'pending' }, select: { id: true } })
+  await releaseRaastTargetsTx(tx, replaced.map((p) => p.id))
   await tx.payment.deleteMany({ where: { orderId, status: 'pending' } })
   const created = []
   for (const [i, s] of portions.entries()) {

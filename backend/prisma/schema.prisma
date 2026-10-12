@@ -104,9 +104,10 @@ enum AccountStatus {
 enum PaymentMethod {
   cash
   card
-  keenu_qr
+  keenu_qr // RETIRED 2026-10-12 (replaced by raast): read + refund of old sales only, never written by new code
   split
   comp
+  raast // Raast QR — instant bank transfer to the company's receiving account (digital tax rate, like card)
 }
 
 enum PaymentStatus {
@@ -122,6 +123,7 @@ enum PaymentGateway {
   easypaisa
   none
   card_terminal // till card charged through the POS connector's card machine (TerminalCharge); keenuSettle never touches these
+  raast // Raast instant transfer straight to the company's bank — keenuSettle never touches these
 }
 
 enum ShiftStatus {
@@ -306,34 +308,38 @@ model Concept {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  menus             MenuItem[]
-  categories        Category[]
-  orders            Order[]
-  stations          Station[]
-  tables            Table[]
-  financialEntries  FinancialEntry[]
-  customers         Customer[]             @relation("PreferredConcept")
-  reviews           OrderReview[]
-  complaints        OrderComplaint[]
-  promoCodes        PromoCode[]
-  sectionDiscounts  SectionDiscount[]
-  abandonedCarts    AbandonedCart[]
-  qrCodes           QrCode[]
-  allocationWeights AllocationRuleWeight[]
-  floors            Floor[]
-  reservations      Reservation[]
-  blockouts         ConceptBlockout[]
-  serviceHours      ServiceHours[]
-  groupOrders       GroupOrder[]
-  scheduledShifts   ScheduledShift[]
-  analyticsEvents   AnalyticsEvent[]       @relation("ConceptAnalytics")
-  contentEvents     ContentEvent[]         @relation("ConceptCalendar")
-  locations         ConceptLocation[]
-  tenant            Tenant?                @relation(fields: [tenantId], references: [id])
-  componentUses     ComponentBrandUse[]
-  feedbackEntries   FeedbackEntry[]
-  positions         Position[]
-  projectionInputs  ProjectionBrandInput[]
+  menus              MenuItem[]
+  categories         Category[]
+  orders             Order[]
+  stations           Station[]
+  tables             Table[]
+  financialEntries   FinancialEntry[]
+  customers          Customer[]             @relation("PreferredConcept")
+  reviews            OrderReview[]
+  complaints         OrderComplaint[]
+  promoCodes         PromoCode[]
+  sectionDiscounts   SectionDiscount[]
+  abandonedCarts     AbandonedCart[]
+  qrCodes            QrCode[]
+  allocationWeights  AllocationRuleWeight[]
+  floors             Floor[]
+  reservations       Reservation[]
+  blockouts          ConceptBlockout[]
+  serviceHours       ServiceHours[]
+  groupOrders        GroupOrder[]
+  scheduledShifts    ScheduledShift[]
+  analyticsEvents    AnalyticsEvent[]       @relation("ConceptAnalytics")
+  contentEvents      ContentEvent[]         @relation("ConceptCalendar")
+  locations          ConceptLocation[]
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id])
+  componentUses      ComponentBrandUse[]
+  feedbackEntries    FeedbackEntry[]
+  positions          Position[]
+  projectionInputs   ProjectionBrandInput[]
+  // Raast QR receiving account for this brand (overrides the company default;
+  // must be the same company's account — enforced in code).
+  raastBankAccountId String?
+  raastBankAccount   BankAccount?           @relation("ConceptRaastAccount", fields: [raastBankAccountId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@map("concepts")
@@ -1702,6 +1708,7 @@ model Order {
   fiscalDocuments FiscalDocument[]
   terminalCharges TerminalCharge[]
   preBills        PreBill[]
+  raastReceipts   RaastReceipt[]
 
   @@unique([source, externalId])
   @@index([conceptId, placedAt(sort: Desc)])
@@ -1793,8 +1800,9 @@ model Payment {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
-  order Order  @relation(fields: [orderId], references: [id])
-  shift Shift? @relation(fields: [shiftId], references: [id])
+  order        Order         @relation(fields: [orderId], references: [id])
+  shift        Shift?        @relation(fields: [shiftId], references: [id])
+  raastReceipt RaastReceipt?
 
   @@index([orderId])
   @@index([shiftId, status])
@@ -2647,7 +2655,8 @@ model BankStatementLine {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  import BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  import       BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  raastReceipt RaastReceipt?
 
   @@index([importId, matchStatus])
   @@index([postedDate(sort: Desc)])
@@ -3859,11 +3868,19 @@ model BankAccount {
   openingBalanceCents Int       @default(0)
   isActive            Boolean   @default(true)
   notes               String?
+  // Raast QR: the Raast ID / alias shown at the till, and whether this is the
+  // company's default receiving account (at most one per company — a partial
+  // unique index in SQL, migration 20261013090100). A brand may override it
+  // (Concept.raastBankAccountId).
+  raastId             String?
+  raastDefault        Boolean   @default(false)
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
 
-  tenant Tenant? @relation("TenantBankAccounts", fields: [tenantId], references: [id])
+  tenant        Tenant?        @relation("TenantBankAccounts", fields: [tenantId], references: [id])
+  raastConcepts Concept[]      @relation("ConceptRaastAccount")
+  raastReceipts RaastReceipt[]
 
   @@index([tenantId])
   @@map("bank_accounts")
@@ -4788,6 +4805,11 @@ model Tenant {
   tipPools         TipPool[]          @relation("TenantTipPools")
   taxInvoices      TaxInvoice[]       @relation("TenantTaxInvoices")
   taxInvoiceSeries TaxInvoiceSeries[] @relation("TenantTaxInvoiceSeries")
+
+  // Raast QR (2026-10-12)
+  raastReceipts  RaastReceipt[]  @relation("TenantRaastReceipts")
+  bankSmsDevices BankSmsDevice[] @relation("TenantBankSmsDevices")
+  bankSmsAlerts  BankSmsAlert[]  @relation("TenantBankSmsAlerts")
 
   @@map("tenants")
 }
@@ -6074,6 +6096,44 @@ model WaitlistVisit {
 enum ConnectorKind {
   fiscal // external fiscal POS that files FBR / SRB
   terminal // payment processor's card machine
+  raast // Raast QR bank alerts: bank-SMS matching now, a bank / aggregator API later ('enabled' = SMS matching ON)
+}
+
+// ─── Raast QR (2026-10-12) ───────────────────────────────────────────────────
+// A Raast tender records a RaastReceipt: the sale completes at the till like
+// card; the receipt is 'provisional' until a bank-statement line matches it
+// (the statement is the truth that closes the books). Bank SMS alerts from the
+// counter phone (BankSmsDevice) only confirm or settle — never guess.
+
+enum RaastReceiptStatus {
+  awaiting // an intent: the customer is paying, waiting for the bank SMS (SMS matching ON)
+  provisional // paid at the till (reference typed or SMS-confirmed); not yet on a bank statement
+  matched // matched to a bank-statement line
+  cancelled // intent cancelled or expired before payment
+  unreceived // finance wrote it off: never arrived in the bank
+  needs_attention // an SMS or a settle could not complete it cleanly — a person decides
+}
+
+enum RaastConfirmedVia {
+  cashier // the cashier typed the bank reference after checking the counter device
+  sms // a bank SMS forwarded by the counter phone
+  bank_api // a future bank / aggregator callback
+}
+
+enum BankSmsAlertStatus {
+  received
+  processing
+  unparsed
+  off // parsed while SMS matching is OFF — kept so IT can check templates; never matched
+  debit
+  duplicate
+  matched // settled an awaiting intent
+  confirmed // confirmed a receipt the cashier had already recorded
+  unmatched
+  ambiguous
+  needs_attention
+  attached // a cashier attached it to a bill by hand
+  dismissed // a manager marked it 'not a sale'
 }
 
 enum FiscalDocKind {
@@ -6141,8 +6201,9 @@ model PosConnector {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  tenant  Tenant           @relation("TenantPosConnectors", fields: [tenantId], references: [id])
-  charges TerminalCharge[]
+  tenant     Tenant           @relation("TenantPosConnectors", fields: [tenantId], references: [id])
+  charges    TerminalCharge[]
+  smsDevices BankSmsDevice[] // kind 'raast' only
 
   @@unique([tenantId, kind])
   @@index([tenantId])
@@ -6329,4 +6390,143 @@ model PreBillCounter {
   next     Int    @default(1)
 
   @@map("pre_bill_counters")
+}
+
+/// One row per Raast tender (an intent while the customer pays, or a direct
+/// cashier-recorded payment). Company = the order's brand's company.
+/// 'provisional' until a bank-statement line matches it ('matched').
+model RaastReceipt {
+  id              String             @id @default(cuid())
+  tenantId        String
+  orderId         String
+  conceptId       String
+  shiftId         String?
+  targetPaymentId String? // a pending check-split portion this receipt settles
+  paymentId       String?            @unique // null while awaiting / cancelled / needs_attention
+  bankAccountId   String
+  ledgerCode      String // snapshot of BankAccount.accountCode when recorded — the ledger debits this
+  // Per-ticket money (the bill share + tip the customer transfers): INT4 like Payment.amountCents.
+  amountCents     Int
+  tipCents        Int                @default(0)
+  dueCents        Int // the bill due when created
+  bankRef         String? // normalised (connectors/raast/reference.ts); required from 'provisional' on
+  bankRefRaw      String?
+  status          RaastReceiptStatus @default(awaiting)
+  confirmedVia    RaastConfirmedVia?
+  confirmedAt     DateTime?
+  confirmedById   String?
+  cashierVerified Boolean            @default(false) // the cashier ticked "I saw it arrive on the counter device"
+  smsAlertId      String?            @unique
+  smsConfirmedAt  DateTime?
+  // An SMS settling this intent holds a short lease so the alert's own
+  // finishing write and a racing cashier confirm never overwrite each other.
+  settlingUntil   DateTime?
+  statementLineId String?            @unique
+  matchedAt       DateTime?
+  matchedById     String? // null = matched automatically
+  expiresAt       DateTime? // awaiting only
+  cancelReason    String?
+  attentionReason String?
+  flaggedAt       DateTime?
+  writeOffEntryId String?
+  idempotencyKey  String
+  createdById     String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  tenant        Tenant             @relation("TenantRaastReceipts", fields: [tenantId], references: [id])
+  order         Order              @relation(fields: [orderId], references: [id])
+  payment       Payment?           @relation(fields: [paymentId], references: [id])
+  bankAccount   BankAccount        @relation(fields: [bankAccountId], references: [id])
+  smsAlert      BankSmsAlert?      @relation(fields: [smsAlertId], references: [id], onDelete: SetNull)
+  statementLine BankStatementLine? @relation(fields: [statementLineId], references: [id], onDelete: Restrict)
+
+  // The same transfer can't pay two bills — per company. (One awaiting
+  // intent per order is a partial unique index in SQL, migration 20261013090100.)
+  @@unique([tenantId, bankRef])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, bankAccountId, status, amountCents])
+  @@index([orderId])
+  @@index([shiftId, status])
+  @@map("raast_receipts")
+}
+
+/// A counter phone that forwards bank SMS alerts (one company). The bearer
+/// token is stored as a SHA-256 lookup hash + secretBox ciphertext.
+model BankSmsDevice {
+  id             String    @id @default(cuid())
+  tenantId       String
+  connectorId    String // the company's raast PosConnector
+  locationId     String? // the company's own location (optional)
+  label          String
+  // A credential, globally unique like PosConnector.webhookToken (not per company).
+  tokenHash      String    @unique
+  tokenEnc       String
+  tokenHint      String
+  // The forwarder may post the token in the URL path (forwarders without
+  // custom headers). Off by default: a path token lands in request logs.
+  allowPathToken Boolean   @default(false)
+  active         Boolean   @default(true)
+  lastSeenAt     DateTime?
+  lastSmsAt      DateTime?
+  ignoredCount   Int       @default(0)
+  lastIgnoredAt  DateTime?
+  rotatedAt      DateTime?
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant    Tenant         @relation("TenantBankSmsDevices", fields: [tenantId], references: [id])
+  connector PosConnector   @relation(fields: [connectorId], references: [id])
+  alerts    BankSmsAlert[]
+
+  @@index([tenantId])
+  @@map("bank_sms_devices")
+}
+
+/// One bank SMS from a counter phone (only listed bank senders are stored;
+/// OTPs and other SMS are never stored).
+model BankSmsAlert {
+  id            String             @id @default(cuid())
+  tenantId      String
+  deviceId      String
+  locationId    String?
+  sender        String // normalised
+  bodyHash      String
+  body          String? // null after retention
+  receivedAt    DateTime
+  templateId    String?
+  kind          String? // 'credit' | 'debit'
+  // A bank credit can be any size (like BankStatementLine.amountCents): BIGINT.
+  amountCents   BigInt?
+  bankRef       String?
+  occurredAt    DateTime?
+  payer         String?
+  accountLast4  String?
+  bankAccountId String?
+  status        BankSmsAlertStatus @default(received)
+  candidateIds  String[]           @default([])
+  attempts      Int                @default(0)
+  processedAt   DateTime?
+  resolvedById  String?
+  resolvedAt    DateTime?
+  resolution    String?
+  // A reference a manager dismissed as 'not a sale' (or a debit's reference)
+  // is claimed here so the same transfer can never also be booked as a sale.
+  claimedRef    String?
+  alertedAt     DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  tenant  Tenant        @relation("TenantBankSmsAlerts", fields: [tenantId], references: [id])
+  device  BankSmsDevice @relation(fields: [deviceId], references: [id])
+  receipt RaastReceipt?
+
+  @@unique([tenantId, bodyHash])
+  @@unique([tenantId, claimedRef])
+  @@index([tenantId, status, receivedAt])
+  @@index([tenantId, bankRef])
+  @@index([status, createdAt])
+  @@map("bank_sms_alerts")
 }

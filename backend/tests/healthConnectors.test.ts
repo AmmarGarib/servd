@@ -1,6 +1,7 @@
-// W1 — /health checks for the POS connector (spec §8.4): ok / warn / off, never fail.
+// W1 — /health checks for the POS connector (spec §8.4) and Raast QR bank SMS
+// (raast spec §6.11): ok / warn / off, never fail.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { prisma, mkCompany, mkOrder, setConnector, resetConnectorCache, TEST_SECRET_KEY, type Company } from './connectorsFixtures.js'
+import { prisma, mkCompany, mkOrder, setConnector, resetConnectorCache, mkRaastAccount, TEST_SECRET_KEY, type Company } from './connectorsFixtures.js'
 import { connectorHealthChecks } from '../src/connectors/health.js'
 import { enqueueFiscalSaleTx } from '../src/connectors/fiscal/outbox.js'
 import { encryptSecret } from '../src/lib/secretBox.js'
@@ -25,7 +26,7 @@ afterAll(() => {
 describe('connectorHealthChecks', () => {
   it('nothing configured → off everywhere (never fail)', async () => {
     const h = await connectorHealthChecks()
-    expect(h.checks).toEqual({ fiscalConnector: 'off', cardTerminal: 'off', connectorSecretKey: 'off' })
+    expect(h.checks).toEqual({ fiscalConnector: 'off', cardTerminal: 'off', connectorSecretKey: 'off', raastSms: 'off' })
   })
 
   it('a live company on the TEST driver warns; held / stale / failed / manual-refund backlogs warn', async () => {
@@ -73,6 +74,33 @@ describe('connectorHealthChecks', () => {
     const h = await connectorHealthChecks()
     expect(h.checks.cardTerminal).toBe('warn')
     expect(h.details['cardTerminal']).toMatch(/unknown/)
+  })
+
+  it('raast SMS: on → ok; an SMS not understood, a bill needing a person or an over-age intent → warn', async () => {
+    await setConnector(A.tenantId, 'raast', { enabled: true })
+    let h = await connectorHealthChecks()
+    expect(h.checks.raastSms).toBe('ok')
+    const conn = await prisma.posConnector.findFirstOrThrow({ where: { tenantId: A.tenantId, kind: 'raast' } })
+    const user = await prisma.user.create({ data: { name: 'r', email: 'r.health@conn.test', password: 'x', role: 'it', tenantId: A.tenantId } })
+    const device = await prisma.bankSmsDevice.create({ data: { tenantId: A.tenantId, connectorId: conn.id, label: 'p', tokenHash: 'h-health', tokenEnc: 'plain', tokenHint: 'x', createdById: user.id } })
+    const alert = await prisma.bankSmsAlert.create({ data: { tenantId: A.tenantId, deviceId: device.id, sender: 'BANK', bodyHash: 'hh', body: '?', receivedAt: new Date(), status: 'unparsed' } })
+    h = await connectorHealthChecks()
+    expect(h.checks.raastSms).toBe('warn')
+    expect(h.details['raastSms']).toMatch(/not understood/)
+    await prisma.bankSmsAlert.update({ where: { id: alert.id }, data: { status: 'dismissed' } })
+
+    const { bankAccountId } = await mkRaastAccount(A)
+    const orderId = await mkOrder(A, { items: KHEER(A), taxCents: 8_800, taxRatePct: 8, totalCents: 118_800, status: 'received' })
+    const base = { tenantId: A.tenantId, orderId, conceptId: A.conceptId, bankAccountId, ledgerCode: '1021', amountCents: 118_800, dueCents: 118_800, createdById: user.id }
+    await prisma.raastReceipt.create({ data: { ...base, status: 'awaiting', idempotencyKey: 'h-1', expiresAt: new Date(), createdAt: new Date(Date.now() - 2 * 60 * 60_000) } })
+    h = await connectorHealthChecks()
+    expect(h.checks.raastSms).toBe('warn')
+    expect(h.details['raastSms']).toMatch(/twice their time limit/)
+    await prisma.raastReceipt.updateMany({ where: { tenantId: A.tenantId }, data: { status: 'needs_attention' } })
+    h = await connectorHealthChecks()
+    expect(h.details['raastSms']).toMatch(/need a person/)
+    expect(never(h.checks)).toBe(true)
+    await prisma.raastReceipt.updateMany({ where: { tenantId: A.tenantId }, data: { status: 'cancelled' } })
   })
 
   it('secret key: encrypted values stored but the key missing → warn; key set → ok', async () => {

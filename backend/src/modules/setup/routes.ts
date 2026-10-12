@@ -71,6 +71,63 @@ async function assertStationOf(tenantId: string, stationId: string): Promise<voi
   if (!station) throw new AppError('STATION_NOT_IN_COMPANY', 'That station does not belong to this company', 422)
 }
 
+/** Upper-case letters and digits only — how two banks' copies of an IBAN / account number / Raast ID compare. */
+const normId = (v: string | null | undefined): string => String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+
+/** A Raast ID that is a PK mobile number, written 03…, +92…, 0092… or 92…, as '92' + 10 digits; anything else normId. */
+export const canonRaastId = (v: string | null | undefined): string => {
+  const m = /^(?:0092|92|0)?(3\d{9})$/.exec(String(v ?? '').replace(/\D/g, ''))
+  return m ? `92${m[1]}` : normId(v)
+}
+
+type AccountIds = { iban: string | null; accountNumber: string | null; raastId: string | null }
+
+/**
+ * RV-CO-2: the same physical account however each company wrote it — any
+ * identifier equal after canonicalisation (a mobile Raast ID 03… = +92…), or
+ * an IBAN (or an IBAN-shaped Raast ID) that ends with the other side's account
+ * number (at least 8 digits, leading zeros ignored): PK IBANs carry the
+ * account number zero-padded at the end.
+ */
+export function sameBankAccount(a: AccountIds, b: AccountIds): boolean {
+  const ids = (x: AccountIds) => [normId(x.iban), normId(x.accountNumber), canonRaastId(x.raastId)].filter((v) => v.length >= 4)
+  const bIds = ids(b)
+  if (ids(a).some((v) => bIds.includes(v))) return true
+  const ibans = (x: AccountIds) => [normId(x.iban), normId(x.raastId)].filter((v) => /^[A-Z]{2}\d{2}[A-Z0-9]{8,}$/.test(v))
+  const acct = (x: AccountIds) => {
+    const n = normId(x.accountNumber).replace(/^0+/, '')
+    return /^\d{8,}$/.test(n) ? n : null
+  }
+  const tail = (x: AccountIds, y: AccountIds) => {
+    const n = acct(y)
+    return !!n && ibans(x).some((i) => i.endsWith(n))
+  }
+  return tail(a, b) || tail(b, a)
+}
+
+async function assertRaastAccountNotShared(
+  tenantId: string,
+  acc: { id: string; iban: string | null; accountNumber: string | null; raastId: string | null },
+): Promise<void> {
+  const mine = [normId(acc.iban), normId(acc.accountNumber), canonRaastId(acc.raastId)].filter((v) => v.length >= 4)
+  if (mine.length === 0) return
+  const others = await prisma.bankAccount.findMany({
+    where: {
+      tenantId: { not: tenantId }, id: { not: acc.id }, isActive: true, deletedAt: null,
+      OR: [{ raastDefault: true }, { raastConcepts: { some: { deletedAt: null } } }],
+    },
+    select: { id: true, iban: true, accountNumber: true, raastId: true },
+  })
+  const clash = others.find((o) => sameBankAccount(acc, o))
+  if (clash) {
+    throw new AppError(
+      'RAAST_ACCOUNT_SHARED',
+      'Another company already receives Raast payments on this bank account. One account can receive Raast for one company only — otherwise both companies would book the same transfer.',
+      409,
+    )
+  }
+}
+
 /**
  * Who may change the company's operations rules (PATCH /setup/operations-config):
  * the CEO and co-owners (APPROVERS), plus the owner roles of the workspace the
@@ -392,10 +449,13 @@ export async function setupRoutes(fastify: FastifyInstance) {
       accountCode:         z.string().min(1).max(20).optional(),
       isActive:            z.boolean().optional(),
       notes:               z.string().nullable().optional(),
+      // Raast QR (spec §7.5): the Raast ID / alias the till shows, and whether
+      // this is the company's default receiving account (one per company).
+      raastId:             z.string().trim().max(40).nullable().optional().transform((v) => (v === '' ? null : v)),
+      raastDefault:        z.boolean().optional(),
     }).parse(req.body)
     const existing = await prisma.bankAccount.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true, tenantId: true, name: true },
     })
     if (!existing) throw new NotFoundError('BankAccount', req.params.id)
     if (body.accountCode) {
@@ -403,7 +463,48 @@ export async function setupRoutes(fastify: FastifyInstance) {
       const { linkBankLedgerAccount } = await import('../../lib/bankAccounts.js')
       await linkBankLedgerAccount(existing.tenantId, body.name ?? existing.name, body.accountCode)
     }
-    return prisma.bankAccount.update({ where: { id: existing.id }, data: body })
+    const { raastDefault, ...fields } = body
+    const raastTouched = raastDefault !== undefined || body.raastId !== undefined
+    const after = { ...existing, ...fields, raastDefault: raastDefault ?? existing.raastDefault }
+    // Still (or now) a Raast receiving account once saved: the company default,
+    // or a brand's override. Its checks run whenever the change could matter.
+    const overrides = await prisma.concept.count({ where: { raastBankAccountId: existing.id, deletedAt: null } })
+    const receiving = after.raastDefault || overrides > 0
+    if (receiving && (raastDefault === true || ['iban', 'accountNumber', 'raastId', 'isActive', 'accountCode'].some((k) => k in fields))) {
+      if (!existing.tenantId) throw new AppError('NO_COMPANY', 'This bank account has no company — it cannot receive Raast payments', 422)
+      if (after.raastDefault && !after.isActive) {
+        throw new AppError('BANK_ACCOUNT_INACTIVE', 'An inactive bank account cannot be the default Raast account — pick another default first', 422)
+      }
+      if (after.raastDefault && !after.accountCode) {
+        throw new AppError('BANK_ACCOUNT_NOT_LINKED', 'Link this bank account to a chart code first — the ledger debits that code for every Raast payment', 422)
+      }
+      if (after.accountCode && !(await import('../../connectors/raast/accounts.js')).isRaastBankCode(after.accountCode)) {
+        throw new AppError('RAAST_NOT_A_BANK_CODE', `Chart code ${after.accountCode} is not a bank balance (cash, the drawer, card receivable or customer receivable) — a Raast account must post to a bank code`, 422)
+      }
+      if (after.raastDefault && after.accountCode) {
+        const live = await prisma.account.findFirst({ where: { tenantId: existing.tenantId, code: after.accountCode, isActive: true }, select: { id: true } })
+        if (!live) throw new AppError('BANK_ACCOUNT_NOT_LINKED', `Chart code ${after.accountCode} is not active in this company's chart`, 422)
+      }
+      await assertRaastAccountNotShared(existing.tenantId, after)
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+      // One default per company (also a partial unique index): unset the
+      // company's other default in the same transaction.
+      if (raastDefault === true && existing.tenantId) {
+        await tx.bankAccount.updateMany({ where: { tenantId: existing.tenantId, raastDefault: true, id: { not: existing.id } }, data: { raastDefault: false } })
+      }
+      return tx.bankAccount.update({ where: { id: existing.id }, data: { ...fields, ...(raastDefault !== undefined && { raastDefault }) } })
+    })
+    if (raastTouched) {
+      await audit({
+        category: 'accounting', action: 'raast.accounts.update', entity: 'BankAccount', entityId: existing.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null,
+        before: { raastId: existing.raastId, raastDefault: existing.raastDefault },
+        after: { raastId: updated.raastId, raastDefault: updated.raastDefault },
+        metadata: { bankTenantId: existing.tenantId },
+      })
+    }
+    return updated
   })
   fastify.delete<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req, reply) => {
     const existing = await prisma.bankAccount.findFirst({
@@ -411,8 +512,67 @@ export async function setupRoutes(fastify: FastifyInstance) {
       select: { id: true },
     })
     if (!existing) throw new NotFoundError('BankAccount', req.params.id)
-    await prisma.bankAccount.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
+    // A deleted account stops receiving Raast: no longer the company default
+    // (brand overrides pointing at it fall back to the default — the resolver
+    // ignores deleted accounts).
+    await prisma.bankAccount.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false, raastDefault: false } })
     return reply.status(204).send()
+  })
+
+  // ── Raast receiving accounts by brand (spec §7.5) ─────────────────────────
+  // The company default is set on the bank account (PATCH raastDefault); a
+  // brand may take its own account. Active company only. Edited here and
+  // nowhere else (the IT connector page shows them read-only).
+  fastify.get('/raast-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+    const tenantId = activeTenantId(req)
+    const { raastAccountsForCompany } = await import('../../connectors/raast/accounts.js')
+    return raastAccountsForCompany(prisma, tenantId)
+  })
+
+  fastify.put('/raast-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+    const body = z.object({
+      brands: z.array(z.object({ conceptId: z.string().min(1), bankAccountId: z.string().min(1).nullable() })).min(1).max(100),
+    }).parse(req.body)
+    const tenantId = activeTenantId(req)
+    // Resolve every brand and account first; write nothing until all pass.
+    const plan: Array<{ conceptId: string; name: string; before: string | null; after: string | null }> = []
+    for (const b of body.brands) {
+      // A brand of the operator's companies (assertConceptOwned 404s a
+      // foreign one), and of the ACTIVE company — the page edits one company.
+      const owned = await assertConceptOwned(req, b.conceptId, 'write')
+      const concept = await prisma.concept.findFirst({
+        where: { id: owned.id, deletedAt: null },
+        select: { id: true, name: true, tenantId: true, raastBankAccountId: true },
+      })
+      if (!concept || concept.tenantId !== tenantId) throw new NotFoundError('Concept', b.conceptId)
+      if (b.bankAccountId) {
+        const bank = await prisma.bankAccount.findFirst({ where: { id: b.bankAccountId, deletedAt: null } })
+        if (!bank || bank.tenantId !== tenantId || !bank.isActive) {
+          throw new AppError('BANK_ACCOUNT_NOT_IN_COMPANY', 'That bank account is not an active account of this company', 422)
+        }
+        if (!bank.accountCode) {
+          throw new AppError('BANK_ACCOUNT_NOT_LINKED', 'Link that bank account to a chart code first (Finance → Bank accounts)', 422)
+        }
+        if (!(await import('../../connectors/raast/accounts.js')).isRaastBankCode(bank.accountCode)) {
+          throw new AppError('RAAST_NOT_A_BANK_CODE', `Chart code ${bank.accountCode} of that bank account is not a bank balance — a Raast account must post to a bank code`, 422)
+        }
+        const live = await prisma.account.findFirst({ where: { tenantId, code: bank.accountCode, isActive: true }, select: { id: true } })
+        if (!live) throw new AppError('BANK_ACCOUNT_NOT_LINKED', `Chart code ${bank.accountCode} of that bank account is not active in this company's chart`, 422)
+        await assertRaastAccountNotShared(tenantId, bank)
+      }
+      plan.push({ conceptId: concept.id, name: concept.name, before: concept.raastBankAccountId, after: b.bankAccountId })
+    }
+    await prisma.$transaction(async (tx) => {
+      for (const p of plan) await tx.concept.update({ where: { id: p.conceptId }, data: { raastBankAccountId: p.after } })
+    })
+    await audit({
+      category: 'accounting', action: 'raast.accounts.update', entity: 'Concept',
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+      before: plan.map((p) => ({ conceptId: p.conceptId, bankAccountId: p.before })),
+      after: plan.map((p) => ({ conceptId: p.conceptId, bankAccountId: p.after })),
+    })
+    const { raastAccountsForCompany } = await import('../../connectors/raast/accounts.js')
+    return raastAccountsForCompany(prisma, tenantId)
   })
 
   // ════════════════════════════════════════════════════════════════════════

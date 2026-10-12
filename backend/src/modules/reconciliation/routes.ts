@@ -5,7 +5,9 @@ import { requireAuth, FINANCE_TEAM, APPROVERS, ADMIN_ONLY } from '../auth/middle
 import {
   importBankStatement,
   adjustStatementLine,
+  unmatchStatementLine,
 } from './service.js'
+import { raastReconciliationRoutes, raastPaidCents } from './raastRoutes.js'
 import { drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
 import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE, resolveTenantScope } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
@@ -86,12 +88,14 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         select: { id: true },
       })
       if (!imp) throw new NotFoundError('BankStatementImport', req.params.id)
+      // A line matched to a Raast payment carries it (the Raast tab's chip).
       return prisma.bankStatementLine.findMany({
         where: {
           importId: imp.id,
           ...(req.query.status && { matchStatus: req.query.status }),
         },
         orderBy: { postedDate: 'asc' },
+        include: { raastReceipt: { select: { id: true, bankRef: true, orderId: true, amountCents: true } } },
       })
     },
   )
@@ -162,15 +166,57 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     async (req) => {
       const line = await prisma.bankStatementLine.findFirst({
         where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
-        select: { id: true },
+        select: { id: true, matchStatus: true, raastReceipt: { select: { id: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
-      return prisma.bankStatementLine.update({
-        where: { id: line.id },
+      // RV-FIN-3: only an UNMATCHED line can be ignored. A line matched to a
+      // Raast receipt is undone on the Raast tab (Unmatch) — ignoring it would
+      // strand the receipt; a generic match is undone with /unmatch first.
+      if (line.raastReceipt) {
+        throw new AppError('RAAST_MATCHED_LINE', 'This line is matched to a Raast payment — unmatch it on the Raast tab first', 409, { receiptId: line.raastReceipt.id })
+      }
+      if (line.matchStatus === 'ignored') return prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })
+      const claimed = await prisma.bankStatementLine.updateMany({
+        where: { id: line.id, matchStatus: 'unmatched' },
         data: { matchStatus: 'ignored' },
       })
+      if (claimed.count === 0) throw new AppError('LINE_NOT_UNMATCHED', `Line is already ${line.matchStatus}`, 409)
+      return prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })
     },
   )
+
+  // POST /bank/lines/:id/unmatch — undo a GENERIC match (S3, APPROVERS,
+  // audited): the line goes back to unmatched and its journal line is free.
+  // A line matched to a Raast payment is undone on the Raast tab (409).
+  fastify.post<{ Params: { id: string } }>(
+    '/bank/lines/:id/unmatch',
+    { preHandler: requireAuth(...APPROVERS) },
+    async (req) => {
+      const body = z.object({ reason: z.string().trim().min(3).max(500).optional() }).parse(req.body ?? {})
+      const line = await prisma.bankStatementLine.findFirst({
+        where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
+        select: { id: true, import: { select: { tenantId: true } } },
+      })
+      if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      const { before } = await unmatchStatementLine(line.id)
+      await audit({
+        category: 'accounting',
+        action: 'reconciliation.line.unmatch',
+        entity: 'BankStatementLine',
+        entityId: line.id,
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: req.staffUser!.tenantId ?? null,
+        before,
+        after: { matchStatus: 'unmatched', matchedJournalLineId: null },
+        metadata: { lineTenantId: line.import.tenantId, reason: body.reason ?? null },
+      })
+      return { ok: true }
+    },
+  )
+
+  // ─── Raast QR (spec §7.2) — /reconciliation/raast/* ─────────────────────
+  await fastify.register(raastReconciliationRoutes, { prefix: '/raast' })
 
   // ─── POS shift cash reconciliation ──────────────────────────────────────
   //
@@ -226,11 +272,13 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         const drawer = drawerExpectationOf(shift)
         const varianceCents = drawerVariance(shift.closingFloatCents, drawer)
         const varianceLimitCents = await limitFor(shiftTenantId(shift))
-        // Same sales total as the Z-report: paid cash + card + Keenu QR.
-        // Comps are not sales (they are 7030 on the P&L).
+        // Same sales total as the Z-report: paid cash + Card – Keenu (with
+        // the retired Keenu QR's old rows) + Raast QR. Comps are not sales
+        // (they are 7030 on the P&L).
         const totalSalesCents = shift.payments
-          .filter((p) => p.status === 'paid' && ['cash', 'card', 'keenu_qr'].includes(p.method))
+          .filter((p) => p.status === 'paid' && ['cash', 'card', 'keenu_qr', 'raast'].includes(p.method))
           .reduce((s, p) => s + p.amountCents, 0)
+        const raastSalesCents = raastPaidCents(shift.payments)
         summary.push({
           shiftId: shift.id,
           cashier: shift.user.name,
@@ -238,6 +286,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
           closedAt: shift.closedAt,
           status: shift.status,
           totalSalesCents,
+          raastSalesCents,
           cashSalesCents: drawer.cashSalesCents,
           expectedCashCents: drawer.expectedCents,
           closingFloatCents: shift.closingFloatCents,

@@ -10,10 +10,10 @@ import { emitItemUpdated } from '../../lib/ws.js'
 import { priceOrder, tenderOf, tenderOfPayments, gstRatePct, type OrderPrice, type PricingChannel, type Tender } from '../../lib/pricing.js'
 import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
 import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantScope.js'
-import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
+import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, raastTotalCents, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
 import {
   postRefundPayment, refundDueCents, isShiftReceipt, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf,
-  GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX,
+  raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX,
 } from '../accounting/orderPosting.js'
 import { postJournalEntry, ACCT, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
 import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
@@ -34,6 +34,19 @@ import { enqueueFiscalRefundTx, kickFiscal } from '../../connectors/fiscal/outbo
 import { fiscalViewForOrder, legacySrbAlias, type FiscalView } from '../../connectors/fiscal/view.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { INT4_MAX_CENTS, sumCents, toCents } from '../../lib/money.js'
+// Raast QR (2026-10-12): the till's ONE tender set, the per-company Raast lock
+// (taken FIRST, before the order lock — M2/M3) and the receipt side of a
+// Raast tender.
+import {
+  TILL_TENDERS as TILL_TENDER_LIST, REFUND_TENDERS, PENDING_GATEWAY_TENDERS, KEENU_QR_RETIRED,
+  type RefundTender,
+} from '../../lib/tenders.js'
+import { lockRaastTx } from '../../connectors/raast/lock.js'
+import {
+  recordRaastReceiptTx, assertRaastIntentUsableTx, chooseRaastRefundSourceTx, cleanRaastRef, raastRefRule,
+  raastRefRequired, raastNotVerified, raastRefConflict, raastTenderView, flagRaastSettledOtherwiseTx, releaseRaastTargetsTx,
+  raastMetaOf, type RaastTenderMeta, type RaastRefundSource,
+} from './raastTender.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -74,9 +87,11 @@ export interface PosOrderInput {
   idempotencyKey?: string
   // CEO policy: GST splits by tender. Cashier picks the intended payment
   // method when ringing up so the bill on the receipt matches what gets
-  // collected. 'cash' → taxRateCash (default 15%); anything else →
-  // taxRateCard (default 8%). Defaults to 'cash' if not specified.
-  paymentMethod?: 'cash' | 'card' | 'keenu_qr' | 'split' | 'comp'
+  // collected. 'cash' → taxRateCash (default 15%); card / Raast QR (the
+  // digital group) → taxRateCard (default 8%). Defaults to 'cash' if not
+  // specified. (The route maps a legacy 'keenu_qr' from an offline-queued
+  // pre-deploy ring-up to 'raast' — lib/tenders legacyRingUpTender.)
+  paymentMethod?: 'cash' | 'card' | 'raast' | 'split' | 'comp'
 }
 
 type PosLine = PosOrderInput['items'][number]
@@ -366,12 +381,19 @@ export interface TillTenderInput {
   authCode?: string | null
   cardBrand?: string | null
   cardLast4?: string | null
+  // ── Raast QR (spec §4.1). Set by the SERVER only — the till route maps its
+  //    `raastVerified: true` to { via: 'cashier', cashierVerified: true }; the
+  //    Raast intents and the bank-SMS matcher (connectors/raast) set the rest.
+  //    gatewayRef is the bank reference (normalised + validated here).
+  raast?: RaastTenderMeta
 }
 
 export interface ProcessPaymentInput {
   orderId: string
   shiftId: string
   payments: TillTenderInput[]
+  /** Who is taking the payment — required for a Raast tender (its receipt records them). */
+  actorId?: string
   /**
    * The card-machine charge this payment records (server only): the
    * active-charge guard lets exactly that charge through.
@@ -445,18 +467,29 @@ export async function assertDrawerOperator(shiftId: string, actor: { id: string;
 
 
 // Every tender taken at the till settles there and then. Cash is in the
-// drawer; a card or Keenu QR tender carries the terminal's reference number
-// (owner decision 4) — the terminal approved it, so it is money receivable
-// from the processor (1030) from that moment, and the sale completes, files
-// with the fiscal POS and reaches the drawer's close like a cash sale. If
-// the processor later fails it, the Keenu webhook moves it to the customer's
-// receivable (shiftPosting.ts postPosCardFailure). Card and QR tenders used to
-// wait as 'pending' for a webhook that never matched them, so every card sale
-// at the till sat in 'received' with no revenue record and no tax filing.
+// drawer; a card tender carries the terminal's reference number (owner
+// decision 4) — the terminal approved it, so it is money receivable from the
+// processor (1030) from that moment, and the sale completes, files with the
+// fiscal POS and reaches the drawer's close like a cash sale. If the
+// processor later fails it, the Keenu webhook moves it to the customer's
+// receivable (shiftPosting.ts postPosCardFailure). Card tenders used to wait
+// as 'pending' for a webhook that never matched them, so every card sale at
+// the till sat in 'received' with no revenue record and no tax filing.
+// A Raast QR tender (2026-10-12) is an instant transfer straight to the
+// company's bank: the cashier checks it arrived on the COUNTER device and
+// types the bank reference (or a bank SMS settles it), the sale completes like
+// card, and its RaastReceipt stays 'provisional' until the bank statement
+// matches it (raastTender.ts). Keenu QR is RETIRED — a new keenu_qr payment
+// is refused (422 KEENU_QR_RETIRED); old rows read and refund as before.
 // A comp is NOT a tender: it goes through compOrder (caps, manager PIN, audit,
 // owner notify). 'split' is not a tender either — it is the group-order
 // placeholder that check-split replaces with the real tenders.
-const TILL_TENDERS: ReadonlySet<PaymentMethod> = new Set(['cash', 'card', 'keenu_qr'] as PaymentMethod[])
+const TILL_TENDERS: ReadonlySet<PaymentMethod> = new Set<PaymentMethod>(TILL_TENDER_LIST)
+
+/** 422 KEENU_QR_RETIRED — the one refusal for a new Keenu QR payment / settle / split / quote. */
+export function keenuQrRetired(message: string = KEENU_QR_RETIRED.message): AppError {
+  return new AppError(KEENU_QR_RETIRED.code, message, KEENU_QR_RETIRED.status)
+}
 
 type Tx = Prisma.TransactionClient
 
@@ -510,6 +543,11 @@ async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway')
     where: { orderId, status: 'pending' },
     data: { status: 'failed', processedAt: new Date() },
   })
+  // S6: a Raast receipt of this bill still needing attention (an SMS that
+  // could not complete it) is now a customer transfer with no bill behind it —
+  // finance refunds or attaches it. (An awaiting one cannot exist here: the
+  // active-tender guard refuses every other tender while one waits.)
+  await flagRaastSettledOtherwiseTx(tx, orderId)
   const completes = order.source === 'pos' || (via === 'till' && order.fulfilmentType === 'dine_in')
   const open = !['completed', 'refunded', 'cancelled', 'rejected'].includes(order.status)
   if (completes && open) {
@@ -556,7 +594,9 @@ async function afterTillSale(
  * OFF, a CARD tender is recorded only from the machine (a server-side
  * terminalChargeId). A keyed slip reference — 'terminal_offline' included —
  * is refused: "cash taken, card keyed with a made-up slip" is the skim the
- * switch exists to close. Keenu QR is not a card-machine tender.
+ * switch exists to close. Raast QR is not a card-machine tender (its own
+ * checks: the bank reference, the counter-device tick, the bank SMS and the
+ * statement — raastTender.ts); nor was the retired Keenu QR.
  */
 async function assertManualCardRefAllowed(tenantId: string | null, shiftId: string | null | undefined): Promise<void> {
   if (!tenantId) return
@@ -625,16 +665,18 @@ function tillFiscal(fiscal: FiscalView | null): { fiscal: FiscalView | null; srb
 // a storefront cash-on-delivery amount the rider pays into a drawer (owner
 // decision 4 — it lands on that drawer's Z-report), and a gateway
 // confirmation from the Keenu webhook. At the till it needs an OPEN drawer of
-// the order's company and, for card / QR, the terminal reference; from the
-// gateway it keeps the row's drawer (if any). Then the one coverage rule runs
-// (applyCoverageTx).
+// the order's company and, for card, the terminal reference; for a Raast
+// portion the bank reference, the counter-device tick and its receipt
+// (raastTender.ts — the company's Raast lock first, then the order lock).
+// From the gateway it keeps the row's drawer (if any). Then the one coverage
+// rule runs (applyCoverageTx).
 
 export interface SettleInput {
   paymentId: string
   via: 'till' | 'gateway'
   /** The open drawer taking the money — required at the till. */
   shiftId?: string | null
-  /** Card terminal / gateway transaction reference. Required for card and QR at the till. */
+  /** Card terminal / gateway transaction reference, or the Raast bank reference. Required for card and Raast at the till. */
   gatewayRef?: string | null
   /** Cash handed over, for the change calculation. */
   tenderedCents?: number | null
@@ -642,6 +684,28 @@ export interface SettleInput {
   gateway?: PaymentGateway
   /** Card machine (server only): the TerminalCharge this settle records — let through the active-charge guard. */
   terminalChargeId?: string
+  /** Who is taking the money — required to settle a Raast portion (its receipt records them). */
+  actorId?: string
+  /** Raast QR (server only): how the transfer was verified, and the intent / SMS it came through. */
+  raast?: RaastTenderMeta
+}
+
+function raastAfterCompletion(): AppError {
+  return new AppError(
+    'RAAST_AFTER_COMPLETION',
+    'This order is already completed — a Raast transfer can no longer be recorded on it. Take this part by cash or Card – Keenu, or ask finance.',
+    422,
+  )
+}
+
+/** The Raast receipts written for these payment rows, as the till shows them. */
+async function raastViewsOf(db: Tx | typeof prisma, paymentIds: string[]) {
+  if (paymentIds.length === 0) return []
+  const rows = await db.raastReceipt.findMany({
+    where: { paymentId: { in: paymentIds } },
+    select: { id: true, paymentId: true, status: true, bankRef: true, confirmedVia: true, smsConfirmedAt: true },
+  })
+  return rows.map(raastTenderView)
 }
 
 export async function settlePayment(input: SettleInput) {
@@ -650,11 +714,14 @@ export async function settlePayment(input: SettleInput) {
     where: { id: input.paymentId },
     select: {
       id: true, status: true, method: true, amountCents: true, gatewayRef: true, shiftId: true, gatewayMeta: true,
-      order: { select: { id: true, concept: { select: { tenantId: true } } } },
+      order: { select: { id: true, status: true, conceptId: true, concept: { select: { tenantId: true } } } },
     },
   })
   if (!payment) throw new NotFoundError('Payment', input.paymentId)
-  if (payment.status === 'paid') return { payment, alreadySettled: true, orderCompleted: false, fiscal: null, srb: null }
+  if (payment.status === 'paid') {
+    const raast = payment.method === 'raast' ? await raastViewsOf(prisma, [payment.id]) : []
+    return { payment, alreadySettled: true, orderCompleted: false, fiscal: null, srb: null, raast }
+  }
   if (payment.status !== 'pending') throw new AppError('NOT_PENDING', `Payment is ${payment.status}, not pending`, 422)
   if (payment.method === 'comp') {
     throw new AppError('COMP_NOT_A_TENDER', 'Comps go through POST /pos/orders/:id/comp — re-split this bill without the comp line', 422)
@@ -662,17 +729,42 @@ export async function settlePayment(input: SettleInput) {
   if (payment.method === 'split') {
     throw new AppError('SPLIT_PLACEHOLDER', 'This is the group bill placeholder — split the bill (or take one tender at the till) instead of settling it', 422)
   }
-  const gatewayRef = input.gatewayRef?.trim() || payment.gatewayRef || null
+  // Keenu QR is retired at the till (2026-10-12). A pre-deploy split portion
+  // left on it is not re-split (a bill with a paid portion can't be) — the
+  // rest is taken with Pay, whose coverage fails this leftover row (S5). A
+  // processor's confirmation of an old online keenu_qr row still settles.
+  if (payment.method === 'keenu_qr' && input.via === 'till') {
+    throw keenuQrRetired('Keenu QR is retired — take the rest with Pay (cash, Card – Keenu or Raast QR)')
+  }
+
+  // ── Raast QR portion (spec §4.2) ───────────────────────────────────────
+  const isRaast = payment.method === 'raast'
+  const tenantId = payment.order.concept.tenantId
+  let raastRef: { ref: string; raw: string } | null = null
+  const raastMeta: RaastTenderMeta = input.raast ?? { via: 'cashier' }
+  if (isRaast) {
+    if (input.via !== 'till') throw new AppError('NOT_A_GATEWAY_TENDER', 'A Raast transfer is taken at the till, never confirmed by a card gateway', 422)
+    if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
+    // A completed (non-till) order's sale is already booked — recording a
+    // Raast transfer on it now would need a 1030 → bank reclass.
+    if (payment.order.status === 'completed') throw raastAfterCompletion()
+    raastRef = cleanRaastRef(input.gatewayRef, { orderId: payment.order.id, rule: await raastRefRule(tenantId), missing: raastRefRequired })
+    if (raastMeta.via === 'cashier' && raastMeta.cashierVerified !== true) throw raastNotVerified()
+    if (!input.actorId) throw new AppError('ACTOR_REQUIRED', 'A Raast payment records who took it', 400)
+    if (input.terminalChargeId) throw new AppError('RAAST_NOT_A_CARD', 'A Raast transfer is not a card-machine payment', 400)
+  }
+
+  const gatewayRef = raastRef?.ref ?? (input.gatewayRef?.trim() || payment.gatewayRef || null)
   if (input.via === 'till') {
     if (!input.shiftId) throw new AppError('SHIFT_REQUIRED', 'Open a drawer before taking a payment', 422)
     // The drawer must be an OPEN shift of the ORDER's company.
-    await assertShiftOf(payment.order.concept.tenantId, input.shiftId, true)
+    await assertShiftOf(tenantId, input.shiftId, true)
     if (payment.method !== 'cash' && !gatewayRef) {
       throw new AppError('GATEWAY_REF_REQUIRED', `${payment.method} payments require the card terminal's reference number`, 400)
     }
     // W4-AUTH-2: a keyed card reference only where the company allows it.
     if (payment.method === 'card' && !input.terminalChargeId) {
-      await assertManualCardRefAllowed(payment.order.concept.tenantId, input.shiftId)
+      await assertManualCardRefAllowed(tenantId, input.shiftId)
     }
     // FOH-24: the cash handed over covers the portion.
     if (payment.method === 'cash' && input.tenderedCents != null && input.tenderedCents < payment.amountCents) {
@@ -680,62 +772,108 @@ export async function settlePayment(input: SettleInput) {
     }
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    // FOH-04: one settle at a time per order, so two portions settled at once
-    // both see each other — otherwise each saw the other's row still pending
-    // and the fully paid bill never completed.
-    await lockOrderTx(tx, payment.order.id)
-    if (input.via === 'till') {
-      // FOH-09: at the till a cancelled / refunded ticket takes no money. (A
-      // gateway confirmation is recorded whatever the order's state: the
-      // processor already has the customer's money.)
-      const current = await tx.order.findUniqueOrThrow({ where: { id: payment.order.id }, select: { status: true } })
-      assertTakesMoney(current.status)
-      // §7.10: while the card machine works on this bill nothing else settles
-      // it — except the charge being recorded.
-      await assertNoActiveTerminalChargeTx(tx, payment.order.id, input.terminalChargeId)
-    }
-    // The row as it stands under the lock (a void may have lowered it).
-    const amountCents = (await tx.payment.findUnique({ where: { id: payment.id }, select: { amountCents: true } }))?.amountCents ?? payment.amountCents
-    // W4-MONEY-1: recorded from the card machine → the row must still be
-    // exactly what the card was charged (a gift card or points applied while
-    // the machine waited would otherwise book less than the customer paid).
-    if (input.terminalChargeId) {
-      await assertChargeMatchesTx(tx, input.terminalChargeId, {
-        orderId: payment.order.id, tenantId: payment.order.concept.tenantId, amountCents, tipCents: 0, targetPaymentId: payment.id,
+  let result
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // M2/M3: a Raast settle takes the company's Raast lock FIRST — the SMS
+      // matcher, a typed reference and an attach of the same company never
+      // interleave — then the order lock.
+      if (isRaast) await lockRaastTx(tx, tenantId!)
+      // FOH-04: one settle at a time per order, so two portions settled at once
+      // both see each other — otherwise each saw the other's row still pending
+      // and the fully paid bill never completed.
+      await lockOrderTx(tx, payment.order.id)
+      if (input.via === 'till') {
+        // FOH-09: at the till a cancelled / refunded ticket takes no money. (A
+        // gateway confirmation is recorded whatever the order's state: the
+        // processor already has the customer's money.)
+        const current = await tx.order.findUniqueOrThrow({ where: { id: payment.order.id }, select: { status: true } })
+        assertTakesMoney(current.status)
+        if (isRaast && current.status === 'completed') throw raastAfterCompletion()
+        // §7.10: while the card machine works on this bill — or a Raast
+        // request waits for the customer's transfer — nothing else settles it,
+        // except the charge / the Raast request being recorded.
+        await assertNoActiveTerminalChargeTx(tx, payment.order.id, input.terminalChargeId, isRaast ? raastMeta.intentId ?? null : null)
+      }
+      // The row as it stands under the lock (a void may have lowered it).
+      const amountCents = (await tx.payment.findUnique({ where: { id: payment.id }, select: { amountCents: true } }))?.amountCents ?? payment.amountCents
+      // W4-MONEY-1: recorded from the card machine → the row must still be
+      // exactly what the card was charged (a gift card or points applied while
+      // the machine waited would otherwise book less than the customer paid).
+      if (input.terminalChargeId) {
+        await assertChargeMatchesTx(tx, input.terminalChargeId, {
+          orderId: payment.order.id, tenantId, amountCents, tipCents: 0, targetPaymentId: payment.id,
+        })
+      }
+      // The same for a Raast request: this portion's own, still claimable, for
+      // exactly this money (a settle carries no tip).
+      if (isRaast && raastMeta.intentId) {
+        await assertRaastIntentUsableTx(tx, {
+          intentId: raastMeta.intentId, tenantId: tenantId!, orderId: payment.order.id, amountCents, tipCents: 0,
+          targetPaymentId: payment.id, smsAlertId: raastMeta.smsAlertId ?? null,
+        })
+      }
+      if (input.via === 'till' && payment.method === 'cash' && input.tenderedCents != null && input.tenderedCents < amountCents) {
+        throw new AppError('TENDERED_LESS_THAN_DUE', `Cash handed over (${input.tenderedCents}) is less than the ${amountCents} due`, 400)
+      }
+      const priorMeta = (payment.gatewayMeta && typeof payment.gatewayMeta === 'object' && !Array.isArray(payment.gatewayMeta))
+        ? payment.gatewayMeta as Prisma.JsonObject
+        : {}
+      const claimed = await tx.payment.updateMany({
+        where: { id: payment.id, status: 'pending' },
+        data: {
+          status: 'paid',
+          ...(input.via === 'till' && { shiftId: input.shiftId! }),
+          gatewayRef,
+          ...(isRaast ? { gateway: 'raast' as const } : input.gateway ? { gateway: input.gateway } : {}),
+          ...(input.terminalChargeId && { gatewayMeta: { ...priorMeta, terminalChargeId: input.terminalChargeId } }),
+          ...(input.tenderedCents != null && {
+            tenderedCents: input.tenderedCents,
+            changeCents: payment.method === 'cash' ? Math.max(0, input.tenderedCents - amountCents) : null,
+          }),
+          processedAt: new Date(),
+        },
       })
-    }
-    if (input.via === 'till' && payment.method === 'cash' && input.tenderedCents != null && input.tenderedCents < amountCents) {
-      throw new AppError('TENDERED_LESS_THAN_DUE', `Cash handed over (${input.tenderedCents}) is less than the ${amountCents} due`, 400)
-    }
-    const priorMeta = (payment.gatewayMeta && typeof payment.gatewayMeta === 'object' && !Array.isArray(payment.gatewayMeta))
-      ? payment.gatewayMeta as Prisma.JsonObject
-      : {}
-    const claimed = await tx.payment.updateMany({
-      where: { id: payment.id, status: 'pending' },
-      data: {
-        status: 'paid',
-        ...(input.via === 'till' && { shiftId: input.shiftId! }),
-        gatewayRef,
-        ...(input.gateway && { gateway: input.gateway }),
-        ...(input.terminalChargeId && { gatewayMeta: { ...priorMeta, terminalChargeId: input.terminalChargeId } }),
-        ...(input.tenderedCents != null && {
-          tenderedCents: input.tenderedCents,
-          changeCents: payment.method === 'cash' ? Math.max(0, input.tenderedCents - amountCents) : null,
-        }),
-        processedAt: new Date(),
-      },
-    })
-    if (claimed.count === 0) throw new AppError('ALREADY_SETTLED', 'Payment is not pending', 409)
-    const coverage = await applyCoverageTx(tx, payment.order.id, input.via)
-    const settled = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } })
-    return { settled, coverage }
-  }, { maxWait: 10_000, timeout: 15_000 })
+      if (claimed.count === 0) throw new AppError('ALREADY_SETTLED', 'Payment is not pending', 409)
+      // The Raast receipt, in this transaction: provisional until the bank
+      // statement matches it.
+      const receipt = isRaast
+        ? await recordRaastReceiptTx(tx, {
+            order: { id: payment.order.id, conceptId: payment.order.conceptId, tenantId: tenantId! },
+            payment: { id: payment.id, amountCents },
+            tipCents: 0,
+            shiftId: input.shiftId ?? null,
+            bankRef: raastRef!.ref,
+            bankRefRaw: raastRef!.raw,
+            via: raastMeta.via,
+            cashierVerified: raastMeta.cashierVerified === true,
+            actorId: input.actorId!,
+            intentId: raastMeta.intentId ?? null,
+            smsAlertId: raastMeta.smsAlertId ?? null,
+            targetPaymentId: payment.id,
+          })
+        : null
+      const coverage = await applyCoverageTx(tx, payment.order.id, input.via)
+      const settled = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } })
+      return { settled, coverage, receipt }
+    }, { maxWait: 10_000, timeout: 15_000 })
+  } catch (err) {
+    // A racing payment claimed the same bank reference first (the unique
+    // index aborted this transaction): the pre-check's 409.
+    if (isRaast) await raastRefConflict(prisma, err, tenantId, raastRef?.ref ?? null)
+    throw err
+  }
 
   const fiscal = result.coverage.completedNow
     ? await afterTillSale(payment.order.id, result.coverage.customerId, result.coverage.source)
     : null
-  return { payment: result.settled, alreadySettled: false, orderCompleted: result.coverage.completedNow, ...tillFiscal(fiscal) }
+  return {
+    payment: result.settled,
+    alreadySettled: false,
+    orderCompleted: result.coverage.completedNow,
+    ...tillFiscal(fiscal),
+    raast: result.receipt ? [raastTenderView(result.receipt)] : [],
+  }
 }
 
 /** The order columns the tender pricing reads. */
@@ -801,9 +939,10 @@ async function repriceForTenderTx(tx: Tx, order: TenderPricedOrder, methods: Arr
  * GET /pos/orders/:id/quote — what POST /pos/payments will demand for this
  * order if it is paid with `method`: the same rule processPayment applies
  * (re-priced for the tender while nothing is paid yet, else the stored total,
- * minus what is already covered). Writes nothing.
+ * minus what is already covered). Writes nothing. Raast QR is the digital tax
+ * group, priced at the card rate (lib/pricing tenderOf → 'card').
  */
-export async function quoteOrderForTender(orderId: string, method: 'cash' | 'card' | 'keenu_qr') {
+export async function quoteOrderForTender(orderId: string, method: 'cash' | 'card' | 'raast') {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: { payments: { select: { status: true, amountCents: true } } },
@@ -878,13 +1017,23 @@ export async function processPayment(input: ProcessPaymentInput) {
   if (input.payments.some((p) => p.method === 'comp')) {
     throw new AppError('COMP_NOT_A_TENDER', 'A comp is not a tender — use POST /pos/orders/:id/comp (reason, caps and manager PIN apply)', 400)
   }
+  // Keenu QR is retired (2026-10-12): never written by new code.
+  if (input.payments.some((p) => p.method === 'keenu_qr')) throw keenuQrRetired()
   if (input.payments.some((p) => !TILL_TENDERS.has(p.method))) {
-    throw new AppError('NOT_A_TENDER', 'Take cash, card or Keenu QR at the till — split the bill first to pay it in parts', 400)
+    throw new AppError('NOT_A_TENDER', 'Take cash, Card – Keenu or Raast QR at the till — split the bill first to pay it in parts', 400)
   }
-  // Card and QR need the card terminal's reference number (owner decision 4).
+  const raastTenders = input.payments.filter((p) => p.method === 'raast')
+  if (raastTenders.length > 1) {
+    throw new AppError('RAAST_ONE_PER_PAYMENT', 'One Raast transfer per payment — take a second transfer as its own payment', 400)
+  }
   for (const p of input.payments) {
-    if (p.method !== 'cash' && !p.gatewayRef?.trim()) {
+    // A card needs the card terminal's reference number (owner decision 4); a
+    // Raast transfer its bank reference (checked below).
+    if (p.method === 'card' && !p.gatewayRef?.trim()) {
       throw new AppError('GATEWAY_REF_REQUIRED', `${p.method} payments require the card terminal's reference number`, 400)
+    }
+    if (p.method === 'raast' && (p.terminalChargeId || p.manualReason)) {
+      throw new AppError('RAAST_NOT_A_CARD', 'A Raast transfer is not a card-machine payment', 400)
     }
     // FOH-24: the cash handed over must cover what the tender takes.
     if (p.method === 'cash' && p.tenderedCents !== undefined && p.tenderedCents < p.amountCents) {
@@ -908,136 +1057,208 @@ export async function processPayment(input: ProcessPaymentInput) {
     await assertManualCardRefAllowed(owner?.concept.tenantId ?? null, input.shiftId)
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    // FOH-04: lock the order, THEN read what is paid. Two cashiers settling
-    // the same table, or a double-tapped card, used to both read "nothing
-    // paid" under READ COMMITTED and both take the money.
-    await lockOrderTx(tx, input.orderId)
-    const order = await tx.order.findUnique({
-      where: { id: input.orderId },
-      include: { payments: true },
-    })
-    if (!order) throw new NotFoundError('Order', input.orderId)
+  // ── Raast QR (spec §4.1): the order's company (its Raast lock and its
+  //    receipt), the bank reference and the counter-device attestation (D9).
+  let raast: {
+    tender: TillTenderInput
+    meta: RaastTenderMeta
+    tenantId: string
+    conceptId: string
+    ref: string
+    raw: string
+  } | null = null
+  if (raastTenders.length === 1) {
+    const tender = raastTenders[0]!
+    const owner = await prisma.order.findUnique({ where: { id: input.orderId }, select: { conceptId: true, concept: { select: { tenantId: true } } } })
+    if (!owner) throw new NotFoundError('Order', input.orderId)
+    const tenantId = owner.concept.tenantId
+    if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
+    const { ref, raw } = cleanRaastRef(tender.gatewayRef, { orderId: input.orderId, rule: await raastRefRule(tenantId), missing: raastRefRequired })
+    const meta: RaastTenderMeta = tender.raast ?? { via: 'cashier' }
+    if (meta.via === 'cashier' && meta.cashierVerified !== true) throw raastNotVerified()
+    if (!input.actorId) throw new AppError('ACTOR_REQUIRED', 'A Raast payment records who took it', 400)
+    raast = { tender, meta, tenantId, conceptId: owner.conceptId, ref, raw }
+  }
+  /** The reference a tender is recorded with (a Raast reference normalised). */
+  const refOf = (p: TillTenderInput): string | null => (p.method === 'raast' && raast ? raast.ref : p.gatewayRef?.trim() || null)
 
-    // A retry of a submission that already went through returns what it took.
-    if (input.idempotencyKey) {
-      const prior = order.payments.filter((p) => paymentKeyOf(p) === input.idempotencyKey)
-      if (prior.length > 0) {
-        const signature = (rows: Array<{ method: string; amountCents: number }>) =>
-          rows.map((r) => `${r.method}:${r.amountCents}`).sort().join(',')
-        if (signature(prior) !== signature(input.payments)) throw idempotencyKeyReused()
-        return { payments: prior, coverage: null, replayCompleted: order.status === 'completed' }
+  let result
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // M2/M3: a Raast tender takes the company's Raast lock FIRST (the SMS
+      // matcher, a typed reference, an attach and a reference fix of the same
+      // company are serialised), then the order lock.
+      if (raast) await lockRaastTx(tx, raast.tenantId)
+      // FOH-04: lock the order, THEN read what is paid. Two cashiers settling
+      // the same table, or a double-tapped card, used to both read "nothing
+      // paid" under READ COMMITTED and both take the money.
+      await lockOrderTx(tx, input.orderId)
+      const order = await tx.order.findUnique({
+        where: { id: input.orderId },
+        include: { payments: true },
+      })
+      if (!order) throw new NotFoundError('Order', input.orderId)
+
+      // A retry of a submission that already went through returns what it took.
+      // (A Raast tender is the same request only with the same bank reference.)
+      if (input.idempotencyKey) {
+        const prior = order.payments.filter((p) => paymentKeyOf(p) === input.idempotencyKey)
+        if (prior.length > 0) {
+          const signature = (rows: Array<{ method: string; amountCents: number; ref: string | null }>) =>
+            rows.map((r) => `${r.method}:${r.amountCents}${r.method === 'raast' ? `:${r.ref ?? ''}` : ''}`).sort().join(',')
+          const priorSig = signature(prior.map((p) => ({ method: p.method, amountCents: p.amountCents, ref: p.gatewayRef })))
+          const inputSig = signature(input.payments.map((p) => ({ method: p.method, amountCents: p.amountCents, ref: refOf(p) })))
+          if (priorSig !== inputSig) throw idempotencyKeyReused()
+          const receipts = await raastViewsOf(tx, prior.filter((p) => p.method === 'raast').map((p) => p.id))
+          return { payments: prior, coverage: null, replayCompleted: order.status === 'completed', receipts }
+        }
       }
-    }
 
-    // §7.10: while the card machine works on this bill no other tender is
-    // taken — only the charge being recorded passes (its own terminalChargeId).
-    await assertNoActiveTerminalChargeTx(tx, input.orderId, input.terminalChargeId)
+      // §7.10: while the card machine works on this bill — or a Raast request
+      // waits for the customer's transfer — no other tender is taken; only the
+      // charge / the Raast request being recorded passes.
+      await assertNoActiveTerminalChargeTx(tx, input.orderId, input.terminalChargeId, raast?.meta.intentId ?? null)
 
-    // FOH-09: a cancelled / rejected / refunded ticket takes no money.
-    assertTakesMoney(order.status)
-    // W4-MONEY-1: a tender recorded from the card machine is exactly that charge.
-    for (const p of input.payments) {
-      if (!p.terminalChargeId) continue
-      const tenant = await tx.concept.findUnique({ where: { id: order.conceptId }, select: { tenantId: true } })
-      await assertChargeMatchesTx(tx, p.terminalChargeId, {
-        orderId: order.id, tenantId: tenant?.tenantId ?? null, amountCents: p.amountCents, tipCents: p.tipCents ?? 0, targetPaymentId: null,
-      })
-    }
-    const alreadyPaid = coveredCents(order.payments)
-    if (order.totalCents <= 0 && alreadyPaid === 0) {
-      throw new AppError('NOTHING_DUE', 'Nothing is due on this order — cancel the ticket instead', 409)
-    }
-    if (alreadyPaid >= order.totalCents) {
-      throw new AppError('ALREADY_PAID', 'Order is already fully paid', 400)
-    }
-    if (order.status === 'completed') {
-      // A completed order still owing is a delivery / pickup whose cash is
-      // with the rider — it is paid in through its own pending row.
-      throw new AppError('ORDER_NOT_OPEN', 'This order is already completed — pay its cash in from the cash-due list', 409)
-    }
-
-    // Decision 9: a till sale is taxed at the rate of the tender it is paid
-    // with. Rung up as cash and paid by card (or a group bill, priced at the
-    // cash rate until the table chooses) → re-priced here, before any money
-    // is taken, so the bill, the GST filed and the tender agree.
-    const totalDue = alreadyPaid === 0
-      ? await repriceForTenderTx(tx, order, input.payments.map((p) => p.method))
-      : order.totalCents
-    const remainingDue = totalDue - alreadyPaid
-    const submittedForBill = submittedTotal - tipTotal
-
-    // Allow up to 2 paisa rounding tolerance — protect against under/overcharge
-    if (Math.abs(submittedForBill - remainingDue) > TENDER_ROUNDING_CENTS) {
-      throw new AppError(
-        'AMOUNT_MISMATCH',
-        tipTotal > 0
-          ? `Payments total ${submittedTotal} (incl. ${tipTotal} tip) but ${remainingDue} is due before the tip`
-          : `Payments total ${submittedTotal} but ${remainingDue} is due`,
-        400,
-      )
-    }
-
-    // FOH-14: the tip rides on the order (Order.tipCents, and on its total —
-    // what the customer was charged). The shift close credits it to 2095
-    // Tips Payable (computeSaleAccounting), the Z-report shows it and the tip
-    // pool sums it. Added AFTER the tender re-price, which keeps a tipped bill.
-    if (tipTotal > 0) {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { tipCents: { increment: tipTotal }, totalCents: { increment: tipTotal } },
-      })
-    }
-
-    const createdPayments = []
-    for (const p of input.payments) {
-      const changeCents =
-        p.method === 'cash' && p.tenderedCents !== undefined
-          ? Math.max(0, p.tenderedCents - p.amountCents)
-          : undefined
-      const meta = {
-        ...(input.idempotencyKey && { idempotencyKey: input.idempotencyKey }),
-        ...((p.tipCents ?? 0) > 0 && { tipCents: p.tipCents }),
-        // Card machine (spec §7): which charge this is, and what the slip says.
-        ...(p.terminalChargeId && { terminalChargeId: p.terminalChargeId }),
-        ...(p.authCode && { authCode: p.authCode }),
-        ...(p.cardBrand && { cardBrand: p.cardBrand }),
-        ...(p.cardLast4 && { cardLast4: p.cardLast4 }),
-        ...(p.manualReason && { manualReason: p.manualReason }),
+      // FOH-09: a cancelled / rejected / refunded ticket takes no money.
+      assertTakesMoney(order.status)
+      // W4-MONEY-1: a tender recorded from the card machine is exactly that charge.
+      for (const p of input.payments) {
+        if (!p.terminalChargeId) continue
+        const tenant = await tx.concept.findUnique({ where: { id: order.conceptId }, select: { tenantId: true } })
+        await assertChargeMatchesTx(tx, p.terminalChargeId, {
+          orderId: order.id, tenantId: tenant?.tenantId ?? null, amountCents: p.amountCents, tipCents: p.tipCents ?? 0, targetPaymentId: null,
+        })
       }
-      const payment = await tx.payment.create({
-        data: {
-          orderId: input.orderId,
-          shiftId: input.shiftId,
-          method: p.method,
-          amountCents: p.amountCents,
-          status: 'paid',
-          gateway: p.gateway ?? 'none',
-          gatewayRef: p.gatewayRef?.trim() || null,
-          ...(Object.keys(meta).length > 0 && { gatewayMeta: meta }),
-          tenderedCents: p.tenderedCents ?? null,
-          changeCents: changeCents ?? null,
-          processedAt: new Date(),
-        },
-      })
-      createdPayments.push(payment)
-    }
+      // The same for a Raast request: this bill's, still claimable, for exactly
+      // this money (the bill moved while the customer was paying → 409).
+      if (raast?.meta.intentId) {
+        await assertRaastIntentUsableTx(tx, {
+          intentId: raast.meta.intentId, tenantId: raast.tenantId, orderId: order.id,
+          amountCents: raast.tender.amountCents, tipCents: raast.tender.tipCents ?? 0,
+          targetPaymentId: null, smsAlertId: raast.meta.smsAlertId ?? null,
+        })
+      }
+      const alreadyPaid = coveredCents(order.payments)
+      if (order.totalCents <= 0 && alreadyPaid === 0) {
+        throw new AppError('NOTHING_DUE', 'Nothing is due on this order — cancel the ticket instead', 409)
+      }
+      if (alreadyPaid >= order.totalCents) {
+        throw new AppError('ALREADY_PAID', 'Order is already fully paid', 400)
+      }
+      if (order.status === 'completed') {
+        // A completed order still owing is a delivery / pickup whose cash is
+        // with the rider — it is paid in through its own pending row.
+        throw new AppError('ORDER_NOT_OPEN', 'This order is already completed — pay its cash in from the cash-due list', 409)
+      }
 
-    // The tenders cover what was due, so the one coverage rule completes the
-    // sale (and voids a leftover placeholder row).
-    const coverage = await applyCoverageTx(tx, order.id, 'till')
-    return { payments: createdPayments, coverage, replayCompleted: false }
-  }, { maxWait: 10_000, timeout: 15_000 })
+      // Decision 9: a till sale is taxed at the rate of the tender it is paid
+      // with. Rung up as cash and paid by card (or a group bill, priced at the
+      // cash rate until the table chooses) → re-priced here, before any money
+      // is taken, so the bill, the GST filed and the tender agree.
+      const totalDue = alreadyPaid === 0
+        ? await repriceForTenderTx(tx, order, input.payments.map((p) => p.method))
+        : order.totalCents
+      const remainingDue = totalDue - alreadyPaid
+      const submittedForBill = submittedTotal - tipTotal
+
+      // Allow up to 2 paisa rounding tolerance — protect against under/overcharge
+      if (Math.abs(submittedForBill - remainingDue) > TENDER_ROUNDING_CENTS) {
+        throw new AppError(
+          'AMOUNT_MISMATCH',
+          tipTotal > 0
+            ? `Payments total ${submittedTotal} (incl. ${tipTotal} tip) but ${remainingDue} is due before the tip`
+            : `Payments total ${submittedTotal} but ${remainingDue} is due`,
+          400,
+        )
+      }
+
+      // FOH-14: the tip rides on the order (Order.tipCents, and on its total —
+      // what the customer was charged). The shift close credits it to 2095
+      // Tips Payable (computeSaleAccounting), the Z-report shows it and the tip
+      // pool sums it. Added AFTER the tender re-price, which keeps a tipped bill.
+      if (tipTotal > 0) {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { tipCents: { increment: tipTotal }, totalCents: { increment: tipTotal } },
+        })
+      }
+
+      const createdPayments = []
+      const receipts = []
+      for (const p of input.payments) {
+        const changeCents =
+          p.method === 'cash' && p.tenderedCents !== undefined
+            ? Math.max(0, p.tenderedCents - p.amountCents)
+            : undefined
+        const meta = {
+          ...(input.idempotencyKey && { idempotencyKey: input.idempotencyKey }),
+          ...((p.tipCents ?? 0) > 0 && { tipCents: p.tipCents }),
+          // Card machine (spec §7): which charge this is, and what the slip says.
+          ...(p.terminalChargeId && { terminalChargeId: p.terminalChargeId }),
+          ...(p.authCode && { authCode: p.authCode }),
+          ...(p.cardBrand && { cardBrand: p.cardBrand }),
+          ...(p.cardLast4 && { cardLast4: p.cardLast4 }),
+          ...(p.manualReason && { manualReason: p.manualReason }),
+        }
+        const payment = await tx.payment.create({
+          data: {
+            orderId: input.orderId,
+            shiftId: input.shiftId,
+            method: p.method,
+            amountCents: p.amountCents,
+            status: 'paid',
+            // A Raast transfer went straight to the company's bank: gateway
+            // 'raast' (keenuSettle never touches it), the normalised reference.
+            gateway: p.method === 'raast' ? 'raast' : p.gateway ?? 'none',
+            gatewayRef: refOf(p),
+            ...(Object.keys(meta).length > 0 && { gatewayMeta: meta }),
+            tenderedCents: p.tenderedCents ?? null,
+            changeCents: changeCents ?? null,
+            processedAt: new Date(),
+          },
+        })
+        createdPayments.push(payment)
+        // The Raast receipt, in this transaction: provisional until the bank
+        // statement matches it (raastTender.ts).
+        if (p.method === 'raast' && raast) {
+          receipts.push(await recordRaastReceiptTx(tx, {
+            order: { id: order.id, conceptId: order.conceptId, tenantId: raast.tenantId },
+            payment: { id: payment.id, amountCents: payment.amountCents },
+            tipCents: p.tipCents ?? 0,
+            shiftId: input.shiftId,
+            bankRef: raast.ref,
+            bankRefRaw: raast.raw,
+            via: raast.meta.via,
+            cashierVerified: raast.meta.cashierVerified === true,
+            actorId: input.actorId!,
+            intentId: raast.meta.intentId ?? null,
+            smsAlertId: raast.meta.smsAlertId ?? null,
+            targetPaymentId: null,
+          }))
+        }
+      }
+
+      // The tenders cover what was due, so the one coverage rule completes the
+      // sale (and voids a leftover placeholder row).
+      const coverage = await applyCoverageTx(tx, order.id, 'till')
+      return { payments: createdPayments, coverage, replayCompleted: false, receipts: receipts.map(raastTenderView) }
+    }, { maxWait: 10_000, timeout: 15_000 })
+  } catch (err) {
+    // A racing payment claimed the same bank reference first (the unique
+    // index aborted this transaction): the pre-check's 409.
+    if (raast) await raastRefConflict(prisma, err, raast.tenantId, raast.ref)
+    throw err
+  }
 
   if (!result.coverage) {
     // An idempotent replay: nothing new was taken. The sale's fiscal view as it stands now.
     const fiscal = result.replayCompleted ? await fiscalViewForOrder(input.orderId, 'sale', { staff: true }).catch(() => null) : null
-    return { payments: result.payments, orderCompleted: result.replayCompleted, ...tillFiscal(fiscal), replayed: true }
+    return { payments: result.payments, orderCompleted: result.replayCompleted, ...tillFiscal(fiscal), replayed: true, raast: result.receipts }
   }
   const fiscal = result.coverage.completedNow
     ? await afterTillSale(input.orderId, result.coverage.customerId, result.coverage.source)
     : null
-  return { payments: result.payments, orderCompleted: result.coverage.completedNow, ...tillFiscal(fiscal), replayed: false }
+  return { payments: result.payments, orderCompleted: result.coverage.completedNow, ...tillFiscal(fiscal), replayed: false, raast: result.receipts }
 }
 
 // ─── Shift management ─────────────────────────────────────────────────────────
@@ -1267,8 +1488,9 @@ export async function getZReport(shiftId: string) {
   const shift = await prisma.shift.findUnique({
     where: { id: shiftId },
     include: {
-      // The same rows, and the same sale summary, the ledger post reads.
-      payments: { include: SHIFT_SALE_PAYMENT_INCLUDE },
+      // The same rows, and the same sale summary, the ledger post reads —
+      // plus each Raast tender's receipt (provisional / matched).
+      payments: { include: { ...SHIFT_SALE_PAYMENT_INCLUDE, raastReceipt: { select: { status: true } } } },
       cashMovements: true,
       user: { select: { name: true, tenantId: true } },
       location: { select: { tenantId: true } },
@@ -1282,6 +1504,7 @@ export async function getZReport(shiftId: string) {
     .filter((p) => p.method === 'cash' && p.status === 'paid')
     .reduce((s, p) => s + p.amountCents, 0)
 
+  // Card takings (Card – Keenu), with the retired Keenu QR's legacy rows.
   const cardSales = payments
     .filter((p) => ['card', 'keenu_qr'].includes(p.method) && p.status === 'paid')
     .reduce((s, p) => s + p.amountCents, 0)
@@ -1289,6 +1512,18 @@ export async function getZReport(shiftId: string) {
   const pendingCardSales = payments
     .filter((p) => ['card', 'keenu_qr'].includes(p.method) && p.status === 'pending')
     .reduce((s, p) => s + p.amountCents, 0)
+
+  // Raast QR takings: transfers straight to the company's bank, confirmed at
+  // the counter (or by bank SMS) — 'provisional' until the bank statement
+  // matches them, 'matched' once it has.
+  const raastPaid = payments.filter((p) => p.method === 'raast' && p.status === 'paid')
+  const raastSales = raastPaid.reduce((s, p) => s + p.amountCents, 0)
+  const raastCount = raastPaid.length
+  const raastByStatus = (status: string) =>
+    raastPaid.filter((p) => p.raastReceipt?.status === status).reduce((s, p) => s + p.amountCents, 0)
+  const raastProvisionalCents = raastByStatus('provisional')
+  const raastMatchedCents = raastByStatus('matched')
+  const raastUnreceivedCents = raastByStatus('unreceived')
 
   // F-PAY02: wallet sales line stays at 0 until JazzCash/Easypaisa adapters
   // are reintroduced. Z-reports still show the row so the shape of the
@@ -1306,7 +1541,7 @@ export async function getZReport(shiftId: string) {
   const refundedPayments = payments.filter((p) => p.status === 'refunded')
   const voids = refundedPayments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
 
-  const totalSales = cashSales + cardSales + walletSales
+  const totalSales = cashSales + cardSales + raastSales + walletSales
   // Orders, tax, discounts, tips and service charge are the till orders this
   // drawer books, split by the one sale formula (accounting/shiftPosting.ts
   // summariseShiftSales → computeSaleAccounting) — the figures the shift's
@@ -1329,7 +1564,10 @@ export async function getZReport(shiftId: string) {
     if (!p.order || !cancelledIds.has(p.order.id) || refundedOnCancelled.has(p.order.id)) continue
     refundedOnCancelled.set(p.order.id, p.order.payments.filter((r) => r.status === 'refunded').reduce((t, r) => t + Math.abs(r.amountCents), 0))
   }
-  const cancelledPaidCents = sales.cancelledPaid.cashCents + sales.cancelledPaid.cardCents
+  // Raast money taken here on those tickets — held per receiving-bank code by
+  // the close (never in its cash or card figures), so it is counted once.
+  const cancelledRaastCents = raastTotalCents(sales.cancelledPaid.raastByCode)
+  const cancelledPaidCents = sales.cancelledPaid.cashCents + sales.cancelledPaid.cardCents + cancelledRaastCents
   const refundDueCents = Math.max(0, cancelledPaidCents - [...refundedOnCancelled.values()].reduce((t, c) => t + c, 0))
   // Of that, what this drawer's CARD receipts on those tickets still owe back
   // (less every card hand-back on the ticket) — the shift screen offers
@@ -1377,11 +1615,20 @@ export async function getZReport(shiftId: string) {
     openingFloat: shift.openingFloatCents,
     closingFloat: shift.closingFloatCents,
     cashSales,
+    /** Card – Keenu takings (plus the retired Keenu QR's legacy rows). */
     cardSales,
     pendingCardSales,
+    /** Raast QR takings — transfers to the company's bank. */
+    raastSales,
+    raastCount,
+    /** Of raastSales: not yet on a bank statement / matched to one / written off as never received. */
+    raastProvisionalCents,
+    raastMatchedCents,
+    raastUnreceivedCents,
     walletSales,
     compSales,
     voids,
+    /** cash + card + Raast + wallet. */
     totalSales,
     totalOrders,
     totalDiscounts,
@@ -1400,14 +1647,17 @@ export async function getZReport(shiftId: string) {
     netCents:             totalSales - voids,
     taxCents:             totalTax,
     tipsCents:            totalTips,
-    // TILL-R5: the takings above (cash + card) include card tips, which are
-    // staff money (2095), not sales — the sales figure without them.
+    // TILL-R5: the takings above (cash + card + Raast) include tips taken on
+    // the tenders, which are staff money (2095), not sales — the sales figure
+    // without them.
     salesExTipsCents:     totalSales - totalTips,
     giftCardCents,
     cancelledPaid: {
       count:     sales.cancelledPaid.orderIds.length,
       cashCents: sales.cancelledPaid.cashCents,
       cardCents: sales.cancelledPaid.cardCents,
+      /** Raast money taken on them (owed back by Raast, from the bank). */
+      raastCents: cancelledRaastCents,
       /** The cancelled tickets themselves (the shift screen's per-ticket "Refund to card"). */
       orderIds: sales.cancelledPaid.orderIds,
       /** Card money on them still owed back (machine refunds in flight not yet booked are not deducted). */
@@ -1455,6 +1705,13 @@ interface VoidInput {
   actorId: string
   actorRole: string
   managerOverridePin?: string
+  /**
+   * TILL-R3 on a bill paid by Raast QR: the line's value goes back by Raast,
+   * which a manager sends from the bank FIRST — this is that outgoing
+   * transfer's reference (409 RAAST_REFUND_REFERENCE_REQUIRED {amountCents}
+   * without it).
+   */
+  refundReference?: string
 }
 
 async function ensureCapOrManagerOverride(
@@ -1651,7 +1908,11 @@ async function lowerBillForVoidTx(tx: Tx, orderId: string, bill: VoidBill, remov
     select: { id: true, amountCents: true, splitGroup: true },
   })
   const portions = pending.filter((p) => p.splitGroup != null)
-  if (portions.length > 0) await tx.payment.deleteMany({ where: { id: { in: portions.map((p) => p.id) } } })
+  if (portions.length > 0) {
+    // S6: a Raast receipt that pointed at a cleared portion has none to settle now.
+    await releaseRaastTargetsTx(tx, portions.map((p) => p.id))
+    await tx.payment.deleteMany({ where: { id: { in: portions.map((p) => p.id) } } })
+  }
   let left = removedCents
   for (const p of pending.filter((x) => x.splitGroup == null)) {
     if (left <= 0) break
@@ -1773,8 +2034,14 @@ export async function voidOrderItem(input: VoidInput) {
       ? new AppError('OVER_MANAGER_CAP', `Amount ${lineCents} exceeds the manager cap of ${policy.managerVoidLimitCents}`, 403)
       : new AppError('OVER_CAP', `Amount ${lineCents} exceeds the ${policy.managerVoidLimitCents} cap for void`, 403)
   }
+  // A bill Raast money was taken on may give the line's value back by Raast:
+  // then the company's Raast lock is taken first (lock order: Raast, then the
+  // order — M2), and the outgoing reference is checked against its rule.
+  const raastTaken = !!tenantId && (await prisma.payment.count({ where: { orderId: input.orderId, method: 'raast', status: 'paid' } })) > 0
+  const raastRule = raastTaken ? await raastRefRule(tenantId!) : null
 
   const result = await prisma.$transaction(async (tx) => {
+    if (raastTaken) await lockRaastTx(tx, tenantId!)
     // The order is locked, so a void and a payment never interleave: the
     // payment either sees the lowered bill or the void sees the payment.
     await lockOrderTx(tx, input.orderId)
@@ -1868,6 +2135,24 @@ export async function voidOrderItem(input: VoidInput) {
       if (method === 'cash' && !own) {
         throw new AppError('OPEN_DRAWER_REQUIRED', 'This item was paid in cash — open a shift so the refund can leave your drawer, then void it', 422)
       }
+      // Paid by Raast: the manager (who approved this void) sends the line's
+      // value back from the bank first; its outgoing reference rides on the
+      // refund row with the receipt it goes back against (spec §4.5).
+      let raastSource: RaastRefundSource | null = null
+      let raastOutRef: string | null = null
+      if (method === 'raast') {
+        raastOutRef = cleanRaastRef(input.refundReference, {
+          orderId: order.id,
+          rule: raastRule ?? undefined,
+          missing: () => new AppError(
+            'RAAST_REFUND_REFERENCE_REQUIRED',
+            `This bill was paid by Raast QR — send PKR ${(delta.removedCents / 100).toFixed(2)} back to the customer from the bank first, then enter the outgoing transfer's reference`,
+            409,
+            { amountCents: delta.removedCents },
+          ),
+        }).ref
+        raastSource = await chooseRaastRefundSourceTx(tx, order.id, delta.removedCents)
+      }
       refund = await writeRefundTx(tx, {
         orderId: order.id,
         shiftId: own?.id ?? null,
@@ -1877,6 +2162,8 @@ export async function voidOrderItem(input: VoidInput) {
         approverId,
         actorId: input.actorId,
         voidedItemId: input.orderItemId,
+        gatewayRef: raastOutRef,
+        raast: raastSource,
       })
       bill = { totalCents: order.totalCents, taxCents: order.taxCents, serviceChargeCents: order.serviceChargeCents, discountCents: order.discountCents }
     }
@@ -2217,19 +2504,84 @@ async function flagHeavyStaffMeals(staffId: string, tenantId: string, conceptId:
 export interface RefundInput extends CompRefundInput {
   /** The open drawer a cash refund leaves from. Defaults to the actor's own open drawer. */
   shiftId?: string | null
-  /** How the money goes back. Defaults to the tender of the most recent receipt. */
-  method?: 'cash' | 'card' | 'keenu_qr'
+  /**
+   * How the money goes back — only a tender the order was paid with (ONL-16).
+   * Defaults to the tender of the most recent receipt. An old Keenu QR sale is
+   * refunded by keenu_qr exactly as before (Cr 1030).
+   */
+  method?: RefundTender
   /** Card machine (server only, connectors/terminal): the refund went back through this gateway. */
   gateway?: PaymentGateway
-  /** Card machine: the processor's reference for the refund. */
+  /**
+   * Card machine: the processor's reference for the refund. Raast QR: the
+   * OUTGOING transfer's bank reference — the money is sent back from the bank
+   * first — required (400 RAAST_REFUND_REF_REQUIRED), validated, not unique.
+   */
   gatewayRef?: string
   /** Card machine: the refund TerminalCharge this books (persisted in gatewayMeta). */
   terminalChargeId?: string
 }
 
-const REFUNDABLE_TENDERS = new Set(['cash', 'card', 'keenu_qr'])
-const DIGITAL_TENDERS = new Set(['card', 'keenu_qr'])
-export type RefundMethod = 'cash' | 'card' | 'keenu_qr'
+// The tenders money can go back on (lib/tenders REFUND_TENDERS — Raast QR,
+// and the retired Keenu QR for its old sales), and the pending rows a
+// processor may still confirm (PENDING_GATEWAY_TENDERS — never Raast: a Raast
+// payment is recorded paid at the till or not at all).
+const REFUNDABLE_TENDERS: ReadonlySet<string> = new Set(REFUND_TENDERS)
+const DIGITAL_TENDERS: ReadonlySet<string> = new Set(PENDING_GATEWAY_TENDERS)
+export type RefundMethod = RefundTender
+
+/**
+ * The reference a refund row carries: a Raast refund's outgoing transfer
+ * (validated); a card-machine refund's processor reference (server-set, with
+ * its gateway). A reference a client typed on any other refund is not kept.
+ */
+function refundRowRef(input: RefundInput, raastOut: { ref: string } | null): string | undefined {
+  if (raastOut) return raastOut.ref
+  return input.gateway ? input.gatewayRef : undefined
+}
+
+function raastRefundRefRequired(): AppError {
+  return new AppError(
+    'RAAST_REFUND_REF_REQUIRED',
+    "Send the money back from the bank first, then type the outgoing transfer's reference",
+    400,
+  )
+}
+
+/**
+ * A Raast refund is money a person sends back from the company's bank, so a
+ * MANAGER always approves it (requireManagerApproval: the actor when they are
+ * an approver, else a valid manager PIN of the ORDER's company; the approver
+ * is always recorded) — on top of the cap rules: above the manager refund cap
+ * it is refused. The policy's reason / photo rules apply first, as on every
+ * refund.
+ */
+async function approveRaastRefund(
+  input: RefundInput,
+  tenantId: string,
+  policy: Awaited<ReturnType<typeof getRefundPolicy>>,
+): Promise<{ approverId: string }> {
+  if (policy.requireReason && input.reason.trim().length === 0) {
+    throw new AppError('REASON_REQUIRED', 'Reason required by policy', 400)
+  }
+  if (policy.requirePhotoEvidence && !input.photoUrl) {
+    throw new AppError('PHOTO_REQUIRED', 'Photo evidence required by policy', 400)
+  }
+  const { approverId, viaPin } = await requireManagerApproval({
+    actorId: input.actorId,
+    actorRole: input.actorRole,
+    managerOverridePin: input.managerOverridePin,
+    tenantId,
+    action: 'A Raast refund',
+    orderId: input.orderId,
+  })
+  if (input.amountCents > policy.managerRefundLimitCents) {
+    throw viaPin
+      ? new AppError('OVER_MANAGER_CAP', `Amount ${input.amountCents} exceeds the manager cap of ${policy.managerRefundLimitCents}`, 403)
+      : new AppError('OVER_CAP', `Amount ${input.amountCents} exceeds the ${policy.managerRefundLimitCents} cap for refund`, 403)
+  }
+  return { approverId }
+}
 
 /**
  * What an order can still give back, from its payment rows. The ONE
@@ -2379,6 +2731,13 @@ async function writeRefundTx(tx: Tx, r: {
   gateway?: PaymentGateway
   gatewayRef?: string | null
   terminalChargeId?: string | null
+  /**
+   * A Raast refund: the receipt it goes back against and that receipt's bank
+   * account and ledger code (chooseRaastRefundSourceTx) — gatewayMeta.raast,
+   * which the ledger credits (orderPosting refundCreditAccount → the bank,
+   * never 1030). gatewayRef is the outgoing transfer's reference.
+   */
+  raast?: RaastRefundSource | null
 }): Promise<{ payment: Payment; entryId: string }> {
   const payment = await tx.payment.create({
     data: {
@@ -2387,11 +2746,12 @@ async function writeRefundTx(tx: Tx, r: {
       method: r.method,
       amountCents: -r.amountCents,
       status: 'refunded',
-      gateway: r.gateway ?? 'none',
+      gateway: r.raast ? 'raast' : r.gateway ?? 'none',
       gatewayRef: r.gatewayRef?.trim() || null,
       gatewayMeta: {
         refund: { reason: r.reason, approverId: r.approverId, actorId: r.actorId, ...(r.voidedItemId && { voidedItemId: r.voidedItemId }) },
         ...(r.terminalChargeId && { terminalChargeId: r.terminalChargeId }),
+        ...(r.raast && { raast: { receiptId: r.raast.receiptId, bankAccountId: r.raast.bankAccountId, ledgerCode: r.raast.ledgerCode } }),
       },
       processedAt: new Date(),
     },
@@ -2595,9 +2955,10 @@ function assertRefundDue(state: ReturnType<typeof refundDueOf>, amountCents: num
 // re-derived with the close's OWN formula (summariseShiftSales) on this order,
 // and the non-money lines of its earlier refund entries, read from the ledger
 // — into where the money is now owed from. Each hand-back ('order.refund:
-// <refundId>') then debits where its tender's money is parked — 1010 (cash) /
-// 1030 (card) up to what a pre-cancel close left there for a non-till ticket,
-// the rest 1110 — and credits the drawer or card it leaves by. Together they
+// <refundId>') then debits where its tender's money is parked — by ACCOUNT
+// CODE: 1010 (cash) / 1030 (card) / the receiving bank's code (Raast QR) up
+// to what a pre-cancel close left there for a non-till ticket, the rest 1110
+// — and credits the drawer, card or bank it leaves by. Together they
 // net revenue, tax, wallet, gift card, comps, 1110 and 1010 to zero for the
 // ticket once all of it is handed back, in any order of close, void, cancel
 // and hand-back. (COGS a close booked stays booked — the food was made, as on
@@ -2606,19 +2967,63 @@ function assertRefundDue(state: ReturnType<typeof refundDueOf>, amountCents: num
 
 export const CANCEL_UNWIND_SOURCE = 'order.cancel_unwind'
 
-/** Where a cancelled ticket's money sits: balanced against, never unwound. */
-const MONEY_ACCOUNTS: ReadonlySet<string> = new Set([ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.CARD_RECEIVABLE, ACCT.CUSTOMER_AR])
-type ParkKey = 'cash' | 'card'
-const parkKeyOf = (method: string): ParkKey => (method === 'cash' ? 'cash' : 'card')
-/** A non-till ticket's receipts a pre-cancel close left outside 1110: cash Cr 1010; card booked nowhere (1030 nets itself). */
-const PARK_ACCOUNT: Record<ParkKey, string> = { cash: ACCT.CASH_ON_HAND, card: ACCT.CARD_RECEIVABLE }
+// Money is parked by ACCOUNT CODE, not by tender class (Raast QR, 2026-10-12):
+// a Raast receipt sits on the receiving bank's own chart code (snapshotted on
+// the receipt; a Raast refund row carries it in gatewayMeta.raast), never on
+// 1030 — so the codes are per order.
+
+/** Where every cancelled ticket's money can sit: balanced against, never unwound (plus its Raast bank codes — moneyAccountsOf). */
+const BASE_MONEY_ACCOUNTS: readonly string[] = [ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.CARD_RECEIVABLE, ACCT.CUSTOMER_AR]
+
+type ParkRow = { method: string; gatewayMeta?: unknown; raastReceipt?: { ledgerCode: string } | null }
+
+/**
+ * The money account a cancelled ticket's receipt or refund is parked against
+ * — what a pre-cancel close left outside 1110 for a non-till ticket: cash
+ * 1010 (the close moved it 1010 → 1015, Cr 1010); card and the retired Keenu
+ * QR 1030 (booked nowhere — 1030 nets itself); Raast the receiving bank's own
+ * code (booked nowhere either — the bank code nets itself), from the
+ * receipt's snapshot or the refund row's gatewayMeta.raast
+ * (orderPosting raastLedgerCodeOf — a Raast row with no code throws, never
+ * 1030).
+ */
+function parkAccountOf(p: ParkRow): string {
+  if (p.method === 'cash') return ACCT.CASH_ON_HAND
+  if (p.method === 'raast') return raastLedgerCodeOf(p)
+  return ACCT.CARD_RECEIVABLE
+}
+
+/** A ticket's Raast money rows: paid receipts and Raast refunds (a pending portion carries no money). */
+function raastMoneyRows<T extends ParkRow & { status: string; amountCents: number }>(order: { payments: T[] }): T[] {
+  return order.payments.filter((p) => p.method === 'raast' && ((p.status === 'paid' && p.amountCents > 0) || p.status === 'refunded'))
+}
+
+/** The ticket's money accounts: the base four plus every bank code its Raast receipts and refunds sit on. */
+function moneyAccountsOf(order: CancelledBooksOrder): ReadonlySet<string> {
+  return new Set([...BASE_MONEY_ACCOUNTS, ...raastMoneyRows(order).map(parkAccountOf)])
+}
+
+/** The accounts a ticket's money can be parked on: 1010, 1030 and its Raast bank codes. */
+function parkAccountsOf(order: CancelledBooksOrder): string[] {
+  return [...new Set([ACCT.CASH_ON_HAND, ACCT.CARD_RECEIVABLE, ...raastMoneyRows(order).map(parkAccountOf)])]
+}
+
+/** Cents per money account code. */
+type Parked = Map<string, number>
+const addParked = (m: Parked, code: string, cents: number): void => { m.set(code, (m.get(code) ?? 0) + cents) }
 
 const CANCELLED_BOOKS_SELECT = {
   id: true, status: true, source: true, conceptId: true,
   totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
   promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
   concept: { select: { id: true, slug: true, province: true, srbPosId: true, tenantId: true } },
-  payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
+  payments: {
+    select: {
+      id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true,
+      // A Raast receipt's bank code (its ledger snapshot).
+      raastReceipt: { select: { ledgerCode: true, status: true } },
+    },
+  },
   giftCardRedemptions: { select: { amountCents: true } },
 } as const
 type CancelledBooksOrder = Prisma.OrderGetPayload<{ select: typeof CANCELLED_BOOKS_SELECT }>
@@ -2655,13 +3060,15 @@ async function refundEntriesTx(tx: Tx, tenantId: string, order: CancelledBooksOr
 /**
  * What the cancelled ticket's pre-cancel postings left to undo: the sale-side
  * lines to reverse (signed), the debit each earlier sale-refund's reversal
- * needs (by its tender), and what a pre-cancel close parked outside 1110 for a
- * non-till ticket (by tender).
+ * needs (by the money account its tender's money sits on), and what a
+ * pre-cancel close parked outside 1110 for a non-till ticket (by money
+ * account — parkAccountOf).
  */
 async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: CancelledBooksOrder, exceptRefundId: string | null) {
   const reverse: SignedLine[] = []
-  const shareDebits: Array<{ key: ParkKey; cents: number }> = []
-  const parked: Record<ParkKey, number> = { cash: 0, card: 0 }
+  const shareDebits: Array<{ code: string; cents: number }> = []
+  const parked: Parked = new Map()
+  const money = moneyAccountsOf(order)
   const id8 = orderRefOf(order.id)
 
   const receipts = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && isShiftReceipt(p))
@@ -2685,8 +3092,9 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
     const here = receipts.filter((p) => p.shiftId === shiftId && p.method !== 'comp')
 
     if (order.source !== 'pos') {
-      // Non-till: its cash moved 1010 → 1015 (Cr 1010); its card was booked nowhere.
-      for (const p of here) parked[parkKeyOf(p.method)] += p.amountCents
+      // Non-till: its cash moved 1010 → 1015 (Cr 1010); its card and its
+      // Raast money were booked nowhere.
+      for (const p of here) addParked(parked, parkAccountOf(p), p.amountCents)
       continue
     }
 
@@ -2730,20 +3138,20 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
   for (const { row, lines } of await refundEntriesTx(tx, tenantId, order, exceptRefundId)) {
     let net = 0
     for (const l of lines) {
-      if (MONEY_ACCOUNTS.has(l.account.code)) continue
+      if (money.has(l.account.code)) continue
       const amt = toCents(l.amountCents)
       const signed = l.type === 'debit' ? amt : -amt
       net += signed
       reverse.push({ accountCode: l.account.code, cents: -signed, conceptId: l.conceptId, memo: `Cancelled order ${order.id} — refund ${row.id.slice(0, 8)} was booked as a sale refund (#${id8})` })
     }
-    if (net !== 0) shareDebits.push({ key: parkKeyOf(row.method), cents: net })
+    if (net !== 0) shareDebits.push({ code: parkAccountOf(row), cents: net })
   }
   return { reverse, shareDebits, parked }
 }
 
-/** Debits on 1010 / 1030 this ticket's own unwind and hand-backs already made against what a close parked there. */
-async function parkedUsedTx(tx: Tx, tenantId: string, order: CancelledBooksOrder, exceptRefundId: string | null): Promise<Record<ParkKey, number>> {
-  const used: Record<ParkKey, number> = { cash: 0, card: 0 }
+/** Debits on the ticket's park accounts (1010, 1030, its Raast bank codes) its own unwind and hand-backs already made against what a close parked there. */
+async function parkedUsedTx(tx: Tx, tenantId: string, order: CancelledBooksOrder, exceptRefundId: string | null): Promise<Parked> {
+  const used: Parked = new Map()
   const refs = [
     `${CANCEL_UNWIND_SOURCE}:${order.id}`,
     ...order.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0 && p.id !== exceptRefundId).map((p) => `order.refund:${p.id}`),
@@ -2751,24 +3159,30 @@ async function parkedUsedTx(tx: Tx, tenantId: string, order: CancelledBooksOrder
   const rows = await tx.journalLine.groupBy({
     by: ['accountId'],
     _sum: { amountCents: true },
-    where: { type: 'debit', account: { tenantId, code: { in: [PARK_ACCOUNT.cash, PARK_ACCOUNT.card] } }, journalEntry: { tenantId, reference: { in: refs } } },
+    where: { type: 'debit', account: { tenantId, code: { in: parkAccountsOf(order) } }, journalEntry: { tenantId, reference: { in: refs } } },
   })
   if (rows.length === 0) return used
   const accounts = await tx.account.findMany({ where: { id: { in: rows.map((r) => r.accountId) } }, select: { id: true, code: true } })
   const codeOf = new Map(accounts.map((a) => [a.id, a.code]))
   for (const r of rows) {
     const code = codeOf.get(r.accountId)
-    if (code === PARK_ACCOUNT.cash) used.cash += sumCents(r._sum.amountCents)
-    else if (code === PARK_ACCOUNT.card) used.card += sumCents(r._sum.amountCents)
+    if (code) addParked(used, code, sumCents(r._sum.amountCents))
   }
   return used
 }
 
-/** Takes up to `cents` from what is left parked under `key`; the rest is 1110. */
-function takeParked(left: Record<ParkKey, number>, key: ParkKey, cents: number): Array<{ accountCode: string; cents: number }> {
-  const fromPark = Math.max(0, Math.min(left[key], cents))
-  left[key] -= fromPark
-  return [{ accountCode: PARK_ACCOUNT[key], cents: fromPark }, { accountCode: ACCT.CUSTOMER_AR, cents: cents - fromPark }]
+/** What a close left parked per money account, less what this ticket's unwind and hand-backs already used. */
+function parkedLeft(parked: Parked, used: Parked): Parked {
+  const left: Parked = new Map(parked)
+  for (const [code, cents] of used) addParked(left, code, -cents)
+  return left
+}
+
+/** Takes up to `cents` from what is left parked on `code`; the rest is 1110. */
+function takeParked(left: Parked, code: string, cents: number): Array<{ accountCode: string; cents: number }> {
+  const fromPark = Math.max(0, Math.min(left.get(code) ?? 0, cents))
+  left.set(code, (left.get(code) ?? 0) - fromPark)
+  return [{ accountCode: code, cents: fromPark }, { accountCode: ACCT.CUSTOMER_AR, cents: cents - fromPark }]
 }
 
 /**
@@ -2781,14 +3195,12 @@ async function postCancelledUnwindTx(tx: Tx, order: CancelledBooksOrder, tenantI
   if (existing) return existing.id
   const books = await cancelledTicketBooksTx(tx, tenantId, order, exceptRefundId)
   if (books.reverse.length === 0) return null
-  const left = { ...books.parked }
-  const used = await parkedUsedTx(tx, tenantId, order, exceptRefundId)
-  left.cash -= used.cash; left.card -= used.card
+  const left = parkedLeft(books.parked, await parkedUsedTx(tx, tenantId, order, exceptRefundId))
   const memo = `Cancelled order ${order.id} — owed back to the customer, not a sale`
   const signed: SignedLine[] = [...books.reverse]
   // Each reversed sale-refund share is debited where its tender's money is parked.
   for (const d of books.shareDebits) {
-    for (const t of takeParked(left, d.key, d.cents)) signed.push({ ...t, conceptId: order.conceptId, memo })
+    for (const t of takeParked(left, d.code, d.cents)) signed.push({ ...t, conceptId: order.conceptId, memo })
   }
   // What the sale reversal leaves is the ticket's money, now owed back: 1110.
   const rest = signed.reduce((t, l) => t + l.cents, 0)
@@ -2809,12 +3221,14 @@ async function postCancelledUnwindTx(tx: Tx, order: CancelledBooksOrder, tenantI
 /**
  * The entry for ONE hand-back on a cancelled ticket ('order.refund', keyed on
  * the refund row, so the shift close skips it): the unwind first (once), then
- * Dr where this tender's money is parked / Cr the drawer or card it leaves by.
+ * Dr where this tender's money is parked / Cr the drawer, card or bank it
+ * leaves by (refundCreditAccount — a Raast hand-back credits the receiving
+ * bank's code from gatewayMeta.raast, never 1030).
  */
 async function bookCancelledHandBackTx(tx: Tx, refundPaymentId: string, postedBy: string): Promise<{ entryId: string | null; reason?: string }> {
   const payment = await tx.payment.findUniqueOrThrow({
     where: { id: refundPaymentId },
-    select: { id: true, orderId: true, method: true, shiftId: true, amountCents: true, processedAt: true },
+    select: { id: true, orderId: true, method: true, shiftId: true, amountCents: true, processedAt: true, gatewayMeta: true },
   })
   const order = await tx.order.findUniqueOrThrow({ where: { id: payment.orderId }, select: CANCELLED_BOOKS_SELECT })
   const tenantId = order.concept.tenantId
@@ -2825,13 +3239,13 @@ async function bookCancelledHandBackTx(tx: Tx, refundPaymentId: string, postedBy
 
   const amount = Math.abs(payment.amountCents)
   const books = await cancelledTicketBooksTx(tx, tenantId, order, payment.id)
-  const used = await parkedUsedTx(tx, tenantId, order, payment.id)
-  const left: Record<ParkKey, number> = { cash: books.parked.cash - used.cash, card: books.parked.card - used.card }
+  const left = parkedLeft(books.parked, await parkedUsedTx(tx, tenantId, order, payment.id))
   const memo = `Refund due handed back — cancelled order ${order.id}`
-  const signed: SignedLine[] = takeParked(left, parkKeyOf(payment.method), amount)
+  const signed: SignedLine[] = takeParked(left, parkAccountOf(payment), amount)
     .map((t) => ({ ...t, conceptId: order.conceptId, memo }))
   signed.push({ accountCode: refundCreditAccount(payment), cents: -amount, conceptId: order.conceptId, memo })
-  // Dr 1030 / Cr 1030 for card a pre-cancel close never booked must stay two lines, so no netting here.
+  // Dr 1030 / Cr 1030 for card (or Dr bank / Cr bank for Raast) a pre-cancel
+  // close never booked must stay two lines, so no netting here.
   const lines: JournalLineInput[] = signed
     .filter((l) => l.cents !== 0)
     .map((l) => ({ accountCode: l.accountCode, type: l.cents > 0 ? 'debit' as const : 'credit' as const, amountCents: Math.abs(l.cents), memo: l.memo, conceptId: l.conceptId }))
@@ -2886,6 +3300,11 @@ export async function postCancelledTicketUnwind(orderId: string, postedBy = 'sys
  * hand-back entry, exactly once per machine refund. Until it is booked it
  * counts as already on its way back (inFlightTerminalRefundCents), so the
  * record-only hand-back and the machine never give the same money back twice.
+ *
+ * Raast money goes back by Raast: a manager sends it from the bank first and
+ * always approves the hand-back (approveRaastRefund); the outgoing transfer's
+ * reference is required, and the row is booked against the receipt it came
+ * in on (chooseRaastRefundSourceTx — Dr where it is parked / Cr that bank).
  */
 async function refundDueOnCancelledTicket(
   input: RefundInput,
@@ -2905,24 +3324,32 @@ async function refundDueOnCancelledTicket(
   // (A machine refund being booked was checked before the machine moved the
   // money; its own replay is answered under the lock, below.)
   if (!input.terminalChargeId) assertRefundDue(pre, input.amountCents, method)
+  const isRaast = method === 'raast'
+  const raastOut = isRaast
+    ? cleanRaastRef(input.gatewayRef, { orderId: input.orderId, rule: await raastRefRule(tenantId), missing: raastRefundRefRequired })
+    : null
 
   const policy = await getRefundPolicy(tenantId)
-  const { approverId } = await ensureCapOrManagerOverride(
-    input.amountCents,
-    policy.cashierRefundLimitCents,
-    policy.managerRefundLimitCents,
-    policy,
-    input.reason,
-    input.photoUrl,
-    input.actorRole,
-    input.managerOverridePin,
-    'refund',
-    tenantId,
-    { actorId: input.actorId, orderId: input.orderId },
-  )
+  const { approverId } = isRaast
+    ? await approveRaastRefund(input, tenantId, policy)
+    : await ensureCapOrManagerOverride(
+        input.amountCents,
+        policy.cashierRefundLimitCents,
+        policy.managerRefundLimitCents,
+        policy,
+        input.reason,
+        input.photoUrl,
+        input.actorRole,
+        input.managerOverridePin,
+        'refund',
+        tenantId,
+        { actorId: input.actorId, orderId: input.orderId },
+      )
   const shiftId = await refundDrawerOf(input, tenantId, method)
 
   const booked = await prisma.$transaction(async (tx) => {
+    // Lock order: the company's Raast lock first for a Raast hand-back (M2).
+    if (isRaast) await lockRaastTx(tx, tenantId)
     await lockOrderTx(tx, input.orderId)
     const current = await tx.order.findUniqueOrThrow({
       where: { id: input.orderId },
@@ -2939,11 +3366,14 @@ async function refundDueOnCancelledTicket(
     }
     const inFlight = await inFlightTerminalRefundCents(tx, input.orderId, { exceptChargeId: input.terminalChargeId })
     assertRefundDue(withInFlightDue(state, inFlight), input.amountCents, method)
+    // A Raast hand-back goes back against the receipt the money came in on.
+    const raastSource = isRaast ? await chooseRaastRefundSourceTx(tx, input.orderId, input.amountCents) : null
     // Booked by where the money is parked, not as a sale refund (R5-A/B/C, above).
     const { payment: refundPayment, entryId } = await writeRefundTx(tx, {
       orderId: input.orderId, shiftId, method, amountCents: input.amountCents, reason: input.reason, approverId, actorId: input.actorId,
       post: (t, id) => bookCancelledHandBackTx(t, id, input.actorId),
-      gateway: input.gateway, gatewayRef: input.gatewayRef, terminalChargeId: input.terminalChargeId,
+      gateway: input.gateway, gatewayRef: refundRowRef(input, raastOut), terminalChargeId: input.terminalChargeId,
+      raast: raastSource,
     })
     // A cancelled ticket was never a sale, so nothing goes to the fiscal POS
     // (§17.1) — unless the sale WAS filed directly with SRB / FBR before the
@@ -2974,6 +3404,7 @@ async function refundDueOnCancelledTicket(
     metadata: {
       amountCents: input.amountCents, method, shiftId, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, entryId,
       ...(input.terminalChargeId && { terminalChargeId: input.terminalChargeId }),
+      ...(raastOut && { raast: { outgoingRef: raastOut.ref, ...raastMetaOf(refundPayment.gatewayMeta) } }),
       fiscalRefund: fiscalDoc ? { documentId: fiscalDoc.id, status: fiscalDoc.status } : null,
     },
   })
@@ -3012,25 +3443,36 @@ export async function refundOrder(input: RefundInput) {
   const method: RefundMethod = input.method ?? pre.latestMethod ?? 'cash'
   // Fast refusals before anyone is asked for a PIN; re-checked under the lock.
   assertRefundable(pre, input.amountCents, method)
+  // Raast QR (spec §4.4): the money is sent back from the bank first — its
+  // outgoing transfer's reference is required (validated, not unique).
+  const isRaast = method === 'raast'
+  const raastOut = isRaast
+    ? cleanRaastRef(input.gatewayRef, { orderId: input.orderId, rule: await raastRefRule(tenantId), missing: raastRefundRefRequired })
+    : null
 
   const policy = await getRefundPolicy(tenantId)
-  const { approverId } = await ensureCapOrManagerOverride(
-    input.amountCents,
-    policy.cashierRefundLimitCents,
-    policy.managerRefundLimitCents,
-    policy,
-    input.reason,
-    input.photoUrl,
-    input.actorRole,
-    input.managerOverridePin,
-    'refund',
-    tenantId,
-    { actorId: input.actorId, orderId: input.orderId },
-  )
+  // A Raast refund always has a manager's approval (on top of the cap rules).
+  const { approverId } = isRaast
+    ? await approveRaastRefund(input, tenantId, policy)
+    : await ensureCapOrManagerOverride(
+        input.amountCents,
+        policy.cashierRefundLimitCents,
+        policy.managerRefundLimitCents,
+        policy,
+        input.reason,
+        input.photoUrl,
+        input.actorRole,
+        input.managerOverridePin,
+        'refund',
+        tenantId,
+        { actorId: input.actorId, orderId: input.orderId },
+      )
 
   const shiftId = await refundDrawerOf(input, tenantId, method)
 
   const { refundPayment, entryId, state, fiscalDoc } = await prisma.$transaction(async (tx) => {
+    // Lock order: the company's Raast lock first for a Raast refund (M2).
+    if (isRaast) await lockRaastTx(tx, tenantId)
     // FOH-05: lock the order and recompute what is refundable from what is
     // committed NOW. Two refunds fired together each used to read "nothing
     // refunded yet" before either wrote, and both went through.
@@ -3047,10 +3489,14 @@ export async function refundOrder(input: RefundInput) {
     const inFlight = await inFlightTerminalRefundCents(tx, input.orderId, { exceptChargeId: input.terminalChargeId })
     const state = withInFlight(refundableOf(current.payments, current.source), inFlight)
     assertRefundable(state, input.amountCents, method)
+    // A Raast refund goes back against the receipt the money came in on: its
+    // bank account and ledger code ride on the row (Cr that bank, never 1030).
+    const raastSource = isRaast ? await chooseRaastRefundSourceTx(tx, input.orderId, input.amountCents) : null
 
     const { payment: refundPayment, entryId } = await writeRefundTx(tx, {
       orderId: input.orderId, shiftId, method, amountCents: input.amountCents, reason: input.reason, approverId, actorId: input.actorId,
-      gateway: input.gateway, gatewayRef: input.gatewayRef, terminalChargeId: input.terminalChargeId,
+      gateway: input.gateway, gatewayRef: refundRowRef(input, raastOut), terminalChargeId: input.terminalChargeId,
+      raast: raastSource,
     })
     // The fiscal return, in THIS transaction with the negative Payment (D4):
     // it stands or falls with the refund. The whole tender amount is passed —
@@ -3087,6 +3533,7 @@ export async function refundOrder(input: RefundInput) {
     metadata: {
       amountCents: input.amountCents, method, shiftId, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, entryId,
       ...(input.terminalChargeId && { terminalChargeId: input.terminalChargeId }),
+      ...(raastOut && { raast: { outgoingRef: raastOut.ref, ...raastMetaOf(refundPayment.gatewayMeta) } }),
       fiscalRefund: fiscalDoc ? { documentId: fiscalDoc.id, status: fiscalDoc.status } : null,
     },
   })

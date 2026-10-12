@@ -10,9 +10,14 @@
 //   • After the 3rd attempt the payment is marked 'failed' permanently and
 //     no further retries are scheduled.
 //
+// Never Raast QR (2026-10-12): a Raast payment is a transfer the customer
+// sends straight to the company's bank — recorded 'paid' at the till
+// (reference checked on the counter device) or by the bank SMS, or not at
+// all. There is nothing to re-charge, so Raast rows are left out of the scan.
+//
 // NOTE — gateway integration:
 //   This worker contains the full retry orchestration skeleton. The actual
-//   gateway charge call (Keenu QR re-initiation, JazzCash re-auth, etc.) must
+//   gateway charge call (Keenu card re-initiation, JazzCash re-auth, etc.) must
 //   be inserted at the marked location below. Each gateway client lives in
 //   src/lib/gateways/ and accepts { payment, order } — return a
 //   { success: boolean; gatewayRef?: string; gatewayMeta?: object } shape so
@@ -60,6 +65,9 @@ async function runRetrySweep(): Promise<void> {
     where: {
       status: 'failed',
       retryCount: { lt: MAX_RETRIES },
+      // Raast is never retried (see the header).
+      method: { not: 'raast' },
+      gateway: { not: 'raast' },
       OR: [
         { lastRetryAt: null },
         { lastRetryAt: { lt: backOffCutoff } },

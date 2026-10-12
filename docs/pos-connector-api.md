@@ -23,6 +23,13 @@ driver inside servd (`backend/src/connectors/drivers/<vendor>.ts`) instead.
   `version` stays `1`: an integration that ignores the new fields keeps
   working, but must not assume the lines plus tax alone add up to
   `totalCents` (see "How servd builds the figures" in §2).
+- **2026-10-12 — Raast QR (backward compatible).** Tills now take Cash,
+  Card – Keenu and **Raast QR**. A new tender `raast` appears in
+  `payment.tenders` (sales and refunds): an instant bank transfer straight to
+  the seller's bank account, billed at the **card (digital) rate**, so a
+  Raast-only sale has `payment.mode` `card`. Keenu QR is retired: `keenu_qr`
+  now appears only on sales made before this date and on their refunds. The
+  FBR `PaymentMode` reference (§5) maps `raast` to 3. `version` stays `1`.
 
 ---
 
@@ -146,16 +153,21 @@ How servd builds the figures:
   discount when you map to an authority (see §5).
 - **Tax is what the customer was charged.** servd sends the tax it stored on
   the order. The Pakistan rate depends on the tender: 15 % for cash, 8 % for
-  card. The rate is in `totals.taxRatePct`. Line tax adds up exactly to
-  `totals.taxCents`. Zero-rated and exempt items carry `taxRatePct: 0` and no
-  tax.
+  card and Raast QR (the digital rate). The rate is in `totals.taxRatePct`.
+  Line tax adds up exactly to `totals.taxCents`. Zero-rated and exempt items
+  carry `taxRatePct: 0` and no tax.
 - `grossCents` is quantity × (unit price + modifiers). `discountCents` is the
   POS discount plus any storefront promo (and loyalty points), spread over
   the lines and capped at the food value; anything above it is
   `totals.billDiscountCents`. `taxableCents` is gross minus that line's share
   of the discount.
 - `payment.tenders` lists how the bill was settled, and the tenders add up
-  to `totalCents`. Besides `cash`, `card` and `keenu_qr`, a tender can be:
+  to `totalCents`. Besides `cash` and `card` (Card – Keenu), a tender can be:
+  - `raast` — Raast QR: an instant bank transfer from the customer straight
+    to the seller's bank account (since 2026-10-12). It is taxed at the card
+    (digital) rate;
+  - `keenu_qr` — Keenu QR, **retired** on 2026-10-12: only on older sales
+    and on their refunds;
   - `wallet` — the customer's servd wallet balance (paid online earlier);
   - `gift_card` — a servd gift card (its money was taken when the card was
     sold);
@@ -165,8 +177,9 @@ How servd builds the figures:
   - `comp` — a complimentary amount.
   Accept a method you do not recognise; never reject the document for it.
 - `payment.mode` is `cash` only when every paid tender is cash. It is `card`
-  when every paid tender is a card, Keenu QR or the servd wallet (the wallet
-  is paid online, at the card rate), and `mixed` otherwise. A comp and a gift
+  when every paid tender is a card, Raast QR, Keenu QR (older sales) or the
+  servd wallet (the wallet is paid online, at the card rate), and `mixed`
+  otherwise. A comp and a gift
   card are not money tendered at this sale and do not count toward the mode. A zero-value bill (a full
   comp or a staff meal) has mode `cash` and no tenders. servd sends these
   by default.
@@ -203,6 +216,11 @@ fields:
 - `refundAmountCents`: the amount returned, including its share of tax, tip
   and service charge.
 - `reason`: the reason the operator gave, when there is one.
+
+`payment.tenders` holds the one tender the money went back by: `cash`,
+`card`, `raast` (sent back by bank transfer from the account the Raast
+payment came into) or, for a sale made before 2026-10-12, `keenu_qr`. A
+refund of a sale paid only by Raast QR defaults to `raast`.
 
 The refund is split in proportion to the sale. The tax returned is
 `round(sale tax × refund ÷ sale total)`, and tip, service charge, the
@@ -367,7 +385,7 @@ in `backend/src/connectors/fiscal/payload.ts` (`toSrbInvoiceFields`,
 | `taxAmount` | `saleValue × rateValue ÷ 100`. This is SRB's formula, on the pre-discount value. |
 | `discountAmount` | `(totals.discountCents + totals.billDiscountCents) ÷ 100` (a missing `billDiscountCents` is 0) |
 | `netAmount` | `saleValue + taxAmount − discountAmount` |
-| `modeOfPay` | `Cash` when every tender is cash, otherwise `Card` |
+| `modeOfPay` | `Cash` when every tender is cash, otherwise `Card` (card, Raast QR, the servd wallet and any mix) |
 | `invoiceType` | 1 for a sale, 2 for a sales return |
 | `invoiceDateTime` | `issuedAt` written as `yyyy-MM-dd HH:mm:ss` in Pakistan time |
 
@@ -377,7 +395,7 @@ in `backend/src/connectors/fiscal/payload.ts` (`toSrbInvoiceFields`,
 | `TotalSaleValue` | `(totals.totalCents − totals.taxCents) ÷ 100`, never below 0. It includes the delivery charge, service charge and tip. |
 | `TotalTaxCharged` | `totals.taxCents ÷ 100` |
 | `Discount` | `(totals.discountCents + totals.billDiscountCents) ÷ 100` (a missing `billDiscountCents` is 0) |
-| `PaymentMode` | 2 when any tender is cash, 3 for Keenu QR, otherwise 1 (card — the servd wallet and a gift card included) |
+| `PaymentMode` | 2 when any tender is cash; otherwise 3 when any tender is `raast` (Raast QR) or `keenu_qr` (older sales); otherwise 1 (card — the servd wallet and a gift card included). Raast QR as 3 is servd's default reading of PRAL's modes — tell servd if your PRAL integration expects another value. |
 | `InvoiceType` | 1 for a sale, 3 for a credit note (`RefUSIN` = the original fiscal number) |
 | `Items[].PCTCode` | `9963.1100` (restaurant food service) |
 | `Items[].TaxCharged` | `lines[].taxCents ÷ 100` |

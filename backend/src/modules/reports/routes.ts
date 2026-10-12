@@ -6,7 +6,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
-import { salesTotals, salesByHour, salesByChannel, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
+import { salesTotals, salesByHour, salesByChannel, salesByTender, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
 
 // Who reads the OPERATIONAL reports — sales volume (orders, orders by hour,
 // orders by channel), item mix, ticket times by station and the demand
@@ -110,6 +110,27 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const rows = await salesByChannel(await salesQuery(req, req.query))
       if (seesRevenue(req)) return rows
       return rows.map((r) => ({ source: r.source, orders: r.orders })).sort((a, b) => b.orders - a.orders)
+    },
+  )
+
+  // GET /reports/by-tender — how the period's sales were paid (Raast QR, spec
+  // §7.6): Cash, Card – Keenu, Raast QR (provisional / matched), the retired
+  // Keenu QR's old rows, wallet, gift cards; comps apart; refunds by tender.
+  // Same scope and dates as /sales. The money only to FINANCIALS_VIEWERS;
+  // the other report readers get the order counts per tender.
+  fastify.get<{ Querystring: { conceptId?: string; locationId?: string; channel?: string; dateFrom?: string; dateTo?: string } }>(
+    '/by-tender',
+    { preHandler: requireAuth(...REPORT_READERS) },
+    async (req) => {
+      const r = await salesByTender(await salesQuery(req, req.query))
+      if (seesRevenue(req)) return r
+      return {
+        volumeOnly: true,
+        from: r.from,
+        to: r.to,
+        tenders: r.tenders.map((t) => ({ tender: t.tender, label: t.label, orders: t.orders })),
+        comp: { orders: r.comp.orders },
+      }
     },
   )
 

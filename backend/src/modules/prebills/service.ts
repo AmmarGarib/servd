@@ -529,7 +529,9 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
   const screenWidth = cfg.paperWidthMm === 58 ? 240 : 320
   const row = (label: string, value: string) => `<tr><td>${label}</td><td style="text-align:right">${value}</td></tr>`
   const banners = [r.banner, priorRenders > 0 ? 'COPY' : null].filter((b): b is string => !!b)
-  const tenderLabel = r.tender === 'card' ? 'card' : 'cash'
+  // 'card' is the digital tax group: a card pre-bill's total is also what a
+  // Raast QR transfer pays (both at Concept.taxRateCard).
+  const tenderLabel = r.tender === 'card' ? 'card / Raast QR' : 'cash'
 
   return `<!DOCTYPE html>
 <html>
@@ -573,7 +575,7 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
     <tr class="bold"><td style="border-top:1px solid #000;padding-top:4px">TOTAL (${tenderLabel.toUpperCase()})</td><td style="border-top:1px solid #000;padding-top:4px;text-align:right">${fmtPkr(r.totalCents)}</td></tr>
     ${r.paidCents > 0 ? row('Paid so far', `-${fmtPkr(r.paidCents)}`) : ''}
     ${r.paidCents > 0 ? `<tr class="bold"><td>BALANCE DUE</td><td style="text-align:right">${fmtPkr(r.dueCents)}</td></tr>` : ''}
-    ${r.cardTotalCents != null && r.cardTotalCents !== r.totalCents ? row('If paid by card', fmtPkr(r.cardTotalCents)) : ''}
+    ${r.cardTotalCents != null && r.cardTotalCents !== r.totalCents ? row('If paid by card / Raast QR', fmtPkr(r.cardTotalCents)) : ''}
   </table>
   <div class="divider"></div>
   <div class="center bold" style="font-size:11px">${esc(r.banner)}</div>
@@ -595,10 +597,11 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
 //   FINAL_LOWER       the converted pre-bill's order was finally charged LESS
 //                     than the pre-bill's total FOR THE TENDER IT WAS SETTLED
 //                     WITH (tenderOfPayments, the rule processPayment prices
-//                     by: all card-class → the card total printed under a
-//                     cash headline; any cash, a mix, or no payments → the
-//                     headline). Paid by card at the card total is not
-//                     "lower"; paid in cash at the card total is;
+//                     by: all card-class (card or Raast QR) → the card
+//                     total printed under a cash headline; any cash, a mix,
+//                     or no payments → the headline). Paid by card or Raast
+//                     at the card total is not "lower"; paid in cash at the
+//                     card total is;
 //   LINE_VOIDS_AFTER  lines of the order were voided after this pre-bill was
 //                     printed (with the manager who approved each void).
 // Read-only. There is no delete, hide, edit or exclude.
@@ -882,8 +885,8 @@ export async function listPreBills(f: PreBillListFilter): Promise<PreBillList> {
 
 /**
  * The pre-bill total the final bill should be compared with: the total for
- * the tender the order was settled with (tenderOfPayments — all card-class →
- * card; any cash, a mix, or nothing paid → cash, the rate processPayment
+ * the tender the order was settled with (tenderOfPayments — all card-class,
+ * card or Raast QR → card; any cash, a mix, or nothing paid → cash, the rate processPayment
  * charges). A cash pre-bill printed the card total under its headline; a
  * card pre-bill printed only the card total, so it is the base either way.
  */

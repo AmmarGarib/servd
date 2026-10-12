@@ -91,9 +91,14 @@ describe('stored figures, never recomputed', () => {
 })
 
 describe('payment mode', () => {
-  it('cash only when every paid tender is cash; card for card / Keenu QR; mixed otherwise; zero-value → cash, no tenders', async () => {
+  it('cash only when every paid tender is cash; card for card / Raast QR / Keenu QR; mixed otherwise; zero-value → cash, no tenders', async () => {
     expect(paymentModeOf(['cash'])).toBe('cash')
     expect(paymentModeOf(['card', 'keenu_qr'])).toBe('card')
+    // Raast QR is the digital tax group, like card (2026-10-12).
+    expect(paymentModeOf(['raast'])).toBe('card')
+    expect(paymentModeOf(['raast', 'card'])).toBe('card')
+    expect(paymentModeOf(['raast', 'gift_card', 'comp'])).toBe('card')
+    expect(paymentModeOf(['cash', 'raast'])).toBe('mixed')
     expect(paymentModeOf(['cash', 'card'])).toBe('mixed')
     expect(paymentModeOf([])).toBe('cash')
     const comped = await mkOrder(A, { items: [KHEER2(A)], taxCents: 0, taxRatePct: 15, totalCents: 0, payments: [] })
@@ -101,6 +106,64 @@ describe('payment mode', () => {
     expect(p.payment).toEqual({ mode: 'cash', tenders: [] })
     const mixed = await mkOrder(A, { items: [KHEER2(A)], taxCents: 16_500, taxRatePct: 15, totalCents: 126_500, payments: [{ method: 'cash', amountCents: 26_500 }, { method: 'card', amountCents: 100_000 }] })
     expect((await build(mixed)).payload.payment.mode).toBe('mixed')
+  })
+})
+
+describe('Raast QR (2026-10-12)', () => {
+  it('a Raast-only sale: mode card, the raast tender at its stored amount, the stored 8 % rate and tax', async () => {
+    const id = await mkOrder(A, { items: [NIHARI_NALLI(A), KHEER2(A)], taxCents: 23_200, taxRatePct: 8, totalCents: 313_200, payments: [{ method: 'raast', amountCents: 313_200 }] })
+    const built = await build(id)
+    expect(built.check.ok).toBe(true)
+    const p = built.payload
+    expect(p.payment).toEqual({ mode: 'card', tenders: [{ method: 'raast', amountCents: 313_200 }] })
+    expect(p.totals).toMatchObject({ saleValueCents: 290_000, taxCents: 23_200, taxRatePct: 8, totalCents: 313_200 })
+    expect(sum(p.lines.map((l) => l.taxCents))).toBe(23_200)
+    for (const l of p.lines) expect(l.taxRatePct).toBe(8)
+  })
+
+  it('an order with no stored rate paid by Raast falls back to the CARD rate (never concept.taxRate)', async () => {
+    const id = await mkOrder(A, { items: [KHEER2(A)], taxCents: 8_800, taxRatePct: null, totalCents: 118_800, payments: [{ method: 'raast', amountCents: 118_800 }] })
+    const p = (await build(id)).payload
+    expect(p.totals.taxRatePct).toBe(8)
+    expect(p.totals.taxRatePct).not.toBe(17)
+  })
+
+  it('any cash with Raast is mixed at the stored (cash) rate; Raast with card stays card', async () => {
+    const cashAndRaast = await mkOrder(A, { items: [KHEER2(A)], taxCents: 16_500, taxRatePct: 15, totalCents: 126_500, payments: [{ method: 'cash', amountCents: 26_500 }, { method: 'raast', amountCents: 100_000 }] })
+    const p1 = (await build(cashAndRaast)).payload
+    expect(p1.payment.mode).toBe('mixed')
+    expect(p1.totals.taxRatePct).toBe(15)
+    expect(p1.payment.tenders).toEqual([{ method: 'cash', amountCents: 26_500 }, { method: 'raast', amountCents: 100_000 }])
+    const cardAndRaast = await mkOrder(A, { items: [KHEER2(A)], taxCents: 8_800, taxRatePct: 8, totalCents: 118_800, payments: [{ method: 'card', amountCents: 18_800 }, { method: 'raast', amountCents: 100_000 }] })
+    expect((await build(cardAndRaast)).payload.payment.mode).toBe('card')
+  })
+
+  it('SRB modeOfPay Card and FBR PaymentMode 3 for Raast; any cash wins (2); card alone stays 1', async () => {
+    const raast = (await build(await mkOrder(A, { items: [KHEER2(A)], taxCents: 8_800, taxRatePct: 8, totalCents: 118_800, payments: [{ method: 'raast', amountCents: 118_800 }] }))).payload
+    expect(toSrbInvoiceFields(raast)).toMatchObject({ modeOfPay: 'Card', rateValue: 8 })
+    expect(toFbrInvoiceFields(raast).PaymentMode).toBe(3)
+    const withCash = { ...raast, payment: { mode: 'mixed' as const, tenders: [{ method: 'cash', amountCents: 18_800 }, { method: 'raast', amountCents: 100_000 }] } }
+    expect(toFbrInvoiceFields(withCash).PaymentMode).toBe(2)
+    expect(toSrbInvoiceFields(withCash).modeOfPay).toBe('Card')
+    const withCard = { ...raast, payment: { mode: 'card' as const, tenders: [{ method: 'card', amountCents: 18_800 }, { method: 'raast', amountCents: 100_000 }] } }
+    expect(toFbrInvoiceFields(withCard).PaymentMode).toBe(3)
+    const cardOnly = { ...raast, payment: { mode: 'card' as const, tenders: [{ method: 'card', amountCents: 118_800 }] } }
+    expect(toFbrInvoiceFields(cardOnly).PaymentMode).toBe(1)
+  })
+
+  it('a return of a Raast-only sale goes back by raast unless the refund engine names the tender; card and cash defaults unchanged', async () => {
+    const raast = (await build(await mkOrder(A, { items: [KHEER2(A)], taxCents: 8_800, taxRatePct: 8, totalCents: 118_800, payments: [{ method: 'raast', amountCents: 118_800 }] }))).payload
+    const r = buildRefundPayload(raast, { documentId: 'r_raast', refundAmountCents: 118_800, issuedAt: new Date(), original: { fiscalNumber: 'SRB-R', authority: 'srb' } })
+    expect(r.payment).toEqual({ mode: 'card', tenders: [{ method: 'raast', amountCents: 118_800 }] })
+    expect(r.totals).toMatchObject({ taxCents: 8_800, totalCents: 118_800 })
+    expect(toFbrInvoiceFields(r)).toMatchObject({ PaymentMode: 3, InvoiceType: 3 })
+    // The refund engine's own tender always wins (an old keenu_qr sale refunds by keenu_qr).
+    const named = buildRefundPayload(raast, { documentId: 'r_named', refundAmountCents: 10_000, issuedAt: new Date(), method: 'cash', original: null })
+    expect(named.payment.tenders).toEqual([{ method: 'cash', amountCents: 10_000 }])
+    const card = (await build(await mkOrder(A, { items: [KHEER2(A)], taxCents: 8_800, taxRatePct: 8, totalCents: 118_800, payments: [{ method: 'card', amountCents: 118_800 }] }))).payload
+    expect(buildRefundPayload(card, { documentId: 'r_card', refundAmountCents: 1_000, issuedAt: new Date(), original: null }).payment.tenders[0]!.method).toBe('card')
+    const mixed = (await build(await mkOrder(A, { items: [KHEER2(A)], taxCents: 16_500, taxRatePct: 15, totalCents: 126_500, payments: [{ method: 'cash', amountCents: 26_500 }, { method: 'raast', amountCents: 100_000 }] }))).payload
+    expect(buildRefundPayload(mixed, { documentId: 'r_mixed', refundAmountCents: 1_000, issuedAt: new Date(), original: null }).payment.tenders[0]!.method).toBe('cash')
   })
 })
 
@@ -198,12 +261,14 @@ describe('ported FBR / SRB adapter figures', () => {
     expect(f.saleValue).toBe(1000) // 1150 − 150 tax (round(43500 × 115000 / 333500) = 15000)
   })
 
-  it('FBR: bill / sale value / tax in PKR, PaymentMode 2 cash · 1 card · 3 QR, PCT 9963.1100, items sum', () => {
+  it('FBR: bill / sale value / tax in PKR, PaymentMode 2 cash · 1 card · 3 QR (Raast, legacy Keenu QR), PCT 9963.1100, items sum', () => {
     const f = toFbrInvoiceFields(cash)
     expect(f).toMatchObject({ POSID: 999, TotalBillAmount: 3335, TotalSaleValue: 2900, TotalTaxCharged: 435, Discount: 0, PaymentMode: 2, InvoiceType: 1, DateTime: '10102026143000', TotalQuantity: 3 })
     expect(f.Items.map((i) => [i.SaleValue, i.TaxCharged, i.TotalAmount, i.PCTCode, i.TaxRate])).toEqual([[1800, 270, 2070, '9963.1100', 15], [1100, 165, 1265, '9963.1100', 15]])
     expect(toFbrInvoiceFields(card).PaymentMode).toBe(1)
     expect(toFbrInvoiceFields({ ...card, payment: { mode: 'card', tenders: [{ method: 'keenu_qr', amountCents: 313_200 }] } }).PaymentMode).toBe(3)
+    expect(toFbrInvoiceFields({ ...card, payment: { mode: 'card', tenders: [{ method: 'raast', amountCents: 313_200 }] } }).PaymentMode).toBe(3)
+    expect(toFbrInvoiceFields({ ...card, payment: { mode: 'mixed', tenders: [{ method: 'raast', amountCents: 300_000 }, { method: 'cash', amountCents: 13_200 }] } }).PaymentMode).toBe(2)
     expect(toFbrInvoiceFields(discounted)).toMatchObject({ TotalSaleValue: 2750, Discount: 150, TotalTaxCharged: 412.5 })
     const r = buildRefundPayload(cash, { documentId: 'cn1', refundAmountCents: 333_500, issuedAt: new Date(), original: { fiscalNumber: 'FBR-ORIG', authority: 'fbr' } })
     expect(toFbrInvoiceFields(r)).toMatchObject({ InvoiceType: 3, TotalBillAmount: 3335, TotalTaxCharged: 435 })

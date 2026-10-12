@@ -16,8 +16,10 @@
 //            − drops − pay-outs      (CashMovement)
 //            + adds  + pay-ins       (CashMovement)
 //
-// Card and Keenu QR never touch the drawer. Payment.shiftId is the only link
-// from money to a drawer.
+// Card (Card – Keenu), Raast QR (a transfer straight to the company's bank —
+// the ledger debits that bank, accounting/shiftPosting.ts) and the retired
+// Keenu QR never touch the drawer: only method 'cash' counts here.
+// Payment.shiftId is the only link from money to a drawer.
 //
 // The tolerance is the drawer company's ReceiptConfig.cashVarianceLimitCents
 // (Configuration → Receipts), never a hard-coded figure: |variance| ≤ limit

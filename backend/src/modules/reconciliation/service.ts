@@ -8,6 +8,8 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
 import { MAX_MONEY_CENTS, assertMoneyFits, toCents } from '../../lib/money.js'
+import { RAAST_RECEIPTS_MEMO } from '../accounting/orderPosting.js'
+import { matchRaastLinesTx, raastSkipLinesTx, flagUnmatchedReceipts } from './raast.js'
 
 // ─── CSV statement parser ────────────────────────────────────────────────────
 // Lenient: accepts any of date,description,amount in the header (in any case);
@@ -111,10 +113,24 @@ export function parseStatementCsv(csv: string): ParsedStatementLine[] {
 }
 
 // ─── Import + auto-match ────────────────────────────────────────────────────
-// Heuristic: a statement line matches a journal line if, within a 3-day
-// window, signed amounts equal AND the journal-line account is the one the
-// statement is reconciling against. Auto-matched lines flip to `matched`;
-// the rest stay `unmatched` for the operator.
+// One transaction, three steps:
+//   1. insert every line 'unmatched';
+//   2. the Raast pass (./raast.ts — only when the import names its bank
+//      account): a credit line naming exactly one provisional Raast receipt's
+//      reference with the same amount matches that receipt;
+//   3. the generic pass: a line matches a journal line if, within a 3-day
+//      window, signed amounts equal AND the journal-line account is the one
+//      the statement is reconciling against. It skips lines step 2 claimed,
+//      never uses a journal line whose memo starts with RAAST_RECEIPTS_MEMO
+//      (a shift's aggregated Raast debit or a write-off — those reconcile
+//      receipt by receipt on the Raast tab), leaves alone every credit that
+//      names a Raast receipt's reference without matching it (RV-FIN-2), and
+//      (S3) every credit equal to a provisional or written-off Raast receipt's
+//      amount on that account within ±statementMatchDays, which it would
+//      otherwise pair with any equal debit (a cash deposit) and strand the
+//      receipt.
+// Auto-matched lines flip to `matched`; the rest stay `unmatched` for the
+// operator.
 
 const MATCH_WINDOW_DAYS = 3
 
@@ -138,7 +154,12 @@ export async function importBankStatement(input: {
 
   const parsed = parseStatementCsv(input.csv)
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    // No Raast lock here: inserting this import's own (new, uncommitted) rows
+    // touches nothing the till or the SMS matcher write. matchRaastLinesTx
+    // takes lockRaastTx itself right before it reads receipts (RV-FRAUD-6) —
+    // holding it for the whole import would stall every till's Raast payment
+    // of the company behind a big statement.
     const importRow = await tx.bankStatementImport.create({
       data: {
         tenantId: input.tenantId,
@@ -153,17 +174,61 @@ export async function importBankStatement(input: {
       },
     })
 
-    // Pull candidate journal lines for the reconciling account in a wide window
+    // 1. Every line, unmatched, in the statement's own order (the generic
+    //    pass below walks them in that order, as it always has).
+    const order: string[] = []
+    for (const line of parsed) {
+      const row = await tx.bankStatementLine.create({
+        data: {
+          importId: importRow.id,
+          postedDate: line.postedDate,
+          description: line.description,
+          reference: line.reference,
+          amountCents: line.amountCents,
+          matchStatus: 'unmatched',
+        },
+        select: { id: true },
+      })
+      order.push(row.id)
+    }
+
+    // 2. The Raast pass (same transaction, before the generic matcher).
+    let raastMatched = 0
+    const raastSkip = new Set<string>()
+    if (input.bankAccountId) {
+      const pass = await matchRaastLinesTx(tx, { tenantId: input.tenantId, importId: importRow.id, bankAccountId: input.bankAccountId, actorId: null })
+      raastMatched = pass.matched
+      // RV-FIN-2: a line that names a Raast receipt's reference but was not
+      // matched (another amount, two receipts named, a receipt named twice) is
+      // the Raast tab's — never paired with an unrelated equal journal line.
+      for (const id of pass.hitLineIds) raastSkip.add(id)
+    }
+    const position = new Map(order.map((id, i) => [id, i]))
+    const lines = (await tx.bankStatementLine.findMany({
+      where: { importId: importRow.id, matchStatus: 'unmatched' },
+      select: { id: true, postedDate: true, description: true, reference: true, amountCents: true },
+    }))
+      .map((l) => ({ ...l, amountCents: toCents(l.amountCents) }))
+      .sort((a, b) => position.get(a.id)! - position.get(b.id)!)
+    if (input.bankAccountId) {
+      for (const id of await raastSkipLinesTx(tx, { tenantId: input.tenantId, bankAccountId: input.bankAccountId, lines })) raastSkip.add(id)
+    }
+
+    // 3. The generic pass. Candidate journal lines for the reconciling account
+    //    in a wide window.
+    if (parsed.length === 0) return { importId: importRow.id, totalRows: 0, matchedCount: 0, raastMatchedCount: 0, unmatchedCount: 0 }
     const minDate = new Date(parsed.reduce((m, l) => Math.min(m, l.postedDate.getTime()), Infinity) - MATCH_WINDOW_DAYS * 86400_000)
     const maxDate = new Date(parsed.reduce((m, l) => Math.max(m, l.postedDate.getTime()), -Infinity) + MATCH_WINDOW_DAYS * 86400_000)
 
-    const candidates = await tx.journalLine.findMany({
+    const candidates = (await tx.journalLine.findMany({
       where: {
         accountId: account.id,
         journalEntry: { entryDate: { gte: minDate, lte: maxDate } },
       },
       include: { journalEntry: { select: { entryDate: true } } },
-    })
+    // A Raast line (a shift's aggregated Raast debit, a write-off) is never a
+    // generic match — Raast reconciles receipt by receipt.
+    })).filter((c) => !(c.memo ?? '').startsWith(RAAST_RECEIPTS_MEMO))
 
     // Lock out journal lines that ANY prior BankStatementLine already matched.
     // Without this, re-importing the same statement (or overlapping windows)
@@ -189,33 +254,38 @@ export async function importBankStatement(input: {
       byAmount.set(signed, arr)
     }
 
-    let matchedCount = 0
-    for (const line of parsed) {
+    let genericMatched = 0
+    for (const line of lines) {
+      if (raastSkip.has(line.id)) continue   // S3: left for the Raast tab
       const candidates = byAmount.get(line.amountCents) ?? []
       const fit = candidates.find(
         (c) => !consumed.has(c.id) && Math.abs(c.date.getTime() - line.postedDate.getTime()) <= MATCH_WINDOW_DAYS * 86400_000,
       )
-      const matchedJournalLineId = fit?.id ?? null
-      if (fit) {
-        consumed.add(fit.id)
-        matchedCount++
-      }
-
-      await tx.bankStatementLine.create({
-        data: {
-          importId: importRow.id,
-          postedDate: line.postedDate,
-          description: line.description,
-          reference: line.reference,
-          amountCents: line.amountCents,
-          matchStatus: matchedJournalLineId ? 'matched' : 'unmatched',
-          matchedJournalLineId,
-        },
+      if (!fit) continue
+      consumed.add(fit.id)
+      genericMatched++
+      await tx.bankStatementLine.update({
+        where: { id: line.id },
+        data: { matchStatus: 'matched', matchedJournalLineId: fit.id },
       })
     }
 
-    return { importId: importRow.id, totalRows: parsed.length, matchedCount, unmatchedCount: parsed.length - matchedCount }
-  })
+    const matchedCount = genericMatched + raastMatched
+    return {
+      importId: importRow.id,
+      totalRows: parsed.length,
+      matchedCount,
+      raastMatchedCount: raastMatched,
+      unmatchedCount: parsed.length - matchedCount,
+    }
+  }, { maxWait: 10_000, timeout: 60_000 })
+
+  // The daily raast_unmatched flag of this company follows the import at
+  // once (a statement that matched everything clears it). Best effort.
+  if (input.bankAccountId) {
+    await flagUnmatchedReceipts(input.tenantId).catch((err) => console.warn('[reconciliation] raast flag refresh failed:', (err as Error).message))
+  }
+  return result
 }
 
 // Operator decision on an unmatched line: book it as an adjustment JE, in the
@@ -329,4 +399,28 @@ export async function adjustStatementLine(input: {
   })
 
   return { ok: true }
+}
+
+// Undo a GENERIC match (S3): the line goes back to 'unmatched' and its
+// journal line is free again. A line matched to a Raast receipt is undone on
+// the Raast tab (POST /reconciliation/raast/receipts/:id/unmatch), which puts
+// the receipt back to provisional too — 409 RAAST_MATCHED_LINE here.
+export async function unmatchStatementLine(lineId: string): Promise<{ before: { matchStatus: string; matchedJournalLineId: string | null; notes: string | null } }> {
+  return prisma.$transaction(async (tx) => {
+    const line = await tx.bankStatementLine.findUnique({
+      where: { id: lineId },
+      select: { id: true, matchStatus: true, matchedJournalLineId: true, notes: true, raastReceipt: { select: { id: true } } },
+    })
+    if (!line) throw new NotFoundError('BankStatementLine', lineId)
+    if (line.raastReceipt) {
+      throw new AppError('RAAST_MATCHED_LINE', 'This line is matched to a Raast payment — unmatch it on the Raast tab', 409, { receiptId: line.raastReceipt.id })
+    }
+    if (line.matchStatus !== 'matched') throw new AppError('LINE_NOT_MATCHED', `Line is ${line.matchStatus}, not matched`, 409)
+    const r = await tx.bankStatementLine.updateMany({
+      where: { id: line.id, matchStatus: 'matched' },
+      data: { matchStatus: 'unmatched', matchedJournalLineId: null, notes: null },
+    })
+    if (r.count === 0) throw new AppError('LINE_NOT_MATCHED', 'Line was already unmatched', 409)
+    return { before: { matchStatus: line.matchStatus, matchedJournalLineId: line.matchedJournalLineId, notes: line.notes } }
+  })
 }

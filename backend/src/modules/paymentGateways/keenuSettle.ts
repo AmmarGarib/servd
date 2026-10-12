@@ -22,6 +22,13 @@
 // settled by the POS connector alone — even if the processor behind the card
 // machine is Keenu and a callback carries the same transaction id, it is
 // never settled, failed or marked refunded here (no double settlement).
+//
+// Raast QR (2026-10-12) replaced Keenu QR at the till. A Raast payment is a
+// transfer straight to the company's bank (gateway 'raast'), recorded at the
+// till or by the bank SMS — Keenu never settles, fails or refunds it. The
+// gateway filter below already leaves 'raast' rows out; the method filter
+// keeps any Raast row out too, whatever its gateway. Old keenu_qr rows are
+// unchanged: still Keenu's to confirm.
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -58,7 +65,7 @@ export type KeenuOutcome =
 
 export async function applyKeenuCallback(cb: KeenuCallback, log: { error: (o: object, m: string) => void } = console as never): Promise<KeenuOutcome> {
   const all: KeenuRow[] = await prisma.payment.findMany({
-    where: { orderId: cb.orderId, gatewayRef: cb.transactionId, gateway: { in: ['keenu', 'none'] } },
+    where: { orderId: cb.orderId, gatewayRef: cb.transactionId, gateway: { in: ['keenu', 'none'] }, method: { not: 'raast' } },
     select: { id: true, amountCents: true, status: true, shiftId: true, gateway: true, gatewayMeta: true },
   })
   const rows = all.filter(isKeenuRow)
