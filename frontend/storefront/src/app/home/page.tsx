@@ -13,6 +13,7 @@ import { organizationSchema, websiteSchema, jsonLdScript } from '../../lib/jsonL
 import { conceptsOrFallback, fetchLiveConcepts, inBrandOrder, joinNames } from '../../lib/liveConcepts'
 import { mergeFields } from '../../sections/catalog'
 import { ManagedPage } from '../../sections/ManagedPage'
+import { PageSurface } from '../../sections/pageSurface'
 import { HomeSearchParam } from '../../sections/servd/HomeSearchParam'
 
 export const dynamic = 'force-dynamic'
@@ -108,9 +109,9 @@ export default async function HomePage() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
       {/* /home?q=… (the sitelinks search box above) opens the search sheet. */}
       <HomeSearchParam />
-      <div className="sv-home">
+      <PageSurface slug="servd:home">
         <ManagedPage slug="servd:home" {...(live.length > 0 && { concepts: live })} />
-      </div>
+      </PageSurface>
     </>
   )
 }

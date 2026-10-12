@@ -138,3 +138,30 @@ Exact slugs win over patterns (`brand:*:about`).
   component files — never edit `globals.css` from a group.
 - Catalogue files are **data only** (the admin downloads them as JSON):
   no functions, no React, no Dates.
+
+## Scroll effects and the editor frame
+
+Sections need no change for either:
+
+- **Scroll effects** (`block.motion`, `lib/motion.ts`) wrap the WHOLE block
+  outside the section (`components/blocks/Motion.tsx`). A section never reads
+  `motion`.
+- **The editor frame** (`/editor-frame`, `src/editor/README.md`) renders the
+  operator's unsaved draft through these same renderers and wraps each block
+  in a `display: contents` selection marker. Section internals are edited in
+  the inspector, not selected on the page.
+
+What a section must NOT do, so both keep working:
+
+- rely on being a direct child of `<main>` or of any particular wrapper (a
+  `display: contents` marker and a motion wrapper may sit around it);
+- put `overflow: hidden` / `overflow: auto` on a page-level wrapper (it breaks
+  `position: sticky` and scroll timelines — use `overflow-x: clip` the way
+  `body` and `.sv-home` do);
+- navigate, post, or count anything on render — in the frame clicks never
+  reach the page, but effects run (the feedback button treats the frame like
+  `/preview`: always shown, never posts).
+
+Each servd page's outer wrapper is `pageSurface.tsx` (`PageSurface`), shared
+by the live routes and the frame — change it there, not in a route.
+

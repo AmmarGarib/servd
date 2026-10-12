@@ -23,6 +23,7 @@ import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../../lib/brandDo
 import { fetchSiteLayout, pageSeo } from '../../../lib/blocks'
 import { asSentence, fetchLiveConcepts, fitSentences, isServdCompanyBrand } from '../../../lib/liveConcepts'
 import { ManagedPage } from '../../../sections/ManagedPage'
+import { PageSurface } from '../../../sections/pageSurface'
 import { fillLocation, findLocation } from '../../../sections/servd/location'
 
 export const dynamic = 'force-dynamic'
@@ -82,9 +83,9 @@ export default async function LocationPage({ params }: Params) {
   ]
 
   return (
-    <div style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', minHeight: '100dvh' }}>
+    <PageSurface slug="servd:location">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schemaGraph) }} />
       <ManagedPage slug="servd:location" params={{ loc: brand.locationSlug }} />
-    </div>
+    </PageSurface>
   )
 }

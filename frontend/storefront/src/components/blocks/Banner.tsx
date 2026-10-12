@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { BannerBlock } from '../../lib/blocks'
+import { blockHref } from '../../lib/blocks'
 
 const HEIGHT: Record<NonNullable<BannerBlock['height']>, string> = {
   sm: '180px', md: '280px', lg: '420px',
@@ -38,7 +39,7 @@ export function Banner(block: BannerBlock) {
           </p>
         )}
         {block.cta && (
-          <Link href={block.cta.href} style={{
+          <Link href={blockHref(block.cta.href)} style={{
             display: 'inline-flex', marginTop: '1.5rem',
             background: 'var(--servd-green)', color: 'var(--servd-on-green)',
             padding: '0.85rem 1.75rem', borderRadius: '999px',

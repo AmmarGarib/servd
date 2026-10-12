@@ -10,7 +10,7 @@ import { brandAccent, formatBrandName, type Concept } from '../lib/concept'
 import { FALLBACK_CONCEPTS } from '../lib/fallbackBrands'
 import { BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { SiteLayoutView } from '../components/blocks/SiteLayoutView'
-import { PageRenderer, type RenderContext } from '../components/blocks/PageRenderer'
+import { PageRenderer, type EditorMarker, type RenderContext } from '../components/blocks/PageRenderer'
 import { pageDefault } from './catalog'
 import type { SectionContext } from './types'
 
@@ -75,16 +75,23 @@ interface Props {
   previewVariant?: 'a' | 'b'
   /** Route params for a template page (see SectionContext.params). */
   params?: Record<string, string>
+  /** The editor frame (/editor-frame) only: mark the given layout's blocks
+      for selection. The page-default branch never gets markers — its ids are
+      not the editor's. */
+  editor?: boolean
+  /** The frame's per-block marker component (see RenderContext.editorMarker). */
+  editorMarker?: EditorMarker
 }
 
-export async function ManagedPage({ slug, concepts, notFoundWhenEmpty, layout: given, previewVariant, params }: Props) {
+export async function ManagedPage({ slug, concepts, notFoundWhenEmpty, layout: given, previewVariant, params, editor, editorMarker }: Props) {
   const [layout, sctx] = await Promise.all([
     given ? Promise.resolve(given) : fetchSiteLayout(slug),
     sectionContextFor(slug, { ...(concepts && { concepts }), ...(params && { params }) }),
   ])
   const context = renderContextFor(sctx)
   if (layout?.blocks?.length) {
-    return <SiteLayoutView layout={layout} context={context} {...(previewVariant && { previewVariant })} />
+    const ctx: RenderContext = editor ? { ...context, editor: true, ...(editorMarker && { editorMarker }) } : context
+    return <SiteLayoutView layout={layout} context={ctx} {...(previewVariant && { previewVariant })} />
   }
   const blocks = defaultBlocks(slug)
   if (!blocks.length) {

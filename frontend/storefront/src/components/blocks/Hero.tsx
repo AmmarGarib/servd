@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { HeroBlock } from '../../lib/blocks'
+import { blockHref } from '../../lib/blocks'
 
 const HEIGHT: Record<NonNullable<HeroBlock['height']>, string> = {
   sm:     'min(40dvh, 320px)',
@@ -91,7 +92,7 @@ export function Hero(block: HeroBlock) {
               justifyContent: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
             }}>
               {block.primaryCta && (
-                <Link href={block.primaryCta.href} className="servd-cta"
+                <Link href={blockHref(block.primaryCta.href)} className="servd-cta"
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
                     background: 'var(--servd-green)', color: 'var(--servd-on-green)', fontWeight: 900,
@@ -104,7 +105,7 @@ export function Hero(block: HeroBlock) {
                 </Link>
               )}
               {block.secondaryCta && (
-                <Link href={block.secondaryCta.href} style={{
+                <Link href={blockHref(block.secondaryCta.href)} style={{
                   display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
                   padding: '1rem 1.75rem', borderRadius: '999px',
                   border: `1px solid ${block.imageUrl ? 'rgba(255,255,255,0.3)' : 'var(--servd-purple)'}`,

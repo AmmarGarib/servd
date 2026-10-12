@@ -6,16 +6,14 @@
 
 import { NextResponse } from 'next/server'
 import { PAGE_DEFAULTS, SECTION_SPECS } from '../../../sections/catalog'
+import { adminOrigins } from '../../../lib/adminOrigins'
 
-// The admin reads this cross-origin (admin.servd.pk → servd.pk).
-const ADMIN_ORIGINS = new Set(
-  (process.env['ADMIN_ORIGINS'] ?? 'https://admin.servd.pk,http://localhost:3002,http://localhost:3001,http://localhost:3000')
-    .split(',').map((s) => s.trim()).filter(Boolean),
-)
-
+// The admin reads this cross-origin (admin.servd.pk → servd.pk). The allowed
+// origins are ADMIN_ORIGINS (lib/adminOrigins.ts — the one definition, shared
+// with the editor frame's CSP).
 function cors(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''
-  return ADMIN_ORIGINS.has(origin)
+  return adminOrigins().includes(origin)
     ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' }
     : {}
 }

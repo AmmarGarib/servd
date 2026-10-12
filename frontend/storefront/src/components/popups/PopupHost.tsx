@@ -7,6 +7,7 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { PopupBlocks } from './PopupBlocks'
 import { ConversionContext, isManualConvertTarget } from '../blocks/conversion'
 import { isRiderPath } from '../StorefrontNav'
+import { isEditorFramePath } from '../../lib/editorFrame'
 
 // Storefront pop-ups (SiteLayout kind 'popup'), mounted once in the root
 // layout. Fetches the live pop-ups, evaluates each one's PopupRules against the
@@ -20,6 +21,7 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? ''
 const RESERVED = new Set([
   'account', 'auth', 'brand', 'brands', 'browse', 'group-order', 'home', 'locations', 'login', 'order',
   'orders', 'press', 'reserve', 'signup', 'pages', 'preview', 'checkout', 'api', 'waitlist', 'rider',
+  'editor-frame',
 ])
 
 type OrderState = 'unknown' | 'loading' | 'none' | 'some' | 'error'
@@ -69,12 +71,16 @@ export function PopupHost({ initialBrandSlug }: { initialBrandSlug?: string | nu
   const [active, setActive] = useState<LivePopup | null>(null)
   const [orders, setOrders] = useState<OrderState>('unknown')
   const activeRef = useRef<LivePopup | null>(null)
+  // The editor frame shows only the pop-up being edited (it renders its own
+  // PopupFrame): no live pop-ups there, and none fetched.
+  const inEditorFrame = isEditorFramePath(pathname)
 
   useEffect(() => {
+    if (inEditorFrame) return
     let alive = true
     void fetchLivePopups(API_URL).then((list) => { if (alive) setPopups(list) })
     return () => { alive = false }
-  }, [])
+  }, [inEditorFrame])
 
   // never_ordered needs the customer's order count — only fetched when a live
   // pop-up actually targets that audience.
@@ -95,8 +101,8 @@ export function PopupHost({ initialBrandSlug }: { initialBrandSlug?: string | nu
   const close = useCallback(() => { activeRef.current = null; setActive(null) }, [])
 
   useEffect(() => {
-    // No pop-ups on draft previews or in the rider app (servd.pk/rider).
-    if (!popups || popups.length === 0 || pathname.startsWith('/preview') || isRiderPath(pathname)) {
+    // No pop-ups on draft previews, the editor frame or in the rider app (servd.pk/rider).
+    if (!popups || popups.length === 0 || pathname.startsWith('/preview') || isRiderPath(pathname) || inEditorFrame) {
       if (activeRef.current) close()
       return
     }
@@ -166,14 +172,21 @@ export function PopupHost({ initialBrandSlug }: { initialBrandSlug?: string | nu
       }
     }
     return () => cleanups.forEach((fn) => fn())
-  }, [popups, pathname, token, orders, initialBrandSlug, close])
+  }, [popups, pathname, token, orders, initialBrandSlug, close, inEditorFrame])
 
-  if (!active) return null
+  if (!active || inEditorFrame) return null
   return <PopupFrame key={`${active.slug}:${active.version}`} popup={active} onClose={close} track />
 }
 
-/** One pop-up in its display (modal / bar / corner). */
-function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () => void; track: boolean }) {
+/** One pop-up in its display (modal / bar / corner). Also used by the editor
+ *  frame (`editor`: selection markers on its blocks, and the card never takes
+ *  focus — the operator is typing in the admin; pass a stable onClose). */
+export function PopupFrame({ popup, onClose, track, editor = false }: {
+  popup: LivePopup
+  onClose: () => void
+  track: boolean
+  editor?: boolean
+}) {
   const display = popup.rules.display ?? 'modal'
   const converted = useRef(false)
   const viewed = useRef(false)
@@ -192,13 +205,13 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
     if (display === 'modal') {
       restore = document.body.style.overflow
       document.body.style.overflow = 'hidden'
-      cardRef.current?.focus()
+      if (!editor) cardRef.current?.focus()
     }
     return () => {
       document.removeEventListener('keydown', onKey)
       if (restore !== null) document.body.style.overflow = restore
     }
-  }, [display, onClose])
+  }, [display, onClose, editor])
 
   const convert = useCallback(() => {
     if (!track || converted.current) return
@@ -227,7 +240,7 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
       <div role="region" aria-label={label} className="sv-popup" {...common}
         style={{ position: 'relative', background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', paddingRight: '3rem' }}>
         {fontStyle}
-        <PopupBlocks blocks={blocks} compact />
+        <PopupBlocks blocks={blocks} compact editor={editor} />
         <CloseButton onClose={onClose} light style={{ position: 'absolute', top: '50%', right: '0.5rem', transform: 'translateY(-50%)' }} />
       </div>
     )
@@ -244,7 +257,7 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
         }}>
         {fontStyle}
         <CloseButton onClose={onClose} style={{ position: 'absolute', top: '0.35rem', right: '0.35rem' }} />
-        <PopupBlocks blocks={blocks} />
+        <PopupBlocks blocks={blocks} editor={editor} />
       </div>
     )
   }
@@ -265,7 +278,7 @@ function PopupFrame({ popup, onClose, track }: { popup: LivePopup; onClose: () =
         }}>
         {fontStyle}
         <CloseButton onClose={onClose} style={{ position: 'absolute', top: '0.5rem', right: '0.5rem' }} />
-        <PopupBlocks blocks={blocks} />
+        <PopupBlocks blocks={blocks} editor={editor} />
       </div>
     </div>
   )

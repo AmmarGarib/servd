@@ -1,15 +1,19 @@
 // Page-builder block schema.
 //
-// Every storefront page is a `Block[]`. The storefront's PageRenderer maps
-// each block.type to a component. The dashboard's content editor exposes
-// the same block library to the operator: pick a type, configure props,
-// reorder, save → live.
+// Every storefront page is a `Block[]` (a SiteLayout row, edited in
+// Admin → Storefront and published by the CEO). The storefront's PageRenderer
+// maps each block.type to a component; the admin builder
+// (frontend/admin/src/components/storefront) offers the same block library.
+//
+// The schema has four copies that change together: this file,
+// frontend/admin/src/lib/blocks.ts, mobile/src/content/types.ts and the zod
+// in backend/src/modules/siteLayouts/schemas.ts.
 //
 // Adding a new block type:
-//   1. Add to BlockType union below
+//   1. Add to BlockType union below (and the three other copies)
 //   2. Add a render component to src/components/blocks/
-//   3. Map it in PageRenderer.tsx
-//   4. Add an editor form in apps/web/src/app/content/[slug]/blockEditors.tsx
+//   3. Map it in PageRenderer.tsx (and PopupBlocks.tsx if pop-ups take it)
+//   4. Add its form to the admin builder (BlockInspector.tsx)
 //
 // The schema is deliberately a discriminated union so TypeScript catches
 // missing fields at compile time. JSON validation on the API side mirrors
@@ -20,6 +24,21 @@ export type ButtonSize  = 'sm' | 'md' | 'lg' | 'xl' | 'huge'
 export type Align       = 'left' | 'center' | 'right'
 export type SectionPad  = 'none' | 'sm' | 'md' | 'lg' | 'xl'
 export type BlockAnimation = 'none' | 'fade-up' | 'fade-in' | 'slide-left' | 'slide-right' | 'zoom-in'
+
+// Scroll effects (D4 stage 1). Same order and spelling in all four copies.
+export const MOTION_PRESETS = ['parallax', 'fade', 'grow', 'pin-reveal', 'sticky-stack', 'side-pan', 'text-reveal'] as const
+export type MotionPreset = (typeof MOTION_PRESETS)[number]
+export const MOTION_INTENSITIES = ['subtle', 'medium', 'strong'] as const
+export type MotionIntensity = (typeof MOTION_INTENSITIES)[number]
+
+/** A block's scroll effect. Absent = none. intensity absent = 'medium'.
+ *  Renderers treat an unknown/invalid value as "none" — never hidden content
+ *  (lib/motion.ts normalizeMotion). The keys `keyframes`, `devices`, `range`
+ *  and `delayMs` are reserved for later stages. */
+export interface BlockMotion {
+  preset: MotionPreset
+  intensity?: MotionIntensity
+}
 
 interface BlockBase {
   id: string                  // uuid, stable across edits
@@ -33,6 +52,7 @@ interface BlockBase {
   animationDelayMs?: number   // 0..3000
   animationDurationMs?: number // 200..3000, default 600
   fontFamily?: string         // a library font family or a built-in stack
+  motion?: BlockMotion        // scroll effect; independent of `animation` (entrance, plays once)
 }
 
 export interface HeroBlock extends BlockBase {
@@ -350,6 +370,23 @@ export function trackLayout(apiBase: string, slug: string, version: number, vari
       keepalive: true,
     }).catch(() => { /* stats are best-effort */ })
   } catch { /* ignore */ }
+}
+
+// ── Links ──────────────────────────────────────────────────────────────────
+
+/**
+ * A core block's link target with only script-capable schemes neutralised:
+ * `javascript:`, `data:` and `vbscript:` (checked after trimming, lowercasing
+ * and removing whitespace / control characters, the way browsers read them)
+ * become '#'. Every other href renders exactly as written.
+ */
+export function blockHref(href: string): string
+export function blockHref(href: string | undefined): string | undefined
+export function blockHref(href: string | undefined): string | undefined {
+  if (typeof href !== 'string') return href
+  // eslint-disable-next-line no-control-regex
+  const squashed = href.replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase()
+  return /^(javascript|data|vbscript):/.test(squashed) ? '#' : href
 }
 
 // ── Fonts ──────────────────────────────────────────────────────────────────

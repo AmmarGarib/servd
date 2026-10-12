@@ -2,6 +2,7 @@
 import type { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
 import { useOnBrandMicrosite } from '../lib/host'
+import { isEditorFramePath } from '../lib/editorFrame'
 import { SearchSheet } from './SearchSheet'
 
 // The gate for the servd global header. The header itself is content — the
@@ -38,6 +39,8 @@ export function StorefrontNav({ initialBrandSlug = null, children }: Props) {
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
 
   if (onBrandMicrosite) return null
+  // The editor frame draws its own copy of the header (live, or the draft).
+  if (isEditorFramePath(pathname)) return null
   if (HIDDEN_PREFIXES.some((p) => pathname.startsWith(p))) return null
   if (isRiderPath(pathname)) return null
 

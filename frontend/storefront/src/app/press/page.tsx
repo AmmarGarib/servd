@@ -19,6 +19,7 @@ import { breadcrumbSchema, jsonLdScript } from '../../lib/jsonLd'
 import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../lib/blocks'
 import { ManagedPage } from '../../sections/ManagedPage'
+import { PageSurface } from '../../sections/pageSurface'
 
 const CANONICAL = `${SERVD_ORIGIN}/press`
 
@@ -41,9 +42,9 @@ export default async function PressPage() {
   ])
 
   return (
-    <div style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', minHeight: '100dvh' }}>
+    <PageSurface slug="servd:press">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
       <ManagedPage slug="servd:press" />
-    </div>
+    </PageSurface>
   )
 }

@@ -16,8 +16,11 @@ import { Animate } from '../blocks/Animate'
 // Client-safe block renderer for pop-ups. Pop-ups mount in the browser, so the
 // data-fetching server blocks (kitchens, featured_menu, reviews) and the
 // page-only `signature` are not available here; they render nothing.
+// Scroll effects (block.motion) are ignored: pop-ups do not scroll. In the
+// editor frame (`editor`) each block's wrapper carries the selection marker
+// (data-sv-block / data-sv-type), columns children included.
 
-function renderBlock(block: Block, compact: boolean): ReactNode {
+function renderBlock(block: Block, compact: boolean, editor: boolean): ReactNode {
   switch (block.type) {
     case 'text':        return <TextBody {...block} />
     case 'image':       return <ImageBlockUi {...block} />
@@ -38,7 +41,7 @@ function renderBlock(block: Block, compact: boolean): ReactNode {
           style={{ ['--sv-cols' as string]: String(cols.length), ['--sv-gap' as string]: '1rem' } as CSSProperties}>
           {cols.map((col, i) => (
             <div key={i} style={{ minWidth: 0 }}>
-              <PopupBlocks blocks={(Array.isArray(col) ? col : []).filter((b) => b.type !== 'columns')} compact={compact} />
+              <PopupBlocks blocks={(Array.isArray(col) ? col : []).filter((b) => b && b.type !== 'columns')} compact={compact} editor={editor} />
             </div>
           ))}
         </div>
@@ -48,7 +51,7 @@ function renderBlock(block: Block, compact: boolean): ReactNode {
   }
 }
 
-export function PopupBlocks({ blocks, compact = false }: { blocks: Block[]; compact?: boolean }) {
+export function PopupBlocks({ blocks, compact = false, editor = false }: { blocks: Block[]; compact?: boolean; editor?: boolean }) {
   return (
     <>
       {blocks.filter((b) => b && !b.hidden).map((b, i) => {
@@ -62,8 +65,9 @@ export function PopupBlocks({ blocks, compact = false }: { blocks: Block[]; comp
           ...(font && { fontFamily: font, ['--sv-heading-font' as string]: font }),
         }
         const section = (
-          <div key={b.id ?? i} style={style} {...(font && { 'data-sv-font': '' })}>
-            {renderBlock(b, compact)}
+          <div key={b.id ?? i} style={style} {...(font && { 'data-sv-font': '' })}
+            {...(editor && { 'data-sv-block': String(b.id ?? ''), 'data-sv-type': String(b.type ?? '') })}>
+            {renderBlock(b, compact, editor)}
           </div>
         )
         if (!b.animation || b.animation === 'none') return section

@@ -14,7 +14,7 @@ export async function Reviews({ block, fallbackSlug }: { block: ReviewsBlock; fa
 
   let data: ReviewsResp | null = null
   try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/${slug}/reviews`, { next: { revalidate: 120 } })
+    const res = await fetch(`${API_URL}/api/v1/storefront/${encodeURIComponent(slug)}/reviews`, { next: { revalidate: 120 } })
     if (res.ok) data = await res.json() as ReviewsResp
   } catch { /* nope */ }
 

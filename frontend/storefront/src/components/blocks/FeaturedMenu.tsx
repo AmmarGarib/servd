@@ -13,7 +13,7 @@ export async function FeaturedMenu({ block, fallbackSlug }: { block: FeaturedMen
 
   let items: MenuItem[] = []
   try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/${slug}/menu`, { next: { revalidate: 60 } })
+    const res = await fetch(`${API_URL}/api/v1/storefront/${encodeURIComponent(slug)}/menu`, { next: { revalidate: 60 } })
     if (res.ok) {
       const cats: Cat[] = await res.json()
       for (const c of cats) for (const it of c.items ?? []) {

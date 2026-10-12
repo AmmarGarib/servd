@@ -1,0 +1,99 @@
+/* Scroll effects for blocks (block.motion). See lib/motion.ts for the values
+   and components/blocks/Motion.tsx for the markup. Imported by Motion.tsx —
+   not part of globals.css.
+
+   Every rule keeps the NON-animated state natural: no transform, opacity 1, no
+   clip, the mask at its fully opaque position. Child combinators (>) keep an
+   outer wrapper from styling an inner block's target (motion inside columns);
+   nested named timelines resolve to the nearest --svm. */
+
+:root { --sv-page-bg: var(--servd-bg); --sv-sticky-top: 0px; }
+html:has(.sv-nav) { --sv-sticky-top: 52px; }          /* pins land under the servd glass nav */
+
+.sv-motion-track { height: var(--sv-m-track, 0px); pointer-events: none; }
+.sv-motion[data-sv-motion='pin-reveal'] > .sv-motion-pin { position: sticky; top: var(--sv-sticky-top, 0px); }
+
+/* Text reveal: the mask is static; only its position animates. black = mask
+   alpha, never painted. 0 0 = fully visible. */
+.sv-motion[data-sv-motion='text-reveal'] > .sv-motion-target {
+  -webkit-mask-image: linear-gradient(to bottom, black 40%, rgb(0 0 0 / var(--sv-m-floor, 0.2)) 60%);
+          mask-image: linear-gradient(to bottom, black 40%, rgb(0 0 0 / var(--sv-m-floor, 0.2)) 60%);
+  -webkit-mask-size: 100% 250%; mask-size: 100% 250%;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: 0 0; mask-position: 0 0;
+}
+
+.sv-stack .sv-stack-card {
+  position: sticky;
+  top: calc(var(--sv-sticky-top, 0px) + var(--sv-stack-i, 0) * var(--sv-stack-step, 16px));
+  background-color: var(--sv-page-bg);
+}
+.sv-stack .sv-stack-card:not([data-sv-stack-first]) {
+  box-shadow: 0 -12px 28px -20px color-mix(in srgb, var(--servd-ink) 55%, transparent);
+}
+/* Brand pages (Simmer bans gradients; a soft shadow edge reads as one):
+   the cards rely on their own backgrounds there. */
+.sv-stack[data-sv-brand] .sv-stack-card { box-shadow: none; }
+
+@keyframes sv-m-parallax { from { transform: translate3d(0, var(--sv-m-y, 56px), 0); } to { transform: translate3d(0, calc(var(--sv-m-y, 56px) * -1), 0); } }
+@keyframes sv-m-fade     { from { opacity: var(--sv-m-o0, 0.15); } to { opacity: 1; } }
+@keyframes sv-m-grow     { from { transform: scale(var(--sv-m-s0, 0.86)); } to { transform: none; } }
+@keyframes sv-m-reveal   { from { clip-path: inset(var(--sv-m-inset, 10% 7%) round var(--sv-m-radius, 28px)); } to { clip-path: inset(0 round 0); } }
+@keyframes sv-m-pan      { from { transform: translate3d(var(--sv-m-x, 14vw), 0, 0); } to { transform: none; } }
+@keyframes sv-m-text     { from { -webkit-mask-position: 0 100%; mask-position: 0 100%; } to { -webkit-mask-position: 0 0; mask-position: 0 0; } }
+
+/* Browsers with scroll-driven animations: pure CSS, works without JS.
+   Longhands only (the `animation` shorthand would reset animation-timeline
+   and animation-range). */
+@supports (animation-timeline: view()) {
+  .sv-motion { view-timeline: --svm block; view-timeline-inset: 0; }
+  .sv-motion > .sv-motion-target,
+  .sv-motion > .sv-motion-pin > .sv-motion-target {
+    animation-name: var(--sv-m-name);
+    animation-duration: auto;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: --svm;
+    animation-range: var(--sv-m-range);
+  }
+}
+/* Everyone else: nothing until the JS engine (motionClient.ts) marks the
+   wrapper ready; it then scrubs the paused animation's currentTime. */
+@supports not (animation-timeline: view()) {
+  .sv-motion[data-sv-motion-ready] > .sv-motion-target,
+  .sv-motion[data-sv-motion-ready] > .sv-motion-pin > .sv-motion-target {
+    animation-name: var(--sv-m-name);
+    animation-duration: 1000ms;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-play-state: paused;
+  }
+}
+/* The end of the range can't be reached on this page (e.g. a pin near the
+   bottom): no effect, natural content. Set by MotionRuntime in every browser. */
+.sv-motion[data-sv-motion-off]:not([data-sv-m-scrub]) > .sv-motion-target,
+.sv-motion[data-sv-motion-off]:not([data-sv-m-scrub]) > .sv-motion-pin > .sv-motion-target {
+  animation: none !important;
+}
+/* Editor preview slider (set only inside /editor-frame), any browser. */
+.sv-motion[data-sv-m-scrub] > .sv-motion-target,
+.sv-motion[data-sv-m-scrub] > .sv-motion-pin > .sv-motion-target {
+  animation-name: var(--sv-m-name) !important;
+  animation-duration: 1000ms !important;
+  animation-delay: 0s !important;
+  animation-timing-function: linear !important;
+  animation-fill-mode: both !important;
+  animation-play-state: paused !important;
+  animation-timeline: auto !important;
+  animation-range: normal !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sv-motion:not([data-sv-m-scrub]) > .sv-motion-target,
+  .sv-motion:not([data-sv-m-scrub]) > .sv-motion-pin > .sv-motion-target {
+    animation: none !important; transform: none !important; opacity: 1 !important; clip-path: none !important;
+    -webkit-mask-image: none !important; mask-image: none !important;
+  }
+  .sv-motion > .sv-motion-pin { position: static !important; }
+  .sv-motion-track { display: none !important; }
+  .sv-stack .sv-stack-card { position: relative !important; top: auto !important; box-shadow: none !important; }
+}

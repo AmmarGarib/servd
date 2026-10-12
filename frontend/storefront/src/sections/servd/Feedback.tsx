@@ -39,6 +39,7 @@ import { usePathname } from 'next/navigation'
 import type { SectionProps } from '../types'
 import { list, safeSrc, str } from '../safe'
 import { FEEDBACK_DEFAULTS } from './feedbackDefaults'
+import { isEditorFramePath } from '../../lib/editorFrame'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const STORAGE_KEY = 'servd-feedback-cooldown'
@@ -66,7 +67,10 @@ function hiddenOnRoute(pathname: string): boolean {
   return HIDDEN_ROUTE_PATTERNS.some((re) => re.test(pathname))
 }
 
-const isPreviewPath = (pathname: string) => pathname === '/preview' || pathname.startsWith('/preview/')
+// The editor frame (Admin → Storefront's live page) counts as a preview: the
+// button always shows there and never posts.
+const isPreviewPath = (pathname: string) =>
+  pathname === '/preview' || pathname.startsWith('/preview/') || isEditorFramePath(pathname)
 
 // Inputs that are buttons/toggles rather than somewhere to type.
 const NON_TEXT_INPUTS = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'hidden'])

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
 import { useOnBrandMicrosite } from '../lib/host'
 import { isRiderPath } from './StorefrontNav'
+import { isEditorFramePath } from '../lib/editorFrame'
 
 // The gate for the servd global footer. The footer itself is content — the
 // `servd:footer` page (section `servd.footer`), rendered on the server by
@@ -24,6 +25,7 @@ export function StorefrontFooter({ initialBrandSlug = null, children }: { initia
   // page: no servd footer, its CTA or its links.
   const pathname = usePathname() ?? '/'
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
-  if (onBrandMicrosite || pathname.startsWith('/brand/') || isRiderPath(pathname)) return null
+  // The editor frame (/editor-frame) draws its own copy of the footer.
+  if (onBrandMicrosite || pathname.startsWith('/brand/') || isRiderPath(pathname) || isEditorFramePath(pathname)) return null
   return <>{children}</>
 }

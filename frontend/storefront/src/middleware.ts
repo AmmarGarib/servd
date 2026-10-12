@@ -3,6 +3,8 @@ import {
   hostBrand, BRAND_HOST_HEADER, SERVD_HOSTS, SERVD_ORIGIN, isBrandRewritePath,
 } from './lib/brandDomains'
 import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
+import { isEditorFramePath } from './lib/editorFrame'
+import { frameAncestors } from './lib/adminOrigins'
 
 // Host-based brand routing.
 //
@@ -97,7 +99,7 @@ function brandSelfPath(pathname: string, slug: string): string | null {
 
 /** The app's own top-level routes: /<one of these>/menu is not a brand's. */
 const TOP_LEVEL_ROUTES = new Set([
-  'account', 'api', 'auth', 'brand', 'group-order', 'home', 'locations', 'login',
+  'account', 'api', 'auth', 'brand', 'editor-frame', 'group-order', 'home', 'locations', 'login',
   'orders', 'pages', 'press', 'preview', 'reserve', 'signup', 'waitlist',
 ])
 
@@ -114,9 +116,15 @@ function orderingHop(pathname: string): string | null {
   return `/${m[1]}`
 }
 
-/** A Host header without port, trailing dot or case: "stackd.pk". */
+/** A Host header without port, trailing dot or case: "stackd.pk". A
+ *  bracketed IPv6 host keeps its brackets: "[::1]:3002" -> "[::1]". */
 function bareHost(host: string): string {
-  return (host.split(':')[0] ?? '').trim().toLowerCase().replace(/\.$/, '')
+  const h = host.trim()
+  if (h.startsWith('[')) {
+    const end = h.indexOf(']')
+    return end > 0 ? h.slice(0, end + 1).toLowerCase() : ''
+  }
+  return (h.split(':')[0] ?? '').toLowerCase().replace(/\.$/, '')
 }
 
 function hostnameOf(origin: string): string {
@@ -183,6 +191,31 @@ export async function middleware(req: NextRequest) {
 
   const toApex = await apexRedirect(req, host)
   if (toApex) return toApex
+
+  // The editor frame (Admin → Storefront's live page, src/editor/README.md).
+  // Framable ONLY by the admin origins — CSP frame-ancestors from
+  // ADMIN_ORIGINS, read at runtime; next.config.js leaves X-Frame-Options off
+  // this one path. No visitor cookie (nothing here is a visit), no settle /
+  // redirect, no brand rewrite, and any inbound copy of the brand-host header
+  // is dropped. Served on the servd host only: on a brand domain it is a 404
+  // that nobody may frame.
+  // (Matched case-insensitively here because the header rules in
+  // next.config.js are: /Editor-Frame is a 404 that must not be framable.)
+  if (/^\/editor-frame\/?$/i.test(req.nextUrl.pathname)) {
+    const bare = bareHost(host)
+    const devHost = process.env.NODE_ENV !== 'production' && (bare === '127.0.0.1' || bare === '[::1]')
+    if (!isEditorFramePath(req.nextUrl.pathname) || (!isServdHost(bare) && !devHost)) {
+      const res = NextResponse.rewrite(new URL('/__editor-frame-not-here', req.url))
+      res.headers.set('Content-Security-Policy', "frame-ancestors 'none'")
+      res.headers.set('X-Frame-Options', 'DENY')
+      return res
+    }
+    const headers = new Headers(req.headers)
+    headers.delete(BRAND_HOST_HEADER)
+    const res = NextResponse.next({ request: { headers } })
+    res.headers.set('Content-Security-Policy', `frame-ancestors ${frameAncestors()}`)
+    return res
+  }
 
   // Share images and icons (/opengraph-image, /icon, /apple-icon, and the
   // per-brand ones under /brand/<slug>/) pass straight through: no visitor

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { CtaButtonBlock } from '../../lib/blocks'
-import { BUTTON_SIZE_PX } from '../../lib/blocks'
+import { BUTTON_SIZE_PX, blockHref } from '../../lib/blocks'
 
 const STYLE: Record<CtaButtonBlock['style'], { bg: string; fg: string; shadow: string; border: string }> = {
   primary:   { bg: 'var(--servd-green)', fg: 'var(--servd-on-green)', shadow: '0 14px 36px rgba(61,31,59,0.4)', border: 'none' },
@@ -18,7 +18,7 @@ export function CtaButton(block: CtaButtonBlock) {
       justifyContent: block.align === 'center' ? 'center' : block.align === 'right' ? 'flex-end' : 'flex-start',
     }}>
       <Link
-        href={block.href}
+        href={blockHref(block.href)}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
           width: block.fullWidth ? '100%' : 'clamp(280px, 70vw, 560px)',

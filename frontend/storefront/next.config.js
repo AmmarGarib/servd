@@ -50,11 +50,31 @@ const LEGACY_REDIRECTS = [
   { source: '/apple-touch-icon-precomposed.png', destination: '/apple-icon.png', permanent: true },
 ]
 
+// The baseline security headers (see headers() below).
+const BASE_HEADERS = [
+  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  // HTTPS only, for a year. No includeSubDomains until every servd.pk
+  // subdomain (admin, api, media, …) is confirmed https-only; the
+  // Cloudflare zone setting is the primary control, this is the backstop.
+  { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
+]
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   ...(process.env.BUILD_STANDALONE === 'true' && { output: 'standalone' }),
   eslint: { ignoreDuringBuilds: true },
   poweredByHeader: false,
+  // The editor frame (/editor-frame) renders through a same-origin Server
+  // Action. Behind the Cloudflare tunnel the Host the app sees can differ from
+  // the browser's Origin, so the servd host is allowed explicitly. Never list
+  // the admin origins here — the action is only ever called by the frame
+  // itself. The body is the operator's working copy (capped at 600 kB of
+  // UTF-8 by the frame and the action; the stored page is ≤ 200 kB).
+  experimental: {
+    serverActions: { allowedOrigins: [SERVD_URL.host], bodySizeLimit: '2mb' },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.r2.cloudflarestorage.com' },
@@ -95,18 +115,21 @@ const nextConfig = {
 
   // Baseline security headers for the consumer site, plus crawl and cache
   // hints that have to be headers rather than <meta> tags.
+  //
+  // X-Frame-Options SAMEORIGIN goes on every path EXCEPT the editor frame
+  // (/editor-frame), which only the admin may frame: the middleware sends its
+  // CSP frame-ancestors from ADMIN_ORIGINS (src/editor/README.md). Anything
+  // under /editor-frame/… is a 404 and keeps SAMEORIGIN.
   async headers() {
     return [
+      { source: '/', headers: BASE_HEADERS },
+      { source: '/:path((?!editor-frame(?:/|$)).*)', headers: BASE_HEADERS },
+      { source: '/editor-frame/:rest+', headers: BASE_HEADERS },
       {
-        source: '/:path*',
+        source: '/editor-frame',
         headers: [
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          // HTTPS only, for a year. No includeSubDomains until every servd.pk
-          // subdomain (admin, api, media, …) is confirmed https-only; the
-          // Cloudflare zone setting is the primary control, this is the backstop.
-          { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
+          ...BASE_HEADERS.filter((h) => h.key !== 'X-Frame-Options'),
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
         ],
       },
       // Pages that must never be indexed but must stay crawlable so the

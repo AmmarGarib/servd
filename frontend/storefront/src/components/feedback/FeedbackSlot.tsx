@@ -2,6 +2,7 @@
 import type { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
 import { isRiderPath } from '../StorefrontNav'
+import { isEditorFramePath } from '../../lib/editorFrame'
 
 // The gate for the feedback button. The button itself is content — the
 // `servd:feedback` page (section `servd.feedback`, sections/servd/Feedback.tsx),
@@ -17,5 +18,8 @@ export function FeedbackSlot({ children }: { children: ReactNode }) {
   // The rider app (servd.pk/rider) is a work tool, not the storefront: no
   // servd chrome there, and the button would sit over its pinned step button.
   if (isRiderPath(pathname)) return null
+  // The editor frame shows only the page being edited (the draft feedback
+  // button when that is what is edited).
+  if (isEditorFramePath(pathname)) return null
   return <>{children}</>
 }
