@@ -7,14 +7,23 @@
 // shift and active-orders (void / comp / refund) screens were retired; it
 // keeps the kitchen and floor jobs — KDS / expo, dispatch, curbside,
 // bookings, floor, customer lookup and the time clock.
+//
+// The rail shows a tab only when the signed-in role can use it (wave 3,
+// UI-12): GET /permissions/me gives the role's EFFECTIVE modules — the same
+// resolver the API gates /expo, /dispatch, /crm and /orders with — and each
+// gated tab needs one of the modules in NAV_MODULES. This only tidies the
+// rail; the server decides. While /permissions/me is loading, or if it
+// fails, every tab shows as before.
 
 import { useEffect } from 'react'
 import { View, Text, Pressable, Alert, ScrollView } from 'react-native'
 import { Slot, useRouter, usePathname } from 'expo-router'
+import { useQuery } from '@tanstack/react-query'
 
 import { theme } from '../../src/lib/theme'
 import { useSessionStore, sessionStore } from '../../src/store/session'
 import { getSocket } from '../../src/lib/socket'
+import { api } from '../../src/lib/api'
 import { StatusDot } from '../../src/components/StatusDot'
 import { initials } from '../../src/lib/format'
 
@@ -29,6 +38,38 @@ const NAV = [
   { key: 'settings',      label: 'Settings',     icon: '⚙️', path: '/(staff)/settings' },
 ] as const
 
+type NavItem = typeof NAV[number]
+
+// A tab listed here shows only when the role holds ANY of its modules (the
+// API's GATED_PREFIXES rule for the routes behind the screen):
+//   kds      — /expo queues, bumps, fire, hand-off
+//   dispatch — /dispatch board, assign, delivered
+//   customer — /crm/customers search + context
+//   curbside — /orders/curbside
+// Tabs not listed (floor, bookings, time clock, settings) always show.
+const NAV_MODULES: Partial<Record<NavItem['key'], readonly string[]>> = {
+  kds:      ['kds_dashboard', 'kds_all', 'expo_station'],
+  dispatch: ['dispatch', 'riders'],
+  customer: ['crm'],
+  curbside: ['curbside', 'orders', 'pos'],
+}
+
+interface MePermissions { role: string; modules: string[] }
+
+/** Unknown permissions (loading / failed) show every tab; admin sees all. */
+function canUseTab(item: NavItem, me: MePermissions | undefined): boolean {
+  if (!me || me.role === 'admin') return true
+  const need = NAV_MODULES[item.key]
+  return !need || need.some((m) => me.modules.includes(m))
+}
+
+// expo-router's usePathname() drops route groups ('/kds', not
+// '/(staff)/kds'); accept either form.
+function onTab(pathname: string, item: NavItem): boolean {
+  const route = item.path.replace('/(staff)', '')
+  return pathname === route || pathname.startsWith(route + '/') || pathname.startsWith(item.path)
+}
+
 export default function StaffLayout() {
   const router   = useRouter()
   const pathname = usePathname()
@@ -36,6 +77,30 @@ export default function StaffLayout() {
 
   // Boot the socket as soon as we enter the staff area.
   useEffect(() => { getSocket() }, [])
+
+  // Read once per signed-in user (keyed by id: the query cache is persisted,
+  // and a shared tablet signs different people in).
+  const perms = useQuery({
+    queryKey: ['permissions', 'me', user?.id],
+    queryFn:  () => api.get<MePermissions>('/permissions/me'),
+    enabled:  !!user?.id,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+  const me  = perms.data && Array.isArray(perms.data.modules) ? perms.data : undefined
+  const nav = NAV.filter((item) => canUseTab(item, me))
+
+  // Every sign-in lands on KDS. A role without it (cashier, foh) — or anyone
+  // sitting on a tab their role no longer has — moves to its first allowed
+  // tab once the permissions are known.
+  const firstPath = nav[0]?.path
+  useEffect(() => {
+    if (!me || !firstPath) return
+    const current = NAV.find((item) => onTab(pathname, item))
+    if (current && !canUseTab(current, me) && current.path !== firstPath) {
+      router.replace(firstPath as never)
+    }
+  }, [me, pathname, firstPath, router])
 
   function signOut() {
     Alert.alert('Sign out?', `Sign ${user?.name ?? 'this user'} out of this tablet?`, [
@@ -63,8 +128,8 @@ export default function StaffLayout() {
         <View style={{ height: 1, backgroundColor: theme.border, marginVertical: 12 }} />
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }} showsVerticalScrollIndicator={false}>
-          {NAV.map((item) => {
-            const active = pathname.startsWith(item.path)
+          {nav.map((item) => {
+            const active = onTab(pathname, item)
             return (
               <Pressable
                 key={item.key}

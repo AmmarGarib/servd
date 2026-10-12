@@ -175,6 +175,9 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   const [loadedConcept, setConcept] = useState<Concept | null>(initialConcept)
   const [categories, setCategories] = useState<Category[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Whether the brand takes orders right now (menu.ordering, ONL-14): when it
+  // is closed, checkout answers 409 BRAND_CLOSED, so the menu says so first.
+  const [ordering, setOrdering] = useState<{ open: boolean; opensAt: string | null; message: string | null } | null>(null)
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [openItem, setOpenItem] = useState<MenuItem | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
@@ -223,10 +226,14 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
           throw new Error(menuRes.status === 404 ? 'Brand not found' : `Menu API returned ${menuRes.status}`)
         }
         // Backend returns { concept, categories } — pull the array out.
-        const menuPayload = await menuRes.json() as { concept?: Concept; categories: Category[] } | Category[]
+        const menuPayload = await menuRes.json() as {
+          concept?: Concept; categories: Category[]
+          ordering?: { open: boolean; opensAt: string | null; message: string | null }
+        } | Category[]
         const cats: Category[] = Array.isArray(menuPayload) ? menuPayload : (menuPayload.categories ?? [])
 
         if (cancelled) return
+        setOrdering(Array.isArray(menuPayload) ? null : (menuPayload.ordering ?? null))
         setCategories(cats)
         setActiveCategory(cats[0]?.id ?? null)
         // The basket is left alone here, even when it holds another
@@ -437,6 +444,31 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
         </div>
       ) : (
         <Fragment key="menu">
+          {/* Closed right now: say when it opens, before a basket is built
+              that checkout would refuse. Pre-orders for an open time still go
+              through at checkout. */}
+          {ordering && !ordering.open && categories.length > 0 && (
+            <section
+              role="status"
+              aria-live="polite"
+              style={{
+                background: 'var(--servd-surface)',
+                color: 'var(--servd-ink)',
+                borderBottom: '1px solid var(--servd-line)',
+              }}
+            >
+              <div className="container" style={{ paddingTop: '1rem', paddingBottom: '1rem', display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: 'none', marginTop: '0.15rem' }}>
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                <p style={{ fontSize: '0.95rem', fontWeight: 700, lineHeight: 1.45 }}>
+                  {ordering.message ?? `${brandName} is closed right now.`}
+                </p>
+              </div>
+            </section>
+          )}
           {/* A brand that only takes orders at the table says so up front,
               instead of letting a customer at home fill a basket checkout
               can't take. Seated customers say so and carry on. */}

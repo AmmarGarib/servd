@@ -6,8 +6,16 @@
 // Flow:
 //   1. Pick party size + date → fetch availability
 //   2. Pick a time slot
-//   3. Enter guest details
-//   4. Submit → SMS + email confirmation with confirm/cancel link
+//   3. Enter guest details (pre-filled from the account when signed in)
+//   4. Submit. servd only messages a phone / email the signed-in guest has
+//      VERIFIED on their own account (ONL-09) — anyone else gets the
+//      confirm / cancel link on this screen instead, and no reminders.
+//
+// Signed-in guests send their customer token (availability and booking):
+// a booking from a verified account is linked to it (My bookings), confirmed
+// over WhatsApp, reminded, and not held to the share of tables the API keeps
+// for anonymous bookings (ONLINE-R2 — such slots come back as
+// reason 'sign_in').
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
@@ -16,6 +24,7 @@ import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useBrandSlug } from '../../../lib/host'
 import { formatBrandName } from '../../../lib/concept'
 import { brandCanonical } from '../../../lib/brandDomains'
+import { useCustomerAuth } from '../../../store/customerAuth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -32,7 +41,16 @@ interface AvailabilityResponse {
   dayparts?: Daypart[]
   slots: Slot[]
 }
-interface ApiErrorResponse { error: { code: string; message: string } }
+interface ApiErrorResponse { error: { code: string; message: string; details?: { signInToBook?: boolean } } }
+interface BookingResponse {
+  id: string
+  confirmToken: string
+  confirmUrl?: string
+  startTime: string
+  status: string
+  notified?: { whatsapp: boolean; email: boolean; reminders: boolean }
+}
+interface AccountProfile { name?: string | null; phone?: string | null; email?: string | null; phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null }
 
 // Fallback grouping if the API didn't return dayparts (older deploy or
 // custom integration). Matches the original hardcoded thresholds so
@@ -47,6 +65,11 @@ const DEFAULT_DAYPARTS: Daypart[] = [
 function todayPktIso(): string {
   const pkt = new Date(Date.now() + 5 * 3600_000)
   return pkt.toISOString().slice(0, 10)
+}
+
+/** Hour of the day in Karachi (the slot's own clock, not the browser's). */
+function pktHour(iso: string): number {
+  return new Date(new Date(iso).getTime() + 5 * 3600_000).getUTCHours()
 }
 
 function fmtSlot(iso: string): string {
@@ -71,7 +94,13 @@ export default function ReservePage() {
   const [selected, setSelected] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState(false)
+  const [done, setDone] = useState<BookingResponse | null>(null)
+  const [signInToBook, setSignInToBook] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+
+  // The signed-in customer, if any (persisted store — null until hydrated).
+  const token = useCustomerAuth((s) => s.token)
+  const [profile, setProfile] = useState<AccountProfile | null>(null)
 
   // Guest details
   const [name, setName] = useState('')
@@ -84,11 +113,32 @@ export default function ReservePage() {
   // a retry CTA, just a polite "we're not taking bookings right now."
   const [disabled, setDisabled] = useState(false)
 
+  // Pre-fill the guest's details from their account (only empty fields).
+  useEffect(() => {
+    if (!token) { setProfile(null); return }
+    let cancelled = false
+    fetch(`${API_URL}/api/v1/storefront/account?conceptSlug=${encodeURIComponent(slug)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<AccountProfile>) : null))
+      .then((a) => {
+        if (cancelled || !a) return
+        setProfile(a)
+        if (a.name) setName((v) => v || a.name || '')
+        if (a.phone) setPhone((v) => v || a.phone || '')
+        if (a.email) setEmail((v) => v || a.email || '')
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [token, slug])
+
   useEffect(() => {
     setLoading(true)
     setSelected(null)
     setDisabled(false)
-    fetch(`${API_URL}/api/v1/reservations/availability?conceptSlug=${slug}&date=${date}&partySize=${partySize}`)
+    fetch(`${API_URL}/api/v1/reservations/availability?conceptSlug=${slug}&date=${date}&partySize=${partySize}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then(async (r) => {
         if (r.ok) return r.json() as Promise<AvailabilityResponse>
         if (r.status === 403) {
@@ -103,14 +153,14 @@ export default function ReservePage() {
       .then((d) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false))
-  }, [slug, date, partySize])
+  }, [slug, date, partySize, token, reloadKey])
 
   const groupedSlots = useMemo(() => {
     if (!data) return []
     const dayparts = data.dayparts && data.dayparts.length > 0 ? data.dayparts : DEFAULT_DAYPARTS
     const groups: Array<[string, Slot[]]> = dayparts.map((d) => [d.label, [] as Slot[]])
     for (const s of data.slots) {
-      const h = new Date(s.time).getHours()
+      const h = pktHour(s.time)
       // Find the first daypart whose [startHour, endHour) contains this hour.
       const idx = dayparts.findIndex((d) => h >= d.startHour && h < d.endHour)
       if (idx === -1) continue              // hour outside all dayparts — drop
@@ -124,15 +174,17 @@ export default function ReservePage() {
     if (!selected || !name.trim() || !phone.trim()) return
     setSubmitting(true)
     setError(null)
+    setSignInToBook(false)
     try {
+      // The sitting length is the restaurant's (the API ignores a client
+      // value), so none is sent.
       const res = await fetch(`${API_URL}/api/v1/reservations/public`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           conceptSlug: slug,
           partySize,
           startTime: selected,
-          durationMin: 90,
           guestName: name.trim(),
           guestPhone: phone.trim(),
           guestEmail: email.trim() || null,
@@ -140,10 +192,17 @@ export default function ReservePage() {
         }),
       })
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
+        const body = (await res.json().catch(() => ({}))) as Partial<ApiErrorResponse>
+        // The time was taken (or the share for guests without an account is
+        // full) between loading the slots and pressing the button: say so and
+        // show the times as they are now.
+        if (res.status === 409 && (body.error?.code === 'SLOT_FULL' || body.error?.code === 'CLOSED')) {
+          setSignInToBook(!!body.error?.details?.signInToBook && !token)
+          setReloadKey((k) => k + 1)
+        }
         throw new Error(body?.error?.message ?? `Booking failed (${res.status})`)
       }
-      setDone(true)
+      setDone((await res.json()) as BookingResponse)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -152,17 +211,45 @@ export default function ReservePage() {
   }
 
   if (done) {
+    const sentWhatsapp = !!done.notified?.whatsapp
+    const sentEmail = !!done.notified?.email
+    // The guest's own confirm / cancel page, on this site (the API's
+    // confirmUrl names the storefront host it was configured with).
+    const manageHref = `/reserve/confirm/${done.confirmToken}`
+    const brand = formatBrandName(data?.concept.name)
     return (
       <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✓</div>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-ink)"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+            style={{ display: 'inline-block', marginBottom: '0.5rem' }}>
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
           <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
             Reservation request sent.
           </h1>
-          <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
-            Check your phone — we&rsquo;ve sent a confirmation link with your booking. {formatBrandName(data?.concept.name)} will see it in their dashboard.
-          </p>
-          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to {formatBrandName(data?.concept.name)}</MagneticLink>
+          {sentWhatsapp || sentEmail ? (
+            <p style={{ color: 'var(--servd-mute)', marginBottom: '1.25rem' }}>
+              We&rsquo;ve sent a confirmation link to your {sentWhatsapp && sentEmail ? 'WhatsApp and email' : sentWhatsapp ? 'WhatsApp' : 'email'}
+              {done.notified?.reminders ? ', and we’ll remind you before your booking' : ''}. {brand} will see it in their dashboard.
+            </p>
+          ) : (
+            <p style={{ color: 'var(--servd-mute)', marginBottom: '1.25rem' }}>
+              {brand} will see your booking in their dashboard. We haven&rsquo;t sent a message, so keep this link to
+              confirm or cancel your table:
+            </p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
+            <MagneticLink href={manageHref} className="servd-btn-primary">Confirm or cancel your booking</MagneticLink>
+            {!sentWhatsapp && (
+              <p style={{ fontSize: '0.8rem', color: 'var(--servd-dim)', maxWidth: '26rem' }}>
+                {token
+                  ? 'WhatsApp confirmations and reminders go to the verified phone on your account. Verify your number in your account to get them next time.'
+                  : <>Sign in with a verified phone to get WhatsApp confirmations and reminders next time. <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link></>}
+              </p>
+            )}
+            <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>Back to {brand}</Link>
+          </div>
         </div>
       </div>
     )
@@ -250,6 +337,12 @@ export default function ReservePage() {
                 No slots available on {date}. Try another day.
               </p>
             )}
+            {!loading && data && !token && data.slots.some((s) => s.reason === 'sign_in') && (
+              <p style={{ fontSize: '0.85rem', color: 'var(--servd-mute)', marginBottom: '1rem' }}>
+                Some times are held for guests with an account.{' '}
+                <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link> to see them.
+              </p>
+            )}
             {!loading && data && groupedSlots.map(([groupName, slots]) => (
               <div key={groupName} style={{ marginBottom: '1.25rem' }}>
                 <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--servd-mute)', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.6rem' }}>
@@ -272,7 +365,7 @@ export default function ReservePage() {
                           padding: '0.55rem 0.95rem',
                           borderRadius: '999px',
                           border: `1px solid ${sel ? 'var(--servd-green-dark)' : 'var(--servd-line)'}`,
-                          background: sel ? 'var(--servd-green)' : (s.available ? '#fff' : 'rgba(0,0,0,0.04)'),
+                          background: sel ? 'var(--servd-green)' : (s.available ? 'var(--servd-surface)' : 'var(--servd-line)'),
                           color: sel ? 'var(--servd-on-green)' : (s.available ? 'var(--servd-ink)' : 'var(--servd-dim)'),
                           fontWeight: sel ? 800 : 500,
                           fontSize: '0.875rem',
@@ -319,14 +412,21 @@ export default function ReservePage() {
               </div>
 
               {error && (
-                <p role="alert" style={{ marginTop: '0.75rem', color: 'var(--servd-danger)', fontSize: '0.85rem' }}>{error}</p>
+                <p role="alert" style={{ marginTop: '0.75rem', color: 'var(--servd-danger)', fontSize: '0.85rem' }}>
+                  {error}
+                  {signInToBook && (
+                    <> <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link></>
+                  )}
+                </p>
               )}
 
               <MagneticButton type="submit" disabled={submitting || !name.trim() || !phone.trim()} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
                 {submitting ? 'Booking…' : 'Confirm booking'}
               </MagneticButton>
               <p style={{ fontSize: '0.7rem', color: 'var(--servd-dim)', textAlign: 'center', marginTop: '0.75rem' }}>
-                You&rsquo;ll get an SMS confirmation. Reminders 24h and 2h before.
+                {token && profile?.phoneVerifiedAt
+                  ? 'You’ll get a WhatsApp confirmation on your verified number, and a reminder before your booking.'
+                  : 'You’ll get a link to confirm or cancel on the next screen. Sign in with a verified phone for WhatsApp confirmations and reminders.'}
               </p>
             </form>
           )}

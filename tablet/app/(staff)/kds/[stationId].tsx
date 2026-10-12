@@ -6,6 +6,12 @@
 // recipe steps are bumped with PATCH /order-items/:id/status. The screen used
 // to call /kds/stations/:id/items and /orders/items/:id/advance, which do not
 // exist.
+//
+// A legacy line's `status` says what kind of work it is: pending / preparing
+// (cook it), recalled (a REMAKE — the dish came back from the pass and is
+// cooked again; Bump walks it through preparing on the server) and held
+// (paused — only on a screen that asks for ?states=all, which this one does
+// not, so the server leaves held lines off; shown, never bumpable, if sent).
 
 import { Alert, View, Text, ScrollView, Pressable } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
@@ -32,9 +38,10 @@ interface QueueStep {
 }
 interface QueueLegacy {
   itemId: string; itemName: string; qty: number; itemNotes: string | null
-  status: 'pending' | 'preparing'; firedAt: string | null
+  status: LegacyStatus; firedAt: string | null
   order: QueueOrder
 }
+type LegacyStatus = 'pending' | 'preparing' | 'held' | 'recalled'
 interface StationQueue { steps: QueueStep[]; legacy: QueueLegacy[] }
 
 // One card on the screen, whichever way the work was routed.
@@ -49,6 +56,8 @@ interface StationItem {
   instruction: string | null
   notes: string | null
   lane: 'now' | 'next'
+  /** recalled = a remake of a dish that came back; held = paused, not bumpable. */
+  flag: 'remake' | 'held' | null
   firedAt: string | null
   placedAt: string
 }
@@ -60,13 +69,15 @@ function toItems(q: StationQueue | undefined): StationItem[] {
       key: `s:${s.stepId}`, stepId: s.stepId, itemId: s.itemId,
       orderNumber: s.order.id.slice(0, 6).toUpperCase(), conceptName: s.order.concept.name,
       menuItemName: s.itemName, qty: s.qty, instruction: s.instruction, notes: s.itemNotes,
-      lane: s.status === 'waiting' ? 'next' : 'now', firedAt: s.firedAt, placedAt: s.order.placedAt,
+      lane: s.status === 'waiting' ? 'next' : 'now', flag: null, firedAt: s.firedAt, placedAt: s.order.placedAt,
     })),
     ...q.legacy.map((it): StationItem => ({
       key: `i:${it.itemId}`, stepId: null, itemId: it.itemId,
       orderNumber: it.order.id.slice(0, 6).toUpperCase(), conceptName: it.order.concept.name,
       menuItemName: it.itemName, qty: it.qty, instruction: null, notes: it.itemNotes,
-      lane: 'now', firedAt: it.firedAt, placedAt: it.order.placedAt,
+      lane: it.status === 'held' ? 'next' : 'now',
+      flag: it.status === 'recalled' ? 'remake' : it.status === 'held' ? 'held' : null,
+      firedAt: it.firedAt, placedAt: it.order.placedAt,
     })),
   ]
 }
@@ -130,13 +141,23 @@ export default function KdsStationScreen() {
               {lanes[status].map((item) => (
                 <Pressable
                   key={item.key}
-                  disabled={item.lane === 'next'}
+                  disabled={item.lane === 'next' || item.flag === 'held'}
                   onPress={() => bump.mutate(item)}
                   style={({ pressed }) => ({
                     backgroundColor: pressed ? theme.panelAlt : theme.panel,
-                    borderRadius: theme.radius, borderWidth: 1, borderColor: theme.border,
+                    borderRadius: theme.radius, borderWidth: item.flag === 'remake' ? 2 : 1,
+                    borderColor: item.flag === 'remake' ? theme.danger : theme.border,
                     padding: 14,
                   })}>
+                  {item.flag && (
+                    <Text style={{
+                      alignSelf: 'flex-start', marginBottom: 6, paddingHorizontal: 8, paddingVertical: 2,
+                      borderRadius: 6, overflow: 'hidden', fontSize: 11, fontWeight: '900', letterSpacing: 1,
+                      color: theme.text, backgroundColor: item.flag === 'remake' ? theme.danger : theme.info,
+                    }}>
+                      {item.flag === 'remake' ? 'REMAKE' : 'HELD'}
+                    </Text>
+                  )}
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
                     <Text style={{ color: theme.textDim, fontSize: 12, fontWeight: '700' }}>
                       #{item.orderNumber} · {item.conceptName}

@@ -35,7 +35,12 @@ interface Quote {
   walletCents: number
   tipCents: number
   giftCardCents: number
+  // A gift card that can't pay here (unknown, another company's, expired,
+  // empty) — ONL-15. Shown under the gift-card field, like a promo error.
+  giftCardError?: { code: string; message: string } | null
   totalCents: number
+  // The methods checkout accepts right now (ONL-02) — today cash only.
+  paymentMethods?: string[]
 }
 
 interface CustomerAddress {
@@ -54,18 +59,22 @@ const FULFILMENT_LABEL: Record<FulfilmentOption, string> = {
   'delivery': 'Delivery',
 }
 
+// Every method the page knows how to show. Only the ones the API lists
+// (quote.paymentMethods — GET /storefront/payment-methods) are rendered:
+// checkout refuses the rest with 422 PAYMENT_METHOD_UNAVAILABLE until its
+// gateway really takes the money (ONL-02). Today that is cash only, so the
+// online methods — and their phone field and redirect copy — stay hidden.
 const PAYMENT_OPTIONS: Array<{
   id: PaymentMethod
   icon: string
   label: string
   sub: string
-  phoneRequired: boolean
 }> = [
   // label/sub for cash are replaced per fulfilment by cashCopy() below.
-  { id: 'cash',      icon: 'Cash', label: 'Cash',              sub: 'Pay in cash', phoneRequired: false },
-  { id: 'jazzcash',  icon: 'JC', label: 'JazzCash Wallet',   sub: 'Enter your JazzCash number',      phoneRequired: true  },
-  { id: 'easypaisa', icon: 'EP', label: 'EasyPaisa',         sub: 'Enter your EasyPaisa number',     phoneRequired: true  },
-  { id: 'keenu',     icon: 'Card', label: 'Keenu (Card)',       sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
+  { id: 'cash',      icon: 'Cash', label: 'Cash',            sub: 'Pay in cash' },
+  { id: 'jazzcash',  icon: 'JC',   label: 'JazzCash Wallet', sub: 'Pay with JazzCash' },
+  { id: 'easypaisa', icon: 'EP',   label: 'EasyPaisa',       sub: 'Pay with EasyPaisa' },
+  { id: 'keenu',     icon: 'Card', label: 'Card (Keenu)',    sub: 'Pay by card' },
 ]
 
 // The cash option is named for how the order reaches the customer — only a
@@ -199,18 +208,29 @@ export default function CheckoutPage() {
   const [giftCard,  setGiftCard]  = useState('')
   const _orderPlaced = useRef(false)
 
-  // Payment method
+  // Payment method — only what the API accepts (starts as cash, the one
+  // method always offered).
   const [paymentMethod,  setPaymentMethod]  = useState<PaymentMethod>('cash')
-  const [paymentPhone,   setPaymentPhone]   = useState('')
+  const [availableMethods, setAvailableMethods] = useState<string[]>(['cash'])
+  const [paymentNotice, setPaymentNotice] = useState('')
 
-  // Gift card balance check
+  // Gift card: Check sends the code to the quote, which says whether it can
+  // pay here (this brand's company, active, not expired, has balance).
   const [giftCardStatus,  setGiftCardStatus]  = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
   const [giftCardBalance, setGiftCardBalance] = useState(0)
+  const [appliedGiftCard, setAppliedGiftCard] = useState('')
+  const [giftCardMessage, setGiftCardMessage] = useState('')
+
+  // Placed, but the response carries something the customer must read
+  // (a gift card that could not be applied) — shown before the tracker.
+  const [placedNotice, setPlacedNotice] = useState<{ orderId: string; message: string } | null>(null)
 
   useEffect(() => {
     if (!token) return
     Promise.all([
-      fetch(`${API_URL}/api/v1/storefront/account`, {
+      // ?conceptSlug: the points shown are this brand's company's (loyalty is
+      // per company — points from another company can't be spent here).
+      fetch(`${API_URL}/api/v1/storefront/account?conceptSlug=${encodeURIComponent(slug)}`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then(r => r.ok ? r.json() as Promise<AccountInfo> : null),
       fetch(`${API_URL}/api/v1/storefront/addresses`, {
@@ -227,7 +247,7 @@ export default function CheckoutPage() {
         setDeliveryAddress(defaultAddr.address)
       }
     }).catch(() => {})
-  }, [token])
+  }, [token, slug])
 
   // Delivery drop point. The server needs coordinates for the zone fee and
   // the rider, and refuses delivery without them (DELIVERY_LOCATION_REQUIRED).
@@ -326,7 +346,7 @@ export default function CheckoutPage() {
       ...(appliedPromo && { promoCode: appliedPromo }),
       ...(loyaltyPts > 0 && { loyaltyPointsToRedeem: String(loyaltyPts) }),
       ...(useWallet && { useWallet: 'true' }),
-      ...(giftCardStatus === 'valid' && giftCard.trim() && { giftCardCode: giftCard.trim().toUpperCase() }),
+      ...(appliedGiftCard && { giftCardCode: appliedGiftCard }),
       ...tipParams,
     })
     const ctrl = new AbortController()
@@ -338,7 +358,14 @@ export default function CheckoutPage() {
         .then(async (res) => {
           const data = await res.json()
           if (!res.ok) {
-            const err = (data as { error?: { code?: string; message?: string } })?.error
+            const err = (data as { error?: { code?: string; message?: string; details?: { available?: string[] } } })?.error
+            // A method checkout can't charge: back to cash, and say why.
+            if (err?.code === 'PAYMENT_METHOD_UNAVAILABLE' && paymentMethod !== 'cash') {
+              setAvailableMethods(err.details?.available?.length ? err.details.available : ['cash'])
+              setPaymentMethod('cash')
+              setPaymentNotice(err.message ?? 'That payment method isn’t available. Please pay with cash.')
+              return
+            }
             setQuote(null)
             setQuoteError(err?.message ?? 'Could not price your order')
             setQuoteErrorCode(err?.code ?? '')
@@ -348,9 +375,17 @@ export default function CheckoutPage() {
           setQuote(q)
           setQuoteError('')
           setQuoteErrorCode('')
+          if (Array.isArray(q.paymentMethods) && q.paymentMethods.length > 0) {
+            setAvailableMethods(q.paymentMethods)
+            if (!q.paymentMethods.includes(paymentMethod)) setPaymentMethod('cash')
+          }
           if (appliedPromo) {
             if (q.promo) { setPromoStatus('valid'); setPromoMessage(q.promo.description) }
             else { setPromoStatus('invalid'); setPromoMessage(q.promoError?.message ?? 'Promo code is invalid') }
+          }
+          if (appliedGiftCard) {
+            if (q.giftCardError) { setGiftCardStatus('invalid'); setGiftCardMessage(q.giftCardError.message) }
+            else { setGiftCardStatus('valid'); setGiftCardMessage('') }
           }
         })
         .catch((e: unknown) => {
@@ -361,7 +396,7 @@ export default function CheckoutPage() {
     }, 250)
     return () => { clearTimeout(t); ctrl.abort() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [basketKey, slug, fulfilmentType, paymentMethod, deliveryLat, deliveryLng, appliedPromo, loyaltyPts, useWallet, giftCardStatus, giftCard, tipKey, token])
+  }, [basketKey, slug, fulfilmentType, paymentMethod, deliveryLat, deliveryLng, appliedPromo, loyaltyPts, useWallet, appliedGiftCard, tipKey, token])
 
   useEffect(() => {
     if (items.length > 0) {
@@ -374,6 +409,19 @@ export default function CheckoutPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  if (placedNotice) return (
+    <div className={`flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center${brandSkinClass ? ' ' + brandSkinClass : ''}`}
+      style={{ background: 'transparent' }}>
+      <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>Your order is placed.</p>
+      <p role="alert" className="text-sm max-w-sm" style={{ color: 'var(--servd-danger)' }}>{placedNotice.message}</p>
+      <Link href={`/${slug}/order/${placedNotice.orderId}`}
+        className="rounded-2xl font-black px-8 py-4 text-sm"
+        style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
+        Track your order
+      </Link>
+    </div>
+  )
 
   if (itemCount() === 0) return (
     <div className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
@@ -439,6 +487,10 @@ export default function CheckoutPage() {
     ? 'Drop a pin on the map, or tap “Use my current location”, so your rider can find you.'
     : deliveryAreaError || null
   const cash = cashCopy(fulfilmentType)
+  // The brand is closed for this order's time (409 BRAND_CLOSED, ONL-14):
+  // the quote says when it opens, and the order can't be placed.
+  const brandClosed = quoteErrorCode === 'BRAND_CLOSED'
+  const shownMethods = PAYMENT_OPTIONS.filter((o) => availableMethods.includes(o.id))
 
   // Apply = ask the quote to price the code (same evaluation as checkout).
   const applyPromo = () => {
@@ -449,31 +501,22 @@ export default function CheckoutPage() {
     setAppliedPromo(code)
   }
 
+  // Check = ask the quote whether this card pays HERE (the same check
+  // checkout makes). The balance lookup is only for showing the balance.
   const checkGiftCardBalance = async () => {
     const code = giftCard.trim().toUpperCase()
     if (!code) return
     setGiftCardStatus('checking')
+    setGiftCardMessage('')
     setGiftCardBalance(0)
+    setAppliedGiftCard(code)
     try {
       const res = await fetch(`${API_URL}/api/v1/gift-cards/balance/${encodeURIComponent(code)}`)
-      if (!res.ok) {
-        setGiftCardStatus('invalid')
-        return
+      if (res.ok) {
+        const data = await res.json() as { balanceCents?: number }
+        setGiftCardBalance(data.balanceCents ?? 0)
       }
-      const data = await res.json() as { balanceCents: number; status: string; expiresAt?: string | null }
-      if (data.status !== 'active') {
-        setGiftCardStatus('invalid')
-        return
-      }
-      if (data.expiresAt && new Date(data.expiresAt) < new Date()) {
-        setGiftCardStatus('invalid')
-        return
-      }
-      setGiftCardBalance(data.balanceCents)
-      setGiftCardStatus('valid')
-    } catch {
-      setGiftCardStatus('invalid')
-    }
+    } catch { /* the quote decides */ }
   }
 
   const handlePlaceOrder = async () => {
@@ -498,8 +541,12 @@ export default function CheckoutPage() {
       setError('Please enter your table number (printed on the QR card at your seat).')
       return
     }
-    if ((paymentMethod === 'jazzcash' || paymentMethod === 'easypaisa') && !paymentPhone.trim()) {
-      setError(`Please enter your ${paymentMethod === 'jazzcash' ? 'JazzCash' : 'EasyPaisa'} mobile number`)
+    if (brandClosed) {
+      setError(quoteError)
+      return
+    }
+    if (appliedGiftCard && giftCardStatus === 'invalid') {
+      setError(giftCardMessage || 'That gift card can’t be used here. Remove it to continue.')
       return
     }
     setLoading(true)
@@ -527,11 +574,10 @@ export default function CheckoutPage() {
             useWallet,
             loyaltyPointsToRedeem: loyaltyPts,
             paymentGateway: paymentMethod,
-            ...(paymentPhone.trim() && (paymentMethod === 'jazzcash' || paymentMethod === 'easypaisa') && {
-              paymentPhone: paymentPhone.trim(),
-            }),
             tipCents,
-            giftCardCode: giftCard.trim().toUpperCase() || undefined,
+            // Only a card the quote accepted — checkout refuses an unusable
+            // one with 422 before anything is created (ONL-15).
+            giftCardCode: (giftCardStatus === 'valid' && appliedGiftCard) || undefined,
             items: items.map(i => ({
               menuItemId: i.menuItemId,
               quantity: i.quantity,
@@ -545,14 +591,28 @@ export default function CheckoutPage() {
           }),
         })
         if (!res.ok) {
-          const d = await res.json() as { error?: { message?: string } }
+          const d = await res.json() as { error?: { code?: string; message?: string; details?: { available?: string[] } } }
+          if (d?.error?.code === 'PAYMENT_METHOD_UNAVAILABLE') {
+            setAvailableMethods(d.error.details?.available?.length ? d.error.details.available : ['cash'])
+            setPaymentMethod('cash')
+          }
+          if (d?.error?.code === 'BRAND_CLOSED') {
+            setQuote(null)
+            setQuoteError(d.error.message ?? 'This kitchen is closed right now.')
+            setQuoteErrorCode('BRAND_CLOSED')
+          }
           throw new Error(d?.error?.message ?? 'Failed to place order')
         }
-        const order = await res.json() as { id: string }
+        const order = await res.json() as { id: string; totalCents?: number; giftCardError?: { message?: string } | null }
         if (appliedPromo) trackPromoApplied(appliedPromo, slug, promoDiscountCents)
         _orderPlaced.current = true
-        trackOrderPlaced(order.id, slug, displayTotal ?? 0, paymentMethod)
+        trackOrderPlaced(order.id, slug, order.totalCents ?? displayTotal ?? 0, paymentMethod)
         clearCart()
+        if (order.giftCardError?.message) {
+          // Placed at full price — the customer must see why before the tracker.
+          setPlacedNotice({ orderId: order.id, message: order.giftCardError.message })
+          return
+        }
         router.push(`/${slug}/order/${order.id}`)
       } else {
         // Guest checkout is no longer available — anonymous order placement
@@ -578,8 +638,8 @@ export default function CheckoutPage() {
     ? 'Placing order…'
     : needsPin
       ? 'Set your delivery pin'
-      : paymentMethod === 'keenu'
-        ? 'Continue to Keenu'
+      : brandClosed
+        ? 'Closed right now'
         : 'Place Order'
 
   return (
@@ -905,10 +965,12 @@ export default function CheckoutPage() {
                 value={giftCard}
                 onChange={(e) => {
                   setGiftCard(e.target.value.toUpperCase())
-                  // Reset validation when user edits the code
-                  if (giftCardStatus !== 'idle') {
+                  // Editing the code takes it off the bill until checked again.
+                  if (giftCardStatus !== 'idle' || appliedGiftCard) {
                     setGiftCardStatus('idle')
                     setGiftCardBalance(0)
+                    setGiftCardMessage('')
+                    setAppliedGiftCard('')
                   }
                 }}
                 placeholder="GS-XXXX-XXXX"
@@ -922,21 +984,21 @@ export default function CheckoutPage() {
                 className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition-all disabled:opacity-40"
                 style={{
                   background: giftCardStatus === 'valid' ? 'var(--servd-green-dark)' : 'rgba(0,0,0,0.07)',
-                  color: giftCardStatus === 'valid' ? '#fff' : 'var(--servd-ink)',
+                  color: giftCardStatus === 'valid' ? 'var(--servd-on-green)' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}>
-                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? '✓' : 'Check'}
+                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? 'Applied' : 'Check'}
               </button>
             </div>
             {giftCardStatus === 'valid' && (
               <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
-                Balance: {fmt(giftCardBalance)}
+                {giftCardBalance > 0 ? `Balance: ${fmt(giftCardBalance)}` : 'Gift card applied'}
                 {giftCardDeduction > 0 && ` · saving ${fmt(giftCardDeduction)} on this order`}
               </p>
             )}
             {giftCardStatus === 'invalid' && (
-              <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }}>
-                Invalid or expired card
+              <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }} role="alert">
+                {giftCardMessage || 'This gift card can’t be used here'}
               </p>
             )}
           </div>
@@ -972,7 +1034,7 @@ export default function CheckoutPage() {
               <span className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }}>{displayTotal != null ? fmt(displayTotal) : '…'}</span>
             </div>
             {quoteError && (
-              <p className="text-xs pt-1" style={{ color: 'var(--servd-mute)' }} role="status">
+              <p className="text-xs pt-1" style={{ color: brandClosed ? 'var(--servd-danger)' : 'var(--servd-mute)' }} role="status">
                 {needsPin && quoteErrorCode === 'DELIVERY_LOCATION_REQUIRED'
                   ? 'Set your delivery pin above to see the delivery fee and total.'
                   : deliveryAreaError
@@ -1117,14 +1179,17 @@ export default function CheckoutPage() {
         {/* ── Payment Method ── */}
         <Panel icon="" label="Payment Method">
           <div className="space-y-2">
-            {PAYMENT_OPTIONS.map((base) => {
+            {paymentNotice && (
+              <p className="text-xs font-semibold" role="status" style={{ color: 'var(--servd-danger)' }}>{paymentNotice}</p>
+            )}
+            {shownMethods.map((base) => {
               const opt = base.id === 'cash' ? { ...base, ...cash } : base
               const isSelected = paymentMethod === opt.id
               return (
                 <div key={opt.id}>
                   <button
                     type="button"
-                    onClick={() => setPaymentMethod(opt.id)}
+                    onClick={() => { setPaymentMethod(opt.id); setPaymentNotice('') }}
                     className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-all"
                     style={isSelected
                       ? { background: 'rgba(135,197,64,0.06)', border: '1.5px solid rgba(135,197,64,0.35)' }
@@ -1132,9 +1197,7 @@ export default function CheckoutPage() {
                     <span className="text-lg shrink-0">{opt.icon}</span>
                     <div className="flex-1 text-left min-w-0">
                       <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{opt.label}</p>
-                      {!opt.phoneRequired && (
-                        <p className="text-[11px] mt-0.5" style={{ color: 'var(--servd-mute)' }}>{opt.sub}</p>
-                      )}
+                      <p className="text-[11px] mt-0.5" style={{ color: 'var(--servd-mute)' }}>{opt.sub}</p>
                     </div>
                     <div className="h-5 w-5 rounded-full shrink-0 flex items-center justify-center"
                       style={isSelected
@@ -1144,33 +1207,6 @@ export default function CheckoutPage() {
                     </div>
                   </button>
 
-                  {/* Phone number input for mobile wallets */}
-                  {isSelected && opt.phoneRequired && (
-                    <div className="mt-1.5 px-1">
-                      <input
-                        type="tel"
-                        value={paymentPhone}
-                        onChange={(e) => setPaymentPhone(e.target.value)}
-                        placeholder="03xx-xxxxxxx"
-                        maxLength={15}
-                        className="w-full rounded-lg px-3 py-2 text-sm"
-                        style={{ background: '#fff', border: '1.5px solid rgba(135,197,64,0.3)' }}
-                      />
-                      <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }}>
-                        Enter your {opt.label} number to process payment
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Keenu redirect note */}
-                  {isSelected && opt.id === 'keenu' && (
-                    <div className="mt-1.5 mx-1 rounded-lg px-3 py-2"
-                      style={{ background: 'rgba(135,197,64,0.06)', border: '1px solid rgba(135,197,64,0.2)' }}>
-                      <p className="text-[11px]" style={{ color: 'var(--servd-green-dark)' }}>
-                        After placing your order you&rsquo;ll be redirected to Keenu&rsquo;s secure payment page to complete payment by card.
-                      </p>
-                    </div>
-                  )}
                 </div>
               )
             })}
@@ -1224,12 +1260,12 @@ export default function CheckoutPage() {
       <div className="fixed bottom-0 left-0 right-0 px-4 pt-4 z-40"
         style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         <button
-          onClick={() => { void handlePlaceOrder() }} disabled={loading}
+          onClick={() => { void handlePlaceOrder() }} disabled={loading || brandClosed}
           className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
           style={{
-            background: loading ? 'var(--servd-line)' : 'var(--servd-green)',
-            color: loading ? 'var(--servd-mute)' : 'var(--servd-on-green)',
-            boxShadow: loading ? 'none' : '0 0 32px rgba(61,31,59,0.28)',
+            background: loading || brandClosed ? 'var(--servd-line)' : 'var(--servd-green)',
+            color: loading || brandClosed ? 'var(--servd-mute)' : 'var(--servd-on-green)',
+            boxShadow: loading || brandClosed ? 'none' : '0 0 32px rgba(61,31,59,0.28)',
           }}>
           <span>{ctaLabel}</span>
           <span>{displayTotal != null ? fmt(displayTotal) : '…'}</span>

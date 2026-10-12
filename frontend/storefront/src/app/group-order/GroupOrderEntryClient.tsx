@@ -50,7 +50,11 @@ export function GroupOrderEntryClient({ brands }: Props) {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ conceptSlug, initiatorName: name }),
       })
-      if (!res.ok) throw new Error('Could not start group')
+      if (!res.ok) {
+        // 409 BRAND_CLOSED carries "<Brand> is closed right now. Opens at …".
+        const body = await res.json().catch(() => null) as { error?: { code?: string; message?: string } } | null
+        throw new Error(body?.error?.code === 'BRAND_CLOSED' && body.error.message ? body.error.message : 'Could not start group')
+      }
       const go = await res.json() as { shareCode: string }
       router.push(`/group-order/${go.shareCode}?me=${encodeURIComponent(name)}`)
     } catch (e) {

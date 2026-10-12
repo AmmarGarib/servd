@@ -79,9 +79,11 @@ export default function FloorScreen() {
   const [picked, setPicked]       = useState<TableStatus | null>(null)
 
   const concepts = useQuery({
-    queryKey: ['concepts'],
-    // GET /concepts returns a bare array.
-    queryFn:  async () => ({ concepts: await api.get<Concept[]>('/concepts') }),
+    queryKey: ['concepts', 'picker'],
+    // The brand picker view (id + name of the company's active brands) is
+    // open to every staff role; the plain list refuses kitchen roles.
+    // Returns a bare array.
+    queryFn:  async () => ({ concepts: await api.get<Concept[]>('/concepts?view=picker') }),
   })
 
   if (!conceptId && concepts.data?.concepts[0]) setConceptId(concepts.data.concepts[0].id)
