@@ -14,6 +14,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { AppError } from './errors.js'
+import { sumCents } from './money.js'
 
 export const OPERATING_BANK_CODE = '1020'
 const CHILD_BANK_CODES = ['1021', '1022', '1023', '1024', '1025', '1026', '1027', '1028', '1029']
@@ -110,7 +111,7 @@ export async function ledgerBalancesByCode(tenantId: string, codes: string[]): P
   for (const s of sums) {
     const code = codeOf.get(s.accountId)
     if (!code) continue
-    const amt = s._sum.amountCents ?? 0
+    const amt = sumCents(s._sum.amountCents)
     out.set(code, (out.get(code) ?? 0) + (s.type === 'debit' ? amt : -amt))
   }
   return out

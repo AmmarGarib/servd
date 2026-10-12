@@ -14,6 +14,7 @@ import {
 import { scopeTenantWhere, resolveTenantScope, assertConceptOwned, type ScopeMode } from '../../lib/tenantScope.js'
 import { pnlByConcept } from '../accounting/reports.js'
 import { ACCT } from '../accounting/journal.js'
+import { sumCents, toCents } from '../../lib/money.js'
 
 // Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
 // ledger books as COGS and the stock depletion explodes. That is: each
@@ -778,11 +779,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           select: { amountCents: true, cadence: true },
         })
         opexLinesMonthlyCents = opexLines.reduce((s, l) => {
+          const amt = toCents(l.amountCents)
           const monthly =
-            l.cadence === 'monthly'   ? l.amountCents :
-            l.cadence === 'quarterly' ? Math.round(l.amountCents / 3) :
-            l.cadence === 'annual'    ? Math.round(l.amountCents / 12) :
-            l.amountCents
+            l.cadence === 'monthly'   ? amt :
+            l.cadence === 'quarterly' ? Math.round(amt / 3) :
+            l.cadence === 'annual'    ? Math.round(amt / 12) :
+            amt
           return s + monthly
         }, 0)
 
@@ -1403,7 +1405,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         },
         _sum: { amountCents: true },
       })
-      const actualPurchasesCents = purchasesAgg._sum.amountCents ?? 0
+      const actualPurchasesCents = sumCents(purchasesAgg._sum.amountCents)
 
       // ── Theoretical: THE plate cost × what was sold (completed, not voided),
       // at the price actually charged.

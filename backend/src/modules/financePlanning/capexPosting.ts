@@ -24,6 +24,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { ACCT } from '../accounting/journal.js'
 import { syncSourcePosting, liveRevision, liveRevisionsFor, type SyncOutcome } from '../accounting/sourcePosting.js'
 import { ASSET_CATEGORIES, postAcquisition, type AssetCategory } from '../fixedAssets/service.js'
+import { assertMoneyFits, toCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -76,7 +77,7 @@ export async function syncCapexPaymentPosting(
   })
   if (!p) throw new NotFoundError('CapexPayment', paymentId)
   const project = p.line.project
-  const amount = p.paidAmountCents ?? p.amountCents
+  const amount = toCents(p.paidAmountCents ?? p.amountCents)
   const paid = !!p.paidAt && amount > 0
   const tenantId = project.tenantId
   if (!tenantId) {
@@ -159,9 +160,10 @@ export async function capitaliseCapexLine(input: CapitaliseInput) {
   const advancedCents = Array.from(live.values())
     .filter((e) => e.debitCode === ADVANCES_TO_SUPPLIERS)
     .reduce((t, e) => t + e.amountCents, 0)
-  const committed = line.negotiatedCents ?? line.unitCostCents * line.quantity
+  const committed = line.negotiatedCents != null ? toCents(line.negotiatedCents) : toCents(line.unitCostCents) * line.quantity
   const costCents = input.costCents ?? Math.max(committed, advancedCents)
   if (costCents <= 0) throw new AppError('NO_COST', 'This line has no cost to capitalise', 422)
+  assertMoneyFits(costCents, 'The asset\'s cost')
   if (costCents < advancedCents) {
     throw new AppError('COST_BELOW_ADVANCES', `PKR ${(advancedCents / 100).toFixed(0)} has been advanced for this item — the asset cannot cost less`, 422)
   }
@@ -215,7 +217,7 @@ export async function capexLedgerState(tenantIds: string[], lines: Array<{ id: s
   const assetOf = new Map<string, { id: string; costCents: number; status: string }>()
   for (const a of assets) {
     const lineId = a.notes?.slice('capex-line:'.length).split(' ')[0]
-    if (lineId) assetOf.set(lineId, { id: a.id, costCents: a.costCents, status: a.status })
+    if (lineId) assetOf.set(lineId, { id: a.id, costCents: toCents(a.costCents), status: a.status })
   }
   const byLine = new Map<string, { advancedCents: number; prepaidCents: number; expensedCents: number; settledPayableCents: number; asset: { id: string; costCents: number; status: string } | null; payments: Record<string, { status: 'posted' | 'unposted'; accountCode: string | null }> }>()
   for (const l of lines) {

@@ -357,7 +357,8 @@ describe('bank statements — finance reconciles, big balances import, card sett
     expect(list.find((i) => i.id === importId)).toMatchObject({ openingBalanceCents: 2_500_000_000, closingBalanceCents: 2_500_100_000 })
     const row = await prisma.bankStatementImport.findUniqueOrThrow({ where: { id: importId } })
     expect(row.tenantId).toBe(tenantA)
-    expect(row.closingBalanceCents).toBe(2_500_100_000n)
+    // BIGINT, returned as a JS number by lib/money.ts (BOOKS-06).
+    expect(row.closingBalanceCents).toBe(2_500_100_000)
     // Finance reads the lines and ignores one.
     const lines = (await call('fin', 'GET', `/reconciliation/bank/imports/${importId}/lines`)).json() as Array<{ id: string; description: string }>
     expect(lines).toHaveLength(3)
@@ -377,13 +378,17 @@ describe('bank statements — finance reconciles, big balances import, card sett
     expect((await call('cashier', 'GET', '/reconciliation/bank/imports')).statusCode).toBe(403)
   })
 
-  it('BOOKS-06: out-of-range figures are clear 4xx, never a 500', async () => {
+  it('BOOKS-06: out-of-range figures are clear 4xx, never a 500 (and a PKR 25m line fits)', async () => {
     const base = { bankAccountId: bankA, statementDate: '2026-05-21', filename: 'x.csv', fileUrl: 'https://files.example.invalid/x.csv' }
     const tooBig = await call('fin', 'POST', '/reconciliation/bank/imports', { ...base, openingBalanceCents: 2 ** 60, closingBalanceCents: 0, csv: 'Date,Description,Amount\n2026-05-21,x,1' })
-    expect(tooBig.statusCode).toBe(400)
+    expect(tooBig.statusCode).toBe(422)
+    expect((tooBig.json() as { error: { code: string } }).error.code).toBe('AMOUNT_TOO_LARGE')
+    // journal_lines / bank_statement_lines are BIGINT now: a PKR 25m line imports.
     const bigLine = await call('fin', 'POST', '/reconciliation/bank/imports', { ...base, openingBalanceCents: 0, closingBalanceCents: 0, csv: 'Date,Description,Amount\n2026-05-21,Property sale,25000000.00' })
-    expect(bigLine.statusCode).toBe(422)
-    expect((bigLine.json() as { error: { code: string } }).error.code).toBe('CSV_AMOUNT_TOO_LARGE')
+    expect(bigLine.statusCode).toBe(201)
+    const hugeLine = await call('fin', 'POST', '/reconciliation/bank/imports', { ...base, openingBalanceCents: 0, closingBalanceCents: 0, csv: 'Date,Description,Amount\n2026-05-21,Typo,900000000000.01' })
+    expect(hugeLine.statusCode).toBe(422)
+    expect((hugeLine.json() as { error: { code: string } }).error.code).toBe('CSV_AMOUNT_TOO_LARGE')
     const badDate = await call('fin', 'POST', '/reconciliation/bank/imports', { ...base, statementDate: 'soon', openingBalanceCents: 0, closingBalanceCents: 0, csv: 'Date,Description,Amount\n2026-05-21,x,1' })
     expect(badDate.statusCode).toBe(400)
   })

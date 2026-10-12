@@ -9,6 +9,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { postJournalEntry, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
+import { sumCents } from '../../lib/money.js'
 
 const BPS_TOTAL = 10_000
 
@@ -31,8 +32,8 @@ async function netDebitForAccount(accountId: string, periodStart: Date, periodEn
   })
   let debit = 0, credit = 0
   for (const s of sums) {
-    if (s.type === 'debit') debit  = s._sum.amountCents ?? 0
-    else                     credit = s._sum.amountCents ?? 0
+    if (s.type === 'debit') debit  = sumCents(s._sum.amountCents)
+    else                     credit = sumCents(s._sum.amountCents)
   }
   return debit - credit
 }
@@ -57,8 +58,8 @@ async function revenueByConcept(tenantId: string, periodStart: Date, periodEnd: 
     })
     let debit = 0, credit = 0
     for (const s of sums) {
-      if (s.type === 'debit') debit  = s._sum.amountCents ?? 0
-      else                     credit = s._sum.amountCents ?? 0
+      if (s.type === 'debit') debit  = sumCents(s._sum.amountCents)
+      else                     credit = sumCents(s._sum.amountCents)
     }
     out.push({ conceptId: c.id, revenueCents: Math.max(0, credit - debit) })
   }

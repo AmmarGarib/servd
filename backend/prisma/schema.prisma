@@ -1063,6 +1063,7 @@ model PayrollRunLine {
 
 // ─── Customer ─────────────────────────────────────────────────────────────────
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model Customer {
   id                 String    @id @default(uuid())
   name               String
@@ -1079,7 +1080,7 @@ model Customer {
   birthdayMmDd       String? // MM-DD format, e.g. "04-23"
   firstOrderAt       DateTime?
   lastOrderAt        DateTime?
-  totalSpentCents    Int       @default(0)
+  totalSpentCents    BigInt    @default(0)
   preferredConceptId String?
   // RETIRED (ONL-R2-01, migration 20261011160000): the wallet is per company
   // now — CustomerWallet. This column is no longer read or written; the
@@ -2015,6 +2016,7 @@ model WasteLog {
 
 // ─── Supplier ─────────────────────────────────────────────────────────────────
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model Supplier {
   id                  String    @id @default(uuid())
   // Tenant the supplier belongs to. Procurement is multi-tenant — GS Foods
@@ -2038,7 +2040,7 @@ model Supplier {
   notes               String?
   paymentTermsDays    Int       @default(30)
   leadTimeDays        Int?
-  openingBalanceCents Int       @default(0)
+  openingBalanceCents BigInt    @default(0)
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
@@ -2322,6 +2324,7 @@ model OrderItemStep {
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model PurchaseOrder {
   id           String    @id @default(uuid())
   supplierId   String
@@ -2331,7 +2334,7 @@ model PurchaseOrder {
   receivedDate DateTime?
   reference    String? // supplier invoice / PO number
   notes        String?
-  totalCents   Int       @default(0)
+  totalCents   BigInt    @default(0)
 
   // Audit / lifecycle
   createdBy      String?
@@ -2437,6 +2440,7 @@ model ItemPriceHistory {
 
 // ─── Supplier Bills (Accounts Payable) ────────────────────────────────────────
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierBill {
   id            String    @id @default(uuid())
   supplierId    String
@@ -2445,16 +2449,16 @@ model SupplierBill {
   billDate      DateTime
   dueDate       DateTime
   status        String    @default("open") // draft | open | partially_paid | paid | void
-  subtotalCents Int       @default(0)
-  taxCents      Int       @default(0)
-  totalCents    Int       @default(0)
+  subtotalCents BigInt    @default(0)
+  taxCents      BigInt    @default(0)
+  totalCents    BigInt    @default(0)
   // Income-tax withheld at source (s.153), fixed when the bill is recorded
   // and booked by postSupplierBill: the supplier is owed totalCents − whtCents
   // (credited to AP 2010) and the rest is owed to FBR (2040). Every "still
   // due" figure — payments, status, AP aging, the supplier statement — is net
   // of it, so a bill paid net of withholding clears, as it does in the ledger.
-  whtCents      Int       @default(0)
-  paidCents     Int       @default(0) // running total of payments applied
+  whtCents      BigInt    @default(0)
+  paidCents     BigInt    @default(0) // running total of payments applied
   notes         String?
   attachmentUrl String? // S3/R2 link to scanned bill
   createdBy     String?
@@ -2474,6 +2478,7 @@ model SupplierBill {
   @@map("supplier_bills")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierBillLine {
   id              String  @id @default(uuid())
   billId          String
@@ -2481,8 +2486,8 @@ model SupplierBillLine {
   poLineId        String? // 3-way match link
   description     String
   quantity        Float
-  unitCostCents   Int
-  lineTotalCents  Int
+  unitCostCents   BigInt
+  lineTotalCents  BigInt
 
   bill          SupplierBill       @relation(fields: [billId], references: [id], onDelete: Cascade)
   inventoryItem InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
@@ -2494,14 +2499,15 @@ model SupplierBillLine {
 
 // ─── Supplier Payments + multi-bill applications ──────────────────────────────
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierPayment {
   id           String   @id @default(uuid())
   supplierId   String
   paymentDate  DateTime @default(now())
   method       String // cash | bank_transfer | cheque | wallet
   reference    String? // cheque #, bank ref
-  amountCents  Int
-  appliedCents Int      @default(0) // sum of applications
+  amountCents  BigInt
+  appliedCents BigInt   @default(0) // sum of applications
   notes        String?
   createdBy    String?
   createdAt    DateTime @default(now())
@@ -2513,11 +2519,12 @@ model SupplierPayment {
   @@map("supplier_payments")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierPaymentApplication {
   id                 String   @id @default(uuid())
   paymentId          String
   billId             String
-  amountAppliedCents Int
+  amountAppliedCents BigInt
   createdAt          DateTime @default(now())
 
   payment SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
@@ -2571,6 +2578,7 @@ model JournalEntry {
   @@map("journal_entries")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model JournalLine {
   id             String           @id @default(uuid())
   journalEntryId String
@@ -2581,7 +2589,7 @@ model JournalLine {
   // per-brand report allocates across brands by revenue share.
   conceptId      String?
   type           JournalEntryType
-  amountCents    Int
+  amountCents    BigInt
   memo           String?
 
   journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
@@ -2609,8 +2617,8 @@ model BankStatementImport {
   accountCode         String // CoA code the statement is reconciling against (e.g. 1020 Bank)
   statementDate       DateTime
   // BigInt: an operating account holds more than PKR 21.47M (2^31 paisa) —
-  // INT4 made those imports 500 (BOOKS-06). The API reads them back as
-  // numbers (paisa stay far inside 2^53).
+  // INT4 made those imports 500 (BOOKS-06). They come back as JS numbers
+  // through the one boundary in lib/money.ts (moneyAsNumbers).
   openingBalanceCents BigInt   @default(0)
   closingBalanceCents BigInt   @default(0)
   filename            String?
@@ -2625,13 +2633,14 @@ model BankStatementImport {
   @@map("bank_statement_imports")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model BankStatementLine {
   id                   String   @id @default(uuid())
   importId             String
   postedDate           DateTime
   description          String
   reference            String?
-  amountCents          Int // signed: + = credit to bank, − = debit
+  amountCents          BigInt // signed: + = credit to bank, − = debit
   matchStatus          String   @default("unmatched") // unmatched | matched | adjusted | ignored
   matchedJournalLineId String?
   notes                String?
@@ -2696,13 +2705,14 @@ model AllocationRuleWeight {
   @@map("allocation_rule_weights")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model CostAllocationRun {
   id               String   @id @default(uuid())
   tenantId         String?
   ruleId           String
   periodStart      DateTime
   periodEnd        DateTime
-  totalAmountCents Int
+  totalAmountCents BigInt
   postedAt         DateTime @default(now())
   postedById       String?
 
@@ -4286,6 +4296,7 @@ model CapitalLedgerEntry {
 // One project per location/concept buildout. Line items grouped into scopes
 // (BOH = back of house, FOH = front of house, AG = above ground / finishing).
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model CapexProject {
   id                  String    @id @default(cuid())
   tenantId            String?
@@ -4296,11 +4307,11 @@ model CapexProject {
   phase               String    @default("planning") // planning | quoting | executing | snagging | live
   // Budget envelope — owner-set cap. Lines + fees + tax + contingency = totalAsk;
   // we flag when totalAsk exceeds this.
-  budgetEnvelopeCents Int       @default(0)
+  budgetEnvelopeCents BigInt    @default(0)
   contingencyPct      Float     @default(0.10) // 10% default
-  totalAskCents       Int       @default(0) // legacy; recomputed from lines + fees
-  consultantFeesCents Int       @default(0)
-  taxCents            Int       @default(0)
+  totalAskCents       BigInt    @default(0) // legacy; recomputed from lines + fees
+  consultantFeesCents BigInt    @default(0)
+  taxCents            BigInt    @default(0)
   // Project schedule
   targetOpeningDate   DateTime?
   actualOpeningDate   DateTime?
@@ -4331,6 +4342,7 @@ model CapexProject {
   @@map("capex_projects")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model CapexLine {
   id                   String    @id @default(cuid())
   projectId            String
@@ -4338,13 +4350,13 @@ model CapexLine {
   category             String? // sub-grouping for the operator's mental model
   item                 String
   quantity             Int       @default(1)
-  unitCostCents        Int // budgeted/estimated cost — what you planned
+  unitCostCents        BigInt // budgeted/estimated cost — what you planned
   // Vendor + quoting
   vendor               String? // selected vendor
   vendorContact        String?
-  quotedCents          Int? // initial quote total
-  negotiatedCents      Int? // final negotiated total — what you actually committed to
-  paidCents            Int       @default(0) // running total paid
+  quotedCents          BigInt? // initial quote total
+  negotiatedCents      BigInt? // final negotiated total — what you actually committed to
+  paidCents            BigInt    @default(0) // running total paid
   // Status pipeline
   status               String    @default("not_quoted") // not_quoted | quoted | ordered | partial_paid | delivered | installed | commissioned | snag | done
   priority             String    @default("must_have") // must_have | nice_to_have | future
@@ -4375,13 +4387,14 @@ model CapexLine {
 
 // Multiple quotes per line — vendor comparison shopping. Operator marks one
 // as the winner; that one populates CapexLine.vendor + negotiatedCents.
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model CapexQuote {
   id           String    @id @default(cuid())
   lineId       String
   vendor       String
   contactName  String?
   contactPhone String?
-  totalCents   Int
+  totalCents   BigInt
   leadTimeDays Int?
   validUntil   DateTime?
   fileUrl      String? // PDF / image of the quote document
@@ -4400,13 +4413,14 @@ model CapexQuote {
 // utilities, software). The model is "category → line → period payments" with
 // expected vs actual per period so trend + variance jump out.
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model OpexCategory {
   id                 String    @id @default(cuid())
   tenantId           String?
   conceptId          String? // null = company-wide
   name               String // 'Rent' | 'Utilities' | 'Payroll' | 'Software' | etc.
   emoji              String? // surfaced in UI
-  budgetMonthlyCents Int       @default(0) // monthly cap; variance vs actual flagged
+  budgetMonthlyCents BigInt    @default(0) // monthly cap; variance vs actual flagged
   notes              String?
   isActive           Boolean   @default(true)
   sortOrder          Int       @default(0)
@@ -4421,6 +4435,7 @@ model OpexCategory {
   @@map("opex_categories")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model OpexLine {
   id            String    @id @default(cuid())
   categoryId    String
@@ -4429,7 +4444,7 @@ model OpexLine {
   name          String // 'Office rent — Lahore', 'KE bill — Karachi kitchen'
   vendor        String?
   vendorContact String?
-  amountCents   Int // expected per-period amount
+  amountCents   BigInt // expected per-period amount
   cadence       String    @default("monthly") // 'monthly' | 'quarterly' | 'annual' | 'per_use'
   nextDueDate   DateTime?
   paymentMethod String? // 'bank_transfer' | 'card' | 'cash' | 'auto_debit'
@@ -4450,13 +4465,14 @@ model OpexLine {
   @@map("opex_lines")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model OpexPayment {
   id            String    @id @default(cuid())
   lineId        String
   periodStart   DateTime
   periodEnd     DateTime
-  expectedCents Int // forecast for this period
-  actualCents   Int? // what hit the bank (null until paid)
+  expectedCents BigInt // forecast for this period
+  actualCents   BigInt? // what hit the bank (null until paid)
   paidAt        DateTime?
   paymentRef    String?
   receiptUrl    String?
@@ -4472,14 +4488,15 @@ model OpexPayment {
 
 // Payment schedule per line — deposit / midpoint / balance / extras.
 // Cash-flow page sums these by dueDate to show outflow timeline.
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model CapexPayment {
   id              String    @id @default(cuid())
   lineId          String
   label           String // 'deposit' | 'midpoint' | 'balance' | 'extra'
-  amountCents     Int
+  amountCents     BigInt
   dueDate         DateTime?
   paidAt          DateTime?
-  paidAmountCents Int? // null until paid; supports partial
+  paidAmountCents BigInt? // null until paid; supports partial
   paymentRef      String? // bank ref, cheque #, transaction ID
   notes           String?
   createdAt       DateTime  @default(now())
@@ -5125,6 +5142,7 @@ enum ExceptionStatus {
   dismissed
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model ExceptionFlag {
   id          String            @id @default(cuid())
   // Company this row belongs to (company separation sweep, 2026-09-27).
@@ -5138,7 +5156,7 @@ model ExceptionFlag {
   metadata    Json? // arbitrary context (variance %, names, amounts)
   conceptId   String? // when scoped to a brand
   actorId     String? // user who triggered it (if applicable)
-  amountCents Int? // monetary impact, if any
+  amountCents BigInt? // monetary impact, if any
 
   status           ExceptionStatus @default(open)
   acknowledgedById String?
@@ -5577,6 +5595,7 @@ model Position {
 // no depreciation in the P&L.
 // ════════════════════════════════════════════════════════════════════════════
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model FixedAsset {
   id                    String    @id @default(uuid())
   tenantId              String
@@ -5589,15 +5608,15 @@ model FixedAsset {
   serialNumber          String?
   supplier              String?
   acquiredAt            DateTime
-  costCents             Int
-  salvageCents          Int       @default(0)
+  costCents             BigInt
+  salvageCents          BigInt    @default(0)
   usefulLifeMonths      Int
   // Credit side of the acquisition entry: 1020 bank, 1010 cash, 2010 payable.
   // Always set: every asset is capitalised (3010 for equipment already owned).
   acquisitionCreditCode String?
   status                String    @default("active") // active | disposed
   disposedAt            DateTime?
-  disposalProceedsCents Int?
+  disposalProceedsCents BigInt?
   notes                 String?
   createdById           String?
   createdAt             DateTime  @default(now())
@@ -5609,12 +5628,13 @@ model FixedAsset {
   @@map("fixed_assets")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model FixedAssetDepreciation {
   id          String   @id @default(uuid())
   tenantId    String
   assetId     String
   period      String // 'YYYY-MM'
-  amountCents Int
+  amountCents BigInt
   postedAt    DateTime @default(now())
 
   asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
@@ -5633,6 +5653,7 @@ model FixedAssetDepreciation {
 // 1110 was never posted to. Till sales settle immediately and never come here.
 // ════════════════════════════════════════════════════════════════════════════
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model ReceivableInvoice {
   id                 String    @id @default(uuid())
   tenantId           String
@@ -5646,9 +5667,9 @@ model ReceivableInvoice {
   issueDate          DateTime
   dueDate            DateTime
   description        String
-  amountCents        Int // before tax
-  taxCents           Int       @default(0)
-  paidCents          Int       @default(0)
+  amountCents        BigInt // before tax
+  taxCents           BigInt    @default(0)
+  paidCents          BigInt    @default(0)
   status             String    @default("open") // open | partial | paid | void
   revenueAccountCode String    @default("4090")
   notes              String?
@@ -5665,11 +5686,12 @@ model ReceivableInvoice {
   @@map("receivable_invoices")
 }
 
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model ReceivablePayment {
   id          String   @id @default(uuid())
   tenantId    String
   invoiceId   String
-  amountCents Int
+  amountCents BigInt
   receivedAt  DateTime
   method      String // bank | cash | cheque | card
   reference   String?

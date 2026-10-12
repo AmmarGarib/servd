@@ -18,6 +18,7 @@ import type { UserRole } from '@prisma/client'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
+import { zInt4Cents } from '../../lib/money.js'
 
 // Companies whose contributions this request may SEE (view-aware: the active
 // company, or every member company in "All companies" view).
@@ -71,7 +72,10 @@ const contributionSchema = z.object({
   sourceTenantId:      z.string().min(1),
   destinationTenantId: z.string().min(1),
   category: z.enum(['head_office', 'commissary', 'shared_services', 'other']).default('head_office'),
-  monthlyCents: z.number().int().nonnegative(),
+  // tenant_contributions.monthlyCents is INT4 (BOOKS-06 left it there: one
+  // company's monthly transfer to another stays well under PKR 21,474,836.47).
+  // Above it the request is 422 AMOUNT_TOO_LARGE, never a raw 500 at insert.
+  monthlyCents: zInt4Cents('The monthly contribution'),
   label: z.string().min(1).max(120),
   description: z.string().max(500).nullable().optional(),
   internalSplit: z.array(splitItemSchema).nullable().optional(),

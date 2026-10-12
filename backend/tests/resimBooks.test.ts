@@ -5,8 +5,8 @@
 //     high posting_failed exception with the order id in the order's company;
 //     POST /reconciliation/backfill-unposted re-posts them per company,
 //     idempotently, respecting locks (dry run first).
-//   - BOOKS-06: a ledger line above INT4 is a 422 AMOUNT_TOO_LARGE ("split
-//     this amount …"), never a 500.
+//   - BOOKS-06: journal_lines.amountCents is BIGINT — a PKR 25m line posts;
+//     only a line above PKR 900bn (MAX_MONEY_CENTS) is 422 AMOUNT_TOO_LARGE.
 //   - BOH-R2-02: a supplier bill posted before its goods are all received
 //     applies its price variance only to the received quantity and carries the
 //     rest; voiding it takes back out exactly what it put in.
@@ -22,7 +22,8 @@ import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { accountingRoutes } from '../src/modules/accounting/routes.js'
 import { reconciliationRoutes } from '../src/modules/reconciliation/routes.js'
-import { postJournalEntry, MAX_LINE_CENTS } from '../src/modules/accounting/journal.js'
+import { postJournalEntry } from '../src/modules/accounting/journal.js'
+import { MAX_MONEY_CENTS } from '../src/lib/money.js'
 import { pktToday, parsePktEndOfDay } from '../src/modules/accounting/dates.js'
 import { completeOrder, postRefundOrFlag } from '../src/modules/orders/service.js'
 import { receiveGoods, applyReceiptLine } from '../src/modules/procurement/receiving.js'
@@ -294,12 +295,11 @@ describe('BOOKS-R2-01: a refused completion / loyalty earn / refund is flagged a
 
 // ─── BOOKS-06 ───────────────────────────────────────────────────────────────
 
-describe('BOOKS-06: a ledger line above PKR 21,474,836.47 is a 422, never a 500', () => {
+describe('BOOKS-06: a ledger line above INT4 posts (BIGINT); only above PKR 900bn is it a 422', () => {
   const accountId = async (tenantId: string, code: string) =>
     (await prisma.account.findFirstOrThrow({ where: { tenantId, code } })).id
 
-  it('a PKR 25m opening-balance line answers 422 AMOUNT_TOO_LARGE and saves nothing', async () => {
-    const before = await prisma.journalEntry.count({ where: { tenantId: tenantA } })
+  it('a PKR 25m opening-balance line posts (201) and its review flag carries the exact amount', async () => {
     const r = await call('adminA', 'POST', '/accounting/journal', {
       description: 'Opening balance — bank',
       lines: [
@@ -307,13 +307,13 @@ describe('BOOKS-06: a ledger line above PKR 21,474,836.47 is a 422, never a 500'
         { accountId: await accountId(tenantA, '3010'), type: 'credit', amountCents: 2_500_000_000 },
       ],
     })
-    expect(r.statusCode).toBe(422)
-    expect(r.json().error.code).toBe('AMOUNT_TOO_LARGE')
-    expect(r.json().error.message).toMatch(/split this amount into lines of at most PKR 21,474,836\.47/)
-    expect(await prisma.journalEntry.count({ where: { tenantId: tenantA } })).toBe(before)
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().lines.every((l: { amountCents: unknown }) => l.amountCents === 2_500_000_000)).toBe(true)
+    const flag = await prisma.exceptionFlag.findFirst({ where: { kind: 'manual_journal', entityId: r.json().id } })
+    expect(flag!.amountCents).toBe(2_500_000_000)
   })
 
-  it('the same PKR 25m split into two lines per side posts, balanced, and is flagged for review', async () => {
+  it('the same PKR 25m split into two lines per side posts, balanced, and its flag amount is not null', async () => {
     const bank = await accountId(tenantA, '1020')
     const equity = await accountId(tenantA, '3010')
     const r = await call('adminA', 'POST', '/accounting/journal', {
@@ -327,27 +327,26 @@ describe('BOOKS-06: a ledger line above PKR 21,474,836.47 is a 422, never a 500'
     })
     expect(r.statusCode).toBe(201)
     expect(r.json().tenantId).toBe(tenantA)
-    // The review flag is raised even though the total is above INT4 (it rides in metadata).
     const flag = await prisma.exceptionFlag.findFirst({ where: { kind: 'manual_journal', entityId: r.json().id } })
     expect(flag).not.toBeNull()
-    expect(flag!.amountCents).toBeNull()
+    expect(flag!.amountCents).toBe(2_500_000_000)
     expect((flag!.metadata as { debits: number }).debits).toBe(2_500_000_000)
   })
 
-  it('every posting path is guarded at the engine: one line over the ceiling throws AMOUNT_TOO_LARGE (422)', async () => {
+  it('every posting path is guarded at the engine: one line over PKR 900bn throws AMOUNT_TOO_LARGE (422)', async () => {
     await expect(postJournalEntry({
       tenantId: tenantB, sourceType: 'test.big', sourceId: 'x1', description: 'too big',
       lines: [
-        { accountCode: '1020', type: 'debit',  amountCents: MAX_LINE_CENTS + 1 },
-        { accountCode: '3010', type: 'credit', amountCents: MAX_LINE_CENTS + 1 },
+        { accountCode: '1020', type: 'debit',  amountCents: MAX_MONEY_CENTS + 1 },
+        { accountCode: '3010', type: 'credit', amountCents: MAX_MONEY_CENTS + 1 },
       ],
     })).rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422 })
     // Exactly the ceiling is fine.
     const ok = await postJournalEntry({
       tenantId: tenantB, sourceType: 'test.big', sourceId: 'x2', description: 'at the ceiling',
       lines: [
-        { accountCode: '1020', type: 'debit',  amountCents: MAX_LINE_CENTS },
-        { accountCode: '3010', type: 'credit', amountCents: MAX_LINE_CENTS },
+        { accountCode: '1020', type: 'debit',  amountCents: MAX_MONEY_CENTS },
+        { accountCode: '3010', type: 'credit', amountCents: MAX_MONEY_CENTS },
       ],
     })
     expect(ok.posted).toBe(true)

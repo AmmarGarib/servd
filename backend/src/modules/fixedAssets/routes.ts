@@ -13,6 +13,7 @@ import {
   ASSET_CATEGORIES, FUNDING, postAcquisition, runDepreciation, disposeAsset, periodOf,
   type AssetCategory, type Funding,
 } from './service.js'
+import { toCents, zMoneyCents } from '../../lib/money.js'
 
 const createSchema = z.object({
   name: z.string().min(1).max(120),
@@ -21,8 +22,9 @@ const createSchema = z.object({
   // POST /finance/capex/lines/:lineId/capitalise, which knows the advances.
   funding: z.enum(Object.keys(FUNDING).filter((k) => k !== 'advance') as [Funding, ...Funding[]]),
   acquiredAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
-  costCents: z.number().int().positive(),
-  salvageCents: z.number().int().min(0).default(0),
+  // BIGINT paisa (lib/money.ts): one amount ≤ PKR 900bn, else 422.
+  costCents: zMoneyCents('The asset\'s cost', { sign: 'positive' }),
+  salvageCents: zMoneyCents('The salvage value').default(0),
   usefulLifeMonths: z.number().int().min(1).max(600),
   conceptId: z.string().uuid().nullable().optional(),
   locationId: z.string().uuid().nullable().optional(),
@@ -41,8 +43,9 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       include: { depreciation: { select: { amountCents: true, period: true } } },
       orderBy: [{ status: 'asc' }, { acquiredAt: 'desc' }],
     })
-    const assets = rows.map(({ depreciation, ...a }) => {
-      const accumulated = depreciation.reduce((s, d) => s + d.amountCents, 0)
+    const assets = rows.map(({ depreciation, ...row }) => {
+      const a = { ...row, costCents: toCents(row.costCents), salvageCents: toCents(row.salvageCents), disposalProceedsCents: toCents(row.disposalProceedsCents) }
+      const accumulated = depreciation.reduce((s, d) => s + toCents(d.amountCents), 0)
       const lastCharged = depreciation.map((d) => d.period).sort().at(-1) ?? null
       return {
         ...a,
@@ -145,7 +148,7 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/:id/dispose', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const body = z.object({
       disposedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
-      proceedsCents: z.number().int().min(0).default(0),
+      proceedsCents: zMoneyCents('The disposal proceeds').default(0),
     }).parse(req.body)
     const found = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
     if (!found) throw new NotFoundError('FixedAsset', req.params.id)

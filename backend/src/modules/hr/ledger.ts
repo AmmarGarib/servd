@@ -16,6 +16,7 @@ import type { HrRecord, Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { toCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -98,7 +99,10 @@ async function accruedWagesPayable(tx: Tx, tenantId: string, runId: string): Pro
     where: { journalEntryId: entry.id, account: { code: ACCT.WAGES_PAYABLE } },
     select: { type: true, amountCents: true },
   })
-  return lines.reduce((a, l) => a + (l.type === 'credit' ? l.amountCents : -l.amountCents), 0)
+  return lines.reduce((a, l) => {
+    const amt = toCents(l.amountCents)
+    return a + (l.type === 'credit' ? amt : -amt)
+  }, 0)
 }
 
 export async function postPayrollPayment(runId: string, paidBy: string, fromAccount: string) {

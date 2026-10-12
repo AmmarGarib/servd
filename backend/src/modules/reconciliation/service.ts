@@ -6,7 +6,8 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { postJournalEntry, MAX_LINE_CENTS, type JournalLineInput } from '../accounting/journal.js'
+import { postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { MAX_MONEY_CENTS, assertMoneyFits, toCents } from '../../lib/money.js'
 
 // ─── CSV statement parser ────────────────────────────────────────────────────
 // Lenient: accepts any of date,description,amount in the header (in any case);
@@ -54,12 +55,9 @@ function splitCsvLine(line: string): string[] {
   return out
 }
 
-// One statement line becomes one journal line, and journal amounts are INT4
-// paisa — so a single bank transaction can carry at most PKR 21,474,836.47.
-// (The statement's opening / closing BALANCES are BigInt and have no such
-// cap — BOOKS-06.) Above it, a clear 422 rather than a database 500.
-// One shared ceiling: the ledger's (accounting/journal.ts).
-export { MAX_LINE_CENTS }
+// One statement line becomes one journal line (BIGINT paisa, BOOKS-06): a
+// single bank transaction can carry at most MAX_MONEY_CENTS (PKR 900bn), the
+// ledger's own per-line ceiling. Above it, a clear 422 rather than a 500.
 
 export function parseStatementCsv(csv: string): ParsedStatementLine[] {
   const lines = csv.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim().length > 0)
@@ -95,10 +93,10 @@ export function parseStatementCsv(csv: string): ParsedStatementLine[] {
     }
 
     const amountCents = Math.round(amount * 100)
-    if (Math.abs(amountCents) > MAX_LINE_CENTS) {
+    if (!Number.isSafeInteger(amountCents) || Math.abs(amountCents) > MAX_MONEY_CENTS) {
       throw new AppError(
         'CSV_AMOUNT_TOO_LARGE',
-        `Row ${i + 1}: a single statement line can be at most PKR 21,474,836.47 — got "${amtRaw}". Split it into two lines.`,
+        `Row ${i + 1}: a single statement line can be at most PKR 900,000,000,000.00 — got "${amtRaw}". Check the figure.`,
         422,
       )
     }
@@ -148,8 +146,8 @@ export async function importBankStatement(input: {
         source: input.source,
         accountCode: input.accountCode,
         statementDate: input.statementDate,
-        openingBalanceCents: BigInt(input.openingBalanceCents),
-        closingBalanceCents: BigInt(input.closingBalanceCents),
+        openingBalanceCents: input.openingBalanceCents,
+        closingBalanceCents: input.closingBalanceCents,
         filename: input.filename ?? null,
         importedById: input.importedById ?? null,
       },
@@ -183,7 +181,9 @@ export async function importBankStatement(input: {
     const byAmount = new Map<number, Array<{ id: string; date: Date }>>()
     for (const c of candidates) {
       if (consumed.has(c.id)) continue   // already matched in a prior import
-      const signed = c.type === 'debit' ? c.amountCents : -c.amountCents
+      // Map keys must be numbers (a bigint key never equals the parsed number).
+      const amt = toCents(c.amountCents)
+      const signed = c.type === 'debit' ? amt : -amt
       const arr = byAmount.get(signed) ?? []
       arr.push({ id: c.id, date: c.journalEntry.entryDate })
       byAmount.set(signed, arr)
@@ -258,8 +258,9 @@ export async function adjustStatementLine(input: {
   if (!tenantId) throw new AppError('IMPORT_HAS_NO_COMPANY', 'This statement import has no company — it cannot post to a ledger', 422)
 
   // Positive amount = inflow to the reconciling account; negative = outflow.
-  const isInflow = line.amountCents > 0
-  const abs = Math.abs(line.amountCents)
+  const amt = toCents(line.amountCents)
+  const isInflow = amt > 0
+  const abs = Math.abs(amt)
   if (abs === 0) throw new AppError('LINE_ZERO', 'A zero-amount line has nothing to book — ignore it instead', 422)
 
   const bankLeg: JournalLineInput = {
@@ -275,6 +276,7 @@ export async function adjustStatementLine(input: {
       if (!Number.isSafeInteger(l.amountCents) || l.amountCents <= 0) {
         throw new AppError('ADJUSTMENT_BAD_AMOUNT', `Each split line needs a positive amount in paisa (${l.accountCode})`, 422)
       }
+      assertMoneyFits(l.amountCents, `A split line (${l.accountCode})`)
     }
   } else if (input.contraAccountCode) {
     other = [{ accountCode: input.contraAccountCode.trim(), type: isInflow ? 'credit' : 'debit', amountCents: abs, memo: input.memo }]

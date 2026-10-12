@@ -148,14 +148,16 @@ export async function findSupplierByEmail(emailAddress: string): Promise<Supplie
   // reply is to), then the oldest row — deterministic, never "whichever
   // Postgres returns first". A reply-to hint (chat-<id>@) is resolved to its
   // own thread by findOrCreateInboundConversation.
-  const rows = await prisma.$queryRaw<Supplier[]>`
-    SELECT s.* FROM suppliers s
+  // The id only, re-read through the model API: suppliers.openingBalanceCents
+  // is BIGINT and raw SQL is not converted by the money boundary (lib/money.ts).
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT s.id FROM suppliers s
     WHERE LOWER(s.email) = ${normalized} AND s."deletedAt" IS NULL
     ORDER BY (SELECT MAX(c."updatedAt") FROM supplier_conversations c WHERE c."supplierId" = s.id) DESC NULLS LAST,
              s."createdAt" ASC
     LIMIT 1
   `
-  return rows[0] ?? null
+  return rows[0] ? prisma.supplier.findUnique({ where: { id: rows[0].id } }) : null
 }
 
 /**
@@ -174,8 +176,8 @@ export async function findSupplierByWhatsapp(fromDigits: string): Promise<Suppli
   // `whatsappPhoneE164` column and index it.
   // Same tie-break as findSupplierByEmail when the number is on file in
   // more than one company.
-  const rows = await prisma.$queryRaw<Supplier[]>`
-    SELECT s.* FROM suppliers s
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT s.id FROM suppliers s
     WHERE s."deletedAt" IS NULL
       AND (
         regexp_replace(COALESCE(s."whatsappPhone", ''), '[^0-9]', '', 'g') = ${digits}
@@ -185,7 +187,7 @@ export async function findSupplierByWhatsapp(fromDigits: string): Promise<Suppli
              s."createdAt" ASC
     LIMIT 1
   `
-  return rows[0] ?? null
+  return rows[0] ? prisma.supplier.findUnique({ where: { id: rows[0].id } }) : null
 }
 
 // ─── Conversation finding/creation for inbound messages ──────────────────────

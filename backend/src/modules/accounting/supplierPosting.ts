@@ -38,9 +38,11 @@
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
+import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
 import { fmtPktDate } from './dates.js'
+import { type DbMoney, INT4_MAX_CENTS, amountTooLarge, toCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -74,7 +76,7 @@ interface VarianceLine {
  * quantity (BOH-R2-02).
  */
 async function billVarianceLines(tx: Tx, bill: {
-  lines: Array<{ poLineId: string | null; quantity: number; lineTotalCents: number }>
+  lines: Array<{ poLineId: string | null; quantity: number; lineTotalCents: DbMoney }>
 }, tenantId: string, opts: { withZero?: boolean } = {}): Promise<VarianceLine[]> {
   const poLineIds = bill.lines.map((l) => l.poLineId).filter((x): x is string => !!x)
   if (poLineIds.length === 0) return []
@@ -88,7 +90,7 @@ async function billVarianceLines(tx: Tx, bill: {
     const pl = poLines.find((x) => x.id === l.poLineId)
     // Only the bill's own company's stock is ever revalued.
     if (!pl || pl.inventoryItem.tenantId !== tenantId) continue
-    const varianceCents = l.lineTotalCents - Math.round(pl.unitCostCents * l.quantity)
+    const varianceCents = toCents(l.lineTotalCents) - Math.round(pl.unitCostCents * l.quantity)
     if (varianceCents === 0 && !opts.withZero) continue
     out.push({ inventoryItemId: pl.inventoryItemId, poLineId: pl.id, purchaseOrderId: pl.purchaseOrderId, quantity: l.quantity, varianceCents })
   }
@@ -107,17 +109,35 @@ async function revalueItem(tx: Tx, input: {
   targetCents:     number
   supplierId:      string
   source:          'bill_match' | 'bill_void'
+  /** What triggered it, for the 422 below: a bill being recorded, goods being
+   *  received (a carried variance), or a bill being voided. */
+  when?:           'bill' | 'receipt' | 'void'
 }): Promise<{ moved: number; onHand: number }> {
   await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${input.inventoryItemId} FOR UPDATE`
   const item = await tx.inventoryItem.findUnique({
     where:  { id: input.inventoryItemId },
-    select: { id: true, currentStock: true, unitCostCents: true },
+    select: { id: true, name: true, currentStock: true, unitCostCents: true },
   })
   const onHand = Math.max(0, item?.currentStock ?? 0)
   if (!item || item.unitCostCents == null || input.targetCents === 0 || !(onHand > 0)) return { moved: 0, onHand }
   const oldCost = item.unitCostCents
   const newCost = Math.max(0, Math.round((oldCost * onHand + input.targetCents) / onHand))
   if (newCost === oldCost) return { moved: 0, onHand }
+  // InventoryItem.unitCostCents is INT4 (per-unit stock cost, BOOKS-06). With
+  // very little on hand a variance can re-average it past that: refuse with a
+  // 422 naming the item (the caller's transaction rolls back — the bill, the
+  // receipt or the void is not saved) rather than a raw 500 at the update.
+  if (!Number.isFinite(newCost) || newCost > INT4_MAX_CENTS) {
+    const when = input.when ?? (input.source === 'bill_void' ? 'void' : 'bill')
+    if (when === 'void') {
+      throw new AppError(
+        'AMOUNT_TOO_LARGE',
+        `${item.name}'s unit cost after voiding this bill would come to PKR ${(newCost / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, more than the PKR 21,474,836.47 a unit cost can be — adjust ${item.name}'s cost (or count its stock) first, then void the bill`,
+        422,
+      )
+    }
+    throw amountTooLarge(`${item.name}'s unit cost after this ${when === 'receipt' ? 'receipt' : 'bill'}`, newCost, INT4_MAX_CENTS)
+  }
   await tx.inventoryItem.update({ where: { id: item.id }, data: { unitCostCents: newCost } })
   await tx.itemPriceHistory.create({
     data: {
@@ -341,7 +361,7 @@ export async function applyCarriedBillVarianceTx(tx: Tx, input: {
       const onHandTarget = onHandShare >= 1 ? targetCents : Math.round(targetCents * onHandShare)
       const { moved: absorbedCents, onHand } = await revalueItem(tx, {
         inventoryItemId: line.inventoryItemId, poLineId: input.poLineId, targetCents: onHandTarget,
-        supplierId: input.supplierId, source: 'bill_match',
+        supplierId: input.supplierId, source: 'bill_match', when: 'receipt',
       })
       movedCents += absorbedCents
       // The slice less what stock valuation moved: the share used before it
@@ -509,7 +529,7 @@ async function entryNetDebit(tx: Tx, entryId: string, code: string): Promise<num
     where:  { journalEntryId: entryId, account: { code } },
     select: { type: true, amountCents: true },
   })
-  return lines.reduce((s, l) => s + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
+  return lines.reduce((s, l) => s + (l.type === 'debit' ? toCents(l.amountCents) : -toCents(l.amountCents)), 0)
 }
 
 /**
@@ -560,7 +580,10 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
     // Supplier bills post into the supplier's own company.
     const tenantId = bill.supplier.tenantId
     if (!tenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
-    if (bill.subtotalCents === 0 && bill.taxCents === 0) return { posted: false, entryId: null, reason: 'zero_amount' }
+    const subtotalCents = toCents(bill.subtotalCents)
+    const taxCents      = toCents(bill.taxCents)
+    const whtCents      = toCents(bill.whtCents)
+    if (subtotalCents === 0 && taxCents === 0) return { posted: false, entryId: null, reason: 'zero_amount' }
 
     const existing = await tx.journalEntry.findFirst({ where: { reference: billRef(bill.id), tenantId }, select: { id: true } })
     if (existing) return { posted: false, entryId: existing.id, reason: 'already_posted' }
@@ -593,7 +616,7 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
         ? (await revalueItem(tx, {
             inventoryItemId: v.inventoryItemId, poLineId: v.poLineId,
             targetCents: onHandQty >= receivedQty ? receivedCents : Math.round(receivedCents * onHandQty / receivedQty),
-            supplierId: bill.supplierId, source: 'bill_match',
+            supplierId: bill.supplierId, source: 'bill_match', when: 'bill',
           })).moved
         : 0
       record.push({
@@ -618,7 +641,7 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
     // 1210 moves by exactly what stock valuation moved by: the bill less the
     // variance share that was already costed out.
     const lines: JournalLineInput[] = []
-    const inventoryCents = bill.subtotalCents - usedCents
+    const inventoryCents = subtotalCents - usedCents
     if (inventoryCents !== 0) {
       lines.push({ accountCode: ACCT.INVENTORY_FOOD, type: inventoryCents > 0 ? 'debit' : 'credit', amountCents: Math.abs(inventoryCents), memo: `Bill ${bill.billNumber}` })
     }
@@ -630,8 +653,8 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
         memo: `Price difference on bill ${bill.billNumber} for stock already used`,
       })
     }
-    if (bill.taxCents > 0) {
-      lines.push({ accountCode: ACCT.GST_INPUT, type: 'debit', amountCents: bill.taxCents, memo: `Input GST on bill ${bill.billNumber}` })
+    if (taxCents > 0) {
+      lines.push({ accountCode: ACCT.GST_INPUT, type: 'debit', amountCents: taxCents, memo: `Input GST on bill ${bill.billNumber}` })
     }
 
     // Withholding tax — section 153/153A. We deduct at source: supplier is
@@ -640,10 +663,9 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
     // this entry and the bill's "still due" can never disagree. The
     // `withholdingTaxRecoverable` flag is informational (memo only).
     // Math: Inventory dr X, AP cr (X-WHT), WHT_PAYABLE cr WHT  → balanced.
-    const whtCents = bill.whtCents
     if (whtCents > 0) {
       const ops = await getOperationsConfig(tenantId)
-      const pct = bill.subtotalCents > 0 ? (whtCents / bill.subtotalCents) * 100 : 0
+      const pct = subtotalCents > 0 ? (whtCents / subtotalCents) * 100 : 0
       lines.push({
         accountCode: ACCT.WHT_PAYABLE,
         type: 'credit',
@@ -652,7 +674,7 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
       })
     }
 
-    const apPayable = bill.totalCents - whtCents
+    const apPayable = toCents(bill.totalCents) - whtCents
     lines.push({ accountCode: ACCT.AP_SUPPLIERS, type: 'credit', amountCents: apPayable, memo: `${bill.supplier.name} bill ${bill.billNumber}${whtCents > 0 ? ' (net of WHT)' : ''}` })
 
     const result = await postJournalEntry({
@@ -769,7 +791,7 @@ export async function postSupplierBillVoid(
       const variance = await billVarianceLines(tx, bill, tenantId)
       if (variance.length > 0) {
         const varianceCents = variance.reduce((s, v) => s + v.varianceCents, 0)
-        const absorbedAtBill = (await entryNetDebit(tx, original.id, ACCT.INVENTORY_FOOD)) - bill.subtotalCents + varianceCents
+        const absorbedAtBill = (await entryNetDebit(tx, original.id, ACCT.INVENTORY_FOOD)) - toCents(bill.subtotalCents) + varianceCents
         const absorbedNow = await revalueForBillVariance(
           tx,
           variance.map((v) => ({ ...v, varianceCents: -v.varianceCents })),
@@ -819,9 +841,10 @@ export async function postSupplierPayment(paymentId: string, opts: { tx?: Tx } =
       payment.method === 'cash'   ? ACCT.CASH_ON_HAND :
       /* bank_transfer/cheque/wallet */ ACCT.BANK
 
+    const amount = toCents(payment.amountCents)
     const lines: JournalLineInput[] = [
-      { accountCode: ACCT.AP_SUPPLIERS, type: 'debit',  amountCents: payment.amountCents, memo: `Payment to ${payment.supplier.name}` },
-      { accountCode: cashAccount,       type: 'credit', amountCents: payment.amountCents, memo: `${payment.method} via ${payment.reference ?? 'no ref'}` },
+      { accountCode: ACCT.AP_SUPPLIERS, type: 'debit',  amountCents: amount, memo: `Payment to ${payment.supplier.name}` },
+      { accountCode: cashAccount,       type: 'credit', amountCents: amount, memo: `${payment.method} via ${payment.reference ?? 'no ref'}` },
     ]
 
     const result = await postJournalEntry({

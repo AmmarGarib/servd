@@ -14,6 +14,7 @@ import { cogsForSoldLines } from '../../lib/recipeCost.js'
 import { postLoyaltyReversal } from './loyaltyPosting.js'
 import { restoreOrderWallet } from '../wallet/service.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { sumCents } from '../../lib/money.js'
 
 /** Gift Card Liability — credited when a card is sold (giftCards/routes.ts). */
 export const GIFT_CARD_LIABILITY = '2080'
@@ -580,8 +581,8 @@ export async function refundTaxAccountFor(
     _sum: { amountCents: true },
     where: { conceptId: order.conceptId, account: { tenantId, code: saleTaxAccount }, journalEntry: { tenantId } },
   })
-  const credit = sums.find((s) => s.type === 'credit')?._sum.amountCents ?? 0
-  const debit  = sums.find((s) => s.type === 'debit')?._sum.amountCents ?? 0
+  const credit = sumCents(sums.find((s) => s.type === 'credit')?._sum.amountCents)
+  const debit  = sumCents(sums.find((s) => s.type === 'debit')?._sum.amountCents)
   return credit - debit >= taxShareCents ? saleTaxAccount : current
 }
 

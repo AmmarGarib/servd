@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
-import { PrismaClient } from '@prisma/client'
 import { postJournalEntry, reverseJournalEntry } from '../src/modules/accounting/journal.ts'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.ts'
 
-const prisma = new PrismaClient()
+// The app's client: BIGINT money columns come back as JS numbers (lib/money.ts).
+import { serviceClient as prisma } from '../src/lib/prisma.ts'
 
 // The ledger is per company: every posting names its company, and codes
 // resolve inside that company's chart.

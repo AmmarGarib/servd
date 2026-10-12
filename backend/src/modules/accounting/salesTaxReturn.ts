@@ -37,6 +37,7 @@ import { prisma } from '../../lib/prisma.js'
 import { ACCT, revenueCodeForConcept } from './journal.js'
 import { fmtPktDate } from './dates.js'
 import { homeShiftOf, outputTaxCodeFor } from './orderPosting.js'
+import { sumCents, toCents } from '../../lib/money.js'
 
 interface AccountTotal {
   code: string
@@ -58,8 +59,8 @@ async function netCreditCents(tenantId: string, accountCode: string, from: Date,
   })
   let debit = 0, credit = 0
   for (const s of sums) {
-    if (s.type === 'debit') debit  = s._sum.amountCents ?? 0
-    else                     credit = s._sum.amountCents ?? 0
+    if (s.type === 'debit') debit  = sumCents(s._sum.amountCents)
+    else                     credit = sumCents(s._sum.amountCents)
   }
   return credit - debit
 }
@@ -165,8 +166,8 @@ export async function outputTaxCollectedCents(tenantIds: string[], from: Date, t
       journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: from, lte: to } },
     },
   })
-  const credit = sums.find((x) => x.type === 'credit')?._sum.amountCents ?? 0
-  const debit  = sums.find((x) => x.type === 'debit')?._sum.amountCents ?? 0
+  const credit = sumCents(sums.find((x) => x.type === 'credit')?._sum.amountCents)
+  const debit  = sumCents(sums.find((x) => x.type === 'debit')?._sum.amountCents)
   return credit - debit
 }
 
@@ -308,7 +309,7 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date): Promise<Ra
       const oid = orderOfEntry.get(l.journalEntryId)
       if (!oid) continue
       const key = `${oid}|${l.account.code}`
-      refundTaxByOrder.set(key, (refundTaxByOrder.get(key) ?? 0) + (l.type === 'debit' ? l.amountCents : -l.amountCents))
+      refundTaxByOrder.set(key, (refundTaxByOrder.get(key) ?? 0) + (l.type === 'debit' ? toCents(l.amountCents) : -toCents(l.amountCents)))
     }
   }
   const refundedOrders = new Map<string, ReturnOrder>()
@@ -378,8 +379,8 @@ async function misroutedOutputTax(
   })
   return provincial
     .map((c) => {
-      const credit = sums.find((s) => s.conceptId === c.id && s.type === 'credit')?._sum.amountCents ?? 0
-      const debit  = sums.find((s) => s.conceptId === c.id && s.type === 'debit')?._sum.amountCents ?? 0
+      const credit = sumCents(sums.find((s) => s.conceptId === c.id && s.type === 'credit')?._sum.amountCents)
+      const debit  = sumCents(sums.find((s) => s.conceptId === c.id && s.type === 'debit')?._sum.amountCents)
       return { conceptSlug: c.slug, conceptName: c.name, fromAccount: ACCT.GST_OUTPUT, toAccount: outputTaxCodeFor(c), amountCents: credit - debit }
     })
     .filter((r) => r.amountCents !== 0)
@@ -429,8 +430,8 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     })
     let debit = 0, credit = 0
     for (const s of sums) {
-      if (s.type === 'debit') debit  = s._sum.amountCents ?? 0
-      else                     credit = s._sum.amountCents ?? 0
+      if (s.type === 'debit') debit  = sumCents(s._sum.amountCents)
+      else                     credit = sumCents(s._sum.amountCents)
     }
     const revenue = Math.max(0, credit - debit)
     if (revenue > 0) {

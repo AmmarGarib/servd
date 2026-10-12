@@ -19,6 +19,7 @@ import { isPayrollCategory } from '../accounting/expenseCategories.js'
 import { profitAndLoss } from '../accounting/reports.js'
 import { monthlyLabourCents } from '../projections/labour.js'
 import { moduleGateForNewRoles } from './moduleGate.js'
+import { toCents, zMoneyCents } from '../../lib/money.js'
 
 const cadenceEnum = z.enum(['monthly', 'quarterly', 'annual', 'per_use'])
 
@@ -54,7 +55,7 @@ const lineSchema = z.object({
   name:          z.string().min(1).max(120),
   vendor:        z.string().max(120).nullable().optional(),
   vendorContact: z.string().max(120).nullable().optional(),
-  amountCents:   z.number().int().nonnegative(),
+  amountCents:   zMoneyCents('A line amount'),
   cadence:       cadenceEnum.default('monthly'),
   nextDueDate:   z.string().nullable().optional(),
   paymentMethod: z.string().max(40).nullable().optional(),
@@ -95,8 +96,9 @@ export async function opexRoutes(fastify: FastifyInstance) {
       const live = await liveRevisionsFor(tenantIds, OPEX_SOURCE, paymentIds)
 
       return filtered.map((c) => {
-        const monthlyExpected = c.lines.reduce((s, l) => s + monthlyCents(l.amountCents, l.cadence), 0)
-        const overBudgetPct = c.budgetMonthlyCents > 0 ? (monthlyExpected / c.budgetMonthlyCents) - 1 : 0
+        const monthlyExpected = c.lines.reduce((s, l) => s + monthlyCents(toCents(l.amountCents), l.cadence), 0)
+        const budget = toCents(c.budgetMonthlyCents)
+        const overBudgetPct = budget > 0 ? (monthlyExpected / budget) - 1 : 0
         const payroll = isPayrollCategory(c.name)
         return {
           ...c,
@@ -123,7 +125,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       name:               z.string().min(1).max(80),
       emoji:              z.string().max(8).nullable().optional(),
       conceptId:          z.string().uuid().nullable().optional(),
-      budgetMonthlyCents: z.number().int().nonnegative().default(0),
+      budgetMonthlyCents: zMoneyCents('The monthly budget').default(0),
       notes:              z.string().nullable().optional(),
       sortOrder:          z.number().int().optional(),
     }).parse(req.body)
@@ -145,7 +147,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const body = z.object({
       name:               z.string().min(1).max(80).optional(),
       emoji:              z.string().max(8).nullable().optional(),
-      budgetMonthlyCents: z.number().int().nonnegative().optional(),
+      budgetMonthlyCents: zMoneyCents('The monthly budget').optional(),
       notes:              z.string().nullable().optional(),
       sortOrder:          z.number().int().optional(),
       isActive:           z.boolean().optional(),
@@ -238,7 +240,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // month, unmapped category, bank account with no chart code) is not saved
   // as paid either. See opex/posting.ts.
   const paymentBody = {
-    actualCents:   z.number().int().nonnegative().nullable().optional(),
+    actualCents:   zMoneyCents('The amount paid').nullable().optional(),
     paidAt:        z.string().nullable().optional(),
     paymentRef:    z.string().max(120).nullable().optional(),
     receiptUrl:    z.string().url().nullable().optional(),
@@ -253,7 +255,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       lineId:        z.string().min(1),
       periodStart:   z.string(),
       periodEnd:     z.string(),
-      expectedCents: z.number().int().nonnegative(),
+      expectedCents: zMoneyCents('The expected amount'),
       ...paymentBody,
     }).parse(req.body)
     const ownedLine = await prisma.opexLine.findFirst({
@@ -377,7 +379,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const byCategory = new Map<string, { categoryId: string; name: string; budgetMonthlyCents: number; postedCents: number; unpostedCount: number }>()
     for (const p of payments) {
       const c = p.line.category
-      const row = byCategory.get(c.id) ?? { categoryId: c.id, name: c.name, budgetMonthlyCents: c.budgetMonthlyCents, postedCents: 0, unpostedCount: 0 }
+      const row = byCategory.get(c.id) ?? { categoryId: c.id, name: c.name, budgetMonthlyCents: toCents(c.budgetMonthlyCents), postedCents: 0, unpostedCount: 0 }
       const e = live.get(p.id)
       if (e) row.postedCents += e.amountCents
       else if (!isPayrollCategory(c.name)) row.unpostedCount += 1

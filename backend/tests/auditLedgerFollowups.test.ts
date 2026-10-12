@@ -294,14 +294,20 @@ describe('the sales-tax-return CSV carries what the return files', () => {
       ],
     })
 
-    const today = new Date().toISOString().slice(0, 10)
-    const json = await call('mgrA', 'GET', `/accounting/sales-tax-return?dateFrom=${today}&dateTo=${today}`)
+    // Yesterday..today in PKT: the route reads Karachi days, and just after
+    // PKT midnight the sale books to its shift's business day (yesterday)
+    // while the manual entry books to today — a one-day window (UTC or PKT)
+    // missed one of them between 19:00 UTC and the business-day cutoff.
+    const pktDay = (offsetDays: number) => new Date(Date.now() + 5 * 3_600_000 + offsetDays * 86_400_000).toISOString().slice(0, 10)
+    const since = pktDay(-1)
+    const today = pktDay(0)
+    const json = await call('mgrA', 'GET', `/accounting/sales-tax-return?dateFrom=${since}&dateTo=${today}`)
     expect(json.statusCode).toBe(200)
     const report = json.json() as { byAuthority: Array<{ authority: string; netPayableCents: number }>; reclassification: Array<{ conceptSlug: string; amountCents: number }> }
     expect(report.byAuthority.find((a) => a.authority === 'SRB')!.netPayableCents).toBeGreaterThanOrEqual(15_000)
     expect(report.reclassification.find((r) => r.conceptSlug === slugSD)!.amountCents).toBe(2_300)
 
-    const res = await call('mgrA', 'GET', `/accounting/sales-tax-return?dateFrom=${today}&dateTo=${today}&format=csv`)
+    const res = await call('mgrA', 'GET', `/accounting/sales-tax-return?dateFrom=${since}&dateTo=${today}&format=csv`)
     expect(res.statusCode).toBe(200)
     const csv = res.body
     expect(csv).toContain('By authority — SRB')
@@ -311,7 +317,7 @@ describe('the sales-tax-return CSV carries what the return files', () => {
     expect(csv).toContain(`Reclassify,${slugSD},Karachi kitchen: Dr 2030 / Cr 2032`)
     expect(csv).toContain('EXCESS INPUT CARRIED FORWARD')
     // Company B's return never shows A's brand.
-    const other = await call('mgrB', 'GET', `/accounting/sales-tax-return?dateFrom=${today}&dateTo=${today}&format=csv`)
+    const other = await call('mgrB', 'GET', `/accounting/sales-tax-return?dateFrom=${since}&dateTo=${today}&format=csv`)
     expect(other.body).not.toContain(slugSD)
   })
 })

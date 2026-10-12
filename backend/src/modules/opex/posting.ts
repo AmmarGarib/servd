@@ -23,6 +23,7 @@ import { AppError } from '../../lib/errors.js'
 import { ACCT } from '../accounting/journal.js'
 import { syncSourcePosting, liveRevision, type SyncOutcome } from '../accounting/sourcePosting.js'
 import { expenseCodeForCategoryName, isPayrollCategory, assertExpenseCode } from '../accounting/expenseCategories.js'
+import { toCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -89,7 +90,7 @@ export async function syncOpexPaymentPosting(
     creditCode = line.paymentMethod === 'cash' ? ACCT.CASH_ON_HAND : ACCT.BANK
   }
 
-  const amount = p.actualCents!
+  const amount = toCents(p.actualCents!)
   const conceptId = line.conceptId ?? category.conceptId ?? null
   const memo = `${line.name}${line.vendor ? ` — ${line.vendor}` : ''} (${p.periodStart.toISOString().slice(0, 10)}–${p.periodEnd.toISOString().slice(0, 10)})${p.paymentRef ? ` ref ${p.paymentRef}` : ''}`.slice(0, 250)
   const r = await syncSourcePosting({

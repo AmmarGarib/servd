@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { postJournalEntry, reverseJournalEntry, MAX_LINE_CENTS, amountTooLarge } from './journal.js'
+import { postJournalEntry, reverseJournalEntry } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate, pktToday } from './dates.js'
@@ -12,6 +12,7 @@ import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
+import { toCents, zMoneyCents } from '../../lib/money.js'
 
 const journalEntrySchema = z.object({
   reference: z.string().optional(),
@@ -21,7 +22,8 @@ const journalEntrySchema = z.object({
     z.object({
       accountId: z.string().uuid(),
       type: z.enum(['debit', 'credit']),
-      amountCents: z.number().int().min(1),
+      // One line ≤ MAX_MONEY_CENTS (PKR 900bn), else 422 AMOUNT_TOO_LARGE.
+      amountCents: zMoneyCents('A journal line', { sign: 'positive' }),
       memo: z.string().optional(),
       // Optional brand attribution, so a manual adjustment can land on one
       // brand's P&L instead of the shared bucket.
@@ -103,8 +105,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
               reference: e.reference ?? '',
               accountCode: l.account.code,
               accountName: l.account.name,
-              debit:  l.type === 'debit'  ? fmtPkr(l.amountCents) : '',
-              credit: l.type === 'credit' ? fmtPkr(l.amountCents) : '',
+              debit:  l.type === 'debit'  ? fmtPkr(toCents(l.amountCents)) : '',
+              credit: l.type === 'credit' ? fmtPkr(toCents(l.amountCents)) : '',
               memo: l.memo ?? '',
             })
           }
@@ -145,12 +147,6 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.post('/journal', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = journalEntrySchema.parse(req.body)
-
-    // BOOKS-06: a line above the ledger's INT4 ceiling was a 500 at the insert.
-    // Refuse it up front with what to do instead (postJournalEntry checks again
-    // for every other posting path).
-    const tooBig = body.lines.findIndex((l) => l.amountCents > MAX_LINE_CENTS)
-    if (tooBig >= 0) throw amountTooLarge(`Line ${tooBig + 1}`)
 
     const debits =body.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
     const credits = body.lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
@@ -237,9 +233,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       entityType: 'JournalEntry',
       entityId: entry.id,
       actorId: req.staffUser!.id,
-      // ExceptionFlag.amountCents is INT4 too: a total above it rides in the
-      // metadata only, or the flag itself would fail to save.
-      amountCents: debits <= MAX_LINE_CENTS ? debits : null,
+      amountCents: debits,
       metadata: { reference, debits, credits, lineCount: body.lines.length, ip: req.ip },
     })
 
@@ -309,7 +303,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       where: { id: result.entryId },
       include: { lines: { include: { account: true } } },
     })
-    const amountCents = reversal.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
+    const amountCents = reversal.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + toCents(l.amountCents), 0)
     await audit({ category: 'accounting',
       action: 'journal.reverse',
       entity: 'JournalEntry',
@@ -332,7 +326,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       entityType: 'JournalEntry',
       entityId: reversal.id,
       actorId: req.staffUser!.id,
-      amountCents: amountCents <= MAX_LINE_CENTS ? amountCents : null,
+      amountCents,
       metadata: { reversedEntryId: original.id, reason: body.reason, ip: req.ip, amountCents },
     })
 

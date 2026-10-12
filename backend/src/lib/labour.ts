@@ -6,6 +6,7 @@
 
 import { prisma } from './prisma.js'
 import { ACCT } from '../modules/accounting/journal.js'
+import { toCents } from './money.js'
 
 const WAGE_CODES = [ACCT.WAGES_KITCHEN, ACCT.WAGES_FOH, ACCT.WAGES_MANAGEMENT, ACCT.WAGES_RIDERS]
 
@@ -21,7 +22,7 @@ async function netByCode(tenantIds: string[], from: Date, to: Date, where: { typ
   const m = new Map<string, { debit: number; credit: number }>()
   for (const r of rows) {
     const cur = m.get(r.account.code) ?? { debit: 0, credit: 0 }
-    cur[r.type === 'debit' ? 'debit' : 'credit'] += r.amountCents
+    cur[r.type === 'debit' ? 'debit' : 'credit'] += toCents(r.amountCents)
     m.set(r.account.code, cur)
   }
   return m

@@ -1,10 +1,14 @@
 // Post-Monday round, stream B — the books.
 //
-//   (1) BOOKS-06 follow-up: purchase orders, supplier bills, supplier payments
-//       and a supplier's opening balance refuse an amount no money column can
-//       hold (INT4, PKR 21,474,836.47) — typed or computed (quantity × unit
-//       cost, the PO / bill totals) — with 422 AMOUNT_TOO_LARGE before
-//       anything is written. It used to be a raw 500 at insert.
+//   (1) BOOKS-06 (BIGINT money columns, migration 20261012140000): PO totals,
+//       supplier bills (stock-line totals, subtotal, tax, total), supplier
+//       payments and a supplier's opening balance are BIGINT paisa — one
+//       amount up to PKR 900,000,000,000.00 (MAX_MONEY_CENTS) fits; above it
+//       is 422 AMOUNT_TOO_LARGE before anything is written. A unit cost that
+//       becomes an item's STOCK cost (a PO line, a stock-linked bill line,
+//       receiving) stays INT4 (PKR 21,474,836.47) — 422 above it — and so do
+//       a bill's non-stock lines, each and together (they book to 1210 like
+//       stock; capital spend is CapEx — MONEY-BIG-1).
 //   (2) NEEDS 21: POST /reconciliation/apply-missed-bill-variances — the CEO's
 //       catch-up for supplier bills booked before their goods whose carried
 //       price difference a pre-hook receipt never applied. Dry run by default,
@@ -28,11 +32,11 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { pktToday } from '../src/modules/accounting/dates.js'
-import { MAX_LINE_CENTS } from '../src/modules/accounting/journal.js'
-import { createBill, createPaymentTx, allocatePayment, MAX_AMOUNT_CENTS } from '../src/modules/procurement/service.js'
+import { INT4_MAX_CENTS, MAX_MONEY_CENTS } from '../src/lib/money.js'
+import { MAX_AMOUNT_CENTS as POS_MAX_AMOUNT_CENTS } from '../src/modules/pos/service.js'
+import { createBill, createPaymentTx, allocatePayment } from '../src/modules/procurement/service.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { reconciliationRoutes } from '../src/modules/reconciliation/routes.js'
-import { MAX_LINE_CENTS as RECON_MAX_LINE_CENTS } from '../src/modules/reconciliation/service.js'
 import { applyReceiptLine, receiveGoods } from '../src/modules/procurement/receiving.js'
 import { ensureLoyaltyEarnBooked } from '../src/modules/orders/service.js'
 import { applyMissedCarriedBillVariances } from '../src/modules/accounting/supplierPosting.js'
@@ -95,117 +99,157 @@ beforeAll(async () => {
 
 afterAll(async () => { await app?.close() })
 
-// ─── (1) PO / bill / payment amount ceiling ─────────────────────────────────
+// ─── (1) PO / bill / payment amount ceilings (BOOKS-06, BIGINT) ─────────────
 
-describe('(1) procurement money inputs and computed totals refuse amounts no column holds — 422, nothing written', () => {
+describe('(1) procurement money: BIGINT amounts fit up to PKR 900bn, per-unit stock cost stays INT4 — 422 above, nothing written', () => {
   let supA: string, itemA: string
   beforeAll(async () => {
     supA  = (await prisma.supplier.create({ data: { name: `R5 Mills ${RUN}`, tenantId: tenantA } })).id
     itemA = (await prisma.inventoryItem.create({ data: { name: `R5 Flour ${RUN}`, unit: 'kg', tenantId: tenantA } })).id
   })
-  const tooBig = (res: { statusCode: number; body: string; json: () => { error: { code: string; message: string } } }) => {
+  const tooBigInt4 = (res: { statusCode: number; body: string; json: () => { error: { code: string; message: string } } }) => {
     expect(res.statusCode, res.body).toBe(422)
     expect(res.json().error.code).toBe('AMOUNT_TOO_LARGE')
     expect(res.json().error.message).toMatch(/PKR 21,474,836\.47/)
   }
-
-  const tooBigLedger = (res: { statusCode: number; body: string; json: () => { error: { code: string; message: string } } }) => {
+  const tooBig = (res: { statusCode: number; body: string; json: () => { error: { code: string; message: string } } }) => {
     expect(res.statusCode, res.body).toBe(422)
     expect(res.json().error.code).toBe('AMOUNT_TOO_LARGE')
+    expect(res.json().error.message).toMatch(/PKR 900,000,000,000\.00/)
   }
 
-  it('the ceiling is the ledger line ceiling (one shared constant)', () => {
-    expect(MAX_AMOUNT_CENTS).toBe(MAX_LINE_CENTS)
-    expect(MAX_AMOUNT_CENTS).toBe(2_147_483_647)
-    expect(RECON_MAX_LINE_CENTS).toBe(MAX_LINE_CENTS)
+  it('one BIGINT ceiling and one INT4 ceiling; the till keeps the INT4 one', () => {
+    expect(MAX_MONEY_CENTS).toBe(90_000_000_000_000)
+    expect(INT4_MAX_CENTS).toBe(2_147_483_647)
+    expect(POS_MAX_AMOUNT_CENTS).toBe(INT4_MAX_CENTS)
   })
 
-  it('PO: a unit cost, a line (qty × cost) or the total above the ceiling is 422; nothing is saved', async () => {
+  it('PO: a unit cost above INT4 is 422 (it becomes the stock cost); a total above PKR 900bn is 422; nothing saved', async () => {
     const before = await prisma.purchaseOrder.count({ where: { supplierId: supA } })
-    tooBig(await call('mgrA', 'POST', '/procurement/purchase-orders', {
-      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: MAX_AMOUNT_CENTS + 1 }],
+    tooBigInt4(await call('mgrA', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: INT4_MAX_CENTS + 1 }],
     }))
     tooBig(await call('mgrA', 'POST', '/procurement/purchase-orders', {
-      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 30, unitCostCents: 100_000_000 }],   // PKR 1m × 30
-    }))
-    tooBig(await call('mgrA', 'POST', '/procurement/purchase-orders', {
-      supplierId: supA, lines: [
-        { inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 1_500_000_000 },
-        { inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 1_500_000_000 },
-      ],
+      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 50_000, unitCostCents: 2_000_000_000 }],   // PKR 1 trillion
     }))
     expect(await prisma.purchaseOrder.count({ where: { supplierId: supA } })).toBe(before)
   })
 
-  it('PO: exactly the ceiling still fits (201)', async () => {
-    const res = await call('mgrA', 'POST', '/procurement/purchase-orders', {
-      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: MAX_AMOUNT_CENTS }],
+  it('PO: totals above INT4 now fit (30 × PKR 1m, and 2 × PKR 15m → 201, exact numbers)', async () => {
+    const r1 = await call('mgrA', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 30, unitCostCents: 100_000_000 }],
     })
-    expect(res.statusCode).toBe(201)
-    expect(res.json().totalCents).toBe(MAX_AMOUNT_CENTS)
+    expect(r1.statusCode, r1.body).toBe(201)
+    expect(r1.json().totalCents).toBe(3_000_000_000)
+    const r2 = await call('mgrA', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [
+        { inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 1_500_000_000 },
+        { inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 1_500_000_000 },
+      ],
+    })
+    expect(r2.statusCode, r2.body).toBe(201)
+    expect(r2.json().totalCents).toBe(3_000_000_000)
+    const r3 = await call('mgrA', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: INT4_MAX_CENTS }],
+    })
+    expect(r3.statusCode).toBe(201)
+    expect(r3.json().totalCents).toBe(INT4_MAX_CENTS)
   })
 
-  it('bill: a line total, the tax, or subtotal + tax above the ceiling is 422; no bill and no ledger entry', async () => {
-    const bill = (n: string, lines: Array<{ quantity: number; unitCostCents: number }>, taxCents?: number) =>
+  it('bill: stock-line totals, subtotals and totals above INT4 record and post balanced (to 1210); non-stock lines above INT4 (each or together), tax above PKR 900bn or a stock unit cost above INT4 is 422', async () => {
+    const bill = (n: string, lines: Array<{ quantity: number; unitCostCents: number; inventoryItemId?: string }>, taxCents?: number) =>
       call('mgrA', 'POST', '/procurement/bills', {
         supplierId: supA, billNumber: `R5-${n}-${RUN}`, billDate: new Date().toISOString(),
         ...(taxCents !== undefined && { taxCents }),
-        lines: lines.map((l) => ({ description: 'flour', ...l })),
+        lines: lines.map((l) => ({ description: l.inventoryItemId ? 'flour' : 'fit-out', ...l })),
       })
-    tooBig(await bill('LINE', [{ quantity: 3, unitCostCents: 1_000_000_000 }]))
-    tooBig(await bill('TAX', [{ quantity: 1, unitCostCents: 100 }], MAX_AMOUNT_CENTS + 1))
-    tooBig(await bill('TOTAL', [{ quantity: 1, unitCostCents: 2_000_000_000 }], 200_000_000))
-    tooBig(await bill('SUB', [{ quantity: 1, unitCostCents: 1_200_000_000 }, { quantity: 1, unitCostCents: 1_200_000_000 }]))
+    tooBig(await bill('TAX', [{ quantity: 1, unitCostCents: 100 }], MAX_MONEY_CENTS + 1))
+    tooBigInt4(await bill('STOCK', [{ quantity: 1, unitCostCents: INT4_MAX_CENTS + 1, inventoryItemId: itemA }]))
+    // MONEY-BIG-1: a non-stock line books to 1210 Inventory – Food like stock,
+    // so it stays at the INT4 cap — capital spend goes through CapEx.
+    for (const r of [
+      await bill('NS-UNIT', [{ quantity: 1, unitCostCents: INT4_MAX_CENTS + 1 }]),
+      await bill('NS-LINE', [{ quantity: 3, unitCostCents: 1_000_000_000 }]),
+      await bill('NS-SUM', [{ quantity: 1, unitCostCents: 1_200_000_000 }, { quantity: 1, unitCostCents: 1_200_000_000 }]),
+    ]) {
+      tooBigInt4(r)
+      expect(r.json().error.message).toMatch(/CapEx/)
+    }
     expect(await prisma.supplierBill.count({ where: { supplierId: supA } })).toBe(0)
-    expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: { startsWith: 'supplier.bill:' } } })).toBe(0)
+
+    const line = await bill('LINE', [{ quantity: 3, unitCostCents: 1_000_000_000, inventoryItemId: itemA }])
+    expect(line.statusCode, line.body).toBe(201)
+    expect(line.json()).toMatchObject({ subtotalCents: 3_000_000_000, totalCents: 3_000_000_000 })
+    expect(await netOn(tenantA, '1210', [`supplier.bill:${line.json().id}`])).toBe(3_000_000_000)
+    const total = await bill('TOTAL', [{ quantity: 1, unitCostCents: 2_000_000_000, inventoryItemId: itemA }], 200_000_000)
+    expect(total.statusCode, total.body).toBe(201)
+    expect(total.json()).toMatchObject({ subtotalCents: 2_000_000_000, taxCents: 200_000_000, totalCents: 2_200_000_000 })
+    // A non-stock line within INT4 next to a stock line: the bill's subtotal
+    // is past INT4, the non-stock part is not.
+    const sub = await bill('SUB', [{ quantity: 1, unitCostCents: 1_200_000_000, inventoryItemId: itemA }, { quantity: 1, unitCostCents: 1_200_000_000 }])
+    expect(sub.statusCode, sub.body).toBe(201)
+    expect(sub.json().totalCents).toBe(2_400_000_000)
+    expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: { startsWith: 'supplier.bill:' } } })).toBe(3)
+    expect(await imbalance(tenantA)).toBe(0)
   })
 
-  it('payment: an amount or an application above the ceiling is 422 (route and the petty-cash service path)', async () => {
+  it('payment: PKR 50m records (201, posted); above PKR 900bn is 422 (route and the petty-cash service path)', async () => {
     tooBig(await call('mgrA', 'POST', '/procurement/payments', {
-      supplierId: supA, paymentDate: new Date().toISOString(), method: 'cash', amountCents: MAX_AMOUNT_CENTS + 1,
+      supplierId: supA, paymentDate: new Date().toISOString(), method: 'cash', amountCents: MAX_MONEY_CENTS + 1,
     }))
     await expect(prisma.$transaction((tx) => createPaymentTx(tx, {
-      supplierId: supA, paymentDate: new Date().toISOString(), method: 'cash', amountCents: 5_000_000_000, createdBy: users['mgrA']!.id,
+      supplierId: supA, paymentDate: new Date().toISOString(), method: 'cash', amountCents: MAX_MONEY_CENTS + 1, createdBy: users['mgrA']!.id,
     }))).rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422 })
     expect(await prisma.supplierPayment.count({ where: { supplierId: supA } })).toBe(0)
+    const big = await prisma.$transaction((tx) => createPaymentTx(tx, {
+      supplierId: supA, paymentDate: new Date().toISOString(), method: 'bank_transfer', amountCents: 5_000_000_000, createdBy: users['mgrA']!.id,
+    }))
+    expect(big.amountCents).toBe(5_000_000_000)
+    expect(await netOn(tenantA, '2010', [`supplier.payment:${big.id}`])).toBe(5_000_000_000)
+    expect(await imbalance(tenantA)).toBe(0)
   })
 
-  it('allocating an application above the ceiling is 422 before anything moves', async () => {
+  it('allocating an application above PKR 900bn is 422 before anything moves', async () => {
     const p = await prisma.$transaction((tx) => createPaymentTx(tx, {
       supplierId: supA, paymentDate: new Date().toISOString(), method: 'cash', amountCents: 10_000, createdBy: users['mgrA']!.id,
     }))
-    await expect(allocatePayment(p.id, [{ billId: '00000000-0000-0000-0000-000000000000', amountAppliedCents: MAX_AMOUNT_CENTS + 5 }]))
+    await expect(allocatePayment(p.id, [{ billId: '00000000-0000-0000-0000-000000000000', amountAppliedCents: MAX_MONEY_CENTS + 5 }]))
       .rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE' })
     tooBig(await call('mgrA', 'POST', `/procurement/payments/${p.id}/allocate`, {
-      applications: [{ billId: '00000000-0000-0000-0000-000000000000', amountAppliedCents: MAX_AMOUNT_CENTS + 5 }],
+      applications: [{ billId: '00000000-0000-0000-0000-000000000000', amountAppliedCents: MAX_MONEY_CENTS + 5 }],
     }))
   })
 
-  it('supplier opening balance above the ceiling is 422 on create and on edit', async () => {
-    tooBig(await call('mgrA', 'POST', '/procurement/suppliers', { name: `R5 Big ${RUN}`, openingBalanceCents: 2_500_000_000 }))
-    expect(await prisma.supplier.count({ where: { name: `R5 Big ${RUN}` } })).toBe(0)
-    tooBig(await call('mgrA', 'PATCH', `/procurement/suppliers/${supA}`, { openingBalanceCents: 2_500_000_000 }))
+  it('supplier opening balance: PKR 25m records (201) and posts exactly; above PKR 900bn is 422 on create and on edit', async () => {
+    const ok = await call('mgrA', 'POST', '/procurement/suppliers', { name: `R5 Big ${RUN}`, openingBalanceCents: 2_500_000_000 })
+    expect(ok.statusCode, ok.body).toBe(201)
+    expect(ok.json().openingBalanceCents).toBe(2_500_000_000)
+    expect(await netOn(tenantA, '2010', (await prisma.journalEntry.findMany({ where: { tenantId: tenantA, reference: { startsWith: `supplier.opening:${ok.json().id}` } }, select: { reference: true } })).map((e) => e.reference!))).toBe(-2_500_000_000)
+    tooBig(await call('mgrA', 'POST', '/procurement/suppliers', { name: `R5 Huge ${RUN}`, openingBalanceCents: MAX_MONEY_CENTS + 1 }))
+    expect(await prisma.supplier.count({ where: { name: `R5 Huge ${RUN}` } })).toBe(0)
+    tooBig(await call('mgrA', 'PATCH', `/procurement/suppliers/${supA}`, { openingBalanceCents: MAX_MONEY_CENTS + 1 }))
     expect((await prisma.supplier.findUniqueOrThrow({ where: { id: supA } })).openingBalanceCents).toBe(0)
+    expect(await imbalance(tenantA)).toBe(0)
   })
 
-  it('the PO approval limit above the ceiling is 422 and unchanged', async () => {
+  it('the PO approval limit above PKR 900bn is 422 and unchanged', async () => {
     const before = (await call('ceoA', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents
-    tooBig(await call('ceoA', 'PUT', '/procurement/settings/approval-threshold', { thresholdCents: MAX_AMOUNT_CENTS + 1 }))
+    tooBig(await call('ceoA', 'PUT', '/procurement/settings/approval-threshold', { thresholdCents: MAX_MONEY_CENTS + 1 }))
     expect((await call('ceoA', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents).toBe(before)
   })
 
-  it('reconciliation: a split line on a bank-statement adjustment above the ceiling is 422 before any lookup', async () => {
-    tooBigLedger(await call('ceoA', 'POST', '/reconciliation/bank/lines/00000000-0000-0000-0000-000000000000/adjust', {
+  it('reconciliation: a split line on a bank-statement adjustment above PKR 900bn is 422 before any lookup', async () => {
+    tooBig(await call('ceoA', 'POST', '/reconciliation/bank/lines/00000000-0000-0000-0000-000000000000/adjust', {
       memo: 'r5 split', lines: [
-        { accountCode: '1010', type: 'debit',  amountCents: MAX_AMOUNT_CENTS + 1 },
-        { accountCode: '6080', type: 'credit', amountCents: MAX_AMOUNT_CENTS + 1 },
+        { accountCode: '1010', type: 'debit',  amountCents: MAX_MONEY_CENTS + 1 },
+        { accountCode: '6080', type: 'credit', amountCents: MAX_MONEY_CENTS + 1 },
       ],
     }))
-    // Within the ceiling it gets as far as the line lookup (404: no such line).
+    // Within the ceiling (even above INT4) it gets as far as the line lookup (404: no such line).
     expect((await call('ceoA', 'POST', '/reconciliation/bank/lines/00000000-0000-0000-0000-000000000000/adjust', {
       memo: 'r5 split', lines: [
-        { accountCode: '1010', type: 'debit',  amountCents: 100 },
-        { accountCode: '6080', type: 'credit', amountCents: 100 },
+        { accountCode: '1010', type: 'debit',  amountCents: 2_500_000_000 },
+        { accountCode: '6080', type: 'credit', amountCents: 2_500_000_000 },
       ],
     })).statusCode).toBe(404)
   })

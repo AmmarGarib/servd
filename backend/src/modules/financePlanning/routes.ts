@@ -41,6 +41,7 @@ import {
   requireActiveCompany, assertConceptAttachable, assertLocationOfCompany,
   assertMemberOfCompany, assertCapexProjectOfCompany,
 } from './companyRefs.js'
+import { type DbMoney, assertMoneyFits, sumCents, toCents, zMoneyCents } from '../../lib/money.js'
 
 const STATUS_ENUM = ['not_quoted', 'quoted', 'ordered', 'partial_paid', 'delivered', 'installed', 'commissioned', 'snag', 'done'] as const
 
@@ -52,12 +53,13 @@ const lineSchema = z.object({
   category:        z.string().max(80).nullable().optional(),
   item:            z.string().min(1).max(200),
   quantity:        z.number().int().positive().default(1),
-  unitCostCents:   z.number().int().nonnegative(),
+  // Money: BIGINT paisa, one amount ≤ PKR 900bn (lib/money.ts), else 422.
+  unitCostCents:   zMoneyCents('A line\'s unit cost'),
   vendor:          z.string().max(120).nullable().optional(),
   vendorContact:   z.string().max(120).nullable().optional(),
-  quotedCents:     z.number().int().nonnegative().nullable().optional(),
-  negotiatedCents: z.number().int().nonnegative().nullable().optional(),
-  paidCents:       z.number().int().nonnegative().optional(),
+  quotedCents:     zMoneyCents('A quoted amount').nullable().optional(),
+  negotiatedCents: zMoneyCents('A negotiated amount').nullable().optional(),
+  paidCents:       zMoneyCents('A paid amount').optional(),
   status:          z.enum(STATUS_ENUM).optional(),
   priority:        z.enum(['must_have', 'nice_to_have', 'future']).optional(),
   leadTimeDays:    z.number().int().min(0).nullable().optional(),
@@ -75,15 +77,16 @@ const lineSchema = z.object({
 // Compute roll-ups for a project: budgeted (line item totals), quoted (sum of
 // won quotes), committed (negotiatedCents sum), paid (paidCents sum),
 // remaining (envelope - committed), variance vs envelope.
-function withRollups<T extends { lines: Array<{ unitCostCents: number; quantity: number; quotedCents: number | null; negotiatedCents: number | null; paidCents: number; status: string }>; consultantFeesCents: number; taxCents: number; budgetEnvelopeCents: number; contingencyPct: number }>(p: T) {
-  const budgeted   = p.lines.reduce((s, l) => s + l.unitCostCents * l.quantity, 0)
-  const quoted     = p.lines.reduce((s, l) => s + (l.quotedCents ?? 0), 0)
-  const committed  = p.lines.reduce((s, l) => s + (l.negotiatedCents ?? l.unitCostCents * l.quantity), 0)
-  const paid       = p.lines.reduce((s, l) => s + l.paidCents, 0)
-  const totalAsk   = budgeted + p.consultantFeesCents + p.taxCents
+function withRollups<T extends { lines: Array<{ unitCostCents: DbMoney; quantity: number; quotedCents: DbMoney | null; negotiatedCents: DbMoney | null; paidCents: DbMoney; status: string }>; consultantFeesCents: DbMoney; taxCents: DbMoney; budgetEnvelopeCents: DbMoney; contingencyPct: number }>(p: T) {
+  const budgeted   = p.lines.reduce((s, l) => s + toCents(l.unitCostCents) * l.quantity, 0)
+  const quoted     = p.lines.reduce((s, l) => s + toCents(l.quotedCents ?? 0), 0)
+  const committed  = p.lines.reduce((s, l) => s + (l.negotiatedCents != null ? toCents(l.negotiatedCents) : toCents(l.unitCostCents) * l.quantity), 0)
+  const paid       = p.lines.reduce((s, l) => s + toCents(l.paidCents), 0)
+  const totalAsk   = budgeted + toCents(p.consultantFeesCents) + toCents(p.taxCents)
   const contingency = Math.round(budgeted * p.contingencyPct)
-  const remaining  = p.budgetEnvelopeCents - committed
-  const varianceVsEnvelope = committed - p.budgetEnvelopeCents
+  const envelope   = toCents(p.budgetEnvelopeCents)
+  const remaining  = envelope - committed
+  const varianceVsEnvelope = committed - envelope
   return {
     ...p,
     rollups: {
@@ -132,11 +135,12 @@ async function recalcLinePaid(lineId: string): Promise<void> {
     where: { lineId, paidAt: { not: null } },
     _sum: { paidAmountCents: true },
   })
-  const paid = sum._sum.paidAmountCents ?? 0
+  const paid = sumCents(sum._sum.paidAmountCents)
   // Also nudge status forward when fully paid
   const line = await prisma.capexLine.findUnique({ where: { id: lineId }, select: { negotiatedCents: true, status: true } })
   let status = line?.status ?? 'quoted'
-  if (line?.negotiatedCents && paid >= line.negotiatedCents && status !== 'delivered' && status !== 'installed' && status !== 'commissioned' && status !== 'done') {
+  const negotiated = toCents(line?.negotiatedCents ?? null)
+  if (negotiated && paid >= negotiated && status !== 'delivered' && status !== 'installed' && status !== 'commissioned' && status !== 'done') {
     status = 'partial_paid'  // fully paid in money terms but not yet delivered â†’ "ordered/paid"
   }
   await prisma.capexLine.update({ where: { id: lineId }, data: { paidCents: paid, status } })
@@ -148,10 +152,12 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
     where: { id: projectId },
     include: { lines: { select: { negotiatedCents: true, unitCostCents: true, quantity: true, item: true } } },
   })
-  if (!project || project.budgetEnvelopeCents === 0) return
-  const committed = project.lines.reduce((s, l) => s + (l.negotiatedCents ?? l.unitCostCents * l.quantity), 0)
-  if (committed <= project.budgetEnvelopeCents) return
-  const overBy = committed - project.budgetEnvelopeCents
+  if (!project) return
+  const envelope = toCents(project.budgetEnvelopeCents)
+  if (envelope === 0) return
+  const committed = project.lines.reduce((s, l) => s + (l.negotiatedCents != null ? toCents(l.negotiatedCents) : toCents(l.unitCostCents) * l.quantity), 0)
+  if (committed <= envelope) return
+  const overBy = committed - envelope
   // Don't double-flag â€” only if no open over-budget flag exists for this project
   const existing = await prisma.exceptionFlag.findFirst({
     // Its own kind since 2026-10-12; an open flag raised before that carries
@@ -164,13 +170,13 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
     kind: 'capex_over_budget',
     tenantId: project.tenantId,
     conceptId: project.conceptId,
-    severity: overBy > project.budgetEnvelopeCents * 0.1 ? 'high' : 'medium',
+    severity: overBy > envelope * 0.1 ? 'high' : 'medium',
     title: `CapEx project over budget: ${project.name}`,
-    description: `Committed PKR ${(committed / 100).toLocaleString()} on a PKR ${(project.budgetEnvelopeCents / 100).toLocaleString()} envelope. Over by PKR ${(overBy / 100).toLocaleString()}.`,
+    description: `Committed PKR ${(committed / 100).toLocaleString()} on a PKR ${(envelope / 100).toLocaleString()} envelope. Over by PKR ${(overBy / 100).toLocaleString()}.`,
     entityType: 'CapexProject',
     entityId: projectId,
     amountCents: overBy,
-    metadata: { committed, envelope: project.budgetEnvelopeCents, lineId },
+    metadata: { committed, envelope, lineId },
   })
 }
 
@@ -244,10 +250,10 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       locationId: z.string().uuid().nullable().optional(),
       projectType: z.enum(['kitchen_buildout', 'refurb', 'expansion', 'new_brand', 'equipment_only']).default('kitchen_buildout'),
       phase:       z.enum(['planning', 'quoting', 'executing', 'snagging', 'live']).default('planning'),
-      budgetEnvelopeCents: z.number().int().nonnegative().default(0),
+      budgetEnvelopeCents: zMoneyCents('The budget envelope').default(0),
       contingencyPct:      z.number().min(0).max(0.5).default(0.10),
-      consultantFeesCents: z.number().int().nonnegative().default(0),
-      taxCents:            z.number().int().nonnegative().default(0),
+      consultantFeesCents: zMoneyCents('The consultant fees').default(0),
+      taxCents:            zMoneyCents('The tax').default(0),
       targetOpeningDate:   z.string().nullable().optional(),
       address:             z.string().max(500).nullable().optional(),
       floorAreaSqft:       z.number().int().positive().nullable().optional(),
@@ -286,10 +292,10 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         locationId:          z.string().uuid().nullable().optional(),
         projectType:         z.enum(['kitchen_buildout', 'refurb', 'expansion', 'new_brand', 'equipment_only']).optional(),
         phase:               z.enum(['planning', 'quoting', 'executing', 'snagging', 'live']).optional(),
-        budgetEnvelopeCents: z.number().int().nonnegative().optional(),
+        budgetEnvelopeCents: zMoneyCents('The budget envelope').optional(),
         contingencyPct:      z.number().min(0).max(0.5).optional(),
-        consultantFeesCents: z.number().int().nonnegative().optional(),
-        taxCents:            z.number().int().nonnegative().optional(),
+        consultantFeesCents: zMoneyCents('The consultant fees').optional(),
+        taxCents:            zMoneyCents('The tax').optional(),
         targetOpeningDate:   z.string().nullable().optional(),
         actualOpeningDate:   z.string().nullable().optional(),
         address:             z.string().max(500).nullable().optional(),
@@ -362,6 +368,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
       const body = lineSchema.parse(req.body)
+      assertMoneyFits(body.unitCostCents * body.quantity, 'This line (quantity × unit cost)')
       const project = await prisma.capexProject.findFirst({
         where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       })
@@ -400,6 +407,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         include: { project: { select: { tenantId: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
+      assertMoneyFits((body.unitCostCents ?? toCents(owned.unitCostCents)) * (body.quantity ?? owned.quantity), 'This line (quantity × unit cost)')
       if (body.assignedToId) await assertMemberOfCompany(owned.project.tenantId, body.assignedToId)
       const updated = await prisma.capexLine.update({
         where: { id: req.params.lineId },
@@ -444,7 +452,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         vendor:       z.string().min(1).max(120),
         contactName:  z.string().max(120).nullable().optional(),
         contactPhone: z.string().max(40).nullable().optional(),
-        totalCents:   z.number().int().nonnegative(),
+        totalCents:   zMoneyCents('A quote\'s total'),
         leadTimeDays: z.number().int().min(0).nullable().optional(),
         validUntil:   z.string().nullable().optional(),
         fileUrl:      z.string().url().nullable().optional(),
@@ -520,7 +528,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // the ledger refuses (closed month, project with no company) is not saved.
   const capexPaymentBody = {
     paidAt:      z.string().nullable().optional(),
-    paidAmountCents: z.number().int().nonnegative().nullable().optional(),
+    paidAmountCents: zMoneyCents('A paid amount').nullable().optional(),
     paymentRef:  z.string().max(120).nullable().optional(),
     notes:       z.string().nullable().optional(),
     // How it is booked — defaults from what the line is (capexTreatmentOf).
@@ -533,7 +541,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const body = z.object({
         label:       z.enum(['deposit', 'midpoint', 'balance', 'extra']).default('deposit'),
-        amountCents: z.number().int().nonnegative(),
+        amountCents: zMoneyCents('An instalment'),
         dueDate:     z.string().nullable().optional(),
         ...capexPaymentBody,
       }).parse(req.body)
@@ -656,10 +664,10 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const body = z.object({
         category: z.enum(Object.keys(ASSET_CATEGORIES) as [AssetCategory, ...AssetCategory[]]),
         usefulLifeMonths: z.number().int().min(1).max(600),
-        salvageCents: z.number().int().min(0).default(0),
+        salvageCents: zMoneyCents('The salvage value').default(0),
         name: z.string().min(1).max(120).optional(),
         acquiredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional(),
-        costCents: z.number().int().positive().optional(),
+        costCents: zMoneyCents('The asset\'s cost', { sign: 'positive' }).optional(),
       }).parse(req.body)
       const line = await prisma.capexLine.findFirst({
         where: { id: req.params.lineId, project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },

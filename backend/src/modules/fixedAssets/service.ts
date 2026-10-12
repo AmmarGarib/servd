@@ -18,7 +18,8 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { postJournalEntry } from '../accounting/journal.js'
+import { postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { toCents } from '../../lib/money.js'
 
 export const ASSET_CATEGORIES = {
   kitchen_equipment:  { label: 'Kitchen equipment',      account: '1510' },
@@ -115,8 +116,9 @@ export async function postAcquisition(
   if (!a.acquisitionCreditCode) throw new AppError('ASSET_FUNDING', 'Say how this asset was paid for', 422)
   const assetAccount = ASSET_CATEGORIES[a.category as AssetCategory]?.account
   if (!assetAccount) throw new AppError('ASSET_CATEGORY', `Unknown asset category ${a.category}`, 422)
-  const credits = opts.credits ?? [{ accountCode: a.acquisitionCreditCode, amountCents: a.costCents }]
-  if (credits.reduce((t, c) => t + c.amountCents, 0) !== a.costCents) {
+  const cost = toCents(a.costCents)
+  const credits = opts.credits ?? [{ accountCode: a.acquisitionCreditCode, amountCents: cost }]
+  if (credits.reduce((t, c) => t + c.amountCents, 0) !== cost) {
     throw new AppError('ASSET_FUNDING_SPLIT', 'How the asset was paid for must add up to its cost', 422)
   }
   return postJournalEntry({
@@ -128,7 +130,7 @@ export async function postAcquisition(
     postedBy: postedBy ?? 'system',
     reference: a.assetTag ?? undefined,
     lines: [
-      { accountCode: assetAccount, type: 'debit', amountCents: a.costCents, conceptId: a.conceptId, memo: a.name },
+      { accountCode: assetAccount, type: 'debit', amountCents: cost, conceptId: a.conceptId, memo: a.name },
       ...credits.map((c) => ({ accountCode: c.accountCode, type: 'credit' as const, amountCents: c.amountCents, memo: c.memo ?? a.name })),
     ],
   }, { tx: opts.tx })
@@ -157,15 +159,15 @@ export async function runDepreciation(tenantId: string, period: string, postedBy
   const results: Array<{ assetId: string; name: string; amountCents: number; status: 'charged' | 'already' | 'none' }> = []
   for (const a of assets) {
     if (a.depreciation.some((d) => d.period === period)) {
-      results.push({ assetId: a.id, name: a.name, amountCents: a.depreciation.find((d) => d.period === period)!.amountCents, status: 'already' })
+      results.push({ assetId: a.id, name: a.name, amountCents: toCents(a.depreciation.find((d) => d.period === period)!.amountCents), status: 'already' })
       continue
     }
     // Only months BEFORE this one count as already charged — a later month run
     // out of order must not eat into this month's share.
     const before = a.depreciation
       .filter((d) => periodIndex(d.period) < periodIndex(period))
-      .reduce((s, d) => s + d.amountCents, 0)
-    const amount = chargeFor(a, period, before)
+      .reduce((s, d) => s + toCents(d.amountCents), 0)
+    const amount = chargeFor({ ...a, costCents: toCents(a.costCents), salvageCents: toCents(a.salvageCents) }, period, before)
     if (amount <= 0) { results.push({ assetId: a.id, name: a.name, amountCents: 0, status: 'none' }); continue }
 
     await prisma.$transaction(async (tx) => {
@@ -204,19 +206,20 @@ export async function disposeAsset(
   const assetAccount = ASSET_CATEGORIES[a.category as AssetCategory]?.account
   if (!assetAccount) throw new AppError('ASSET_CATEGORY', `Unknown asset category ${a.category}`, 422)
 
-  const accumulated = a.depreciation.reduce((s, d) => s + d.amountCents, 0)
-  const bookValue = a.costCents - accumulated
+  const cost = toCents(a.costCents)
+  const accumulated = a.depreciation.reduce((s, d) => s + toCents(d.amountCents), 0)
+  const bookValue = cost - accumulated
   const gainLoss = opts.proceedsCents - bookValue // > 0 gain, < 0 loss
 
-  const lines = [
-    { accountCode: ACCUMULATED_DEPRECIATION, type: 'debit' as const, amountCents: accumulated, memo: a.name },
-    { accountCode: BANK, type: 'debit' as const, amountCents: opts.proceedsCents, memo: 'Disposal proceeds' },
-    { accountCode: assetAccount, type: 'credit' as const, amountCents: a.costCents, memo: a.name },
+  const lines: JournalLineInput[] = [
+    { accountCode: ACCUMULATED_DEPRECIATION, type: 'debit', amountCents: accumulated, memo: a.name },
+    { accountCode: BANK, type: 'debit', amountCents: opts.proceedsCents, memo: 'Disposal proceeds' },
+    { accountCode: assetAccount, type: 'credit', amountCents: cost, memo: a.name },
   ]
   // Gain is a credit to 8030, loss a debit — it is an expense-type account, so
   // a gain shows as a negative expense, which is how the P&L should read it.
-  if (gainLoss > 0) lines.push({ accountCode: DISPOSAL_GAIN_LOSS, type: 'credit', amountCents: gainLoss, memo: 'Gain on disposal' } as never)
-  if (gainLoss < 0) lines.push({ accountCode: DISPOSAL_GAIN_LOSS, type: 'debit', amountCents: -gainLoss, memo: 'Loss on disposal' } as never)
+  if (gainLoss > 0) lines.push({ accountCode: DISPOSAL_GAIN_LOSS, type: 'credit', amountCents: gainLoss, memo: 'Gain on disposal' })
+  if (gainLoss < 0) lines.push({ accountCode: DISPOSAL_GAIN_LOSS, type: 'debit', amountCents: -gainLoss, memo: 'Loss on disposal' })
 
   await prisma.$transaction(async (tx) => {
     // Claim the disposal before posting so two clicks cannot post twice.

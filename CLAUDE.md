@@ -691,9 +691,31 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   no loyalty/wallet/promo redemption on WhatsApp. Typed replies (numbers or
   titles) work for the text-only gateway. `WHATSAPP_DEFAULT_CONCEPT` is
   optional (listed first / fallback). Contract: `backend/src/adapters/whatsapp/README.md`.
-- **Money inputs above INT4** (PKR 21,474,836.47) answer 422
-  `AMOUNT_TOO_LARGE` on POs, bills, supplier payments, receiving and manual
-  journals until the BigInt migration lands.
+- **Money columns: BIGINT where a group outgrows INT4** (BOOKS-06, migration
+  `20261012140000_money_bigint`). The ledger, AP, AR, bank lines and
+  balances, exception amounts, allocation runs, fixed assets, capex/opex and
+  `Customer.totalSpentCents` are BIGINT paisa. Per-ticket (orders, payments,
+  till), per-unit stock cost and per-person HR amounts stay INT4.
+  `lib/money.ts` is the one boundary: `moneyAsNumbers`, on the base client
+  under the RLS extension, returns every BIGINT as a JS number on `prisma`,
+  `serviceClient` and every tx, so JSON stays numbers. Prisma still TYPES
+  them `bigint`: convert with `toCents`/`sumCents` where tsc asks. Never use
+  bigint literals, `BigInt()` or bigint math in src (tested). Raw SQL is not
+  converted: raw SQL that returns a BIGINT column — including `SELECT *` /
+  `t.*` of a widened table — comes back as bigint; select ids and re-read
+  through the model API, and cast sums `::bigint` and `toCents` them (a
+  numeric reaches JSON as a string). One BIGINT amount ≤ `MAX_MONEY_CENTS`
+  (PKR 900bn) via `zMoneyCents`/`assertMoneyFits`; INT4 columns ≤
+  `INT4_MAX_CENTS` via `zInt4Cents`/`assertInt4Fits` or the till's
+  `assertAmountsFit`; above either is 422 `AMOUNT_TOO_LARGE`. A supplier
+  bill's NON-stock lines stay ≤ INT4 (each and in total): `postSupplierBill`
+  books every bill to 1210 Inventory – Food, so fit-out/equipment goes
+  through CapEx (→ 1340 → fixed-asset register), never a bill.
+  `TenantContribution.monthlyCents` stays INT4 behind `zInt4Cents`. A new
+  company-level money column is BIGINT from its first commit. If the
+  migration ever fails on deploy, run `prisma migrate resolve --rolled-back
+  20261012140000_money_bigint` in the api image before redeploying either
+  image (P3009 blocks both) — runbook in the migration's header.
 
 ## Claude Code operating policy — model routing & parallel agents
 

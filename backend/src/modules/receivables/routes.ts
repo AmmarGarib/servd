@@ -22,6 +22,7 @@ import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, reverseJournalEntry } from '../accounting/journal.js'
 import { outputTaxCodeFor } from '../accounting/orderPosting.js'
+import { assertMoneyFits, toCents, zMoneyCents } from '../../lib/money.js'
 
 const RECEIVABLE = '1110'
 const PAYMENT_ACCOUNT: Record<string, string> = { bank: '1020', cheque: '1020', card: '1030', cash: '1010' }
@@ -64,8 +65,8 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     })
     const now = new Date()
     const invoices = rows.map((r) => {
-      const total = r.amountCents + r.taxCents
-      const balance = r.status === 'void' ? 0 : total - r.paidCents
+      const total = toCents(r.amountCents) + toCents(r.taxCents)
+      const balance = r.status === 'void' ? 0 : total - toCents(r.paidCents)
       return { ...r, totalCents: total, balanceCents: balance, bucket: balance > 0 ? agingBucket(r.dueDate, now) : null }
     })
     const aging = { current: 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 } as Record<string, number>
@@ -88,11 +89,13 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
       dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
       description: z.string().min(1).max(500),
-      amountCents: z.number().int().positive(),
-      taxCents: z.number().int().min(0).default(0),
+      // BIGINT paisa (lib/money.ts): one amount ≤ PKR 900bn, else 422.
+      amountCents: zMoneyCents('The invoice amount', { sign: 'positive' }),
+      taxCents: zMoneyCents('The invoice tax').default(0),
       revenueAccountCode: z.string().regex(/^4\d{3}$/).default('4090'),
       notes: z.string().max(1000).optional(),
     }).parse(req.body)
+    assertMoneyFits(body.amountCents + body.taxCents, 'The invoice total')
     const tenantId = activeTenant(req)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
     const issueDate = new Date(body.issueDate)
@@ -127,6 +130,8 @@ export async function receivableRoutes(fastify: FastifyInstance) {
           createdById: req.staffUser!.id,
         },
       })
+      const amount = toCents(inv.amountCents)
+      const tax    = toCents(inv.taxCents)
       await postJournalEntry({
         tenantId,
         sourceType: 'receivable.issue',
@@ -136,9 +141,9 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         postedBy: req.staffUser!.id,
         reference: inv.number,
         lines: [
-          { accountCode: RECEIVABLE, type: 'debit', amountCents: inv.amountCents + inv.taxCents, conceptId: inv.conceptId },
-          { accountCode: inv.revenueAccountCode, type: 'credit', amountCents: inv.amountCents, conceptId: inv.conceptId },
-          ...(inv.taxCents > 0 ? [{ accountCode: taxAccountCode, type: 'credit' as const, amountCents: inv.taxCents, conceptId: inv.conceptId }] : []),
+          { accountCode: RECEIVABLE, type: 'debit', amountCents: amount + tax, conceptId: inv.conceptId },
+          { accountCode: inv.revenueAccountCode, type: 'credit', amountCents: amount, conceptId: inv.conceptId },
+          ...(tax > 0 ? [{ accountCode: taxAccountCode, type: 'credit' as const, amountCents: tax, conceptId: inv.conceptId }] : []),
         ],
       }, { tx })
       return inv
@@ -161,7 +166,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
   // POST /accounting/receivables/:id/payments — money received.
   fastify.post<{ Params: { id: string } }>('/:id/payments', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const body = z.object({
-      amountCents: z.number().int().positive(),
+      amountCents: zMoneyCents('This payment', { sign: 'positive' }),
       receivedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
       method: z.enum(['bank', 'cash', 'cheque', 'card']),
       reference: z.string().max(80).optional(),
@@ -173,7 +178,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     const payment = await prisma.$transaction(async (tx) => {
       // Claim the balance atomically — two people recording the same cheque
       // must not both succeed and overpay the invoice.
-      const total = inv.amountCents + inv.taxCents
+      const total = toCents(inv.amountCents) + toCents(inv.taxCents)
       const claimed = await tx.receivableInvoice.updateMany({
         where: { id: inv.id, status: { in: ['open', 'partial'] }, paidCents: { lte: total - body.amountCents } },
         data: { paidCents: { increment: body.amountCents } },
@@ -184,7 +189,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       const after = await tx.receivableInvoice.findUniqueOrThrow({ where: { id: inv.id } })
       await tx.receivableInvoice.update({
         where: { id: inv.id },
-        data: { status: after.paidCents >= total ? 'paid' : 'partial' },
+        data: { status: toCents(after.paidCents) >= total ? 'paid' : 'partial' },
       })
       const p = await tx.receivablePayment.create({
         data: {

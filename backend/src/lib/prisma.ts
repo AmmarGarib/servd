@@ -1,11 +1,17 @@
 import { PrismaClient } from '@prisma/client'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { getRlsContext } from './rlsContext.js'
+import { moneyAsNumbers, installBigIntJson } from './money.js'
+
+// Safety net only: a stray bigint still serialises as a JSON number. The
+// money boundary below (moneyAsNumbers) is the mechanism of record.
+installBigIntJson()
 
 // Two clients backed by the same Postgres pool. They differ in whether
 // they thread the active RLS context into each query:
 //
-//   • serviceClient — raw PrismaClient. No extension, no SET LOCAL. For
+//   • serviceClient — no RLS extension, no SET LOCAL (it does carry the
+//                     money boundary — see below). For
 //                     background workers, webhook handlers, adapters
 //                     called from those, and the auth flow's pre-context
 //                     lookups. Policies treat queries from this client as
@@ -36,6 +42,11 @@ import { getRlsContext } from './rlsContext.js'
 //      writes the session var onto the same connection the rest of the
 //      callback uses. A re-entrancy flag (inTxFlag) tells the per-query
 //      wrapper to skip its own wrap while we're inside that callback.
+//
+// BIGINT money columns (BOOKS-06) come back as JS numbers on EVERY client:
+// lib/money.ts's moneyAsNumbers is installed on the base client, UNDER the
+// RLS extension. It has to sit there: the $transaction override below
+// delegates to basePrisma, so the tx it hands out carries it too.
 
 const ENFORCE_RLS = process.env['RLS_ENFORCE'] === '1'
 
@@ -43,14 +54,20 @@ const globalForPrisma = globalThis as unknown as {
   basePrisma?: PrismaClient
 }
 
-const basePrisma = globalForPrisma.basePrisma ??
+const rawPrisma = globalForPrisma.basePrisma ??
   new PrismaClient({
     log: process.env['NODE_ENV'] === 'development' ? ['query', 'error', 'warn'] : ['error'],
   })
 
 if (process.env['NODE_ENV'] !== 'production') {
-  globalForPrisma.basePrisma = basePrisma
+  globalForPrisma.basePrisma = rawPrisma
 }
+
+// BIGINT money columns come back as JS numbers on every client (lib/money.ts).
+// Typed as PrismaClient on purpose: exporting the extended type breaks the tx
+// client's assignability across the app; Prisma still types the widened
+// fields `bigint`, so code converts with toCents/sumCents where tsc asks.
+const basePrisma = rawPrisma.$extends(moneyAsNumbers) as unknown as PrismaClient
 
 export const serviceClient = basePrisma
 

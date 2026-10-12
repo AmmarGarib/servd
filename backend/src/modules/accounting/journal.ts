@@ -8,7 +8,8 @@
 //      mutate or delete prior journal lines. Period-close locks rely on this.
 //   4. Account codes (not UUIDs) at the call site. Codes are stable; UUIDs
 //      change between environments.
-//   5. PKR cents (Int) throughout. No floats, no rounding drift.
+//   5. Paisa as JS integers; journal_lines.amountCents is BIGINT (lib/money.ts).
+//      No floats, no rounding drift. One line ≤ MAX_MONEY_CENTS (PKR 900bn).
 //   6. One company per entry. Each company keeps its own chart of accounts and
 //      its own books, so every posting names the company it belongs to: the
 //      account codes resolve inside that company, the period-lock check reads
@@ -19,6 +20,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { fmtPktDate } from './dates.js'
+import { amountTooLarge, assertMoneyFits, toCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -65,25 +67,6 @@ export const CONCEPT_REVENUE_CODE: Record<string, string> = {
   'garnish-station': '4005',
   'stax-padel':      '4006',
   'bukhari':         '4007',
-}
-
-// ─── Line amount ceiling (BOOKS-06) ─────────────────────────────────────────
-//
-// JournalLine.amountCents is a Postgres INT4: the largest line it can hold is
-// 2,147,483,647 paisa (PKR 21,474,836.47). A bigger line (a PKR 25m opening
-// balance) used to reach the insert and come back as a 500. Every posting is
-// checked here — and the manual journal route checks the operator's lines
-// before anything else — so it is a clear 422 instead. The real fix is a
-// BigInt migration of journal_lines.amountCents; until then a bigger amount
-// is posted as several lines.
-export const MAX_LINE_CENTS = 2_147_483_647
-
-export function amountTooLarge(where?: string): AppError {
-  return new AppError(
-    'AMOUNT_TOO_LARGE',
-    `${where ? `${where}: ` : ''}a single ledger line can hold at most PKR 21,474,836.47 — split this amount into lines of at most PKR 21,474,836.47`,
-    422,
-  )
 }
 
 export function revenueCodeForConcept(slug: string): string {
@@ -183,9 +166,7 @@ export async function postJournalEntry(
     if (!Number.isInteger(l.amountCents)) {
       throw new AppError('JOURNAL_NOT_INTEGER', `Line amount must be integer cents: ${l.accountCode} ${l.amountCents}`, 422)
     }
-    if (l.amountCents > MAX_LINE_CENTS) {
-      throw amountTooLarge(`${input.sourceType}:${input.sourceId} account ${l.accountCode}`)
-    }
+    assertMoneyFits(l.amountCents, `${input.sourceType}:${input.sourceId} account ${l.accountCode}`)
   }
   if (lines.length < 2) {
     throw new AppError('JOURNAL_TOO_FEW_LINES', 'After dropping zero lines, fewer than two remained', 422)
@@ -193,6 +174,11 @@ export async function postJournalEntry(
 
   const debitTotal  = lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
   const creditTotal = lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
+  // Each line is ≤ MAX_MONEY_CENTS, but a total of many big lines can still
+  // pass 2^53 and stop being exact — refuse rather than round.
+  if (!Number.isSafeInteger(debitTotal) || !Number.isSafeInteger(creditTotal)) {
+    throw amountTooLarge(`${input.sourceType}:${input.sourceId} total`)
+  }
   if (debitTotal !== creditTotal) {
     throw new AppError(
       'JOURNAL_UNBALANCED',
@@ -310,7 +296,7 @@ export async function reverseJournalEntry(
       lines: original.lines.map((l) => ({
         accountCode: l.account.code,
         type: l.type === 'debit' ? 'credit' : 'debit',
-        amountCents: l.amountCents,
+        amountCents: toCents(l.amountCents),
         memo: l.memo ?? `Reversal: ${reason}`,
         conceptId: l.conceptId, // keep brand attribution on the reversal
       })),
@@ -367,7 +353,7 @@ export async function flagPostingFailed(f: PostingFailure): Promise<void> {
       entityType: f.entityType,
       entityId: f.entityId,
       conceptId: f.conceptId ?? null,
-      amountCents: f.amountCents != null && Math.abs(f.amountCents) <= MAX_LINE_CENTS ? f.amountCents : null,
+      amountCents: f.amountCents ?? null, // lib/exceptions.ts clamps
       metadata: { reason: f.reason, sourceType: f.sourceType, sourceId: f.sourceId },
     })
   } catch (err) {

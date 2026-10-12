@@ -9,6 +9,7 @@ import type { AccountType, Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT } from './journal.js'
 import { fmtPktDate } from './dates.js'
+import { sumCents, toCents } from '../../lib/money.js'
 
 // Asset & expense accounts increase on the debit side; liability, equity, and
 // revenue accounts increase on the credit side. "Balance" is always expressed
@@ -94,8 +95,8 @@ async function aggregateByAccount(opts: {
   const bucket = new Map<string, { debit: number; credit: number }>()
   for (const row of grouped) {
     const slot = bucket.get(row.accountId) ?? { debit: 0, credit: 0 }
-    if (row.type === 'debit') slot.debit  += row._sum.amountCents ?? 0
-    else                       slot.credit += row._sum.amountCents ?? 0
+    if (row.type === 'debit') slot.debit  += sumCents(row._sum.amountCents)
+    else                       slot.credit += sumCents(row._sum.amountCents)
     bucket.set(row.accountId, slot)
   }
 
@@ -349,7 +350,7 @@ export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: 
   for (const row of grouped) {
     const acc = accMap.get(row.accountId)
     if (!acc) continue
-    const amt = row._sum.amountCents ?? 0
+    const amt = sumCents(row._sum.amountCents)
     if (amt === 0) continue
     const b = ensure(row.conceptId)
     if (acc.type === 'revenue') {
@@ -459,7 +460,7 @@ export async function brandPnl(
   for (const row of grouped) {
     const acc = accMap.get(row.accountId)
     if (!acc) continue
-    const amt = row._sum.amountCents ?? 0
+    const amt = sumCents(row._sum.amountCents)
     if (amt === 0) continue
     const bucket = row.conceptId && known.has(row.conceptId) ? perBrand.get(row.conceptId)! : ho
     if (acc.type === 'revenue') {
@@ -679,7 +680,7 @@ export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date
   ])
 
   for (const entry of entriesWithCash) {
-    const split = splitEntryCash(entry.lines, isCash)
+    const split = splitEntryCash(entry.lines.map((l) => ({ ...l, amountCents: toCents(l.amountCents) })), isCash)
     for (const [accountId, s] of split.perAccount) {
       const row = perCash.get(accountId)!
       row.inflowCents      += s.inflowCents

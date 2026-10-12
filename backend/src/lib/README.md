@@ -4,7 +4,8 @@ Cross-cutting infrastructure used by every module.
 
 ## Files
 
-- `prisma.ts` — Singleton Prisma client.
+- `prisma.ts` — Singleton Prisma clients: `prisma` (RLS session vars) and `serviceClient` (no RLS); both carry the money boundary from `money.ts`.
+- `money.ts` — Money in paisa (BOOKS-06): the `moneyAsNumbers` extension that returns BIGINT money columns as JS numbers, `toCents`/`sumCents`, the ceilings (`MAX_MONEY_CENTS` PKR 900bn for BIGINT, `INT4_MAX_CENTS` for INT4) and their guards (`zMoneyCents`, `zInt4Cents`, `assertMoneyFits`, `assertInt4Fits`, `amountTooLarge`).
 - `redis.ts` — Singleton Redis client.
 - `ws.ts` — Socket.IO server + safe emitters (never throw if WS is uninitialised).
 - `errors.ts` — `AppError`, `UnauthorizedError`, `ForbiddenError`, `NotFoundError` + Fastify error formatter.

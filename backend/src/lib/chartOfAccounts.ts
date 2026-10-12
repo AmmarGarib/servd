@@ -16,6 +16,7 @@
 
 import type { AccountType } from '@prisma/client'
 import { serviceClient as prisma } from './prisma.js'
+import { sumCents } from './money.js'
 
 export interface AccountTemplate {
   code: string
@@ -202,8 +203,8 @@ export async function retireAggregatorAccounts(tenantId: string): Promise<string
       where: { accountId: row.id },
       _sum: { amountCents: true },
     })
-    const debit  = sums.find((s) => s.type === 'debit')?._sum.amountCents ?? 0
-    const credit = sums.find((s) => s.type === 'credit')?._sum.amountCents ?? 0
+    const debit  = sumCents(sums.find((s) => s.type === 'debit')?._sum.amountCents)
+    const credit = sumCents(sums.find((s) => s.type === 'credit')?._sum.amountCents)
     if (debit !== credit) continue
     await prisma.account.update({ where: { id: row.id }, data: { isActive: false } })
     retired.push(row.code)

@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry } from '../accounting/journal.js'
+import { toCents } from '../../lib/money.js'
 
 export const OPENING_SOURCE_TYPE = 'supplier.opening'
 /** Offset for opening AP: balances brought forward from before the books. */
@@ -54,7 +55,8 @@ export async function postedOpeningBalances(
     const tenantId = l.journalEntry.tenantId
     if (!supplierId || !tenantId) continue
     const per = out.get(supplierId) ?? new Map<string, number>()
-    per.set(tenantId, (per.get(tenantId) ?? 0) + (l.type === 'credit' ? l.amountCents : -l.amountCents))
+    const amt = toCents(l.amountCents)
+    per.set(tenantId, (per.get(tenantId) ?? 0) + (l.type === 'credit' ? amt : -amt))
     out.set(supplierId, per)
   }
   return out
@@ -86,7 +88,7 @@ export async function syncSupplierOpeningBalance(
 
     const posted = (await postedOpeningBalances([supplierId], tx)).get(supplierId) ?? new Map<string, number>()
     const targets = new Map<string, number>(Array.from(posted.keys()).map((t) => [t, 0]))
-    if (supplier.tenantId) targets.set(supplier.tenantId, supplier.openingBalanceCents)
+    if (supplier.tenantId) targets.set(supplier.tenantId, toCents(supplier.openingBalanceCents))
 
     for (const [tenantId, target] of targets) {
       const delta = target - (posted.get(tenantId) ?? 0)

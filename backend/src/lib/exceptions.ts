@@ -20,6 +20,7 @@ import { prisma } from './prisma.js'
 import { Prisma, type ExceptionSeverity } from '@prisma/client'
 import { tenantForConcept } from './setup-config.js'
 import type { TenantIdWhere } from './tenantScope.js'
+import { MAX_MONEY_CENTS } from './money.js'
 
 export type ExceptionKind =
   | 'receiving_variance'    // GRN qty differs from PO qty above threshold
@@ -111,6 +112,11 @@ async function flagTenantId(input: FlagInput): Promise<string | null> {
 export async function flagException(input: FlagInput): Promise<{ id: string } | null> {
   try {
     const tenantId = await flagTenantId(input)
+    // The ONE clamp on a flag's amount (a flag must never fail to save): a
+    // finite amount is rounded to whole paisa and kept up to MAX_MONEY_CENTS;
+    // only a non-finite or out-of-range figure is dropped (null).
+    const a = input.amountCents
+    const amountCents = a != null && Number.isFinite(a) && Math.abs(Math.round(a)) <= MAX_MONEY_CENTS ? Math.round(a) : null
     const row = await prisma.exceptionFlag.create({
       data: {
         tenantId,
@@ -123,7 +129,7 @@ export async function flagException(input: FlagInput): Promise<{ id: string } | 
         metadata: input.metadata ? (input.metadata as Prisma.InputJsonObject) : Prisma.DbNull,
         conceptId: input.conceptId ?? null,
         actorId: input.actorId ?? null,
-        amountCents: input.amountCents ?? null,
+        amountCents,
       },
       select: { id: true },
     })

@@ -11,7 +11,7 @@ import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE, res
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { reportDateRange } from '../reports/service.js'
-import { MAX_LINE_CENTS, amountTooLarge } from '../accounting/journal.js'
+import { zMoneyCents } from '../../lib/money.js'
 
 // Who works the reconciliation module (BOOKS-02): every manager tier plus the
 // finance role, which holds the `reconciliation` module by default
@@ -21,9 +21,10 @@ import { MAX_LINE_CENTS, amountTooLarge } from '../accounting/journal.js'
 // backfill stays CEO-only.
 const RECONCILERS = FINANCE_TEAM
 
-// Statement balances are BigInt columns (BOOKS-06); JSON carries them as
-// numbers. Paisa stay far inside 2^53, and the schema refuses anything bigger.
-const balanceCents = z.number().int().refine(Number.isSafeInteger, 'Balance is out of range')
+// Statement balances are BIGINT columns (BOOKS-06) and come back as JS
+// numbers through lib/money.ts. One balance ≤ MAX_MONEY_CENTS (PKR 900bn),
+// else 422 AMOUNT_TOO_LARGE; either sign (an overdrawn account is negative).
+const balanceCents = zMoneyCents('A statement balance', { sign: 'any' })
 
 const importBankSchema = z.object({
   // The bank the statement is for (Configuration → Bank accounts): the ledger
@@ -49,12 +50,9 @@ const adjustLineSchema = z.object({
   lines: z.array(z.object({
     accountCode: z.string().trim().min(1),
     type: z.enum(['debit', 'credit']),
-    // One journal line each (INT4): above PKR 21,474,836.47 it is a plain
-    // 422 AMOUNT_TOO_LARGE here rather than a refusal deep in the posting.
-    amountCents: z.number().int().positive().refine(Number.isSafeInteger).transform((v) => {
-      if (v > MAX_LINE_CENTS) throw amountTooLarge('A split line')
-      return v
-    }),
+    // One journal line each (BIGINT): above PKR 900bn it is a plain 422
+    // AMOUNT_TOO_LARGE here rather than a refusal deep in the posting.
+    amountCents: zMoneyCents('A split line', { sign: 'positive' }),
     memo: z.string().trim().max(500).optional(),
   })).min(1).max(20).optional(),
 }).refine((b) => !!b.contraAccountCode !== !!b.lines, {
@@ -75,11 +73,8 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       take: 100,
       include: { _count: { select: { lines: true } } },
     })
-    return rows.map((r) => ({
-      ...r,
-      openingBalanceCents: Number(r.openingBalanceCents),
-      closingBalanceCents: Number(r.closingBalanceCents),
-    }))
+    // The balances are BIGINT; lib/money.ts already hands them over as numbers.
+    return rows
   })
 
   fastify.get<{ Params: { id: string }; Querystring: { status?: string } }>(

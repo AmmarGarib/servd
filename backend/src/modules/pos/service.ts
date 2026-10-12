@@ -33,6 +33,7 @@ import { getConnector, terminalDriverOf } from '../../connectors/registry.js'
 import { enqueueFiscalRefundTx, kickFiscal } from '../../connectors/fiscal/outbox.js'
 import { fiscalViewForOrder, legacySrbAlias, type FiscalView } from '../../connectors/fiscal/view.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { INT4_MAX_CENTS, sumCents, toCents } from '../../lib/money.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -385,8 +386,9 @@ export interface ProcessPaymentInput {
   idempotencyKey?: string
 }
 
-/** The largest amount a money column holds (Postgres INT4), in paisa — PKR 21.47 million. */
-export const MAX_AMOUNT_CENTS = 2_147_483_647
+/** The largest amount a till / order / payment column holds (Postgres INT4 —
+ *  per-ticket amounts stay INT4, BOOKS-06), in paisa — PKR 21.47 million. */
+export const MAX_AMOUNT_CENTS = INT4_MAX_CENTS
 
 /**
  * R2-UI-07: refuse an amount no money column can hold (a mistyped tender,
@@ -2729,7 +2731,8 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
     let net = 0
     for (const l of lines) {
       if (MONEY_ACCOUNTS.has(l.account.code)) continue
-      const signed = l.type === 'debit' ? l.amountCents : -l.amountCents
+      const amt = toCents(l.amountCents)
+      const signed = l.type === 'debit' ? amt : -amt
       net += signed
       reverse.push({ accountCode: l.account.code, cents: -signed, conceptId: l.conceptId, memo: `Cancelled order ${order.id} — refund ${row.id.slice(0, 8)} was booked as a sale refund (#${id8})` })
     }
@@ -2755,8 +2758,8 @@ async function parkedUsedTx(tx: Tx, tenantId: string, order: CancelledBooksOrder
   const codeOf = new Map(accounts.map((a) => [a.id, a.code]))
   for (const r of rows) {
     const code = codeOf.get(r.accountId)
-    if (code === PARK_ACCOUNT.cash) used.cash += r._sum.amountCents ?? 0
-    else if (code === PARK_ACCOUNT.card) used.card += r._sum.amountCents ?? 0
+    if (code === PARK_ACCOUNT.cash) used.cash += sumCents(r._sum.amountCents)
+    else if (code === PARK_ACCOUNT.card) used.card += sumCents(r._sum.amountCents)
   }
   return used
 }

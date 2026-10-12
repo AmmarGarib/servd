@@ -25,6 +25,7 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { requireActiveCompany, assertConceptAttachable, assertConceptOfCompany } from '../financePlanning/companyRefs.js'
 import { monthlyLabourCents } from './labour.js'
+import { toCents } from '../../lib/money.js'
 
 const brandInputSchema = z.object({
   conceptId:           z.string(),
@@ -148,11 +149,12 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       const opexByBrand = new Map<string, number>()
       for (const l of opexLines) {
         if (!l.conceptId) continue
+        const amt = toCents(l.amountCents)
         const monthly =
-          l.cadence === 'monthly'   ? l.amountCents :
-          l.cadence === 'quarterly' ? Math.round(l.amountCents / 3) :
-          l.cadence === 'annual'    ? Math.round(l.amountCents / 12) :
-          l.amountCents
+          l.cadence === 'monthly'   ? amt :
+          l.cadence === 'quarterly' ? Math.round(amt / 3) :
+          l.cadence === 'annual'    ? Math.round(amt / 12) :
+          amt
         opexByBrand.set(l.conceptId, (opexByBrand.get(l.conceptId) ?? 0) + monthly)
       }
 
@@ -164,7 +166,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       const capexByBrand = new Map<string, number>()
       for (const c of capexProjects) {
         if (!c.conceptId) continue
-        capexByBrand.set(c.conceptId, (capexByBrand.get(c.conceptId) ?? 0) + c.totalAskCents)
+        capexByBrand.set(c.conceptId, (capexByBrand.get(c.conceptId) ?? 0) + toCents(c.totalAskCents))
       }
 
       const rampCurve = projection.rampCurve

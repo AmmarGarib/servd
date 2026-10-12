@@ -19,6 +19,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
 import { postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
+import { toCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -69,7 +70,7 @@ export async function liveRevision(
       sourceId,
       entryId: e.id,
       entryDate: e.entryDate,
-      lines: e.lines.map((l) => ({ accountCode: l.account.code, type: l.type, amountCents: l.amountCents, conceptId: l.conceptId })),
+      lines: e.lines.map((l) => ({ accountCode: l.account.code, type: l.type, amountCents: toCents(l.amountCents), conceptId: l.conceptId })),
     }
   }
   return { live, revisions: posted.length }
@@ -162,7 +163,7 @@ export async function liveRevisionsFor(
     const debits = e.lines.filter((l) => l.type === 'debit')
     out.set(base, {
       entryId: e.id,
-      amountCents: debits.reduce((t, l) => t + l.amountCents, 0),
+      amountCents: debits.reduce((t, l) => t + toCents(l.amountCents), 0),
       debitCode: debits[0]?.account.code ?? null,
       creditCode: e.lines.find((l) => l.type === 'credit')?.account.code ?? null,
       entryDate: e.entryDate,

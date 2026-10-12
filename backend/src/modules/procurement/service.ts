@@ -23,35 +23,18 @@ import { withholdingForBill, postSupplierBill, postSupplierBillVoid, postSupplie
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
-import { MAX_LINE_CENTS } from '../accounting/journal.js'
 import type { Prisma } from '@prisma/client'
+import { type DbMoney, assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
 
-// ─── Amount ceiling (BOOKS-06 follow-up) ─────────────────────────────────────
+// ─── Amount ceilings (BOOKS-06) ──────────────────────────────────────────────
 //
-// Every procurement money column (PO total and line cost, bill subtotal / tax
-// / total / WHT and line totals, payment and application amounts) is a
-// Postgres INT4, as is a ledger line: at most 2,147,483,647 paisa
-// (PKR 21,474,836.47). A bigger figure — typed, or computed as quantity ×
-// unit cost — used to reach the insert and come back as a raw 500. It is
-// refused here, before anything is written, with 422 AMOUNT_TOO_LARGE.
-
-export const MAX_AMOUNT_CENTS = MAX_LINE_CENTS
-
-const fmtPkr = (cents: number) =>
-  `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
-export function amountTooLargeError(what: string, cents: number): AppError {
-  return new AppError(
-    'AMOUNT_TOO_LARGE',
-    `${what} comes to ${fmtPkr(cents)}, more than the PKR 21,474,836.47 one entry can hold. Check the figures you typed, or split it into smaller ones.`,
-    422,
-  )
-}
-
-/** Refuse a money figure no column can hold (or one that is not a number at all). */
-export function assertAmountFits(cents: number, what: string): void {
-  if (!Number.isFinite(cents) || Math.abs(cents) > MAX_AMOUNT_CENTS) throw amountTooLargeError(what, cents)
-}
+// PO totals, bill subtotal / tax / total / WHT, stock-line totals, payments
+// and applications are BIGINT paisa: one amount ≤ MAX_MONEY_CENTS (PKR 900bn).
+// A unit cost that becomes an item's STOCK cost (a PO line, a stock-linked
+// bill line, receiving) lands in INT4 columns and stays ≤ INT4_MAX_CENTS
+// (PKR 21,474,836.47); so do a bill's non-stock lines, which the ledger books
+// to 1210 like stock (see createBill). Above either it is refused here, before
+// anything is written, with 422 AMOUNT_TOO_LARGE (lib/money.ts).
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
@@ -114,13 +97,14 @@ export async function createPo(input: CreatePoInput) {
   }
   await assertItemsOfCompany(input.lines.map((l) => l.inventoryItemId), supplier.tenantId, supplier.name)
 
-  // Every line and the total must fit a money column (422, not a 500 at insert).
+  // A PO line's unit cost is INT4 (it becomes the item's stock cost); the
+  // line total and the PO total are BIGINT (422, not a 500 at insert).
   input.lines.forEach((l, i) => {
-    assertAmountFits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
-    assertAmountFits(Math.round(l.unitCostCents * l.quantityOrdered), `Line ${i + 1} (quantity × unit cost)`)
+    assertInt4Fits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
+    assertMoneyFits(Math.round(l.unitCostCents * l.quantityOrdered), `Line ${i + 1} (quantity × unit cost)`)
   })
   const totalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
-  assertAmountFits(totalCents, 'This purchase order\'s total')
+  assertMoneyFits(totalCents, 'This purchase order\'s total')
 
   const po = await prisma.purchaseOrder.create({
     data: {
@@ -161,7 +145,8 @@ export async function submitPo(poId: string, userId: string) {
 
   // The PO's company's threshold (its supplier's company).
   const threshold = await getApprovalThresholdCents(po.supplier.tenantId)
-  const needsApproval = po.totalCents >= threshold
+  const total = toCents(po.totalCents)
+  const needsApproval = total >= threshold
 
   return prisma.$transaction(async (tx) => {
     const newStatus = needsApproval ? 'pending_approval' : 'approved'
@@ -172,7 +157,7 @@ export async function submitPo(poId: string, userId: string) {
         : { status: 'approved', approvedById: userId, approvedAt: new Date() },
     })
     await tx.poActivityLog.create({
-      data: { purchaseOrderId: poId, userId, action: 'submitted', details: { needsApproval, threshold, total: po.totalCents } },
+      data: { purchaseOrderId: poId, userId, action: 'submitted', details: { needsApproval, threshold, total } },
     })
     if (!needsApproval) {
       await tx.poActivityLog.create({
@@ -295,7 +280,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
         <tbody>${linesHtml}</tbody>
         <tfoot>
           <tr><td colspan="3" style="padding:12px;text-align:right;font-weight:bold;">Total</td>
-              <td style="padding:12px;text-align:right;font-weight:bold;">${fmt(po.totalCents)}</td></tr>
+              <td style="padding:12px;text-align:right;font-weight:bold;">${fmt(toCents(po.totalCents))}</td></tr>
         </tfoot>
       </table>
       ${po.expectedDate ? `<p><strong>Expected delivery:</strong> ${po.expectedDate.toDateString()}</p>` : ''}
@@ -309,7 +294,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
     '',
     ...po.lines.map((l) => `- ${l.inventoryItem.name}: ${l.quantityOrdered} ${l.inventoryItem.unit} @ ${fmt(l.unitCostCents)}`),
     '',
-    `Total: ${fmt(po.totalCents)}`,
+    `Total: ${fmt(toCents(po.totalCents))}`,
     ...(po.expectedDate ? [`Expected delivery: ${po.expectedDate.toDateString()}`] : []),
     ...(po.notes ? [`Notes: ${po.notes}`] : []),
     'Please confirm receipt.',
@@ -318,7 +303,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
   const sent: string[] = []
   const failed: string[] = []
   if (email) {
-    try { await sendEmail(email, `Purchase Order from servd — ${fmt(po.totalCents)}`, html); sent.push('email') }
+    try { await sendEmail(email, `Purchase Order from servd — ${fmt(toCents(po.totalCents))}`, html); sent.push('email') }
     catch (err) { failed.push(`email: ${(err as Error).message}`) }
   }
   if (waNumber) {
@@ -411,16 +396,42 @@ export async function createBill(input: CreateBillInput) {
   // Every line, the subtotal, the tax and the total must fit a money column
   // (and a ledger line — the bill posts in the same transaction): 422, never
   // a 500 at insert.
+  //
+  // A stock line's unit cost re-averages the item's INT4 stock cost, so it
+  // stays ≤ INT4; its line total (quantity × cost) may be BIGINT — a group's
+  // bulk food purchase is genuinely stock and belongs in 1210.
+  //
+  // A NON-stock line (no item, no PO line) stays at the INT4 cap, line by line
+  // AND in total (MONEY-BIG-1): postSupplierBill books a bill's whole subtotal
+  // to 1210 Inventory – Food, so a PKR 30m "kitchen fit-out" line would show
+  // as food stock on the balance sheet and as food purchases in the
+  // actual-vs-theoretical food cost, and never reach the fixed-asset register.
+  // Capital spend goes through CapEx (payments → 1340, capitalise → 15x0).
+  const assertNonStockFits = (cents: number, what: string) => {
+    try { assertInt4Fits(cents, what) } catch (err) {
+      if (!(err instanceof AppError)) throw err
+      throw new AppError(err.code, `${err.message}. Capital spend (fit-out, equipment) belongs in CapEx, not a supplier bill.`, err.statusCode)
+    }
+  }
+  let nonStockCents = 0
   input.lines.forEach((l, i) => {
-    assertAmountFits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
-    assertAmountFits(Math.round(l.unitCostCents * l.quantity), `Line ${i + 1} (quantity × unit cost)`)
+    const lineCents = Math.round(l.unitCostCents * l.quantity)
+    if (l.inventoryItemId || l.poLineId) {
+      assertInt4Fits(l.unitCostCents, `Line ${i + 1}'s unit cost (a stock item)`)
+      assertMoneyFits(lineCents, `Line ${i + 1} (quantity × unit cost)`)
+    } else {
+      assertNonStockFits(l.unitCostCents, `Line ${i + 1}'s unit cost (not a stock item)`)
+      assertNonStockFits(lineCents, `Line ${i + 1} (quantity × unit cost, not a stock item)`)
+      nonStockCents += lineCents
+    }
   })
+  assertNonStockFits(nonStockCents, 'This bill\'s lines that are not stock items')
   const subtotalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantity), 0)
   const taxCents      = input.taxCents ?? 0
   const totalCents    = subtotalCents + taxCents
-  assertAmountFits(subtotalCents, 'This bill\'s subtotal')
-  assertAmountFits(taxCents, 'This bill\'s tax')
-  assertAmountFits(totalCents, 'This bill\'s total')
+  assertMoneyFits(subtotalCents, 'This bill\'s subtotal')
+  assertMoneyFits(taxCents, 'This bill\'s tax')
+  assertMoneyFits(totalCents, 'This bill\'s total')
   // Withholding is fixed now, from the supplier's company's settings, and the
   // ledger books this same figure (postSupplierBill) — see SupplierBill.whtCents.
   const whtCents      = await withholdingForBill(subtotalCents, supplier.tenantId)
@@ -571,7 +582,7 @@ export async function matchBill(billId: string) {
     const received = bl.poLine.quantityReceived
     const billed   = bl.quantity
     const orderedCost  = bl.poLine.unitCostCents
-    const billedCost   = bl.unitCostCents
+    const billedCost   = toCents(bl.unitCostCents)
 
     const issues: string[] = []
     if (Math.abs(billed - received) > 0.001)     issues.push(`Billed ${billed}, received ${received}`)
@@ -603,18 +614,19 @@ export async function matchBill(billId: string) {
 // total, so a bill paid net of withholding stayed 'partially_paid' for ever
 // and showed as owing the WHT the ledger had already moved to FBR.
 
-type BillAmounts = { totalCents: number; whtCents: number; paidCents: number }
+type BillAmounts = { totalCents: DbMoney; whtCents: DbMoney; paidCents: DbMoney }
 
 /** What the supplier is still owed on this bill. */
 export function billDueCents(b: BillAmounts): number {
-  return b.totalCents - b.whtCents - b.paidCents
+  return toCents(b.totalCents) - toCents(b.whtCents) - toCents(b.paidCents)
 }
 
 /** The status a bill's payments put it in (void and draft are left alone). */
 function paidStatus(b: BillAmounts & { status: string }): string {
   if (b.status === 'void' || b.status === 'draft') return b.status
-  if (b.paidCents > 0 && billDueCents(b) <= 0) return 'paid'
-  return b.paidCents > 0 ? 'partially_paid' : b.status
+  const paid = toCents(b.paidCents)
+  if (paid > 0 && billDueCents(b) <= 0) return 'paid'
+  return paid > 0 ? 'partially_paid' : b.status
 }
 
 // ─── Supplier Payments ───────────────────────────────────────────────────────
@@ -645,10 +657,10 @@ export async function createPayment(input: CreatePaymentInput) {
  */
 export async function createPaymentTx(tx: Prisma.TransactionClient, input: CreatePaymentInput) {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Amount must be positive', 400)
-  assertAmountFits(input.amountCents, 'This payment')
+  assertMoneyFits(input.amountCents, 'This payment')
 
   const allocations = input.applications ?? []
-  allocations.forEach((a) => assertAmountFits(a.amountAppliedCents, 'An amount applied to a bill'))
+  allocations.forEach((a) => assertMoneyFits(a.amountAppliedCents, 'An amount applied to a bill'))
   const totalAllocated = allocations.reduce((s, a) => s + a.amountAppliedCents, 0)
   if (totalAllocated > input.amountCents) {
     throw new AppError('OVER_ALLOCATED', 'Allocations exceed payment amount', 400)
@@ -709,7 +721,7 @@ export async function allocatePayment(
   paymentId: string,
   applications: Array<{ billId: string; amountAppliedCents: number }>,
 ) {
-  applications.forEach((a) => assertAmountFits(a.amountAppliedCents, 'An amount applied to a bill'))
+  applications.forEach((a) => assertMoneyFits(a.amountAppliedCents, 'An amount applied to a bill'))
   return prisma.$transaction(async (tx) => {
     const payment = await tx.supplierPayment.findUnique({
       where:   { id: paymentId },
@@ -717,9 +729,9 @@ export async function allocatePayment(
     })
     if (!payment) throw new NotFoundError('SupplierPayment', paymentId)
 
-    const alreadyApplied = payment.applications.reduce((s, a) => s + a.amountAppliedCents, 0)
+    const alreadyApplied = payment.applications.reduce((s, a) => s + toCents(a.amountAppliedCents), 0)
     const adding         = applications.reduce((s, a) => s + a.amountAppliedCents, 0)
-    if (alreadyApplied + adding > payment.amountCents) {
+    if (alreadyApplied + adding > toCents(payment.amountCents)) {
       throw new AppError('OVER_ALLOCATED', 'New allocations exceed remaining payment amount', 400)
     }
 
@@ -836,12 +848,13 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
   for (const s of suppliers) {
     // Company suppliers: the opening as posted to that company's ledger.
     // No company: nothing is ever posted, the column is the only figure.
-    const openingCents = s.tenantId ? (posted.get(s.id)?.get(s.tenantId) ?? 0) : s.openingBalanceCents
+    const opening = toCents(s.openingBalanceCents)
+    const openingCents = s.tenantId ? (posted.get(s.id)?.get(s.tenantId) ?? 0) : opening
     const row: AgingRow = {
       supplierId: s.id, supplierName: s.name, tenantId: s.tenantId,
       bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0,
       creditsCents: 0, total: 0, openingCents,
-      openingUnpostedCents: s.tenantId ? s.openingBalanceCents - openingCents : 0,
+      openingUnpostedCents: s.tenantId ? opening - openingCents : 0,
     }
     for (const b of s.bills) {
       const due = billDueCents(b)
@@ -850,7 +863,7 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
       row[agingBucket(Math.floor((asOf.getTime() - b.dueDate.getTime()) / 86_400_000))] += due
       row.bills += 1
     }
-    for (const p of s.payments) row.creditsCents += Math.max(0, p.amountCents - p.appliedCents)
+    for (const p of s.payments) row.creditsCents += Math.max(0, toCents(p.amountCents) - toCents(p.appliedCents))
     row.total = row.current + row['1_30'] + row['31_60'] + row['61_90'] + row['90_plus'] + row.openingCents - row.creditsCents
     if (row.bills > 0 || row.creditsCents > 0 || row.openingCents !== 0 || row.openingUnpostedCents !== 0) rows.push(row)
   }

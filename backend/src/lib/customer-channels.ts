@@ -98,25 +98,28 @@ export function parseCustomerConversationId(toAddress: string): string | null {
 
 // ─── Inbound resolution ───────────────────────────────────────────────────────
 
+// Raw SQL selects the id only and the row is re-read through the model API:
+// customers.totalSpentCents is BIGINT, and raw SQL is not converted by the
+// money boundary (lib/money.ts) — a SELECT * row would carry a real bigint.
 export async function findCustomerByEmail(emailAddress: string): Promise<Customer | null> {
   const normalized = emailAddress.trim().toLowerCase()
   if (!normalized) return null
-  const rows = await prisma.$queryRaw<Customer[]>`
-    SELECT * FROM customers WHERE LOWER(email) = ${normalized} AND "deletedAt" IS NULL LIMIT 1
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM customers WHERE LOWER(email) = ${normalized} AND "deletedAt" IS NULL LIMIT 1
   `
-  return rows[0] ?? null
+  return rows[0] ? prisma.customer.findUnique({ where: { id: rows[0].id } }) : null
 }
 
 export async function findCustomerByPhone(fromDigits: string): Promise<Customer | null> {
   const digits = fromDigits.replace(/[^0-9]/g, '')
   if (!digits) return null
-  const rows = await prisma.$queryRaw<Customer[]>`
-    SELECT * FROM customers
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM customers
     WHERE "deletedAt" IS NULL
       AND regexp_replace(COALESCE("phone", ''), '[^0-9]', '', 'g') = ${digits}
     LIMIT 1
   `
-  return rows[0] ?? null
+  return rows[0] ? prisma.customer.findUnique({ where: { id: rows[0].id } }) : null
 }
 
 /**
