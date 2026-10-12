@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { ReachOutModal } from '../../components/crm/ReachOutModal'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useBrandFilter } from '../../store/brandFilter'
+import { orderRef } from '../../lib/orderRef'
 
 interface Review {
   id: string
@@ -215,7 +216,7 @@ export default function ReviewsPage() {
               <div className="flex gap-3 mt-1 items-center">
                 <span className="text-xs text-s-muted capitalize">{r.source}</span>
                 {r.order && (
-                  <span className="text-xs text-s-muted">Order {r.order.id.slice(0, 8)}…</span>
+                  <span className="text-xs text-s-muted">Order {orderRef(r.order.id)}</span>
                 )}
                 {/* Reach-out CTA: low-rating reviews are the most valuable to follow up on,
                     so the button only appears for ≤3-star reviews with a reachable customer.

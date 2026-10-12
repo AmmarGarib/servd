@@ -7,6 +7,7 @@ import { ReachOutModal } from '../../components/crm/ReachOutModal'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
+import { orderRef } from '../../lib/orderRef'
 
 interface Complaint {
   id: string
@@ -347,10 +348,10 @@ export default function ComplaintsPage() {
                   ) : null}
                   {c.orderId && (
                     canOpenOrders ? (
-                      <Link href={`/orders?search=${c.orderId.slice(0, 8)}`} className="text-xs text-primary-ink hover:text-primary-ink/80 hover:underline transition-colors font-mono">
-                        #{c.orderId.slice(-6).toUpperCase()} →
+                      <Link href={`/orders/${c.orderId}`} className="text-xs text-primary-ink hover:text-primary-ink/80 hover:underline transition-colors font-mono">
+                        #{orderRef(c.orderId)} →
                       </Link>
-                    ) : <span className="text-xs text-s-muted font-mono">#{c.orderId.slice(-6).toUpperCase()}</span>
+                    ) : <span className="text-xs text-s-muted font-mono">#{orderRef(c.orderId)}</span>
                   )}
                   <span className="text-xs text-s-muted">{new Date(c.createdAt).toLocaleDateString()}</span>
                 </div>

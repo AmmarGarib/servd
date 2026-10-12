@@ -13,14 +13,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
+import { useManagerRoles } from '../../../lib/roles'
 
-// The API's MANAGERS (backend modules/auth/middleware.ts). Forgiving a strike
+// The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts). Forgiving a strike
 // and lifting a ban stay with managers; the marketing roles (who hold the crm
 // module) read this list but do not get those buttons.
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 function useIsManager(): boolean {
   const { data: me } = usePermissions()
-  return MANAGER_ROLES.has(me?.role ?? '')
+  return useManagerRoles().has(me?.role ?? '')
 }
 
 interface Customer {

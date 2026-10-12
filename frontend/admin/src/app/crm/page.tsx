@@ -6,6 +6,8 @@ import { api } from '../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { fmtPkrWhole } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
+import { orderRef } from '../../lib/orderRef'
+import { useManagerRoles } from '../../lib/roles'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -15,11 +17,10 @@ import { usePermissions } from '../../hooks/useCan'
 // owner decision 15: it applies at that company's brands only) and unblocking
 // lifts it; the old isBlacklisted toggle is gone.
 
-// The API's MANAGERS (backend modules/auth/middleware.ts). The marketing roles
+// The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts). The marketing roles
 // (marketing, brand_manager) read and work this page, but blocking a customer
 // (POST /crm/bans, /crm/bans/:id/lift) and crediting a wallet (POST
 // /wallet/topup) stay with managers — so those buttons show to managers only.
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 
 interface ActiveBan { id: string; reason: string; bannedAt: string }
 
@@ -39,7 +40,8 @@ interface Customer {
 export default function CRMPage() {
   const qc = useQueryClient()
   const { data: me } = usePermissions()
-  const isManager = MANAGER_ROLES.has(me?.role ?? '')
+  const managerRoles = useManagerRoles()
+  const isManager = managerRoles.has(me?.role ?? '')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [banModal, setBanModal] = useState<{ id: string; name: string; ban: ActiveBan | null } | null>(null)
@@ -382,7 +384,7 @@ export default function CRMPage() {
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <div className="flex items-center gap-2">
-                                <p className="font-mono text-xs text-s-muted">#{order.id.slice(-6).toUpperCase()}</p>
+                                <p className="font-mono text-xs text-s-muted">#{orderRef(order.id)}</p>
                                 <span className="text-xs text-s-muted">{order.concept.name}</span>
                               </div>
                               <p className="text-xs text-s-muted mt-1">

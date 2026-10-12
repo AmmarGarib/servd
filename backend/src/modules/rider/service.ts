@@ -18,6 +18,7 @@ import {
   setRiderStatus, takeRiderOff, withdrawOffer,
 } from '../dispatch/service.js'
 import { riderPublic, type RiderPublic, type SignedInRider } from '../riderAuth/service.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 type Rider = Pick<SignedInRider, 'id' | 'tenantId'>
 type Pos = { lat?: number | null; lng?: number | null }
@@ -96,7 +97,7 @@ export function toJob(o: JobRow): Job {
   return {
     orderId: o.id,
     // The reference the customer sees in their messages (lib/notify.ts).
-    orderNumber: o.id.slice(0, 8).toUpperCase(),
+    orderNumber: orderRefOf(o.id),
     status: o.status,
     stage: jobStage(o),
     brand: { name: brandName, slug: o.concept.slug },
@@ -344,8 +345,8 @@ export async function deliverJob(rider: Rider, orderId: string, input: Pos & { o
         kind: 'lost_package',
         severity: 'high',
         title: attemptsLeft === 0
-          ? `Hand-over locked on order ${row.id.slice(0, 8)} after ${attempts} wrong codes`
-          : `OTP failed ${attempts} times on order ${row.id.slice(0, 8)}`,
+          ? `Hand-over locked on order ${orderRefOf(row.id)} after ${attempts} wrong codes`
+          : `OTP failed ${attempts} times on order ${orderRefOf(row.id)}`,
         description: attemptsLeft === 0
           ? 'The rider entered the wrong hand-over code too many times and the order is locked. Confirm with the customer, then mark it delivered from Dispatch.'
           : 'The rider has entered the wrong hand-over code three times. Either the customer is disputing the delivery or the rider is at the wrong door. Check before it is marked delivered.',
@@ -380,7 +381,7 @@ export async function sendHandoverCode(orderId: string): Promise<void> {
     })
     const phone = o?.customer?.phone ? normalisePhone(o.customer.phone) : ''
     if (!o?.deliveryOtp || phone.length < 11) return
-    const ref = o.id.slice(0, 8).toUpperCase()
+    const ref = orderRefOf(o.id)
     const brand = formatBrandName(o.concept.name)
     await sendText(
       phone,
@@ -388,6 +389,6 @@ export async function sendHandoverCode(orderId: string): Promise<void> {
       + 'Only share it once you have your order in hand.',
     )
   } catch (err) {
-    console.warn(`[rider] hand-over code WhatsApp failed for order ${orderId.slice(0, 8)}: ${(err as Error).message}`)
+    console.warn(`[rider] hand-over code WhatsApp failed for order ${orderRefOf(orderId)}: ${(err as Error).message}`)
   }
 }

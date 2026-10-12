@@ -15,6 +15,7 @@ import { api } from '../../lib/api'
 import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
 import { fmtPkrWhole } from '../../lib/money'
+import { useManagerRoles } from '../../lib/roles'
 
 interface Concept { id: string; name: string }
 interface StaffMember { id: string; name: string; employeeCode: string; designation: string | null; canHaveExceptions: boolean }
@@ -33,7 +34,6 @@ interface WeekView { weekStart: string; weekEnd: string; staff: StaffMember[]; c
 interface LaborCost { totalCents: number; totalHours: number; basis: string; byEmployee: Array<{ employeeId: string; name: string; hours: number; totalCents: number; rateUnset: boolean }> }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const PLANNERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'hr']
 const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', leave: 'approved', none: '' }
 const SOURCE_TONE: Record<Cell['source'], string> = {
   roster: 'rgb(135 197 64 / 0.12)', swap: 'rgb(61 31 59 / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', none: 'transparent',
@@ -50,7 +50,8 @@ const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(
 export default function SchedulingPage() {
   const qc = useQueryClient()
   const role = useAuthStore((s) => s.user?.role ?? '')
-  const planner = PLANNERS.includes(role)
+  // Who plans the rota: the API's MANAGERS (lib/roles.ts) + hr.
+  const planner = useManagerRoles('hr').has(role)
   const [weekStart, setWeekStart] = useState(ymd(mondayOf(new Date())))
   const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [editing, setEditing] = useState<{ member: StaffMember; cell: Cell } | null>(null)

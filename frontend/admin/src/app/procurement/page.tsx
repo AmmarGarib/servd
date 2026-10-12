@@ -7,10 +7,10 @@ import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { ApAging } from '../../components/finance/ApAging'
 import { fmtPkrWhole } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
+import { useManagerRoles } from '../../lib/roles'
 
-// The API's MANAGERS (backend modules/auth/middleware.ts): only they take a
-// delivery in (owner decision 27, R2-UI-02). The buyer sees the dock read-only.
-const RECEIVING_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager']
+// Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
+// the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
 
 // Whoever raised a PO can't receive it; the CEO (role admin) is exempt — the
 // server's assertNotSelfApproval rule (lib/separation-of-duties.ts). A PO with
@@ -404,8 +404,8 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 }
 
 function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: string, body?: unknown) => void }) {
-  const isManager = useAuthStore((s) => s.isRole(...RECEIVING_ROLES))
   const me = useAuthStore((s) => s.user)
+  const isManager = useManagerRoles().has(me?.role ?? '')
   const ownPo = raisedByMe(po, me)
   const canReceive = isManager && !ownPo
   const actions: { label: string; action: string; cls: string; title?: string }[] = []

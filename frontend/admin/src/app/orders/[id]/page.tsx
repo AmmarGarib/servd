@@ -10,7 +10,9 @@ import { formatDistanceToNowStrict, format } from 'date-fns'
 import Link from 'next/link'
 import { fmtPkr, fmtPkrWhole } from '../../../lib/money'
 import {
-  fetchReceiptHtml, isPreBillRequired, preBillErrorMessage, printHtml, printPreBill, tillErrorMessage,
+  cancelledCardRefundOffer, fetchReceiptHtml, fetchTerminalConfig, isPreBillRequired, preBillErrorMessage, printHtml, printPreBill,
+  terminalChargesFor, tillErrorMessage,
+  type TerminalChargeView,
 } from '../../../components/pos/tillApi'
 import { useIsManager } from '../../../components/pos/managerRole'
 import { VoidLineDialog, type VoidLineResult } from '../../../components/pos/VoidLineDialog'
@@ -23,10 +25,12 @@ import {
   type RefundChoice,
 } from '../../refunds/RefundOptions'
 import {
-  approvalErrorMessage, cancelOrderWithApproval, refundThroughEngine, terminalRefundFinal, terminalRefundText, uploadEvidencePhoto,
+  approvalErrorMessage, cancelOrderWithApproval, keepFollowingTerminalRefund, refundOnCardMachine, refundThroughEngine,
+  terminalRefundFinal, terminalRefundText, uploadEvidencePhoto,
   type RefundResult, type RefundTender,
 } from '../../refunds/refundEngine'
 import { ApiError } from '../../../lib/api'
+import { orderRef } from '../../../lib/orderRef'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -172,6 +176,13 @@ const STATUS_CTA: Record<string, string> = {
 // server re-checks it under the order lock (NOTHING_TO_REFUND /
 // REFUND_EXCEEDS_DUE). Money an online gateway took is not in it — it never
 // reached a drawer.
+//
+// A card the CARD MACHINE took can go back to the card on the machine (POST
+// /pos/terminal/refunds, managers): the server checks it against the ticket's
+// refund due before the machine moves money, then books it as the hand-back —
+// never a sale refund, never a fiscal document. cancelledCardRefundOffer
+// (tillApi) says whether to offer it and its most. A card taken by a manual
+// slip is refunded by hand and only recorded here ("Card — record only").
 
 const HAND_BACK_TENDERS: readonly RefundTender[] = ['cash', 'card', 'keenu_qr']
 const HAND_BACK_LABEL: Record<RefundTender, string> = { cash: 'Cash', card: 'Card', keenu_qr: 'Keenu QR' }
@@ -212,6 +223,13 @@ function handBackErrorMessage(e: unknown): string {
       case 'SHIFT_CLOSED': return 'That drawer has been closed — pick another open drawer for the cash to leave from.'
       case 'SHIFT_NOT_IN_COMPANY': return 'That drawer is not an open drawer of this order’s company — pick another one.'
       case 'NOT_YOUR_SHIFT': return 'That is another cashier’s drawer — only a manager can pay cash out of it. Pick your own drawer.'
+      // The card-machine refund's one answer for "more than is left" (its message is in paisa — never shown).
+      case 'AMOUNT_EXCEEDS_REFUNDABLE': {
+        const left = (e.details as { refundableCents?: unknown } | null | undefined)?.refundableCents
+        return typeof left === 'number'
+          ? `Only ${fmtPkr(Math.max(0, left))} of this card payment can still go back to the card — some of it is already refunded or on its way back. Refund that much, or reload the order.`
+          : 'That is more than can still go back to the card on this ticket — some of it may already be refunded or on its way back to the card. Reload the order and refund what it shows.'
+      }
     }
   }
   return refundErrorMessage(e)
@@ -222,6 +240,7 @@ function MoneyTakenModal({
   onClose,
   onDone,
 }: { order: OrderDetail; onClose: () => void; onDone: (message: string) => void }) {
+  const qc = useQueryClient()
   const taken = moneyTakenOf(order)
   const policy = useRefundPolicy()
   const needsPhoto = !!policy.data?.requirePhotoEvidence
@@ -229,8 +248,50 @@ function MoneyTakenModal({
     taken.byTender.length === 1 ? taken.byTender[0]!.method
       : taken.byTender.find((t) => t.method === taken.latest)?.method ?? taken.byTender[0]?.method ?? '')
   const leftOnMethod = taken.byTender.find((t) => t.method === method)?.leftCents ?? 0
-  const maxCents = Math.min(taken.dueCents, leftOnMethod)
-  const [amount, setAmount] = useState(() => (maxCents / 100).toFixed(2))
+
+  // ── Card: back to the card on the card machine, or record a refund done by hand.
+  // Only a card the machine took (gateway card_terminal) can go back through
+  // it, and only while a card machine is connected — at the till's drawer or
+  // the drawer that took the card. The offer is recomputed from the order as
+  // it is now, so a hand-back booked meanwhile lowers it at once.
+  const tillShiftId = usePosStore.getState().shiftId
+  const machineReceipt = order.payments.find((p) => isDrawerReceipt(p) && p.method === 'card' && p.gateway === 'card_terminal' && p.status === 'paid')
+  const terminalShifts = [...new Set([tillShiftId, machineReceipt?.shiftId].filter((s): s is string => !!s))]
+  const machine = useQuery({
+    queryKey: ['order-card-machine', order.id, ...terminalShifts],
+    queryFn: async () => {
+      const [charges, configs] = await Promise.all([
+        terminalChargesFor(order.id),
+        Promise.all(terminalShifts.map(async (shiftId) => ({ shiftId, config: await fetchTerminalConfig(shiftId).catch(() => null) }))),
+      ])
+      // The first drawer whose outlet has a usable card machine (the refund's fallback machine).
+      const on = configs.find((c) => c.config?.enabled)
+      return { charges, shiftId: on?.shiftId ?? null }
+    },
+    enabled: method === 'card' && !!machineReceipt && terminalShifts.length > 0,
+    retry: false,
+  })
+  const offer = method === 'card' && machine.data
+    ? cancelledCardRefundOffer({ status: order.status, payments: order.payments, charges: machine.data.charges, terminalEnabled: machine.data.shiftId !== null })
+    : null
+  // null = not picked yet: the card machine when it is offered, else record only.
+  const [cardVia, setCardVia] = useState<'machine' | 'record' | null>(null)
+  const viaMachine = method === 'card' && !!offer && cardVia !== 'record'
+  // The machine refund being followed: its state as the machine reports it, and
+  // one still not answered after ~2 minutes (Refund then keeps following the
+  // SAME refund — never a second one).
+  const [progress, setProgress] = useState<TerminalChargeView | null>(null)
+  const [following, setFollowing] = useState<{ charge: TerminalChargeView; paymentId: string } | null>(null)
+  // The machine gave the money back but servd could not book it: no further
+  // refund from this dialog (a manager has been alerted to book it).
+  const [machineStuck, setMachineStuck] = useState(false)
+
+  const maxCents = viaMachine && offer
+    ? Math.min(offer.maxCents, taken.dueCents, leftOnMethod)
+    : Math.min(taken.dueCents, leftOnMethod)
+  // null = untouched: the most allowed for the way picked (follows it when the way changes).
+  const [amountInput, setAmountInput] = useState<string | null>(null)
+  const amount = amountInput ?? (maxCents / 100).toFixed(2)
   const [reason, setReason] = useState('')
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -286,6 +347,52 @@ function MoneyTakenModal({
     },
   })
 
+  // Back to the card on the card machine (managers; the server checks the
+  // refund due, the policy and the cap BEFORE the machine moves money, and
+  // books it as the hand-back once the machine approves).
+  const cardRefund = useMutation({
+    mutationFn: async (): Promise<{ charge: TerminalChargeView; paymentId: string }> => {
+      if (following) {
+        return { charge: await keepFollowingTerminalRefund(following.charge, following.paymentId, setProgress), paymentId: following.paymentId }
+      }
+      if (!offer) throw new Error('No card machine is connected for this card payment — refund it by hand and record it as a card refund.')
+      const paid = order.payments.find((p) => p.id === offer.paymentId)
+      const charge = await refundOnCardMachine(order.id, {
+        payment: { id: offer.paymentId, method: 'card', amountCents: paid?.amountCents ?? amountCents, status: 'paid', gateway: 'card_terminal' },
+        amountCents,
+        reason: reason.trim(),
+        ...(photoUrl && { photoUrl }),
+        shiftId: machine.data?.shiftId ?? null,
+      }, setProgress)
+      return { charge, paymentId: offer.paymentId }
+    },
+    onSuccess: ({ charge, paymentId }) => {
+      setProgress(charge)
+      if (!terminalRefundFinal(charge)) { setFollowing({ charge, paymentId }); return }
+      setFollowing(null)
+      if (charge.status === 'needs_attention') setMachineStuck(true)
+      if (charge.status !== 'recorded') return // declined / not completed / needs attention: the progress line says why
+      const left = Math.max(0, taken.dueCents - charge.amountCents)
+      onDone(`Refunded ${fmtPkr(charge.amountCents)} to the card on ${charge.terminalLabel} and booked — nothing goes to the fiscal POS, the ticket was never a sale. ${left > 0 ? `${fmtPkr(left)} is still owed back on this ticket.` : 'Nothing more is owed back on this ticket.'}`)
+      onClose()
+    },
+    onSettled: () => {
+      // Whatever the machine answered, the order (its hand-backs) and its card refunds have moved.
+      void qc.invalidateQueries({ queryKey: ['order-detail', order.id] })
+      void qc.invalidateQueries({ queryKey: ['order-card-machine', order.id] })
+    },
+  })
+  const machineState = progress ? terminalRefundText(progress) : null
+
+  /** A new way to hand it back: the amount follows the new most; an old machine answer is cleared. */
+  function changeWay(next: { method?: RefundTender; cardVia?: 'machine' | 'record' }) {
+    if (next.method) setMethod(next.method)
+    if (next.cardVia) setCardVia(next.cardVia)
+    setAmountInput(null)
+    if (!following && !machineStuck) { setProgress(null); cardRefund.reset() }
+    handBack.reset()
+  }
+
   return (
     <div className="fixed inset-0 bg-secondary/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Refund money taken">
       <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
@@ -300,14 +407,9 @@ function MoneyTakenModal({
         {taken.byTender.length > 1 && (
           <div>
             <label htmlFor="due-method" className="text-xs text-s-muted block mb-1">Hand it back by</label>
-            <select id="due-method" value={method}
-              onChange={(e) => {
-                const m = e.target.value as RefundTender
-                setMethod(m)
-                const cap = Math.min(taken.dueCents, taken.byTender.find((t) => t.method === m)?.leftCents ?? 0)
-                setAmount((cap / 100).toFixed(2))
-              }}
-              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none">
+            <select id="due-method" value={method} disabled={!!following || cardRefund.isPending}
+              onChange={(e) => changeWay({ method: e.target.value as RefundTender })}
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none disabled:opacity-60">
               {taken.byTender.map((t) => (
                 <option key={t.method} value={t.method}>{HAND_BACK_LABEL[t.method]} — {fmtPkr(Math.min(t.leftCents, taken.dueCents))} taken</option>
               ))}
@@ -335,18 +437,43 @@ function MoneyTakenModal({
             </p>
           </div>
         )}
-        {method === 'card' && (
+        {method === 'card' && offer && (
+          <fieldset className="space-y-1.5" disabled={!!following || cardRefund.isPending}>
+            <legend className="text-xs text-s-muted mb-1">How the card money goes back</legend>
+            <label className="flex items-start gap-2 text-sm text-s-text">
+              <input type="radio" name="due-card-via" className="mt-1" checked={viaMachine}
+                onChange={() => changeWay({ cardVia: 'machine' })} />
+              <span>Refund to card (card machine) <span className="text-s-muted">— up to {fmtPkr(Math.min(offer.maxCents, taken.dueCents))}</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm text-s-text">
+              <input type="radio" name="due-card-via" className="mt-1" checked={!viaMachine}
+                onChange={() => changeWay({ cardVia: 'record' })} />
+              <span>Card — record only <span className="text-s-muted">(refunded by hand)</span></span>
+            </label>
+          </fieldset>
+        )}
+        {method === 'card' && viaMachine && (
           <p className="text-xs text-s-muted">
-            Refund the card on the card machine (or the bank&rsquo;s portal) by hand first — servd records the refund here.
+            The guest taps or inserts the card on the card machine; servd books the refund once the machine approves it.
+          </p>
+        )}
+        {method === 'card' && !viaMachine && !following && !machineStuck && (
+          <p className="text-xs text-s-muted">
+            {offer
+              ? 'For a card taken with a manual slip (or refunded on the machine outside servd): refund it on the card machine or the bank’s portal by hand first — servd only records the refund here.'
+              : machine.isFetching
+                ? 'Checking for a card machine…'
+                : 'Refund the card on the card machine (or the bank’s portal) by hand first — servd records the refund here.'}
           </p>
         )}
         {method === 'keenu_qr' && <p className="text-xs text-s-muted">Send the money back through Keenu first — servd records the refund here.</p>}
 
         <div>
           <label htmlFor="due-amount" className="text-xs text-s-muted block mb-1">Amount (PKR) — up to {fmtPkr(maxCents)}</label>
-          <input id="due-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
-            className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text font-mono focus:border-primary focus:outline-none" />
-          {amount.trim() !== '' && !amountOk && (
+          <input id="due-amount" inputMode="decimal" value={amount} onChange={(e) => setAmountInput(e.target.value)}
+            disabled={!!following || cardRefund.isPending}
+            className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text font-mono focus:border-primary focus:outline-none disabled:opacity-60" />
+          {!following && amount.trim() !== '' && !amountOk && (
             <p className="text-xs text-s-amber mt-1">Enter an amount between PKR 0.01 and {fmtPkr(maxCents)}.</p>
           )}
         </div>
@@ -364,19 +491,29 @@ function MoneyTakenModal({
 
         <div>
           <label htmlFor="due-reason" className="text-xs text-s-muted block mb-1">Reason (required)</label>
-          <textarea id="due-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+          <textarea id="due-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={200}
+            disabled={!!following || cardRefund.isPending}
             placeholder="e.g. Order cancelled — guest left before it was served"
-            className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none resize-none" />
+            className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none resize-none disabled:opacity-60" />
         </div>
 
+        {machineState && (
+          <p className={`text-sm ${machineState.ok ? 'text-s-muted' : 'text-s-red'}`} role="status">{machineState.text}</p>
+        )}
         {handBack.isError && <p className="text-sm text-s-red" role="alert">{handBackErrorMessage(handBack.error)}</p>}
+        {cardRefund.isError && <p className="text-sm text-s-red" role="alert">{handBackErrorMessage(cardRefund.error)}</p>}
 
         <div className="flex gap-3">
           <button
-            onClick={() => handBack.mutate()}
-            disabled={handBack.isPending || !method || !amountOk || reason.trim().length < 3 || uploading || (needsPhoto && !photoUrl)}
+            onClick={() => (viaMachine || following ? cardRefund.mutate() : handBack.mutate())}
+            disabled={handBack.isPending || cardRefund.isPending || (!following && (
+              !method || !amountOk || reason.trim().length < 3 || uploading || (needsPhoto && !photoUrl) || machineStuck
+            ))}
             className="flex-1 rounded-xl bg-s-red text-bone text-sm font-bold py-2 hover:opacity-90 disabled:opacity-40">
-            {handBack.isPending ? 'Refunding…' : `Refund ${amountOk ? fmtPkr(amountCents) : ''}`.trim()}
+            {cardRefund.isPending ? 'On the card machine…'
+              : following ? 'Keep following the refund'
+              : handBack.isPending ? 'Refunding…'
+              : `Refund ${amountOk ? fmtPkr(amountCents) : ''}${viaMachine ? ' to card' : ''}`.replace(/\s+/g, ' ').trim()}
           </button>
           <button onClick={onClose} className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-text">
             Close
@@ -677,7 +814,7 @@ export default function OrderDetailPage() {
             </Link>
             <div className="flex items-center gap-3 mt-0.5">
               <h1 className="text-xl font-bold text-s-text font-mono">
-                #{order.id.slice(0, 8).toUpperCase()}
+                #{orderRef(order.id)}
               </h1>
               <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${STATUS_COLORS[order.status] ?? ''}`}>
                 {order.status}

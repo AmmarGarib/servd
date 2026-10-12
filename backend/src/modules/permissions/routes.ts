@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ADMIN_ONLY, ALL_STAFF, CASHIERS } from '../auth/middleware.js'
+import { requireAuth, ADMIN_ONLY, ALL_STAFF, CASHIERS, MANAGERS } from '../auth/middleware.js'
 import {
   DEFAULT_MODULE_ACCESS,
   MODULE_IDS,
@@ -93,6 +93,11 @@ export async function permissionRoutes(fastify: FastifyInstance) {
         // Who may print a bill (the /pos receipt routes' guard) — the admin's
         // Reprint button reads this instead of keeping its own list.
         cashiers: CASHIERS,
+        // The management tier (requireAuth(...MANAGERS) on manager-only
+        // routes; the base of FIRE_ALL_ROLES, HR_TEAM, …). Distinct from
+        // overrideApprovers (no legacy 'manager'). The admin's lib/roles.ts
+        // reads it instead of keeping its own copies.
+        managers: MANAGERS,
       },
     }
   })

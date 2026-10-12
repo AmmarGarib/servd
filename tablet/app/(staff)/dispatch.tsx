@@ -27,6 +27,7 @@ import { api } from '../../src/lib/api'
 import { useSessionStore } from '../../src/store/session'
 import { useSocketEvent } from '../../src/lib/socket'
 import { theme } from '../../src/lib/theme'
+import { orderRef } from '../../src/lib/orderRef'
 import { pkr, elapsed } from '../../src/lib/format'
 import { Panel, Pill } from '../../src/components/Panel'
 
@@ -263,7 +264,7 @@ function OrderCard({ order, riders, onAssign, onDelivered, deliverNote, deliverL
       borderWidth: 1, borderColor: theme.border, padding: 12,
     }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-        <Text style={{ color: theme.text, fontWeight: '900', fontSize: 18 }}>#{order.id.slice(-6).toUpperCase()}</Text>
+        <Text style={{ color: theme.text, fontWeight: '900', fontSize: 18 }}>#{orderRef(order.id)}</Text>
         <Text style={{ color: theme.textDim, fontSize: 12 }}>{elapsed(order.placedAt)}</Text>
       </View>
       <Text style={{ color: theme.text, fontWeight: '700', fontSize: 14 }}>{order.customerName ?? 'Guest'} · {order.concept.name}</Text>

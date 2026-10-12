@@ -28,6 +28,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '../../../../lib/api'
 import { useAuthStore } from '../../../../store/auth'
+import { FIRE_ALL_EXTRA_ROLES, useManagerRoles } from '../../../../lib/roles'
 
 interface CourseItem {
   id: string
@@ -36,6 +37,8 @@ interface CourseItem {
   status: string
   firedAt: string | null
   completedAt: string | null
+  /** A paced line's fire time (an older API leaves it out). */
+  scheduledFireAt?: string | null
 }
 
 interface CourseGroup {
@@ -54,9 +57,6 @@ interface FireCourseResponse {
   paced?: PacedLine[]
   unroutedItems?: Array<{ id: string; name: string }>
 }
-
-/** Who may override course pacing ("Fire all now") — the server's FIRE_ALL_ROLES (MANAGERS + expediter). */
-const FIRE_ALL_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'expediter']
 
 /** How long before a pre-order's time it reaches the kitchen — the server's PRE_ORDER_PREP_MS. */
 const PRE_ORDER_PREP_MS = 60 * 60_000
@@ -97,17 +97,39 @@ function waiting(it: CourseItem): boolean {
   return it.status === 'pending' && !it.firedAt
 }
 
+/**
+ * The course's paced lines — waiting lines with a fire time, earliest first.
+ * Read from the server (GET /orders/:id/courses → scheduledFireAt) once part
+ * of the course has fired, so a reload keeps "fires at HH:MM"; the last fire
+ * response (`fromFire`) fills in for an older API without the field.
+ */
+function pacedLinesOf(g: CourseGroup, fromFire: PacedLine[]): PacedLine[] {
+  const waitingLines = g.items.filter(waiting)
+  const waitingIds = new Set(waitingLines.map((i) => i.id))
+  const byId = new Map<string, PacedLine>()
+  if (g.fired) {
+    for (const it of waitingLines) {
+      if (it.scheduledFireAt) byId.set(it.id, { id: it.id, name: it.name, scheduledFireAt: it.scheduledFireAt })
+    }
+  }
+  for (const l of fromFire) if (waitingIds.has(l.id) && !byId.has(l.id)) byId.set(l.id, l)
+  return [...byId.values()].sort((a, b) => a.scheduledFireAt.localeCompare(b.scheduledFireAt))
+}
+
 export default function CoursePage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
   const role = useAuthStore((s) => s.user?.role ?? '')
-  const canFireAll = FIRE_ALL_ROLES.includes(role)
+  // Who may override course pacing ("Fire all now") — the server's
+  // FIRE_ALL_ROLES: the managers list (served by the API) + the expediter.
+  const canFireAll = useManagerRoles(...FIRE_ALL_EXTRA_ROLES).has(role)
 
   const [error, setError] = useState<string | null>(null)
   // Two-step "send this pre-order to the kitchen early" (managers / expediter).
   const [confirmEarly, setConfirmEarly] = useState(false)
-  // Paced lines the last fire returned, per course (the courses summary does
-  // not carry fire times). Lines drop off as the pacing worker fires them.
+  // Paced lines the last fire returned, per course — only a bridge until the
+  // courses summary refetches: it carries each line's scheduledFireAt, so the
+  // fire times survive a reload. Lines drop off as the pacing worker fires them.
   const [pacedByCourse, setPacedByCourse] = useState<Record<number, PacedLine[]>>({})
 
   const { data, isLoading } = useQuery({
@@ -220,8 +242,11 @@ export default function CoursePage() {
         {data?.map((g) => {
           const waitingLines = g.items.filter(waiting)
           const waitingIds = new Set(waitingLines.map((i) => i.id))
-          // Paced lines still waiting (the worker fires them at their time).
-          const paced = (pacedByCourse[g.course] ?? []).filter((l) => waitingIds.has(l.id))
+          // Paced lines still waiting (the worker fires them at their time):
+          // from the server's scheduledFireAt once the course has started (an
+          // unfired course's schedule is re-laid when it fires), else from the
+          // last fire response.
+          const paced = pacedLinesOf(g, pacedByCourse[g.course] ?? [])
           // Some of the course is in the kitchen but dishes are still waiting.
           const partlyFired = g.fired && waitingLines.length > 0
           const fullyFired = g.fired && waitingLines.length === 0

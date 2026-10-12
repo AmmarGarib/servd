@@ -17,6 +17,14 @@ export interface TicketItem {
   modifiers?: string[]
   station?: string | null
   status: TicketStatus
+  /**
+   * False for a line the kitchen has not fired yet (still pending, never
+   * fired: a NEW ticket's lines, a later course not fired, a paced dish
+   * waiting for its time). A tap on it must never mark it done — it would be
+   * recorded as served uncooked and its course could no longer be fired.
+   * Default true.
+   */
+  tappable?: boolean
 }
 
 export interface Ticket {
@@ -33,12 +41,19 @@ export interface Ticket {
 }
 
 export function OrderTicket({
-  ticket, onAdvance, onBump, onItemAdvance, compact = false,
+  ticket, onAdvance, onBump, onItemAdvance, onLockedItemTap, compact = false,
 }: {
   ticket: Ticket
   onAdvance: () => void
   onBump: () => void
+  /** Tap on a line that may be advanced (its `tappable` is not false). */
   onItemAdvance?: (itemId: string) => void
+  /**
+   * Tap on a line that may NOT be advanced (`tappable: false`) — only to say
+   * why (e.g. "not fired yet"); it never advances the line. Without it such a
+   * line is not pressable at all.
+   */
+  onLockedItemTap?: (itemId: string) => void
   compact?: boolean
 }) {
   const mins = minutesSince(ticket.placedAt) ?? 0
@@ -93,12 +108,21 @@ export function OrderTicket({
 
       {/* Items */}
       <View style={{ padding: 12, gap: 10, minHeight: 100 }}>
-        {ticket.items.map((it) => (
+        {ticket.items.map((it) => {
+          // Per line, never per ticket: a fired ticket can still carry a later
+          // course or a paced dish that nobody has cooked yet.
+          const locked = it.tappable === false
+          const tappable = !locked && !!onItemAdvance
+          const onPress = tappable
+            ? () => onItemAdvance?.(it.id)
+            : locked && onLockedItemTap ? () => onLockedItemTap(it.id) : undefined
+          return (
           <Pressable
             key={it.id}
-            onPress={() => onItemAdvance?.(it.id)}
+            disabled={!onPress}
+            onPress={onPress}
             style={({ pressed }) => ({
-              backgroundColor: pressed ? 'rgba(255,255,255,0.04)' : 'transparent',
+              backgroundColor: pressed && tappable ? 'rgba(255,255,255,0.04)' : 'transparent',
               opacity: it.status === 'ready' || it.status === 'served' ? 0.55 : 1,
             })}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
@@ -118,7 +142,8 @@ export function OrderTicket({
               {it.station && <Pill label={it.station} />}
             </View>
           </Pressable>
-        ))}
+          )
+        })}
       </View>
 
       {/* Actions */}

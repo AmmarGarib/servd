@@ -13,6 +13,7 @@ import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } 
 import { cogsForSoldLines } from '../../lib/recipeCost.js'
 import { postLoyaltyReversal } from './loyaltyPosting.js'
 import { restoreOrderWallet } from '../wallet/service.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 /** Gift Card Liability — credited when a card is sold (giftCards/routes.ts). */
 export const GIFT_CARD_LIABILITY = '2080'
@@ -278,7 +279,7 @@ export function giftCardSaleMemo(slug: string, orderId: string): string {
 
 function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsCents: number): JournalLineInput[] {
   const lines: JournalLineInput[] = []
-  const conceptMemo = `${order.concept.slug} #${order.id.slice(0, 8)}`
+  const conceptMemo = `${order.concept.slug} #${orderRefOf(order.id)}`
 
   // ── Debits: where the money / value moved TO ───────────────────────────
   if (sa.totalChargedCents > 0) {
@@ -387,7 +388,7 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
     tenantId,
     sourceType: 'order.complete',
     sourceId: order.id,
-    description: `Order ${order.id.slice(0, 8)} completed (${order.concept.slug} / ${order.source})`,
+    description: `Order ${orderRefOf(order.id)} completed (${order.concept.slug} / ${order.source})`,
     entryDate: order.completedAt ?? new Date(),
     postedBy: 'system',
     lines,
@@ -628,7 +629,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
   const order = asBooked(payment.order, giftCardAppliedOf(payment.order.giftCardRedemptions), booking)
 
   const amount = Math.abs(payment.amountCents)
-  const memo = `Refund on ${order.concept.slug} #${order.id.slice(0, 8)}`
+  const memo = `Refund on ${order.concept.slug} #${orderRefOf(order.id)}`
   const creditLine = { accountCode: refundCreditAccount(payment), type: 'credit' as const, amountCents: amount, memo, conceptId: order.conceptId }
 
   // LEDGER-R5: money taken on a cancelled / rejected ticket was never a sale.
@@ -644,7 +645,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
         tenantId,
         sourceType: 'order.refund',
         sourceId: payment.id,
-        description: `Money taken on cancelled order ${order.id.slice(0, 8)} handed back (${order.concept.slug}, ${payment.method}) — not a sale`,
+        description: `Money taken on cancelled order ${orderRefOf(order.id)} handed back (${order.concept.slug}, ${payment.method}) — not a sale`,
         entryDate: payment.processedAt ?? new Date(),
         postedBy: options.postedBy ?? 'system',
         lines: [
@@ -671,7 +672,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
     tenantId,
     sourceType: 'order.refund',
     sourceId: payment.id,
-    description: `Refund of PKR ${(amount / 100).toFixed(0)} on order ${order.id.slice(0, 8)} (${order.concept.slug} / ${order.source}, ${payment.method})`,
+    description: `Refund of PKR ${(amount / 100).toFixed(0)} on order ${orderRefOf(order.id)} (${order.concept.slug} / ${order.source}, ${payment.method})`,
     entryDate: payment.processedAt ?? new Date(),
     postedBy: options.postedBy ?? 'system',
     lines,
@@ -745,7 +746,7 @@ export async function postOrderRefund(
   if (!order) return [{ posted: false, entryId: null, reason: 'order_not_found' }]
   const results: PostOrderResult[] = []
   const tenantId = order.concept.tenantId
-  const id8 = order.id.slice(0, 8)
+  const id8 = orderRefOf(order.id)
   // Only a refunded order was sold — its sale is (or will be) on the books, so
   // the wallet and gift-card restores book their share of it back.
   const sold = opts.bookWalletRestore ?? order.status === 'refunded'

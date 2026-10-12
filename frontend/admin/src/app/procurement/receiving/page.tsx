@@ -19,10 +19,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
+import { useManagerRoles } from '../../../lib/roles'
 
-// The API's MANAGERS (backend modules/auth/middleware.ts) — the roles that may
-// take a delivery in (owner decision 27).
-const MANAGER_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager']
+// The API's MANAGERS take a delivery in (owner decision 27) — the list comes
+// from the server (lib/roles.ts useManagerRoles).
 
 // Whoever raised a PO can't receive it; the CEO (role admin) is exempt — the
 // server's assertNotSelfApproval rule (lib/separation-of-duties.ts), which
@@ -66,8 +66,8 @@ const nextKey = () => `l${++keySeq}`
 
 export default function ReceivingPage() {
   const qc = useQueryClient()
-  const canReceive = useAuthStore((s) => s.isRole(...MANAGER_ROLES))
   const me = useAuthStore((s) => s.user)
+  const canReceive = useManagerRoles().has(me?.role ?? '')
   const { data: pos = [], error: posError } = useQuery<OpenPo[]>({ queryKey: ['receiving', 'open-pos'], queryFn: () => api.get('/crosschecks/receiving/open-pos') })
   const { data: suppliers = [] } = useQuery<Supplier[]>({ queryKey: ['receiving', 'suppliers'], queryFn: () => api.get('/crosschecks/receiving/suppliers') })
   // Only the receiving form needs the item list (deliveries without a PO).

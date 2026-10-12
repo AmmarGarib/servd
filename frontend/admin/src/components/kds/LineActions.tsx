@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api, ApiError } from '../../lib/api'
+import { orderRef } from '../../lib/orderRef'
 
 /**
  * Hold / resume / remake / recall for a station's line tickets (BOH-04).
@@ -129,7 +130,7 @@ export function RecallStrip({ stationId, actions }: { stationId: string; actions
                   {it.itemName}
                 </p>
                 <p className="text-[10px] text-kds-subtext">
-                  {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{it.order.id.slice(-5).toUpperCase()}
+                  {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{orderRef(it.order.id)}
                   {it.completedAt && <> · {formatDistanceToNowStrict(new Date(it.completedAt))} ago</>}
                 </p>
               </div>

@@ -12,6 +12,7 @@ import {
   fetchReceiptHtml, isPreBillRequired, preBillErrorMessage, printHtml, printPreBill, tillErrorMessage,
 } from '../../components/pos/tillApi'
 import { useCanPrintBill } from '../../components/pos/useCanPrintBill'
+import { orderRef } from '../../lib/orderRef'
 
 // The full & final bill exists only once an order reached it (spec §17.1):
 // completed, or since refunded / cancelled / rejected (bannered so), or paid
@@ -311,7 +312,7 @@ export default function OrdersPage() {
                               expandedId === order.id ? 'border-primary' : 'border-s-border hover:border-primary/50'
                             }`}>
                             <div className="flex items-start justify-between gap-1">
-                              <p className="font-mono text-xs text-s-muted">#{order.id.slice(-5).toUpperCase()}</p>
+                              <p className="font-mono text-xs text-s-muted">#{orderRef(order.id)}</p>
                               <span className={`text-xs font-bold px-1.5 py-0.5 rounded uppercase ${SOURCE_COLORS[order.source] ?? ''}`}>
                                 {order.source}
                               </span>
@@ -411,7 +412,7 @@ export default function OrdersPage() {
                                     className="rounded border-s-border accent-primary cursor-pointer"
                                   />
                                 </td>
-                                <td className="px-4 py-3 font-mono text-xs text-s-muted">#{order.id.slice(-6).toUpperCase()}</td>
+                                <td className="px-4 py-3 font-mono text-xs text-s-muted">#{orderRef(order.id)}</td>
                                 <td className="px-4 py-3">
                                   <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${SOURCE_COLORS[order.source] ?? ''}`}>
                                     {order.source}

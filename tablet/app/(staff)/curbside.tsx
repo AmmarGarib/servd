@@ -14,6 +14,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { api } from '../../src/lib/api'
 import { useSocketEvent } from '../../src/lib/socket'
 import { theme } from '../../src/lib/theme'
+import { orderRef } from '../../src/lib/orderRef'
 import { elapsed, shortTime, pkr } from '../../src/lib/format'
 import { Panel, Pill } from '../../src/components/Panel'
 import { Button } from '../../src/components/Button'
@@ -47,7 +48,7 @@ interface CurbsideOrder {
 function toCard(r: CurbsideRow): CurbsideOrder {
   return {
     id: r.id,
-    number: r.id.slice(0, 6).toUpperCase(),
+    number: orderRef(r.id),
     customerName: r.customerName ?? 'Guest',
     carDescription: [r.curbsideVehicle, r.curbsidePlate].filter(Boolean).join(' · ') || null,
     parkingSpace: r.curbsideSpot,

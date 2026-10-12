@@ -1,6 +1,7 @@
 import { AppError } from './errors.js'
 import { sendEmail as sendMail, emailConfigured } from './mailer.js'
 import { formatBrandName } from './brandName.js'
+import { orderRefOf } from './orderRef.js'
 
 const isProd = process.env['NODE_ENV'] === 'production'
 
@@ -169,7 +170,7 @@ export async function sendOrderStatusUpdate(opts: {
 
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
   const trackUrl = `${baseUrl}/orders/${opts.orderId}`
-  const ref = opts.orderId.slice(0, 8).toUpperCase()
+  const ref = orderRefOf(opts.orderId)
 
   // Operator-defined template override — if one exists for this event, it wins.
   const { renderTemplate } = await import('./notification-templates.js')

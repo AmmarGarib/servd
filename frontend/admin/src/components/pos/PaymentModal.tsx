@@ -14,6 +14,7 @@ import {
   type FiscalView, type TerminalChargeView, type TillBrand, type TillOrder, type TillQuote,
 } from './tillApi'
 import { TerminalCharge } from './TerminalCharge'
+import { orderRef } from '../../lib/orderRef'
 
 /** What the done screen shows: change due, the sale's fiscal document, the card the machine took. */
 interface Done {
@@ -457,7 +458,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
 
   // ── Step 2: take payment for the order ────────────────────────────────────
   const live = order.items.filter((i) => i.status !== 'voided')
-  const title = order.table?.label ? `Table ${order.table.label}` : `Order ${order.id.slice(0, 8)}`
+  const title = order.table?.label ? `Table ${order.table.label}` : `Order ${orderRef(order.id)}`
   return (
     <Shell title={done ? 'Paid' : `${title} — ${shown ? fmtPkrWhole(due) : '…'}`} onClose={onClose}>
       {!done && (

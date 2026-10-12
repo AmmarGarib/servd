@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
+import { useManagerRoles } from '../../lib/roles'
 
 interface Reading { id: string; readingC: number; withinRange: boolean; correctiveAction: string | null; takenAt: string; unit?: { name: string } }
 interface Unit { id: string; name: string; kind: string; minC: number | null; maxC: number | null; lastReading: Reading | null; checkedToday: boolean }
@@ -17,17 +18,17 @@ interface Task { id: string; name: string; area: string | null; frequency: strin
 interface Summary { units: Unit[]; readings: Reading[]; outOfRangeToday: number; cleaning: Task[]; cleaningDue: number }
 
 // Setting up units and the cleaning schedule (POST /food-safety/units/presets,
-// /cleaning/presets) is managers only — mirror of the API's MANAGERS. The
+// /cleaning/presets) is managers only — the API's MANAGERS (lib/roles.ts). The
 // kitchen logs readings and marks cleaning done (KITCHEN_STAFF) but does not
 // get the set-up buttons the server would refuse.
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 
 /** Hidden while the role loads; if it fails to load the buttons show and the server decides. */
 function useCanSetUp(): boolean {
   const { data: me, isFetched } = usePermissions()
+  const managerRoles = useManagerRoles()
   if (!isFetched) return false
   if (!me) return true
-  return MANAGER_ROLES.has(me.role)
+  return managerRoles.has(me.role)
 }
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }

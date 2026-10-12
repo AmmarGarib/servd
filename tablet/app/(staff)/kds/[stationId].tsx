@@ -20,6 +20,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { api } from '../../../src/lib/api'
 import { useSocketEvent } from '../../../src/lib/socket'
 import { theme } from '../../../src/lib/theme'
+import { orderRef } from '../../../src/lib/orderRef'
 import { elapsed } from '../../../src/lib/format'
 import { Panel } from '../../../src/components/Panel'
 
@@ -67,13 +68,13 @@ function toItems(q: StationQueue | undefined): StationItem[] {
   return [
     ...q.steps.map((s): StationItem => ({
       key: `s:${s.stepId}`, stepId: s.stepId, itemId: s.itemId,
-      orderNumber: s.order.id.slice(0, 6).toUpperCase(), conceptName: s.order.concept.name,
+      orderNumber: orderRef(s.order.id), conceptName: s.order.concept.name,
       menuItemName: s.itemName, qty: s.qty, instruction: s.instruction, notes: s.itemNotes,
       lane: s.status === 'waiting' ? 'next' : 'now', flag: null, firedAt: s.firedAt, placedAt: s.order.placedAt,
     })),
     ...q.legacy.map((it): StationItem => ({
       key: `i:${it.itemId}`, stepId: null, itemId: it.itemId,
-      orderNumber: it.order.id.slice(0, 6).toUpperCase(), conceptName: it.order.concept.name,
+      orderNumber: orderRef(it.order.id), conceptName: it.order.concept.name,
       menuItemName: it.itemName, qty: it.qty, instruction: null, notes: it.itemNotes,
       lane: it.status === 'held' ? 'next' : 'now',
       flag: it.status === 'recalled' ? 'remake' : it.status === 'held' ? 'held' : null,

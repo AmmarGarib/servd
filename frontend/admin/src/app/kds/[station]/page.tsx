@@ -11,6 +11,7 @@ import { useKdsStore } from '../../../store/kds'
 import { KdsHeader } from '../../../components/kds/KdsHeader'
 import { NewOrderFlash } from '../../../components/kds/NewOrderFlash'
 import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../../components/kds/LineActions'
+import { orderRef } from '../../../lib/orderRef'
 
 // Recipe payload — matches /recipes/by-item/:menuItemId.
 // Used by the per-card expand panel to show free-text + per-step
@@ -291,7 +292,7 @@ export default function StationKdsPage() {
                       </p>
                     )}
                     <p className="text-[11px] text-kds-subtext mt-2">
-                      {t.order.customerName ?? (isUrdu ? 'مہمان' : 'Walk-in')} · #{t.order.id.slice(-5).toUpperCase()}
+                      {t.order.customerName ?? (isUrdu ? 'مہمان' : 'Walk-in')} · #{orderRef(t.order.id)}
                     </p>
                     {eta > 0 && (
                       <p className="text-[10px] text-kds-subtext mt-1">

@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { fmtPkrShort } from '../../lib/money'
+import { orderRef } from '../../lib/orderRef'
 
 interface FeedItem {
   kind: 'journal' | 'audit' | 'order'
@@ -70,7 +71,7 @@ function FeedRow({ item }: { item: FeedItem }) {
             <span className="font-semibold">{o.concept.name}</span> order {o.status}
             <span className="text-s-muted"> · {fmtPkrShort(o.totalCents)}</span>
           </p>
-          <p className="text-[11px] text-s-dim font-mono">#{o.id.slice(0, 8)} · {ts}</p>
+          <p className="text-[11px] text-s-dim font-mono">#{orderRef(o.id)} · {ts}</p>
         </div>
       </Link>
     )

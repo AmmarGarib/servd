@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
 import { fmtPkrWhole } from '../../lib/money'
+import { orderRef } from '../../lib/orderRef'
+import { FIRE_ALL_EXTRA_ROLES, useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 
 /**
@@ -27,17 +29,35 @@ import { useAuthStore } from '../../store/auth'
  * Expo lives one level up.
  */
 
+// Kitchen screens stay dark (.erp-kitchen-dark) and take their colours from
+// the kds-* tokens (tailwind.config.ts) — never a hex in the page. Class
+// names are spelled out in full so Tailwind keeps them.
 const FULFILMENT_META = {
-  dine_in:  { label: 'Dine-in',  emoji: '🍽',  short: 'PLATE',   accent: '#22c55e', bg: 'rgba(34,197,94,0.10)' },
-  takeout:  { label: 'Takeout',  emoji: '🥡', short: 'PACK',    accent: '#f59e0b', bg: 'rgba(245,158,11,0.10)' },
-  delivery: { label: 'Delivery', emoji: '🛵', short: 'PACK+LBL',accent: '#ec4899', bg: 'rgba(236,72,153,0.10)' },
+  dine_in:  {
+    label: 'Dine-in', short: 'PLATE',
+    chip: 'bg-kds-green/10 text-kds-green', text: 'text-kds-green', bar: 'bg-kds-green',
+    border: 'border border-kds-green/25', ready: 'bg-kds-green/10 border-2 border-kds-green',
+    button: 'bg-kds-green text-kds-bg',
+  },
+  takeout:  {
+    label: 'Takeout', short: 'PACK',
+    chip: 'bg-kds-amber/10 text-kds-amber', text: 'text-kds-amber', bar: 'bg-kds-amber',
+    border: 'border border-kds-amber/25', ready: 'bg-kds-amber/10 border-2 border-kds-amber',
+    button: 'bg-kds-amber text-kds-bg',
+  },
+  delivery: {
+    label: 'Delivery', short: 'PACK+LBL',
+    chip: 'bg-kds-blue/10 text-kds-blue', text: 'text-kds-blue', bar: 'bg-kds-blue',
+    border: 'border border-kds-blue/25', ready: 'bg-kds-blue/10 border-2 border-kds-blue',
+    button: 'bg-kds-blue text-kds-text',
+  },
 } as const
 type FulfilmentType = keyof typeof FULFILMENT_META
 
 const HANDOFF_LABEL: Record<FulfilmentType, string> = {
-  dine_in:  '🍽 Serve to table',
-  takeout:  '✓ Customer pickup',
-  delivery: '🛵 Hand to rider',
+  dine_in:  'Serve to table',
+  takeout:  'Customer pickup',
+  delivery: 'Hand to rider',
 }
 
 // Quick-pick rejection reasons. Ordered by frequency — 86 (out of an
@@ -54,11 +74,40 @@ const REJECT_REASONS = [
   'Suspected bad order',
 ] as const
 
-const SOURCE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
-  servd:     { label: 'Storefront', bg: 'rgba(99,102,241,0.15)',  fg: '#A5B4FC' },
-  pos:       { label: 'POS',        bg: 'rgba(245,158,11,0.15)',  fg: '#FCD34D' },
-  cart:      { label: 'Cart',       bg: 'rgba(0,212,177,0.15)',   fg: '#5EEAD4' },
-  manual:    { label: 'Manual',     bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.55)' },
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
+  servd:     { label: 'Storefront', cls: 'bg-kds-blue/15 text-kds-blue' },
+  pos:       { label: 'POS',        cls: 'bg-kds-amber/15 text-kds-amber' },
+  cart:      { label: 'Cart',       cls: 'bg-kds-green/15 text-kds-green' },
+  manual:    { label: 'Manual',     cls: 'bg-white/5 text-kds-subtext' },
+}
+
+/** Column / counter tones — kds-* tokens only. */
+type Tone = 'amber' | 'blue' | 'green' | 'neutral'
+const TONE_TEXT: Record<Tone, string> = {
+  amber: 'text-kds-amber', blue: 'text-kds-blue', green: 'text-kds-green', neutral: 'text-kds-subtext',
+}
+const TONE_BOX: Record<Tone, string> = {
+  amber: 'bg-kds-amber/5 border border-kds-amber/20',
+  blue: 'bg-kds-blue/5 border border-kds-blue/20',
+  green: 'bg-kds-green/5 border border-kds-green/20',
+  neutral: 'bg-white/5 border border-white/15',
+}
+
+/** Inline icons (no emoji as structural icons). */
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  )
+}
+function WarnIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"
+      className="inline-block align-[-2px] mr-1 shrink-0">
+      <path d="M8 1.8l6.5 12H1.5z" /><path d="M8 6.3v3.6M8 11.6v.4" strokeLinecap="round" />
+    </svg>
+  )
 }
 
 interface ExpoOrder {
@@ -98,9 +147,6 @@ function PaidBadge() {
     </span>
   )
 }
-
-/** Who may override course pacing ("Fire all now") — the server's FIRE_ALL_ROLES (manager tiers + expediter). */
-const FIRE_ALL_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'expediter']
 
 interface PacedLine { id: string; name: string; scheduledFireAt: string }
 
@@ -188,8 +234,10 @@ export default function ExpoPage() {
     return () => clearTimeout(t)
   }, [pacedNotice])
 
+  // Who may override course pacing ("Fire all now") — the server's
+  // FIRE_ALL_ROLES: the managers list (served by the API) + the expediter.
   const role = useAuthStore((s) => s.user?.role ?? '')
-  const canFireAll = FIRE_ALL_ROLES.includes(role)
+  const canFireAll = useManagerRoles(...FIRE_ALL_EXTRA_ROLES).has(role)
 
   // An action the server refused (the order moved on — e.g. 409
   // INVALID_TRANSITION / NOTHING_TO_FIRE / FIRE_ALL_NOT_ALLOWED). Without it
@@ -263,14 +311,13 @@ export default function ExpoPage() {
   }, {})
 
   return (
-    <div className="erp-kitchen-dark min-h-screen" style={{ background: '#0A0B0F' }}>
+    <div className="erp-kitchen-dark min-h-screen bg-kds-bg">
       {/* Unrouted-items toast — fires when the order was confirmed but some
           items have no station, so the line will never see them. */}
       {unroutedToast.length > 0 && (
-        <div className="fixed top-4 right-4 z-50 max-w-sm rounded-xl p-4 shadow-2xl"
-          style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.45)' }}>
-          <p className="text-sm font-black text-amber-300">⚠ Fired, but {unroutedToast.length} item{unroutedToast.length === 1 ? '' : 's'} have no live station</p>
-          <p className="text-[11px] text-amber-200/70 mt-1">
+        <div role="alert" className="fixed top-4 right-4 z-50 max-w-sm rounded-xl p-4 pr-8 shadow-2xl bg-kds-card border border-kds-amber">
+          <p className="text-sm font-black text-kds-amber"><WarnIcon />Fired, but {unroutedToast.length} item{unroutedToast.length === 1 ? '' : 's'} have no live station</p>
+          <p className="text-[11px] text-kds-subtext mt-1">
             The line won't see these because their menu item has no station, or its station was retired. Open Menu Editor → Edit item → pick a station.
           </p>
           <ul className="mt-2 space-y-0.5">
@@ -281,8 +328,8 @@ export default function ExpoPage() {
               <li className="text-[11px] text-white/50">+ {unroutedToast.length - 6} more</li>
             )}
           </ul>
-          <button onClick={() => setUnroutedToast([])}
-            className="absolute top-2 right-2 text-amber-200/60 hover:text-amber-200 text-sm">✕</button>
+          <button onClick={() => setUnroutedToast([])} aria-label="Dismiss"
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       {heldNotice && (
@@ -294,8 +341,8 @@ export default function ExpoPage() {
             Fire the next course when the table is ready, from the order&apos;s{' '}
             <Link href={`/orders/${heldNotice.orderId}/courses`} className="underline text-kds-blue">Courses</Link> page.
           </p>
-          <button onClick={() => setHeldNotice(null)}
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
+          <button onClick={() => setHeldNotice(null)} aria-label="Dismiss"
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       {actionError && (
@@ -303,7 +350,7 @@ export default function ExpoPage() {
           <p className="text-sm font-black text-kds-red">Not done</p>
           <p className="text-[11px] text-kds-subtext mt-1">{actionError}</p>
           <button onClick={() => setActionError(null)} aria-label="Dismiss"
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       {pacedNotice && (
@@ -320,23 +367,23 @@ export default function ExpoPage() {
               Fire all now
             </button>
           )}
-          <button onClick={() => setPacedNotice(null)}
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text text-sm">✕</button>
+          <button onClick={() => setPacedNotice(null)} aria-label="Dismiss"
+            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
-      <header className="px-6 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+      <header className="px-6 py-4 border-b border-white/5">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-black text-white/95">🪧 Expo Station</h1>
+            <h1 className="text-2xl font-black text-white/95">Expo Station</h1>
             <p className="text-xs text-white/45 mt-0.5">
               Confirm incoming → watch progress → hand off ready.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Stat label="Awaiting" count={awaitingFire.length} color="#FCD34D" />
-            <Stat label="In progress" count={inProgress.length} color="#A5B4FC" />
-            <Stat label="Ready" count={ready.length} color="#5EEAD4" />
-            {upcoming.length > 0 && <Stat label="Pre-orders" count={upcoming.length} color="#C4B5FD" />}
+            <Stat label="Awaiting" count={awaitingFire.length} tone="amber" />
+            <Stat label="In progress" count={inProgress.length} tone="blue" />
+            <Stat label="Ready" count={ready.length} tone="green" />
+            {upcoming.length > 0 && <Stat label="Pre-orders" count={upcoming.length} tone="neutral" />}
           </div>
         </div>
       </header>
@@ -347,27 +394,25 @@ export default function ExpoPage() {
           Fire when their time comes — so no Fire button here. */}
       {upcoming.length > 0 && (
         <section className="px-6 pt-5 space-y-3">
-          <SectionHeader title="Upcoming pre-orders" count={upcoming.length} color="#C4B5FD" />
+          <SectionHeader title="Upcoming pre-orders" count={upcoming.length} tone="neutral" />
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             {upcoming.map((order) => {
               const fm = FULFILMENT_META[order.fulfilmentType]
               const live = order.items.filter((it) => it.status !== 'voided')
               return (
-                <article key={order.id} className="rounded-2xl p-3.5"
-                  style={{ background: 'rgba(196,181,253,0.05)', border: '1px solid rgba(196,181,253,0.22)' }}>
+                <article key={order.id} className={`rounded-2xl p-3.5 ${TONE_BOX.neutral}`}>
                   <p className="text-sm font-black text-white/90">
                     Pre-order for {pkWhen(order.scheduledFor)} — reaches the kitchen at {pkWhen(order.kitchenAt)}
                   </p>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md"
-                      style={{ background: fm.bg, color: fm.accent }}>
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${fm.chip}`}>
                       {fm.label}
                     </span>
                     {order.paid && <PaidBadge />}
                     <span className="text-xs text-white/55">
                       {order.customer?.name ?? order.customerName ?? 'Walk-in'} · {order.concept.name}
                     </span>
-                    <span className="text-[10px] text-white/30 font-mono ml-auto">#{order.id.slice(-6).toUpperCase()}</span>
+                    <span className="text-[10px] text-white/30 font-mono ml-auto">#{orderRef(order.id)}</span>
                   </div>
                   <p className="text-[11px] text-white/45 mt-1.5">
                     {live.map((it) => `${it.quantity}× ${it.name}`).join(' · ')}
@@ -383,12 +428,12 @@ export default function ExpoPage() {
 
         {/* ── Awaiting Fire ───────────────────────────────────────────── */}
         <section className="space-y-3">
-          <SectionHeader title="Awaiting Fire" count={awaitingFire.length} color="#FCD34D" />
+          <SectionHeader title="Awaiting Fire" count={awaitingFire.length} tone="amber" />
 
           {isLoading && <div className="text-sm text-white/40">Loading…</div>}
 
           {!isLoading && awaitingFire.length === 0 && (
-            <EmptyState emoji="✓" text="Queue clear" sub="New orders appear here for confirmation." />
+            <EmptyState text="Queue clear" sub="New orders appear here for confirmation." />
           )}
 
           {awaitingFire.map((order) => {
@@ -396,14 +441,12 @@ export default function ExpoPage() {
             const src = SOURCE_BADGE[order.source] ?? SOURCE_BADGE.manual!
             const isRejecting = rejecting === order.id
             return (
-              <article key={order.id} className="rounded-2xl p-4"
-                style={{ background: 'rgba(255,255,255,0.025)', border: `1px solid ${fm.accent}30` }}>
+              <article key={order.id} className={`rounded-2xl p-4 bg-white/[0.025] ${fm.border}`}>
 
                 {/* Fulfilment banner — the loudest thing on the card */}
                 <div className="flex items-center justify-between mb-3 -mt-1 -mx-1">
-                  <span className="text-xs font-black uppercase tracking-[0.2em] px-3 py-1 rounded-md"
-                    style={{ background: fm.bg, color: fm.accent }}>
-                    {fm.emoji} {fm.label} · {fm.short}
+                  <span className={`text-xs font-black uppercase tracking-[0.2em] px-3 py-1 rounded-md ${fm.chip}`}>
+                    {fm.label} · {fm.short}
                   </span>
                   <span className="text-[10px] text-white/35">
                     {formatDistanceToNowStrict(new Date(order.placedAt), { addSuffix: true })}
@@ -412,25 +455,23 @@ export default function ExpoPage() {
 
                 {/* Source + table + customer */}
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
-                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md"
-                    style={{ background: src.bg, color: src.fg }}>
+                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${src.cls}`}>
                     {src.label}
                   </span>
                   {order.paid && <PaidBadge />}
                   <span className="text-xs text-white/45">{order.concept.name}</span>
                   {order.table && (
-                    <span className="text-[10px] font-bold rounded-md px-2 py-0.5"
-                      style={{ background: 'rgba(34,197,94,0.12)', color: '#86EFAC' }}>
-                      🪑 {order.table.label}
+                    <span className="text-[10px] font-bold rounded-md px-2 py-0.5 bg-kds-green/10 text-kds-green">
+                      Table {order.table.label}
                     </span>
                   )}
-                  <span className="text-[10px] text-white/30 font-mono ml-auto">#{order.id.slice(-6).toUpperCase()}</span>
+                  <span className="text-[10px] text-white/30 font-mono ml-auto">#{orderRef(order.id)}</span>
                 </div>
 
                 <div className="flex items-baseline gap-3 mb-2">
                   <p className="font-bold text-white/90">{order.customer?.name ?? order.customerName ?? 'Walk-in'}</p>
                   {order.customer?.phone && <p className="text-[11px] text-white/40">{order.customer.phone}</p>}
-                  <p className="ml-auto text-sm font-black" style={{ color: '#00D4B1' }}>{fmtPkrWhole(order.totalCents)}</p>
+                  <p className="ml-auto text-sm font-black text-kds-green">{fmtPkrWhole(order.totalCents)}</p>
                 </div>
 
                 <div className="space-y-1 mb-4">
@@ -438,7 +479,7 @@ export default function ExpoPage() {
                     <div key={it.id} className="flex items-baseline gap-2 text-[13px]">
                       <span className="font-bold text-white/55 tabular-nums w-6">{it.quantity}×</span>
                       <span className="text-white/85 flex-1">{it.name}</span>
-                      {it.notes && <span className="text-[11px] text-amber-300/80 italic">{it.notes}</span>}
+                      {it.notes && <span className="text-[11px] text-kds-amber italic">{it.notes}</span>}
                     </div>
                   ))}
                 </div>
@@ -449,15 +490,13 @@ export default function ExpoPage() {
                         paid; a refund goes through the till. */}
                     {!order.paid && (
                       <button onClick={() => setRejecting(order.id)} disabled={reject.isPending}
-                        className="rounded-xl px-3 py-2.5 text-xs font-bold transition-colors disabled:opacity-40"
-                        style={{ background: 'rgba(255,77,79,0.08)', color: '#FF7B7D', border: '1px solid rgba(255,77,79,0.18)' }}>
+                        className="rounded-xl px-3 py-2.5 text-xs font-bold transition-colors disabled:opacity-40 bg-kds-red/10 text-kds-red border border-kds-red/25">
                         Reject
                       </button>
                     )}
                     <button onClick={() => fire.mutate(order.id)} disabled={fire.isPending}
-                      className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-40"
-                      style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
-                      {fire.isPending && fire.variables === order.id ? 'Firing…' : 'Fire 🔥'}
+                      className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-40 bg-kds-green text-kds-bg">
+                      {fire.isPending && fire.variables === order.id ? 'Firing…' : 'Fire'}
                     </button>
                   </div>
                 ) : (
@@ -472,28 +511,24 @@ export default function ExpoPage() {
                           key={preset}
                           type="button"
                           onClick={() => setRejectReason(preset)}
-                          className="text-[11px] font-bold rounded-full px-2.5 py-1 transition-colors"
-                          style={rejectReason === preset
-                            ? { background: 'rgba(255,77,79,0.22)', color: '#FF8A8C', border: '1px solid rgba(255,77,79,0.5)' }
-                            : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          className={`text-[11px] font-bold rounded-full px-2.5 py-1 transition-colors border ${rejectReason === preset
+                            ? 'bg-kds-red/20 text-kds-red border-kds-red/50'
+                            : 'bg-white/[0.04] text-white/60 border-white/10'}`}>
                           {preset}
                         </button>
                       ))}
                     </div>
                     <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
                       placeholder="…or type a custom reason"
-                      className="w-full rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none"
-                      style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,77,79,0.2)', color: 'rgba(255,255,255,0.9)' }} />
+                      className="w-full rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none bg-black/40 border border-kds-red/20 text-white/90" />
                     <div className="flex gap-2">
                       <button onClick={() => { setRejecting(null); setRejectReason('') }}
-                        className="rounded-lg px-3 py-2 text-xs font-bold transition-colors"
-                        style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.6)' }}>
+                        className="rounded-lg px-3 py-2 text-xs font-bold transition-colors bg-white/[0.04] text-white/60">
                         Cancel
                       </button>
                       <button onClick={() => reject.mutate({ orderId: order.id, reason: rejectReason })}
                         disabled={!rejectReason.trim() || reject.isPending}
-                        className="flex-1 rounded-lg py-2 text-xs font-black transition-colors disabled:opacity-40"
-                        style={{ background: '#FF4D4F', color: '#fff' }}>
+                        className="flex-1 rounded-lg py-2 text-xs font-black transition-colors disabled:opacity-40 bg-kds-red text-kds-text">
                         Confirm reject
                       </button>
                     </div>
@@ -506,10 +541,10 @@ export default function ExpoPage() {
 
         {/* ── In Progress ─────────────────────────────────────────────── */}
         <section className="space-y-3">
-          <SectionHeader title="In Progress" count={inProgress.length} color="#A5B4FC" />
+          <SectionHeader title="In Progress" count={inProgress.length} tone="blue" />
 
           {!isLoading && inProgress.length === 0 && (
-            <EmptyState emoji="…" text="Nothing cooking" sub="Fired orders appear here with live step counts." />
+            <EmptyState text="Nothing cooking" sub="Fired orders appear here with live step counts." />
           )}
 
           {inProgress.map((order) => {
@@ -517,15 +552,13 @@ export default function ExpoPage() {
             const pct = order.totalSteps > 0 ? Math.round((order.doneSteps / order.totalSteps) * 100) : 0
             const paced = pacedLines(order)
             return (
-              <article key={order.id} className="rounded-2xl p-3.5"
-                style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${fm.accent}25` }}>
+              <article key={order.id} className={`rounded-2xl p-3.5 bg-white/[0.02] ${fm.border}`}>
                 <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md"
-                    style={{ background: fm.bg, color: fm.accent }}>
-                    {fm.emoji} {fm.short}
+                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${fm.chip}`}>
+                    {fm.label} · {fm.short}
                   </span>
                   {order.table && (
-                    <span className="text-[10px] font-bold" style={{ color: '#86EFAC' }}>🪑 {order.table.label}</span>
+                    <span className="text-[10px] font-bold text-kds-green">Table {order.table.label}</span>
                   )}
                   {order.paid && <PaidBadge />}
                   <span className="text-[10px] text-white/40 ml-auto">
@@ -536,20 +569,20 @@ export default function ExpoPage() {
                   {order.customer?.name ?? order.customerName ?? 'Walk-in'} · {order.concept.name}
                 </p>
                 <p className="text-[11px] text-white/45 mb-2">
-                  {order.items.length} item{order.items.length === 1 ? '' : 's'} · #{order.id.slice(-5).toUpperCase()}
+                  {order.items.length} item{order.items.length === 1 ? '' : 's'} · #{orderRef(order.id)}
                 </p>
 
                 {/* Step progress */}
                 <div className="space-y-1.5">
                   <div className="flex items-baseline justify-between text-[10px] font-bold">
                     <span className="text-white/55">Steps</span>
-                    <span className="tabular-nums" style={{ color: fm.accent }}>
+                    <span className={`tabular-nums ${fm.text}`}>
                       {order.doneSteps} / {order.totalSteps}
                     </span>
                   </div>
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    <div className="h-full transition-all duration-500"
-                      style={{ width: `${pct}%`, background: fm.accent }} />
+                  <div className="h-1.5 rounded-full overflow-hidden bg-white/[0.06]">
+                    <div className={`h-full transition-all duration-500 ${fm.bar}`}
+                      style={{ width: `${pct}%` }} />
                   </div>
                 </div>
 
@@ -577,25 +610,24 @@ export default function ExpoPage() {
 
         {/* ── Ready ────────────────────────────────────────────────────── */}
         <section className="space-y-3">
-          <SectionHeader title="Ready" count={ready.length} color="#5EEAD4" />
+          <SectionHeader title="Ready" count={ready.length} tone="green" />
 
           {!isLoading && ready.length === 0 && (
-            <EmptyState emoji="—" text="Nothing ready yet" sub="Completed cooks land here for handoff." />
+            <EmptyState text="Nothing ready yet" sub="Completed cooks land here for handoff." />
           )}
 
           {ready.map((order) => {
             const fm = FULFILMENT_META[order.fulfilmentType]
             return (
-              <article key={order.id} className="rounded-2xl p-4"
-                style={{ background: `${fm.bg}`, border: `2px solid ${fm.accent}` }}>
+              <article key={order.id} className={`rounded-2xl p-4 ${fm.ready}`}>
                 {/* Loud fulfilment banner — cook + expo + server all see this */}
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-black uppercase tracking-[0.18em]" style={{ color: fm.accent }}>
-                    {fm.emoji} {fm.label}
+                  <span className={`text-sm font-black uppercase tracking-[0.18em] ${fm.text}`}>
+                    {fm.label}
                   </span>
                   <span className="flex items-center gap-2">
                     {order.paid && <PaidBadge />}
-                    <span className="text-[10px] text-white/40">#{order.id.slice(-5).toUpperCase()}</span>
+                    <span className="text-[10px] text-white/40 font-mono">#{orderRef(order.id)}</span>
                   </span>
                 </div>
 
@@ -605,19 +637,18 @@ export default function ExpoPage() {
                 <div className="text-[11px] text-white/55 mb-3 space-y-0.5">
                   <p>{order.concept.name} · {order.items.length} item{order.items.length === 1 ? '' : 's'}</p>
                   {order.fulfilmentType === 'dine_in' && order.table && (
-                    <p style={{ color: '#86EFAC' }}>→ Table {order.table.label}</p>
+                    <p className="text-kds-green">→ Table {order.table.label}</p>
                   )}
                   {order.fulfilmentType === 'delivery' && order.rider && (
-                    <p style={{ color: '#F9A8D4' }}>→ {order.rider.name} ({order.rider.phone ?? 'no phone'})</p>
+                    <p className="text-kds-blue">→ {order.rider.name} ({order.rider.phone ?? 'no phone'})</p>
                   )}
                   {order.fulfilmentType === 'delivery' && !order.rider && (
-                    <p style={{ color: '#FF7B7D' }}>⚠ no rider assigned yet</p>
+                    <p className="text-kds-red"><WarnIcon />No rider assigned yet</p>
                   )}
                 </div>
 
                 <button onClick={() => handoff.mutate(order.id)} disabled={handoff.isPending}
-                  className="w-full rounded-xl py-3 text-sm font-black transition-all disabled:opacity-40"
-                  style={{ background: fm.accent, color: '#0A0B0F' }}>
+                  className={`w-full rounded-xl py-3 text-sm font-black transition-all disabled:opacity-40 ${fm.button}`}>
                   {handoff.isPending && handoff.variables === order.id ? 'Handing off…' : HANDOFF_LABEL[order.fulfilmentType]}
                 </button>
               </article>
@@ -638,15 +669,12 @@ export default function ExpoPage() {
                   const busy = s.activeItems > 0
                   return (
                     <Link key={s.id} href={`/kds/${s.id}`}
-                      className="flex items-center gap-3 rounded-lg px-3 py-2 transition-colors"
-                      style={{
-                        background: busy ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)',
-                        border: `1px solid ${busy ? 'rgba(245,158,11,0.18)' : 'rgba(255,255,255,0.05)'}`,
-                      }}>
-                      <span className="text-xs font-bold flex-1" style={{ color: busy ? '#FCD34D' : 'rgba(255,255,255,0.75)' }}>
+                      className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors border ${busy
+                        ? 'bg-kds-amber/5 border-kds-amber/20' : 'bg-white/[0.02] border-white/5'}`}>
+                      <span className={`text-xs font-bold flex-1 ${busy ? 'text-kds-amber' : 'text-white/75'}`}>
                         {s.name}
                       </span>
-                      <span className="text-sm font-black tabular-nums" style={{ color: busy ? '#FCD34D' : 'rgba(255,255,255,0.3)' }}>
+                      <span className={`text-sm font-black tabular-nums ${busy ? 'text-kds-amber' : 'text-white/30'}`}>
                         {s.activeItems}
                       </span>
                     </Link>
@@ -661,32 +689,29 @@ export default function ExpoPage() {
   )
 }
 
-function Stat({ label, count, color }: { label: string; count: number; color: string }) {
+function Stat({ label, count, tone }: { label: string; count: number; tone: Tone }) {
   return (
-    <div className="rounded-xl px-3 py-2 text-center min-w-[80px]"
-      style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
-      <p className="text-[9px] uppercase tracking-wider font-black" style={{ color }}>{label}</p>
-      <p className="text-xl font-black leading-none mt-0.5 tabular-nums" style={{ color }}>{count}</p>
+    <div className={`rounded-xl px-3 py-2 text-center min-w-[80px] ${TONE_BOX[tone]} ${TONE_TEXT[tone]}`}>
+      <p className="text-[9px] uppercase tracking-wider font-black">{label}</p>
+      <p className="text-xl font-black leading-none mt-0.5 tabular-nums">{count}</p>
     </div>
   )
 }
 
-function SectionHeader({ title, count, color }: { title: string; count: number; color: string }) {
+function SectionHeader({ title, count, tone }: { title: string; count: number; tone: Tone }) {
   return (
-    <div className="flex items-baseline justify-between">
-      <h2 className="text-[10px] uppercase tracking-[0.2em] font-black" style={{ color }}>
+    <div className={`flex items-baseline justify-between ${TONE_TEXT[tone]}`}>
+      <h2 className="text-[10px] uppercase tracking-[0.2em] font-black">
         {title}
       </h2>
-      <span className="text-[10px] font-black tabular-nums" style={{ color: `${color}AA` }}>{count}</span>
+      <span className="text-[10px] font-black tabular-nums opacity-70">{count}</span>
     </div>
   )
 }
 
-function EmptyState({ emoji, text, sub }: { emoji: string; text: string; sub: string }) {
+function EmptyState({ text, sub }: { text: string; sub: string }) {
   return (
-    <div className="rounded-2xl p-8 text-center"
-      style={{ background: 'rgba(255,255,255,0.015)', border: '1px dashed rgba(255,255,255,0.06)' }}>
-      <p className="text-3xl mb-2 opacity-50">{emoji}</p>
+    <div className="rounded-2xl p-8 text-center bg-white/[0.015] border border-dashed border-white/10">
       <p className="text-sm font-bold text-white/65">{text}</p>
       <p className="text-[11px] text-white/35 mt-1">{sub}</p>
     </div>

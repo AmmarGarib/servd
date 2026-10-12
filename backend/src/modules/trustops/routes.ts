@@ -24,6 +24,7 @@ import {
 import { cashVarianceLimitCents } from '../../lib/drawer.js'
 import { generateDeliveryOtp, deliveryOtpMatches, DELIVERY_OTP_READERS, DELIVERY_OTP_MAX_ATTEMPTS } from '../../lib/deliveryOtp.js'
 import type { UserRole } from '@prisma/client'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 // The 4-digit hand-off code: generated with crypto.randomInt and compared in
 // constant time — the same helpers as the rider app (lib/deliveryOtp.ts).
@@ -204,7 +205,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
             conceptId: order.conceptId,
             kind: 'lost_package',
             severity: 'high',
-            title: `OTP failed 3+ times on order ${order.id.slice(0, 8)}`,
+            title: `OTP failed 3+ times on order ${orderRefOf(order.id)}`,
             description: `Rider attempted delivery hand-off ${attempts} times without correct OTP. Either customer dispute or rider attempting to deliver to wrong recipient. Investigate before marking delivered.`,
             entityType: 'Order',
             entityId: order.id,

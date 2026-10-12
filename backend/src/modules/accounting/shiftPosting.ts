@@ -76,6 +76,7 @@ import {
 import { drawerExpectationOf } from '../../lib/drawer.js'
 import { cogsForSoldLines } from '../../lib/recipeCost.js'
 import { SHIFT_COMPANY_INCLUDE, shiftTenantId } from '../../lib/tenantScope.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 /** processPayment accepts a tender within 2 paisa of what is due. */
 export const TENDER_ROUNDING_CENTS = 2
@@ -385,7 +386,7 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   // Cr drawer or card (orderPosting.ts postRefundPayment, LEDGER-R5).
   const cp = sales.cancelledPaid
   if (cp.cashCents + cp.cardCents > 0) {
-    const memo = `${REFUND_DUE_PREFIX} — paid on cancelled order(s) ${cp.orderIds.map((id) => `#${id.slice(0, 8)}`).join(', ')}, not a sale ${tag}`.slice(0, 250)
+    const memo = `${REFUND_DUE_PREFIX} — paid on cancelled order(s) ${cp.orderIds.map((id) => `#${orderRefOf(id)}`).join(', ')}, not a sale ${tag}`.slice(0, 250)
     if (cp.cashCents > 0) lines.push({ accountCode: ACCT.CASH_DRAWER,     type: 'debit', amountCents: cp.cashCents, memo })
     if (cp.cardCents > 0) lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: cp.cardCents, memo })
     for (const o of cp.byOrder) {
@@ -648,7 +649,7 @@ export async function postPosCardFailure(paymentId: string): Promise<{ posted: b
   })
   if (!closePosted) return { posted: false, entryId: null, reason: 'shift_not_posted' }
 
-  const memo = `Card ${payment.gatewayRef} failed after close — owed by the customer (order #${payment.order.id.slice(0, 8)})`
+  const memo = `Card ${payment.gatewayRef} failed after close — owed by the customer (order #${orderRefOf(payment.order.id)})`
   const result = await postJournalEntry({
     tenantId,
     sourceType: 'pos.card_failed',

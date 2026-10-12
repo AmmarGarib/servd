@@ -31,6 +31,7 @@ import { formatBrandName } from '../../lib/brandName.js'
 import { fmtPkr as fmtPkrShared } from '../accounting/csv.js'
 import { tenderOfPayments } from '../../lib/pricing.js'
 import { quoteOrderForTender, lockOrderTx } from '../pos/service.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -111,10 +112,8 @@ export interface PreBillReceipt {
   status: string
 }
 
-/** Short order reference, as the receipt prints it. */
-export function orderRefOf(orderId: string): string {
-  return orderId.slice(-8).toUpperCase()
-}
+/** Short order reference, as the receipt prints it (lib/orderRef.ts). */
+export { orderRefOf }
 
 export function preBillLabel(number: number): string {
   return `PB-${number}`

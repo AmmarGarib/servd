@@ -25,6 +25,7 @@ import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { fmtPkrWhole } from '../../../lib/money'
 import { usePermissions } from '../../../hooks/useCan'
+import { useManagerRoles } from '../../../lib/roles'
 
 // Who may change what on this page — the same rules the API enforces
 // (backend/src/modules/positions/routes.ts + contributions.ts), so no one is
@@ -35,11 +36,11 @@ import { usePermissions } from '../../../hooks/useCan'
 //   - finance (staff_directory or capital): reads the budget, changes nothing.
 // Contributions move money between two companies' books, so only managers
 // record or change one. Until /permissions/me answers, nothing is writable.
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 function usePositionAccess(): { isManager: boolean; canEditSeats: boolean } {
   const { data: me } = usePermissions()
+  const managerRoles = useManagerRoles()
   if (!me) return { isManager: false, canEditSeats: false }
-  const isManager = MANAGER_ROLES.has(me.role)
+  const isManager = managerRoles.has(me.role)
   const hrEditor = me.role === 'hr' && (me.modules ?? []).includes('staff_directory')
   return { isManager, canEditSeats: isManager || hrEditor }
 }

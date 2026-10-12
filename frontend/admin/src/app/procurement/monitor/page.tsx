@@ -6,11 +6,12 @@ import { api } from '../../../lib/api'
 import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
 import { fmtPkrWhole } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
+import { useManagerRoles } from '../../../lib/roles'
 
 // Who may read the staff directory (GET /auth/users: management + HR). Any
 // other holder of the procurement module (the buyer) gets the staff already
 // assigned to a supplier plus themselves, without a 403 toast (R2-UI-04).
-const STAFF_DIRECTORY_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'hr']
+// = the API's MANAGERS (lib/roles.ts) + hr.
 type StaffLite = { id: string; name: string; role: string }
 
 interface TenantLite { id: string; name: string; slug: string }
@@ -87,7 +88,8 @@ export default function ProcurementMonitorPage() {
   })
 
   const me = useAuthStore((st) => st.user)
-  const canReadDirectory = !!me && STAFF_DIRECTORY_ROLES.includes(me.role)
+  const directoryRoles = useManagerRoles('hr')
+  const canReadDirectory = !!me && directoryRoles.has(me.role)
   const { data: directory } = useQuery<StaffLite[]>({
     queryKey: ['staff'],
     queryFn: () => api.get('/auth/users'),

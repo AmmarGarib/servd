@@ -13,6 +13,7 @@
 // are rows; the role covers an empty list. The role set mirrors the API's
 // COSTS_HIDDEN_ROLES (backend src/modules/inventory/routes.ts).
 import { usePermissions } from '../../hooks/useCan'
+import { useManagerRoles } from '../../lib/roles'
 
 const KITCHEN_FLOOR_ROLES = new Set(['boh', 'kitchen', 'expediter'])
 
@@ -40,9 +41,8 @@ export function useKitchenRole(): { settled: boolean; kitchen: boolean } {
 //   • count — POST /crosschecks/physical-counts (managers + boh). The buyer
 //     does not certify the stock it buys (owner-visible judgement call), so
 //     procurement gets no Count button.
-const MANAGER_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager']
-const WASTE_LOGGER_ROLES = new Set([...MANAGER_ROLES, 'boh'])
-const STOCK_COUNTER_ROLES = new Set([...MANAGER_ROLES, 'boh'])
+// Both lists are the API's MANAGERS (served by GET /permissions/role-modules,
+// lib/roles.ts) + boh.
 
 /**
  * Which stock actions the signed-in role may take. Hidden while the role is
@@ -50,7 +50,8 @@ const STOCK_COUNTER_ROLES = new Set([...MANAGER_ROLES, 'boh'])
  */
 export function useStockActions(): { canWaste: boolean; canCount: boolean } {
   const { data: me, isFetched } = usePermissions()
+  const managersAndBoh = useManagerRoles('boh')
   if (!isFetched) return { canWaste: false, canCount: false }
   if (!me) return { canWaste: true, canCount: true }
-  return { canWaste: WASTE_LOGGER_ROLES.has(me.role), canCount: STOCK_COUNTER_ROLES.has(me.role) }
+  return { canWaste: managersAndBoh.has(me.role), canCount: managersAndBoh.has(me.role) }
 }

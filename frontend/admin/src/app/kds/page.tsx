@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
 import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../components/kds/LineActions'
+import { orderRef } from '../../lib/orderRef'
 
 /**
  * Kitchen dashboard — the line cook's home page.
@@ -363,7 +364,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                     </p>
                   )}
                   <p className="text-[10px] text-kds-subtext mt-1">
-                    {t.order.customerName ?? 'Walk-in'} · #{t.order.id.slice(-5).toUpperCase()}
+                    {t.order.customerName ?? 'Walk-in'} · #{orderRef(t.order.id)}
                   </p>
                   {!isHeld && (
                     <button
@@ -470,7 +471,7 @@ function UnroutedPanel() {
                 {it.itemName}
               </p>
               <p className="text-[11px] text-kds-subtext truncate">
-                {it.order.concept.name} · {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{it.order.id.slice(-5).toUpperCase()}
+                {it.order.concept.name} · {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{orderRef(it.order.id)}
               </p>
               <p className="text-[10px] text-kds-subtext/80">
                 {it.retiredStation ? `Routed to retired station "${it.retiredStation}"` : 'No station set'}

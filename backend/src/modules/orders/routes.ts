@@ -584,7 +584,10 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
       await assertConceptAccess(req.staffUser!, order.conceptId)
       const items = await prisma.orderItem.findMany({
         where: { orderId: req.params.id },
-        select: { id: true, name: true, quantity: true, course: true, status: true, firedAt: true, completedAt: true },
+        // scheduledFireAt: a PACED line's fire time, so the Courses page still
+        // says "fires at HH:MM" after a reload (it used to know only what the
+        // last fire response returned).
+        select: { id: true, name: true, quantity: true, course: true, status: true, firedAt: true, completedAt: true, scheduledFireAt: true },
         orderBy: [{ course: 'asc' }, { name: 'asc' }],
       })
       // Group by course

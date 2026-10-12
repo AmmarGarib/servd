@@ -48,6 +48,8 @@ async function main() {
     ['financialEntries',              () => prisma.financialEntry.deleteMany()],   // BEFORE orders
     ['taxInvoiceLines',               () => prisma.taxInvoiceLine.deleteMany()],
     ['taxInvoices',                   () => prisma.taxInvoice.deleteMany()],
+    // Each company's invoice numbering restarts with its invoices.
+    ['taxInvoiceSeries',              () => prisma.taxInvoiceSeries.deleteMany()],
     ['orders',                        () => prisma.order.deleteMany()],
 
     // ── Group orders ────────────────────────────────────────────────

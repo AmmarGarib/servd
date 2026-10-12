@@ -17,11 +17,19 @@
 // stock taken — and moves them to NEW when their time comes, so they show in
 // their own band with no FIRE button.
 //
+// Only a line the kitchen has FIRED can be tapped done (isLineFired: firedAt
+// set, or past pending). The rule is per line, not per ticket: a NEW ticket's
+// lines, a later course on a FIRED ticket (course 2 stays pending, firedAt
+// null, until someone fires it from Courses or expo) and a paced dish are all
+// unfired, and a tap used to bump them straight to done — recorded as served
+// uncooked, and the course could then never be fired ("No pending items at
+// course 2"). The server still allows pending → bumped on purpose ("already
+// plated"), so the guard lives here: such a tap only says why.
+//
 // A PACED line (pending, with scheduledFireAt) is not cooked yet: the pacing
-// worker fires it at its time. Tapping it does nothing but say so (bumping it
-// would mark it done uncooked, and the worker would never fire it), and READY
-// is refused while any paced line is still waiting — a manager or the
-// expediter can "Fire all now" from that prompt instead.
+// worker fires it at its time. Tapping it says so, and READY is refused while
+// any paced line is still waiting — a manager or the expediter can "Fire all
+// now" from that prompt instead.
 
 import { Alert, View, Text, ScrollView, RefreshControl } from 'react-native'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
@@ -30,13 +38,14 @@ import * as Haptics from 'expo-haptics'
 import { api } from '../../../src/lib/api'
 import { useSocketEvent } from '../../../src/lib/socket'
 import { theme } from '../../../src/lib/theme'
+import { orderRef } from '../../../src/lib/orderRef'
 import { useSessionStore } from '../../../src/store/session'
 import { OrderTicket, Ticket, TicketStatus } from '../../../src/components/OrderTicket'
 import { Panel, Pill } from '../../../src/components/Panel'
 
 type ExpoItemStatus = 'pending' | 'preparing' | 'held' | 'recalled' | 'ready' | 'bumped' | 'voided'
 /** scheduledFireAt on a pending line = PACED: the pacing worker fires it then, so the course plates together. */
-interface ExpoItem { id: string; name: string; quantity: number; notes: string | null; status: ExpoItemStatus; scheduledFireAt?: string | null }
+interface ExpoItem { id: string; name: string; quantity: number; notes: string | null; status: ExpoItemStatus; firedAt?: string | null; scheduledFireAt?: string | null }
 interface ExpoOrder {
   id: string
   status: string
@@ -98,6 +107,16 @@ function isPaced(it: ExpoItem): it is ExpoItem & { scheduledFireAt: string } {
   return it.status === 'pending' && !!it.scheduledFireAt
 }
 
+/**
+ * Has the kitchen fired this line? Fired = firedAt set, or moved past pending
+ * (preparing, held, recalled, ready, bumped). A pending line with no firedAt
+ * has not been cooked: a NEW ticket's line, a later course nobody has fired
+ * yet, or a paced dish waiting for its time.
+ */
+function isLineFired(it: Pick<ExpoItem, 'status' | 'firedAt'>): boolean {
+  return it.firedAt != null || it.status !== 'pending'
+}
+
 /** Who may override course pacing ("Fire all now") — the server's FIRE_ALL_ROLES (manager tiers + expediter). */
 const FIRE_ALL_ROLES = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'expediter']
 
@@ -116,7 +135,7 @@ function itemLabel(it: ExpoItem, lane: TicketStatus): string {
 function toTicket(o: ExpoOrder, status: TicketStatus): Ticket {
   return {
     id: o.id,
-    number: o.id.slice(0, 6).toUpperCase(),
+    number: orderRef(o.id),
     conceptName: o.concept.name,
     source: o.source,
     table: o.table?.label ?? null,
@@ -125,7 +144,11 @@ function toTicket(o: ExpoOrder, status: TicketStatus): Ticket {
     status,
     items: o.items
       .filter((it) => it.status !== 'voided')
-      .map((it) => ({ id: it.id, name: itemLabel(it, status), qty: it.quantity, notes: it.notes, status: itemStatus(it.status) })),
+      .map((it) => ({
+        id: it.id, name: itemLabel(it, status), qty: it.quantity, notes: it.notes, status: itemStatus(it.status),
+        // Nothing on a NEW ticket is cooking yet; elsewhere, per line.
+        tappable: status !== 'new' && isLineFired(it),
+      })),
   }
 }
 
@@ -197,12 +220,33 @@ export default function KdsAllScreen() {
     if (paced.length > 0) pacedByOrder.set(o.id, paced)
   }
 
-  // Tapping a line bumps it — but a paced line has not been cooked: bumping
-  // it would mark it done and the pacing worker would never fire it.
-  const onItemTap = (itemId: string) => {
+  // Lines nobody has fired yet: every line of a NEW ticket, and on the other
+  // lanes every pending line with no firedAt (a later course, a paced dish).
+  const newLineIds = new Set((q.data?.awaitingFire ?? []).flatMap((o) => o.items.map((it) => it.id)))
+  const unfiredById = new Map<string, ExpoItem>()
+  for (const o of activeOrders) for (const it of o.items) if (!isLineFired(it)) unfiredById.set(it.id, it)
+
+  // Why an unfired line cannot be bumped. Never bumps it: it would be
+  // recorded as done uncooked, and its course could no longer be fired.
+  const explainLocked = (itemId: string) => {
+    if (newLineIds.has(itemId)) {
+      Alert.alert('Not fired yet', 'This order has not been fired. Press FIRE first; a dish can be bumped once it has been cooked.')
+      return
+    }
     const paced = pacedById.get(itemId)
     if (paced) {
       Alert.alert('Not cooked yet', `${paced.name} fires at ${fireClock(paced.scheduledFireAt)} so the course plates together. It can be bumped once it has been cooked.`)
+      return
+    }
+    const name = unfiredById.get(itemId)?.name ?? 'This dish'
+    Alert.alert('Course not fired yet', `${name} is in a later course that has not been fired yet. Fire it from the order's Courses page or expo; it can be bumped once it has been cooked.`)
+  }
+
+  // Tapping a fired line bumps it. An unfired line (OrderTicket only lets it
+  // explain itself; this is the belt to that brace) is never bumped.
+  const onItemTap = (itemId: string) => {
+    if (newLineIds.has(itemId) || unfiredById.has(itemId)) {
+      explainLocked(itemId)
       return
     }
     itemAdvance.mutate(itemId)
@@ -251,7 +295,8 @@ export default function KdsAllScreen() {
       <OrderTicket ticket={t}
         onAdvance={() => onTicketAdvance(t)}
         onBump={() => bump.mutate(t.id)}
-        onItemAdvance={onItemTap} />
+        onItemAdvance={onItemTap}
+        onLockedItemTap={explainLocked} />
     </View>
   )
 
@@ -283,7 +328,7 @@ export default function KdsAllScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                   {o.paid === true && <Pill label="PAID" tone="success" />}
                   <Text style={{ color: theme.textDim, fontSize: 13 }}>
-                    {o.customer?.name ?? o.customerName ?? 'Walk-in'} · {o.concept.name} · #{o.id.slice(0, 6).toUpperCase()}
+                    {o.customer?.name ?? o.customerName ?? 'Walk-in'} · {o.concept.name} · #{orderRef(o.id)}
                   </Text>
                 </View>
                 <Text style={{ color: theme.textMuted, fontSize: 12, marginTop: 6 }}>

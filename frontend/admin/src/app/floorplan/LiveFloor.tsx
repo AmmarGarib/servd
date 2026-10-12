@@ -10,6 +10,7 @@ import { api } from '../../lib/api'
 import { FloorCanvas } from '../../components/floorplan/FloorCanvas'
 import type { FloorTable } from '../../components/floorplan/FloorCanvas'
 import { fmtPkr } from '../../lib/money'
+import { orderRef } from '../../lib/orderRef'
 
 interface LiveTable extends FloorTable {
   status: string
@@ -126,7 +127,7 @@ function TableDetailPanel({ table, onChanged }: { table: LiveTable; onChanged: (
             {table.openOrders.map((o) => (
               <div key={o.id} className="flex justify-between text-xs py-1">
                 <span>
-                  <span className="font-mono text-s-muted">#{o.id.slice(0, 6)}</span> · {o.customerName ?? 'Walk-in'}
+                  <span className="font-mono text-s-muted">#{orderRef(o.id)}</span> · {o.customerName ?? 'Walk-in'}
                 </span>
                 <span>
                   <span className="text-s-muted mr-1">{o.status}</span>

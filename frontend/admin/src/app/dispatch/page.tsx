@@ -26,6 +26,8 @@ import { api } from '../../lib/api'
 import { fmtPkrWhole } from '../../lib/money'
 import { formatBrandName } from '../../lib/brandName'
 import { usePermissions } from '../../hooks/useCan'
+import { orderRef } from '../../lib/orderRef'
+import { useManagerRoles } from '../../lib/roles'
 
 interface RiderRow {
   id: string; name: string; phone: string
@@ -72,8 +74,6 @@ function jobStage(o: BoardOrder): { stage: string; at: string | null } | null {
 
 /** Wrong hand-over codes before the job locks — DELIVERY_OTP_MAX_ATTEMPTS in backend lib/deliveryOtp.ts. */
 const OTP_MAX_ATTEMPTS = 5
-/** The API's MANAGERS (backend modules/auth/middleware.ts). */
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 
 /** The kitchen is done ('ready', or 'completed' as it went out) and the customer does not have it yet. */
 function onTheRoad(o: BoardOrder): boolean {
@@ -129,7 +129,9 @@ function fmtPhone(p: string): string {
 export default function DispatchPage() {
   const qc = useQueryClient()
   const { data: me } = usePermissions()
-  const isManager = MANAGER_ROLES.has(me?.role ?? '')
+  // The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts).
+  const managerRoles = useManagerRoles()
+  const isManager = managerRoles.has(me?.role ?? '')
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['dispatch-board'],
@@ -262,7 +264,7 @@ export default function DispatchPage() {
                     return (
                       <div key={o.id} className={`rounded-lg border p-2 bg-s-bg-soft ${isDelivery(o) ? 'border-s-border' : 'border-s-red/40'}`}>
                         <div className="flex justify-between items-baseline mb-1">
-                          <span className="text-xs font-mono text-s-muted">#{o.id.slice(0, 6)}</span>
+                          <span className="text-xs font-mono text-s-muted">#{orderRef(o.id)}</span>
                           <span className="text-[10px] uppercase tracking-wider font-bold text-s-muted">
                             {o.status === 'completed' ? 'completed · not delivered' : o.status}
                           </span>

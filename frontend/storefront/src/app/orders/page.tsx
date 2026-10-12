@@ -194,7 +194,7 @@ export default function OrdersPage() {
                         {itemSummary}{more}
                       </p>
                       <p style={{ color: 'var(--servd-dim)', fontSize: '0.75rem' }}>
-                        {fmtDate(o.placedAt)} · #{o.id.slice(0, 8)}
+                        {fmtDate(o.placedAt)} · #{o.id.slice(-8).toUpperCase()}
                       </p>
                     </div>
                     <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-end' }}>

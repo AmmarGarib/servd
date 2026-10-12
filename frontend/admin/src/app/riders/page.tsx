@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { formatBrandName } from '../../lib/brandName'
 import { usePermissions } from '../../hooks/useCan'
+import { orderRef } from '../../lib/orderRef'
+import { useManagerRoles } from '../../lib/roles'
 
 // Rider portal: the dispatch board (delivery orders awaiting a rider / with a
 // rider), the roster, and the shared-fleet agreements (docs/rider-app.md).
@@ -121,8 +123,6 @@ function jobStage(o: StageTimes): { stage: string; at: string | null } | null {
 
 /** Wrong hand-over codes before the job locks — DELIVERY_OTP_MAX_ATTEMPTS in backend lib/deliveryOtp.ts. */
 const OTP_MAX_ATTEMPTS = 5
-/** The API's MANAGERS (backend modules/auth/middleware.ts). */
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 
 /**
  * Who may mark a delivery delivered from this board — the API's rule for
@@ -199,7 +199,9 @@ function Switch({ value, onChange, disabled, label }: { value: boolean; onChange
 export default function RidersPage() {
   const qc = useQueryClient()
   const { data: me } = usePermissions()
-  const isManager = MANAGER_ROLES.has(me?.role ?? '')
+  // The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts).
+  const managerRoles = useManagerRoles()
+  const isManager = managerRoles.has(me?.role ?? '')
   const [tab, setTab] = useState<'dispatch' | 'roster' | 'fleet'>('dispatch')
   const [showAdd, setShowAdd] = useState(false)
   const [viewingHistory, setViewingHistory] = useState<string | null>(null)
@@ -480,7 +482,7 @@ export default function RidersPage() {
                         {order.deliveryNotes ?? 'No address'} · PKR {(order.totalCents / 100).toFixed(0)}
                       </p>
                       <p className="text-xs text-s-muted">
-                        {new Date(order.placedAt).toLocaleTimeString()} · #{order.id.slice(0, 8)}
+                        {new Date(order.placedAt).toLocaleTimeString()} · #{orderRef(order.id)}
                       </p>
                     </div>
                     <span className={`text-xs px-2 py-1 rounded-full font-medium capitalize

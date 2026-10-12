@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { fmtPkrWhole } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
 import { paidCentsOf, preBillErrorMessage, printPreBill, type TillOrder } from './tillApi'
+import { orderRef } from '../../lib/orderRef'
 
 interface OpenTicketsProps {
   brandName: string | undefined
@@ -32,7 +33,7 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
     setNote(null)
     setPrinting(o.id)
     printPreBill(o.id, 'cash', useAuthStore.getState().token)
-      .then(() => setNote({ ok: true, text: `Pre-bill printed for ${o.table?.label ? `table ${o.table.label}` : `order ${o.id.slice(0, 8)}`}.` }))
+      .then(() => setNote({ ok: true, text: `Pre-bill printed for ${o.table?.label ? `table ${o.table.label}` : `order ${orderRef(o.id)}`}.` }))
       .catch((e: unknown) => setNote({ ok: false, text: preBillErrorMessage(e) }))
       .finally(() => setPrinting(null))
   }
@@ -77,7 +78,7 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-semibold text-kds-text">
-                          {o.table?.label ? `Table ${o.table.label}` : `Order ${o.id.slice(0, 8)}`}
+                          {o.table?.label ? `Table ${o.table.label}` : `Order ${orderRef(o.id)}`}
                         </p>
                         <p className="text-xs text-kds-subtext">
                           {items} item{items !== 1 ? 's' : ''} · {o.status} · {minutesSince(o.placedAt)} ago
@@ -93,7 +94,7 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
                       type="button"
                       onClick={() => preBill(o)}
                       disabled={printing !== null}
-                      aria-label={`Print pre-bill for ${o.table?.label ? `table ${o.table.label}` : `order ${o.id.slice(0, 8)}`}`}
+                      aria-label={`Print pre-bill for ${o.table?.label ? `table ${o.table.label}` : `order ${orderRef(o.id)}`}`}
                       className="shrink-0 border-l border-kds-border px-4 text-xs font-semibold text-kds-subtext hover:bg-kds-border/30 disabled:opacity-30"
                     >
                       {printing === o.id ? 'Printing…' : 'Pre-bill'}
