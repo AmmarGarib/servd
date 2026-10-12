@@ -56,7 +56,7 @@ export interface Concept {
 const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
   simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
   stackd: '#FCE8CE',  // Pantone 9180 cream — the wordmark colour on the plum field
-  flipd:  '#006380',  // PANTONE 18-4530 Celestial (owner, 2026-10-12 — was Flipd Blue #294375)
+  flipd:  '#294375',  // Flipd Blue (Pantone 19-4057) — the brand book's ink
 }
 
 /** Returns the brand accent the storefront should use for this concept,
@@ -81,9 +81,9 @@ export interface BrandSurface {
 const BRAND_SURFACE: Record<string, BrandSurface> = {
   simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
   stackd: { bg: '#7C2946', text: '#FCE8CE', muted: 'rgba(252,232,206,0.72)', border: 'rgba(252,232,206,0.20)' },
-  // flipd's dark band is Celestial with Aspen Gold type — the inverse of the
+  // flipd's dark band is Flipd Blue with mustard type — the inverse of the
   // page, which is mustard with blue type. Both halves of the brand book.
-  flipd:  { bg: '#006380', text: '#FFD662', muted: 'rgba(255,214,98,0.72)',  border: 'rgba(255,214,98,0.22)'  },
+  flipd:  { bg: '#294375', text: '#FED561', muted: 'rgba(254,213,97,0.72)',  border: 'rgba(254,213,97,0.22)'  },
   servd:  { bg: '#5a2156', text: '#f3e7cd', muted: 'rgba(243,231,205,0.68)', border: 'rgba(243,231,205,0.14)' },
 }
 

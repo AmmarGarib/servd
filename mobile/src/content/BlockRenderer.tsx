@@ -52,8 +52,8 @@ const CSS_VARS: Record<string, string> = {
   '--simmer-black': '#0E0E0E', '--simmer-orange': '#E94E1B',
   '--stackd-plum': '#7C2946', '--stackd-plum-dark': '#3D1122', '--stackd-cream': '#FCE8CE',
   '--stackd-sky': '#9BD3DD', '--stackd-cement': '#2E1922',
-  '--flipd-blue': '#006380', '--flipd-blue-deep': '#004B61', '--flipd-mustard': '#FFD662',
-  '--flipd-bone': '#FCE8CE',
+  '--flipd-blue': '#294375', '--flipd-blue-deep': '#1D3159', '--flipd-mustard': '#FED561',
+  '--flipd-bone': '#F9F0E1',
 }
 
 function resolveColor(v: string | undefined): string | undefined {

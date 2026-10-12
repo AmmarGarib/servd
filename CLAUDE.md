@@ -69,7 +69,9 @@ rewritten, trust these corrections:
   `#3d1f3b` as the ink/text colour.** Text on green is purple (never white);
   green as text on bone is `#4f7a1c`. Legacy token names stay
   (`--servd-green` holds the primary). The brand microsites keep their own
-  palettes.
+  palettes: the servd ERP and servd.pk colours are NEVER applied to a brand
+  (owner, 2026-10-12: "Only on servd erp and servds storefront. Brands remain
+  as they are"), except inside a section that is about servd on a brand page.
   **Admin/ERP colours (owner, 2026-10-12): deep vibrant purple on white, with
   the servd logo green as the accent** — primary `#6a0dad` (buttons, links,
   selected; white text on it), sidebar `#3b0764`, page `#f9f7fc`, cards
@@ -533,11 +535,7 @@ are switched on in `BrandFallback.tsx`. Live brands:
 - **stackd** — Industrial plum (Pantone 19-2025 Red Plum `#7C2946` + Pantone
   9180 cream `#FCE8CE`, Pantone 635 `#9BD3DD` as the one cool accent). Was
   "stax" / navy-grey; see the 2026-09-09 note above.
-- **flipd** — three Pantone chips (owner, 2026-10-12): 18-4530 Celestial
-  `#006380` (every mark; dark bands with Aspen Gold type), 13-0850 Aspen
-  Gold `#FFD662` (the field) and 9180 `#FCE8CE` (the quiet surface, third
-  checker square). Hex = Pantone's published web values. The logo artwork is
-  being redrawn in these by the owner's designer.
+- **flipd** — Cool diner (curious blue `#2092E9` + bone `#EDE6D3` + midnight-oil ink `#090D17`)
 
 CSS tokens for all three are defined in
 `frontend/storefront/src/app/globals.css` under `:root` (search
