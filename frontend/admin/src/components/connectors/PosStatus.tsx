@@ -10,7 +10,7 @@ import {
   connectorsApi, connectorErrorText, type ConnectorsOverview, type FiscalDocStatus, type TerminalChargeStatus, type TerminalChargeView,
 } from '../../lib/connectorsApi'
 import { fmtPkr } from '../../lib/money'
-import { Badge, Card, ChargeChip, Dot, ErrorLine, Field, Modal, TestBadge, fmtAge, fmtWhen, type Tone } from './ui'
+import { Badge, Banner, Card, ChargeChip, Dot, ErrorLine, Field, Modal, TestBadge, fmtAge, fmtWhen, type Tone } from './ui'
 
 export function fiscalMode(o: ConnectorsOverview): { label: string; tone: Tone; test: boolean } {
   const f = o.fiscal
@@ -28,6 +28,12 @@ export function fiscalHealth(o: ConnectorsOverview): { tone: Tone; label: string
   const oldMs = c.oldestPendingAt ? Date.now() - new Date(c.oldestPendingAt).getTime() : 0
   if (c.held > 0 || c.submittingStale > 0 || oldMs > 15 * 60_000) return { tone: 'warn', label: 'Behind' }
   return { tone: 'ok', label: 'Filing' }
+}
+
+/** The Held counter's small print. */
+export function heldSub(o: ConnectorsOverview): string {
+  if (!o.fiscalReportingRequired) return 'kept as they are; not a backlog while reporting is off'
+  return o.fiscal.enabled ? 'not registered yet, or waiting for release' : 'filed once released after go-live'
 }
 
 const ATTENTION: TerminalChargeStatus[] = ['needs_attention', 'unknown', 'unverified']
@@ -63,7 +69,7 @@ export function PosStatus({ data, canManageCharges, onOpenSubmissions }: {
   const f = data.fiscal
 
   const counters: Array<{ label: string; value: number; status: FiscalDocStatus | ''; tone: Tone; sub?: string; today?: boolean }> = [
-    { label: 'Held', value: c.held, status: 'held', tone: c.held ? 'warn' : 'muted', sub: f.enabled ? 'not registered yet, or waiting for release' : 'filed once released after go-live' },
+    { label: 'Held', value: c.held, status: 'held', tone: c.held && data.fiscalReportingRequired ? 'warn' : 'muted', sub: heldSub(data) },
     { label: 'Waiting', value: c.waiting, status: 'waiting', tone: c.waiting ? 'warn' : 'muted', sub: 'refunds waiting for their sale' },
     { label: 'Pending', value: c.pending, status: 'pending', tone: c.pending ? 'warn' : 'muted', sub: [c.oldestPendingAt ? `oldest ${fmtAge(c.oldestPendingAt)}` : '', 'incl. sending now'].filter(Boolean).join(' · ') },
     { label: 'Failed', value: c.failed, status: 'failed', tone: c.failed ? 'bad' : 'muted' },
@@ -81,6 +87,11 @@ export function PosStatus({ data, canManageCharges, onOpenSubmissions }: {
           <Dot tone={health.tone} label={health.label} />
           <span className="text-xs text-s-muted">Driver: <span className="font-mono text-s-text">{f.driver}</span></span>
         </div>
+        {data.heldNote && (
+          <Banner tone="info" title="Held sales from before reporting was switched off">
+            <p>{data.heldNote}</p>
+          </Banner>
+        )}
         <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <div>
             <dt className="text-s-muted">Last good answer</dt>

@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   connectorsApi, connectorErrorText, missingFrom, useDrivers,
-  type ConnectorsOverview, type FiscalSettings, type TestResult,
+  type ConnectorsOverview, type FiscalSettings, type ReportingRequiredResult, type TestResult,
 } from '../../lib/connectorsApi'
 import { Badge, Banner, Card, ConfirmPhrase, ErrorLine, Field, Modal, OkLine, RangeNumberInput, TestBadge, fmtWhen } from './ui'
 
@@ -56,9 +56,10 @@ export function FiscalSetup({ data, companyName, canEdit, isCeo }: {
               No new sale creates a fiscal document, but the {leftover.total} created earlier are left as they are
               ({leftover.text}).{' '}
               {data.fiscal.enabled
-                ? 'The fiscal POS is still live, so pending and failed ones keep filing and can be retried; held ones file when released. Switch off to stop all of it — they then stay as they are.'
-                : 'The fiscal POS is off, so nothing more is sent. Held ones are filed only if the CEO goes live and releases them; otherwise record a manual filing in Submissions.'}
+                ? 'The fiscal POS is still live, so pending and failed ones keep filing and can be retried. Held ones are not released while reporting is off. Switch off to stop all of it — they then stay as they are.'
+                : 'The fiscal POS is off, so nothing more is sent.'}
             </p>
+            {data.heldNote && <p className="mt-1">{data.heldNote}</p>}
           </Banner>
           <GoLiveCard data={data} isCeo={isCeo} />
           {data.counts.held > 0 && <ReleaseHeldCard data={data} isCeo={isCeo} />}
@@ -90,10 +91,11 @@ function ReportingSwitch({ data, companyName, isCeo }: { data: ConnectorsOvervie
   const [open, setOpen] = useState(false)
   const [next, setNext] = useState(current)
   const [reason, setReason] = useState('')
+  const [saved, setSaved] = useState<ReportingRequiredResult | null>(null)
   useEffect(() => { if (!open) { setNext(current); setReason('') } }, [open, current])
   const m = useMutation({
     mutationFn: () => connectorsApi.setReportingRequired(next, reason.trim()),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['connectors'] }); setOpen(false) },
+    onSuccess: (r) => { setSaved(r); void qc.invalidateQueries({ queryKey: ['connectors'] }); setOpen(false) },
   })
   return (
     <Card
@@ -105,6 +107,14 @@ function ReportingSwitch({ data, companyName, isCeo }: { data: ConnectorsOvervie
         <Badge tone={current ? 'ok' : 'warn'}>{current ? 'Required' : 'Not required (non-commercial or test company)'}</Badge>
         {!isCeo && <span className="text-xs text-s-muted">Only the CEO can change this.</span>}
       </div>
+      {saved && saved.fiscalReportingRequired === current && (
+        <OkLine>
+          Saved. {saved.fiscalReportingRequired
+            ? (saved.heldCount > 0 ? `${saved.heldCount} held sale${saved.heldCount === 1 ? ' is' : 's are'} still held — release them below once the fiscal POS is live.` : 'Sales completed from now on are filed.')
+            : (saved.heldCount > 0 ? `${saved.heldCount} held sale${saved.heldCount === 1 ? ' is' : 's are'} kept as they are (never skipped).` : 'No held sales.')}
+        </OkLine>
+      )}
+      {!current && data.heldNote && <p className="text-xs text-s-text">{data.heldNote}</p>}
       {open && (
         <Modal title={`Fiscal reporting for ${companyName}`} onClose={() => setOpen(false)}>
           <div className="space-y-2 text-sm">
@@ -117,7 +127,12 @@ function ReportingSwitch({ data, companyName, isCeo }: { data: ConnectorsOvervie
               <span><strong>Not required</strong> (non-commercial or test company) — no fiscal document is created for this company&rsquo;s sales; receipts print &ldquo;Not a tax invoice&rdquo;. The card machine keeps working.</span>
             </label>
           </div>
-          {next && !current && <p className="text-xs text-s-muted">Applies to sales completed from now on. Earlier sales are not filed.</p>}
+          {next && !current && (
+            <p className="text-xs text-s-muted">
+              Applies to sales completed from now on. Sales completed while it was off have no fiscal document and are not filed.
+              {data.counts.held > 0 && ` The ${data.counts.held} sale${data.counts.held === 1 ? '' : 's'} held from before it was switched off can be released again (Release held sales, once the fiscal POS is live) or recorded as filed by hand.`}
+            </p>
+          )}
           {!next && current && (() => {
             const open = openDocCounts(data)
             return (
@@ -455,8 +470,10 @@ function ReleaseHeldCard({ data, isCeo }: { data: ConnectorsOverview; isCeo: boo
               {data.brandPosIds.map((b) => <option key={b.conceptId} value={b.conceptId}>{b.name}</option>)}
             </select>
           </Field>
-          <button className="s-btn-primary" disabled={held === 0 || !data.fiscal.enabled || m.isPending} onClick={() => setOpen(true)}>Release all held…</button>
-          {!data.fiscal.enabled && <span className="text-xs text-s-muted">Go live first.</span>}
+          <button className="s-btn-primary" disabled={held === 0 || !data.fiscal.enabled || !data.fiscalReportingRequired || m.isPending} onClick={() => setOpen(true)}>Release all held…</button>
+          {!data.fiscalReportingRequired
+            ? <span className="text-xs text-s-muted">Fiscal reporting is off — switch it back on first. The held sales are kept.</span>
+            : !data.fiscal.enabled && <span className="text-xs text-s-muted">Go live first.</span>}
         </div>
       ) : <p className="text-xs text-s-muted">Only the CEO releases held sales.</p>}
       {result && <OkLine>Released {result.released}. Still held (no POS id yet): {result.stillHeld}.</OkLine>}

@@ -115,6 +115,7 @@ function PosConnector() {
             {!data.fiscalReportingRequired && (
               <Banner tone="warn" title={`Fiscal reporting: not required for ${companyName} (non-commercial / test)`}>
                 <p>This company&rsquo;s sales are not filed with FBR / SRB and its receipts print &ldquo;Not a tax invoice&rdquo;. The card machine still works. Only the CEO can change this, in Fiscal setup.</p>
+                {data.heldNote && <p className="mt-1">{data.heldNote}</p>}
               </Banner>
             )}
             {data.fiscalReportingRequired && !data.fiscal.enabled && (

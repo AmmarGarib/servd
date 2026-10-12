@@ -56,6 +56,30 @@ Only the CEO (role `admin`) can change it, with a reason; every change is in
 the audit trail (old → new). It never applies per sale, brand, order or date
 range. Switching it back on applies to sales completed from then on.
 
+### Switching it off — and back on
+
+Where: Dev → API → POS connector → **Fiscal setup** → "Fiscal reporting" →
+Change (CEO only, reason required).
+
+- **What happens to sales already held.** Nothing is deleted or skipped. Sales
+  held before the switch stay `held`, listed in Submissions, and the Status and
+  Fiscal setup tabs show a note saying how many there are. While reporting is
+  off they **cannot be released**: Release all held answers
+  `409 REPORTING_OFF` (the button is greyed out with the reason). Documents
+  that were already pending or failed keep filing while the fiscal POS stays
+  live — switch the fiscal POS off as well if nothing more should be sent.
+- **`/health`.** Held sales of a company with reporting off are not counted as
+  a backlog: no `fiscalConnector` warning for them. Failed, rejected and
+  file-by-hand documents of a company whose fiscal POS is still live are
+  still reported until they are dealt with (Retry, or Record manual filing).
+- **Switching back on.** Sales completed from then on are filed again. Sales
+  completed while it was off have **no fiscal document** and are never filed
+  by servd — if any of them must be filed, do it on the authority portal.
+  The sales held from before the switch count as a backlog again (Status
+  tab, `/health`) and release as usual: the fiscal POS must be live (else
+  `409 NOT_LIVE` — go live first), then **Release all held**. Or record a
+  manual filing for each one already filed outside servd.
+
 ---
 
 ## 3. What the vendor gives you
@@ -89,6 +113,11 @@ Who: the CEO and IT (`CONNECTOR_ADMINS`). Management can look, not change.
    signup, staff code sign-in, password reset, 2FA): the old image sends the
    ciphertext as the gateway key. After such a rollback, re-enter the
    WhatsApp key in the old screen (Configuration → WhatsApp, `/configuration/whatsapp`) straight away.
+   The SMTP password (Configuration → Email) is treated the same way from the
+   ops-round-5 release: encrypted on save and on first read once the key is
+   set (without the key it is still saved, in plain text, and `/health`
+   `smtpPassAtRest` warns). Rolling back below that release sends the
+   ciphertext as the SMTP password — re-enter it in Configuration → Email.
    Never roll back once a company is live (§4 step 5) in any case.
 1. **Fiscal setup** tab: pick the driver, enter the base URL and the API key.
    Generate a webhook secret and give it, with the webhook URL shown, to the
@@ -149,3 +178,6 @@ tests, the CEO goes live again. The API key can be rotated while live.
 | IT gets 403 on Dev → API pages | The CEO's saved Module Access row for `it` lacks `api_pos` / `api_whatsapp` (or a per-user deny) | CEO ticks the module in Module Access; new modules are added to saved rows once at deploy, an untick after that is kept |
 | `409 SWITCH_OFF_FIRST` | Changing driver or base URL while live | CEO switches off, IT edits and tests, CEO goes live |
 | A company should never file | It is a test or non-commercial company | CEO turns off "Fiscal reporting required" for that company (§2) |
+| `409 REPORTING_OFF` on Release all held | "Fiscal reporting required" is off for the company; its held sales are kept | Switch it back on (§2), go live if needed, then release |
+| `409 NOT_LIVE` on Release all held | The fiscal POS is not live | Go live first (§4 step 5), then release |
+| A document says "Figures do not add up — not sent" | Its lines + tax + service + tip + delivery do not equal the bill, so it was held back (also in the Inbox) | A sale: check the order's stored figures and Retry (the sale is rebuilt from the order). Still wrong → file it on the authority portal and Record manual filing. A refund is never rebuilt — Retry only re-checks the same stored figures, so file it by hand and Record manual filing. If it says an earlier send's result is unknown, the fiscal POS may already have it and servd cannot ask this fiscal POS automatically (Retry will not settle it): ask the vendor outside servd; if they have it, record their fiscal number with Record manual filing; only if they confirm they never got it, file it on the portal and record that |

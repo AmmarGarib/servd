@@ -102,6 +102,9 @@ function PosCard() {
               TEST card machine is on at the till — card sales are recorded as paid but no card is charged.
             </p>
           )}
+          {!data.fiscalReportingRequired && data.counts.held > 0 && (
+            <p className="text-xs text-s-muted">{data.counts.held} sale{data.counts.held === 1 ? '' : 's'} held from before reporting was switched off — kept, never skipped.</p>
+          )}
           {data.fiscalReportingRequired && (
             <div className="grid grid-cols-5 gap-1 text-center">
               {backlog.map((b) => (

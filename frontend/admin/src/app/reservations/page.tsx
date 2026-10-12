@@ -18,6 +18,10 @@ import { todayPktIso, fmtPkrShort } from '../../lib/money'
 import { useReservationSocket } from '../../hooks/useReservationSocket'
 import { CustomerContextSidebar } from '../../components/customer/CustomerContextSidebar'
 import { useBrandFilter } from '../../store/brandFilter'
+import {
+  bookedLine, overbookFields, overbookReady, overbookRefusalText, policyRefusalText, slotFullPrompt,
+  OVERBOOK_REASON_MAX, type CreatedBooking, type SlotFull,
+} from './overbook'
 
 interface Concept { id: string; name: string }
 
@@ -376,21 +380,58 @@ function NewReservationModal({
   const [notes, setNotes] = useState('')
   const [isVip, setIsVip] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // ONL-R2-04: the server said no table fits (409 SLOT_FULL) and a manager
+  // may book past capacity — ask for the reason (and a manager PIN when the
+  // signed-in user is not a manager), then send the same booking again.
+  const [slotFull, setSlotFull] = useState<SlotFull | null>(null)
+  const [overReason, setOverReason] = useState('')
+  const [overPin, setOverPin] = useState('')
+  const [booked, setBooked] = useState<CreatedBooking | null>(null)
 
   const create = useMutation({
-    mutationFn: () => {
+    mutationFn: (override: ReturnType<typeof overbookFields> | null) => {
       const startIso = new Date(`${startDate}T${startTime}:00+05:00`).toISOString()
-      return api.post('/reservations', {
+      return api.post<CreatedBooking>('/reservations', {
         conceptId, partySize, startTime: startIso, durationMin,
         tableId: tableId || null, waitlist,
         guestName: guestName.trim(), guestPhone: guestPhone.trim() || null,
         guestEmail: guestEmail.trim() || null, notes: notes.trim() || null,
         isVip, source: 'staff',
+        ...(override ?? {}),
       })
     },
-    onSuccess: onCreated,
-    onError: (e: { message?: string }) => setErr(e.message ?? 'Could not create reservation'),
+    onSuccess: (r) => { setErr(null); setSlotFull(null); setOverPin(''); setBooked(r) },
+    onError: (e: unknown, override) => {
+      setOverPin('')
+      const full = slotFullPrompt(e)
+      // A refused overbook keeps the prompt open with the plain reason.
+      if (override) {
+        const refusal = overbookRefusalText(e)
+        if (refusal) { setErr(refusal); return }
+      }
+      if (full) { setSlotFull(full); setErr(null); return }
+      setSlotFull(null)
+      setErr(overbookRefusalText(e) ?? policyRefusalText(e) ?? ((e as { message?: string }).message || 'Could not create reservation'))
+    },
   })
+
+  // Any change to when / who / which table is a new question: drop the prompt.
+  useEffect(() => { setSlotFull(null) }, [partySize, startDate, startTime, durationMin, tableId, waitlist])
+
+  if (booked) {
+    return (
+      <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onCreated}>
+        <div className="bg-s-surface rounded-2xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+          <h2 className="text-lg font-bold">Booking made</h2>
+          <p className="text-sm text-s-text">{guestName.trim()} · {partySize} ppl · {startDate} {startTime}</p>
+          <p className={`text-sm ${booked.overbooked ? 'text-s-amber' : 'text-s-text'}`}>{bookedLine(booked)}</p>
+          <div className="flex justify-end">
+            <button autoFocus onClick={onCreated} className="s-btn-primary text-sm">Done</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -442,13 +483,44 @@ function NewReservationModal({
             <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={isVip} onChange={(e) => setIsVip(e.target.checked)} /> ⭐ VIP</label>
             {!tableId && <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={waitlist} onChange={(e) => setWaitlist(e.target.checked)} /> Mark as waitlist</label>}
           </div>
+          {slotFull && (
+            <div className="rounded-lg border border-s-amber/40 bg-s-amber-dim p-3 space-y-2">
+              <p className="text-xs font-semibold text-s-amber">No table fits this booking</p>
+              <p className="text-xs text-s-text">{slotFull.message}</p>
+              <p className="text-xs text-s-muted">
+                A manager can book it past capacity anyway (for example tables pushed together).
+                {slotFull.managerRequired ? ' Enter the manager’s PIN and the reason.' : ' Say why.'} It is recorded with the reason.
+              </p>
+              <Field label="Reason for booking past capacity *">
+                <input value={overReason} onChange={(e) => setOverReason(e.target.value)} maxLength={OVERBOOK_REASON_MAX}
+                  placeholder="e.g. Regular, two 4-tops pushed together"
+                  className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              </Field>
+              {slotFull.managerRequired && (
+                <Field label="Manager PIN *">
+                  <input type="password" inputMode="numeric" autoComplete="off" value={overPin} maxLength={8}
+                    onChange={(e) => setOverPin(e.target.value)}
+                    className="w-full max-w-[160px] bg-s-surface border border-s-border rounded px-2 py-1.5 font-mono" />
+                </Field>
+              )}
+            </div>
+          )}
           {err && <p className="text-xs text-s-red">{err}</p>}
         </div>
-        <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2 flex-wrap">
           <button onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={create.isPending || !guestName.trim()} className="s-btn-primary text-sm">
-            {create.isPending ? 'Booking…' : 'Confirm booking'}
-          </button>
+          {slotFull ? (
+            <button
+              onClick={() => create.mutate(overbookFields(overReason, overPin, slotFull.managerRequired))}
+              disabled={create.isPending || !guestName.trim() || !overbookReady(overReason, overPin, slotFull.managerRequired)}
+              className="s-btn-primary text-sm">
+              {create.isPending ? 'Booking…' : 'Book past capacity'}
+            </button>
+          ) : (
+            <button onClick={() => create.mutate(null)} disabled={create.isPending || !guestName.trim()} className="s-btn-primary text-sm">
+              {create.isPending ? 'Booking…' : 'Confirm booking'}
+            </button>
+          )}
         </div>
       </div>
     </div>

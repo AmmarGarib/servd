@@ -86,10 +86,17 @@ async function insertOnceTx(tx: Tx, data: Prisma.FiscalDocumentCreateManyInput):
 
 export const TOTALS_MISMATCH = 'totals_mismatch'
 
-function mismatchText(orderRef: string, check: TotalsCheck, inDoubt = false): string {
+function mismatchText(orderRef: string, check: TotalsCheck, inDoubt = false, kind: FiscalDocument['kind'] = 'sale'): string {
   if (inDoubt) {
     // F-RV-2: an earlier submit's outcome is unknown — the vendor MAY have it.
-    return `Order ${orderRef}: the fiscal document's figures do not add up (${check.problems.join('; ')}), so it was not sent again. An earlier submit's outcome is UNKNOWN — the fiscal POS may already have filed it. Do NOT file it on the authority portal before checking with the fiscal POS: Retry it in Dev → API → POS connector → Submissions (it asks the fiscal POS first), and record a filing by hand only once the fiscal POS confirms it never got it.`
+    // A row is only left in doubt when this fiscal POS has no lookup (a POS
+    // that can be asked is asked before the totals gate), so Retry cannot ask
+    // it either: the vendor is asked outside servd.
+    return `Order ${orderRef}: the fiscal document's figures do not add up (${check.problems.join('; ')}), so it was not sent again. An earlier submit's outcome is UNKNOWN — the fiscal POS may already have filed it. Do NOT file it on the authority portal yet. servd cannot ask this fiscal POS about it automatically: ask the fiscal POS vendor (outside servd) whether they have it; if they do, record the filing by hand with their fiscal number; only if they confirm they never got it, file it on the authority portal and record that.`
+  }
+  if (kind === 'refund') {
+    // A refund is never rebuilt from the order (retryMismatch): Retry re-checks the same frozen figures.
+    return `Order ${orderRef}: the fiscal document's figures do not add up (${check.problems.join('; ')}). It was NOT sent to the fiscal POS. A refund is not rebuilt from the order — Retry only re-checks the stored figures. File it on the authority portal and record it there.`
   }
   return `Order ${orderRef}: the fiscal document's figures do not add up (${check.problems.join('; ')}). It was NOT sent to the fiscal POS. Check the order's stored figures, then Retry it in Dev → API → POS connector → Submissions, or file it on the authority portal and record it there.`
 }
@@ -105,14 +112,14 @@ function mayExistAtVendor(doc: Pick<FiscalDocument, 'lastErrorCode' | 'providerR
 }
 
 /** The fiscal_failed flag for a totals mismatch, inside the caller's transaction (the flag and the document stand or fall together). */
-async function flagMismatchTx(tx: Tx, doc: { id: string; tenantId: string; conceptId: string; amountCents: number }, orderRef: string, check: TotalsCheck): Promise<void> {
+async function flagMismatchTx(tx: Tx, doc: { id: string; tenantId: string; conceptId: string; amountCents: number; kind: FiscalDocument['kind'] }, orderRef: string, check: TotalsCheck): Promise<void> {
   await tx.exceptionFlag.create({
     data: {
       tenantId: doc.tenantId,
       kind: 'fiscal_failed',
       severity: 'high',
       title: 'Fiscal document not sent: totals do not add up',
-      description: mismatchText(orderRef, check),
+      description: mismatchText(orderRef, check, false, doc.kind),
       entityType: 'FiscalDocument',
       entityId: doc.id,
       conceptId: doc.conceptId,
@@ -570,7 +577,7 @@ export async function promoteWaitingRefunds(saleDocumentId: string, tenantId: st
           payload: toJson(next), payloadHash: payloadHash(next), amountCents: next.refundAmountCents ?? r.amountCents,
         },
       })
-      if (failed.count > 0) await alertFiscalDocument(r, 'fiscal_failed', 'high', 'Fiscal document not sent: totals do not add up', mismatchText(next.orderRef ?? r.orderId, check))
+      if (failed.count > 0) await alertFiscalDocument(r, 'fiscal_failed', 'high', 'Fiscal document not sent: totals do not add up', mismatchText(next.orderRef ?? r.orderId, check, false, r.kind))
       continue
     }
     const moved = await prisma.fiscalDocument.updateMany({
@@ -677,8 +684,9 @@ export async function sendOnce(documentId: string, via: FiscalVia, budgetMs: num
   // add up is never submitted or resubmitted — e.g. one frozen before the
   // totals fix. It guards only an actual (re)submit (F-RV-2): a document the
   // vendor may already hold was looked up above, and the lookup's answer
-  // wins. When it could not be looked up, the UNKNOWN / PROCESSING marker is
-  // kept (Retry asks the vendor first) and the alert never says "not sent".
+  // wins. When it could not be looked up (this fiscal POS has no lookup), the
+  // UNKNOWN / PROCESSING marker is kept, the alert never says "not sent", and
+  // it tells the operator to ask the vendor outside servd — Retry cannot.
   // (A vendor webhook can still report it filed: applyFiled accepts a failed
   // row.)
   const check = totalsCheck(payload)
@@ -691,7 +699,7 @@ export async function sendOnce(documentId: string, via: FiscalVia, budgetMs: num
     })
     await alertFiscalDocument(doc, 'fiscal_failed', 'high',
       inDoubt ? 'Fiscal document in doubt: totals do not add up' : 'Fiscal document not sent: totals do not add up',
-      mismatchText(payload.orderRef ?? doc.orderId, check, inDoubt))
+      mismatchText(payload.orderRef ?? doc.orderId, check, inDoubt, doc.kind))
     return 'failed'
   }
 
@@ -873,7 +881,16 @@ async function retryMismatch(doc: FiscalDocument): Promise<FiscalDocument> {
       total = built.totalCents
     }
     const check = totalsCheck(payload)
-    if (!check.ok) throw new AppError('TOTALS_MISMATCH', `The figures still do not add up: ${check.problems.join('; ')}`, 409)
+    if (!check.ok) {
+      // An in-doubt refund is never looked up (only a sale is, above): say it is
+      // in doubt, so nobody files a credit note the fiscal POS may already hold.
+      // (The prefix stays "The figures still do not add up: " — the admin's
+      // connectorErrorText reads the problems after it.)
+      if (cur.kind === 'refund' && mayExistAtVendor(cur)) {
+        throw new AppError('TOTALS_MISMATCH', `The figures still do not add up: ${check.problems.join('; ')}. An earlier submit's outcome is unknown, so the fiscal POS may already have it — confirm with the fiscal POS vendor (outside servd) before filing it by hand.`, 409)
+      }
+      throw new AppError('TOTALS_MISMATCH', `The figures still do not add up: ${check.problems.join('; ')}`, 409)
+    }
     let status: FiscalDocStatus = 'pending'
     let reason: string | null = null
     if (cur.kind === 'refund') {

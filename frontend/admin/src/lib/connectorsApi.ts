@@ -107,6 +107,13 @@ export interface ConnectorsOverview {
   terminal: ConnectorView<TerminalSettings>
   /** §17.7 — the company's "fiscal reporting required" switch (default true). */
   fiscalReportingRequired: boolean
+  /**
+   * BOOKS-R2-02 / FOH-R2-02: while reporting is OFF and sales held from before
+   * are still there, the server's plain sentence about them (kept, never
+   * skipped, not a backlog while off, release when switched back on). null
+   * otherwise. Optional only so an older API (before the field) still types.
+   */
+  heldNote?: string | null
   legacyDrained: boolean
   brandPosIds: BrandPosIds[]
   counts: FiscalCounts
@@ -231,6 +238,15 @@ export interface ConnectorPut {
   settings?: Record<string, unknown>
 }
 
+/** PUT /connectors/fiscal/reporting-required — the held backlog is left exactly as it is. */
+export interface ReportingRequiredResult {
+  fiscalReportingRequired: boolean
+  /** Documents of the company still held (never skipped by the switch). */
+  heldCount: number
+  /** The server's sentence about them when reporting is now OFF and some are held; else null. */
+  heldNote: string | null
+}
+
 // ─── WhatsApp (platform-wide gateway, /auth/integrations/*) ─────────────────
 
 export interface WhatsappStatus {
@@ -271,7 +287,7 @@ export const connectorsApi = {
   goLive: () => api.post<ConnectorView<FiscalSettings>>('/connectors/fiscal/go-live', { confirm: 'GO LIVE' }),
   switchOff: () => api.post<ConnectorView<FiscalSettings>>('/connectors/fiscal/switch-off', { confirm: 'SWITCH OFF' }),
   setReportingRequired: (required: boolean, reason: string) =>
-    api.put<{ fiscalReportingRequired: boolean }>('/connectors/fiscal/reporting-required', { required, reason }),
+    api.put<ReportingRequiredResult>('/connectors/fiscal/reporting-required', { required, reason }),
   saveBrandPosIds: (items: Array<{ conceptId: string; fbrPosId: number | null; srbPosId: number | null }>) =>
     api.put<{ updated: number }>('/connectors/fiscal/brand-pos-ids', { items }),
   documents: (f: { status?: string; kind?: string; from?: string; to?: string; conceptId?: string; q?: string; cursor?: string; limit?: number }) =>
@@ -378,6 +394,16 @@ export function connectorErrorText(err: unknown): string {
         return `That address is not allowed: ${err.message}. It must be a public https:// address.`
       case 'FORBIDDEN':
         return 'Your role cannot do this here.'
+      case 'REPORTING_OFF':
+        return 'Fiscal reporting is switched off for this company, so nothing is released or filed. The held sales are kept as they are — switch "Fiscal reporting required" back on (CEO, Fiscal setup) to release them.'
+      case 'NOT_LIVE':
+        return 'The fiscal POS is not live yet, so held sales cannot be released. The CEO goes live first (Fiscal setup → Go live), then releases them.'
+      case 'TOTALS_MISMATCH':
+        return `The figures still do not add up, so it was not sent. ${err.message.replace(/^The figures still do not add up:\s*/, 'Problem: ')} Check the order's stored figures; if it cannot be corrected, file it on the authority portal and use Record manual filing.`
+      case 'FISCAL_IN_DOUBT':
+        return `${err.message} Do not file it on the authority portal until the fiscal POS confirms it never got it.`
+      case 'NOT_RETRYABLE':
+        return 'This document has moved on since the list loaded — reload it.'
       default:
         return err.message || err.code
     }
@@ -392,6 +418,103 @@ export function missingFrom(err: unknown): string[] {
     return ((d as { missing: unknown[] }).missing).filter((x): x is string => typeof x === 'string')
   }
   return []
+}
+
+// ─── Documents held back because their figures do not add up ────────────────
+//
+// backend connectors/fiscal/outbox.ts: a document whose lines + tax + service +
+// tip + delivery do not equal the bill is NEVER sent. It is stored `failed`
+// with statusReason 'totals_mismatch' (lastErrorCode TOTALS_MISMATCH, the
+// problems in lastError) and raises a fiscal_failed flag in the Inbox.
+//
+// What Retry really does (retryMismatch):
+//   - a SALE nobody may have yet → rebuilt from the order and checked again
+//     (409 TOTALS_MISMATCH when still wrong) — so "fix the order, then Retry"
+//     works;
+//   - a REFUND → never rebuilt: the same stored figures are checked again, so
+//     Retry cannot make it pass — it is filed by hand (Record manual filing);
+//   - IN DOUBT (an earlier submit's outcome is unknown, the fiscal POS may
+//     already hold it) → the outbox only lands here when it could not ask the
+//     fiscal POS (no lookup), so a sale's Retry answers 409 FISCAL_IN_DOUBT
+//     and a refund's 409 TOTALS_MISMATCH. The vendor must confirm OUTSIDE
+//     servd before anyone files it by hand — filing it twice is a duplicate
+//     invoice / credit note.
+
+export const TOTALS_MISMATCH_REASON = 'totals_mismatch'
+
+type MismatchFields = Pick<FiscalDocRow, 'kind' | 'status' | 'statusReason' | 'lastErrorCode' | 'lastError'>
+
+/** A document held back (not sent) because its figures do not add up. */
+export function isTotalsMismatch(d: Pick<FiscalDocRow, 'status' | 'statusReason'>): boolean {
+  return d.status === 'failed' && d.statusReason === TOTALS_MISMATCH_REASON
+}
+
+/** …and an earlier submit's outcome is unknown, so the fiscal POS may already have it. */
+export function isMismatchInDoubt(d: Omit<MismatchFields, 'kind'>): boolean {
+  if (!isTotalsMismatch(d)) return false
+  return (!!d.lastErrorCode && d.lastErrorCode !== 'TOTALS_MISMATCH')
+    || (d.lastError ?? '').startsWith('TOTALS_MISMATCH (an earlier')
+}
+
+const IN_DOUBT_STEPS = (what: 'sale' | 'refund') =>
+  `The fiscal POS may already have filed this ${what}, and servd cannot ask this fiscal POS about it automatically, so Retry will not settle it. ` +
+  'Ask the fiscal POS vendor (outside servd) whether they have it. If they do, use Record manual filing with the fiscal number they give you. ' +
+  'Only if they confirm they never got it, file it on the authority portal and record that. Do NOT file it by hand before they confirm — that would file it twice.'
+
+/** What to do about a totals-mismatch document, in plain words; null for any other document. */
+export function mismatchAdvice(d: MismatchFields): { title: string; steps: string } | null {
+  if (!isTotalsMismatch(d)) return null
+  const what = d.kind === 'refund' ? 'refund' : 'sale'
+  if (isMismatchInDoubt(d)) {
+    return {
+      title: 'Not sent again: the figures do not add up, and an earlier send’s result is unknown',
+      steps: IN_DOUBT_STEPS(what),
+    }
+  }
+  if (d.kind === 'refund') {
+    return {
+      title: 'Not sent: the figures do not add up',
+      steps: 'The refund’s lines, tax and total do not agree, so servd held it back rather than file wrong numbers. A refund is not rebuilt from the order — Retry only checks the same stored figures again, so it will not pass. File the refund on the authority portal and use Record manual filing.',
+    }
+  }
+  return {
+    title: 'Not sent: the figures do not add up',
+    steps: 'The lines, tax, service, tip and delivery do not equal the bill, so servd held it back rather than file wrong numbers. Check the order’s stored figures, then press Retry — servd rebuilds the sale from the order and checks again. If it still does not add up, file it on the authority portal and use Record manual filing.',
+  }
+}
+
+/**
+ * The line shown when Retry on a document fails. For a totals-mismatch row the
+ * row's own situation decides (in doubt → never "file it by hand"; a refund →
+ * Retry cannot rebuild it); everything else is connectorErrorText.
+ */
+export function retryErrorText(err: unknown, d: MismatchFields | null | undefined): string {
+  if (d && isTotalsMismatch(d) && err instanceof ApiError && (err.code === 'TOTALS_MISMATCH' || err.code === 'FISCAL_IN_DOUBT')) {
+    const what = d.kind === 'refund' ? 'refund' : 'sale'
+    if (isMismatchInDoubt(d) || err.code === 'FISCAL_IN_DOUBT') return `Not sent. ${IN_DOUBT_STEPS(what)}`
+    if (d.kind === 'refund') {
+      return 'The refund’s stored figures still do not add up — Retry does not rebuild a refund, so it cannot pass. File it on the authority portal and use Record manual filing.'
+    }
+  }
+  return connectorErrorText(err)
+}
+
+/** Plain words for a document's statusReason (the server's codes). */
+export function docReasonLabel(reason: string | null | undefined): string | null {
+  if (!reason) return null
+  switch (reason) {
+    case TOTALS_MISMATCH_REASON: return 'Figures do not add up — not sent'
+    case 'no_connector': return 'Fiscal POS not live'
+    case 'not_registered': return 'Brand has no POS id'
+    case 'zero_value': return 'Zero-value bill (not filed by setting)'
+    case 'zero_value_unsupported': return 'Zero-value bill the fiscal POS cannot take'
+    case 'prefiled_direct': case 'prefiled_direct_refund': return 'Filed directly before the connector'
+    case 'no_sale_document': return 'No sale document to refund against'
+    case 'refunds_unsupported': return 'The fiscal POS does not take refunds'
+    case 'legacy_unfiled': return 'Unfiled sale from the old direct queue'
+    case 'operator': return 'Recorded by hand'
+    default: return reason.replace(/_/g, ' ')
+  }
 }
 
 // ─── Labels ──────────────────────────────────────────────────────────────────

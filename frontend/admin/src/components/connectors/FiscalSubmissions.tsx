@@ -10,12 +10,13 @@ import Link from 'next/link'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AUTHORITIES, DOC_STATUS_LABEL, FISCAL_DOC_STATUSES, authorityLabel, connectorsApi, connectorErrorText,
+  docReasonLabel, isTotalsMismatch, mismatchAdvice, retryErrorText,
   type Authority, type ConnectorsOverview, type FiscalDocRow, type FiscalDocStatus,
 } from '../../lib/connectorsApi'
 import { fmtPkr } from '../../lib/money'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
-import { Banner, Card, DocChip, ErrorLine, Field, Modal, OkLine, fmtWhen } from './ui'
+import { Badge, Banner, Card, DocChip, ErrorLine, Field, Modal, OkLine, fmtWhen } from './ui'
 
 const RETRYABLE: FiscalDocStatus[] = ['failed', 'rejected', 'pending']
 const MANUAL_FILABLE: FiscalDocStatus[] = ['held', 'waiting', 'pending', 'failed', 'rejected', 'manual_required']
@@ -106,6 +107,18 @@ export function FiscalSubmissions({ data, initialStatus, initialDay = '', canCon
         </div>
       </Card>
 
+      {rows.some(isTotalsMismatch) && (
+        <Banner tone="bad" title="Some documents were not sent because their figures do not add up">
+          <p>
+            servd never files numbers that do not add up (lines + tax + service + tip + delivery must equal the bill). Each one is marked
+            &ldquo;Figures do not add up&rdquo; below and is in the Inbox. For a sale, check the order&rsquo;s stored figures, then Retry (the sale is
+            rebuilt from the order); if it still does not add up, file it on the authority portal and use Record manual filing. A refund is not
+            rebuilt, so Retry will not fix it — file it by hand and record it. If a row says an earlier send&rsquo;s result is unknown, the fiscal POS
+            may already have it: ask the vendor first, and do not file it by hand until they confirm they never got it.
+          </p>
+        </Banner>
+      )}
+
       {portfolio && (
         <Banner tone="info" title="All-companies view — this list shows the active company only">
           <p>Switch company to see another company&rsquo;s submissions.</p>
@@ -128,10 +141,18 @@ export function FiscalSubmissions({ data, initialStatus, initialDay = '', canCon
                   <td className="text-xs">{r.brand ?? '—'}</td>
                   <td className="text-xs">{r.kind === 'sale' ? 'Sale' : 'Refund'}</td>
                   <td className="text-xs">{fmtPkr(r.amountCents)}</td>
-                  <td><DocChip status={r.status} isTest={r.isTest} />{r.statusReason && <span className="block text-[10px] text-s-muted">{r.statusReason.replace(/_/g, ' ')}</span>}</td>
+                  <td>
+                    <DocChip status={r.status} isTest={r.isTest} />
+                    {isTotalsMismatch(r)
+                      ? <span className="mt-1 block"><Badge tone="bad" title={mismatchAdvice(r)?.steps}>Figures do not add up — not sent</Badge></span>
+                      : r.statusReason && <span className="block text-[10px] text-s-muted">{docReasonLabel(r.statusReason)}</span>}
+                  </td>
                   <td className="font-mono text-xs">{r.fiscalNumber ? `${authorityLabel(r.authority)} ${r.fiscalNumber}` : '—'}</td>
                   <td className="text-xs">{r.attempts}</td>
-                  <td className="max-w-[240px] whitespace-normal text-[11px] text-s-red">{r.lastError ?? ''}</td>
+                  <td className="max-w-[240px] whitespace-normal text-[11px] text-s-red">
+                    {r.lastError ?? ''}
+                    {isTotalsMismatch(r) && <span className="block mt-1 text-s-text">{mismatchAdvice(r)?.steps}</span>}
+                  </td>
                   <td className="text-right space-x-1" onClick={(e) => e.stopPropagation()}>
                     {RETRYABLE.includes(r.status) && (
                       <button className="s-btn-secondary px-2 py-1 text-xs" disabled={retry.isPending} onClick={() => retry.mutate(r.id)}>Retry</button>
@@ -147,7 +168,7 @@ export function FiscalSubmissions({ data, initialStatus, initialDay = '', canCon
         </div>
         {docs.isLoading && <p className="p-4 text-xs text-s-muted">Loading…</p>}
         {!docs.isLoading && rows.length === 0 && !docs.error && <p className="p-4 text-xs text-s-muted">No documents match.</p>}
-        <div className="p-3"><ErrorLine>{docs.error ? connectorErrorText(docs.error) : retry.error ? connectorErrorText(retry.error) : null}</ErrorLine></div>
+        <div className="p-3"><ErrorLine>{docs.error ? connectorErrorText(docs.error) : retry.error ? retryErrorText(retry.error, rows.find((r) => r.id === retry.variables)) : null}</ErrorLine></div>
         {docs.hasNextPage && (
           <div className="p-3 border-t border-s-border">
             <button className="s-btn-secondary text-xs" disabled={docs.isFetchingNextPage} onClick={() => void docs.fetchNextPage()}>
@@ -179,8 +200,16 @@ function DocDrawer({ id, onClose, canConfigure, canOpenOrders, onManual }: { id:
         <>
           <div className="flex flex-wrap items-center gap-2">
             <DocChip status={doc.status} isTest={doc.isTest} />
-            {doc.statusReason && <span className="text-xs text-s-muted">{doc.statusReason.replace(/_/g, ' ')}</span>}
+            {doc.statusReason && <span className="text-xs text-s-muted">{docReasonLabel(doc.statusReason)}</span>}
           </div>
+          {(() => {
+            const advice = mismatchAdvice(doc)
+            return advice && (
+              <Banner tone="bad" title={advice.title}>
+                <p>{advice.steps}</p>
+              </Banner>
+            )
+          })()}
           <dl className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
             <div><dt className="text-s-muted">Amount</dt><dd>{fmtPkr(doc.amountCents)}</dd></div>
             <div><dt className="text-s-muted">Fiscal no.</dt><dd className="font-mono">{doc.fiscalNumber ? `${authorityLabel(doc.authority)} ${doc.fiscalNumber}` : '—'}</dd></div>
@@ -197,7 +226,7 @@ function DocDrawer({ id, onClose, canConfigure, canOpenOrders, onManual }: { id:
             {RETRYABLE.includes(doc.status) && <button className="s-btn-secondary text-xs" disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? 'Retrying…' : 'Retry'}</button>}
             {canConfigure && MANUAL_FILABLE.includes(doc.status) && <button className="s-btn-ghost text-xs" onClick={() => onManual({ ...doc, brand: null })}>Record manual filing</button>}
           </div>
-          <ErrorLine>{retry.error ? connectorErrorText(retry.error) : null}</ErrorLine>
+          <ErrorLine>{retry.error ? retryErrorText(retry.error, doc) : null}</ErrorLine>
 
           <div>
             <h4 className="text-xs font-bold text-s-text mb-1">Attempts (latest 50)</h4>

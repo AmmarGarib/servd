@@ -630,6 +630,19 @@ async function build() {
       details.whatsappKeyAtRest = 'Could not check how the WhatsApp gateway key is stored.'
     }
 
+    // SMTP password at rest (lib/mailer, ops round 5) — the same levels and
+    // wording as the WhatsApp key: warn when plain text (no SERVD_SECRET_KEY;
+    // saving email settings is never blocked by that) or encrypted but
+    // unreadable here; off when none is stored in the database.
+    try {
+      const { smtpSecretHealth } = await import('./lib/mailer.js')
+      const smtp = await smtpSecretHealth()
+      if (smtp.check !== 'off') { checks.smtpPassAtRest = smtp.check; details.smtpPassAtRest = smtp.detail }
+    } catch {
+      checks.smtpPassAtRest = 'warn'
+      details.smtpPassAtRest = 'Could not check how the SMTP password is stored.'
+    }
+
     // POS connector (spec §8.4): fiscal POS, card machine, the secret key for
     // stored connector secrets. ok / warn / off — never an error: a fiscal POS
     // or card machine being down must not mark the API unhealthy (sales keep

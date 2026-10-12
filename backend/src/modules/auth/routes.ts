@@ -1299,12 +1299,18 @@ export async function authRoutes(fastify: FastifyInstance) {
     const rows = await prisma.setting.findMany({ where: { key: { in: keys } } })
     const get = (k: string) => rows.find((r) => r.key === k)?.value ?? ''
     const cfg = await mailConfig()
+    // passSet / passAtRest / passSource only — never the password, nor a hint
+    // of it (ops round 5: it is encrypted at rest when SERVD_SECRET_KEY is set).
+    const { smtpPassView } = await import('../../lib/mailer.js')
+    const pass = await smtpPassView()
     return {
       host: get(SMTP_HOST_KEY),
       port: get(SMTP_PORT_KEY),
       user: get(SMTP_USER_KEY),
       from: get(SMTP_FROM_KEY),
-      passSet: Boolean(get(SMTP_PASS_KEY) || (process.env['SMTP_PASS'] ?? '').trim()),
+      passSet: pass.passSet,
+      passAtRest: pass.passAtRest,
+      passSource: pass.passSource,
       // What is actually in force, whatever the fields above show — the values
       // may be coming from the environment.
       effective: { host: cfg.host, port: cfg.port, user: cfg.user, from: cfg.from },
@@ -1329,10 +1335,14 @@ export async function authRoutes(fastify: FastifyInstance) {
       [SMTP_USER_KEY, body.user.trim()],
       [SMTP_FROM_KEY, body.from.trim()],
     ]
-    if (body.pass !== undefined) pairs.push([SMTP_PASS_KEY, body.pass.trim()])
-    for (const [key, value] of pairs) {
-      await prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } })
-    }
+    // The password is stored encrypted when SERVD_SECRET_KEY is set; without
+    // it, as typed — saving is never refused (email is the fallback channel
+    // when WhatsApp drops) and the answer + /health smtpPassAtRest say so.
+    const { sealSmtpPass } = await import('../../lib/mailer.js')
+    const sealed = body.pass !== undefined ? sealSmtpPass(body.pass) : null
+    if (sealed) pairs.push([SMTP_PASS_KEY, sealed.value])
+    await prisma.$transaction(pairs.map(([key, value]) =>
+      prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } })))
     invalidateMailConfig()
 
     await audit({
@@ -1343,9 +1353,15 @@ export async function authRoutes(fastify: FastifyInstance) {
       userId: req.staffUser?.id ?? null,
       userEmail: req.staffUser?.email ?? null,
       tenantId: req.staffUser?.tenantId ?? null,
-      after: { host: body.host, port: body.port, user: body.user, from: body.from, passChanged: body.pass !== undefined },
+      after: { host: body.host, port: body.port, user: body.user, from: body.from, passChanged: body.pass !== undefined, ...(sealed && { passAtRest: sealed.atRest }) },
     })
-    return reply.status(200).send({ ok: true })
+    return reply.status(200).send({
+      ok: true,
+      ...(sealed && { passAtRest: sealed.atRest }),
+      ...(sealed?.atRest === 'plaintext' && {
+        warning: 'Saved, but the password is stored in plain text because SERVD_SECRET_KEY is not set on the server. Ask IT to set it — the password is then encrypted on the next read.',
+      }),
+    })
   })
 
   fastify.post('/integrations/email/test', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
