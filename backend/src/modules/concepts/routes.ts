@@ -1,10 +1,192 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
-import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
+import type { UserRole } from '@prisma/client'
+import { requireAuth, MANAGERS, CASHIERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
+import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { audit } from '../../lib/audit.js'
+
+// What a till role (cashier, foh/waiter) may read about a brand: enough to
+// pick it at the till and see its tender GST split, nothing else. The brand
+// strategy brief, legal/tax registration, FBR/SRB POS ids and storefront
+// layout stay with management. (FOH-01: the till called GET /concepts, which
+// was managers-only, so cashiers and waiters saw no brands and rang nothing.)
+const TILL_CONCEPT_SELECT = {
+  id: true,
+  tenantId: true,
+  name: true,
+  slug: true,
+  type: true,
+  logoUrl: true,
+  primaryColor: true,
+  isActive: true,
+  taxRateCash: true,
+  taxRateCard: true,
+} satisfies Prisma.ConceptSelect
+
+// What the Storefront editor reads about a brand (GET /concepts?view=storefront):
+// enough to list its pages, pick it in the Library and target a pop-up at it.
+// Nothing else — no tax, legal, strategy or layout fields. Opt-in by query on
+// purpose: plain GET /concepts stays management/till only, so the narrow row
+// never reaches a page that edits brands. (The Brand Editor at
+// /marketing/brands, in marketing's sidebar through the 'brands' module, fills
+// its whole form from GET /concepts — a narrow row there reads as a wiped
+// brand.) The Storefront Pages tab, Library brand picker and pop-up brand
+// targeting call it; before, they called the managers/till list, so marketing
+// saw no brand pages and a red "Role not allowed" toast.
+const STOREFRONT_CONCEPT_SELECT = {
+  id: true,
+  tenantId: true,
+  name: true,
+  slug: true,
+  logoUrl: true,
+  primaryColor: true,
+  isActive: true,
+} satisfies Prisma.ConceptSelect
+
+// What the admin shell's brand picker reads (GET /concepts?view=picker): the
+// active brands of the caller's OWN companies in scope, id + name + mark only.
+// Every staff role gets it — it is the sidebar's brand filter, shown on every
+// page, and a KDS, finance or HR login filters by brand like anyone else
+// (UI-13: the picker called the managers/till list, so every other role got a
+// red "Role X is not allowed" toast on every page). Opt-in by query, like the
+// storefront view, so a page that edits brands never receives this narrow row
+// in place of the full one.
+const PICKER_CONCEPT_SELECT = {
+  id: true,
+  tenantId: true,
+  name: true,
+  slug: true,
+  logoUrl: true,
+  primaryColor: true,
+} satisfies Prisma.ConceptSelect
+
+// The Brand Editor (/marketing/brands) for the marketing tier — roles that
+// hold the 'brands' module without being management (marketing,
+// brand_manager by default; CLAUDE.md: Concept.description is edited in
+// admin → Marketing → Brands). R2-UI-03: the editor read the managers-only
+// list, so marketing saw no brands and could not save any.
+//
+// BRAND_MARKETING_FIELDS is the ONE allow-list of what that tier may WRITE:
+// the brand's public copy, artwork, colour and strategy brief. Everything
+// else stays with management — name, slug, type, isActive, tenant, the tax
+// rates and tender split, STRN/NTN/province/invoice details, FBR/SRB POS ids,
+// forecast portions (opex denominator), storefront visibility, reservations,
+// the guest-facing contact numbers (a WhatsApp number is where customers'
+// messages go) and the storefront layout. A PATCH that carries any of those
+// is refused whole (403 FIELD_NOT_ALLOWED), never partly applied.
+export const BRAND_MARKETING_FIELDS = [
+  'description', 'heroTagline',
+  'logoUrl', 'wordmarkUrl', 'mascotUrl', 'primaryColor',
+  'conceptStatement', 'cuisine', 'heroProduct', 'anchoringExperience',
+  'targetCustomer', 'priceTier', 'daypartFocus', 'competitors',
+  'differentiator', 'brandVoice',
+] as const
+
+// What the marketing tier READS in the Brand Editor: the fields it edits plus
+// the public, read-only context the form shows (name, slug, status, guest
+// contact, the kitchen mirror). No tax, legal, POS id, forecast or layout.
+const BRAND_EDITOR_CONCEPT_SELECT = {
+  id: true,
+  tenantId: true,
+  name: true,
+  slug: true,
+  type: true,
+  isActive: true,
+  storefrontVisible: true,
+  reservationsEnabled: true,
+  phone: true,
+  whatsapp: true,
+  email: true,
+  addressLocality: true,
+  address: true,
+  latitude: true,
+  longitude: true,
+  ...Object.fromEntries(BRAND_MARKETING_FIELDS.map((f) => [f, true])) as Record<(typeof BRAND_MARKETING_FIELDS)[number], true>,
+} satisfies Prisma.ConceptSelect
+
+/** True for the management tier — they get the full brand row. */
+function isManager(role: UserRole): boolean {
+  return MANAGERS.includes(role)
+}
+
+/** True when the caller holds the 'brands' module (role default/override,
+ *  + moduleAllow, − moduleDeny — the same source as the central gate). */
+async function holdsBrandsModule(req: FastifyRequest): Promise<boolean> {
+  const su = req.staffUser!
+  if (su.role === 'admin') return true
+  const u = await prisma.user.findUnique({ where: { id: su.id }, select: { moduleAllow: true, moduleDeny: true } })
+  const modules = await effectiveModulesForUser({ role: su.role, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+  return modules.has('brands')
+}
+
+/** The Brand Editor's access: management edits the whole brand, a 'brands'
+ *  module holder only the marketing fields; anyone else 403. */
+async function brandEditorAccess(req: FastifyRequest): Promise<'full' | 'marketing'> {
+  if (isManager(req.staffUser!.role)) return 'full'
+  if (await holdsBrandsModule(req)) return 'marketing'
+  throw new ForbiddenError(`Role '${req.staffUser!.role}' is not allowed for this resource`)
+}
+
+const brandMarketingSchema = z.object({
+  description:         z.string().max(2000).nullable().optional(),
+  heroTagline:         z.string().max(120).nullable().optional(),
+  logoUrl:             brandArtworkUrlSchema(),
+  wordmarkUrl:         brandArtworkUrlSchema(),
+  mascotUrl:           brandArtworkUrlSchema(),
+  primaryColor:        z.string().regex(/^#[0-9a-fA-F]{3,8}$/, 'A hex colour like #87c540').nullable().optional(),
+  conceptStatement:    z.string().max(280).nullable().optional(),
+  cuisine:             z.string().max(60).nullable().optional(),
+  heroProduct:         z.string().max(120).nullable().optional(),
+  anchoringExperience: z.string().max(280).nullable().optional(),
+  targetCustomer:      z.string().max(280).nullable().optional(),
+  priceTier:           z.enum(['budget', 'mid', 'premium', 'luxury']).nullable().optional(),
+  daypartFocus:        z.array(z.string().max(40)).max(10).optional(),
+  competitors:         z.array(z.string().max(80)).max(10).optional(),
+  differentiator:      z.string().max(280).nullable().optional(),
+  brandVoice:          z.string().max(500).nullable().optional(),
+}).strict()
+
+// Same rule as brandArtworkUrl below (http(s) or root-relative, '' clears),
+// as a function so the marketing schema can sit above it.
+function brandArtworkUrlSchema() {
+  return z
+    .string()
+    .max(2048)
+    .refine((v) => v === '' || /^https?:\/\//i.test(v) || v.startsWith('/'), { message: 'Must be an http(s) URL or a root-relative path' })
+    .optional()
+    .nullable()
+    // An absent key stays absent (undefined = "leave it"); '' / null clear it.
+    .transform((v) => (v === undefined ? undefined : v || null))
+}
+
+/** Which brand view the caller gets. Read-only either way — every write route
+ *  keeps its own role gate.
+ *  - `?view=storefront`: the Storefront editor's narrow row, for anyone who
+ *    holds the 'storefront' module (marketing, brand_manager) and for
+ *    management (who already read the full row); anyone else 403.
+ *  - otherwise: the full row (management), the till's narrow row (cashier,
+ *    foh), or 403 — a Storefront-only role gets nothing here. */
+async function conceptView(req: FastifyRequest, wantStorefront: boolean): Promise<'full' | 'till' | 'storefront'> {
+  const su = req.staffUser!
+  if (wantStorefront) {
+    if (isManager(su.role)) return 'storefront'
+    const u = await prisma.user.findUnique({ where: { id: su.id }, select: { moduleAllow: true, moduleDeny: true } })
+    const modules = await effectiveModulesForUser({ role: su.role, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+    if (modules.has('storefront')) return 'storefront'
+    throw new ForbiddenError(`Role '${su.role}' is not allowed for this resource`)
+  }
+  if (isManager(su.role)) return 'full'
+  if (CASHIERS.includes(su.role)) return 'till'
+  throw new ForbiddenError(`Role '${su.role}' is not allowed for this resource`)
+}
+
+const wantsStorefront = (q: { view?: string }) => q.view === 'storefront'
+const wantsPicker = (q: { view?: string }) => q.view === 'picker'
+const wantsBrandEditor = (q: { view?: string }) => q.view === 'brand'
 
 // An uploaded artwork URL: either what the R2 presigner returns
 // (https://media.../marketing/xyz.png) or, when R2_PUBLIC_URL is unset, the
@@ -25,7 +207,10 @@ const createConceptSchema = z.object({
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
   type: z.enum(['restaurant', 'digital', 'cart']),
   description: z.string().optional(),
-  logoUrl: z.string().url().optional().or(z.literal('')).transform(v => v || null),
+  // Same rule as the wordmark/mascot below (and the Brand Editor's marketing
+  // tier): the uploader can hand back a root-relative path, and a value the
+  // marketing tier saved must not make management's next full save 400.
+  logoUrl: brandArtworkUrl,
   primaryColor: z.string().optional(),
   taxRate: z.number().min(0).max(100).default(17),
   // Split GST rates per tender (FBR rule): cash @ taxRateCash, card / digital
@@ -42,7 +227,7 @@ const createConceptSchema = z.object({
   // Brand microsite artwork. Null / '' means "use the asset bundled in the
   // storefront build", which is what every brand did before these existed.
   //
-  // Deliberately NOT z.string().url() like logoUrl above: getSignedUploadUrl
+  // Deliberately NOT z.string().url(): getSignedUploadUrl
   // builds its publicUrl as `${R2_PUBLIC_URL}/${key}`, so on any environment
   // where R2_PUBLIC_URL is unset it hands back a root-relative '/marketing/x.png'
   // — which .url() rejects, and the operator sees their upload fail on save
@@ -205,14 +390,53 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.get<{ Querystring: { includeInactive?: string } }>('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // GET /concepts — the brand list. Management gets the full rows (and may
+  // ask for retired brands); till roles (cashier, foh) get the active brands
+  // of their companies in scope, narrow fields only. `?view=picker` is the
+  // shell's brand picker: every staff role, its own companies' active brands,
+  // id/name/mark only. `?view=storefront` is the
+  // Storefront editor's list (roles holding the 'storefront' module, and
+  // management): active brands in scope, its own narrow fields. All go
+  // through the company scope — an empty scope matches nothing.
+  fastify.get<{ Querystring: { includeInactive?: string; view?: string } }>('/', { preHandler: requireAuth() }, async (req) => {
+    // ?view=picker — the shell's brand picker, any staff role (see
+    // PICKER_CONCEPT_SELECT). Company-scoped: an empty scope matches nothing.
+    if (wantsPicker(req.query)) {
+      return prisma.concept.findMany({
+        where: { deletedAt: null, isActive: true, ...(await scopeTenantWhere(req, 'read')) },
+        orderBy: { name: 'asc' },
+        select: PICKER_CONCEPT_SELECT,
+      })
+    }
+    const includeInactive = req.query.includeInactive === '1'
+    // ?view=brand — the Brand Editor. Management: the full rows (below).
+    // A 'brands' module holder: the editor's row (BRAND_EDITOR_CONCEPT_SELECT),
+    // its companies in read scope; retired brands too when asked. It saves
+    // only in a company it belongs to ('write' scope, PATCH below).
+    // Each row says which form the caller gets (brandEditorAccess).
+    const brandEditor = wantsBrandEditor(req.query)
+    if (brandEditor && (await brandEditorAccess(req)) === 'marketing') {
+      const rows = await prisma.concept.findMany({
+        where: { deletedAt: null, ...(includeInactive ? {} : { isActive: true }), ...(await scopeTenantWhere(req, 'read')) },
+        orderBy: { name: 'asc' },
+        select: BRAND_EDITOR_CONCEPT_SELECT,
+      })
+      return rows.map((c) => ({ ...c, brandEditorAccess: 'marketing' as const }))
+    }
+    const view = brandEditor ? 'full' : await conceptView(req, wantsStorefront(req.query))
+    if (view !== 'full') {
+      return prisma.concept.findMany({
+        where: { deletedAt: null, isActive: true, ...(await scopeTenantWhere(req, 'read')) },
+        orderBy: { name: 'asc' },
+        select: view === 'till' ? TILL_CONCEPT_SELECT : STOREFRONT_CONCEPT_SELECT,
+      })
+    }
     const scope = await resolveTenantScope(req)
     // Retired brands (isActive=false, e.g. Simmer) are EXCLUDED by default so
     // they vanish from every admin picker, dashboard card, and filter in one
     // place. The Tenants & Brands settings page opts in via ?includeInactive=1
     // so the CEO can still see and reactivate them. Historical data (orders,
     // financial entries) is untouched — this only affects concept listings.
-    const includeInactive = req.query.includeInactive === '1'
     const concepts = await prisma.concept.findMany({
       where: { deletedAt: null, ...(includeInactive ? {} : { isActive: true }), ...tenantWhere(scope) },
       orderBy: { name: 'asc' },
@@ -221,14 +445,31 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       // join — Tenant is tiny.
       include: scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : undefined,
     })
-    return concepts
+    return brandEditor ? concepts.map((c) => ({ ...c, brandEditorAccess: 'full' as const })) : concepts
   })
 
-  // GET /concepts/:id — must belong to the active tenant
-  fastify.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const concept = await prisma.concept.findFirst({
-      where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
-    })
+  // GET /concepts/:id — must belong to a company in the caller's read scope
+  // (a foreign id 404s). Till roles, and `?view=storefront` callers, get their
+  // narrow fields only. Scoped through the shared helper: the raw
+  // tenantFilter is null for a staffer with no company, and `tenantId: null`
+  // would match every company-less brand.
+  fastify.get<{ Params: { id: string }; Querystring: { view?: string } }>('/:id', { preHandler: requireAuth() }, async (req) => {
+    if (wantsBrandEditor(req.query) && (await brandEditorAccess(req)) === 'marketing') {
+      const concept = await prisma.concept.findFirst({
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
+        select: BRAND_EDITOR_CONCEPT_SELECT,
+      })
+      if (!concept) throw new NotFoundError('Concept', req.params.id)
+      return { ...concept, brandEditorAccess: 'marketing' as const }
+    }
+    const view = wantsBrandEditor(req.query) ? 'full' : await conceptView(req, wantsStorefront(req.query))
+    const where = { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'read')) }
+    const concept = view === 'full'
+      ? await prisma.concept.findFirst({ where })
+      : await prisma.concept.findFirst({
+          where: { ...where, isActive: true },
+          select: view === 'till' ? TILL_CONCEPT_SELECT : STOREFRONT_CONCEPT_SELECT,
+        })
     if (!concept) throw new NotFoundError('Concept', req.params.id)
     return concept
   })
@@ -243,15 +484,66 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(concept)
   })
 
-  // PATCH /concepts/:id — managers can edit storefront content; admin-only for structural changes
-  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  // PATCH /concepts/:id — management edits the whole brand (the full schema
+  // below); a 'brands' module holder (marketing, brand_manager — the Brand
+  // Editor) edits ONLY BRAND_MARKETING_FIELDS. Either way the brand must be in
+  // a company the operator belongs to ('write' scope — a foreign id 404s),
+  // and the change is audited.
+  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth() }, async (req, reply) => {
+    const access = await brandEditorAccess(req)
+    if (access === 'marketing') {
+      const body = req.body
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw new AppError('VALIDATION_ERROR', 'Send the brand fields to change', 400)
+      }
+      // Refuse the whole request when it carries a field outside the
+      // marketing allow-list — never apply part of it.
+      const allowed = new Set<string>(BRAND_MARKETING_FIELDS)
+      const refused = Object.keys(body).filter((k) => !allowed.has(k) && (body as Record<string, unknown>)[k] !== undefined)
+      if (refused.length) {
+        throw new AppError(
+          'FIELD_NOT_ALLOWED',
+          `Only management can change: ${refused.join(', ')}. The Brand Editor saves copy, artwork, colour and the brand brief.`,
+          403,
+        )
+      }
+      const data = brandMarketingSchema.parse(body)
+      const owned = await prisma.concept.findFirst({
+        // 'write': editing an EXISTING brand → any company the operator
+        // belongs to (the Brand Editor lists every member company's brands in
+        // All-companies view). Foreign rows and a company-less staffer 404.
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+        select: BRAND_EDITOR_CONCEPT_SELECT,
+      })
+      if (!owned) throw new NotFoundError('Concept', req.params.id)
+      const updated = await prisma.concept.update({
+        where: { id: owned.id },
+        data,
+        select: BRAND_EDITOR_CONCEPT_SELECT,
+      })
+      const changed = Object.keys(data) as (keyof typeof data)[]
+      await audit({
+        category: 'identity',
+        action: 'concept.marketing_update',
+        entity: 'Concept',
+        entityId: owned.id,
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: owned.tenantId,
+        before: Object.fromEntries(changed.map((k) => [k, (owned as Record<string, unknown>)[k]])),
+        after: Object.fromEntries(changed.map((k) => [k, (updated as Record<string, unknown>)[k]])),
+      })
+      return { ...updated, brandEditorAccess: 'marketing' as const }
+    }
     assertNoMovedFields(req.body)
     const body = updateConceptSchema.parse(req.body)
-    // Verify the concept belongs to the active tenant before mutating.
+    // Verify the concept belongs to a company the operator is a member of
+    // before mutating ('write' — editing an existing row; an empty scope — a
+    // staffer with no company — matches nothing, so a foreign id 404s).
     const owned = await prisma.concept.findFirst({
-      where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     })
-    if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
+    if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your companies' } })
     const { storefrontLayout, ...rest } = body
     const data: Prisma.ConceptUpdateInput = { ...rest }
     if (storefrontLayout !== undefined) {
@@ -261,6 +553,19 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id },
       data,
     })
+    const changedKeys = Object.keys(rest).filter((k) => (rest as Record<string, unknown>)[k] !== undefined)
+    if (storefrontLayout !== undefined) changedKeys.push('storefrontLayout')
+    await audit({
+      category: 'identity',
+      action: 'concept.update',
+      entity: 'Concept',
+      entityId: owned.id,
+      userId: req.staffUser!.id,
+      userEmail: req.staffUser!.email,
+      tenantId: owned.tenantId,
+      metadata: { fields: changedKeys },
+    })
+    if (wantsBrandEditor(req.query as { view?: string })) return { ...concept, brandEditorAccess: 'full' as const }
     return concept
   })
 

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { AppError } from '../../lib/errors.js'
-import { assertConceptOwned } from '../../lib/tenantScope.js'
+import { assertConceptOwned, conceptIdsInScope } from '../../lib/tenantScope.js'
 
 const createDiscountSchema = z.object({
   conceptId: z.string().uuid().optional(),
@@ -24,19 +25,29 @@ async function assertCategoryOf(conceptId: string, categoryId: string): Promise<
   if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'That category is not part of this brand', 422)
 }
 
+// Module Access really closes these staff routes (W3A-RV-03): the role array
+// lets the Marketing team in, and the CEO's Module Access (decision 34)
+// narrows it to logins holding promos (Discounts page, under Promotions). Same source of truth as the
+// central gate (lib/moduleAccess.ts effectiveModulesForUser).
+const marketingGuard = [requireAuth(...MARKETING_TEAM), requireModule('promos')]
+
+// Access (wave 3, UI-06): section discounts sit under Promotions (module
+// promos), so the operator routes are MARKETING_TEAM — MANAGERS plus marketing
+// and brand_manager — scoped to brands in view via lib/tenantScope.ts.
 export async function discountRoutes(fastify: FastifyInstance) {
   // GET /discounts/sections — scoped to active tenant
   fastify.get<{ Querystring: { conceptId?: string; active?: string } }>(
     '/sections',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req) => {
       const now = new Date()
+      // Only discounts on a brand in view (lib/tenantScope.ts — an empty scope
+      // matches nothing). Discounts with a null conceptId belong to no company
+      // and are excluded. A client conceptId only narrows inside that scope.
+      const inScope = await conceptIdsInScope(req, 'read')
       const where: Record<string, unknown> = {
-        // Only show discounts attached to a concept under the active tenant.
-        // (Discounts with null conceptId would be cross-tenant and are excluded.)
-        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        conceptId: { in: req.query.conceptId ? inScope.filter((id) => id === req.query.conceptId) : inScope },
       }
-      if (req.query.conceptId) where.conceptId = req.query.conceptId
       if (req.query.active === 'true') {
         where.isActive = true
         where.startDate = { lte: now }
@@ -54,7 +65,7 @@ export async function discountRoutes(fastify: FastifyInstance) {
   )
 
   // POST /discounts/sections — verify concept belongs to active tenant
-  fastify.post('/sections', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/sections', { preHandler: marketingGuard }, async (req, reply) => {
     const body = createDiscountSchema.parse(req.body)
     if (new Date(body.startDate) >= new Date(body.endDate)) {
       throw new AppError('INVALID_DATES', 'startDate must be before endDate', 400)
@@ -75,13 +86,10 @@ export async function discountRoutes(fastify: FastifyInstance) {
   // PATCH /discounts/sections/:id — verify ownership
   fastify.patch<{ Params: { id: string } }>(
     '/sections/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req, reply) => {
       const owned = await prisma.sectionDiscount.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Discount not found in your active company' } })
       const body = createDiscountSchema.partial().parse(req.body)
@@ -101,13 +109,10 @@ export async function discountRoutes(fastify: FastifyInstance) {
   // DELETE /discounts/sections/:id — verify ownership
   fastify.delete<{ Params: { id: string } }>(
     '/sections/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req, reply) => {
       const owned = await prisma.sectionDiscount.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Discount not found in your active company' } })
       await prisma.sectionDiscount.delete({ where: { id: req.params.id } })

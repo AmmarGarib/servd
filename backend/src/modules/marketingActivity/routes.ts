@@ -4,7 +4,8 @@
 
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MARKETING_TEAM, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 
 const MARKETING_ACTIONS = [
@@ -17,12 +18,21 @@ const MARKETING_ACTIONS = [
   'content_event.create', 'content_event.publish',
 ] as const
 
+// Module Access really closes these staff routes (W3A-RV-03): the role array
+// lets the Marketing team in, and the CEO's Module Access (decision 34)
+// narrows it to logins holding marketing_workspace (Activity log). Same source of truth as the
+// central gate (lib/moduleAccess.ts effectiveModulesForUser).
+const marketingGuard = [requireAuth(...MARKETING_TEAM), requireModule('marketing_workspace')]
+
 export async function marketingActivityRoutes(fastify: FastifyInstance) {
   // GET /marketing/activity — recent marketing actions
   // Query: ?userId — filter by user; ?days — lookback window (default 14)
   fastify.get<{ Querystring: { userId?: string; days?: string; limit?: string } }>(
     '/activity',
-    { preHandler: requireAuth(...MANAGERS) },     // managers / admin track agency
+    // The Marketing workspace's own Activity log (module marketing_workspace):
+    // MARKETING_TEAM — managers / admin track the agency, the team sees its own
+    // company's work. Company-scoped below whatever the role.
+    { preHandler: marketingGuard },
     async (req) => {
       const days = Math.min(parseInt(req.query.days ?? '14', 10), 365)
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
@@ -56,12 +66,13 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /marketing/team — list of marketing-role users + their last activity
-  fastify.get('/team', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // GET /marketing/team — the Marketing workspace's people (marketing and
+  // brand_manager logins) + their last activity. Names and emails only.
+  fastify.get('/team', { preHandler: marketingGuard }, async (req) => {
     const t = await scopeTenantWhere(req, 'read')
     const users = await prisma.user.findMany({
       // Company-scoped: only the active company's (or portfolio's) marketing staff.
-      where: { role: 'marketing', isActive: true, ...t },
+      where: { role: { in: ['marketing', 'brand_manager'] }, isActive: true, ...t },
       select: { id: true, name: true, email: true, role: true, createdAt: true },
       orderBy: { name: 'asc' },
     })
@@ -84,7 +95,7 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
   // GET /marketing/performance — high-level aggregate (last N days)
   fastify.get<{ Querystring: { days?: string } }>(
     '/performance',
-    { preHandler: requireAuth(...MARKETING_TEAM) },
+    { preHandler: marketingGuard },
     async (req) => {
       const days = Math.min(parseInt(req.query.days ?? '30', 10), 365)
       const since = new Date(Date.now() - days * 86_400_000)

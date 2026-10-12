@@ -248,6 +248,12 @@ export async function assertShiftOf(tenantId: string | null, shiftId: string, mu
       })
     : null
   if (!shift) {
+    // FOH-26: a drawer of this company that has been closed says so — "not
+    // an open shift of this company" read to a cashier like a permission fault.
+    const closed = mustBeOpen && tenantId
+      ? await prisma.shift.findFirst({ where: { id: shiftId, status: 'closed', ...shiftOfCompany({ tenantId }) }, select: { id: true } })
+      : null
+    if (closed) throw new AppError('SHIFT_CLOSED', 'This drawer is closed — open a new shift', 422)
     throw new AppError('SHIFT_NOT_IN_COMPANY', mustBeOpen ? 'That shift is not an open shift of this company' : 'That shift does not belong to this company', 422)
   }
 }

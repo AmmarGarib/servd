@@ -9,6 +9,22 @@ import { z } from 'zod'
 import { Expo } from 'expo-server-sdk'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { staffInCompaniesWhere } from '../auth/staffAccounts.js'
+import { requireModule } from './requireModule.js'
+
+// Who runs staff push (broadcast + the device list): the managers, plus IT —
+// Notifications is a Dev workspace page (module `notifications`) and IT owns
+// that workspace (wave 3, UI-08). Company scope is the same for everyone.
+//
+// Module Access: both routes also need module `notifications` (the page's
+// module), so the CEO's untick — or a per-login moduleDeny — really closes
+// them (wave 3 review W3C-RV-2). Holders by default: admin, owner,
+// management, manager, it. foh_management, boh_management and fnb_manager
+// never had the page and are refused.
+const PUSH_ADMINS = [...MANAGERS, ...CONNECTOR_ADMINS]
+const pushGuard = [requireAuth(...PUSH_ADMINS), requireModule('notifications')]
 
 const expo = new Expo()
 
@@ -80,21 +96,42 @@ export async function notificationRoutes(fastify: FastifyInstance) {
 
   fastify.post(
     '/broadcast',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: pushGuard },
     async (req, reply) => {
       const { title, body, data: pushData, filters } = broadcastSchema.parse(req.body)
-      const tenantId = req.staffUser!.tenantFilter
+      // A broadcast goes to the ACTIVE company's staff only (primary company
+      // or a membership) — never every company the sender belongs to. No
+      // active company → nobody (`in: []`), never "no filter".
+      const active = req.staffUser!.tenantId
+      const narrow = {
+        revokedAt: null,
+        ...(filters?.device     && { device: filters.device }),
+        ...(filters?.locationId && { locationId: filters.locationId }),
+        ...(filters?.userIds    && { userId: { in: filters.userIds } }),
+      }
 
       const tokenRows = await prisma.expoPushToken.findMany({
-        where: {
-          revokedAt: null,
-          user: { tenantId },
-          ...(filters?.device     && { device: filters.device }),
-          ...(filters?.locationId && { locationId: filters.locationId }),
-          ...(filters?.userIds    && { userId: { in: filters.userIds } }),
-        },
+        where: { ...narrow, user: staffInCompaniesWhere(active ? [active] : [], false) },
         select: { token: true },
       })
+
+      // The device list (GET /tokens) is view-aware, so in "All companies"
+      // view it counts the sender's OTHER companies' devices too. Say who was
+      // reached and how many matching devices in those other companies were
+      // not, so the screen never implies a reach it did not have (W3C-RV-4).
+      // Counted only over companies the sender belongs to — nothing about a
+      // company outside their memberships is revealed.
+      const others = req.staffUser!.memberTenantIds.filter((id) => id !== active)
+      const [company, skippedOtherCompanies] = await Promise.all([
+        active ? prisma.tenant.findUnique({ where: { id: active }, select: { id: true, name: true } }) : null,
+        others.length === 0 ? 0 : prisma.expoPushToken.count({
+          where: {
+            ...narrow,
+            user: { AND: [staffInCompaniesWhere(others, false), { NOT: staffInCompaniesWhere(active ? [active] : [], false) }] },
+          },
+        }),
+      ])
+      const audience = { company: company ?? null, skippedOtherCompanies }
 
       // Filter to syntactically valid Expo push tokens before sending
       const validTokens = tokenRows
@@ -102,7 +139,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
         .filter((t) => Expo.isExpoPushToken(t))
 
       if (validTokens.length === 0) {
-        return reply.send({ sent: 0, failed: 0, tickets: [] })
+        return reply.send({ sent: 0, failed: 0, tickets: [], ...audience })
       }
 
       // Build message objects
@@ -139,7 +176,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
         }
       }
 
-      return reply.send({ sent, failed, tickets: allTickets })
+      return reply.send({ sent, failed, tickets: allTickets, ...audience })
     },
   )
 
@@ -147,14 +184,17 @@ export async function notificationRoutes(fastify: FastifyInstance) {
   // Grouped by user so the caller can see who has registered and on what device.
   fastify.get(
     '/tokens',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: pushGuard },
     async (req) => {
-      const tenantId = req.staffUser!.tenantFilter
+      // Read scope (view-aware): staff of the active company, or of every
+      // company the operator belongs to in "All companies" view. An empty
+      // scope lists nobody.
+      const scope = await resolveTenantScope(req)
 
       const tokenRows = await prisma.expoPushToken.findMany({
         where: {
           revokedAt: null,
-          user: { tenantId },
+          user: staffInCompaniesWhere(scope.tenantIds, false),
         },
         select: {
           id:         true,

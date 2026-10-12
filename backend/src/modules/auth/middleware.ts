@@ -143,7 +143,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     role: liveRole,
     moduleAllow: u.moduleAllow,
     moduleDeny: u.moduleDeny,
-  })
+  }, req.method)
   // RLS scope: in single-tenant view, just the active tenant. In portfolio
   // view (or non-GET writes), expand to every tenant the operator belongs
   // to — matches how tenantFilter is computed above. Policies use the same

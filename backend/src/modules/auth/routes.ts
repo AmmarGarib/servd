@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
-import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueStaffSession, findOtpLoginStaff } from './service.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueStaffSession, findOtpLoginStaff, normaliseCustomerContact } from './service.js'
 import {
   challengeSubject,
   verifyLoginChallenge,
@@ -10,12 +10,19 @@ import {
   disable as disableTwoFactor,
   maskPhone,
 } from './twoFactor.js'
-import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode } from './otp.js'
-import { preparePin, setManagerPin } from './managerPin.js'
+import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode, issueStaffCodeInPerson } from './otp.js'
+import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin } from './managerPin.js'
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
-import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt } from '../../lib/roles.js'
+import {
+  normaliseStaffPhone, normaliseStaffPhoneLenient, assertPhoneForRole, assertPhoneFree, withStaffPhoneLock, findManagedStaff,
+  assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf,
+} from './staffAccounts.js'
+import { maskPhoneForLog } from '../../lib/notify.js'
+import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover } from '../../lib/roles.js'
 import type { UserRole } from '@prisma/client'
-import { sendText, invalidateWhatsappConfig, WA_URL_KEY, WA_KEY_KEY } from '../../lib/whatsapp.js'
+import { sendText, whatsappSettingsView, saveWhatsappSettings } from '../../lib/whatsapp.js'
+import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
@@ -31,6 +38,8 @@ import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../li
 import { generateStaffPassword } from '../../lib/generatePassword.js'
 import {
   check as checkRateLimit,
+  claim as claimRateLimit,
+  release as releaseRateLimit,
   recordFailure,
   clearFailures,
   STAFF_PASSWORD_LIMIT,
@@ -62,9 +71,32 @@ const refreshSchema = z.object({
   refreshToken: z.string(),
 })
 
+// 32 characters for a link to an existing account; a signed link (longer) for
+// a contact that had no account when it was requested (service.ts).
 const magicLinkVerifySchema = z.object({
-  token: z.string().length(32),
+  token: z.string().min(32).max(1000),
 })
+
+// Rate-limit buckets this module owns (same shape as lib/loginRateLimit.ts).
+//
+// Sign-in links, PER CONTACT per day: the endpoint is unauthenticated and sends
+// a message to a contact the caller chose, so the contact is what gets capped —
+// an IP limit alone is the easy half to get around (owner rule, 2026-09-09).
+// Counted for every request, account or not, so a 429 says nothing about
+// whether the contact has one.
+const MAGIC_LINK_CONTACT_LIMIT = { scope: 'magic-link-contact', max: 5, lockoutSec: 24 * 60 * 60 }
+// Manager-issued sign-in codes, per manager per hour. A shift start is a
+// handful; this stops a session being used to mint codes in bulk.
+const STAFF_CODE_ISSUER_LIMIT = { scope: 'staff-code-issuer', max: 30, lockoutSec: 60 * 60 }
+// Wrong current PIN / password on the signed-in PIN setter, per account. The
+// session is already authenticated; this stops a borrowed session grinding the
+// 10^4 PIN space or the password.
+const PIN_CHANGE_USER_LIMIT = { scope: 'pin-change-user', max: 5, lockoutSec: 15 * 60 }
+// EVERY PIN-setting attempt on the self-service setter, per account per hour —
+// success, wrong credential or PIN_COLLISION alike (AUTH-R4). The collision
+// answer is a yes/no on "is this a colleague's PIN?", so this is what keeps the
+// 4-digit space from being enumerated.
+const PIN_CHANGE_ATTEMPT_LIMIT = { scope: 'pin-change-attempt', max: 6, lockoutSec: 60 * 60 }
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -230,9 +262,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         // rather than returning the generic success: a cashier standing at a
         // till needs to know to go and find a manager, not to keep retrying.
         req.log.error({ err, staffId: staff.id }, 'staff login OTP send failed')
+        // The way round it is real now: a manager opens Workforce, finds this
+        // person and taps "Sign-in code" (POST /auth/staff/:id/sign-in-code).
         throw new AppError(
           'OTP_UNAVAILABLE',
-          'Sign-in codes cannot be sent right now. Ask a manager to sign you in.',
+          'Sign-in codes cannot be sent right now. Ask a manager for a sign-in code — they get one from Workforce ("Sign-in code" next to your name) — and enter it here.',
           503,
         )
       }
@@ -510,23 +544,57 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  // POST /auth/password/change-authed — same thing for a signed-in user.
+  // POST /auth/password/change-authed — same thing for a signed-in user. The
+  // admin's /account/password page, where the "choose your own password"
+  // prompt after a generated or reissued one lands.
+  //
+  // Shares the per-account login bucket: a session that can grind the current
+  // password here unthrottled would be a way round the login lockout. A wrong
+  // current password is 400, not 401 — a 401 makes the web client refresh and
+  // retry, spending two attempts per click.
+  //
+  // Every OTHER session dies with the old password (applyPasswordChange); this
+  // device gets a fresh session in the response, so the person who just proved
+  // the password is not thrown out mid-task.
   fastify.post('/password/change-authed', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = passwordChangeSchema.extend({
       currentPassword: z.string().min(1).max(200),
     }).parse(req.body)
     const me = await prisma.user.findUnique({
       where: { id: req.staffUser!.id },
-      select: { id: true, email: true, password: true },
+      select: { id: true, name: true, email: true, role: true, password: true },
     })
-    if (!me || !await bcrypt.compare(body.currentPassword, me.password)) {
-      throw new AppError('UNAUTHORIZED', 'Current password is incorrect', 401)
+    if (!me) throw new UnauthorizedError('Account is no longer active')
+    if (usesOtpLogin(me.role)) {
+      throw new AppError('USE_CODE_LOGIN', 'You sign in with a code sent to your phone, so there is no password to change.', 400)
     }
+    const accountKey = `email:${(me.email ?? me.id).toLowerCase()}`
+    // claim() BEFORE the compare, not check-then-record: N parallel guesses
+    // used to all pass the read before any failure was written (AUTH-R3), which
+    // made this a way round the per-account login lockout. A correct password
+    // clears the bucket, as a successful sign-in does.
+    await claimRateLimit(STAFF_PASSWORD_USER_LIMIT, accountKey)
+    if (!await bcrypt.compare(body.currentPassword, me.password)) {
+      throw new AppError('WRONG_PASSWORD', 'Your current password is not right.', 400)
+    }
+    await clearFailures(STAFF_PASSWORD_USER_LIMIT, accountKey)
     if (body.currentPassword === body.newPassword) {
       throw new AppError('WEAK_PASSWORD', 'Your new password must be different from the current one.', 400)
     }
     await applyPasswordChange(me.id, me.email ?? '@', body.newPassword)
-    return reply.status(204).send()
+    await audit({
+      category: 'identity',
+      action: 'user.password_change',
+      entity: 'User',
+      entityId: me.id,
+      userId: me.id,
+      userEmail: me.email,
+      tenantId: req.staffUser!.tenantId ?? null,
+    })
+    // mustChangePassword is false now (applyPasswordChange cleared it).
+    const session = issueStaffSession({ id: me.id, name: me.name, email: me.email, role: me.role, mustChangePassword: false })
+    setAuthCookies(reply, session.accessToken, session.refreshToken)
+    return reply.status(200).send(session)
   })
 
   // POST /auth/users/:id/reissue-password — admin issues a fresh password.
@@ -543,13 +611,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     '/users/:id/reissue-password',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
-      const target = await prisma.user.findFirst({
-        where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
-        select: { id: true, name: true, email: true },
-      })
-      if (!target) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Staff member not found in your active company' } })
-      }
+      // Same scope rule as every other staff-admin route (staffAccounts.ts):
+      // another company's login is 404; a login shared with a company the
+      // operator is not in is 403. This used to read `tenantFilter`, which for
+      // a single-company operator is their PRIMARY company and for an operator
+      // with none is `null` — matching every company-less row.
+      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true })
       if (!target.email) {
         return reply.status(400).send({ error: { code: 'EMAIL_REQUIRED', message: 'This account has no email, so it has no way to sign in. Add one first.' } })
       }
@@ -572,8 +639,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         entityId: target.id,
         userId: req.staffUser?.id ?? null,
         userEmail: req.staffUser?.email ?? null,
-        tenantId: req.staffUser?.tenantId ?? null,
+        // Filed under the TARGET's company, so that company's CEO and IT see
+        // that one of their people was changed. The actor's company rides along.
+        tenantId: auditCompanyOf(target),
         after: { targetEmail: target.email },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
       })
 
       return reply.status(200).send({
@@ -597,13 +667,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     '/users/:id/2fa/reset',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
-      const target = await prisma.user.findFirst({
-        where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
-        select: { id: true, name: true, twoFactorEnabledAt: true },
-      })
-      if (!target) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Staff member not found in your active company' } })
-      }
+      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, twoFactorEnabledAt: true })
       await prisma.user.update({
         where: { id: target.id },
         data: { twoFactorPhone: null, twoFactorEnabledAt: null },
@@ -612,6 +676,20 @@ export async function authRoutes(fastify: FastifyInstance) {
       // live session after we have unhooked the second factor.
       await revokeAllForSubject(target.id)
       req.log.warn({ actor: req.staffUser!.id, target: target.id }, '2FA reset by admin')
+      // Removing someone's second factor is a change to who can get in; it was
+      // never written to the identity trail.
+      await audit({
+        category: 'identity',
+        action: 'user.2fa_reset',
+        entity: 'User',
+        entityId: target.id,
+        userId: req.staffUser?.id ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        tenantId: auditCompanyOf(target),
+        before: { twoFactorEnabled: !!target.twoFactorEnabledAt },
+        after: { twoFactorEnabled: false, targetEmail: target.email },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+      })
       return reply.status(200).send({ id: target.id, name: target.name, twoFactorEnabled: false })
     },
   )
@@ -917,26 +995,35 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (emp.userId) throw new AppError('EMPLOYEE_ALREADY_LINKED', 'That employee already has a login.', 409)
     }
 
+    // Floor roles sign in only with a code to this number, and one number is
+    // one login across every company (staffAccounts.ts).
+    const phone = normaliseStaffPhone(body.phone)
+    assertPhoneForRole(body.role, phone)
+
     // Nobody signs in with this: the invitee sets their own password from the
     // link sent on approval (or the CEO issues one from Workforce).
     const password = await hashPassword(generateStaffPassword())
-    const user = await prisma.user.create({
-      data: {
-        name: body.name,
-        email,
-        ...(body.phone ? { phone: body.phone.trim() } : {}),
-        password,
-        role: body.role as UserRole,
-        tenantId,
-        accountStatus: 'pending',
-        isActive: true,
-        mustChangePassword: true,
-        invitedById: req.staffUser!.id,
-        // Linked to the HrEmployee on approval (validated above, re-checked then).
-        ...(body.employeeId ? { inviteEmployeeId: body.employeeId } : {}),
-        tenantMemberships: { create: [{ tenant: { connect: { id: tenantId } }, role: 'member' }] },
-      },
-      select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true, createdAt: true, tenantId: true },
+    // Check and write under one per-number lock (AUTH-R5).
+    const user = await withStaffPhoneLock(phone, async (tx) => {
+      await assertPhoneFree(req, phone, { role: body.role, db: tx })
+      return tx.user.create({
+        data: {
+          name: body.name,
+          email,
+          ...(phone ? { phone } : {}),
+          password,
+          role: body.role as UserRole,
+          tenantId,
+          accountStatus: 'pending',
+          isActive: true,
+          mustChangePassword: true,
+          invitedById: req.staffUser!.id,
+          // Linked to the HrEmployee on approval (validated above, re-checked then).
+          ...(body.employeeId ? { inviteEmployeeId: body.employeeId } : {}),
+          tenantMemberships: { create: [{ tenant: { connect: { id: tenantId } }, role: 'member' }] },
+        },
+        select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true, createdAt: true, tenantId: true },
+      })
     })
     await audit({
       category: 'identity',
@@ -970,16 +1057,38 @@ export async function authRoutes(fastify: FastifyInstance) {
     '/staff/:id/approve',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
-      const scope = await scopeTenantWhere(req, 'write')
-      const user = await prisma.user.findFirst({
-        where: { id: req.params.id, deletedAt: null, OR: [scope, { tenantId: null }] },
-        select: { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true, tenantId: true, inviteEmployeeId: true },
+      const user = await findManagedStaff(req, req.params.id, {
+        id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true, tenantId: true, inviteEmployeeId: true,
       })
-      if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
       if (accountStateOf(user) === 'active') {
-        const { inviteEmployeeId: _drop, ...shown } = user
+        const { inviteEmployeeId: _drop, companies: _c, ...shown } = user
         return reply.status(200).send({ ...shown, message: 'Already active' })
       }
+      // A login with no company would sign in to nothing; the CEO picks one on
+      // Workforce first (the approvals inbox shows the same hint).
+      if (!user.tenantId) throw new AppError('LOGIN_NEEDS_COMPANY', 'Pick a company for this login on Workforce before approving it.', 422)
+
+      // Re-checked here as well as at invite: the row may predate those checks
+      // (or a number may have been taken since). Approving a floor login with
+      // no number, or with one another login holds, makes an account nobody can
+      // sign in to — and, for the duplicate, locks the OTHER person out too.
+      const phone = normaliseStaffPhoneLenient(user.phone)
+      assertPhoneForRole(user.role, phone)
+
+      // The check and the approval under one per-number lock (AUTH-R5). Only
+      // ACTIVE floor logins count as holders here: a second pending invite of
+      // the same person does not block this one (AUTH-R7) — it is refused when
+      // it in turn is approved.
+      const updated = await withStaffPhoneLock(phone, async (tx) => {
+        await assertPhoneFree(req, phone, { role: user.role, excludeUserId: user.id, countPending: false, db: tx })
+        return tx.user.update({
+          where: { id: req.params.id },
+          // The pending link is spent either way. A number stored the old way
+          // (0300…, +92…) is rewritten in the one normalised form.
+          data: { ...approveData(), inviteEmployeeId: null, ...(phone && phone !== user.phone ? { phone } : {}) },
+          select: { id: true, name: true, email: true, role: true, accountStatus: true },
+        })
+      })
 
       // Link the HR employee named at invite time — re-validated now: still in
       // this login's company and still without a login. Anything else is
@@ -993,13 +1102,6 @@ export async function authRoutes(fastify: FastifyInstance) {
         if (linked.count === 1) linkedEmployeeId = user.inviteEmployeeId
         else req.log.warn({ employeeId: user.inviteEmployeeId, userId: user.id }, 'invite: employee no longer linkable')
       }
-
-      const updated = await prisma.user.update({
-        where: { id: req.params.id },
-        // The pending link is spent either way.
-        data: { ...approveData(), inviteEmployeeId: null },
-        select: { id: true, name: true, email: true, role: true, accountStatus: true },
-      })
 
       // Send the set-your-password link when a channel exists. A failure here
       // is logged, never fatal: the CEO can still issue a password.
@@ -1023,9 +1125,10 @@ export async function authRoutes(fastify: FastifyInstance) {
         entityId: user.id,
         userId: req.staffUser?.id ?? null,
         userEmail: req.staffUser?.email ?? null,
-        tenantId: req.staffUser?.tenantId ?? null,
+        tenantId: auditCompanyOf(user),
         before: { accountStatus: user.accountStatus },
         after: { accountStatus: updated.accountStatus, targetEmail: user.email, role: user.role, linkedEmployeeId, passwordLink },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
       })
       return reply.status(200).send({ ...updated, linkedEmployeeId, passwordLink })
     },
@@ -1038,12 +1141,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     '/staff/:id/reject',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
-      const scope = await scopeTenantWhere(req, 'write')
-      const before = await prisma.user.findFirst({
-        where: { id: req.params.id, OR: [scope, { tenantId: null }] },
-        select: { accountStatus: true, email: true },
-      })
-      if (!before) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      const before = await findManagedStaff(req, req.params.id, { accountStatus: true, email: true })
       const updated = await prisma.user.update({
         where: { id: req.params.id },
         data: suspendData(),
@@ -1057,9 +1155,10 @@ export async function authRoutes(fastify: FastifyInstance) {
         entityId: req.params.id,
         userId: req.staffUser?.id ?? null,
         userEmail: req.staffUser?.email ?? null,
-        tenantId: req.staffUser?.tenantId ?? null,
+        tenantId: auditCompanyOf(before),
         before: { accountStatus: before.accountStatus },
         after: { accountStatus: updated.accountStatus, targetEmail: before.email },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
       })
       return reply.status(200).send(updated)
     },
@@ -1069,29 +1168,101 @@ export async function authRoutes(fastify: FastifyInstance) {
   // manager-override PIN on /workforce (PATCH /auth/users/:id), through the
   // same setter as /pin/change below.
 
-  // POST /auth/pin/change — staff sets their OWN PIN.
+  // POST /auth/pin/change — staff sets their OWN manager-override PIN.
   //
-  // Used both for the forced change after a temporary PIN is issued
-  // (pinMustReset) and for a voluntary change. Requires the CURRENT PIN, so a
-  // borrowed unlocked tablet can't be used to silently take over an account.
+  // Changing an existing PIN requires the CURRENT PIN, so a borrowed unlocked
+  // tablet can't be used to silently take over an account's approvals.
+  //
+  // Setting the FIRST one (no PIN yet) requires the account PASSWORD instead —
+  // there is no current PIN to prove. Without this path every override PIN was
+  // chosen by the CEO (PATCH /auth/users), who then knew it; staff choose their
+  // own (CLAUDE.md). Only override approvers hold a PIN at all — for anyone
+  // else it approves nothing (managerPin.ts verifyManagerPin), so they are not
+  // offered a first one.
+  //
+  // Wrong PIN / password: 400 (not 401, which makes the web client refresh and
+  // retry), and counted per account.
   fastify.post('/pin/change', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = z.object({
-      currentPin: z.string().regex(/^\d{4,8}$/),
+      currentPin: z.string().regex(/^\d{4,8}$/).optional(),
+      password:   z.string().min(1).max(200).optional(),
       newPin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
     }).parse(req.body)
 
     const me = await prisma.user.findUnique({
       where: { id: req.staffUser!.id },
-      select: { id: true, pin: true },
+      select: { id: true, email: true, role: true, pin: true, password: true, tenantId: true },
     })
-    if (!me?.pin || !(await bcrypt.compare(body.currentPin, me.pin))) {
-      return reply.status(401).send({ error: { code: 'BAD_PIN', message: 'Current PIN is incorrect.' } })
+    if (!me) throw new UnauthorizedError('Account is no longer active')
+    const limitKey = `user:${me.id}`
+
+    const firstPin = !me.pin
+    if (firstPin && !isOverrideApprover(me.role)) {
+      throw new AppError('PIN_NOT_FOR_ROLE', 'Only managers approve with an override PIN, so your role does not have one.', 403)
     }
+    if (firstPin && !body.password) {
+      throw new AppError('PASSWORD_REQUIRED', 'Enter your password to set your first PIN.', 400)
+    }
+    // A malformed or guessable new PIN is refused before any bucket is touched
+    // — it says nothing about anyone's PIN, so it should not cost an attempt.
+    if (!PIN_FORMAT.test(body.newPin) || isWeakPin(body.newPin)) {
+      await preparePin(body.newPin, { tenantIds: [] }) // throws INVALID_PIN / WEAK_PIN
+    }
+
+    // Every PIN-setting attempt counts, success or not (AUTH-R4). The collision
+    // check below answers "is this PIN someone else's?", and an override PIN
+    // alone identifies its approver — so an uncounted loop of
+    // { currentPin: mine, newPin: guess } enumerated colleagues' PINs (the
+    // CEO's included). A few changes an hour is plenty for a real person.
+    await claimRateLimit(PIN_CHANGE_ATTEMPT_LIMIT, limitKey)
+    // Wrong current PIN / password: claimed BEFORE the compare (AUTH-R3), so a
+    // parallel burst cannot all pass a read before any failure is recorded.
+    await claimRateLimit(PIN_CHANGE_USER_LIMIT, limitKey)
+
+    if (firstPin) {
+      if (!(await bcrypt.compare(body.password!, me.password))) {
+        throw new AppError('WRONG_PASSWORD', 'Your password is not right.', 400)
+      }
+    } else if (!body.currentPin || !(await bcrypt.compare(body.currentPin, me.pin!))) {
+      throw new AppError('BAD_PIN', 'Current PIN is incorrect.', 400)
+    }
+    // Right credential: this attempt does not count toward the wrong-credential
+    // bucket. (Earlier wrong guesses still do — release, not clear, so a burst
+    // that contains one right answer cannot wipe the others' strikes.)
+    await releaseRateLimit(PIN_CHANGE_USER_LIMIT, limitKey)
 
     // Same rules as the CEO's setter: format, weak-PIN list, and no two
     // people in one company sharing a PIN.
-    await setManagerPin(me.id, body.newPin)
-    return reply.status(200).send({ message: 'PIN updated.' })
+    try {
+      await setManagerPin(me.id, body.newPin)
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'PIN_COLLISION') {
+        // A hit means the guess is a colleague's PIN. Counted as a failure and
+        // put on the identity trail, so a sweep is both capped and visible.
+        await recordFailure(PIN_CHANGE_USER_LIMIT, limitKey)
+        await audit({
+          category: 'identity',
+          action: 'user.pin_collision',
+          entity: 'User',
+          entityId: me.id,
+          userId: me.id,
+          userEmail: me.email,
+          tenantId: me.tenantId ?? req.staffUser!.tenantId ?? null,
+          metadata: { ip: req.ip ?? null },
+        })
+      }
+      throw err
+    }
+    await audit({
+      category: 'identity',
+      action: firstPin ? 'user.pin_set' : 'user.pin_change',
+      entity: 'User',
+      entityId: me.id,
+      userId: me.id,
+      userEmail: me.email,
+      tenantId: me.tenantId ?? req.staffUser!.tenantId ?? null,
+    })
+    return reply.status(200).send({ message: firstPin ? 'PIN set.' : 'PIN updated.' })
   })
 
   // GET /auth/users — list staff (admin/manager only).
@@ -1113,7 +1284,17 @@ export async function authRoutes(fastify: FastifyInstance) {
   // and those drop; when one does, signup, password reset and staff sign-in
   // stop together because there is nothing else to reach anyone with.
 
-  fastify.get('/integrations/email', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+  // Who: READ — the CEO and IT (CONNECTOR_ADMINS, Dev workspace, wave 3
+  // UI-08), and IT only while it holds module `api_whatsapp` — the module the
+  // Email page sits under in the sidebar (lib/moduleCatalog.ts, Dev → API),
+  // so the CEO's untick closes it. GET returns `passSet` only, never the password.
+  // WRITE and TEST — the CEO only. Email is PLATFORM-WIDE (Setting rows with
+  // no company) and the stored password, or the box's env SMTP_PASS, is
+  // paired with whatever host is saved: whoever can change the host (and run
+  // the test send) can receive that secret in SMTP AUTH and every company's
+  // password-reset mail (wave 3 review W3C-RV-1). Opening the writes to IT,
+  // like WhatsApp's D14, needs an explicit owner decision first.
+  fastify.get('/integrations/email', { preHandler: [requireAuth(...CONNECTOR_ADMINS), requireModule('api_whatsapp')] }, async () => {
     const keys = [SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY]
     const rows = await prisma.setting.findMany({ where: { key: { in: keys } } })
     const get = (k: string) => rows.find((r) => r.key === k)?.value ?? ''
@@ -1186,14 +1367,16 @@ export async function authRoutes(fastify: FastifyInstance) {
   // ── Delivery status ───────────────────────────────────────────────────────
   // What the watchdog last saw, so the dashboard can say "signup is down and
   // here is the fix" instead of the operator finding out from a customer.
-  fastify.get('/integrations/delivery-status', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  // Read: the managers (their dashboard banner) plus IT, who own the WhatsApp
+  // connector in Dev → API (CONNECTOR_ADMINS). Check now: CONNECTOR_ADMINS.
+  fastify.get('/integrations/delivery-status', { preHandler: requireAuth(...MANAGERS, ...CONNECTOR_ADMINS) }, async () => {
     const row = await prisma.setting.findUnique({ where: { key: DELIVERY_STATE_KEY } })
     if (!row) return { ok: true, cause: 'ok', detail: 'Not checked yet.', fix: '', checkedAt: null }
     try { return JSON.parse(row.value) } catch { return { ok: true, cause: 'ok', detail: '', fix: '', checkedAt: null } }
   })
 
   // Run the check on demand, for the "check now" button.
-  fastify.post('/integrations/delivery-status/check', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+  fastify.post('/integrations/delivery-status/check', { preHandler: requireAuth(...CONNECTOR_ADMINS) }, async () => {
     return runDeliveryWatch()
   })
 
@@ -1204,32 +1387,22 @@ export async function authRoutes(fastify: FastifyInstance) {
   // the person who owns them could not set them — and while they were blank,
   // customer signup, password reset and staff code sign-in were all down.
   //
-  // CEO only. The key is a live credential: it is never returned, only a masked
-  // tail so the screen can show that something is saved and which one.
+  // Dev → API → WhatsApp connector: the CEO and IT (CONNECTOR_ADMINS, spec
+  // D14). PLATFORM-WIDE: one gateway for every company (lib/whatsapp.ts), so
+  // these rows carry no company and GET says `scope: 'platform'`. The key is a
+  // live credential: encrypted at rest (lib/secretBox) and never returned —
+  // only a hint (first 4 + last 4) so the screen can show which one is saved.
 
-  fastify.get('/integrations/whatsapp', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
-    const rows = await prisma.setting.findMany({ where: { key: { in: [WA_URL_KEY, WA_KEY_KEY] } } })
-    const url = rows.find((r) => r.key === WA_URL_KEY)?.value ?? ''
-    const key = rows.find((r) => r.key === WA_KEY_KEY)?.value ?? ''
-    // Where the value in force actually comes from — without this the screen
-    // cannot explain why sending works when both fields look empty.
-    const envUrl = (process.env['WHATSAPP_API_URL'] ?? '').trim()
-    const envKey = (process.env['WHATSAPP_API_KEY'] ?? '').trim()
-    return {
-      apiUrl: url,
-      // Never the key itself. Enough to recognise which one is stored.
-      apiKeyHint: key ? `${key.slice(0, 6)}…${key.slice(-4)}` : (envKey ? 'set in environment' : ''),
-      source: url || key ? 'database' : (envUrl || envKey ? 'environment' : 'unset'),
-      configured: Boolean(url || envUrl),
-    }
+  fastify.get('/integrations/whatsapp', { preHandler: requireAuth(...CONNECTOR_ADMINS) }, async () => {
+    return whatsappSettingsView()
   })
 
-  fastify.put('/integrations/whatsapp', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  fastify.put('/integrations/whatsapp', { preHandler: requireAuth(...CONNECTOR_ADMINS) }, async (req, reply) => {
     const body = z.object({
       // Empty string clears the stored value and falls back to the environment.
       apiUrl: z.string().max(500),
       // Optional: omitting it leaves the stored key untouched, so the URL can
-      // be corrected without re-typing a 50-character secret.
+      // be corrected without re-typing a 50-character secret. '' clears it.
       apiKey: z.string().max(200).optional(),
     }).parse(req.body)
 
@@ -1238,34 +1411,29 @@ export async function authRoutes(fastify: FastifyInstance) {
       throw new AppError('INVALID_URL', 'The endpoint must be a https:// URL, copied from the gateway\'s API Info tab.', 400)
     }
 
-    await prisma.setting.upsert({
-      where: { key: WA_URL_KEY }, create: { key: WA_URL_KEY, value: url }, update: { value: url },
-    })
-    if (body.apiKey !== undefined) {
-      const key = body.apiKey.trim()
-      await prisma.setting.upsert({
-        where: { key: WA_KEY_KEY }, create: { key: WA_KEY_KEY, value: key }, update: { value: key },
-      })
-    }
-    invalidateWhatsappConfig()
+    // Encrypts a new key; 503 SECRET_KEY_MISSING (nothing written) when the
+    // server has no SERVD_SECRET_KEY.
+    await saveWhatsappSettings({ apiUrl: url, ...(body.apiKey !== undefined && { apiKey: body.apiKey }) })
 
     await audit({
       category: 'identity',
       action: 'integrations.whatsapp.update',
       entity: 'Setting',
-      entityId: WA_URL_KEY,
+      entityId: 'integrations.whatsapp.apiUrl',
       userId: req.staffUser?.id ?? null,
       userEmail: req.staffUser?.email ?? null,
+      // Platform setting (no company of its own); the operator's active
+      // company is recorded so the trail shows where the change came from.
       tenantId: req.staffUser?.tenantId ?? null,
       // The endpoint is not a secret; the key never goes in the log.
-      after: { apiUrl: url, apiKeyChanged: body.apiKey !== undefined },
+      after: { apiUrl: url, apiKeyChanged: body.apiKey !== undefined, scope: 'platform' },
     })
     return reply.status(200).send({ ok: true })
   })
 
   // Prove it end to end from the screen, rather than finding out when a
   // customer cannot sign up.
-  fastify.post('/integrations/whatsapp/test', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+  fastify.post('/integrations/whatsapp/test', { preHandler: requireAuth(...CONNECTOR_ADMINS) }, async (req) => {
     const body = z.object({ phone: z.string().min(7).max(20) }).parse(req.body)
     const phone = normalisePhone(body.phone)
     try {
@@ -1388,27 +1556,30 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.get('/users', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // Read: the managers, plus HR — the Workforce staff list is HR's
+  // (staff_directory, wave 3 UI-09). Read only: every write on a login stays
+  // the CEO's (POST/PATCH/DELETE /users are ADMIN_ONLY) and HR adds logins
+  // only through the invite flow (childRoles). Same company scope for all.
+  fastify.get('/users', { preHandler: requireAuth(...MANAGERS, 'hr') }, async (req) => {
     const q = z.object({
       role:   z.string().optional(),  // comma-separated list of UserRole values
       status: z.enum(['pending', 'active', 'suspended']).optional(),
     }).parse(req.query)
 
     const scope = await resolveTenantScope(req)
-    const where: Record<string, unknown> = { deletedAt: null }
-
-    // Scope to current/visible tenant(s). We also accept rows where tenantId
-    // IS NULL so legacy/back-fill users don't vanish; the frontend tags them
-    // with a "No company" chip so the CEO can fix them up.
+    const isAdmin = req.staffUser!.role === 'admin'
+    // Company-scoped like every other list (standing rule, 2026-09-28): the
+    // operator's READ scope — the active company, or every company they belong
+    // to in "All companies" view — matched on the login's primary company OR a
+    // membership. The CEO also sees company-less legacy rows, to fix them.
     //
-    // Admins (owners) see EVERY staff member across all companies — otherwise a
-    // pending hire who signed up under a company the CEO isn't a formal member
-    // of would be invisible, so the CEO couldn't approve them or reissue a PIN.
-    if (req.staffUser!.role !== 'admin' && scope.tenantIds.length > 0) {
-      where.OR = [
-        { tenantId: { in: scope.tenantIds } },
-        { tenantId: null },
-      ]
+    // It used to skip the scope for every admin, so another company's CEO could
+    // list (and then re-role, move and delete) GS Foods' logins. A CEO who runs
+    // several companies is a MEMBER of each of them, and sees them all here.
+    // An empty scope lists nobody (`in: []`), never "no filter".
+    const where: Record<string, unknown> = {
+      deletedAt: null,
+      AND: [staffInCompaniesWhere(scope.tenantIds, isAdmin && scope.tenantIds.length > 0)],
     }
 
     if (q.role) {
@@ -1417,7 +1588,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
     // Status is derived in ONE place (accountStatus.ts) so a row switched off
     // through the legacy isActive column still lists as suspended.
-    if (q.status) Object.assign(where, { AND: [whereAccountState(q.status)] })
+    if (q.status) (where.AND as unknown[]).push(whereAccountState(q.status))
 
     const users = await prisma.user.findMany({
       where,
@@ -1454,20 +1625,55 @@ export async function authRoutes(fastify: FastifyInstance) {
       },
       orderBy: { name: 'asc' },
     })
-    return users.map((u) => ({
-      ...u,
-      accountStatus: accountStateOf(u),
-      hasPin: !!u.pin,
-      pin: undefined,
-      // Flatten memberships into a `tenants` array — primary tenant first,
-      // then any TenantMember-only tenants. The frontend uses this to render
-      // the multi-tenant chip group + populate the multi-select on edit.
-      tenants: dedupeTenants([
-        ...(u.tenantId && (u as { tenant?: TenantLite | null }).tenant ? [(u as { tenant: TenantLite }).tenant] : []),
-        ...u.tenantMemberships.map((m) => m.tenant),
-      ]),
-      tenantMemberships: undefined,
-    }))
+
+    // Still on payroll (PPL-10). Switching a login off does not stop pay: HR
+    // payroll reads only the employee record, and it pays everyone not
+    // separated. So for each login, the linked employee record in the
+    // operator's companies that payroll would still include — Workforce warns
+    // on a suspended login that still has one.
+    const mine = new Set(req.staffUser!.memberTenantIds)
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0)
+    const onPayroll = users.length === 0 ? [] : await prisma.hrEmployee.findMany({
+      where: {
+        userId: { in: users.map((u) => u.id) },
+        tenantId: { in: Array.from(mine) },
+        NOT: { status: 'separated' },
+        OR: [{ lastWorkingDay: null }, { lastWorkingDay: { gte: today } }],
+      },
+      select: { id: true, userId: true, status: true, tenantId: true },
+    })
+    const payrollOf = new Map(onPayroll.map((e) => [e.userId!, { employeeId: e.id, status: e.status, tenantId: e.tenantId }]))
+
+    return users.map((u) => {
+      const memberCompanies = u.tenantMemberships.map((m) => m.tenantId)
+      const allCompanies = Array.from(new Set([...(u.tenantId ? [u.tenantId] : []), ...memberCompanies]))
+      const primary = (u as { tenant?: TenantLite | null }).tenant ?? null
+      return {
+        ...u,
+        // The primary company's relation only when it is one of the viewer's —
+        // another company's name is not theirs to read off this list.
+        ...(primary && !mine.has(primary.id) ? { tenant: null } : {}),
+        accountStatus: accountStateOf(u),
+        hasPin: !!u.pin,
+        pin: undefined,
+        // Flatten memberships into a `tenants` array — primary tenant first,
+        // then any TenantMember-only tenants, limited to the viewer's own
+        // companies. The frontend renders the chip group from it and edits
+        // memberships through it; a login that also belongs elsewhere is
+        // flagged instead (and only someone in every one of its companies may
+        // edit it — staffAccounts.ts findManagedStaff).
+        tenants: dedupeTenants([
+          ...(u.tenantId && primary ? [primary] : []),
+          ...u.tenantMemberships.map((m) => m.tenant),
+        ]).filter((t) => mine.has(t.id)),
+        inOtherCompanies: allCompanies.some((t) => !mine.has(t)),
+        payroll: payrollOf.get(u.id) ?? null,
+        // Floor roles sign in with a code (middleware.ts OTP_LOGIN_ROLES) —
+        // the server's list, so Workforce keeps no copy of it.
+        usesCodeLogin: usesOtpLogin(u.role),
+        tenantMemberships: undefined,
+      }
+    })
   })
 
   // POST /auth/users — create staff member (admin only).
@@ -1514,32 +1720,18 @@ export async function authRoutes(fastify: FastifyInstance) {
     // other PIN write (format, weak list, per-company collision) below, once
     // the target companies are known.
 
-    // Resolve the target tenant: explicit body.tenantId wins; falls back to
-    // the operator's active tenantId. Validate either way — you can only
-    // create staff into a company you actually belong to.
-    // ADMIN_ONLY endpoint — the admin owns the portfolio and can create staff
-    // in any company. Scope checks apply only to non-admins (defensive, should
-    // ADMIN_ONLY ever widen).
-    const isAdmin = req.staffUser!.role === 'admin'
-    const scope = await resolveTenantScope(req)
+    // Resolve the target company: explicit body.tenantId wins; falls back to
+    // the operator's ACTIVE company. Every company the new login is bound to
+    // must be one the operator belongs to — admins included. This used to let
+    // any admin create logins in ANY company, so another company's CEO could
+    // put people into GS Foods. The group owner belongs to every company, so
+    // they still can.
     const tenantId = body.tenantId ?? req.staffUser!.tenantId
-    if (!isAdmin && tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
-      return reply.status(403).send({ error: {
-        code: 'CROSS_TENANT',
-        message: 'You can only create staff inside a company you belong to.',
-      }})
+    if (!tenantId) {
+      throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a new login belongs to a company.', 422)
     }
-
-    // Validate every extra tenant the body wants this user added to.
     const extraIds = (body.tenantIds ?? []).filter((id) => id !== tenantId)
-    for (const id of extraIds) {
-      if (!isAdmin && scope.tenantIds.length > 0 && !scope.tenantIds.includes(id)) {
-        return reply.status(403).send({ error: {
-          code: 'CROSS_TENANT',
-          message: 'You can only add staff to companies you belong to.',
-        }})
-      }
-    }
+    assertCompaniesInScope(req, [tenantId, ...extraIds])
 
     // Email is now mandatory and must be on the company domain: it is the ONLY
     // way to sign in, so creating a staff row without one creates an account
@@ -1547,46 +1739,61 @@ export async function authRoutes(fastify: FastifyInstance) {
     if (!isStaffEmail(body.email)) {
       return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
     }
+    if (await prisma.user.findUnique({ where: { email: normaliseStaffEmail(body.email!) }, select: { id: true } })) {
+      throw new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
+    }
+
+    // Floor roles sign in only with a code to this number; one number is one
+    // login across every company (staffAccounts.ts).
+    const phone = normaliseStaffPhone(body.phone)
+    assertPhoneForRole(body.role, phone)
 
     const pin = body.pin
       ? await preparePin(body.pin, { tenantIds: dedupeStrings([...(tenantId ? [tenantId] : []), ...extraIds]) })
       : null
 
-    const user = await prisma.user.create({
-      data: {
-        name: body.name?.trim() || 'Unnamed staff',
-        email: normaliseStaffEmail(body.email!),
-        ...(body.phone ? { phone: body.phone.trim() } : {}),
-        ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
-        password,
-        pin,
-        pinMustReset: false,
-        ...(tenantId ? { tenantId } : {}),
-        role: body.role,
-        // Mirror the primary tenant as a membership row too — keeps "is this
-        // user a member of tenant X?" queries simple (just check TenantMember,
-        // no UNION with User.tenantId needed).
-        //
-        // Nested writes use `tenant: { connect }` not raw `tenantId` — Prisma
-        // disallows the FK column inside a nested-create when the relation is
-        // already implicit from the parent.
-        tenantMemberships: {
-          create: dedupeStrings([
-            ...(tenantId ? [tenantId] : []),
-            ...extraIds,
-          ]).map((id) => ({
-            tenant: { connect: { id } },
-            role: 'member',
-          })),
+    // Check and write under one per-number lock (AUTH-R5).
+    const user = await withStaffPhoneLock(phone, async (tx) => {
+      await assertPhoneFree(req, phone, { role: body.role, db: tx })
+      return tx.user.create({
+        data: {
+          name: body.name?.trim() || 'Unnamed staff',
+          email: normaliseStaffEmail(body.email!),
+          ...(phone ? { phone } : {}),
+          ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
+          password,
+          // The CEO is shown this password; the person is prompted to replace
+          // it at first sign-in (the flag rides on the login response).
+          mustChangePassword: true,
+          pin,
+          pinMustReset: false,
+          tenantId,
+          role: body.role,
+          // Mirror the primary tenant as a membership row too — keeps "is this
+          // user a member of tenant X?" queries simple (just check TenantMember,
+          // no UNION with User.tenantId needed).
+          //
+          // Nested writes use `tenant: { connect }` not raw `tenantId` — Prisma
+          // disallows the FK column inside a nested-create when the relation is
+          // already implicit from the parent.
+          tenantMemberships: {
+            create: dedupeStrings([
+              ...(tenantId ? [tenantId] : []),
+              ...extraIds,
+            ]).map((id) => ({
+              tenant: { connect: { id } },
+              role: 'member',
+            })),
+          },
         },
-      },
-      select: {
-        id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
-        isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
-        permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
-        tenant: { select: { id: true, name: true, slug: true } },
-        tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
-      },
+        select: {
+          id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
+          isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+          permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
+          tenant: { select: { id: true, name: true, slug: true } },
+          tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
+        },
+      })
     })
     // Creating a staff account is the first half of "who can get in"; the role
     // it is created WITH is the second. Neither was recorded anywhere before.
@@ -1597,8 +1804,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       entityId: user.id,
       userId: req.staffUser?.id ?? null,
       userEmail: req.staffUser?.email ?? null,
-      tenantId: req.staffUser?.tenantId ?? null,
+      tenantId: user.tenantId,
       after: { name: user.name, email: user.email, role: user.role, tenantId: user.tenantId },
+      metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
     })
     return reply.status(201).send({
       ...user,
@@ -1655,57 +1863,64 @@ export async function authRoutes(fastify: FastifyInstance) {
         stationIds:      z.array(z.string().min(1)).optional(),
       }).parse(req.body)
 
-      // Cross-tenant guard. This endpoint is ADMIN_ONLY and the admin owns the
-      // whole portfolio, so they may edit any staff row and assign staff to ANY
-      // company. The per-tenant scope checks below only apply to non-admins
-      // (should ADMIN_ONLY ever widen). Previously they wrongly scoped admins
-      // to their active tenant, blocking the CEO from giving a staff member
-      // access to a second company (e.g. GS Foods + GSX Viva) from the
-      // all-companies view — the write carries no portfolio header, so scope
-      // collapsed to the single active tenant and rejected the extra company.
-      const isAdmin = req.staffUser!.role === 'admin'
-      const scope = await resolveTenantScope(req)
-      const existing = await prisma.user.findUnique({
-        where: { id: req.params.id },
-        // role / isActive / email are read for the audit trail's before-state,
-        // not for the tenant check — a role change is only meaningful in the
-        // log if you can see what it moved FROM.
-        select: { tenantId: true, role: true, isActive: true, accountStatus: true, email: true },
+      // Company scope (staffAccounts.ts findManagedStaff), admins included: the
+      // login must be in the operator's WRITE scope (every company they belong
+      // to) — another company's login is 404, and one shared with a company
+      // they are not in is 403. It used to apply only to non-admins, so another
+      // company's CEO could re-role GS Foods staff and move them into their own
+      // company. The group owner belongs to every company, so they still can —
+      // including giving someone a second company from the all-companies view
+      // (write scope is every membership, not the active company).
+      const existing = await findManagedStaff(req, req.params.id, {
+        // role / isActive / email are read for the audit trail's before-state —
+        // a role change is only meaningful in the log if you can see what it
+        // moved FROM. phone for the floor-login rules below.
+        role: true, isActive: true, accountStatus: true, email: true, phone: true,
       })
-      if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
-      if (!isAdmin && existing.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(existing.tenantId)) {
-        return reply.status(403).send({ error: {
-          code: 'CROSS_TENANT',
-          message: 'This staff member belongs to a company you don\'t have access to.',
-        }})
-      }
 
-      // Tenant transfer validation: target tenant must be one you belong to
-      // (admins may transfer into any company).
-      if (!isAdmin && body.tenantId && !scope.tenantIds.includes(body.tenantId)) {
-        return reply.status(403).send({ error: {
-          code: 'CROSS_TENANT',
-          message: 'You can only transfer staff into a company you belong to.',
-        }})
-      }
-      if (!isAdmin && body.tenantIds) {
-        for (const id of body.tenantIds) {
-          if (!scope.tenantIds.includes(id)) {
-            return reply.status(403).send({ error: {
-              code: 'CROSS_TENANT',
-              message: 'One or more selected companies aren\'t accessible to you.',
-            }})
-          }
-        }
-      }
+      // Moving or adding companies: only ones the operator belongs to (422).
+      assertCompaniesInScope(req, [...(body.tenantId ? [body.tenantId] : []), ...(body.tenantIds ?? [])])
 
       // Resolve final primary tenantId — explicit tenantId wins; otherwise
       // first entry of tenantIds; otherwise leave existing value alone.
       const finalPrimary = body.tenantId ?? body.tenantIds?.[0]
 
+      // Floor-login rules (PPL-04/05), on the state this save produces, and only
+      // for what the save CHANGES — a name edit, a promotion between office
+      // roles, or re-saving an unchanged number on a legacy row must never be
+      // blocked by a duplicate or a missing phone that predates the rules
+      // (only NEW conflicts are refused):
+      //   • PHONE_REQUIRED: the number is cleared on a floor login, or a login
+      //     moves INTO a floor role without one. Enforced even while the login
+      //     is (or is being) suspended — otherwise "suspend + make cashier +
+      //     clear phone", then "switch back on", produced an active cashier
+      //     nobody can sign in to (AUTH-R6). A plain reactivation of a legacy
+      //     floor login with no number is still allowed ("No phone" on
+      //     Workforce), as is a floor-to-floor role change on one.
+      //   • PHONE_IN_USE: only for a login that ends up an active/pending FLOOR
+      //     login, when its number actually changed, it moved into a floor role,
+      //     or it is being switched back on (a suspended login gives its number
+      //     up, so a duplicate could otherwise come back this way). Office
+      //     logins never collide (AUTH-R7).
+      const finalRole = body.role ?? existing.role
+      const reactivating = body.isActive === true && accountStateOf(existing) === 'suspended'
+      const existingPhone = normaliseStaffPhoneLenient(existing.phone)
+      // Re-sending the number already on file, character for character, is not
+      // a change — even a legacy value that would fail today's format check
+      // (F4: an old row must stay editable, only NEW bad numbers are refused).
+      const phoneUntouched = body.phone == null || body.phone.trim() === (existing.phone ?? '').trim()
+      const finalPhone = phoneUntouched ? existingPhone : normaliseStaffPhone(body.phone)
+      const phoneChanged = !phoneUntouched && finalPhone !== existingPhone
+      const intoFloorRole = body.role != null && usesOtpLogin(body.role) && !usesOtpLogin(existing.role)
+      const finalState = body.isActive === false ? 'suspended'
+        : reactivating ? reactivateData(existing.accountStatus).accountStatus
+        : accountStateOf(existing)
+      if (phoneChanged || intoFloorRole) assertPhoneForRole(finalRole, finalPhone)
+      const checkPhoneFree = finalState !== 'suspended' && (phoneChanged || intoFloorRole || reactivating)
+
       const data: Record<string, unknown> = {}
       if (body.name     != null) data.name      = body.name
-      if (body.phone    != null) data.phone     = body.phone || null
+      if (!phoneUntouched)       data.phone     = finalPhone
       // Refuse to CLEAR an email. Sign-in matches on email alone and there is
       // no reset flow, so blanking it from this ordinary admin form is an
       // unrecoverable action — the account can never be signed into again.
@@ -1764,7 +1979,12 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.moduleDeny      != null) data.moduleDeny      = body.moduleDeny
       if (body.stationIds      != null) data.stationIds      = body.stationIds
 
-      const user = await prisma.$transaction(async (tx) => {
+      const user = await withStaffPhoneLock(checkPhoneFree ? finalPhone : null, async (tx) => {
+        // Under the per-number lock, so the check and this write cannot
+        // interleave with another save of the same number (AUTH-R5).
+        if (checkPhoneFree) {
+          await assertPhoneFree(req, finalPhone, { role: finalRole, excludeUserId: req.params.id, db: tx })
+        }
         const updated = await tx.user.update({ where: { id: req.params.id }, data })
         // Membership rewrite — only when the caller supplied tenantIds.
         // Treat the request as the source of truth: drop old rows, recreate
@@ -1780,6 +2000,15 @@ export async function authRoutes(fastify: FastifyInstance) {
               data: desired.map((tid) => ({ userId: req.params.id, tenantId: tid, role: 'member' })),
             })
           }
+        } else if (finalPrimary) {
+          // A primary-company move without a membership list: the new primary
+          // is also a real membership, as at create — so a later company switch
+          // (which overwrites users.tenantId) can never drop it (AUTH-R1).
+          await tx.tenantMember.upsert({
+            where:  { userId_tenantId: { userId: req.params.id, tenantId: finalPrimary } },
+            create: { userId: req.params.id, tenantId: finalPrimary, role: 'member' },
+            update: {},
+          })
         }
         return tx.user.findUnique({
           where: { id: req.params.id },
@@ -1803,42 +2032,62 @@ export async function authRoutes(fastify: FastifyInstance) {
       // how someone comes to hold access they did not have. Logged only when
       // the value actually moved, so the trail is not buried under name and
       // phone edits.
+      // Identity-trail rows are filed under the TARGET's company (the one it
+      // belonged to when it was changed), so that company's CEO and IT see what
+      // happened to their own people. They used to carry the ACTOR's active
+      // company, which hid a change made from another company from the one it
+      // happened to. The actor's company rides along in metadata.
+      const trail = {
+        category: 'identity' as const,
+        entity: 'User',
+        entityId: req.params.id,
+        userId: req.staffUser?.id ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        tenantId: auditCompanyOf(existing),
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+      }
       if (body.role != null && existing.role !== body.role) {
         await audit({
-          category: 'identity',
+          ...trail,
           action: 'user.role_change',
-          entity: 'User',
-          entityId: req.params.id,
-          userId: req.staffUser?.id ?? null,
-          userEmail: req.staffUser?.email ?? null,
-          tenantId: req.staffUser?.tenantId ?? null,
           before: { role: existing.role },
           after: { role: body.role, targetEmail: existing.email },
         })
       }
       if (body.isActive != null && (accountStateOf(existing) === 'suspended') === body.isActive) {
         await audit({
-          category: 'identity',
+          ...trail,
           action: body.isActive ? 'user.enable' : 'user.disable',
-          entity: 'User',
-          entityId: req.params.id,
-          userId: req.staffUser?.id ?? null,
-          userEmail: req.staffUser?.email ?? null,
-          tenantId: req.staffUser?.tenantId ?? null,
           after: { targetEmail: existing.email },
         })
       }
       if (body.pin != null && body.pin !== '') {
         await audit({
-          category: 'identity',
+          ...trail,
           action: 'user.pin_reissue',
-          entity: 'User',
-          entityId: req.params.id,
-          userId: req.staffUser?.id ?? null,
-          userEmail: req.staffUser?.email ?? null,
-          tenantId: req.staffUser?.tenantId ?? null,
           after: { targetEmail: existing.email },
         })
+      }
+      // Moving a login between companies, or changing which companies it works
+      // for, was not recorded at all. Filed under the company it left AND the
+      // one(s) it joined, so both sides can see it.
+      const afterCompanies = dedupeStrings([...(user.tenantId ? [user.tenantId] : []), ...user.tenantMemberships.map((m) => m.tenantId)])
+      const companiesMoved = user.tenantId !== existing.tenantId
+        || afterCompanies.slice().sort().join(',') !== existing.companies.slice().sort().join(',')
+      if (companiesMoved) {
+        const filedUnder = dedupeStrings([
+          ...(existing.tenantId ? [existing.tenantId] : []),
+          ...afterCompanies.filter((t) => !existing.companies.includes(t)),
+        ])
+        for (const t of filedUnder.length ? filedUnder : [null]) {
+          await audit({
+            ...trail,
+            tenantId: t,
+            action: 'user.company_change',
+            before: { tenantId: existing.tenantId, companies: existing.companies },
+            after: { tenantId: user.tenantId, companies: afterCompanies, targetEmail: existing.email },
+          })
+        }
       }
       return {
         ...user,
@@ -1854,23 +2103,158 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // DELETE /auth/users/:id — soft-delete staff (admin only)
+  // DELETE /auth/users/:id — soft-delete staff (admin only).
+  //
+  // Same company scope as every staff-admin route (another company's login is
+  // 404), and audited: removing a login is the last word on "who can get in",
+  // and it used to leave no trace at all.
   fastify.delete<{ Params: { id: string } }>(
     '/users/:id',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
+      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true })
       await prisma.user.update({
-        where: { id: req.params.id },
+        where: { id: target.id },
         data: softDeleteData(),
       })
-      await revokeAllForSubject(req.params.id) // kill the deleted user's sessions now
+      await revokeAllForSubject(target.id) // kill the deleted user's sessions now
+      await audit({
+        category: 'identity',
+        action: 'user.delete',
+        entity: 'User',
+        entityId: target.id,
+        userId: req.staffUser?.id ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        tenantId: auditCompanyOf(target),
+        before: { name: target.name, role: target.role, accountStatus: accountStateOf(target), companies: target.companies },
+        after: { deleted: true, targetEmail: target.email },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+      })
       return reply.status(204).send()
     },
   )
 
-  // POST /auth/customer/request — send a magic-link / OTP to the email or
-  // phone. Used by the mobile app login flow + the storefront magic-link
-  // sign-in. Always returns 200 to prevent enumeration.
+  // POST /auth/staff/:id/sign-in-code — a manager hands a floor-staff member a
+  // one-time sign-in code in person (FOH-19).
+  //
+  // Floor staff have no password: a code to WhatsApp or email is their only way
+  // in. When neither can be delivered (gateway down, SMTP down, phone dead), the
+  // till used to say "ask a manager to sign you in" — and no manager could.
+  // This is that path, kept as narrow as the rest of code sign-in:
+  //   • who: a signed-in manager whose role may manage the target's role
+  //     (lib/workspaces.ts childRoles — foh_management for cashiers and
+  //     servers, boh_management for the kitchen, management / F&B / CEO for
+  //     all floor roles). Owners get none, as everywhere in staff admin.
+  //   • whom: an active floor-role login in the manager's own companies
+  //     (write scope; another company's login is 404) with a phone on file
+  //     that no other login shares.
+  //   • what: the SAME staff_login code row the WhatsApp path writes — 5-minute
+  //     life, single use, the per-number lock, cooldown and daily cap — shown
+  //     on the manager's screen instead of sent. The staff member redeems it at
+  //     the normal POST /auth/staff/otp/verify, with its attempt limit and
+  //     per-phone rate limit.
+  //   • rate-limited per manager, and audited (actor + target, in the
+  //     target's company). The code itself is never logged or stored anywhere
+  //     but the code row.
+  fastify.post<{ Params: { id: string } }>(
+    '/staff/:id/sign-in-code',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const actor = req.staffUser!
+      const target = await findManagedStaff(req, req.params.id, {
+        id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true,
+      })
+      if (!usesOtpLogin(target.role)) {
+        throw new AppError('NOT_A_CODE_LOGIN', 'Only cashiers, servers and kitchen staff sign in with a code. Managers and office staff use their password.', 400)
+      }
+      if (!childRolesFor(actor.role).includes(target.role)) {
+        throw new AppError('ROLE_NOT_ALLOWED', 'Your role cannot sign this person in. Ask their own manager.', 403)
+      }
+      if (accountStateOf(target) !== 'active') {
+        throw new AppError('ACCOUNT_NOT_ACTIVE', 'This login is not active, so it cannot sign in.', 409)
+      }
+      const phone = normaliseStaffPhoneLenient(target.phone)
+      if (!phone) {
+        throw new AppError('PHONE_REQUIRED', 'Add their mobile number on Workforce first — they type it with the code to sign in.', 400)
+      }
+      // The code is redeemed by number. If the number resolves to anyone else
+      // (or to nobody, because two logins share it), the code would not sign
+      // THIS person in — refuse rather than hand over a dead code.
+      const resolved = await findOtpLoginStaff(phone)
+      if (resolved?.id !== target.id) {
+        throw new AppError('PHONE_IN_USE', 'Another login has the same mobile number, so a code cannot tell them apart. Fix the duplicate on Workforce first.', 409)
+      }
+
+      await claimRateLimit(STAFF_CODE_ISSUER_LIMIT, `user:${actor.id}`)
+      const { code, expiresAt } = await issueStaffCodeInPerson(phone)
+      // The usual reason a manager is here is that the cashier has already
+      // tapped "Send code" until the per-phone bucket locked (every send counts
+      // toward it). Left alone, that lock (15 min) outlives this code (5 min),
+      // so the code would be refused at verify with 429 and die unused (AUTH-R2).
+      // A manager has vouched for the person in front of them, so the bucket
+      // starts fresh. Guessing stays bounded: the code row's own attempt limit
+      // (5) and the per-IP bucket still apply at verify.
+      await clearFailures(STAFF_OTP_PHONE_LIMIT, `phone:${phone}`)
+
+      await audit({
+        category: 'identity',
+        action: 'user.signin_code_issue',
+        entity: 'User',
+        entityId: target.id,
+        userId: actor.id,
+        userEmail: actor.email,
+        tenantId: auditCompanyOf(target),
+        after: { targetEmail: target.email, targetRole: target.role, expiresAt },
+        metadata: { actorTenantId: actor.tenantId ?? null, ip: req.ip ?? null },
+      })
+      req.log.warn({ actor: actor.id, target: target.id, phone: maskPhoneForLog(phone) }, 'sign-in code issued in person')
+
+      return reply.status(201).send({
+        code,
+        expiresAt,
+        name: target.name,
+        // What the staff member types with the code — their own number, masked
+        // here because the manager does not need to read it back.
+        phoneHint: maskPhoneForLog(phone),
+      })
+    },
+  )
+
+  // GET /auth/account — the signed-in person's own sign-in settings, for the
+  // admin's /account/password page: whether their password was issued by
+  // someone else, and whether they hold (or may hold) a manager-override PIN.
+  fastify.get('/account', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const me = await prisma.user.findUnique({
+      where: { id: req.staffUser!.id },
+      select: { id: true, name: true, email: true, role: true, pin: true, mustChangePassword: true },
+    })
+    if (!me) throw new UnauthorizedError('Account is no longer active')
+    const codeLogin = usesOtpLogin(me.role)
+    return {
+      id: me.id,
+      name: me.name,
+      email: me.email,
+      role: me.role,
+      usesCodeLogin: codeLogin,
+      mustChangePassword: !codeLogin && me.mustChangePassword,
+      hasPin: !!me.pin,
+      canHoldPin: isOverrideApprover(me.role),
+    }
+  })
+
+  // POST /auth/customer/request — send a sign-in link to the email or phone.
+  // Used by the mobile app login flow. Always returns 200 to prevent
+  // enumeration.
+  //
+  // Unauthenticated, and it sends a message to a contact the CALLER chose —
+  // the shape the 2026-09-09 audit removed /customer/request-otp for. So:
+  //   • capped PER CONTACT per day (MAGIC_LINK_CONTACT_LIMIT), every request
+  //     counted whether or not the contact has an account; the per-IP limit
+  //     stays underneath, but it is the easy half to get around;
+  //   • the phone is normalised before lookup, so 0300… finds the 92300…
+  //     account instead of making a second, empty one;
+  //   • no account is created here. A contact with none gets a signed link,
+  //     and the account is made when the link is followed (service.ts).
   fastify.post('/customer/request', {
     config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
   }, async (req, reply) => {
@@ -1881,8 +2265,18 @@ export async function authRoutes(fastify: FastifyInstance) {
     }).refine((v) => !!(v.email || v.phone), { message: 'Provide email or phone' })
       .parse(req.body)
 
+    const { isEmail, contact } = normaliseCustomerContact((body.email ?? body.phone)!)
     try {
-      await requestMagicLink((body.email ?? body.phone)!, body.name)
+      await claimRateLimit(MAGIC_LINK_CONTACT_LIMIT, `${isEmail ? 'email' : 'phone'}:${contact}`)
+    } catch (err) {
+      if (err instanceof AppError && err.statusCode === 429) {
+        throw new AppError('MAGIC_LINK_LIMIT', 'Too many sign-in links have been requested for this contact today. Try again tomorrow.', 429)
+      }
+      throw err
+    }
+
+    try {
+      await requestMagicLink(contact, body.name)
     } catch (err) {
       // Log but always return 200 — don't leak whether the address exists.
       req.log.warn({ err: (err as Error).message }, 'requestMagicLink failed')

@@ -319,7 +319,13 @@ export async function companySegments(tenantIds: string[]) {
   })
 }
 
-/** Members of one segment at these companies, with the customer card the admin lists. */
+/**
+ * Members of one segment at these companies, with the customer card the admin
+ * lists. The customer's own rollups (totalSpentCents, lastOrderAt) and the
+ * servd-wide wallet are global across companies, so they are NOT selected
+ * here — the route fills spend / last order from the companies' own brands
+ * (crm/routes.ts companyCustomerStats, W3A-RV-02).
+ */
 export async function getSegmentsWithMembers(base: string, tenantIds: string[], limit = 200) {
   if (!isSegmentSlug(base) || tenantIds.length === 0) return []
   return prisma.customerSegmentMembership.findMany({
@@ -327,7 +333,7 @@ export async function getSegmentsWithMembers(base: string, tenantIds: string[], 
     take: limit,
     include: {
       customer: {
-        select: { id: true, name: true, phone: true, email: true, totalSpentCents: true, lastOrderAt: true, walletBalance: true, marketingOptOutAt: true },
+        select: { id: true, name: true, phone: true, email: true, marketingOptOutAt: true },
       },
     },
     orderBy: { joinedAt: 'desc' },

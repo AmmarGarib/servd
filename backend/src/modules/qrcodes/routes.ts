@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 
@@ -51,12 +52,21 @@ async function assertTableOfConcept(tableId: string, conceptId: string): Promise
   if (!table) throw new NotFoundError('Table', tableId)
 }
 
+// Module Access really closes these staff routes (W3A-RV-03): the role array
+// lets the Marketing team in, and the CEO's Module Access (decision 34)
+// narrows it to logins holding promos (QR codes page) or configuration (the hub's QR tile). Same source of truth as the
+// central gate (lib/moduleAccess.ts effectiveModulesForUser).
+const marketingGuard = [requireAuth(...MARKETING_TEAM), requireModule('promos', 'configuration')]
+
+// Access (wave 3, UI-06): QR codes sit under Promotions (module promos), so
+// the operator routes are MARKETING_TEAM — MANAGERS plus marketing and
+// brand_manager. Company scope is unchanged (see above).
 export async function qrCodeRoutes(fastify: FastifyInstance) {
   // GET /qrcodes — view-aware company scope; a client conceptId narrows the
   // list but is validated (404 for a foreign brand) rather than trusted.
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req) => {
       return prisma.qrCode.findMany({
         where: await conceptWhere(req, req.query.conceptId, 'read'),
@@ -71,7 +81,7 @@ export async function qrCodeRoutes(fastify: FastifyInstance) {
 
   // POST /qrcodes — the brand must belong to the ACTIVE company, and the
   // table (if any) to that brand.
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/', { preHandler: marketingGuard }, async (req, reply) => {
     const body = createQrSchema.parse(req.body)
     if (!req.staffUser!.tenantId) {
       throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before generating a QR code', 422)
@@ -154,7 +164,7 @@ export async function qrCodeRoutes(fastify: FastifyInstance) {
   // tableId must be a table of that same brand.
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req) => {
       const body = createQrSchema.partial().omit({ conceptId: true }).parse(req.body)
       const existing = await findOwnedQr(req, req.params.id, 'write')
@@ -166,7 +176,7 @@ export async function qrCodeRoutes(fastify: FastifyInstance) {
   // DELETE /qrcodes/:id — must belong to a company the operator is in
   fastify.delete<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: marketingGuard },
     async (req, reply) => {
       const existing = await findOwnedQr(req, req.params.id, 'write')
       await prisma.qrCode.delete({ where: { id: existing.id } })

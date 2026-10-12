@@ -16,17 +16,36 @@ import { ForbiddenError } from './errors.js'
  * caller's effective modules from effectiveModulesForUser(), so what the
  * sidebar shows and what the API lets through cannot disagree.
  *
- * Enforcement is deliberately scoped to the SENSITIVE READ SURFACES the 2026-06
- * audit flagged (finance, reports, management dashboards, payroll,
- * procurement) — not to ops-critical surfaces like orders/KDS/POS, where a
- * mis-configured matrix could lock staff out mid-service. Role-array gating
- * (requireAuth(...MANAGERS) etc.) still applies everywhere as before; this is
- * an ADDITIONAL narrowing on top.
+ * Enforcement covers the prefixes in GATED_PREFIXES below: the sensitive read
+ * surfaces the 2026-06 audit flagged (finance, reports, management dashboards,
+ * payroll, procurement), the HR back office and — wave 3 (UI-12) — the live
+ * operations reads (/orders, /expo, /dispatch, /riders, /crm), each with
+ * EVERY module whose pages use it, so no floor role that works them is
+ * refused by its DEFAULTS. The till's ring-up / payment (/pos/*) and the
+ * per-item bump (PATCH /order-items/:id/status) stay ungated.
+ *
+ * The KITCHEN SCREEN IS GATED, reads and writes: the station and expo queues
+ * AND the step bump, fire and hand-off all live under /expo (POST
+ * /expo/steps/:id/bump, /expo/orders/:id/fire|handoff — the admin KDS pages
+ * and the tablet), and the tablet's "mark ready" is PATCH /orders/:id/status.
+ * So a Module Access row (or a per-user deny) that leaves a kitchen role with
+ * none of expo_station / kds_dashboard / kds_all stops that role's KDS —
+ * module access is THE control (decision 34); untick those only for a role
+ * that should not run the line. The writes are not exempted on their own:
+ * with the queue reads refused there is nothing on screen to bump.
+ *
+ * Role-array gating (requireAuth(...MANAGERS) etc.) still applies everywhere
+ * as before; this is an ADDITIONAL narrowing.
  */
 
 // ── Module registry (ids must match the frontend's ModuleId union) ──────────
 export const MODULE_IDS = [
   'ceo_overview', 'business_info', 'role_management', 'role_modules', 'audit_log', 'accounting_audit', 'tenants',
+  // CEO → Approvals (owner decision D3): the one approvals inbox. Its sidebar
+  // entry for the governance roles; the inbox itself (GET /approvals) is open
+  // to every login and lists only what that login's existing approve routes
+  // would let it act on (modules/approvals). Not gated: it grants nothing.
+  'approvals',
   'brand_dashboard', 'fnb_dashboard',
   'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'chain',
   'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
@@ -36,8 +55,12 @@ export const MODULE_IDS = [
   // Publishing still needs the CEO (role admin) — this only lets you draft.
   'storefront',
   'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'procurement', 'reports',
+  // Finance → Voided pre bills (spec §17.1): every pre-bill printed, read-only.
+  'voided_prebills',
   'staff_directory', 'staff_hr',
   'settings', 'notifications', 'help', 'configuration', 'onboarding', 'integrations',
+  // Dev → API (spec D13): Hasham's WhatsApp connector and the POS connector.
+  'api_whatsapp', 'api_pos',
 ] as const
 const MODULE_ID_SET = new Set<string>(MODULE_IDS)
 const ALL_MODULES = [...MODULE_IDS] as string[]
@@ -61,16 +84,32 @@ export function isRetiredModuleId(id: string): boolean { return RETIRED_SET.has(
 
 // Role defaults. The legacy 'manager' role (migrated to foh_management) keeps
 // an entry only so a not-yet-migrated row still resolves.
-const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain')
-// 'manager' mirrors 'management' for everything EXCEPT the accounting trail.
-const MANAGER_MODULES = MANAGEMENT_MODULES.filter((m) => m !== 'accounting_audit')
+//
+// The sidebar and the API must agree (audit PPL-08): a role holds a module by
+// default only when the routes behind it let that role in.
+//   api_whatsapp  — /auth/integrations/whatsapp*: CONNECTOR_ADMINS (admin, it)
+//   api_pos       — /connectors: CONNECTOR_ADMINS + management (read-only)
+//   voided_prebills — GET /pre-bills: admin, owner, management, finance
+// So management holds everything except the WhatsApp connector (whose routes
+// it cannot open), owner and the legacy manager hold neither API connector.
+const API_WHATSAPP_ONLY = ['api_whatsapp']
+const API_CONNECTORS = ['api_whatsapp', 'api_pos']
+const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m))
+// 'manager' mirrors 'management' for everything EXCEPT the accounting trail,
+// the API connectors and the Finance pre-bill register (none of whose routes
+// admit the legacy role).
+const MANAGER_MODULES = MANAGEMENT_MODULES.filter(
+  (m) => m !== 'accounting_audit' && m !== 'voided_prebills' && !API_CONNECTORS.includes(m),
+)
 // Co-owner: everything the CEO sees — P&L, payroll, projections, investment —
 // EXCEPT the governance surfaces. Withholding role_management/role_modules is
 // what makes the escalation rule real: an owner who could edit roles could
 // grant themselves `admin`. Staff-account admin stays with the CEO for the
 // same reason (creating an admin user is equivalent to self-promotion).
+// The API connectors are the CEO's and IT's (Dev workspace, CONNECTOR_ADMINS)
+// — the routes do not admit owner, so neither does the sidebar.
 const OWNER_MODULES = ALL_MODULES.filter(
-  (m) => !['role_management', 'role_modules', 'accounting_audit'].includes(m),
+  (m) => !['role_management', 'role_modules', 'accounting_audit'].includes(m) && !API_CONNECTORS.includes(m),
 )
 // The books' own audit trail — period closes, manual journals, wage rates,
 // tip-pool postings. Per the owner: the CEO and the exec (management) only.
@@ -91,10 +130,12 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'staff_directory',
     'reports', 'integrations',
   ],
+  // BOH managers rota the kitchen: /scheduling has always let them in
+  // (ROTA_PLANNERS), so the Rota link is theirs too (audit PPL-08).
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
-    'procurement', 'staff_directory',
+    'procurement', 'staff_directory', 'scheduling',
     'reports',
   ],
   foh:       ['pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside'],
@@ -122,16 +163,23 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'staff_directory',
     'finance_pl', 'accounting', 'reports',
   ],
+  // The Finance workspace (lib/workspaces.ts). Each of these has a route that
+  // lets finance in (audit BOOKS-02 / PPL-08): 'payroll' is the payroll
+  // register (GET /hr/payroll/runs, read-only) and tip pools; 'capital' and
+  // 'projections' are /finance/* and /projections.
   finance: [
     'dashboard', 'orders',
     'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation',
-    'exceptions', 'capital', 'projections', 'reports',
+    'exceptions', 'capital', 'projections', 'reports', 'voided_prebills',
   ],
+  // 'payroll' = tip pools (HR runs the people side of the split); HR payroll
+  // itself is staff_hr.
   hr: [
     'staff_directory', 'staff_hr', 'payroll', 'scheduling',
   ],
   // IT / developer — owns the Dev workspace (decision 47, lib/workspaces.ts).
-  it: ['integrations', 'audit_log', 'notifications', 'help'],
+  // The API section (WhatsApp + POS connector) is theirs with the CEO.
+  it: ['api_whatsapp', 'api_pos', 'integrations', 'audit_log', 'notifications', 'help'],
 }
 
 export function isKnownModuleId(id: string): boolean { return MODULE_ID_SET.has(id) }
@@ -142,8 +190,92 @@ const CACHE_TTL_MS = 30_000
 
 export function invalidateModuleAccessCache() { overrideCache = null }
 
+// ── New default modules reach SAVED override rows (once) ────────────────────
+// A RoleModuleAccess row is a FULL allow-list: it replaces the role's defaults.
+// So when a module id is added to a role's defaults, any role the CEO has
+// already saved in the matrix silently does NOT get it — e.g. an `it` row saved
+// before the POS connector shipped would 403 IT on every /connectors call.
+//
+// Each grant below is applied to the saved rows exactly ONCE (a marker in the
+// platform `settings` table records it), appending the module to the rows of
+// every role whose defaults now hold it. After that the row is the CEO's again:
+// untick the module and it stays unticked. Roles with no saved row already get
+// it from the defaults. Data only — no schema change.
+//
+// Add a grant here whenever a module id is added to an existing role's
+// defaults (the role set is derived from DEFAULT_MODULE_ACCESS, so it cannot
+// drift). Runs at boot (index.ts) and, failing that, before the first override
+// read in each process.
+export const MODULE_GRANTS: readonly string[] = [
+  // POS connector + pre-bills (spec D13 / §17.1, 2026-10-11).
+  'api_pos', 'api_whatsapp', 'voided_prebills',
+  // CEO workspace → Approvals (owner decisions D2/D3, 2026-10-11): reaches
+  // the saved rows of owner / management / legacy manager, whose defaults
+  // are "every module except …" and so now hold it.
+  'approvals',
+]
+export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
+
+/** Non-admin roles whose defaults hold `moduleId` — who a grant adds it for. */
+export function rolesGrantedByDefault(moduleId: string): UserRole[] {
+  return (Object.keys(DEFAULT_MODULE_ACCESS) as UserRole[])
+    .filter((r) => r !== 'admin' && DEFAULT_MODULE_ACCESS[r].includes(moduleId))
+}
+
+function parseMarker(value: string | undefined): string[] {
+  if (!value) return []
+  try {
+    const v = JSON.parse(value) as unknown
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Apply every pending MODULE_GRANTS entry to the saved override rows, once.
+ * Idempotent and safe to run concurrently: each row update is conditional on
+ * the module being absent (`NOT has`), and the marker is a union.
+ * Returns the grants applied and the roles whose rows changed.
+ */
+export async function applyModuleGrants(): Promise<{ applied: string[]; roles: UserRole[] }> {
+  const marker = await prisma.setting.findUnique({ where: { key: MODULE_GRANTS_MARKER_KEY } })
+  const done = new Set(parseMarker(marker?.value))
+  const pending = MODULE_GRANTS.filter((m) => !done.has(m))
+  if (pending.length === 0) return { applied: [], roles: [] }
+
+  const touched = new Set<UserRole>()
+  for (const moduleId of pending) {
+    for (const role of rolesGrantedByDefault(moduleId)) {
+      const r = await prisma.roleModuleAccess.updateMany({
+        where: { role, NOT: { modules: { has: moduleId } } },
+        data: { modules: { push: moduleId } },
+      })
+      if (r.count > 0) touched.add(role)
+    }
+  }
+  const value = JSON.stringify([...new Set([...done, ...pending])])
+  // createMany+skipDuplicates then update, not upsert: two processes booting
+  // together would race an upsert's INSERT into a unique violation.
+  await prisma.setting.createMany({ data: [{ key: MODULE_GRANTS_MARKER_KEY, value }], skipDuplicates: true })
+  await prisma.setting.update({ where: { key: MODULE_GRANTS_MARKER_KEY }, data: { value } })
+  invalidateModuleAccessCache()
+  return { applied: pending, roles: [...touched] }
+}
+
+// Once per process, before the first override read. Fails open (the next
+// process tries again); the boot call in index.ts normally got there first.
+let grantsOnce: Promise<void> | null = null
+function ensureModuleGrants(): Promise<void> {
+  if (!grantsOnce) {
+    grantsOnce = applyModuleGrants().then(() => undefined, () => { grantsOnce = null })
+  }
+  return grantsOnce
+}
+
 async function roleOverrides(): Promise<Map<UserRole, string[]>> {
   if (overrideCache && Date.now() - overrideCache.at < CACHE_TTL_MS) return overrideCache.rows
+  await ensureModuleGrants()
   const rows = await prisma.roleModuleAccess.findMany()
   const map = new Map<UserRole, string[]>(rows.map((r) => [r.role, r.modules]))
   overrideCache = { at: Date.now(), rows: map }
@@ -166,21 +298,68 @@ export async function effectiveModulesForUser(user: {
 
 // ── URL → required-module map (first match wins; ANY listed module passes) ──
 // Paths are matched after stripping the /api/v1 prefix. Covers the
-// audit-flagged financial/reporting surfaces plus the HR back office — see
-// header comment.
-const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
+// audit-flagged financial/reporting surfaces, the HR back office and (wave 3,
+// UI-12) the live-operations reads — see header comment.
+//
+// A rule's `anyOf` is EVERY module whose pages call that prefix — the admin
+// pages (frontend/admin lib/moduleCatalog.ts), the tablet (KDS / expo,
+// dispatch, floor, customer lookup) and the till — so a role reaches the API
+// exactly when its sidebar shows a page that needs it. A rule with `pattern`
+// matches that regex instead of the plain prefix (for an id in the middle of
+// the path); `prefix` then only documents it.
+//
+// Only STAFF sessions reach this (requireAuth / requireRefresh). Customer
+// tokens (storefront), rider tokens (/rider*, /rider-auth*), signed webhooks
+// and public routes never do — and '/riders' does not match '/rider/…'.
+// A rule may also carry `readAnyOf`: the modules that may READ it (GET /
+// HEAD) when that set is wider than who may write — e.g. finance reads the
+// payables under /procurement with its 'accounting' module but never raises
+// a PO or pays a bill through it. Writes always need `anyOf`.
+const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: string[]; pattern?: RegExp }> = [
+  // Dev → API → WhatsApp connector: GET / PUT / POST test of the ONE
+  // platform-wide gateway (auth/routes.ts). Whoever can change its URL can
+  // redirect every company's signup, staff sign-in and 2FA code, so the CEO's
+  // Module Access switch must actually close it (decision 34). NOT
+  // /auth/integrations/delivery-status — that feeds the managers' banner.
+  { prefix: '/auth/integrations/whatsapp', anyOf: ['api_whatsapp'] },
   // The P&L (and its by-brand tab) is THE P&L — reachable with the P&L module
   // or the accounting module, as the old /finance P&L was.
   { prefix: '/accounting/pl-ledger', anyOf: ['finance_pl', 'accounting'] },
   { prefix: '/accounting',    anyOf: ['accounting'] },
+  // Sales quadrants (margin) is an Accounting page (/accounting/menu-engineering).
+  { prefix: '/reports/menu-engineering', anyOf: ['accounting', 'reports'] },
   { prefix: '/reports',       anyOf: ['reports'] },
   { prefix: '/management',    anyOf: ['brand_dashboard', 'fnb_dashboard'] },
   // The one AP aging serves the Accounting AP aging page too, so finance
   // (accounting, no procurement) can open it.
   { prefix: '/procurement/ap-aging', anyOf: ['procurement', 'accounting'] },
+  // Payables reads for finance (wave 3, UI-07): the Accounting hub's vendor
+  // and PO widgets, petty cash's bill picker. Their GET routes admit
+  // AP_READERS; every write (raise / approve / receive a PO, enter or pay a
+  // bill, add a supplier) still needs the procurement module.
+  { prefix: '/procurement/bills',           anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/payments',        anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/purchase-orders', anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/suppliers',       anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement',   anyOf: ['procurement'] },
   { prefix: '/reconciliation', anyOf: ['reconciliation'] },
   { prefix: '/gift-cards',    anyOf: ['gift_cards'] },
+  // Dev → API → POS connector: configuration, go-live, fiscal documents and
+  // card charges (modules/connectors/routes.ts). NOT the till's own
+  // /pos/terminal/* and /pos/orders/:id/fiscal* (role-gated, ops-critical) nor
+  // the vendor webhook /webhooks/pos (signed, no staff session).
+  { prefix: '/connectors',    anyOf: ['api_pos'] },
+  // Finance → Voided pre bills: the pre-bill register (modules/prebills).
+  // NOT the till's /pos/orders/:id/pre-bill or /pos/pre-bills/:id/html —
+  // printing a pre-bill must never depend on a Finance toggle.
+  { prefix: '/pre-bills',     anyOf: ['voided_prebills'] },
+  // Capital (CapEx tracker + the old capital ledger — every /finance route),
+  // projections and tip pools (audit PPL-08). Their role arrays let every
+  // manager tier in, so without these a FOH/BOH manager who holds none of the
+  // modules read the capital ledger, projections and tip pools.
+  { prefix: '/finance',       anyOf: ['capital'] },
+  { prefix: '/projections',   anyOf: ['projections'] },
+  { prefix: '/tip-pools',     anyOf: ['payroll'] },
   // HR back office — the HR_ADMIN surfaces (hr/routes.ts). Until now the
   // 'staff_hr' toggle only hid the sidebar link; per owner decision 34 module
   // access is THE control, so it is enforced here too. Every role in HR_ADMIN
@@ -193,7 +372,10 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
   // /records/:s/:id/submit from the admin list under the same prefix.
   { prefix: '/hr/employees',        anyOf: ['staff_hr'] },
   { prefix: '/hr/documents',        anyOf: ['staff_hr'] },
-  { prefix: '/hr/payroll',          anyOf: ['staff_hr'] },
+  // Finance reads the payroll register with its 'payroll' module (BOOKS-02);
+  // preparing, approving and paying it stay with the HR_ADMIN / approver
+  // role arrays in hr/routes.ts.
+  { prefix: '/hr/payroll',          anyOf: ['staff_hr', 'payroll'] },
   { prefix: '/hr/letters',          anyOf: ['staff_hr'] },
   { prefix: '/hr/reports',          anyOf: ['staff_hr'] },
   { prefix: '/hr/settings',         anyOf: ['staff_hr'] },
@@ -204,6 +386,59 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/hr/final-settlement', anyOf: ['staff_hr'] },
   { prefix: '/hr/org/units',        anyOf: ['staff_hr'] },
   { prefix: '/hr/org/departments',  anyOf: ['staff_hr'] },
+
+  // ── Live operations (wave 3, UI-12) ──────────────────────────────────────
+  // Their role arrays are ALL_STAFF (every floor role works them), so before
+  // these rules IT, marketing, HR and procurement read the live order
+  // pipeline and the refundable-orders list, and every role read the rider
+  // roster, the dispatch board and the expo queue. These narrow them to the
+  // roles whose modules hold a page that uses them. NOT the till's own
+  // /pos/* (ring-up, pay, pre-bill, refund — role-gated in pos/routes.ts) nor
+  // the per-item bump PATCH /order-items/:id/status. The KDS's step bump,
+  // fire and hand-off ARE under /expo below, and the tablet's mark-ready is
+  // PATCH /orders/:id/status: a Module Access row that strips every kitchen
+  // module from a role stops its KDS (see the header comment).
+  //
+  // /orders — callers, by module:
+  //   orders        /orders, /orders/[id], courses, split (admin)
+  //   refunds       /refunds (the refundable-orders list, /orders?status=…)
+  //   curbside      /orders/curbside (admin + tablet)
+  //   pos           the till's open-orders list and /orders/:id (tillApi.ts)
+  //   kds_dashboard /kds/[station] (useKdsSocket → /orders/:id), tablet KDS
+  //                 expo lane (PATCH /orders/:id/status)
+  //   kds_all       the live-station pages under the Kitchen view
+  //   expo_station  /expo → /orders/:id/courses, fire-course
+  //   riders        /riders (open delivery orders to assign)
+  //   dispatch      tablet Dispatch screen (/orders?status=…)
+  // So cashier (pos, orders, curbside), foh, kitchen, boh, expediter and every
+  // manager tier keep it; finance keeps it ('orders'); marketing,
+  // brand_manager, hr, it and procurement — none of these — are refused.
+  { prefix: '/orders', anyOf: ['orders', 'refunds', 'curbside', 'pos', 'kds_dashboard', 'kds_all', 'expo_station', 'riders', 'dispatch'] },
+  // /expo — the expo queue and the station queues: admin /expo
+  // (expo_station), /kds and /kds/[station] (kds_dashboard; the live-station
+  // children under kds_all), the tablet KDS (kitchen, boh, expediter). It
+  // covers the line's WRITES too — POST /expo/steps/:id/bump and
+  // /expo/orders/:id/fire|handoff (and the managers' /reject) — so a role
+  // needs one of these modules to bump, fire or hand off a ticket.
+  { prefix: '/expo',     anyOf: ['expo_station', 'kds_dashboard', 'kds_all'] },
+  // /dispatch — admin /dispatch (dispatch), /riders (riders: assign,
+  // delivered, rider status) and the tablet Dispatch screen.
+  { prefix: '/dispatch', anyOf: ['dispatch', 'riders'] },
+  // /riders — the roster, history, fleet agreements: admin /riders only. The
+  // rider app is /rider/* with a rider token and never reaches this.
+  { prefix: '/riders',   anyOf: ['riders'] },
+  // CRM. The guest-context panel (GET context / PATCH notes) also sits on the
+  // Reservations page (CustomerContextSidebar) and the tablet's Customer
+  // screen; Reach out (POST /crm/conversations) on Complaints and Reviews;
+  // the campaign builder reads segments and the summary. Everything else under
+  // /crm — the customer list and profile, bans, strikes, the naughty list —
+  // is the CRM module's (UI-12: boh_management read /crm/customers).
+  { prefix: '/crm/customers/:id/context|notes', pattern: /^\/crm\/customers\/[^/]+\/(context|notes)$/, anyOf: ['crm', 'reservations'] },
+  { prefix: '/crm/conversations',      anyOf: ['crm', 'complaints', 'reviews'] },
+  { prefix: '/crm/campaigns',          anyOf: ['campaigns', 'crm'] },
+  { prefix: '/crm/behavioral-segments', anyOf: ['crm', 'campaigns'] },
+  { prefix: '/crm/summary',            anyOf: ['crm', 'campaigns'] },
+  { prefix: '/crm',                    anyOf: ['crm'] },
 ]
 
 /**
@@ -216,10 +451,14 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
 export async function enforceModuleAccess(
   url: string,
   user: { role: UserRole; moduleAllow?: string[]; moduleDeny?: string[] },
+  /** The HTTP method; only GET / HEAD may use a rule's `readAnyOf`. Omitted = treated as a write. */
+  method?: string,
 ): Promise<void> {
   if (user.role === 'admin') return
   const path = (url.split('?')[0] ?? '').replace(/^\/api\/v1/, '')
-  const rule = GATED_PREFIXES.find((r) => path === r.prefix || path.startsWith(r.prefix + '/') || path.startsWith(r.prefix + '?'))
+  const rule = GATED_PREFIXES.find((r) => r.pattern
+    ? r.pattern.test(path)
+    : path === r.prefix || path.startsWith(r.prefix + '/') || path.startsWith(r.prefix + '?'))
   if (!rule) return
   let modules: Set<string>
   try {
@@ -227,7 +466,9 @@ export async function enforceModuleAccess(
   } catch {
     return   // fail open — see docstring
   }
-  if (!rule.anyOf.some((m) => modules.has(m))) {
+  const isRead = method === 'GET' || method === 'HEAD'
+  const allowed = isRead && rule.readAnyOf ? rule.readAnyOf : rule.anyOf
+  if (!allowed.some((m) => modules.has(m))) {
     throw new ForbiddenError(`Your account does not have access to this module (${rule.anyOf[0]}). Ask the CEO to enable it in Module Access.`)
   }
 }

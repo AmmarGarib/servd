@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
+import { conceptWhere } from '../../lib/tenantScope.js'
 
 interface IncomingEvent {
   event: string
@@ -17,6 +19,15 @@ const VALID_EVENTS = new Set([
   'promo_applied', 'promo_failed',
 ])
 
+// Module Access really closes these staff routes (W3A-RV-03): the role array
+// lets the Marketing team in, and the CEO's Module Access (decision 34)
+// narrows it to logins holding analytics (Analytics page). Same source of truth as the
+// central gate (lib/moduleAccess.ts effectiveModulesForUser).
+const marketingGuard = [requireAuth(...MARKETING_TEAM), requireModule('analytics')]
+
+// Access (wave 3, UI-06): the Analytics page is the Marketing workspace's
+// (module analytics), so the reads are MARKETING_TEAM — MANAGERS plus
+// marketing and brand_manager — scoped to brands in view (conceptWhere).
 export async function analyticsRoutes(fastify: FastifyInstance) {
   // POST /analytics/events — ingest batched storefront events
   // Public (no auth) but rate-limited. Fire-and-forget: always returns 204.
@@ -65,7 +76,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
   // GET /analytics/funnel?conceptId&dateFrom&dateTo
   fastify.get<{
     Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string }
-  }>('/funnel', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/funnel', { preHandler: marketingGuard }, async (req) => {
     const { conceptId, dateFrom, dateTo } = req.query
     const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 864e5)
     const to = dateTo ? new Date(dateTo) : new Date()
@@ -82,9 +93,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       where: {
         event: { in: [...FUNNEL_STEPS] as FunnelEvent[] },
         createdAt: { gte: from, lte: to },
-        // Tenant scope: only events for concepts under the active tenant.
-        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        ...(conceptId ? { conceptId } : {}),
+        // Company scope: only events at brands in view; a foreign conceptId 404s.
+        ...(await conceptWhere(req, conceptId, 'read')),
       },
       _count: { event: true },
     })
@@ -108,22 +118,17 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
   // Items ranked by views with add-to-cart conversion rate.
   fastify.get<{
     Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; limit?: string }
-  }>('/items', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/items', { preHandler: marketingGuard }, async (req) => {
     const { conceptId, dateFrom, dateTo, limit } = req.query
     const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 864e5)
     const to = dateTo ? new Date(dateTo) : new Date()
     const n = Math.min(parseInt(limit ?? '20', 10), 100)
 
-    // Tenant scope: only consider concepts under the active tenant.
-    const tenantConcepts = await prisma.concept.findMany({
-      where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      select: { id: true },
-    })
-    const tenantConceptIds = tenantConcepts.map((c) => c.id)
-    if (tenantConceptIds.length === 0) return []
-    const effectiveConceptIds = conceptId && tenantConceptIds.includes(conceptId)
-      ? [conceptId]
-      : tenantConceptIds
+    // Company scope: brands in view only (empty scope = no rows); a foreign
+    // conceptId 404s rather than silently widening to every brand.
+    const scope = await conceptWhere(req, conceptId, 'read')
+    const effectiveConceptIds = typeof scope.conceptId === 'string' ? [scope.conceptId] : scope.conceptId.in
+    if (effectiveConceptIds.length === 0) return []
 
     type Row = { itemId: string; name: string; views: bigint; adds: bigint }
     const rows = await prisma.$queryRaw<Row[]>`
@@ -154,22 +159,17 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
   // Top search queries with no-result rate.
   fastify.get<{
     Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; limit?: string }
-  }>('/search', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/search', { preHandler: marketingGuard }, async (req) => {
     const { conceptId, dateFrom, dateTo, limit } = req.query
     const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 864e5)
     const to = dateTo ? new Date(dateTo) : new Date()
     const n = Math.min(parseInt(limit ?? '20', 10), 100)
 
-    // Tenant scope: only consider concepts under the active tenant.
-    const tenantConcepts = await prisma.concept.findMany({
-      where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      select: { id: true },
-    })
-    const tenantConceptIds = tenantConcepts.map((c) => c.id)
-    if (tenantConceptIds.length === 0) return []
-    const effectiveConceptIds = conceptId && tenantConceptIds.includes(conceptId)
-      ? [conceptId]
-      : tenantConceptIds
+    // Company scope: brands in view only (empty scope = no rows); a foreign
+    // conceptId 404s rather than silently widening to every brand.
+    const scope = await conceptWhere(req, conceptId, 'read')
+    const effectiveConceptIds = typeof scope.conceptId === 'string' ? [scope.conceptId] : scope.conceptId.in
+    if (effectiveConceptIds.length === 0) return []
 
     type Row = { query: string; count: bigint; noResults: bigint }
     const rows = await prisma.$queryRaw<Row[]>`
@@ -199,18 +199,19 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
   // GET /analytics/overview?conceptId&dateFrom&dateTo — summary numbers
   fastify.get<{
     Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string }
-  }>('/overview', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/overview', { preHandler: marketingGuard }, async (req) => {
     const { conceptId, dateFrom, dateTo } = req.query
     const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 864e5)
     const to = dateTo ? new Date(dateTo) : new Date()
 
+    // Company scope: brands in view only; a foreign conceptId 404s.
+    const scope = await conceptWhere(req, conceptId, 'read')
     const [sessions, events] = await Promise.all([
       prisma.analyticsEvent.groupBy({
         by: ['sessionId'],
         where: {
           createdAt: { gte: from, lte: to },
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-          ...(conceptId ? { conceptId } : {}),
+          ...scope,
         },
         _count: { sessionId: true },
       }),
@@ -218,8 +219,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         by: ['event'],
         where: {
           createdAt: { gte: from, lte: to },
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-          ...(conceptId ? { conceptId } : {}),
+          ...scope,
         },
         _count: { event: true },
       }),

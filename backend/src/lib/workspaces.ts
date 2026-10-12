@@ -16,7 +16,7 @@ import { ASSIGNABLE_ROLES_WITH_ADMIN } from './roles.js'
 
 export interface WorkspaceSection { key: string; title: string; modules: string[] }
 export interface WorkspaceDef {
-  id: 'operations' | 'finance' | 'marketing' | 'hr' | 'dev'
+  id: 'ceo' | 'operations' | 'finance' | 'marketing' | 'hr' | 'dev'
   title: string
   /** Roles that OWN the workspace (run it, add people to it). */
   ownerRoles: UserRole[]
@@ -26,10 +26,38 @@ export interface WorkspaceDef {
 }
 
 export const WORKSPACES: readonly WorkspaceDef[] = [
+  // CEO (owner decision D2, 2026-10-11): the CEO's own section — the one
+  // approvals inbox, the companies, who can sign in and what they can open,
+  // and the company-wide rules. It used to be the 'company' section INSIDE
+  // Operations, which tied company governance to F&B work: nothing could be
+  // handed to an F&B manager without handing over the governance too.
+  //
+  // 'configuration' living here keeps PPL-09 intact: setup/routes.ts lets the
+  // owner roles of the workspace holding 'configuration' (plus APPROVERS)
+  // edit the company-wide rules (selfie / geofence, tip split, service
+  // charge), so it must stay a CEO-owned workspace — tested.
+  // Head offices join "Companies" when head office is built.
+  {
+    id: 'ceo',
+    title: 'CEO',
+    ownerRoles: ['admin'],
+    memberRoles: [],
+    sections: [
+      { key: 'overview',  title: 'Overview',                    modules: ['ceo_overview'] },
+      { key: 'approvals', title: 'Approvals',                   modules: ['approvals'] },
+      { key: 'companies', title: 'Companies & head offices',    modules: ['tenants', 'business_info', 'onboarding'] },
+      { key: 'access',    title: 'Logins & access',             modules: ['role_management', 'role_modules'] },
+      { key: 'rules',     title: 'Company rules',               modules: ['configuration', 'settings'] },
+    ],
+  },
+  // Operations is the F&B manager's (D2): menu, stock, till, kitchen, buying,
+  // floor. The owner can act as F&B manager today and hand it over later by
+  // adding an fnb_manager login; the CEO (admin) still holds every module, so
+  // still sees all of it.
   {
     id: 'operations',
     title: 'Operations',
-    ownerRoles: ['admin'],
+    ownerRoles: ['fnb_manager'],
     memberRoles: [
       'management', 'fnb_manager', 'foh_management', 'boh_management',
       'foh', 'boh', 'kitchen', 'expediter', 'cashier', 'procurement', 'manager',
@@ -41,7 +69,6 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       { key: 'food_safety',   title: 'Food safety',      modules: ['food_safety'] },
       { key: 'front',         title: 'Front of house',   modules: ['pos', 'orders', 'refunds', 'curbside', 'reservations', 'reservations_admin', 'tables', 'dispatch', 'riders'] },
       { key: 'dashboards',    title: 'Dashboards',       modules: ['dashboard', 'ops', 'fnb_dashboard', 'chain'] },
-      { key: 'company',       title: 'Company',          modules: ['ceo_overview', 'business_info', 'tenants', 'role_management', 'role_modules', 'settings', 'configuration', 'onboarding'] },
     ],
   },
   {
@@ -52,7 +79,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     sections: [
       // accounting_audit stays CEO + management only by default (the books'
       // own trail) — it is filed here, but the role defaults withhold it.
-      { key: 'books',   title: 'Books',            modules: ['finance_pl', 'accounting', 'accounting_audit', 'reconciliation', 'exceptions'] },
+      // voided_prebills: Finance → Voided pre bills — every pre-bill printed,
+      // flagged when it never became a full & final bill (spec §17.1). A
+      // control, so it sits with reconciliation and exceptions.
+      { key: 'books',   title: 'Books',            modules: ['finance_pl', 'accounting', 'accounting_audit', 'reconciliation', 'exceptions', 'voided_prebills'] },
       { key: 'money',   title: 'Money & planning', modules: ['gift_cards', 'capital', 'projections', 'payroll'] },
       { key: 'reports', title: 'Reports',          modules: ['reports'] },
     ],
@@ -84,6 +114,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     ownerRoles: ['it'],
     memberRoles: ['it'],
     sections: [
+      // The API section (spec D13): exactly Hasham's WhatsApp connector and the
+      // POS connector (fiscal POS + card machine). Pages /connectors/whatsapp
+      // and /connectors/pos — not /api/*, which the admin rewrites to the API.
+      { key: 'api',     title: 'API',     modules: ['api_whatsapp', 'api_pos'] },
       { key: 'systems', title: 'Systems', modules: ['integrations', 'notifications'] },
       { key: 'trail',   title: 'Audit',   modules: ['audit_log'] },
       { key: 'help',    title: 'Help',    modules: ['help'] },

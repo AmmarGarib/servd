@@ -266,6 +266,36 @@ export async function requestOtp(opts: {
 }
 
 /**
+ * A floor-staff sign-in code handed over IN PERSON by a manager, for when
+ * WhatsApp and email cannot deliver one (gateway down, phone dead, no signal).
+ *
+ * Deliberately not a second sign-in mechanism: it is the same `staff_login`
+ * row the WhatsApp path writes — same lifetime (5 minutes), same per-number
+ * lock, resend cooldown and daily cap, and the staff member redeems it at the
+ * same POST /auth/staff/otp/verify with the same attempt limit and per-phone
+ * rate limit. The only difference is that the code is returned to the caller
+ * (the manager's screen) instead of being sent. The caller is responsible for
+ * authorising and auditing that.
+ */
+export async function issueStaffCodeInPerson(rawPhone: string): Promise<{ code: string; expiresAt: Date }> {
+  const purpose: OtpPurpose = 'staff_login'
+  const phone = normalisePhone(rawPhone)
+  if (phone.length < 11) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
+  const code = generateCode()
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS)
+  await underContactLock([phoneLockKey(phone, purpose)], async (tx) => {
+    const recent = await tx.phoneOtp.findFirst({
+      where: { phone, purpose, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
+      select: { id: true },
+    })
+    if (recent) throw cooldownError()
+    await assertPhoneUnderDailyCap(tx, phone, purpose)
+    await tx.phoneOtp.create({ data: { phone, code, purpose, expiresAt }, select: { id: true } })
+  })
+  return { code, expiresAt }
+}
+
+/**
  * Validates an OTP. Returns the customerId stored on the row (if any) so the
  * caller can complete the signup / verification in the same request.
  */

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, MARKETING_TEAM, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { sendEmail, whatsappNumber } from '../../lib/notify.js'
 import { sendText } from '../../lib/whatsapp.js'
@@ -13,6 +13,7 @@ import {
 } from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
 import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { walletBalancesOf, balanceInView } from '../wallet/service.js'
 import {
   customerOfCompanies, findCustomerInScope, tenantIdsOf,
   strikeCompanies, banCompanies, inCompanies, userOfCompanies,
@@ -22,6 +23,14 @@ import {
 // Rewrite links in outbound campaign content to route through the public
 // /t/c/:sendId redirect (records a click, then forwards), and embed a 1x1 open
 // pixel in email. Per-recipient sendId attributes engagement → CTR / open rate.
+// Loyalty accounts are per company (ONL-04): staff read only the accounts of
+// the companies in view (`loyaltyAccounts: { where: t }`), and `loyaltyAccount`
+// — the one-account shape the admin reads — is the account at the operator's
+// active company, else the first in view.
+function loyaltyAccountInView<A extends { tenantId: string }>(accounts: A[], activeTenantId: string | null | undefined): A | null {
+  return accounts.find((a) => a.tenantId === activeTenantId) ?? accounts[0] ?? null
+}
+
 const URL_RX = /(https?:\/\/[^\s<>"')]+)/g
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -82,15 +91,56 @@ const createCampaignSchema = z
   })
   .refine((d) => !d.segment || isCampaignSegment(d.segment), { message: 'unknown segment', path: ['segment'] })
 
+// The customer card the CRM lists. The customer's own rollups
+// (totalSpentCents, firstOrderAt, lastOrderAt, the order count) are GLOBAL
+// across companies, so they are not selected here: scopedCustomerFigures()
+// replaces them with what the customer did at the brands in view (W3A-RV-02).
 const safeCustomerSelect = {
   id: true, name: true, email: true, phone: true,
   marketingOptIn: true, birthdayMmDd: true,
-  firstOrderAt: true, lastOrderAt: true,
-  totalSpentCents: true, walletBalance: true,
   preferredConceptId: true, createdAt: true, updatedAt: true,
+  preferredConcept: { select: { name: true, slug: true, tenantId: true } },
 } as const
 
-type CompanyStat = { id: string; n: number; spent: number; lastAt: Date | null }
+type CompanyStat = { id: string; n: number; spent: number; firstAt: Date | null; lastAt: Date | null }
+
+/**
+ * The company-facing figures of a customer card (W3A-RV-02). A customer is
+ * global; what they spent, how often and when they ordered at ANOTHER
+ * company's brands — and which of its brands they prefer — is that company's
+ * business, not this operator's:
+ *   - spend / order count / first + last order = completed orders at the
+ *     brands in view only (companyCustomerStats);
+ *   - preferredConcept(Id) only when that brand is a company in view, else null;
+ *   - walletBalance is the customer's wallet at the companies in view (the
+ *     wallet is per company, ONL-R2-01 — another company's balance is not
+ *     ours to show), and only to the roles that run wallets (MANAGERS, who
+ *     credit it via /wallet); the marketing roles get null.
+ */
+async function scopedCustomerFigures<C extends {
+  id: string
+  preferredConceptId: string | null
+  preferredConcept: { name: string; slug: string; tenantId: string | null } | null
+}>(req: FastifyRequest, scope: string[], customers: C[]) {
+  const conceptIds = await conceptIdsInScope(req, 'read')
+  const stats = new Map((await companyCustomerStats(conceptIds, customers.map((c) => c.id))).map((s) => [s.id, s]))
+  const seesWallet = (MANAGERS as string[]).includes(req.staffUser!.role)
+  const wallets = seesWallet ? await walletBalancesOf(customers.map((c) => c.id), scope) : null
+  return customers.map(({ preferredConcept, ...c }) => {
+    const s = stats.get(c.id)
+    const ownBrand = !!preferredConcept?.tenantId && scope.includes(preferredConcept.tenantId)
+    return {
+      ...c,
+      totalSpentCents: s?.spent ?? 0,
+      firstOrderAt: s?.firstAt ?? null,
+      lastOrderAt: s?.lastAt ?? null,
+      _count: { orders: s?.n ?? 0 },
+      walletBalance: wallets ? balanceInView(wallets.get(c.id), scope) : null,
+      preferredConceptId: ownBrand ? c.preferredConceptId : null,
+      preferredConcept: ownBrand && preferredConcept ? { name: preferredConcept.name, slug: preferredConcept.slug } : null,
+    }
+  })
+}
 
 /**
  * Per-customer completed-order stats at THESE brands only. Customer rollups
@@ -100,8 +150,9 @@ type CompanyStat = { id: string; n: number; spent: number; lastAt: Date | null }
  */
 async function companyCustomerStats(conceptIds: string[], customerIds?: string[]): Promise<CompanyStat[]> {
   if (conceptIds.length === 0 || (customerIds && customerIds.length === 0)) return []
-  const rows = await prisma.$queryRaw<Array<{ id: string; n: number; spent: bigint; last_at: Date | null }>>`
+  const rows = await prisma.$queryRaw<Array<{ id: string; n: number; spent: bigint; first_at: Date | null; last_at: Date | null }>>`
     SELECT o."customerId" AS id, COUNT(*)::int AS n, COALESCE(SUM(o."totalCents"), 0)::bigint AS spent,
+           MIN(COALESCE(o."completedAt", o."placedAt")) AS first_at,
            MAX(COALESCE(o."completedAt", o."placedAt")) AS last_at
     FROM orders o
     JOIN customers c ON c.id = o."customerId" AND c."deletedAt" IS NULL
@@ -109,7 +160,7 @@ async function companyCustomerStats(conceptIds: string[], customerIds?: string[]
       AND o."conceptId" = ANY(${conceptIds}::text[])
       ${customerIds ? Prisma.sql`AND o."customerId" = ANY(${customerIds}::text[])` : Prisma.empty}
     GROUP BY o."customerId"`
-  return rows.map((r) => ({ id: r.id, n: Number(r.n), spent: Number(r.spent), lastAt: r.last_at }))
+  return rows.map((r) => ({ id: r.id, n: Number(r.n), spent: Number(r.spent), firstAt: r.first_at, lastAt: r.last_at }))
 }
 
 /** Every live brand of one company. */
@@ -210,6 +261,15 @@ function conversationOfCompanies(t: TenantIdWhere): Prisma.CustomerConversationW
 }
 
 export async function crmRoutes(fastify: FastifyInstance) {
+  // Who may do what (wave 3, UI-06). The Marketing workspace (lib/workspaces.ts:
+  // owners marketing + brand_manager) holds crm + campaigns by default, so
+  // MARKETING_TEAM (MANAGERS + marketing + brand_manager) reads the customer
+  // list, the KPIs and segments, and creates AND sends campaigns — running
+  // campaigns is that workspace's job. Strikes and bans (who may order or book
+  // at all) stay with MANAGERS: they are an operations call about service, and
+  // the admin hides those buttons from the marketing roles. Every read and
+  // write here is company-scoped through lib/tenantScope.ts whatever the role.
+
   // GET /crm/customers
   fastify.get<{
     Querystring: {
@@ -220,12 +280,15 @@ export async function crmRoutes(fastify: FastifyInstance) {
       cursor?: string
       limit?: string
     }
-  }>('/customers', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/customers', { preHandler: requireAuth(...MARKETING_TEAM) }, async (req) => {
     const { search, conceptId, cursor, limit: limitStr } = req.query
     const limit = Math.min(parseInt(limitStr ?? '50', 10), 200)
     const t = await scopeTenantWhere(req, 'read')
+    // A brand filter must be a brand in view: filtering shared customers by
+    // another company's brand would reveal who prefers it (404, as everywhere).
+    if (conceptId) await assertConceptOwned(req, conceptId, 'read')
 
-    const customers = await prisma.customer.findMany({
+    const found = await prisma.customer.findMany({
       where: {
         deletedAt: null,
         ...(search && {
@@ -244,16 +307,15 @@ export async function crmRoutes(fastify: FastifyInstance) {
       },
       select: {
         ...safeCustomerSelect,
-        loyaltyAccount: { select: { pointsBalance: true, tier: true } },
-        preferredConcept: { select: { name: true, slug: true } },
-        _count: { select: { orders: true } },
+        loyaltyAccounts: { where: t, select: { tenantId: true, pointsBalance: true, tier: true } },
       },
       orderBy: { lastOrderAt: 'desc' },
       take: limit + 1,
     })
 
-    const hasMore = customers.length > limit
-    if (hasMore) customers.pop()
+    const hasMore = found.length > limit
+    if (hasMore) found.pop()
+    const customers = await scopedCustomerFigures(req, tenantIdsOf(t), found)
     // Blocked = an active ban raised by this company (decision 15).
     const bans = await bansInScope(customers.map((c) => c.id), tenantIdsOf(t))
 
@@ -277,7 +339,11 @@ export async function crmRoutes(fastify: FastifyInstance) {
     }
 
     return {
-      data: customers.map((c) => ({ ...c, activeBan: bans.get(c.id) ?? null })),
+      data: customers.map((c) => ({
+        ...c,
+        loyaltyAccount: loyaltyAccountInView(c.loyaltyAccounts, req.staffUser!.tenantId),
+        activeBan: bans.get(c.id) ?? null,
+      })),
       cursor: hasMore ? (customers[customers.length - 1]?.id ?? null) : null,
       hasMore,
     }
@@ -286,10 +352,10 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // GET /crm/customers/:id
   fastify.get<{ Params: { id: string } }>(
     '/customers/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
       const t = await scopeTenantWhere(req, 'read')
-      const customer = await prisma.customer.findFirst({
+      const found = await prisma.customer.findFirst({
         where: {
           id: req.params.id,
           deletedAt: null,
@@ -305,13 +371,17 @@ export async function crmRoutes(fastify: FastifyInstance) {
             take: 20,
             include: { concept: { select: { name: true } }, items: { select: { name: true, quantity: true } } },
           },
-          loyaltyAccount: { include: { transactions: { take: 10, orderBy: { createdAt: 'desc' } } } },
-          preferredConcept: { select: { name: true, slug: true } },
+          loyaltyAccounts: { where: t, include: { transactions: { take: 10, orderBy: { createdAt: 'desc' } } } },
         },
       })
-      if (!customer) throw new NotFoundError('Customer', req.params.id)
+      if (!found) throw new NotFoundError('Customer', req.params.id)
+      const customer = (await scopedCustomerFigures(req, tenantIdsOf(t), [found]))[0]!
       const bans = await bansInScope([customer.id], tenantIdsOf(t))
-      return { ...customer, activeBan: bans.get(customer.id) ?? null }
+      return {
+        ...customer,
+        loyaltyAccount: loyaltyAccountInView(customer.loyaltyAccounts, req.staffUser!.tenantId),
+        activeBan: bans.get(customer.id) ?? null,
+      }
     },
   )
 
@@ -339,7 +409,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
         select: {
           id: true, name: true, email: true, phone: true, birthdayMmDd: true,
           firstOrderAt: true, lastOrderAt: true, lastVisitAt: true,
-          totalSpentCents: true, walletBalance: true, staffNotes: true,
+          totalSpentCents: true, staffNotes: true,
           // Rollup fields — denormalized so this endpoint is fast.
           noShowCount: true, complaintCount: true, reviewCount: true,
           avgReviewRating: true, lastNoShowAt: true, lastComplaintAt: true,
@@ -347,7 +417,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
           // Naughty list — surfaced front-and-center so a host opening a
           // reservation immediately sees risk + recent strike history.
           strikeCount: true,
-          loyaltyAccount: { select: { tier: true, pointsBalance: true, lifetimePoints: true } },
+          loyaltyAccounts: { where: t, select: { tenantId: true, tier: true, pointsBalance: true, lifetimePoints: true } },
           preferredConcept: { select: { name: true, slug: true } },
         },
       })
@@ -421,6 +491,9 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const ours = (slug: string) => scope.some((tid) => slug.endsWith(`.${tid}`))
       return {
         ...customer,
+        // The wallet at the companies in view only (ONL-R2-01).
+        walletBalance: balanceInView((await walletBalancesOf([customer.id], scope)).get(customer.id), scope),
+        loyaltyAccount: loyaltyAccountInView(customer.loyaltyAccounts, req.staffUser!.tenantId),
         bannedAt: ban?.bannedAt ?? null,
         activeBan: ban,
         recent: { orders, reservations, openComplaints: complaints, reviews, strikes: recentStrikes },
@@ -454,7 +527,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // and every segment's size (./segmentComputation.ts — the one segment
   // system; the old live-counted /crm/smart-segments is gone). Spend and
   // order counts are measured at the companies' own brands.
-  fastify.get('/summary', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/summary', { preHandler: requireAuth(...MARKETING_TEAM) }, async (req) => {
     const t = await scopeTenantWhere(req, 'read')
     const conceptIds = await conceptIdsInScope(req, 'read')
     const [stats, totalCustomers, segments] = await Promise.all([
@@ -478,7 +551,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // POST /crm/campaigns — a campaign belongs to the ACTIVE company. Every brand
   // it names must be one of that company's (404 otherwise); none named means
   // every brand of that company, never the platform.
-  fastify.post('/campaigns', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/campaigns', { preHandler: requireAuth(...MARKETING_TEAM) }, async (req, reply) => {
     const body = createCampaignSchema.parse(req.body)
     const own = await scopeTenantWhere(req, 'create')
     if (typeof own.tenantId !== 'string') throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating a campaign', 422)
@@ -504,7 +577,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // POST /crm/campaigns/:id/send — immediately broadcast
   fastify.post<{ Params: { id: string } }>(
     '/campaigns/:id/send',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
       // Company-scoped lookup: a campaign of a company the operator is not in
       // is a 404. A legacy campaign with no company cannot be sent at all.
@@ -528,8 +601,25 @@ export async function crmRoutes(fastify: FastifyInstance) {
         segment: seg,
         channel: campaign.channel,
       })
-      const recipientCount = await prisma.customer.count({ where })
-      const campaignId = req.params.id
+      // Claim the campaign BEFORE anything is counted or sent (W3A-RV-01): a
+      // campaign broadcasts exactly once. Two presses at once, or a press
+      // while the first broadcast is still running, used to send the whole
+      // audience again. The conditional update is the single flight — only
+      // one request moves draft → sent; every other one is a 409.
+      const claimed = await prisma.campaign.updateMany({
+        where: { id: campaign.id, status: { in: ['draft', 'scheduled'] } },
+        data: { status: 'sent', sentAt: new Date() },
+      })
+      if (claimed.count === 0) throw new AppError('CAMPAIGN_ALREADY_SENT', 'This campaign has already been sent', 409)
+      let recipientCount: number
+      try {
+        recipientCount = await prisma.customer.count({ where })
+      } catch (err) {
+        // Nothing went out yet — give the draft back so it can be sent again.
+        await prisma.campaign.update({ where: { id: campaign.id }, data: { status: campaign.status, sentAt: null } }).catch(() => {})
+        throw err
+      }
+      const campaignId = campaign.id
       const apiBase = process.env['API_URL'] ?? 'http://localhost:3001'
 
       // Fire-and-forget — don't block the HTTP response. Walks the audience in
@@ -537,59 +627,64 @@ export async function crmRoutes(fastify: FastifyInstance) {
       // here that silently dropped everyone after the 2,000th customer.
       void (async () => {
         let sent = 0
-        let cursor: string | undefined
-        for (;;) {
-          const page = await prisma.customer.findMany({
-            where,
-            select: { id: true, name: true, email: true, phone: true },
-            orderBy: { id: 'asc' },
-            take: 500,
-            ...(cursor && { cursor: { id: cursor }, skip: 1 }),
-          })
-          if (page.length === 0) break
-          cursor = page[page.length - 1]!.id
-          for (const c of page) {
-            // One CampaignSend per recipient — the unit click/open tracking and
-            // unsubscribe attribute to. Created first so its id can be baked in.
-            let send: { id: string }
-            try {
-              send = await prisma.campaignSend.create({
-                data: { campaignId, customerId: c.id, status: 'queued' },
-                select: { id: true },
-              })
-            } catch (err) {
-              fastify.log.warn({ customerId: c.id, err }, 'CampaignSend row create failed')
-              continue
-            }
-            const stop = unsubscribeUrl(send.id)
-            try {
-              if (campaign.channel === 'email' && c.email) {
-                const html = trackedHtml(campaign.body, send.id, apiBase) +
-                  `<p style="font-size:11px;color:#888;margin-top:24px">Don't want these? <a href="${stop}">Unsubscribe</a>.</p>`
-                await sendEmail(c.email, campaign.subject ?? campaign.name, html)
-              } else if ((campaign.channel === 'whatsapp' || campaign.channel === 'sms') && c.phone) {
-                // Phone messages go through the WhatsApp gateway (owner
-                // decision 17). A legacy 'sms' campaign is sent the same way.
-                await sendText(whatsappNumber(c.phone), `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`)
-              } else {
-                await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
+        try {
+          let cursor: string | undefined
+          for (;;) {
+            const page = await prisma.customer.findMany({
+              where,
+              select: { id: true, name: true, email: true, phone: true },
+              orderBy: { id: 'asc' },
+              take: 500,
+              ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+            })
+            if (page.length === 0) break
+            cursor = page[page.length - 1]!.id
+            for (const c of page) {
+              // One CampaignSend per recipient — the unit click/open tracking and
+              // unsubscribe attribute to. Created first so its id can be baked in.
+              let send: { id: string }
+              try {
+                send = await prisma.campaignSend.create({
+                  data: { campaignId, customerId: c.id, status: 'queued' },
+                  select: { id: true },
+                })
+              } catch (err) {
+                fastify.log.warn({ customerId: c.id, err }, 'CampaignSend row create failed')
                 continue
               }
-              sent++
-              await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'sent', sentAt: new Date() } })
-            } catch (err) {
-              await prisma.campaignSend
-                .update({ where: { id: send.id }, data: { status: 'failed', errorMsg: String((err as Error).message).slice(0, 280) } })
-                .catch(() => { /* ignore */ })
-              fastify.log.warn({ customerId: c.id, err }, 'Campaign send failed for customer')
+              const stop = unsubscribeUrl(send.id)
+              try {
+                if (campaign.channel === 'email' && c.email) {
+                  const html = trackedHtml(campaign.body, send.id, apiBase) +
+                    `<p style="font-size:11px;color:#888;margin-top:24px">Don't want these? <a href="${stop}">Unsubscribe</a>.</p>`
+                  await sendEmail(c.email, campaign.subject ?? campaign.name, html)
+                } else if ((campaign.channel === 'whatsapp' || campaign.channel === 'sms') && c.phone) {
+                  // Phone messages go through the WhatsApp gateway (owner
+                  // decision 17). A legacy 'sms' campaign is sent the same way.
+                  await sendText(whatsappNumber(c.phone), `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`)
+                } else {
+                  await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
+                  continue
+                }
+                sent++
+                await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'sent', sentAt: new Date() } })
+              } catch (err) {
+                await prisma.campaignSend
+                  .update({ where: { id: send.id }, data: { status: 'failed', errorMsg: String((err as Error).message).slice(0, 280) } })
+                  .catch(() => { /* ignore */ })
+                fastify.log.warn({ customerId: c.id, err }, 'Campaign send failed for customer')
+              }
             }
           }
+          // Status and sentAt were set by the claim; only the count lands here.
+          await prisma.campaign.update({ where: { id: campaignId }, data: { recipientCount } })
+          fastify.log.info({ campaignId, sent, total: recipientCount }, 'Campaign broadcast complete')
+        } catch (err) {
+          // Part of the audience may already have it: mark it failed, never
+          // back to draft, so it cannot be re-sent to the same people.
+          await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'failed', recipientCount } }).catch(() => {})
+          fastify.log.error({ campaignId, sent, err }, 'Campaign broadcast aborted')
         }
-        await prisma.campaign.update({
-          where: { id: campaignId },
-          data: { status: 'sent', sentAt: new Date(), recipientCount },
-        })
-        fastify.log.info({ campaignId, sent, total: recipientCount }, 'Campaign broadcast complete')
       })()
 
       return { message: 'Campaign broadcast started', campaignId, recipientCount }
@@ -601,7 +696,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // Previewed for the ACTIVE company, the one a new campaign is created in.
   fastify.get<{ Querystring: { conceptIds?: string; segment?: string; channel?: string } }>(
     '/campaigns/audience',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
       const own = await scopeTenantWhere(req, 'create')
       if (typeof own.tenantId !== 'string') throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
@@ -623,7 +718,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   )
 
   // GET /crm/campaigns — this company's campaigns only.
-  fastify.get('/campaigns', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/campaigns', { preHandler: requireAuth(...MARKETING_TEAM) }, async (req) => {
     const rows = await prisma.campaign.findMany({
       where: await scopeTenantWhere(req, 'read'),
       include: { segment: { select: { filters: true } } },
@@ -639,7 +734,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // the companies in view (portfolio mode sums them).
   fastify.get(
     '/behavioral-segments',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
       const segments = await companySegments(tenantIdsOf(await scopeTenantWhere(req, 'read')))
       return segments.sort((x, y) => y.memberCount - x.memberCount || x.name.localeCompare(y.name))
@@ -649,11 +744,18 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // GET /crm/behavioral-segments/:slug/members — members at the companies in view.
   fastify.get<{ Params: { slug: string }; Querystring: { limit?: string } }>(
     '/behavioral-segments/:slug/members',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '200', 10), 500)
       if (!isSegmentSlug(req.params.slug)) throw new NotFoundError('Segment', req.params.slug)
-      return getSegmentsWithMembers(req.params.slug, tenantIdsOf(await scopeTenantWhere(req, 'read')), limit)
+      const rows = await getSegmentsWithMembers(req.params.slug, tenantIdsOf(await scopeTenantWhere(req, 'read')), limit)
+      // Spend and last order at the brands in view only (W3A-RV-02).
+      const stats = new Map((await companyCustomerStats(await conceptIdsInScope(req, 'read'), [...new Set(rows.map((r) => r.customerId))]))
+        .map((s) => [s.id, s]))
+      return rows.map((r) => ({
+        ...r,
+        customer: { ...r.customer, totalSpentCents: stats.get(r.customerId)?.spent ?? 0, lastOrderAt: stats.get(r.customerId)?.lastAt ?? null },
+      }))
     },
   )
 
@@ -661,7 +763,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // the operator can write to.
   fastify.post(
     '/behavioral-segments/compute',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req, reply) => {
       const tenantIds = tenantIdsOf(await scopeTenantWhere(req, 'write'))
       // Fire and forget — client polls /behavioral-segments for updated counts

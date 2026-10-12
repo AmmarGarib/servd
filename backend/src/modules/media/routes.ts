@@ -30,6 +30,18 @@ const FONT_CONTENT_TYPES = new Set([
   'application/octet-stream',
 ])
 
+// Upload storage (Cloudflare R2) settings the presigner needs. With any of
+// them unset lib/storage.ts still signs a URL — for a host such as
+// `servd-media.undefined.r2.cloudflarestorage.com` — so every browser upload
+// fails later with a misleading network/CORS error. Refuse up front instead;
+// /health reports the same list as `checks.uploadStorage`. R2_BUCKET_NAME has
+// a default and is not required.
+export const R2_REQUIRED_ENV = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_URL'] as const
+
+export function missingStorageEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return R2_REQUIRED_ENV.filter((k) => !env[k]?.trim())
+}
+
 function kindOfUpload(filename: string, contentType: string): Exclude<Kind, 'copy'> | null {
   if (contentType.startsWith('image/')) return 'image'
   if (contentType.startsWith('video/')) return 'video'
@@ -93,6 +105,16 @@ export async function mediaRoutes(fastify: FastifyInstance) {
       if (!kind) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', `Files of type '${q.contentType || 'unknown'}' cannot be uploaded`, 422)
       if (q.kind && q.kind !== kind) throw new AppError('MEDIA_KIND_MISMATCH', `This file is a ${kind}, not a ${q.kind}`, 422)
       if (q.conceptId) await assertBrandForAsset(req, q.conceptId, tenantId, 'create')
+
+      const missing = missingStorageEnv()
+      if (missing.length > 0) {
+        throw new AppError(
+          'STORAGE_NOT_CONFIGURED',
+          'File uploads are not set up on this server (Cloudflare R2 settings are missing). Ask IT to configure upload storage.',
+          503,
+          { missing },
+        )
+      }
 
       const { getSignedUploadUrl } = await import('../../lib/storage.js')
       const result = await getSignedUploadUrl(q.filename, q.contentType, q.category, kind === 'font' ? [q.contentType] : [])

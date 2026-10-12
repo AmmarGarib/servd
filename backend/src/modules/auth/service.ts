@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs'
 import { normalisePhone } from './otp.js'
-import { OTP_LOGIN_ROLES } from './middleware.js'
+import { OTP_LOGIN_ROLES, usesOtpLogin } from './middleware.js'
+import type { Prisma } from '@prisma/client'
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import { isTwoFactorEnabled, startLoginChallenge } from './twoFactor.js'
 import { nanoid } from 'nanoid'
@@ -121,12 +122,23 @@ export async function findOtpLoginStaff(phone: string) {
   const hits = matches.filter((u) => normalisePhone(u.phone ?? '') === normalised)
 
   // Two staff sharing one number is a data problem, not a login to guess at —
-  // signing in would have to pick one of them arbitrarily.
+  // signing in would have to pick one of them arbitrarily. Invite, approve,
+  // create, edit and reactivate all refuse a duplicate now (staffAccounts.ts
+  // assertPhoneFree); this is for rows that predate that. Logged — without the
+  // number — because the caller answers "a code is on its way" either way and
+  // otherwise nobody would ever find out why the code never comes.
+  if (hits.length > 1) {
+    console.warn(`[auth] code sign-in refused: ${hits.length} active floor logins share the number ending ${normalised.slice(-4)} — fix the duplicate on Workforce`)
+  }
   if (hits.length !== 1) return null
   return hits[0]!
 }
 
-export function issueStaffSession(user: { id: string; name: string; email: string | null; role: UserRole }) {
+export function issueStaffSession(user: {
+  id: string; name: string; email: string | null; role: UserRole
+  /** Set when the password was generated or reissued by someone else and not yet changed. */
+  mustChangePassword?: boolean | null
+}) {
   const accessToken = jwt.sign(
     { sub: user.id, email: user.email, role: user.role, type: 'access' } satisfies StaffTokenPayload,
     JWT_SECRET,
@@ -142,7 +154,13 @@ export function issueStaffSession(user: { id: string; name: string; email: strin
   return {
     accessToken,
     refreshToken,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: {
+      id: user.id, name: user.name, email: user.email, role: user.role,
+      // The admin's "choose your own password" nudge reads this. It was never
+      // sent, so everyone kept the password the CEO had seen. Floor roles have
+      // no password to change (they sign in with a code), so never for them.
+      mustChangePassword: !!user.mustChangePassword && !usesOtpLogin(user.role),
+    },
   }
 }
 
@@ -351,46 +369,152 @@ export async function customerLogin(email: string, password: string) {
 // ─── Customer auth (magic link — kept for future "forgot password" use) ───────
 
 const MAGIC_LINK_EXPIRY_MINUTES = 15
+// A link for a contact that has no account yet. It carries the contact itself,
+// signed, instead of a row: the account is created only when the link is
+// FOLLOWED, which proves control of the contact. Creating it at request time
+// let anyone with the endpoint fill the customer table with strangers' numbers
+// (and, with un-normalised phones, a second empty account beside a real one).
+const MAGIC_SIGNUP_TYPE = 'magic_signup'
+interface MagicSignupPayload {
+  type: typeof MAGIC_SIGNUP_TYPE
+  ch: 'email' | 'phone'
+  c: string          // the normalised contact
+  n?: string         // the name typed at request time, if any
+  jti: string        // single-use key, burned into magic_links.token on verify
+  exp?: number
+}
 
-export async function requestMagicLink(emailOrPhone: string, name?: string) {
-  const isEmail = emailOrPhone.includes('@')
+type Db = Prisma.TransactionClient | typeof prisma
 
-  let customer = await prisma.customer.findFirst({
-    where: isEmail
-      ? { email: emailOrPhone.toLowerCase() }
-      : { phone: emailOrPhone },
-  })
+/**
+ * A customer contact the way signup stores it: email lowercased, phone as
+ * normalised digits (92XXXXXXXXXX). Throws 400 on a phone that cannot be one.
+ */
+export function normaliseCustomerContact(raw: string): { isEmail: boolean; contact: string } {
+  if (raw.includes('@')) return { isEmail: true, contact: raw.trim().toLowerCase() }
+  const phone = normalisePhone(raw)
+  if (phone.length < 11 || phone.length > 15) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
+  return { isEmail: false, contact: phone }
+}
 
-  if (!customer) {
-    customer = await prisma.customer.create({
-      data: isEmail
-        ? { name: name?.trim() || 'Guest', email: emailOrPhone.toLowerCase() }
-        : { name: name?.trim() || 'Guest', phone: emailOrPhone },
-    })
-  } else if (name?.trim() && customer.name === 'Guest') {
-    customer = await prisma.customer.update({
-      where: { id: customer.id },
-      data: { name: name.trim() },
-    })
-  }
+// Spellings the same number has been stored under on customer rows (signup
+// writes the normalised form; older rows and imports carry 0300… or +92…).
+function phoneSpellings(n: string): string[] {
+  const out = new Set([n, `+${n}`])
+  if (n.startsWith('92') && n.length === 12) { out.add(`0${n.slice(2)}`); out.add(n.slice(2)) }
+  return [...out]
+}
 
-  const token = nanoid(32)
+async function findCustomerByContact(isEmail: boolean, contact: string, db: Db = prisma) {
+  if (isEmail) return db.customer.findFirst({ where: { email: contact } })
+  const rows = await db.customer.findMany({ where: { phone: { in: phoneSpellings(contact) } }, orderBy: { createdAt: 'asc' } })
+  return rows.find((r) => r.phone === contact) ?? rows[0] ?? null
+}
+
+/**
+ * Send a sign-in link. Never creates an account (see MAGIC_SIGNUP_TYPE) and
+ * never returns the token. The per-contact daily cap is applied by the route
+ * before this is called.
+ */
+export async function requestMagicLink(emailOrPhone: string, name?: string): Promise<{ isEmail: boolean; expiresAt: Date }> {
+  const { isEmail, contact } = normaliseCustomerContact(emailOrPhone)
   const expiresAt = new Date(Date.now() + MAGIC_LINK_EXPIRY_MINUTES * 60 * 1000)
+  const customer = await findCustomerByContact(isEmail, contact)
 
-  await prisma.magicLink.create({
-    data: { customerId: customer.id, token, expiresAt, channel: isEmail ? 'email' : 'phone' },
-  })
+  let token: string
+  if (customer) {
+    token = nanoid(32)
+    await prisma.magicLink.create({
+      data: { customerId: customer.id, token, expiresAt, channel: isEmail ? 'email' : 'phone' },
+    })
+  } else {
+    const trimmed = name?.trim().slice(0, 80)
+    token = jwt.sign(
+      { type: MAGIC_SIGNUP_TYPE, ch: isEmail ? 'email' : 'phone', c: contact, ...(trimmed ? { n: trimmed } : {}), jti: nanoid(32) } satisfies MagicSignupPayload,
+      JWT_SECRET,
+      { expiresIn: `${MAGIC_LINK_EXPIRY_MINUTES}m` },
+    )
+  }
 
   try {
-    await sendMagicLink(emailOrPhone, isEmail, token)
+    await sendMagicLink(contact, isEmail, token)
   } catch (err) {
-    console.error('[auth] sendMagicLink failed:', err)
+    // The message only — an error object here can carry the request it failed on.
+    console.error('[auth] sendMagicLink failed:', (err as Error).message)
   }
 
-  return { customerId: customer.id, token, expiresAt, isEmail }
+  return { isEmail, expiresAt }
+}
+
+/** Follow a link for a contact that had no account when it was requested. */
+async function verifySignupLink(token: string) {
+  let p: MagicSignupPayload
+  try {
+    p = jwt.verify(token, JWT_SECRET) as MagicSignupPayload
+  } catch {
+    throw new AppError('INVALID_TOKEN', 'This link has expired or is not valid. Request a new one.', 401)
+  }
+  if (!p || p.type !== MAGIC_SIGNUP_TYPE || typeof p.c !== 'string' || typeof p.jti !== 'string' || p.jti.length !== 32
+    || (p.ch !== 'email' && p.ch !== 'phone')) {
+    throw new AppError('INVALID_TOKEN', 'Invalid or already-used link', 401)
+  }
+  const isEmail = p.ch === 'email'
+  // The common replay, answered without a failed insert. A simultaneous one
+  // still loses on the unique token below.
+  if (await prisma.magicLink.findUnique({ where: { token: p.jti }, select: { id: true } })) {
+    throw new AppError('TOKEN_USED', 'This link has already been used', 401)
+  }
+  const run = () => prisma.$transaction(async (tx) => {
+    const now = new Date()
+    // Someone may have signed up with this contact since the link was sent —
+    // following the link proves control of it, so that account is the one.
+    let c = await findCustomerByContact(isEmail, p.c, tx)
+    if (!c) {
+      c = await tx.customer.create({
+        data: {
+          name: p.n?.trim() || 'Guest',
+          ...(isEmail ? { email: p.c, emailVerifiedAt: now } : { phone: p.c, phoneVerifiedAt: now }),
+        },
+      })
+    } else if (isEmail ? !c.emailVerifiedAt : !c.phoneVerifiedAt) {
+      c = await tx.customer.update({ where: { id: c.id }, data: isEmail ? { emailVerifiedAt: now } : { phoneVerifiedAt: now } })
+    }
+    // Single use: the jti becomes a spent magic-link row. magic_links.token is
+    // unique, so a second follow of the same link fails here and rolls back.
+    await tx.magicLink.create({
+      data: { customerId: c.id, token: p.jti, expiresAt: new Date((p.exp ?? 0) * 1000 || now.getTime()), usedAt: now, channel: p.ch },
+    })
+    return c
+  })
+
+  let customer: Awaited<ReturnType<typeof run>>
+  try {
+    customer = await run()
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') throw err
+    if (await prisma.magicLink.findUnique({ where: { token: p.jti }, select: { id: true } })) {
+      throw new AppError('TOKEN_USED', 'This link has already been used', 401)
+    }
+    // Lost a race creating the account (same contact, two links at once): the
+    // other request made it, so this one now finds it.
+    customer = await run()
+  }
+
+  const customerToken = jwt.sign(
+    { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
+    JWT_SECRET,
+    { expiresIn: '14d' },
+  )
+  return {
+    token: customerToken,
+    customer: { id: customer.id, name: customer.name, email: customer.email, phone: customer.phone },
+  }
 }
 
 export async function verifyMagicLink(token: string) {
+  // A signed link for a contact with no account yet (longer than 32, has dots).
+  if (token.length !== 32 || token.includes('.')) return verifySignupLink(token)
+
   const link = await prisma.magicLink.findUnique({
     where: { token },
     include: { customer: true },
@@ -400,7 +524,10 @@ export async function verifyMagicLink(token: string) {
   if (link.usedAt) throw new AppError('TOKEN_USED', 'This link has already been used', 401)
   if (link.expiresAt < new Date()) throw new AppError('TOKEN_EXPIRED', 'This link has expired', 401)
 
-  await prisma.magicLink.update({ where: { id: link.id }, data: { usedAt: new Date() } })
+  // Claim it, rather than read-then-write: two simultaneous follows of one link
+  // both passed the usedAt check above and both got a session.
+  const claimed = await prisma.magicLink.updateMany({ where: { id: link.id, usedAt: null }, data: { usedAt: new Date() } })
+  if (claimed.count !== 1) throw new AppError('TOKEN_USED', 'This link has already been used', 401)
 
   // Following the link proves control of wherever it was sent. Links issued
   // before `channel` existed carry null and verify nothing.

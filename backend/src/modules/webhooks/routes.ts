@@ -1,6 +1,6 @@
 // Inbound webhook receivers
 // Each verifies HMAC signature, normalises payload, queues for ingestion.
-// Also: outbound webhook subscription management (MANAGERS).
+// Also: outbound webhook subscription management (MANAGERS + IT).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import crypto from 'crypto'
@@ -10,6 +10,8 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { handleWaMessage, type WaIncomingMessage } from '../../adapters/whatsapp/conversation.js'
 import { promises as dns } from 'dns'
 import {
@@ -369,7 +371,20 @@ export async function webhookRoutes(fastify: FastifyInstance) {
   })
 }
 
-// ─── Outbound webhook management (MANAGERS) ───────────────────────────────────
+// ─── Outbound webhook management (MANAGERS + IT) ──────────────────────────────
+// Who: the managers, plus IT — webhooks are a Dev workspace page
+// (/configuration/webhooks, module `integrations`) and IT owns that workspace
+// (wave 3, UI-08). Every route is company-scoped below, whoever calls it, and
+// the signing secret is shown once at creation, never listed.
+//
+// Module Access: every route below also needs module `integrations` (the
+// Webhooks page's module), so the CEO's untick — or a per-login moduleDeny —
+// really closes it (wave 3 review W3C-RV-2). Every MANAGERS role that holds
+// the page by default (owner, management, manager, foh_management) keeps it;
+// boh_management and fnb_manager, which never had the page, are refused.
+const WEBHOOK_ADMINS = [...MANAGERS, ...CONNECTOR_ADMINS]
+const webhookGuard = [requireAuth(...WEBHOOK_ADMINS), requireModule('integrations')]
+
 // These endpoints let operators register, inspect and test the outbound
 // webhook subscriptions that fan out domain events to their own integrations.
 // They live here rather than /setup so they're accessible to managers (not
@@ -450,7 +465,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
     })
 
   // GET /webhooks/endpoints — list active subscriptions
-  fastify.get('/endpoints', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/endpoints', { preHandler: webhookGuard }, async (req) => {
     const list = await prisma.webhookSubscription.findMany({
       where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       orderBy: { createdAt: 'desc' },
@@ -464,7 +479,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
   })
 
   // POST /webhooks/endpoints — register a new endpoint
-  fastify.post('/endpoints', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/endpoints', { preHandler: webhookGuard }, async (req, reply) => {
     const body = z.object({
       url:    z.string().url('Must be a valid HTTPS URL'),
       events: z.array(z.string()).min(1, 'Subscribe to at least one event'),
@@ -497,7 +512,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
   // PATCH /webhooks/endpoints/:id — update url / events / active state / notes
   fastify.patch<{ Params: { id: string } }>(
     '/endpoints/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: webhookGuard },
     async (req, reply) => {
       const body = z.object({
         url:      z.string().url().optional(),
@@ -528,7 +543,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
   // DELETE /webhooks/endpoints/:id — soft-delete (deactivate)
   fastify.delete<{ Params: { id: string } }>(
     '/endpoints/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: webhookGuard },
     async (req, reply) => {
       const existing = await findOwnedEndpoint(req, req.params.id)
       if (!existing) {
@@ -545,7 +560,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
   // POST /webhooks/endpoints/:id/test — send a signed ping payload
   fastify.post<{ Params: { id: string } }>(
     '/endpoints/:id/test',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: webhookGuard },
     async (req, reply) => {
       const sub = await findOwnedEndpoint(req, req.params.id)
       if (!sub) {
@@ -635,7 +650,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
   )
 
   // GET /webhooks/deliveries — last 50 delivery attempts across all endpoints
-  fastify.get('/deliveries', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/deliveries', { preHandler: webhookGuard }, async (req) => {
     const { subscriptionId, limit } = (req.query as { subscriptionId?: string; limit?: string })
     const take = Math.min(Number(limit ?? 50), 200)
 
@@ -658,7 +673,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
   })
 
   // GET /webhooks/events — list of supported event names (for UI dropdowns)
-  fastify.get('/events', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/events', { preHandler: webhookGuard }, async () => {
     return { events: ENDPOINT_EVENTS }
   })
 }
