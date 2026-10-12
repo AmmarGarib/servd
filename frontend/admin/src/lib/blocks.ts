@@ -10,6 +10,21 @@ export type Align       = 'left' | 'center' | 'right'
 export type SectionPad  = 'none' | 'sm' | 'md' | 'lg' | 'xl'
 export type Animation   = 'none' | 'fade-up' | 'fade-in' | 'slide-left' | 'slide-right' | 'zoom-in'
 
+// Scroll effects (D4 stage 1). Same order and spelling in all four copies.
+// Copies: frontend/storefront/src/lib/blocks.ts, this file,
+// mobile/src/content/types.ts and backend/src/modules/siteLayouts/schemas.ts.
+export const MOTION_PRESETS = ['parallax', 'fade', 'grow', 'pin-reveal', 'sticky-stack', 'side-pan', 'text-reveal'] as const
+export type MotionPreset = (typeof MOTION_PRESETS)[number]
+export const MOTION_INTENSITIES = ['subtle', 'medium', 'strong'] as const
+export type MotionIntensity = (typeof MOTION_INTENSITIES)[number]
+
+/** A block's scroll effect. Absent = none. intensity absent = 'medium'.
+ *  Renderers treat an unknown/invalid value as "none" — never hidden content. */
+export interface BlockMotion {
+  preset: MotionPreset
+  intensity?: MotionIntensity
+}
+
 export type BlockType =
   | 'hero' | 'cta_button' | 'banner' | 'text' | 'image' | 'gallery'
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
@@ -34,6 +49,7 @@ export interface BaseBlock {
   animationDelayMs?: number      // 0..3000
   animationDurationMs?: number   // 200..3000, default 600
   fontFamily?: string            // library font family or a built-in stack
+  motion?: BlockMotion           // scroll effect; independent of `animation` (entrance, plays once)
 }
 
 export interface Block extends BaseBlock {
@@ -49,6 +65,52 @@ export const ANIMATIONS: Array<{ value: Animation; label: string }> = [
   { value: 'slide-right', label: 'Slide in from left' },
   { value: 'zoom-in',     label: 'Zoom in' },
 ]
+
+export const isMotionPreset = (v: unknown): v is MotionPreset =>
+  typeof v === 'string' && (MOTION_PRESETS as readonly string[]).includes(v)
+export const isMotionIntensity = (v: unknown): v is MotionIntensity =>
+  typeof v === 'string' && (MOTION_INTENSITIES as readonly string[]).includes(v)
+
+/** What the editor calls each scroll effect (inspector gallery, Layers badge).
+ *  The exact behaviour of each preset lives in the storefront's lib/motion.ts. */
+export const MOTION_UI: Record<MotionPreset, { label: string; description: string }> = {
+  'parallax':     { label: 'Parallax',           description: 'Drifts up slower than the page.' },
+  'fade':         { label: 'Fade as you scroll', description: 'Fades in as it scrolls into view.' },
+  'grow':         { label: 'Grow as you scroll', description: 'Starts smaller and grows to full size.' },
+  'pin-reveal':   { label: 'Pin and reveal',     description: 'Holds at the top while it opens from a card to full size.' },
+  'sticky-stack': { label: 'Sticky stack',       description: 'Sticks at the top; the next one slides over it like cards.' },
+  'side-pan':     { label: 'Sideways pan',       description: 'Slides in from the right as you scroll down.' },
+  'text-reveal':  { label: 'Text reveal',        description: 'Fills in from faint to full, top to bottom.' },
+}
+
+export const MOTION_INTENSITY_UI: Record<MotionIntensity, string> = { subtle: 'Subtle', medium: 'Medium', strong: 'Strong' }
+
+/** The block's scroll-effect preset when it is one the editor knows, else null. */
+export function motionPresetOf(block: Block): MotionPreset | null {
+  const m = block.motion as unknown
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null
+  const p = (m as Record<string, unknown>)['preset']
+  return isMotionPreset(p) ? p : null
+}
+
+/**
+ * The scroll effects the editor offers for a layout. Only pages and footers
+ * scroll with the page (a header is sticky, a widget fixed, a pop-up does not
+ * scroll). Pin and reveal and sticky stack need room below them, which a
+ * footer never has, so they are pages only. Simmer pages leave out Text
+ * reveal: its soft fade reads as a gradient, which Simmer bans (owner to
+ * confirm).
+ */
+export function motionPresetsFor(kind: string, slug: string): MotionPreset[] {
+  if (kind !== 'page' && kind !== 'footer') return []
+  return MOTION_PRESETS.filter((p) => {
+    if (kind === 'footer' && (p === 'pin-reveal' || p === 'sticky-stack')) return false
+    if (isSimmerSlug(slug) && p === 'text-reveal') return false
+    return true
+  })
+}
+
+export const isSimmerSlug = (slug: string) => slug === 'brand:simmer' || slug.startsWith('brand:simmer:')
 
 /** Built-in font stacks offered next to the library's uploaded fonts. */
 export const BUILTIN_FONTS: Array<{ label: string; value: string }> = [

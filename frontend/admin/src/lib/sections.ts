@@ -46,11 +46,22 @@ export interface SectionCatalog { specs: SectionSpec[]; pages: PageDefault[] }
 // The loaded catalogue, for the synchronous helpers (newBlock, summaries).
 let CATALOG: SectionCatalog = { specs: [], pages: [] }
 let BY_VARIANT = new Map<string, SectionSpec>()
+let LOADED = false
 
 function setCatalog(c: SectionCatalog) {
   CATALOG = c
   BY_VARIANT = new Map(c.specs.map((s) => [s.variant, s]))
+  LOADED = true
 }
+
+/** True once the storefront's catalogue has loaded in this tab. Until then a
+ *  section without a spec is "the storefront didn't answer", not "removed". */
+export function isCatalogLoaded(): boolean {
+  return LOADED
+}
+
+/** How long the editor waits for the storefront before calling it down. */
+const CATALOG_TIMEOUT_MS = 8_000
 
 /** The storefront host the catalogue comes from, for messages ("servd.pk").
  *  A function, not a constant: content.ts and this file import each other. */
@@ -67,7 +78,9 @@ export function sectionsUnavailableMessage(): string {
 /** The catalogue fetch failed. `message` is the plain-words cause for the
  *  screen; `detail` the technical reason (network error, HTTP status). */
 export class SectionCatalogError extends Error {
-  constructor(readonly detail: string) {
+  /** `timedOut`: the storefront hung past CATALOG_TIMEOUT_MS. That is final
+   *  (no automatic retry) so the editor reaches its error state in 8 s. */
+  constructor(readonly detail: string, readonly timedOut = false) {
     super(sectionsUnavailableMessage())
     this.name = 'SectionCatalogError'
   }
@@ -80,27 +93,45 @@ export class SectionCatalogError extends Error {
 export function useSectionCatalog(opts: { enabled?: boolean } = {}) {
   return useQuery<SectionCatalog>({
     queryKey: ['storefront-section-catalog'],
-    queryFn: async () => {
-      let res: Response
+    queryFn: async ({ signal }) => {
+      // A storefront that hangs must not hold the editor: give up after 8 s
+      // (the editor opens without sections and says why).
+      const url = `${STOREFRONT_URL}/api/storefront-sections`
+      const ctrl = new AbortController()
+      let timedOut = false
+      const timer = setTimeout(() => { timedOut = true; ctrl.abort() }, CATALOG_TIMEOUT_MS)
+      const onAbort = () => ctrl.abort()
+      signal?.addEventListener('abort', onAbort)
+      const late = () => new SectionCatalogError(`No answer from ${STOREFRONT_URL} within ${CATALOG_TIMEOUT_MS / 1000} seconds`, true)
       try {
-        res = await fetch(`${STOREFRONT_URL}/api/storefront-sections`, { cache: 'no-store' })
-      } catch (e) {
-        throw new SectionCatalogError(`No answer from ${STOREFRONT_URL} (${(e as Error).message || 'network error'})`)
+        let res: Response
+        try {
+          res = await fetch(url, { cache: 'no-store', signal: ctrl.signal })
+        } catch (e) {
+          throw timedOut ? late() : new SectionCatalogError(`No answer from ${STOREFRONT_URL} (${(e as Error).message || 'network error'})`)
+        }
+        if (!res.ok) throw new SectionCatalogError(`${url} answered HTTP ${res.status}`)
+        let c: SectionCatalog
+        try {
+          c = (await res.json()) as SectionCatalog
+        } catch {
+          throw timedOut ? late() : new SectionCatalogError(`${url} did not return JSON`)
+        }
+        if (!c || !Array.isArray(c.specs) || !Array.isArray(c.pages)) {
+          throw new SectionCatalogError(`${url} returned an unexpected shape`)
+        }
+        setCatalog(c)
+        return c
+      } finally {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
       }
-      if (!res.ok) throw new SectionCatalogError(`${STOREFRONT_URL}/api/storefront-sections answered HTTP ${res.status}`)
-      let c: SectionCatalog
-      try {
-        c = (await res.json()) as SectionCatalog
-      } catch {
-        throw new SectionCatalogError(`${STOREFRONT_URL}/api/storefront-sections did not return JSON`)
-      }
-      if (!c || !Array.isArray(c.specs) || !Array.isArray(c.pages)) {
-        throw new SectionCatalogError(`${STOREFRONT_URL}/api/storefront-sections returned an unexpected shape`)
-      }
-      setCatalog(c)
-      return c
     },
     enabled: opts.enabled ?? true,
+    // The app-wide `retry: 1` would turn the 8 s timeout into ~17 s. A hang
+    // is final (the banner has its own Retry); a quick failure such as a
+    // refused connection or a 5xx may still be retried once.
+    retry: (failures, err) => failures < 1 && !(err instanceof SectionCatalogError && err.timedOut),
     meta: { inlineErrors: true },
     staleTime: 5 * 60_000,
   })
@@ -151,7 +182,11 @@ export function fieldValue(block: Block, spec: SectionSpec, key: string): unknow
 
 export function sectionSummary(block: Block): string {
   const spec = sectionSpec(block.variant as string | undefined)
-  if (!spec) return `Unknown section (${String(block.variant ?? '')})`
+  if (!spec) {
+    return isCatalogLoaded()
+      ? `Unknown section (${String(block.variant ?? '')})`
+      : `${String(block.variant ?? 'Section')} (its form loads from the storefront)`
+  }
   const v = spec.summaryKey ? fieldValue(block, spec, spec.summaryKey) : undefined
   if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 90)
   if (v && typeof v === 'object' && 'text' in (v as object)) return String((v as { text: unknown }).text ?? '')

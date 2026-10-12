@@ -1,35 +1,49 @@
 'use client'
 
 // The storefront page builder, shared by pages (/storefront/pages/[slug]) and
-// pop-ups (/storefront/popups/[key]). Left: element palette. Centre: canvas
-// (drag and drop). Right: element inspector, page settings, pop-up rules.
+// pop-ups (/storefront/popups/[key]). Left: Layers (the page's elements, for
+// picking and reordering) and Add (the element palette). Centre: the REAL
+// page — the storefront's /editor-frame showing the unsaved working copy as
+// it is edited (LiveCanvas), with phone / tablet / desktop sizes; clicking an
+// element there selects it here. Right: element inspector (incl. scroll
+// effects), page settings, pop-up rules.
 //
 // Every edit is a DRAFT (PUT /site-layouts/:slug/draft). Nothing reaches the
 // storefront until the CEO (role `admin`) approves it, optionally at a
-// scheduled "publish at" time. A page with no draft starts from the live
-// blocks, or from the page's design: its default sections from the
-// storefront's section catalogue (lib/sections.ts), i.e. what it shows today.
+// scheduled "publish at" time. The live frame shows the working copy only to
+// this editor (it renders what is posted to it); it saves and publishes
+// nothing. A page with no draft starts from the live blocks, or from the
+// page's design: its default sections from the storefront's section
+// catalogue (lib/sections.ts), i.e. what it shows today.
+//
+// The editor opens even when the storefront is down: Layers, the inspector
+// and saving work from the API alone; the live page, the page's design and
+// section forms say they are waiting for the storefront.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePermissions } from '../../hooks/useCan'
-import { BLOCK_CATALOG, canNest, type Block } from '../../lib/blocks'
-import { makeBlock, SECTION_KEY, SectionCatalogError, sectionPaletteItems, sectionSpec, useSectionCatalog, type PaletteItem } from '../../lib/sections'
+import { BLOCK_CATALOG, blockLabel, canNest, type Block } from '../../lib/blocks'
+import { isCatalogLoaded, makeBlock, SECTION_KEY, sectionPaletteItems, sectionSpec, storefrontHost, useSectionCatalog, type PaletteItem } from '../../lib/sections'
 import {
-  contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fromLocalInput, hasSavedDraft, kindForSlug, previewUrl, seedBlocks, storefrontPath, STOREFRONT_BRANDS_KEY, STOREFRONT_URL,
+  cleanSettings, contentApi, DEFAULT_POPUP_RULES, fmtDateTime, fontFamiliesUsed, fromLocalInput, hasSavedDraft, isBuiltInPage, kindForSlug,
+  previewUrl, resolveLibraryFonts, seedBlocks, storefrontPath, STOREFRONT_BRANDS_KEY, STOREFRONT_URL,
   type ConceptLite, type LayoutEdit, type PageSettings, type Variant,
 } from '../../lib/content'
 import { Canvas, Palette } from './Canvas'
 import { BlockInspector } from './BlockInspector'
 import { FontFaces, useLibraryFonts } from './fields'
+import { LiveCanvas, type FrameStatus, type LiveCanvasHandle, type SelectionSource } from './LiveCanvas'
+import type { MotionPreviewControl } from './MotionPicker'
 import { PageSettingsPanel, PopupRulesPanel, StatusBadge } from './panels'
 import { VersionsDrawer } from './VersionsDrawer'
-import { findBlock, insertAt, locate, updateBlock, type Slot } from './tree'
+import { blockIds, findBlock, forEachBlock, insertAt, locate, updateBlock, type Slot } from './tree'
 
 interface Doc { title: string; blocks: Block[]; settings: PageSettings }
 type RightTab = 'element' | 'page' | 'rules'
+type LeftTab = 'layers' | 'add'
 
 function defaultTitle(slug: string): string {
   const [prefix, a, b] = slug.split(':')
@@ -40,19 +54,6 @@ function defaultTitle(slug: string): string {
   return slug
 }
 
-function cleanSettings(s: PageSettings, isPopup: boolean): PageSettings {
-  const out: PageSettings = {}
-  if (s.fonts && (s.fonts.heading || s.fonts.body)) out.fonts = s.fonts
-  if (s.ab) out.ab = { splitPct: Math.max(0, Math.min(100, Math.round(s.ab.splitPct))), blocks: s.ab.blocks }
-  if (isPopup && s.popup) out.popup = { ...s.popup, pages: s.popup.pages.map((p) => p.trim()).filter(Boolean) }
-  if (!isPopup && s.seo) {
-    const title = s.seo.title?.trim()
-    const description = s.seo.description?.trim()
-    if (title || description) out.seo = { ...(title && { title }), ...(description && { description }) }
-  }
-  return out
-}
-
 export function Builder({ slug }: { slug: string }) {
   const router = useRouter()
   const qc = useQueryClient()
@@ -61,25 +62,38 @@ export function Builder({ slug }: { slug: string }) {
   const kind = kindForSlug(slug)
   const isPopup = kind === 'popup'
   const backHref = `/storefront?tab=${isPopup ? 'popups' : 'pages'}`
+  const brandSlug = slug.startsWith('brand:') ? slug.split(':')[1] ?? null : null
 
   const edit = useQuery<LayoutEdit>({ queryKey: ['site-layout-edit', slug], queryFn: () => contentApi.edit(slug) })
   // The storefront's section catalogue: palette, forms and the page's design.
-  // Pop-ups use no sections, so they never fetch it (or wait on it): a pop-up
-  // opens and works while the storefront host is down.
+  // Pop-ups use no sections, so they never fetch it (or wait on it). A page
+  // opens without it when it already has saved elements (see below).
   const catalog = useSectionCatalog({ enabled: !isPopup })
-  const fonts = useLibraryFonts().data ?? []
-  const concepts = useQuery<ConceptLite[]>({ queryKey: STOREFRONT_BRANDS_KEY, queryFn: contentApi.brands, enabled: isPopup })
+  const libraryFonts = useLibraryFonts().data
+  const fonts = useMemo(() => libraryFonts ?? [], [libraryFonts])
+  // Brands: the pop-up rules' brand list, and a brand page's company (which
+  // Library fonts the live page would load).
+  const concepts = useQuery<ConceptLite[]>({ queryKey: STOREFRONT_BRANDS_KEY, queryFn: contentApi.brands, enabled: isPopup || !!brandSlug })
 
   const [doc, setDoc] = useState<Doc | null>(null)
   const [dirty, setDirty] = useState(false)
   const seq = useRef(0)
   const [variant, setVariant] = useState<Variant>('a')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selection, setSelection] = useState<{ id: string | null; source: SelectionSource; nonce: number }>({ id: null, source: 'admin', nonce: 0 })
+  const selectedId = selection.id
+  const [hover, setHover] = useState<{ id: string | null; source: SelectionSource }>({ id: null, source: 'admin' })
   const [tab, setTab] = useState<RightTab>('element')
+  const [leftTab, setLeftTab] = useState<LeftTab>('layers')
   const [showVersions, setShowVersions] = useState(false)
   const [dialog, setDialog] = useState<null | 'approve' | 'reject'>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // The live frame's state, and what it last drew.
+  const canvasRef = useRef<LiveCanvasHandle>(null)
+  const [frame, setFrame] = useState<FrameStatus>({ connection: 'connecting', updating: false, error: null, stale: false })
+  const [renderedIds, setRenderedIds] = useState<Set<string> | null>(null)
+  const [previewReset, setPreviewReset] = useState(0)
 
   const docFrom = (row: LayoutEdit, useDraft: boolean): Doc => {
     const fromDraft = useDraft && row.draftBlocks != null
@@ -89,13 +103,19 @@ export function Builder({ slug }: { slug: string }) {
     return { title: row.title ?? defaultTitle(slug), blocks, settings }
   }
 
-  // Load once per slug (a page waits for the catalogue, which seeds a page
-  // with nothing saved; a pop-up doesn't need it); later refetches must not
-  // clobber local edits.
+  /** Saved elements to open with (a draft, or what is live), so the page
+   *  needs no design from the storefront to start. */
+  const hasSavedBlocks = (row: LayoutEdit) => row.draftBlocks != null || row.blocks != null
+
+  // Load once per slug; later refetches must not clobber local edits. A page
+  // with nothing saved starts from its design, which comes from the
+  // storefront's catalogue: it waits for it. A page with saved elements opens
+  // as soon as the catalogue has answered — or failed.
   useEffect(() => {
-    if (edit.data && (isPopup || catalog.data) && !doc) setDoc(docFrom(edit.data, true))
+    if (doc || !edit.data) return
+    if (isPopup || catalog.data || (catalog.isError && hasSavedBlocks(edit.data))) setDoc(docFrom(edit.data, true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit.data, catalog.data])
+  }, [edit.data, catalog.data, catalog.isError])
 
   useEffect(() => {
     if (!dirty) return
@@ -110,13 +130,17 @@ export function Builder({ slug }: { slug: string }) {
     setDirty(true)
   }
 
-  const activeBlocks = doc ? (variant === 'b' ? doc.settings.ab?.blocks ?? [] : doc.blocks) : []
+  const activeBlocks = useMemo(() => (doc ? (variant === 'b' ? doc.settings.ab?.blocks ?? [] : doc.blocks) : []), [doc, variant])
   const setActive = (next: Block[]) => change((d) => (
     variant === 'b' && d.settings.ab
       ? { ...d, settings: { ...d.settings, ab: { ...d.settings.ab, blocks: next } } }
       : { ...d, blocks: next }
   ))
-  const select = (id: string | null) => { setSelectedId(id); if (id) setTab('element') }
+  const select = (id: string | null, source: SelectionSource = 'admin') => {
+    setSelection((s) => ({ id, source, nonce: s.nonce + 1 }))
+    if (id) setTab('element')
+  }
+  const switchVariant = (v: Variant) => { setVariant(v); select(null) }
   const selected = selectedId ? findBlock(activeBlocks, selectedId) : null
 
   // Palette: this page's sections first (its design), then the general
@@ -150,6 +174,77 @@ export function Builder({ slug }: { slug: string }) {
     }
     setActive(insertAt(activeBlocks, slot, b))
     select(b.id)
+  }
+
+  // ─── What the live frame is sent ─────────────────────────────────────────
+
+  const brandTenant = brandSlug ? concepts.data?.find((c) => c.slug === brandSlug)?.tenantId ?? null : null
+  const layoutTenant = edit.data?.tenantId ?? brandTenant
+  const frameFonts = useMemo(
+    () => (doc ? resolveLibraryFonts(fontFamiliesUsed(doc.blocks, doc.settings), fonts, layoutTenant) : []),
+    [doc, fonts, layoutTenant],
+  )
+  const frameLabels = useMemo(() => {
+    const out: Record<string, string> = {}
+    forEachBlock(activeBlocks, (b) => {
+      out[b.id] = b.type === 'section' ? sectionSpec(b.variant as string | undefined)?.label ?? 'Section' : blockLabel(b.type)
+    })
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBlocks, catalog.data])
+
+  // Visible elements the live page drew nothing for (empty, or no data yet).
+  const missingIds = useMemo(() => {
+    if (!renderedIds || frame.connection !== 'live' || frame.updating || frame.stale || frame.error) return null
+    const out = new Set<string>()
+    const hiddenParents = new Set<string>()
+    forEachBlock(activeBlocks, (b, parentId) => {
+      if (b.hidden) { hiddenParents.add(b.id); return }
+      if (parentId && hiddenParents.has(parentId)) return
+      if (!renderedIds.has(b.id)) out.add(b.id)
+    })
+    return out.size ? out : null
+  }, [renderedIds, frame, activeBlocks])
+
+  // A Layers row follows a selection made in the page.
+  const reveal = selection.source === 'frame' && selection.id ? { id: selection.id, nonce: selection.nonce } : null
+
+  // The newest edit couldn't be sent (too large): a preview running on the
+  // older page ends, and the slider shows "live" until the page catches up.
+  useEffect(() => {
+    if (!frame.stale) return
+    if (selectedId) canvasRef.current?.previewMotion(selectedId, null)
+    setPreviewReset((n) => n + 1)
+  }, [frame.stale]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const motionPreview: MotionPreviewControl = {
+    // Only on a page that shows the newest edit: not while it is being drawn,
+    // and not when the newest edit was too large to send (the page is older).
+    ready: frame.connection === 'live' && !frame.updating && !frame.stale,
+    reason: frame.connection !== 'live'
+      ? 'Preview needs the live page.'
+      : frame.updating
+        ? 'Updating the page…'
+        : frame.stale
+          ? 'The page is too large to preview, so it doesn’t show your latest change.'
+          : null,
+    resetNonce: previewReset,
+    onPreview: (id, progress) => canvasRef.current?.previewMotion(id, progress),
+  }
+
+  const onFrameSelect = (id: string | null) => {
+    // Only elements of the layout being edited (and its active variant).
+    select(id && blockIds(activeBlocks).has(id) ? id : null, 'frame')
+  }
+  const onFrameHover = (id: string | null) => {
+    setHover((h) => (h.id === id && h.source === 'frame' ? h : { id, source: 'frame' }))
+  }
+  const onLayersHover = (id: string | null) => {
+    setHover((h) => (h.id === id ? h : { id, source: 'admin' }))
+  }
+  const openContext = (target: string) => {
+    if (dirty && !confirm('You have unsaved changes on this page. Leave without saving them?')) return
+    router.push(`/storefront/pages/${encodeURIComponent(target)}`)
   }
 
   // ─── Server actions ──────────────────────────────────────────────────────
@@ -204,7 +299,10 @@ export function Builder({ slug }: { slug: string }) {
   const reloadFromServer = async () => {
     const fresh = await contentApi.edit(slug)
     qc.setQueryData(['site-layout-edit', slug], fresh)
-    setDoc(docFrom(fresh, true)); setDirty(false); setVariant('a'); setSelectedId(null)
+    // With nothing saved, the page starts from its design: without the
+    // storefront's catalogue there is none to start from yet.
+    const canOpen = isPopup || isCatalogLoaded() || hasSavedBlocks(fresh)
+    setDoc(canOpen ? docFrom(fresh, true) : null); setDirty(false); setVariant('a'); select(null)
   }
 
   const onSave = () => run('save', () => save.mutateAsync(), 'Draft saved.')
@@ -255,17 +353,73 @@ export function Builder({ slug }: { slug: string }) {
     })
   }
 
+  const retryStorefront = () => {
+    void catalog.refetch()
+    canvasRef.current?.reload()
+  }
+
+  // ─── Pane geometry: the three panes fill the screen under the header ─────
+
+  const rootRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLElement>(null)
+  const [geom, setGeom] = useState({ stick: 88, pane: 640 })
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const measure = () => {
+      const scroller = rootRef.current?.closest('main')
+      const top = scroller ? scroller.getBoundingClientRect().top : 0
+      const stick = header.offsetHeight + 12
+      const pane = Math.max(480, Math.floor(window.innerHeight - top - stick - 12))
+      setGeom((g) => (g.stick === stick && g.pane === pane ? g : { stick, pane }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(header)
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [])
+
   // ─── Render ──────────────────────────────────────────────────────────────
 
   const path = storefrontPath(slug)
   const ab = doc?.settings.ab
   const rules = doc?.settings.popup
+  const host = storefrontHost()
+  const catalogDown = !isPopup && catalog.isError && !catalog.data
+  const waitingForDesign = !doc && !!row && !isPopup && !catalog.isError
+  const blockedByStorefront = !doc && !!row && catalogDown
+  const partName = kind === 'header' ? 'top bar' : kind === 'widget' ? 'feedback button' : 'page'
+
+  const toolbarExtra = (
+    <>
+      {ab && (
+        <span className="inline-flex items-center gap-1">
+          <span className="text-s-muted">Showing</span>
+          {(['a', 'b'] as const).map((v) => (
+            <button key={v} type="button" onClick={() => switchVariant(v)} aria-pressed={variant === v}
+              className={`px-2 py-1 rounded-lg border ${variant === v ? 'border-s-teal text-primary-ink bg-s-teal-dim/40' : 'border-s-border text-s-muted'}`}>
+              {v.toUpperCase()} {v === 'a' ? `(${100 - ab.splitPct}%)` : `(${ab.splitPct}%)`}
+            </button>
+          ))}
+        </span>
+      )}
+      {isPopup && rules && (
+        <span className="text-[11px] text-s-muted">
+          {rules.display === 'bar' ? 'Bar' : rules.display === 'corner' ? 'Corner card' : 'Modal'} pop-up. Keep it short: a heading, a line and one action.
+        </span>
+      )}
+    </>
+  )
+
+  const paneStyle = { '--sf-stick': `${geom.stick}px`, '--sf-pane': `${geom.pane}px` } as React.CSSProperties
+  const pane = 'lg:sticky lg:top-[var(--sf-stick)] lg:h-[var(--sf-pane)]'
 
   return (
-    <div className="min-h-screen bg-s-bg text-s-text">
+    <div ref={rootRef} className="min-h-full bg-s-bg text-s-text">
       <FontFaces fonts={fonts} />
 
-      <header className="sticky top-0 z-20 bg-s-bg/95 backdrop-blur border-b border-s-border px-6 py-3">
+      <header ref={headerRef} className="sticky top-0 z-20 bg-s-bg/95 backdrop-blur border-b border-s-border px-6 py-3">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <Link href={backHref} className="text-xs text-s-muted hover:text-s-text">&larr; Storefront / {isPopup ? 'Pop-ups' : 'Pages'}</Link>
@@ -284,7 +438,8 @@ export function Builder({ slug }: { slug: string }) {
           <div className="flex items-center gap-2 flex-wrap">
             {flash && <span className={`text-xs ${flash.ok ? 'text-primary-ink' : 'text-s-red'}`}>{flash.text}</span>}
             <button type="button" onClick={() => setShowVersions(true)} className="s-btn-ghost text-xs">Versions</button>
-            <button type="button" onClick={onPreview} disabled={!doc || !!busy} className="s-btn-secondary text-xs">{busy === 'preview' ? 'Opening...' : 'Preview'}</button>
+            <button type="button" onClick={onPreview} disabled={!doc || !!busy} className="s-btn-secondary text-xs"
+              title="Opens the saved draft in a new tab, as visitors will see it.">{busy === 'preview' ? 'Opening...' : 'Preview in new tab'}</button>
             <button type="button" onClick={onDiscard} disabled={(!hasDraft && !dirty) || !!busy} className="s-btn-ghost text-xs">Discard draft</button>
             <button type="button" onClick={onSave} disabled={!doc || !dirty || !!busy} className="s-btn-secondary text-xs">{busy === 'save' ? 'Saving...' : 'Save draft'}</button>
             <button type="button" onClick={onSubmit} disabled={!doc || !!busy || (submitted && !dirty)} className="s-btn-primary text-xs"
@@ -326,61 +481,115 @@ export function Builder({ slug }: { slug: string }) {
           Approved. Goes live {fmtDateTime(row.publishAt)}. Saving another change cancels the schedule.
         </div>
       )}
-
-      {(edit.isLoading || (!isPopup && catalog.isLoading)) && <p className="p-6 text-sm text-s-muted">Loading...</p>}
-      {!isPopup && catalog.isError && !doc && (
-        <SectionsUnavailable error={catalog.error} retrying={catalog.isFetching} onRetry={() => void catalog.refetch()} />
+      {catalogDown && doc && (
+        <div role="status" className="mx-6 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-s-amber/40 bg-s-amber-dim px-4 py-2 text-xs text-s-amber">
+          <span className="flex-1 min-w-[16rem]">
+            The storefront ({host}) didn&apos;t answer, so the live page, the page&apos;s design and section forms can&apos;t load. You can still
+            pick, reorder, hide and delete elements, edit general elements and save your draft.
+          </span>
+          <button type="button" onClick={retryStorefront} disabled={catalog.isFetching} className="s-btn-secondary text-xs">
+            {catalog.isFetching ? 'Retrying...' : 'Retry'}
+          </button>
+        </div>
       )}
+
+      {edit.isLoading && <p className="p-6 text-sm text-s-muted">Loading...</p>}
       {edit.isError && <p className="p-6 text-sm text-s-red">Could not load this {isPopup ? 'pop-up' : 'page'}: {(edit.error as Error).message}</p>}
 
-      {doc && (
-        <div className={`grid grid-cols-1 gap-4 p-4 ${isPopup ? 'lg:grid-cols-[200px_minmax(0,1fr)_380px]' : 'lg:grid-cols-[200px_minmax(0,1fr)_400px]'}`}>
-          <aside className="lg:sticky lg:top-24 self-start lg:max-h-[calc(100vh-7rem)] overflow-y-auto">
-            <Palette items={paletteItems} onAdd={addFromPalette} />
-          </aside>
-
-          <main className="min-w-0" onClick={() => select(null)}>
-            <div className={isPopup ? 'max-w-xl mx-auto' : ''}>
-              {ab && (
-                <div className="mb-3 flex items-center gap-2 text-xs" onClick={(e) => e.stopPropagation()}>
-                  <span className="text-s-muted">Editing</span>
-                  {(['a', 'b'] as const).map((v) => (
-                    <button key={v} type="button" onClick={() => { setVariant(v); setSelectedId(null) }}
-                      className={`px-3 py-1 rounded-lg border ${variant === v ? 'border-s-teal text-primary-ink bg-s-teal-dim/40' : 'border-s-border text-s-muted'}`}>
-                      Variant {v.toUpperCase()} {v === 'a' ? `(${100 - ab.splitPct}%)` : `(${ab.splitPct}%)`}
-                    </button>
-                  ))}
+      {row && (
+        <div style={paneStyle} className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)_380px]">
+          {/* Layers | Add */}
+          <aside className={`s-card flex flex-col overflow-hidden max-h-[70vh] lg:max-h-none ${pane}`} onClick={() => select(null)}>
+            <div className="flex border-b border-s-border text-xs shrink-0" onClick={(e) => e.stopPropagation()}>
+              {([['layers', 'Layers'], ['add', 'Add']] as Array<[LeftTab, string]>).map(([k, label]) => (
+                // Dragging an element from Add onto the Layers tab opens it, so it can be dropped in place.
+                <button key={k} type="button" onClick={() => setLeftTab(k)} aria-pressed={leftTab === k}
+                  onDragEnter={() => { if (k === 'layers') setLeftTab('layers') }}
+                  className={`flex-1 px-3 py-2 font-semibold ${leftTab === k ? 'text-primary-ink border-b-2 border-s-teal' : 'text-s-muted hover:text-s-text'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-2">
+              {waitingForDesign && <p className="p-2 text-xs text-s-muted">Loading the page&apos;s design...</p>}
+              {blockedByStorefront && (
+                <div className="space-y-2 p-2" role="alert">
+                  <p className="text-xs text-s-text">
+                    This page hasn&apos;t been edited yet. Its design comes from the storefront, which didn&apos;t answer, so it opens once the
+                    storefront is back.
+                  </p>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); retryStorefront() }} disabled={catalog.isFetching} className="s-btn-primary text-xs">
+                    {catalog.isFetching ? 'Retrying...' : 'Retry'}
+                  </button>
                 </div>
               )}
-              {isPopup && rules && (
-                <p className="mb-3 text-[11px] text-s-muted">
-                  {rules.display === 'bar' ? 'Bar' : rules.display === 'corner' ? 'Corner card' : 'Modal'} pop-up. Keep it short: a heading, a line and one action.
-                </p>
+              {/* Both tabs stay mounted: a drag that starts in Add must survive the switch to Layers. */}
+              {doc && (
+                <div className={leftTab === 'layers' ? '' : 'hidden'}>
+                  {activeBlocks.length === 0 && !isPopup && isBuiltInPage(slug) && (
+                    <p className="mb-2 rounded-lg bg-s-bg-soft px-2 py-1.5 text-[11px] text-s-muted">With no elements, the site shows this page&apos;s built-in design.</p>
+                  )}
+                  <Canvas compact blocks={activeBlocks} onChange={setActive} selectedId={selectedId} onSelect={(id) => select(id)} items={paletteItems}
+                    hoverId={hover.id} onHover={onLayersHover} reveal={reveal} missingIds={missingIds} />
+                </div>
               )}
-              <Canvas blocks={activeBlocks} onChange={setActive} selectedId={selectedId} onSelect={select} items={paletteItems} />
+              {doc && (
+                <div className={leftTab === 'add' ? '' : 'hidden'} onClick={(e) => e.stopPropagation()}>
+                  <Palette items={paletteItems} onAdd={addFromPalette}
+                    empty={catalogDown
+                      ? `The storefront (${host}) didn't answer, so this ${partName}'s sections can't be added right now.`
+                      : undefined} />
+                </div>
+              )}
             </div>
-          </main>
+          </aside>
 
-          <aside className="lg:sticky lg:top-24 self-start">
-            <div className="s-card overflow-hidden">
-              <div className="flex border-b border-s-border text-xs">
-                {([['element', 'Element'], ['page', isPopup ? 'Pop-up' : 'Page'], ...(isPopup ? [['rules', 'Rules']] : [])] as Array<[RightTab, string]>).map(([k, label]) => (
-                  <button key={k} type="button" onClick={() => setTab(k)}
-                    className={`flex-1 px-3 py-2 font-semibold ${tab === k ? 'text-primary-ink border-b-2 border-s-teal' : 'text-s-muted hover:text-s-text'}`}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {tab === 'element' && (selected
+          {/* The live page */}
+          <section className={`min-w-0 h-[70vh] min-h-[480px] lg:min-h-[480px] ${pane}`} aria-label="Live page">
+            {doc
+              ? (
+                <LiveCanvas ref={canvasRef} slug={slug} doc={doc} variant={variant} fonts={frameFonts} labels={frameLabels}
+                  selection={selection} hover={hover} toolbarExtra={toolbarExtra}
+                  onSelect={onFrameSelect} onHover={onFrameHover} onOpenContext={openContext}
+                  onMotionPreviewEnded={() => setPreviewReset((n) => n + 1)}
+                  onRendered={(_rev, ok, _error, ids) => { if (ok) setRenderedIds(new Set(ids)) }}
+                  onStatus={setFrame}
+                  onReconnect={() => setPreviewReset((n) => n + 1)} />
+              )
+              : (
+                <div className="flex h-full items-center justify-center rounded-xl border border-s-border bg-s-bg-soft p-6">
+                  <p className="max-w-md text-center text-sm text-s-muted">
+                    {blockedByStorefront
+                      ? `The live page can't be shown right now. The storefront at ${host} didn't answer.`
+                      : 'Loading the page...'}
+                  </p>
+                </div>
+              )}
+          </section>
+
+          {/* Inspector */}
+          <aside className={`s-card flex flex-col overflow-hidden ${pane}`}>
+            <div className="flex border-b border-s-border text-xs shrink-0">
+              {([['element', 'Element'], ['page', isPopup ? 'Pop-up' : 'Page'], ...(isPopup ? [['rules', 'Rules']] : [])] as Array<[RightTab, string]>).map(([k, label]) => (
+                <button key={k} type="button" onClick={() => setTab(k)}
+                  className={`flex-1 px-3 py-2 font-semibold ${tab === k ? 'text-primary-ink border-b-2 border-s-teal' : 'text-s-muted hover:text-s-text'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {!doc && <p className="p-6 text-center text-sm text-s-muted">Nothing to edit yet.</p>}
+              {doc && tab === 'element' && (selected
                 ? <BlockInspector key={selected.id} block={selected} fonts={fonts} noStyle={kind === 'widget'}
+                    kind={kind} slug={slug} motionPreview={motionPreview}
                     onChange={(next) => setActive(updateBlock(activeBlocks, next))} />
-                : <p className="p-6 text-center text-sm text-s-muted">Select an element on the canvas to edit it.</p>)}
-              {tab === 'page' && (
+                : <p className="p-6 text-center text-sm text-s-muted">Click an element on the page, or in Layers, to edit it.</p>)}
+              {doc && tab === 'page' && (
                 <PageSettingsPanel slug={slug} kind={kind} title={doc.title} onTitle={(t) => change((d) => ({ ...d, title: t }))}
                   settings={doc.settings} onChange={(s) => change((d) => ({ ...d, settings: s }))}
-                  fonts={fonts} variant={variant} onVariant={(v) => { setVariant(v); setSelectedId(null) }} blocksA={doc.blocks} />
+                  fonts={fonts} variant={variant} onVariant={switchVariant} blocksA={doc.blocks} />
               )}
-              {tab === 'rules' && rules && (
+              {doc && tab === 'rules' && rules && (
                 <PopupRulesPanel rules={rules} concepts={concepts.data ?? []}
                   onChange={(r) => change((d) => ({ ...d, settings: { ...d.settings, popup: r } }))} />
               )}
@@ -396,25 +605,6 @@ export function Builder({ slug }: { slug: string }) {
       )}
       {dialog === 'approve' && <ApproveDialog busy={busy === 'approve'} savesFirst={dirty || !hasDraft} onCancel={() => setDialog(null)} onApprove={onApprove} />}
       {dialog === 'reject' && <RejectDialog busy={busy === 'reject'} onCancel={() => setDialog(null)} onReject={onReject} />}
-    </div>
-  )
-}
-
-// The page editor can't open without the storefront's section catalogue (its
-// palette, forms and the page's design all come from it). Say what is really
-// wrong — the storefront host, not the API — and what still works.
-function SectionsUnavailable({ error, retrying, onRetry }: { error: unknown; retrying: boolean; onRetry: () => void }) {
-  const detail = error instanceof SectionCatalogError ? error.detail : (error as Error | null)?.message
-  const message = error instanceof SectionCatalogError ? error.message : 'The list of page sections could not load. Pop-ups and the Library still work.'
-  return (
-    <div role="alert" className="m-6 s-card border-s-red/40 p-5 space-y-3 max-w-2xl">
-      <p className="text-sm font-semibold text-s-text">{message}</p>
-      {detail && <p className="text-xs text-s-muted font-mono break-all">{detail}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={onRetry} disabled={retrying} className="s-btn-primary text-xs">{retrying ? 'Retrying...' : 'Retry'}</button>
-        <Link href="/storefront?tab=popups" className="s-btn-ghost text-xs">Pop-ups</Link>
-        <Link href="/storefront?tab=library" className="s-btn-ghost text-xs">Library</Link>
-      </div>
     </div>
   )
 }

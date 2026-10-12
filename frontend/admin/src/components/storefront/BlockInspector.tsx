@@ -1,14 +1,17 @@
 'use client'
 
 // Per-element editing form (moved from the old /content editor and extended):
-// type-specific fields, then Style (background, text colour, padding, font)
-// and Animation (with a replay preview). Edits flow through onChange(next).
+// type-specific fields, then Style (background, text colour, padding, font),
+// Entrance (the one-shot animation, with a replay preview) and Scroll effect
+// (block.motion: presets, strength and a preview slider that plays it on the
+// live page — MotionPicker). Edits flow through onChange(next).
 
 import { useState } from 'react'
 import { ANIMATIONS, blockLabel, columnsOf, type Animation, type Block, type ButtonSize, type ButtonStyle, type SectionPad } from '../../lib/blocks'
-import type { MediaAssetLite } from '../../lib/content'
+import type { LayoutKind, MediaAssetLite } from '../../lib/content'
 import { setColumnCount } from './tree'
 import { SectionFields } from './SectionFields'
+import { MotionPicker, type MotionPreviewControl } from './MotionPicker'
 import { sectionSpec } from '../../lib/sections'
 import { AlignSelect, Check, ColorInput, CopyInput, Field, FontSelect, MediaInput, NumberInput, Section } from './fields'
 
@@ -23,6 +26,11 @@ interface Props {
    * it scrolls into view, i.e. never, and a band/padding would sit around it.
    */
   noStyle?: boolean
+  /** The layout being edited: scroll effects are offered on pages and footers only. */
+  kind: LayoutKind
+  slug: string
+  /** The live page's preview slider plumbing (MotionPicker). */
+  motionPreview: MotionPreviewControl
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -31,13 +39,16 @@ type FP = { block: Loose; set: (p: Partial<Block>) => void }
 
 const NO_STYLE = new Set<string>()
 
-/** What the Style and Animation sections write onto a block. */
-const STYLE_KEYS = ['background', 'textColor', 'paddingY', 'fontFamily', 'fullBleed', 'animation', 'animationDelayMs', 'animationDurationMs'] as const
+/** What the Style, Entrance and Scroll effect sections write onto a block. */
+const STYLE_KEYS = ['background', 'textColor', 'paddingY', 'fontFamily', 'fullBleed', 'animation', 'animationDelayMs', 'animationDurationMs', 'motion'] as const
 
-export function BlockInspector({ block, onChange, fonts, noStyle = false }: Props) {
+export function BlockInspector({ block, onChange, fonts, noStyle = false, kind, slug, motionPreview }: Props) {
   const set = (patch: Partial<Block>) => onChange({ ...block, ...patch })
   const b = block as Loose
   const showStyle = !noStyle && !NO_STYLE.has(block.type)
+  // Scroll effects move with the page: pages and footers only (a header is
+  // sticky, a widget fixed, a pop-up doesn't scroll).
+  const showMotion = showStyle && (kind === 'page' || kind === 'footer')
   // Style or animation saved before the controls were hidden: offer to clear it.
   const leftoverStyle = noStyle && STYLE_KEYS.some((k) => b[k] !== undefined)
   const clearStyle = () => {
@@ -51,7 +62,7 @@ export function BlockInspector({ block, onChange, fonts, noStyle = false }: Prop
       <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft">
         <p className="text-xs text-s-muted uppercase tracking-wider font-bold">{block.type === 'section' ? sectionSpec(block.variant as string | undefined)?.label ?? 'Section' : blockLabel(block.type)}</p>
       </div>
-      <div className="p-4 max-h-[calc(100vh-14rem)] overflow-y-auto">
+      <div className="p-4">
         <Section title="Content">
           {block.type === 'hero'          && <HeroFields block={b} set={set} />}
           {block.type === 'cta_button'    && <CtaFields block={b} set={set} />}
@@ -77,10 +88,10 @@ export function BlockInspector({ block, onChange, fonts, noStyle = false }: Prop
         {leftoverStyle && (
           <Section title="Style">
             <p className="text-xs text-s-muted">
-              This floats over every page in its own design, so it takes no style or entrance animation. It still carries
+              This floats over every page in its own design, so it takes no style, entrance or scroll effect. It still carries
               some from before, which can hide it on the site.
             </p>
-            <button type="button" onClick={clearStyle} className="text-xs text-s-red hover:underline">Remove the style and animation</button>
+            <button type="button" onClick={clearStyle} className="text-xs text-s-red hover:underline">Remove the style and effects</button>
           </Section>
         )}
 
@@ -100,7 +111,7 @@ export function BlockInspector({ block, onChange, fonts, noStyle = false }: Prop
               <Check checked={!!block.fullBleed} onChange={(v) => set({ fullBleed: v || undefined })}>Full bleed (edge to edge)</Check>
             </Section>
 
-            <Section title="Animation">
+            <Section title="Entrance (plays once)">
               <Field label="Entrance">
                 <select value={block.animation ?? 'none'} onChange={(e) => set({ animation: e.target.value === 'none' ? undefined : e.target.value as Animation })} className="s-select">
                   {ANIMATIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
@@ -116,6 +127,13 @@ export function BlockInspector({ block, onChange, fonts, noStyle = false }: Prop
                 </>
               )}
             </Section>
+
+            {showMotion && (
+              <Section title="Scroll effect">
+                <MotionPicker block={block} kind={kind} slug={slug} preview={motionPreview}
+                  onChange={(motion) => set({ motion })} />
+              </Section>
+            )}
           </>
         )}
 
@@ -398,7 +416,7 @@ function ColumnsFields({ block, onChange }: { block: Block; onChange: (b: Block)
         </select>
       </Field>
       <Check checked={b.stackOnMobile !== false} onChange={(v) => onChange({ ...block, stackOnMobile: v })}>Stack columns on phones</Check>
-      <p className="text-[11px] text-s-dim">Drag elements from the palette or the canvas into a column.</p>
+      <p className="text-[11px] text-s-dim">Drag elements from Add or Layers into a column.</p>
     </>
   )
 }

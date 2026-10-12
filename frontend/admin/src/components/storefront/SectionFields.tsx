@@ -8,13 +8,22 @@
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { Block } from '../../lib/blocks'
-import { fieldValue, sectionSpec, type FieldSpec } from '../../lib/sections'
+import { fieldValue, isCatalogLoaded, sectionSpec, type FieldSpec } from '../../lib/sections'
 import { Check, ColorInput, CopyInput, Field, MediaInput, NumberInput } from './fields'
 
 type Obj = Record<string, unknown>
 
 export function SectionFields({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
   const spec = sectionSpec(block.variant as string | undefined)
+  if (!spec && !isCatalogLoaded()) {
+    // The catalogue never arrived: the section is fine, its form just lives
+    // on the storefront. Nothing about the block is touched.
+    return (
+      <p className="text-xs text-s-amber">
+        This section&apos;s form comes from the storefront, which didn&apos;t answer. Its content is kept as it is.
+      </p>
+    )
+  }
   if (!spec) {
     return (
       <p className="text-xs text-s-red">

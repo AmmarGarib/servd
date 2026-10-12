@@ -119,3 +119,19 @@ export function setColumnCount(block: Block, count: number): Block {
   else next = [...cols.slice(0, n - 1), cols.slice(n - 1).flat()]
   return { ...block, columns: next }
 }
+
+/** Every element, top level first then its column children, in page order. */
+export function forEachBlock(blocks: Block[], fn: (b: Block, parentId: string | null) => void): void {
+  for (const b of blocks) {
+    fn(b, null)
+    const cols = columnsOf(b)
+    if (cols) for (const col of cols) for (const c of col) fn(c, b.id)
+  }
+}
+
+/** Ids of every element (column children included). */
+export function blockIds(blocks: Block[]): Set<string> {
+  const out = new Set<string>()
+  forEachBlock(blocks, (b) => out.add(b.id))
+  return out
+}

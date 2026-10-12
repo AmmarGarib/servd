@@ -5,10 +5,33 @@
 // content-module-contract.md the backend and renderers are built against.
 
 import { api } from './api'
-import { newBlock, type Block } from './blocks'
+import { columnsOf, newBlock, type Block } from './blocks'
+import { EDITOR_FRAME_PATH } from './editorProtocol'
 import { pageDefaultBlocks } from './sections'
 
-export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'https://servd.pk'
+// Where the storefront runs. In development the storefront's own dev server
+// (port 3002), never production: the editor's live page is framed from here
+// and must show the code being worked on.
+export const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL']
+  ?? (process.env.NODE_ENV === 'production' ? 'https://servd.pk' : 'http://localhost:3002')
+
+/** The storefront's origin ("https://servd.pk"): the only origin the editor
+ *  posts to and accepts editor messages from. null when STOREFRONT_URL is not
+ *  a valid http(s) URL — the live page then shows as offline. */
+export const STOREFRONT_ORIGIN: string | null = (() => {
+  try {
+    const u = new URL(STOREFRONT_URL)
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin : null
+  } catch {
+    return null
+  }
+})()
+
+/** The storefront route the editor frames (live page in the middle of the
+ *  builder). null when the storefront address is not usable. */
+export function editorFrameUrl(): string | null {
+  return STOREFRONT_ORIGIN ? `${STOREFRONT_ORIGIN}${EDITOR_FRAME_PATH}` : null
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -134,6 +157,9 @@ export interface MediaAssetLite {
   url: string
   fontFamily: string | null
   text: string | null
+  /** The asset's company, when the API sends it (picks the live page's font). */
+  tenantId?: string | null
+  createdAt?: string
 }
 
 export interface ConceptLite { id: string; name: string; slug: string; tenantId?: string | null }
@@ -206,6 +232,98 @@ export function storefrontPath(slug: string): string | null {
     return `/brand/${a}/pages/${b}`
   }
   return null
+}
+
+/** A page the storefront ships its own design for: what it shows while the
+ *  working copy has no elements. Custom pages (page:<x>, the owner's own
+ *  brand pages) and pop-ups have none. */
+export function isBuiltInPage(slug: string): boolean {
+  const [prefix, a, b] = slug.split(':')
+  if (prefix === 'servd') return !!a
+  if (prefix === 'brand') return !!a && (!b || (BRAND_BUILTIN_PAGES as readonly string[]).includes(b))
+  return false
+}
+
+/** What the editor calls a live part of the page that isn't being edited
+ *  (the frame's "context" click): its top bar, its footer, or a page. */
+export function contextPartName(slug: string): 'top bar' | 'footer' | 'page' | 'feedback button' {
+  const k = kindForSlug(slug)
+  return k === 'header' ? 'top bar' : k === 'footer' ? 'footer' : k === 'widget' ? 'feedback button' : 'page'
+}
+
+const SLUG_PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
+
+/** The SiteLayout slug grammar (backend parseSlug): servd:<p>, page:<p>,
+ *  brand:<b>[:<p>], popup:<k>. */
+export function isValidSlug(slug: unknown): slug is string {
+  if (typeof slug !== 'string' || slug.length > 200) return false
+  const parts = slug.split(':')
+  const [prefix, ...rest] = parts
+  if (!rest.every((p) => SLUG_PART.test(p))) return false
+  if (prefix === 'servd' || prefix === 'page' || prefix === 'popup') return rest.length === 1
+  if (prefix === 'brand') return rest.length === 1 || rest.length === 2
+  return false
+}
+
+/** The settings as saved (and as the live frame is sent them): empty parts
+ *  dropped, the split rounded, pop-up page patterns trimmed. */
+export function cleanSettings(s: PageSettings, isPopup: boolean): PageSettings {
+  const out: PageSettings = {}
+  if (s.fonts && (s.fonts.heading || s.fonts.body)) out.fonts = s.fonts
+  if (s.ab) out.ab = { splitPct: Math.max(0, Math.min(100, Math.round(s.ab.splitPct))), blocks: s.ab.blocks }
+  if (isPopup && s.popup) out.popup = { ...s.popup, pages: s.popup.pages.map((p) => p.trim()).filter(Boolean) }
+  if (!isPopup && s.seo) {
+    const title = s.seo.title?.trim()
+    const description = s.seo.description?.trim()
+    if (title || description) out.seo = { ...(title && { title }), ...(description && { description }) }
+  }
+  return out
+}
+
+/**
+ * Every font family a page refers to: settings.fonts.heading/body and every
+ * block's fontFamily, inside columns and variant B too. The same walk as the
+ * backend's fontFamiliesUsed (siteLayouts/schemas.ts), which picks the fonts
+ * the live page loads.
+ */
+export function fontFamiliesUsed(blocks: Block[], settings: PageSettings | null | undefined): string[] {
+  const out = new Set<string>()
+  const add = (v: unknown) => { if (typeof v === 'string' && v.trim()) out.add(v.trim()) }
+  const walk = (list: unknown) => {
+    if (!Array.isArray(list)) return
+    for (const b of list as Block[]) {
+      if (!b || typeof b !== 'object') continue
+      add(b.fontFamily)
+      for (const col of columnsOf(b) ?? []) walk(col)
+    }
+  }
+  walk(blocks)
+  add(settings?.fonts?.heading)
+  add(settings?.fonts?.body)
+  walk(settings?.ab?.blocks)
+  return [...out]
+}
+
+/**
+ * The Library font the live page would load for each family, mirroring the
+ * backend's resolveFonts: a company's page reads its own company's fonts
+ * (shared servd pages any company's), and the newest upload wins.
+ */
+export function resolveLibraryFonts(families: string[], library: MediaAssetLite[], tenantId: string | null): Array<{ family: string; url: string }> {
+  if (families.length === 0) return []
+  const time = (a: MediaAssetLite) => { const t = a.createdAt ? Date.parse(a.createdAt) : NaN; return Number.isNaN(t) ? 0 : t }
+  const candidates = library
+    .filter((a) => a.kind === 'font' && a.fontFamily && a.url)
+    // Only filter by company when the API says whose the asset is.
+    .filter((a) => !tenantId || a.tenantId === undefined || a.tenantId === tenantId)
+    .slice()
+    .sort((x, y) => time(y) - time(x))
+  const out: Array<{ family: string; url: string }> = []
+  for (const family of families) {
+    const hit = candidates.find((a) => a.fontFamily === family)
+    if (hit) out.push({ family, url: hit.url })
+  }
+  return out
 }
 
 export function newPopupKey(): string {
