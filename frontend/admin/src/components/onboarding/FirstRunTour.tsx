@@ -77,14 +77,14 @@ export function FirstRunTour() {
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-      style={{ background: 'rgb(61 31 59 / 0.55)', backdropFilter: 'blur(6px)' }}
+      style={{ background: 'rgb(var(--ink-rgb) / 0.55)', backdropFilter: 'blur(6px)' }}
       onClick={dismiss}
     >
       <div
         className="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl"
         style={{
           background: 'linear-gradient(180deg, var(--surface) 0%, var(--surface) 100%)',
-          border: '1px solid rgb(135 197 64 / 0.22)',
+          border: '1px solid rgb(var(--erp-primary-rgb) / 0.22)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -92,7 +92,7 @@ export function FirstRunTour() {
         <div
           className="absolute pointer-events-none inset-0"
           style={{
-            background: 'radial-gradient(ellipse at top, rgb(135 197 64 / 0.12) 0%, transparent 60%)',
+            background: 'radial-gradient(ellipse at top, rgb(var(--erp-primary-rgb) / 0.12) 0%, transparent 60%)',
           }}
         />
 

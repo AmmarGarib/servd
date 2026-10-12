@@ -69,7 +69,7 @@ export function BrandPicker({ collapsed }: { collapsed: boolean }) {
       <div className="flex justify-center py-1.5" ref={ref} style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         <button onClick={() => pick(null)} title={current ? `Brand: ${formatBrandName(current.name)} — click to show all` : 'All brands'}
           className="h-6 min-w-6 px-1.5 rounded-md text-[10px] font-black"
-          style={{ background: current ? 'rgb(135 197 64 / 0.15)' : 'rgb(var(--fg-rgb) / 0.04)', color: current ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
+          style={{ background: current ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.04)', color: current ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
           {current ? formatBrandName(current.name).slice(0, 2) : 'All'}
         </button>
       </div>
@@ -92,8 +92,8 @@ export function BrandPicker({ collapsed }: { collapsed: boolean }) {
         </svg>
       </button>
       {open && (
-        <div className="absolute z-30 left-2 right-2 rounded-xl overflow-hidden"
-          style={{ ['--fg-rgb' as string]: '61 31 59', color: 'var(--text)', top: 'calc(100% + 4px)', background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 16px 40px rgb(61 31 59 / 0.18)' }}>
+        <div className="erp-on-surface absolute z-30 left-2 right-2 rounded-xl overflow-hidden"
+          style={{ top: 'calc(100% + 4px)', background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 16px 40px rgb(var(--ink-rgb) / 0.18)' }}>
           {[{ id: null as string | null, name: 'All brands' }, ...concepts].map((c) => (
             <button key={c.id ?? 'all'} onClick={() => pick(c.id)}
               className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-white/[0.05]"

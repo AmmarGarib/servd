@@ -53,7 +53,7 @@ export default function WorkspaceHomePage() {
           <p className="text-sm text-white/45 mt-1">
             Owner: <span className="text-white/75 font-semibold">{def ? def.ownerRoles.map(roleLabel).join(' / ') : '—'}</span>
             {ws.owner && <span className="ml-2 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
-              style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>You own this</span>}
+              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>You own this</span>}
           </p>
         </div>
         {ws.owner && (isCeo || canInvite) && (

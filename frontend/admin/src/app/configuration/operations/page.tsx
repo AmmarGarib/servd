@@ -81,7 +81,7 @@ export default function OperationsPage() {
                 <button key={ch} type="button" onClick={() => toggleChannel(ch)}
                   className="text-xs font-semibold px-3 py-1 rounded-full"
                   style={channels.includes(ch)
-                    ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                    ? { background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                     : { background: 'rgb(var(--fg-rgb) / 0.03)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                   {ch}
                 </button>

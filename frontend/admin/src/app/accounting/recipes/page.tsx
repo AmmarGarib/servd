@@ -497,12 +497,12 @@ export default function RecipesPage() {
                             plate vs component recipes in the mixed list. */}
                         {r.kind === 'component' ? (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68', border: '1px solid rgb(61 31 59 / 0.3)' }}>
+                            style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--ink-rgb) / 0.3)' }}>
                             🧩 Component
                           </span>
                         ) : (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgb(135 197 64 / 0.12)', color: '#3f7d20', border: '1px solid rgb(135 197 64 / 0.3)' }}>
+                            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: '#3f7d20', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)' }}>
                             🍽 Plate
                           </span>
                         )}
@@ -595,7 +595,7 @@ export default function RecipesPage() {
 
                       {/* Spreadsheet header strip */}
                       <div className="grid grid-cols-6 gap-4 text-center px-6 py-3 border-b border-s-border/40"
-                        style={{ background: 'rgb(135 197 64 / 0.04)' }}>
+                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.04)' }}>
                         {[
                           // For plate recipes the "PORTIONS" + "PORTION COST"
                           // headers make sense. For prep we swap them out for
@@ -715,7 +715,7 @@ export default function RecipesPage() {
                                 <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.laborCostCents)}</td>
                               </tr>
                             )}
-                            <tr style={{ borderTop: '2px solid rgb(135 197 64 / 0.2)', background: 'rgb(135 197 64 / 0.04)' }}>
+                            <tr style={{ borderTop: '2px solid rgb(var(--erp-primary-rgb) / 0.2)', background: 'rgb(var(--erp-primary-rgb) / 0.04)' }}>
                               <td colSpan={7} className="px-4 py-3 text-right font-black uppercase text-primary-ink"
                                 style={{ fontSize: '8.5px', letterSpacing: '0.15em' }}>
                                 Total Recipe Cost
@@ -807,7 +807,7 @@ export default function RecipesPage() {
                     <button type="button" onClick={() => setKind('plate')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'plate'
-                        ? { background: 'rgb(135 197 64 / 0.10)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                        ? { background: 'rgb(var(--erp-primary-rgb) / 0.10)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                         : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                       <p className="text-sm font-bold text-s-text">🍽 Finished plate</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A menu item — costed as plate cost (margin vs. menu price).</p>
@@ -815,7 +815,7 @@ export default function RecipesPage() {
                     <button type="button" onClick={() => setKind('component')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'component'
-                        ? { background: 'rgb(61 31 59 / 0.10)', border: '1px solid rgb(61 31 59 / 0.4)' }
+                        ? { background: 'rgb(var(--ink-rgb) / 0.10)', border: '1px solid rgb(var(--ink-rgb) / 0.4)' }
                         : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                       <p className="text-sm font-bold text-s-text">🧩 Component</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A batch sub-recipe (sauce, marinade, dough) used inside plates — costed per gram.</p>
@@ -909,7 +909,7 @@ export default function RecipesPage() {
                   is NOT the same as bump-able routing — see the "Bump-able
                   steps (during service)" section further down for that. */}
               <div className="space-y-3 border border-s-border rounded-xl p-4"
-                style={{ background: 'rgb(135 197 64 / 0.03)' }}>
+                style={{ background: 'rgb(var(--erp-primary-rgb) / 0.03)' }}>
                 <div>
                   <p className="text-xs font-black text-primary-ink uppercase tracking-wider mb-0.5">
                     Cook's notes (method)
@@ -1146,7 +1146,7 @@ export default function RecipesPage() {
                   that drives KDS bumping during service. */}
               <div className="space-y-2 pt-2 border-t border-s-border">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-wider" style={{ color: '#6b2f68' }}>
+                  <p className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--erp-primary-ink)' }}>
                     🍳 Bump-able steps (during service)
                   </p>
                   <p className="text-[11px] text-s-dim mt-0.5">
@@ -1159,7 +1159,7 @@ export default function RecipesPage() {
                   <RecipeStepsEditor recipeId={(modal as Recipe).id} />
                 ) : (
                   <div className="rounded-lg p-4 text-center"
-                    style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px dashed rgb(61 31 59 / 0.25)' }}>
+                    style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px dashed rgb(var(--ink-rgb) / 0.25)' }}>
                     <p className="text-xs font-bold text-white/70">
                       Save the recipe first to add bump-able steps
                     </p>

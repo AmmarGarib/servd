@@ -70,7 +70,7 @@ export default function ParSheetPage() {
               style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }} />
             <Link href="/inventory/prep"
               className="rounded-xl px-3 py-2 text-xs font-bold"
-              style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.25)' }}>
+              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
               Log a batch
             </Link>
             {rows.length > 0 && (
@@ -152,7 +152,7 @@ export default function ParSheetPage() {
                     <td className="px-3 py-2.5 text-right">
                       <Link href={`/inventory/prep?recipeId=${r.recipeId}`}
                         className="text-[11px] font-bold px-2 py-1 rounded"
-                        style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>
+                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>
                         Log batch
                       </Link>
                     </td>
@@ -164,7 +164,7 @@ export default function ParSheetPage() {
         )}
 
         <div className="rounded-xl p-4 mt-4 text-xs text-white/45 leading-relaxed"
-          style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px solid rgb(61 31 59 / 0.15)' }}>
+          style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.15)' }}>
           Planning which trims and by-products each base ingredient can feed? The{' '}
           <Link href="/par-sheet/components" className="text-indigo-700 underline">component matrix</Link>{' '}
           (hero / supporting / trim-waste per ingredient) is kept as a read-only reference.

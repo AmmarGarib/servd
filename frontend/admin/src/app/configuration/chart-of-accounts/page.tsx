@@ -15,9 +15,9 @@ interface Account {
 }
 
 const TYPE_COLOR: Record<AccountType, { bg: string; fg: string }> = {
-  asset:     { bg: 'rgb(135 197 64 / 0.12)', fg: 'var(--erp-primary)' },
+  asset:     { bg: 'rgb(var(--erp-primary-rgb) / 0.12)', fg: 'var(--erp-primary)' },
   liability: { bg: 'rgba(245,158,11,0.12)', fg: '#a15c00' },
-  equity:    { bg: 'rgb(61 31 59 / 0.12)', fg: '#6b2f68' },
+  equity:    { bg: 'rgb(var(--ink-rgb) / 0.12)', fg: 'var(--erp-primary-ink)' },
   revenue:   { bg: 'rgba(34,197,94,0.12)', fg: '#3f7d20' },
   expense:   { bg: 'rgba(239,68,68,0.12)', fg: '#b42318' },
 }

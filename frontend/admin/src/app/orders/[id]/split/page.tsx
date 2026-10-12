@@ -170,7 +170,7 @@ export default function SplitPage() {
             ))}
             <button onClick={() => setDrafts(prev => [...prev, { label: `Diner ${prev.length + 1}`, amountCents: 0, method: 'card' }])}
               className="text-xs text-primary-ink hover:underline">+ Add another split</button>
-            <p className={`text-xs font-bold ${draftMatch ? 'text-primary-ink' : 'text-s-red'}`}>
+            <p className={`text-xs font-bold ${draftMatch ? 'text-success' : 'text-s-red'}`}>
               Sum: {fmtPkr(draftTotal)} · {draftMatch ? '✓ matches' : `must equal ${fmtPkr(order.totalCents)}`}
             </p>
             <button onClick={() => splitCustom.mutate()} disabled={splitCustom.isPending || !draftMatch} className="s-btn-primary w-full">

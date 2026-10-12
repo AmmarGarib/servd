@@ -100,7 +100,7 @@ function Statement({ data }: { data: PL }) {
       <div className="s-card p-4 border-2 border-s-teal">
         <div className="flex justify-between text-lg font-bold">
           <span className="text-s-text">Net Profit</span>
-          <span className={data.totals.netProfitCents >= 0 ? 'text-primary-ink' : 'text-s-red'}>
+          <span className={data.totals.netProfitCents >= 0 ? 'text-success' : 'text-s-red'}>
             {fmtPkr(data.totals.netProfitCents)}
           </span>
         </div>

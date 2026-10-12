@@ -145,9 +145,9 @@ export default function PrepBatchPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(135 197 64 / 0.1)',
+              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-primary-rgb) / 0.1)',
               color: feedback.startsWith('⚠') ? '#a15c00' : 'var(--erp-primary-ink)',
-              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
+              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
             }}>{feedback}</div>
         )}
 
@@ -205,9 +205,9 @@ export default function PrepBatchPage() {
           {yieldPct != null && (
             <div className="mt-3 rounded-lg p-3 text-sm font-bold"
               style={{
-                background: yieldPct < 85 ? 'rgba(245,158,11,0.08)' : 'rgb(135 197 64 / 0.08)',
+                background: yieldPct < 85 ? 'rgba(245,158,11,0.08)' : 'rgb(var(--erp-primary-rgb) / 0.08)',
                 color: yieldPct < 85 ? '#a15c00' : 'var(--erp-primary-ink)',
-                border: `1px solid ${yieldPct < 85 ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
+                border: `1px solid ${yieldPct < 85 ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
               }}>
               Yield: {yieldPct.toFixed(1)}% {yieldPct < 85 && '— will flag (under 85%)'}
             </div>

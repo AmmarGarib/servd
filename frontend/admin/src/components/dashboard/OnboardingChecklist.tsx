@@ -89,8 +89,8 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
     <section
       className="relative rounded-2xl p-5 overflow-hidden"
       style={{
-        background: 'linear-gradient(135deg, rgb(61 31 59 / 0.08) 0%, rgb(135 197 64 / 0.05) 100%)',
-        border: '1px solid rgb(61 31 59 / 0.18)',
+        background: 'linear-gradient(135deg, rgb(var(--ink-rgb) / 0.08) 0%, rgb(var(--erp-primary-rgb) / 0.05) 100%)',
+        border: '1px solid rgb(var(--ink-rgb) / 0.18)',
         animationName: 'ops-revealUp', animationDuration: '0.5s', animationFillMode: 'both',
       }}
     >
@@ -99,7 +99,7 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
         className="absolute pointer-events-none"
         style={{
           top: '-30px', right: '-30px', width: '180px', height: '180px',
-          background: 'radial-gradient(circle, rgb(61 31 59 / 0.12) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgb(var(--ink-rgb) / 0.12) 0%, transparent 70%)',
           animation: 'ops-glowPulse 9s ease-in-out infinite',
         }}
       />
@@ -140,8 +140,8 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
                 item.done ? 'opacity-65 hover:opacity-100' : ''
               }`}
               style={{
-                background: item.done ? 'rgb(135 197 64 / 0.05)' : 'rgb(var(--fg-rgb) / 0.025)',
-                border: `1px solid ${item.done ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
+                background: item.done ? 'rgb(var(--erp-accent-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
+                border: `1px solid ${item.done ? 'rgb(var(--erp-accent-rgb) / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
               }}
             >
               <span

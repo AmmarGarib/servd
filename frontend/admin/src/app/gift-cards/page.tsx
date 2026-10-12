@@ -93,7 +93,7 @@ export default function GiftCardsPage() {
               {redeem.isPending ? 'Applying…' : 'Apply'}
             </button>
           </div>
-          {feedback && <p className={`text-xs mt-2 ${feedback.ok ? 'text-primary-ink' : 'text-s-red'}`}>{feedback.msg}</p>}
+          {feedback && <p className={`text-xs mt-2 ${feedback.ok ? 'text-success' : 'text-s-red'}`}>{feedback.msg}</p>}
         </div>
 
         {/* List */}

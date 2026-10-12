@@ -94,7 +94,7 @@ export default function PeriodClosePage() {
 
       <div className="p-6 max-w-2xl mx-auto space-y-4">
         {feedback && (
-          <div role={feedback.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${feedback.ok ? 'text-primary-ink' : 'text-s-red'}`}>
+          <div role={feedback.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${feedback.ok ? 'text-success' : 'text-s-red'}`}>
             {feedback.msg}
           </div>
         )}

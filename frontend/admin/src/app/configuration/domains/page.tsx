@@ -41,9 +41,9 @@ interface Domain {
 const STATUS_META: Record<Domain['status'], { label: string; color: string; bg: string }> = {
   pending:  { label: 'Pending DNS', color: '#a15c00', bg: 'rgba(245,158,11,0.1)' },
   verified: { label: 'Verified',    color: '#3f7d20', bg: 'rgba(34,197,94,0.1)' },
-  active:   { label: '✓ Live',      color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.12)' },
+  active:   { label: '✓ Live',      color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.12)' },
   failed:   { label: 'DNS not found', color: '#b42318', bg: 'rgba(255,77,79,0.1)' },
-  disabled: { label: 'Disabled',    color: '#7a6178', bg: 'rgb(var(--fg-rgb) / 0.05)' },
+  disabled: { label: 'Disabled',    color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.05)' },
 }
 
 export default function DomainsPage() {
@@ -86,7 +86,7 @@ export default function DomainsPage() {
 
         {/* Setup flow primer */}
         <div className="rounded-2xl p-5"
-          style={{ background: 'linear-gradient(135deg, rgb(135 197 64 / 0.06), rgb(61 31 59 / 0.04))', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+          style={{ background: 'linear-gradient(135deg, rgb(var(--erp-primary-rgb) / 0.06), rgb(var(--ink-rgb) / 0.04))', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
           <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary-ink/70 mb-2">How it works</p>
           <ol className="text-sm text-white/75 space-y-2 leading-relaxed">
             <li><span className="font-bold text-primary-ink">1.</span> Add your domain below — we generate a verification token.</li>
@@ -358,8 +358,8 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
                 <button key={opt.key} onClick={() => setPurpose(opt.key as 'order' | 'brand_microsite')}
                   className="flex-1 rounded-lg px-3 py-2 text-left transition-colors"
                   style={{
-                    background: purpose === opt.key ? 'rgb(135 197 64 / 0.08)' : 'rgb(var(--fg-rgb) / 0.03)',
-                    border: purpose === opt.key ? '1px solid rgb(135 197 64 / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.08)',
+                    background: purpose === opt.key ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.03)',
+                    border: purpose === opt.key ? '1px solid rgb(var(--erp-primary-rgb) / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <p className="text-xs font-bold text-white/85">{opt.label}</p>
                   <p className="text-[10px] text-white/45 mt-0.5">{opt.desc}</p>

@@ -21,8 +21,8 @@ interface MenuEngineeringItem {
 }
 
 const QUADRANT_META = {
-  star:      { label: 'Stars',       color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.08)',  border: 'rgb(135 197 64 / 0.25)', desc: 'High popularity · High margin — promote & protect' },
-  plowHorse: { label: 'Plowhorses', color: 'var(--erp-secondary)', bg: 'rgb(61 31 59 / 0.08)', border: 'rgb(61 31 59 / 0.25)', desc: 'High popularity · Low margin — reduce cost or reprice' },
+  star:      { label: 'Stars',       color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.08)',  border: 'rgb(var(--erp-primary-rgb) / 0.25)', desc: 'High popularity · High margin — promote & protect' },
+  plowHorse: { label: 'Plowhorses', color: 'var(--erp-secondary)', bg: 'rgb(var(--ink-rgb) / 0.08)', border: 'rgb(var(--ink-rgb) / 0.25)', desc: 'High popularity · Low margin — reduce cost or reprice' },
   puzzle:    { label: 'Puzzles',    color: '#a15c00', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.25)', desc: 'Low popularity · High margin — reposition or bundle' },
   dog:       { label: 'Dogs',       color: '#b42318', bg: 'rgba(255,77,79,0.08)',   border: 'rgba(255,77,79,0.25)',  desc: 'Low popularity · Low margin — consider removing' },
 }
@@ -92,7 +92,7 @@ export default function MenuEngineeringPage() {
 
       {conceptId && isLoading && (
         <div className="flex items-center justify-center h-48">
-          <div className="animate-spin h-6 w-6 rounded-full border-2" style={{ borderColor: 'rgb(135 197 64 / 0.3)', borderTopColor: 'var(--erp-primary)' }} />
+          <div className="animate-spin h-6 w-6 rounded-full border-2" style={{ borderColor: 'rgb(var(--erp-primary-rgb) / 0.3)', borderTopColor: 'var(--erp-primary)' }} />
         </div>
       )}
 
@@ -196,7 +196,7 @@ export default function MenuEngineeringPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>{item.qtySold}</td>
-                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: item.grossMarginPct >= 0 ? 'var(--erp-primary-ink)' : '#b42318' }}>{item.hasRecipe ? `${item.grossMarginPct.toFixed(1)}%` : '—'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm" style={{ color: item.grossMarginPct >= 0 ? 'var(--erp-success)' : '#b42318' }}>{item.hasRecipe ? `${item.grossMarginPct.toFixed(1)}%` : '—'}</td>
                       <td className="px-4 py-3 text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>{rec}</td>
                     </tr>
                   )

@@ -47,7 +47,7 @@ interface Floor { id: string; name: string; tables: Array<{ id: string; label: s
 const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> = {
   booked:    { bg: 'rgba(59,130,246,0.12)',  text: '#1d4ed8', label: 'Booked' },
   confirmed: { bg: 'rgba(34,197,94,0.14)',   text: '#15803d', label: 'Confirmed' },
-  seated:    { bg: 'rgb(61 31 59 / 0.18)',  text: '#4338ca', label: 'Seated' },
+  seated:    { bg: 'rgb(var(--ink-rgb) / 0.18)',  text: '#4338ca', label: 'Seated' },
   completed: { bg: 'rgba(0,0,0,0.06)',       text: 'rgba(0,0,0,0.5)', label: 'Done' },
   no_show:   { bg: 'rgba(239,68,68,0.12)',   text: '#b91c1c', label: 'No show' },
   cancelled: { bg: 'rgba(239,68,68,0.12)',   text: '#b91c1c', label: 'Cancelled' },
@@ -241,7 +241,7 @@ export default function ReservationsPage() {
           role="dialog"
           aria-modal="true"
           className="fixed inset-0 z-50 flex justify-end"
-          style={{ background: 'rgb(61 31 59 / 0.5)' }}
+          style={{ background: 'rgb(var(--ink-rgb) / 0.5)' }}
           onClick={() => setDrawerCustomerId(null)}>
           <div
             onClick={(e) => e.stopPropagation()}

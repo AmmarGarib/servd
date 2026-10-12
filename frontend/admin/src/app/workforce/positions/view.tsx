@@ -107,7 +107,7 @@ interface Summary {
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
   open:     { label: 'Open',     color: '#a15c00', bg: 'rgba(245,158,11,0.10)' },
-  filled:   { label: 'Filled',   color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.10)' },
+  filled:   { label: 'Filled',   color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.10)' },
   frozen:   { label: 'Frozen',   color: '#8E8E93', bg: 'rgba(142,142,147,0.10)' },
   archived: { label: 'Archived', color: '#6B7280', bg: 'rgba(107,114,128,0.10)' },
 }
@@ -277,14 +277,14 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
           const jvSplit = (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
+                style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
                 Joint venture
               </span>
               <span className="text-sm text-s-text font-bold">{activeTenant.name}</span>
               <span className="text-xs text-s-muted">- partner split:</span>
               {jvPartners.map((p, i) => (
                 <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+                  style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
                   {p.label} {p.pct}%
                 </span>
               ))}
@@ -377,7 +377,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     const line = (<>
                       <div className="flex justify-between text-xs font-mono items-baseline">
                         <span className="text-s-muted flex items-center gap-1.5">
-                          <span style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
+                          <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
                             {c.direction === 'incoming' ? '<--' : '-->'}
                           </span>
                           {c.label}
@@ -387,7 +387,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                           </span>
                         </span>
                         <span className="font-bold"
-                          style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
+                          style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
                           {c.direction === 'incoming' ? '-' : '+'} {fmtPkrWhole(c.monthlyCents)}
                         </span>
                       </div>
@@ -469,7 +469,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                       <span>{dept.title}</span>
                       {dept.isHeadOffice && (
                         <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                          style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
+                          style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                           Head office
                         </span>
                       )}
@@ -550,7 +550,7 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
         <div className="mt-2 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+              style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
               {p.label} {p.pct}%: {fmtPkrWhole(Math.round(valueCents * p.pct / 100))}
             </span>
           ))}
@@ -583,7 +583,7 @@ function PositionRow({
         <p className="font-semibold text-sm truncate">{position.title}</p>
         {position.headcount > 1 && (
           <span className="text-[10px] font-bold rounded px-1.5 py-0.5"
-            style={{ background: 'rgb(135 197 64 / 0.10)', color: 'var(--erp-primary-ink)' }}>
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
             × {position.headcount}
           </span>
         )}

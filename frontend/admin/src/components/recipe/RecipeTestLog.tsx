@@ -29,7 +29,7 @@ interface TestAttempt {
 }
 
 const OUTCOME_META: Record<Outcome, { label: string; color: string; bg: string }> = {
-  promising:  { label: 'Promising',  color: '#3f7d20', bg: 'rgb(135 197 64 / 0.12)' },
+  promising:  { label: 'Promising',  color: '#3f7d20', bg: 'rgb(var(--erp-primary-rgb) / 0.12)' },
   needs_work: { label: 'Needs work', color: '#a15c00', bg: 'rgba(245,158,11,0.12)' },
   rejected:   { label: 'Rejected',   color: '#b42318', bg: 'rgba(255,77,79,0.12)' },
 }

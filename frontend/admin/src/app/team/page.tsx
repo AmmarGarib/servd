@@ -88,7 +88,7 @@ export default function MyTeamPage() {
                     )}
                     <span className="ml-2 text-[11px] text-white/30 shrink-0">{m.employeeCode}</span>
                     {m.userId && <span className="ml-2 text-[9px] font-bold uppercase tracking-wider px-1 rounded shrink-0"
-                      style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>login</span>}
+                      style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>login</span>}
                   </div>
                   <span className="text-[11px] font-bold shrink-0" style={{ color: today?.color ?? 'rgb(var(--fg-rgb) / 0.3)' }}>
                     {today?.label ?? '—'}

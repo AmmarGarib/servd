@@ -170,7 +170,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
     if (markerRef.current) { markerRef.current.setLatLng([lat, lng]); return }
     const icon = L.divIcon({
       className: '',
-      html: `<div style="width:22px;height:22px;background:var(--erp-primary);border:3px solid #3d1f3b;border-radius:50% 50% 50% 0;transform:rotate(-45deg) translate(-50%,-100%);box-shadow:0 4px 12px rgba(0,0,0,0.5);"></div>`,
+      html: `<div style="width:22px;height:22px;background:var(--erp-primary);border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg) translate(-50%,-100%);box-shadow:0 4px 12px rgba(0,0,0,0.5);"></div>`,
       iconSize: [22, 22], iconAnchor: [0, 0],
     })
     const marker = L.marker([lat, lng], { draggable: true, icon }).addTo(map)
@@ -276,7 +276,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ittehad Commercial, DHA Phase 6" className={inputCls} />
           {(searching || results.length > 0) && (
             <div className="absolute top-full left-0 right-0 mt-1 z-[1000] rounded-lg overflow-hidden"
-              style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(61 31 59 / 0.18)' }}>
+              style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(var(--ink-rgb) / 0.18)' }}>
               {searching && <p className="text-xs text-white/45 px-3 py-2">Searching…</p>}
               {results.map((r, i) => (
                 <button key={i} type="button" onClick={() => pick(r)} className="w-full text-left px-3 py-2 text-xs text-white/75 hover:bg-white/[0.05]">

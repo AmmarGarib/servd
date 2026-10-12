@@ -77,7 +77,7 @@ export default function ModifiersPage() {
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {t.options.map((o, i) => (
                       <span key={i} className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        style={{ background: 'rgb(135 197 64 / 0.08)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.15)' }}>
+                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.15)' }}>
                         {o.name}{o.priceDeltaCents > 0 ? ` +${(o.priceDeltaCents / 100).toFixed(0)}` : o.priceDeltaCents < 0 ? ` ${(o.priceDeltaCents / 100).toFixed(0)}` : ''}
                         {o.isDefault ? ' ★' : ''}
                       </span>

@@ -194,7 +194,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
               <button key={l.id} onClick={() => setSelected(l)}
                 className="text-left rounded-xl p-4 transition-all"
                 style={selected?.id === l.id
-                  ? { background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-3xl">{l.emoji}</span>
@@ -212,7 +212,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
 
           {selected && (
             <div className="mt-5 rounded-xl p-4"
-              style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.2)' }}>
+              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.2)' }}>
               <p className="text-sm font-bold text-primary-ink">{selected.emoji} {selected.name}</p>
               <p className="text-xs text-white/65 mt-1">{selected.description}</p>
 

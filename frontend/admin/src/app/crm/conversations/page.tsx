@@ -136,7 +136,7 @@ export default function CrmConversationsPage() {
                           brand yet (one-off guest). */}
                       {c.customer.preferredConcept && (
                         <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                          style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
+                          style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                           {c.customer.preferredConcept.name}
                         </span>
                       )}

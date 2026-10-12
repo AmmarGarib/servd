@@ -68,7 +68,7 @@ export default function DepositDropsPage() {
                   {d.expectedCents > 0 && (
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
                       style={d.withinTolerance
-                        ? { background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }
+                        ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }
                         : { background: 'rgba(245,158,11,0.12)', color: '#a15c00' }}>
                       {d.varianceCents >= 0 ? '+' : ''}PKR {(d.varianceCents / 100).toLocaleString()}
                     </span>

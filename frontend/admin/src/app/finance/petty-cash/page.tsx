@@ -77,7 +77,7 @@ export default function PettyCashPage() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg font-black text-white/90">{b.name}</h3>
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>
                     PKR {(b.floatCents / 100).toLocaleString()}
                   </span>
                 </div>
@@ -88,7 +88,7 @@ export default function PettyCashPage() {
                   <div className="mt-3 space-y-1">
                     {b.movements.slice(0, 3).map((m) => (
                       <div key={m.id} className="text-xs flex items-center gap-2">
-                        <span className="font-bold" style={{ color: m.amountCents >= 0 ? 'var(--erp-primary-ink)' : '#a15c00' }}>
+                        <span className="font-bold" style={{ color: m.amountCents >= 0 ? 'var(--erp-success)' : '#a15c00' }}>
                           {m.amountCents >= 0 ? '+' : ''}PKR {(m.amountCents / 100).toLocaleString()}
                         </span>
                         <span className="text-white/55">{m.reason}</span>
@@ -178,7 +178,7 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
         Spend
       </button>
       <button type="button" onClick={() => setType('topup')} className="flex-1 rounded-lg px-4 py-2 text-sm font-bold"
-        style={type === 'topup' ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+        style={type === 'topup' ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' } : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
         Top up
       </button>
     </div>
@@ -241,7 +241,7 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
       <p className="text-[10px] text-white/30 mt-1">≈ PKR {(counted / 100).toLocaleString()}</p>
     </Field>
     {Math.abs(variance) > 0 && (
-      <div className="rounded-lg p-3 text-sm font-bold" style={{ background: Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.08)' : 'rgb(135 197 64 / 0.08)', color: Math.abs(variance) >= 20000 ? '#a15c00' : 'var(--erp-primary)', border: `1px solid ${Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}` }}>
+      <div className="rounded-lg p-3 text-sm font-bold" style={{ background: Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.08)' : 'rgb(var(--erp-accent-rgb) / 0.12)', color: Math.abs(variance) >= 20000 ? '#a15c00' : 'var(--erp-success)', border: `1px solid ${Math.abs(variance) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.4)'}` }}>
         Variance: {variance > 0 ? '+' : ''}PKR {(variance / 100).toLocaleString()}
         {Math.abs(variance) >= 20000 && ' — will flag'}
       </div>

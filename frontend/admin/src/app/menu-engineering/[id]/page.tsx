@@ -166,7 +166,7 @@ export default function PlatePricingPage() {
   const actualFc = priceCents > 0 ? (plate / priceCents) * 100 : null
   const verdict = priceCents <= 0
     ? { label: 'Set a selling price', color: 'rgb(var(--fg-rgb) / 0.4)', bg: 'rgb(var(--fg-rgb) / 0.04)' }
-    : net > 0 ? { label: '✓ Profitable', color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.10)' }
+    : net > 0 ? { label: '✓ Profitable', color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.16)' }
     : cm > 0  ? { label: '⚠ Covers food, loses opex', color: '#a15c00', bg: 'rgba(245,158,11,0.10)' }
     :           { label: '✗ Loses every plate', color: '#b42318', bg: 'rgba(255,77,79,0.10)' }
 
@@ -217,7 +217,7 @@ export default function PlatePricingPage() {
             <Line op="+" label="Workforce payroll (brand share)" value={fmtPkrWhole(cost.payrollShareMonthlyCents)} dim />
             <Line op="=" label="Monthly opex" value={fmtPkrWhole(cost.opexLinesMonthlyCents + cost.payrollShareMonthlyCents)} bold />
             <Line op="÷" label={`Forecast portions / month (${cost.brandForecastPortions || '—'})`} value="" dim />
-            <Line op="=" label="OpEx / portion" value={cost.brandForecastPortions > 0 ? fmtPkrWhole(opex) : '—'} bold color="#6b2f68" />
+            <Line op="=" label="OpEx / portion" value={cost.brandForecastPortions > 0 ? fmtPkrWhole(opex) : '—'} bold color="var(--erp-primary-ink)" />
             {cost.payrollTenantMonthlyCents === 0 && (
               <p className="text-[10px] text-s-dim mt-2">
                 No posted payroll runs in the last 90 days — run payroll in{' '}
@@ -261,7 +261,7 @@ export default function PlatePricingPage() {
                     value={`${beMonthly.toLocaleString('en')} / month · ~${beDaily < 10 ? beDaily.toFixed(1) : Math.ceil(beDaily)} / day`} />
                   <Line label="After that, each plate earns" value={`${fmtPkrWhole(cm)} pure margin`} dim />
                   {coverage !== null && (
-                    <p className="text-[10px] mt-2" style={{ color: coverage >= 1 ? 'var(--erp-primary-ink)' : '#b42318' }}>
+                    <p className="text-[10px] mt-2" style={{ color: coverage >= 1 ? 'var(--erp-success)' : '#b42318' }}>
                       {coverage >= 1
                         ? `Your forecast (${forecast.toLocaleString('en')}/month) covers break-even ${coverage.toFixed(1)}× — if this plate alone carried all overheads.`
                         : `Your forecast (${forecast.toLocaleString('en')}/month) is below break-even — this plate alone couldn't carry the overheads.`}
@@ -331,10 +331,10 @@ export default function PlatePricingPage() {
             <Line op="−" label="Plate cost" value={fmtPkrWhole(plate)} />
             <Line op="−" label={`Packaging (${packaging ?? 8}%)`} value={fmtPkrWhole(packagingCost)} dim />
             <Line op="=" label="Contribution margin" bold
-              value={`${fmtPkrWhole(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? 'var(--erp-primary-ink)' : '#b42318'} />
+              value={`${fmtPkrWhole(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? 'var(--erp-success)' : '#b42318'} />
             <Line op="−" label="OpEx / portion" value={fmtPkrWhole(opex)} dim />
             <Line op="=" label="Net profit / portion" bold
-              value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? 'var(--erp-primary-ink)' : '#b42318'} />
+              value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? 'var(--erp-success)' : '#b42318'} />
 
             <button onClick={() => save.mutate()} disabled={save.isPending}
               className="mt-4 w-full rounded-lg bg-primary text-primary-on py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">

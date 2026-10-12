@@ -436,7 +436,7 @@ export function Builder({ slug }: { slug: string }) {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {flash && <span className={`text-xs ${flash.ok ? 'text-primary-ink' : 'text-s-red'}`}>{flash.text}</span>}
+            {flash && <span className={`text-xs ${flash.ok ? 'text-success' : 'text-s-red'}`}>{flash.text}</span>}
             <button type="button" onClick={() => setShowVersions(true)} className="s-btn-ghost text-xs">Versions</button>
             <button type="button" onClick={onPreview} disabled={!doc || !!busy} className="s-btn-secondary text-xs"
               title="Opens the saved draft in a new tab, as visitors will see it.">{busy === 'preview' ? 'Opening...' : 'Preview in new tab'}</button>

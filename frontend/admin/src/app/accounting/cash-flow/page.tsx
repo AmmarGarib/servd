@@ -115,7 +115,7 @@ export default function CashFlowPage() {
               </div>
               <div className="flex flex-wrap justify-between gap-2 font-bold pt-2 border-t border-s-border">
                 <span className="text-s-text">Net Change in Cash</span>
-                <span className={data.totals.netCents >= 0 ? 'text-primary-ink' : 'text-s-red'}>{fmtPkr(data.totals.netCents)}</span>
+                <span className={data.totals.netCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkr(data.totals.netCents)}</span>
               </div>
               <p className="text-xs text-s-muted">
                 {fmtPkr(data.totals.transfersCents)} moved between the company&apos;s own cash accounts (safe drops, pay-ins, bank deposits).

@@ -143,7 +143,7 @@ const CATEGORIES: Category[] = [
 ]
 
 const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: string; bg: string }> = {
-  active:    { label: 'Active',    color: 'var(--erp-primary-ink)', bg: 'rgb(135 197 64 / 0.10)' },
+  active:    { label: 'Active',    color: 'var(--erp-primary-ink)', bg: 'rgb(var(--erp-primary-rgb) / 0.10)' },
   pending:   { label: 'Pending',   color: '#a15c00', bg: 'rgba(245,158,11,0.10)' },
   suspended: { label: 'Suspended', color: '#b42318', bg: 'rgba(255,77,79,0.10)' },
 }
@@ -544,7 +544,7 @@ function StaffRow({
           style={{
             background: isUnnamed
               ? 'rgb(var(--fg-rgb) / 0.06)'
-              : 'linear-gradient(135deg, rgb(135 197 64 / 0.4), rgb(61 31 59 / 0.4))',
+              : 'linear-gradient(135deg, rgb(var(--erp-primary-rgb) / 0.4), rgb(var(--ink-rgb) / 0.4))',
             color: isUnnamed ? 'rgb(var(--fg-rgb) / 0.4)' : 'var(--text)',
           }}>
           {isUnnamed ? '?' : user.name.charAt(0).toUpperCase()}
@@ -587,7 +587,7 @@ function StaffRow({
                 approving access to THAT company. */}
             {(showTenantChip || status === 'pending') && (user.tenants ?? (tenant ? [tenant] : [])).map((t) => (
               <span key={t.id} className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
+                style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                 {t.name}
               </span>
             ))}

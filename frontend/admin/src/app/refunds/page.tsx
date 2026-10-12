@@ -144,7 +144,7 @@ export default function RefundsPage() {
       <div className="p-6 max-w-6xl mx-auto space-y-4">
         {feedback && (
           <div role={feedback.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${feedback.ok ? 'border-l-4 border-s-teal' : 'border-l-4 border-s-red'}`}>
-            <span className={feedback.ok ? 'text-primary-ink' : 'text-s-red'}>{feedback.msg}</span>
+            <span className={feedback.ok ? 'text-success' : 'text-s-red'}>{feedback.msg}</span>
           </div>
         )}
 

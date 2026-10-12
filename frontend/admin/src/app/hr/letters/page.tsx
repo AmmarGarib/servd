@@ -32,7 +32,7 @@ export default function HrLettersPage() {
         <div className="space-y-1">
           {letters.map((l) => (
             <button key={l.key} onClick={() => setKey(l.key)} className="w-full text-left rounded-lg px-3 py-2 text-sm flex items-center justify-between gap-2"
-              style={{ background: key === l.key ? 'rgb(135 197 64 / 0.12)' : 'transparent', color: key === l.key ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.75)' }}>
+              style={{ background: key === l.key ? 'rgb(var(--erp-primary-rgb) / 0.12)' : 'transparent', color: key === l.key ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.75)' }}>
               <span>{l.title}</span>
               {!l.isDefault && <span className="text-[10px] text-white/40">v{l.version}</span>}
             </button>

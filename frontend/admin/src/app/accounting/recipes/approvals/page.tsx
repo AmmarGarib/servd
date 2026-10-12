@@ -79,7 +79,7 @@ export default function RecipeApprovalsPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                      style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
+                      style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                       {r.kind === 'component' ? 'Sub recipe' : 'Plate'}
                     </span>
                     <Link href={`/accounting/recipes/${r.id}`} className="font-semibold text-s-text text-sm truncate hover:text-primary-ink">

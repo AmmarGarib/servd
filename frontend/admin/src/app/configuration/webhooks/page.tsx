@@ -101,7 +101,7 @@ export default function WebhooksPage() {
                   {h.events.map((e) => (
                     <span key={e} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={FIRING.has(e)
-                        ? { background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }
+                        ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }
                         : { background: 'rgba(245,158,11,0.08)', color: '#a15c00' }}
                       title={FIRING.has(e) ? undefined : 'servd does not send this event yet'}>
                       {e}{FIRING.has(e) ? '' : ' · not sent yet'}
@@ -250,7 +250,7 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
                     title={live ? undefined : 'servd does not send this event yet'}
                     className="text-xs font-semibold px-2 py-1.5 rounded-lg text-left disabled:opacity-35 disabled:cursor-not-allowed"
                     style={on
-                      ? { background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.35)' }
+                      ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }
                       : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                     {e}{live ? '' : ' · not sent yet'}
                   </button>

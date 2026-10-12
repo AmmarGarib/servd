@@ -44,7 +44,7 @@ export function EmptyStateGuide({
         {whyItMatters && (
           <div
             className="mt-5 rounded-xl px-4 py-3 text-left text-xs text-s-text/80"
-            style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.18)' }}
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}
           >
             <span className="font-bold text-primary-ink">Why it matters: </span>
             {whyItMatters}

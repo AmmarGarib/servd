@@ -247,7 +247,7 @@ export default function MenuEngineeringPage() {
                       <div className="text-right" style={{ minWidth: 110 }}>
                         <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Contribution</p>
                         <p className="text-xs font-bold font-mono"
-                          style={{ color: cm === null ? 'rgb(var(--fg-rgb) / 0.3)' : cm >= 0 ? 'var(--erp-primary-ink)' : '#b42318' }}>
+                          style={{ color: cm === null ? 'rgb(var(--fg-rgb) / 0.3)' : cm >= 0 ? 'var(--erp-success)' : '#b42318' }}>
                           {cm !== null ? `${fmtPkrWhole(cm)}${cmPct !== null ? ` · ${fmtPct(cmPct)}` : ''}` : '—'}
                         </p>
                       </div>

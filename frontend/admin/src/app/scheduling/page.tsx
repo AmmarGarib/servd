@@ -36,7 +36,7 @@ interface LaborCost { totalCents: number; totalHours: number; basis: string; byE
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', leave: 'approved', none: '' }
 const SOURCE_TONE: Record<Cell['source'], string> = {
-  roster: 'rgb(135 197 64 / 0.12)', swap: 'rgb(61 31 59 / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', none: 'transparent',
+  roster: 'rgb(var(--erp-primary-rgb) / 0.12)', swap: 'rgb(var(--ink-rgb) / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', none: 'transparent',
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -110,13 +110,13 @@ export default function SchedulingPage() {
         <button onClick={() => setWeekStart(ymd(mondayOf(new Date())))} className="px-3 py-1.5 rounded-xl text-xs font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.4)' }}>This week</button>
         {conceptId && planner && (
           <button onClick={() => { if (confirm('Copy last week\'s one-off changes to this week? The roster repeats by itself.')) copyWeek.mutate() }} disabled={copyWeek.isPending}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgb(61 31 59 / 0.1)', border: '1px solid rgb(61 31 59 / 0.3)', color: 'rgba(165,168,255,0.9)' }}>
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--ink-rgb) / 0.1)', border: '1px solid rgb(var(--ink-rgb) / 0.3)', color: 'rgba(165,168,255,0.9)' }}>
             {copyWeek.isPending ? 'Copying…' : 'Copy last week\'s changes'}
           </button>
         )}
       </div>
 
-      {toast && <div className="px-4 py-2.5 rounded-xl text-sm" style={{ background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.25)', color: 'var(--erp-primary-ink)' }}>{toast}</div>}
+      {toast && <div className="px-4 py-2.5 rounded-xl text-sm" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)', color: 'var(--erp-primary-ink)' }}>{toast}</div>}
 
       {conceptId && cost.data && (
         <div className="px-4 py-2.5 rounded-xl text-sm space-y-1" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.06)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
@@ -217,7 +217,7 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgb(61 31 59 / 0.5)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgb(var(--ink-rgb) / 0.5)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="w-full max-w-md rounded-2xl p-6 space-y-4" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
         <div>
           <h2 className="text-base font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{member.name} · {fmtDay(cell.date)}</h2>
@@ -246,14 +246,14 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
                 {shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.start}–{s.end})</option>)}
               </select>
               <button disabled={!shiftId || add.isPending} onClick={() => add.mutate({ shiftId, ...(notes && { notes }) })}
-                className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(135 197 64 / 0.12)', border: '1px solid rgb(135 197 64 / 0.3)', color: 'var(--erp-primary-ink)' }}>Set</button>
+                className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.12)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)', color: 'var(--erp-primary-ink)' }}>Set</button>
             </div>
           )}
           <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
             <label className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>Start<input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="s-input w-full text-sm px-3 py-2 rounded-xl mt-1" /></label>
             <label className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>End<input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="s-input w-full text-sm px-3 py-2 rounded-xl mt-1" /></label>
             <button disabled={add.isPending} onClick={() => add.mutate({ startTime: start, endTime: end, ...(notes && { notes }) })}
-              className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(135 197 64 / 0.12)', border: '1px solid rgb(135 197 64 / 0.3)', color: 'var(--erp-primary-ink)' }}>{cell.source === 'exception' && cell.kind === 'shift' ? 'Add hours' : 'Set hours'}</button>
+              className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.12)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)', color: 'var(--erp-primary-ink)' }}>{cell.source === 'exception' && cell.kind === 'shift' ? 'Add hours' : 'Set hours'}</button>
           </div>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note (optional)" className="s-input w-full text-sm px-3 py-2 rounded-xl" />
         </div>

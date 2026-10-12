@@ -64,7 +64,7 @@ export default function BankAccountsPage() {
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg font-black text-white/90">{b.name}</h3>
-                  {b.bankName && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{b.bankName}</span>}
+                  {b.bankName && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{b.bankName}</span>}
                   <span className="text-[10px] text-white/40 font-mono">{b.currency}</span>
                 </div>
                 {b.accountTitle && <p className="text-sm text-white/65 mt-0.5">{b.accountTitle}</p>}

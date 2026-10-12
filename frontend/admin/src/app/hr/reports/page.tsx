@@ -60,7 +60,7 @@ export default function HrReportsPage() {
                 {list.map((r) => (
                   <button key={r.key} onClick={() => setKey(r.key)}
                     className="w-full text-left rounded-lg px-3 py-2 text-sm"
-                    style={{ background: key === r.key ? 'rgb(135 197 64 / 0.12)' : 'transparent', color: key === r.key ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.75)' }}>
+                    style={{ background: key === r.key ? 'rgb(var(--erp-primary-rgb) / 0.12)' : 'transparent', color: key === r.key ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.75)' }}>
                     {r.title}
                   </button>
                 ))}

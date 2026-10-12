@@ -142,8 +142,8 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
           title={displayLabel}
           className="h-7 w-7 rounded-lg flex items-center justify-center text-[11px] font-black hover:text-white transition-colors"
           style={{
-            background: accentTeal ? 'rgb(135 197 64 / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
-            border: `1px solid ${accentTeal ? 'rgb(135 197 64 / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+            background: accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
+            border: `1px solid ${accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
             color: accentTeal ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)',
           }}>
           {displayInitial}
@@ -170,8 +170,8 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
         className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.03] transition-colors text-left">
         <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[11px] font-black"
           style={{
-            background: accentTeal ? 'rgb(135 197 64 / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
-            border: `1px solid ${accentTeal ? 'rgb(135 197 64 / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+            background: accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
+            border: `1px solid ${accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
             color: accentTeal ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)',
           }}>
           {displayInitial}
@@ -218,19 +218,18 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
   const allActive = activeId === '__ALL__'
   return (
     <div ref={ref}
-      className="absolute z-30 rounded-xl overflow-hidden"
+      className="erp-on-surface absolute z-30 rounded-xl overflow-hidden"
       style={{
         top: anchor === 'below' ? 'calc(100% + 4px)' : '6px',
         left: anchor === 'below' ? '8px' : 'calc(100% + 8px)',
         right: anchor === 'below' ? '8px' : undefined,
         minWidth: anchor === 'left' ? '240px' : undefined,
         // The panel sits inside the purple sidebar but is a light card:
-        // reset the area foreground to ink so its text reads on bone.
-        ['--fg-rgb' as string]: '61 31 59',
+        // .erp-on-surface resets the area colours so its text reads on white.
         color: 'var(--text)',
         background: 'var(--surface)',
         border: '1px solid rgb(var(--fg-rgb) / 0.1)',
-        boxShadow: '0 16px 40px rgb(61 31 59 / 0.18)',
+        boxShadow: '0 16px 40px rgb(var(--ink-rgb) / 0.18)',
       }}>
       <div className="px-3 py-2 border-b border-white/[0.08]">
         <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">Your companies</p>
@@ -247,8 +246,8 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
             } disabled:cursor-default border-b border-white/[0.05]`}>
             <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[12px] font-black"
               style={{
-                background: allActive ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.05)',
-                border: `1px solid ${allActive ? 'rgb(135 197 64 / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+                background: allActive ? 'rgb(var(--erp-primary-rgb) / 0.18)' : 'rgb(var(--fg-rgb) / 0.05)',
+                border: `1px solid ${allActive ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
                 color: allActive ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.85)',
               }}>
               ∞
@@ -275,8 +274,8 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
               } disabled:cursor-default`}>
               <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[11px] font-black"
                 style={{
-                  background: isActive ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.05)',
-                  border: `1px solid ${isActive ? 'rgb(135 197 64 / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+                  background: isActive ? 'rgb(var(--erp-primary-rgb) / 0.18)' : 'rgb(var(--fg-rgb) / 0.05)',
+                  border: `1px solid ${isActive ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
                   color: isActive ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.85)',
                 }}>
                 {t.name[0]?.toUpperCase()}

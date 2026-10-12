@@ -55,7 +55,7 @@ export default function PaymentMethodsPage() {
       <div className="px-7 py-6 max-w-3xl mx-auto space-y-5">
         {/* Setup overview */}
         <div className="rounded-2xl p-5"
-          style={{ background: 'linear-gradient(135deg, rgb(135 197 64 / 0.06), rgb(61 31 59 / 0.04))', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+          style={{ background: 'linear-gradient(135deg, rgb(var(--erp-primary-rgb) / 0.06), rgb(var(--ink-rgb) / 0.04))', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
           <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary-ink/70 mb-2">When you sign up with a gateway</p>
           <ol className="text-sm text-white/75 space-y-2 leading-relaxed">
             <li><span className="font-bold text-primary-ink">1.</span> The gateway gives you a <strong>merchant ID</strong> (or store ID), one or more <strong>secret keys</strong>, and a <strong>sandbox base URL</strong> for testing.</li>
@@ -114,7 +114,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
   })
 
   const statusColor = isEnabled
-    ? gw.ready ? '#4f7a1c' : '#a15c00'
+    ? gw.ready ? 'var(--erp-success)' : 'var(--erp-warning)'
     : 'rgb(var(--fg-rgb) / 0.4)'
   const statusLabel = isEnabled
     ? gw.ready ? (isLive ? 'LIVE' : 'SANDBOX') : 'NEEDS SECRETS'
@@ -133,7 +133,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               <h3 className="font-black text-white/90">{gw.label}</h3>
               <span
                 className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
-                style={{ background: `${statusColor}20`, color: statusColor }}
+                style={{ background: `color-mix(in srgb, ${statusColor} 12%, transparent)`, color: statusColor }}
               >
                 {statusLabel}
               </span>
@@ -162,10 +162,10 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               <div className="space-y-1.5">
                 {gw.envStatus.map((e) => (
                   <div key={e.name} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
-                    style={{ background: e.set ? 'rgb(135 197 64 / 0.05)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgb(135 197 64 / 0.2)' : 'rgba(245,158,11,0.25)'}` }}>
+                    style={{ background: e.set ? 'rgb(var(--erp-primary-rgb) / 0.05)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgb(var(--erp-primary-rgb) / 0.2)' : 'rgba(245,158,11,0.25)'}` }}>
                     <code className="text-xs font-mono text-white/85">{e.name}</code>
                     <span className="text-[10px] font-black"
-                      style={{ color: e.set ? 'var(--erp-primary-ink)' : '#a15c00' }}>
+                      style={{ color: e.set ? 'var(--erp-success)' : '#a15c00' }}>
                       {e.set ? '✓ SET' : '⚠ NOT SET'}
                     </span>
                   </div>

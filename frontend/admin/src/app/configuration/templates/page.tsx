@@ -61,8 +61,8 @@ export default function TemplatesPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>{t.channel}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)' }}>{t.event}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>{t.channel}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{t.event}</span>
                     <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-white/55">{t.language}</span>
                     {concept && <span className="text-[10px] text-white/55">{concept.name}</span>}
                     {!t.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}

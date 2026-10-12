@@ -140,7 +140,7 @@ export default function RoleModulesPage() {
             <button key={r.value} onClick={() => { setFocusRole(r.value); setViewAs(r.value) }}
               className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
               style={focusRole === r.value
-                ? { background: 'rgb(61 31 59 / 0.18)', color: '#6b2f68', border: '1px solid rgb(61 31 59 / 0.35)' }
+                ? { background: 'rgb(var(--ink-rgb) / 0.18)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--ink-rgb) / 0.35)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.45)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {r.emoji} {r.label}
             </button>
@@ -269,14 +269,14 @@ export default function RoleModulesPage() {
 
         {/* Helper card */}
         <div className="rounded-xl p-4 text-xs text-white/45 leading-relaxed"
-          style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px solid rgb(61 31 59 / 0.15)' }}>
+          style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.15)' }}>
           💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. The CEO is the only one who can change this map — non-admin sessions can&rsquo;t open this page. Amber ticks indicate a role you&rsquo;ve customised; teal ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
         </div>
 
         {focusedRoleMeta && focusedRoleModules && (
           <div className="fixed bottom-4 right-4 rounded-2xl p-4 max-w-sm shadow-2xl"
-            style={{ background: 'rgba(15,17,22,0.98)', border: '1px solid rgb(61 31 59 / 0.35)' }}>
-            <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: '#6b2f68' }}>
+            style={{ background: 'rgba(15,17,22,0.98)', border: '1px solid rgb(var(--ink-rgb) / 0.35)' }}>
+            <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: 'var(--erp-primary-ink)' }}>
               🔭 Previewing as
             </p>
             <p className="text-sm font-bold text-white/90">{focusedRoleMeta.emoji} {focusedRoleMeta.label}</p>

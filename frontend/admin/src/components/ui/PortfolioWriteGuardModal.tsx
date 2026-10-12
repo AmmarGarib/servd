@@ -59,7 +59,7 @@ export function PortfolioWriteGuardModal() {
   return (
     <div role="dialog" aria-modal="true"
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-      style={{ background: 'rgb(61 31 59 / 0.5)' }}
+      style={{ background: 'rgb(var(--ink-rgb) / 0.5)' }}
       onClick={cancel}>
       <div onClick={(e) => e.stopPropagation()}
         className="w-full max-w-md rounded-2xl"

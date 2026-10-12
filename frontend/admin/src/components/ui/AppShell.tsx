@@ -315,7 +315,7 @@ function NavLinks({
                   onClick={() => onNavigate?.()}
                   className="flex items-center gap-2 rounded-md transition-all duration-150 ml-7 mr-1.5 px-2.5 py-1.5 group"
                   style={isActive(pathname, c.href) ? {
-                    background: 'rgb(135 197 64 / 0.08)',
+                    background: 'rgb(var(--erp-primary-rgb) / 0.08)',
                     color: 'var(--erp-primary-ink)',
                   } : {
                     background: 'transparent',
@@ -485,8 +485,8 @@ function NavLinkRow({
           collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2'
         }`}
         style={active ? {
-          background: 'rgb(135 197 64 / 0.16)',
-          border: '1px solid rgb(135 197 64 / 0.3)',
+          background: 'rgb(var(--erp-primary-rgb) / 0.16)',
+          border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)',
           color: 'var(--erp-primary)',
         } : {
           background: 'transparent',
@@ -671,7 +671,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             style={{
               background: 'var(--erp-primary)',
               color: 'var(--erp-on-primary)',
-              boxShadow: '0 0 10px rgb(135 197 64 / 0.25)',
+              boxShadow: '0 0 10px rgb(var(--erp-primary-rgb) / 0.25)',
             }}>
             {initials}
           </div>
@@ -701,7 +701,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {isSuper && (
           <div className={`${hasQueue ? 'mt-1' : 'mt-1.5'} pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5`}>
             <span className="text-[9px] uppercase tracking-wider font-bold shrink-0"
-              style={{ color: viewAs ? '#6b2f68' : 'rgb(var(--fg-rgb) / 0.3)' }}>
+              style={{ color: viewAs ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
               {viewAs ? '🔭 As' : 'View as'}
             </span>
             <select
@@ -709,9 +709,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               onChange={(e) => setRole((e.target.value || null) as ViewAsRole)}
               className="flex-1 text-[10.5px] font-semibold rounded-md px-1.5 py-1 cursor-pointer focus:outline-none"
               style={{
-                background: viewAs ? 'rgb(61 31 59 / 0.12)' : 'rgba(0,0,0,0.3)',
-                color: viewAs ? '#6b2f68' : 'rgb(var(--fg-rgb) / 0.6)',
-                border: `1px solid ${viewAs ? 'rgb(61 31 59 / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
+                background: viewAs ? 'rgb(var(--ink-rgb) / 0.12)' : 'rgba(0,0,0,0.3)',
+                color: viewAs ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.6)',
+                border: `1px solid ${viewAs ? 'rgb(var(--ink-rgb) / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
               }}>
               <option value="">Myself</option>
               {switchTargets.map((opt) => (
@@ -744,20 +744,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="absolute pointer-events-none select-none"
           style={{ width: '200px', height: '200px', bottom: '20%', left: '-60px',
-            background: 'radial-gradient(circle, rgb(135 197 64 / 0.06) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(var(--erp-primary-rgb) / 0.06) 0%, transparent 70%)',
             animation: 'ops-glowPulse 8s ease-in-out infinite' }} />
         <div className="absolute pointer-events-none select-none"
           style={{ width: '160px', height: '160px', top: '15%', right: '-70px',
-            background: 'radial-gradient(circle, rgb(61 31 59 / 0.05) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(var(--ink-rgb) / 0.05) 0%, transparent 70%)',
             animation: 'ops-glowPulse 11s ease-in-out infinite reverse' }} />
 
         <div className="relative z-10 flex items-center h-[54px] shrink-0 px-4 gap-3"
           style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-          <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center relative overflow-hidden"
-            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 16px rgb(135 197 64 / 0.35)' }}>
-            <span className="text-xs font-black relative z-10" style={{ color: 'var(--erp-on-primary)' }}>S</span>
-          </div>
-          <span className="text-sm font-black tracking-tight ops-shimmer-text flex-1">servd</span>
+          <ServdLogo size={30} />
+          <span className="flex-1" />
           <button onClick={() => setMobileOpen(false)}
             className="text-white/30 hover:text-white/70 transition-colors p-1 rounded">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -781,22 +778,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="absolute pointer-events-none select-none"
           style={{ width: '200px', height: '200px', bottom: '20%', left: '-60px',
-            background: 'radial-gradient(circle, rgb(135 197 64 / 0.06) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(var(--erp-primary-rgb) / 0.06) 0%, transparent 70%)',
             animation: 'ops-glowPulse 8s ease-in-out infinite' }} />
         <div className="absolute pointer-events-none select-none"
           style={{ width: '160px', height: '160px', top: '15%', right: '-70px',
-            background: 'radial-gradient(circle, rgb(61 31 59 / 0.05) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgb(var(--ink-rgb) / 0.05) 0%, transparent 70%)',
             animation: 'ops-glowPulse 11s ease-in-out infinite reverse' }} />
 
         <div className={`relative z-10 flex items-center h-[54px] shrink-0 ${collapsed ? 'justify-center' : 'px-4 gap-3'}`}
           style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-          <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center relative overflow-hidden"
-            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 16px rgb(135 197 64 / 0.35)' }}>
-            <span className="text-xs font-black relative z-10" style={{ color: 'var(--erp-on-primary)' }}>S</span>
-          </div>
+          <ServdLogo size={30} />
           {!collapsed && (
             <>
-              <span className="text-sm font-black tracking-tight ops-shimmer-text flex-1">servd</span>
+              <span className="flex-1" />
               <button onClick={() => setCollapsedPersisted(true)}
                 className="text-white/20 hover:text-white/55 transition-colors p-1 rounded"
                 style={{ marginRight: '-4px' }}>
@@ -838,11 +832,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>
-          <div className="h-6 w-6 rounded-md flex items-center justify-center"
-            style={{ background: 'var(--erp-primary)' }}>
-            <span className="text-[10px] font-black text-black">S</span>
-          </div>
-          <span className="text-sm font-black tracking-tight ops-shimmer-text">servd</span>
+          <ServdLogo size={26} />
         </header>
 
         <PortfolioBanner />
@@ -902,8 +892,8 @@ function PortfolioBanner() {
   return (
     <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
       style={{
-        background: 'rgb(135 197 64 / 0.08)',
-        borderBottom: '1px solid rgb(135 197 64 / 0.2)',
+        background: 'rgb(var(--erp-primary-rgb) / 0.08)',
+        borderBottom: '1px solid rgb(var(--erp-primary-rgb) / 0.2)',
         color: 'var(--erp-primary-ink)',
       }}>
       <span className="font-black">∞</span>
@@ -933,18 +923,28 @@ function ImpersonationBanner() {
   return (
     <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
       style={{
-        background: 'rgb(61 31 59 / 0.12)',
-        borderBottom: '1px solid rgb(61 31 59 / 0.3)',
-        color: '#6b2f68',
+        background: 'rgb(var(--ink-rgb) / 0.12)',
+        borderBottom: '1px solid rgb(var(--ink-rgb) / 0.3)',
+        color: 'var(--erp-primary-ink)',
       }}>
       <span className="font-black">{opt?.emoji ?? '🔭'}</span>
       <span className="font-bold">Viewing as {opt?.label ?? viewAs}</span>
       <span className="text-white/55">— sidebar & action buttons reflect what this role sees. Writes still run as you.</span>
       <button onClick={() => clear()}
         className="ml-auto rounded-md px-2 py-0.5 text-[10px] font-bold transition-colors"
-        style={{ background: 'rgb(61 31 59 / 0.2)', color: '#6b2f68' }}>
+        style={{ background: 'rgb(var(--ink-rgb) / 0.2)', color: 'var(--erp-primary-ink)' }}>
         Back to CEO view
       </button>
     </div>
+  )
+}
+
+// The servd logo (green circle, purple "s") — top left of the ERP, in place of
+// a text wordmark (owner, 2026-10-12).
+function ServdLogo({ size }: { size: number }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/brand/servd-logo.png" alt="servd" width={size} height={size}
+      className="shrink-0 block" style={{ width: size, height: size }} />
   )
 }

@@ -190,8 +190,8 @@ export default function BrandEditorPage() {
               onClick={() => setSelectedId(c.id)}
               className="w-full text-left rounded-xl p-3 transition-colors"
               style={{
-                background: c.id === selectedId ? 'rgb(135 197 64 / 0.08)' : 'transparent',
-                border: c.id === selectedId ? '1px solid rgb(135 197 64 / 0.35)' : '1px solid transparent',
+                background: c.id === selectedId ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'transparent',
+                border: c.id === selectedId ? '1px solid rgb(var(--erp-primary-rgb) / 0.35)' : '1px solid transparent',
               }}
             >
               <div className="flex items-center gap-3">
@@ -630,7 +630,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                     onClick={() => setDaypartFocus(on ? daypartFocus.filter((x) => x !== d) : [...daypartFocus, d])}
                     className="text-xs font-semibold px-3 py-1 rounded-full"
                     style={on
-                      ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.35)' }
+                      ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }
                       : { background: 'rgb(var(--fg-rgb) / 0.03)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                     {d.replace('_', ' ')}
                   </button>
@@ -711,7 +711,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             </Section>
           )}
           <div className="rounded-xl p-4 text-xs text-white/55"
-            style={{ background: 'rgb(61 31 59 / 0.05)', border: '1px solid rgb(61 31 59 / 0.18)' }}>
+            style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.18)' }}>
             The brand page itself (blocks above and below the signature design, pop-ups, fonts) is built in the <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}`)}`} className="text-primary-ink underline">storefront hub</Link>; footer copy and social links are on its <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink underline">footer page</Link>. Changes go live after CEO approval.
           </div>
         </div>

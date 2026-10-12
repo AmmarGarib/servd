@@ -65,7 +65,7 @@ export default function DeliveryZonesPage() {
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-black text-white/90">{z.name}</h3>
                     {!z.isActive && <span className="text-[10px] font-bold text-white/30 px-1.5 py-0.5 rounded bg-white/5">PAUSED</span>}
-                    {concept && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>{concept.name}</span>}
+                    {concept && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>{concept.name}</span>}
                   </div>
                   <div className="text-sm text-white/55 mt-1 flex flex-wrap gap-x-4 gap-y-1">
                     <span>📍 {z.radiusKmMin ?? 0}–{z.radiusKmMax ?? '∞'} km</span>

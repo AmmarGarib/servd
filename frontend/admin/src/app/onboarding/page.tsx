@@ -103,9 +103,9 @@ export default function OnboardingWizardPage() {
             return (
               <button key={s} onClick={() => setStep(s)} className="flex-1 group text-left">
                 <div className="h-1 rounded-full transition-colors"
-                  style={{ background: isActive ? 'var(--erp-primary)' : isDone ? 'rgb(135 197 64 / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)' }} />
+                  style={{ background: isActive ? 'var(--erp-primary)' : isDone ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)' }} />
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] mt-2"
-                  style={{ color: isActive ? 'var(--erp-primary-ink)' : isDone ? 'rgb(79 122 28 / 0.7)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
+                  style={{ color: isActive ? 'var(--erp-primary-ink)' : isDone ? 'rgb(var(--erp-success-rgb) / 0.8)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
                   {i + 1} · {STEP_LABEL[s]}
                 </p>
               </button>
@@ -224,8 +224,8 @@ function CompanyStep({ tenants, onDone }: { tenants: Tenant[]; onDone: () => voi
         {tenants.map((t) => (
           <div key={t.id} className="flex items-center gap-3 rounded-xl p-3"
             style={{
-              background: t.isActive ? 'rgb(135 197 64 / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
-              border: `1px solid ${t.isActive ? 'rgb(135 197 64 / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
+              background: t.isActive ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
+              border: `1px solid ${t.isActive ? 'rgb(var(--erp-primary-rgb) / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
             }}>
             <span className="text-2xl shrink-0" aria-hidden="true">🏢</span>
             <div className="flex-1 min-w-0">
@@ -494,7 +494,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
         <div className="space-y-2">
           {existingBrands.map((b) => (
             <div key={b.id} className="flex items-center gap-3 rounded-lg p-3"
-              style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
               <span className="text-primary-ink text-lg shrink-0" aria-hidden="true">✓</span>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white/90 text-sm">{b.name}</p>
@@ -730,7 +730,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               <button key={d} type="button" onClick={() => toggleDaypart(d)}
                 className="text-xs font-bold px-3 py-1.5 rounded-full"
                 style={daypartFocus.includes(d)
-                  ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                 {d.replace('_', ' ')}
               </button>
@@ -751,7 +751,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               <button key={t.value} type="button" onClick={() => setPriceTier(t.value)}
                 className="text-xs px-3 py-2.5 rounded-lg text-left"
                 style={priceTier === t.value
-                  ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.45)' }
+                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.45)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <p className="font-bold">{t.label}</p>
                 <p className="text-[10px] opacity-75 mt-0.5">{t.hint}</p>
@@ -777,7 +777,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
         </Field>
         {province !== '' && nextRates && (
           <div className="rounded-xl px-4 py-3 text-xs"
-            style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
             <strong className="text-primary-ink">{PROVINCES.find((p) => p.value === province)?.name}</strong>
             {' · '}{PROVINCES.find((p) => p.value === province)?.authority}{' authority · '}
             {isEdit && !provinceChanged && currentRates
@@ -963,7 +963,7 @@ function LocationStep({ concepts, onDone }: { concepts: Concept[]; onDone: () =>
           {concepts.map((c) => (
             <label key={c.id} className="flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors"
               style={conceptIds.includes(c.id)
-                ? { background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.35)' }
+                ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <input type="checkbox" checked={conceptIds.includes(c.id)}
                 onChange={() => setConceptIds((p) => p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id])}
@@ -1179,7 +1179,7 @@ function CopyMenu({ onCopyAll, onCopyWeekdays, onCopyWeekends }: {
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-20 rounded-lg overflow-hidden min-w-[170px]"
-            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(61 31 59 / 0.18)' }}>
+            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(var(--ink-rgb) / 0.18)' }}>
             <button type="button" onClick={() => { onCopyAll(); setOpen(false) }}
               className="w-full text-left px-3 py-2 text-xs text-white/80 hover:bg-white/[0.05]">All days</button>
             <button type="button" onClick={() => { onCopyWeekdays(); setOpen(false) }}
@@ -1328,7 +1328,7 @@ function DoneStep({ onGo }: { onGo: () => void }) {
     <Card title="You're live."
       hint="Your dashboard now has a brand, a location, hours, and a menu. Next steps live in the Configuration Hub.">
       <div className="rounded-2xl p-5"
-        style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.25)' }}>
+        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
         <p className="text-sm font-bold text-primary-ink mb-3">Recommended next steps:</p>
         <ul className="text-sm text-white/80 space-y-2">
           <li>· Add staff under <Link href="/settings" className="text-primary-ink hover:underline">Settings → Staff</Link></li>

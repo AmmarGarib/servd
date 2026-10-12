@@ -49,7 +49,7 @@ export default function WorkspacesPage() {
           const open = mine.has(w.id)
           return (
             <section key={w.id} className="rounded-2xl p-5"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: `1px solid ${open ? 'rgb(135 197 64 / 0.22)' : 'rgb(var(--fg-rgb) / 0.07)'}` }}>
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: `1px solid ${open ? 'rgb(var(--erp-primary-rgb) / 0.22)' : 'rgb(var(--fg-rgb) / 0.07)'}` }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-black text-s-text">{w.title}</h2>
@@ -62,7 +62,7 @@ export default function WorkspacesPage() {
                 </div>
                 {open ? (
                   <Link href={`/w/${w.id}`} className="text-xs font-bold px-3 py-1.5 rounded-lg"
-                    style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.25)' }}>
+                    style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
                     Open {w.title} →
                   </Link>
                 ) : (

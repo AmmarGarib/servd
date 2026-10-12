@@ -59,7 +59,7 @@ export default function TrialBalancePage() {
                 </div>
                 <div>
                   <p className="text-xs text-s-muted">Difference</p>
-                  <p className={`text-lg font-bold ${data.totals.differenceCents === 0 ? 'text-primary-ink' : 'text-s-red'}`}>
+                  <p className={`text-lg font-bold ${data.totals.differenceCents === 0 ? 'text-success' : 'text-s-red'}`}>
                     {fmtPkr(data.totals.differenceCents)}
                     {data.totals.differenceCents !== 0 && <span className="ml-2 text-xs">⚠ books unbalanced</span>}
                   </p>
@@ -72,7 +72,7 @@ export default function TrialBalancePage() {
                       <span className="text-s-text">{c.name}</span>
                       <span className="font-mono">
                         Dr {fmtPkr(c.debitCents)} · Cr {fmtPkr(c.creditCents)} ·{' '}
-                        <span className={c.differenceCents === 0 ? 'text-primary-ink' : 'text-s-red'}>
+                        <span className={c.differenceCents === 0 ? 'text-success' : 'text-s-red'}>
                           {c.differenceCents === 0 ? 'balanced' : `off by ${fmtPkr(c.differenceCents)}`}
                         </span>
                       </span>

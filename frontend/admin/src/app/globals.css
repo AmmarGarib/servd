@@ -8,7 +8,7 @@
   * { -webkit-tap-highlight-color: transparent; }
 
   /* F36 — global focus-visible ring. Keyboard users need an obvious indicator
-     on every interactive element; we use the brand teal so it reads as a
+     on every interactive element; we use the brand purple so it reads as a
      deliberate accent rather than a browser default. Mouse clicks don't trigger
      focus-visible, so this is invisible to pointer-driven flows. */
   *:focus-visible {
@@ -33,39 +33,95 @@
     background-color: var(--elevated);
   }
 
-  /* servd ERP palette (owner, 2026-10-05): bone background, green primary,
-     purple secondary. Purple doubles as the text colour. `--fg-rgb` is the
-     foreground for the area: Tailwind's `white` resolves to it, so the many
-     `text-white/40` / `bg-white/[0.03]` utilities read as ink on bone, and the
-     sidebar (bone on purple) and the kitchen screens (white on dark) simply
-     redefine it. Never hard-code a colour in a page — use these. */
+  /* servd ERP palette (owner, 2026-10-12): deep, vibrant purple on white.
+     (The storefront keeps bone / green / plum — this is the admin only.)
+     Every colour is a channel triple `R G B` plus the colour built from it, so
+     Tailwind's opacity modifiers work: tailwind.config.ts reads these
+     variables, so this block is the ONE definition of the palette.
+     `--fg-rgb` is the foreground for the area: Tailwind's `white` resolves to
+     it, so the many `text-white/40` / `bg-white/[0.03]` utilities read as ink
+     on white, and the sidebar (white on deep purple) and the kitchen screens
+     (white on dark) simply redefine it. `--ink-rgb` is the ink everywhere (it
+     does not flip). An area that overrides a colour sets BOTH its channel and
+     its colour (a custom property is resolved where it is defined).
+     Never hard-code a colour in a page — use these. */
+  /* The colours an area may redefine: the foreground and the primary family.
+     `.erp-on-surface` puts them back for a light card that pops out of the
+     sidebar (the company and brand pickers). */
+  :root, .erp-on-surface {
+    --fg-rgb:               38 16 56;     /* ink #261038 */
+    --erp-primary-rgb:      106 13 173;   /* #6a0dad deep vibrant purple — buttons, active, highlights */
+    --erp-primary-hover-rgb: 88 9 146;    /* #580992 */
+    --erp-primary-ink-rgb:  106 13 173;   /* purple as TEXT on white (9:1) */
+    --erp-on-primary-rgb:   255 255 255;  /* text on a purple fill */
+    --erp-primary:       rgb(var(--erp-primary-rgb));
+    --erp-primary-hover: rgb(var(--erp-primary-hover-rgb));
+    --erp-primary-ink:   rgb(var(--erp-primary-ink-rgb));
+    --erp-on-primary:    rgb(var(--erp-on-primary-rgb));
+  }
+  .erp-on-surface { color: var(--text); }
   :root {
-    --fg-rgb:          61 31 59;      /* ink = purple #3d1f3b */
-    --bg:              #f3e7cd;       /* bone */
-    --surface:         #faf4e6;       /* cards */
-    --elevated:        #ede0c2;       /* raised / row hover */
-    --border:          #e2d3b3;
-    --border-strong:   #cdbb95;
-    --text:            #3d1f3b;
-    --muted:           #7a6178;
-    --erp-primary:     #87c540;       /* green — buttons, active, highlights */
-    --erp-primary-hover: #76b032;
-    --erp-primary-ink: #4f7a1c;       /* green as TEXT on bone (contrast) */
-    --erp-on-primary:  #3d1f3b;       /* text on a green fill */
-    --erp-secondary:   #5a2156;       /* purple — sidebar, secondary buttons, purple fills (A, owner 2026-10-06) */
-    --erp-on-secondary:#f3e7cd;
-    --erp-danger:      #b42318;
-    --erp-warning:     #a15c00;
+    --ink-rgb:              38 16 56;
+    --bg-rgb:               249 247 252;  /* page #f9f7fc — white, faintest purple */
+    --surface-rgb:          255 255 255;  /* cards */
+    --elevated-rgb:         243 238 250;  /* raised / row hover #f3eefa */
+    --overlay-rgb:          255 255 255;  /* dropdowns, modals */
+    --border-rgb:           232 225 241;  /* #e8e1f1 */
+    --border-strong-rgb:    208 196 224;  /* #d0c4e0 */
+    --text-rgb:             38 16 56;
+    --muted-rgb:            107 91 124;   /* #6b5b7c — 6:1 on white */
+    --dim-rgb:              164 151 180;  /* placeholder / disabled #a497b4 */
+    --erp-primary-dim-rgb:  240 230 250;  /* tint #f0e6fa — badges, soft fills */
+    --erp-secondary-rgb:    59 7 100;     /* #3b0764 deepest purple — sidebar, secondary fills */
+    --erp-secondary-dim-rgb: 236 228 245; /* #ece4f5 */
+    --erp-on-secondary-rgb: 255 255 255;
+    --erp-accent-rgb:       135 197 64;   /* #87c540 servd green, from the logo — accents only, never body text on white */
+    --erp-on-accent-rgb:    59 7 100;     /* text on green is purple, never white */
+    --erp-success-rgb:      79 122 28;    /* #4f7a1c — the logo green as TEXT on white (5:1): "up", done, positive */
+
+    --bg:                rgb(var(--bg-rgb));
+    --surface:           rgb(var(--surface-rgb));
+    --elevated:          rgb(var(--elevated-rgb));
+    --border:            rgb(var(--border-rgb));
+    --border-strong:     rgb(var(--border-strong-rgb));
+    --text:              rgb(var(--text-rgb));
+    --muted:             rgb(var(--muted-rgb));
+    --dim:               rgb(var(--dim-rgb));
+    --erp-secondary:    rgb(var(--erp-secondary-rgb));
+    --erp-on-secondary:  rgb(var(--erp-on-secondary-rgb));
+    --erp-accent:        rgb(var(--erp-accent-rgb));
+    --erp-on-accent:     rgb(var(--erp-on-accent-rgb));
+    --erp-success:       rgb(var(--erp-success-rgb));
+    --erp-danger:        #b42318;
+    --erp-warning:       #a15c00;
     /* legacy names kept so older styles still resolve to the new palette */
-    --teal:            var(--erp-primary);
-    --indigo:          var(--erp-secondary);
+    --teal:              var(--erp-primary);
+    --indigo:            var(--erp-secondary);
   }
 
-  /* Bone on purple: the sidebar. */
-  .erp-on-secondary { --fg-rgb: 243 231 205; color: rgb(243 231 205); }
-  .erp-on-secondary .ops-shimmer-text { background: none; -webkit-text-fill-color: #87c540; color: #87c540; }
-  /* Kitchen screens stay dark on purpose (glare at the pass). */
-  .erp-kitchen-dark { --fg-rgb: 255 255 255; color-scheme: dark; }
+  /* White on deep purple: the sidebar. Purple accents would vanish here, so
+     inside it the primary is the servd green — the logo's green circle on
+     purple (7:1), with purple text on green fills. */
+  .erp-on-secondary {
+    --fg-rgb: 255 255 255;
+    --erp-primary-rgb: 135 197 64;   --erp-primary: rgb(135 197 64);          /* #87c540 */
+    --erp-primary-hover-rgb: 118 176 50; --erp-primary-hover: rgb(118 176 50);
+    --erp-primary-ink-rgb: 135 197 64; --erp-primary-ink: rgb(135 197 64);
+    --erp-on-primary-rgb: 59 7 100;  --erp-on-primary: rgb(59 7 100);
+    color: rgb(255 255 255);
+  }
+  .erp-on-secondary .ops-shimmer-text { background: none; -webkit-text-fill-color: var(--erp-primary); color: var(--erp-primary); }
+  /* Kitchen screens, expo and the till stay dark on purpose (glare at the
+     pass) and keep their green "go" accent — purple text is unreadable on
+     black. */
+  .erp-kitchen-dark {
+    --fg-rgb: 255 255 255;
+    --erp-primary-rgb: 135 197 64;  --erp-primary: rgb(135 197 64);           /* #87c540 */
+    --erp-primary-hover-rgb: 118 176 50; --erp-primary-hover: rgb(118 176 50);
+    --erp-primary-ink-rgb: 135 197 64; --erp-primary-ink: rgb(135 197 64);
+    --erp-on-primary-rgb: 59 7 100;  --erp-on-primary: rgb(59 7 100);
+    color-scheme: dark;
+  }
 
   html { color-scheme: light; }
 
@@ -96,7 +152,7 @@
 
   /* ── Glass card ─────────────────────────────────────────────────────── */
   .glass {
-    background: rgb(250 244 230 / 0.85);
+    background: rgb(var(--surface-rgb) / 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgb(var(--fg-rgb) / 0.06);
@@ -113,7 +169,7 @@
   }
   .s-card-hover:hover {
     border-color: var(--border-strong);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgb(135 197 64 / 0.2);
+    box-shadow: 0 4px 16px rgb(var(--ink-rgb) / 0.10), 0 0 0 1px rgb(var(--erp-primary-rgb) / 0.2);
   }
 
   /* ── S-btn ───────────────────────────────────────────────────────────── */
@@ -123,9 +179,9 @@
   }
   .s-btn-primary {
     @apply s-btn font-semibold hover:opacity-90 active:scale-[0.98];
-    background-color: #87c540;
+    background-color: var(--erp-primary);
     color: var(--erp-on-primary);
-    box-shadow: 0 0 20px rgb(135 197 64 / 0.15);
+    box-shadow: 0 0 20px rgb(var(--erp-primary-rgb) / 0.18);
   }
   .s-btn-secondary {
     @apply s-btn active:scale-[0.98];
@@ -133,7 +189,7 @@
     border: 1px solid var(--border-strong);
     color: var(--text);
   }
-  .s-btn-secondary:hover { border-color: #87c540; color: var(--erp-primary-ink); }
+  .s-btn-secondary:hover { border-color: var(--erp-primary); color: var(--erp-primary-ink); }
   .s-btn-ghost {
     @apply s-btn active:scale-[0.98];
     color: var(--muted);
@@ -154,17 +210,18 @@
     border: 1px solid var(--border);
     color: var(--text);
   }
-  .s-input::placeholder { color: #a8949f; }
-  .s-input:focus { border-color: #87c540; box-shadow: 0 0 0 1px rgb(135 197 64 / 0.2); }
+  .s-input::placeholder { color: var(--dim); }
+  .s-input:focus { border-color: var(--erp-primary); box-shadow: 0 0 0 1px rgb(var(--erp-primary-rgb) / 0.2); }
   .s-select { @apply s-input appearance-none; }
 
   /* ── S-badge ─────────────────────────────────────────────────────────── */
   .s-badge        { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold; }
-  .s-badge-teal   { @apply s-badge; background-color: #e3efcf; color: #4f7a1c; }
+  .s-badge-teal   { @apply s-badge; background-color: rgb(var(--erp-primary-dim-rgb)); color: var(--erp-primary-ink); }
+  .s-badge-green  { @apply s-badge; background-color: rgb(var(--erp-accent-rgb) / 0.18); color: var(--erp-success); }
   .s-badge-red    { @apply s-badge; background-color: #f5d6d0; color: #b42318; }
   .s-badge-amber  { @apply s-badge; background-color: #f6e2bf; color: #a15c00; }
   .s-badge-blue   { @apply s-badge; background-color: #dbe6fb; color: #1d4ed8; }
-  .s-badge-indigo { @apply s-badge; background-color: #e6dbe3; color: #3d1f3b; }
+  .s-badge-indigo { @apply s-badge; background-color: rgb(var(--erp-secondary-dim-rgb)); color: var(--erp-secondary); }
   .s-badge-muted  { @apply s-badge; background-color: var(--elevated); color: var(--muted); border: 1px solid var(--border); }
 
   /* ── S-table ─────────────────────────────────────────────────────────── */
@@ -179,12 +236,12 @@
   .metric-card        { @apply s-card p-5 space-y-1; }
   .metric-value       { @apply text-2xl font-bold tracking-tight; color: var(--text); }
   .metric-label       { @apply text-xs uppercase tracking-wider; color: var(--muted); }
-  .metric-change-up   { @apply text-xs font-medium; color: #4f7a1c; }
+  .metric-change-up   { @apply text-xs font-medium; color: var(--erp-success); }
   .metric-change-down { @apply text-xs font-medium; color: #b42318; }
 
   /* ── Stat bar ────────────────────────────────────────────────────────── */
   .stat-bar-track { @apply w-full h-1.5 rounded-full; background-color: var(--border); }
-  .stat-bar-fill  { @apply h-1.5 rounded-full transition-all duration-500; background: #87c540; }
+  .stat-bar-fill  { @apply h-1.5 rounded-full transition-all duration-500; background: var(--erp-primary); }
 
   /* ── KDS ticket card ─────────────────────────────────────────────────── */
   .ticket-card { @apply rounded-lg p-4 transition-all; border: 1px solid #333333; background-color: #242424; min-height: 120px; }
@@ -231,7 +288,7 @@
 
   .grad-border {
     position: relative;
-    background: #87c540;
+    background: var(--erp-primary);
     padding: 1px;
     border-radius: 14px;
   }
@@ -245,8 +302,8 @@
     transform: translateY(-50%);
     width: 3px; height: 60%;
     border-radius: 0 3px 3px 0;
-    background: #87c540;
-    box-shadow: 0 0 10px rgb(135 197 64 / 0.6);
+    background: var(--erp-accent);
+    box-shadow: 0 0 10px rgb(var(--erp-accent-rgb) / 0.6);
   }
 
   .ops-grain::after {
@@ -262,7 +319,7 @@
   }
 
   .ops-shimmer-text {
-    background: linear-gradient(120deg, #87c540 0%, #5a2156 30%, #87c540 60%, #5a2156 90%, #87c540 100%);
+    background: linear-gradient(120deg, var(--erp-primary) 0%, var(--erp-secondary) 30%, var(--erp-primary) 60%, var(--erp-secondary) 90%, var(--erp-primary) 100%);
     background-size: 300% auto;
     background-clip: text;
     -webkit-background-clip: text;
@@ -275,11 +332,11 @@
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
 
-  /* Brand-accent text: the readable green on bone. */
+  /* Brand-accent text: the readable purple on white. */
   .text-gradient-brand { color: var(--erp-primary-ink); }
 
   .border-gradient-brand {
-    border-image: #87c540 1;
+    border-image: linear-gradient(var(--erp-primary), var(--erp-primary)) 1;
   }
 
   .no-select { user-select: none; -webkit-user-select: none; }
@@ -326,9 +383,9 @@
   color: #111;
 }
 .input:focus {
-  outline: 2px solid #00a896;
+  outline: 2px solid var(--erp-primary);
   outline-offset: -1px;
-  border-color: #00a896;
+  border-color: var(--erp-primary);
 }
 .input::placeholder { color: rgba(0,0,0,0.4); }
 
@@ -381,7 +438,7 @@
 @media (hover: none) and (pointer: coarse) {
   /* Touch device specifically: no hover affordances, full-bleed taps */
   [data-pos-tap] {
-    -webkit-tap-highlight-color: rgba(34, 197, 94, 0.2);
+    -webkit-tap-highlight-color: rgb(var(--erp-primary-rgb) / 0.2);
     touch-action: manipulation;
   }
 }

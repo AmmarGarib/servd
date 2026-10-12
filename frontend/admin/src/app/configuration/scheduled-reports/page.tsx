@@ -75,7 +75,7 @@ export default function ScheduledReportsPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-lg font-black text-white/90">{r.name}</h3>
                     {!r.isActive && <span className="text-[10px] font-bold text-white/30 px-1.5 py-0.5 rounded bg-white/5">PAUSED</span>}
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>{typeLabel}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>{typeLabel}</span>
                     {concept && <span className="text-[10px] text-white/55">{concept.name}</span>}
                   </div>
                   <p className="text-xs text-white/55 mt-1">
@@ -153,7 +153,7 @@ function Modal({ report, concepts, onClose, onSaved }: { report: Report | null; 
                 <button key={p.value} type="button" onClick={() => setCron(p.value)}
                   className="text-[10px] font-semibold px-2 py-1 rounded-full"
                   style={cron === p.value
-                    ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                    ? { background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                     : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                   {p.label}
                 </button>

@@ -181,7 +181,7 @@ export default function UserAuditLogPage() {
             <button key={f.key} onClick={() => setGroup(f.key)} aria-pressed={group === f.key}
               className="px-3 py-1.5 rounded-full text-xs font-semibold border"
               style={group === f.key
-                ? { background: 'rgb(135 197 64 / 0.12)', borderColor: 'rgb(135 197 64 / 0.4)', color: 'var(--erp-primary-ink)' }
+                ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', borderColor: 'rgb(var(--erp-primary-rgb) / 0.4)', color: 'var(--erp-primary-ink)' }
                 : { background: 'transparent', borderColor: 'rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>
               {f.label}
             </button>

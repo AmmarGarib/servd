@@ -51,11 +51,11 @@ export default function LandingPage() {
       <section className="relative pt-32 pb-24 px-6 text-center overflow-hidden">
         {/* Ambient glows */}
         <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[600px] h-[300px] rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse, rgb(135 197 64 / 0.08) 0%, transparent 70%)' }} />
+          style={{ background: 'radial-gradient(ellipse, rgb(var(--erp-primary-rgb) / 0.08) 0%, transparent 70%)' }} />
         <div className="absolute top-40 left-1/4 w-64 h-64 rounded-full pointer-events-none"
-          style={{ background: 'rgb(61 31 59 / 0.06)', filter: 'blur(60px)' }} />
+          style={{ background: 'rgb(var(--ink-rgb) / 0.06)', filter: 'blur(60px)' }} />
         <div className="absolute top-40 right-1/4 w-48 h-48 rounded-full pointer-events-none"
-          style={{ background: 'rgb(135 197 64 / 0.05)', filter: 'blur(50px)' }} />
+          style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', filter: 'blur(50px)' }} />
 
         <div className="relative max-w-3xl mx-auto animate-fade-in">
           <div className="inline-flex items-center gap-2 rounded-full border border-s-teal/20 bg-s-teal-dim/40 px-3 py-1 mb-6">

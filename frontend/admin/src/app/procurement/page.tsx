@@ -656,7 +656,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(b.billDate)}</td>
                     <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-s-red font-semibold' : 'text-s-muted'}`}>{fmt(b.dueDate)}</td>
                     <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(b.totalCents)}</td>
-                    <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-s-red' : 'text-primary-ink'}`}>
+                    <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-s-red' : 'text-success'}`}>
                       {fmtPkrWhole(billDue(b))}
                     </td>
                     <td className="px-4 py-3"><Badge status={isOverdue ? 'overdue' : b.status} /></td>
@@ -1101,7 +1101,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           <div className="flex gap-6">
             <div>
               <p className="text-xs text-s-muted">Outstanding balance</p>
-              <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-s-red' : 'text-primary-ink'}`}>{fmtPkrWhole(statement.outstanding)}</p>
+              <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-s-red' : 'text-success'}`}>{fmtPkrWhole(statement.outstanding)}</p>
             </div>
             <div>
               <p className="text-xs text-s-muted">Opening balance (included above)</p>
@@ -1534,7 +1534,7 @@ function PriceHistoryTab() {
                     <td className="px-4 py-3 text-right text-s-text font-semibold">{fmtPkrWhole(row.newCostCents)}</td>
                     <td className="px-4 py-3 text-right hidden md:table-cell">
                       {pct ? (
-                        <span className={`text-xs font-bold ${up ? 'text-s-red' : 'text-primary-ink'}`}>
+                        <span className={`text-xs font-bold ${up ? 'text-s-red' : 'text-success'}`}>
                           {up ? '▲' : '▼'} {Math.abs(Number(pct))}%
                         </span>
                       ) : <span className="text-s-muted text-xs">—</span>}

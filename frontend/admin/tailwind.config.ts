@@ -1,37 +1,45 @@
 import type { Config } from 'tailwindcss'
 
+// A colour from a globals.css channel variable (`R G B`), opacity-aware.
+const ch = (v: string) => `rgb(var(${v}) / <alpha-value>)`
+
 const config: Config = {
   content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
   theme: {
     extend: {
       colors: {
+        // Every theme colour is a channel variable from globals.css (the ONE
+        // definition of the ERP palette), so opacity modifiers work and an
+        // area that redefines a colour (the purple sidebar, the dark kitchen
+        // screens) restyles these utilities too.
         // Tailwind's `white` is the area's foreground (globals.css --fg-rgb):
-        // ink on bone, bone in the purple sidebar, white on kitchen screens.
-        white: 'rgb(var(--fg-rgb) / <alpha-value>)',
-        primary: { DEFAULT: '#87c540', hover: '#76b032', ink: '#4f7a1c', on: '#3d1f3b' },
-        secondary: { DEFAULT: '#5a2156', on: '#f3e7cd' },
-        bone: '#f3e7cd',
+        // ink on white, white in the purple sidebar and on kitchen screens.
+        white: ch('--fg-rgb'),
+        primary: { DEFAULT: ch('--erp-primary-rgb'), hover: ch('--erp-primary-hover-rgb'), ink: ch('--erp-primary-ink-rgb'), on: ch('--erp-on-primary-rgb') },
+        secondary: { DEFAULT: ch('--erp-secondary-rgb'), on: ch('--erp-on-secondary-rgb') },
+        // The servd green from the logo — accents (dots, bars, the sidebar's
+        // active item); `text-success` is the readable green on white.
+        accent: { DEFAULT: ch('--erp-accent-rgb'), on: ch('--erp-on-accent-rgb') },
+        success: ch('--erp-success-rgb'),
+        // Light text on a coloured fill (red/amber/purple buttons).
+        bone: '#ffffff',
         // ─── 2030 Ops Design System ───────────────────────────────────────
         s: {
-          bg:           '#f3e7cd',   // deepest surface
-          // `bg-s-bg-soft` is used in 83 places (card headers, list-row hover)
-          // but was never defined here, so Tailwind emitted no rule and all 83
-          // rendered with no background — most visibly, list rows had no hover
-          // feedback at all. Set one step up from the .s-card base (#13151A),
-          // which is what "soft" meant: same value as `elevated`.
-          'bg-soft':    '#ede0c2',   // card headers, row hover
-          surface:      '#faf4e6',   // card base
-          elevated:     '#ede0c2',   // raised panels
-          overlay:      '#fffaf0',   // dropdowns, modals
-          border:       '#e2d3b3',   // default border
-          'border-strong': '#cdbb95',
-          text:         '#3d1f3b',   // primary text
-          muted:        '#7a6178',   // secondary text
-          dim:          '#a8949f',   // disabled / placeholder
-          teal:         '#87c540',   // primary action
-          'teal-dim':   '#e3efcf',   // teal bg tint
-          indigo:       '#5a2156',   // secondary accent
-          'indigo-dim': '#e6dbe3',
+          bg:           ch('--bg-rgb'),            // page
+          // `bg-s-bg-soft` (card headers, list-row hover) — same as `elevated`.
+          'bg-soft':    ch('--elevated-rgb'),
+          surface:      ch('--surface-rgb'),       // card base
+          elevated:     ch('--elevated-rgb'),      // raised panels
+          overlay:      ch('--overlay-rgb'),       // dropdowns, modals
+          border:       ch('--border-rgb'),        // default border
+          'border-strong': ch('--border-strong-rgb'),
+          text:         ch('--text-rgb'),          // primary text
+          muted:        ch('--muted-rgb'),         // secondary text
+          dim:          ch('--dim-rgb'),           // disabled / placeholder
+          teal:         ch('--erp-primary-rgb'),   // primary action (legacy name)
+          'teal-dim':   ch('--erp-primary-dim-rgb'),
+          indigo:       ch('--erp-secondary-rgb'), // secondary accent (legacy name)
+          'indigo-dim': ch('--erp-secondary-dim-rgb'),
           amber:        '#a15c00',
           'amber-dim':  '#f6e2bf',
           red:          '#b42318',
@@ -40,8 +48,8 @@ const config: Config = {
           'blue-dim':   '#dbe6fb',
           green:        '#3f7d20',
           'green-dim':  '#dcebcf',
-          purple:       '#6b2f68',
-          'purple-dim': '#eadcea',
+          purple:       '#7b2cbf',
+          'purple-dim': '#efe4fa',
           pink:         '#be185d',
         },
         // ─── KDS Dark (kitchen screens — keep unchanged) ──────────────────
@@ -61,7 +69,7 @@ const config: Config = {
         },
         // Source badge colors
         source: {
-          servd:     '#5a2156',
+          servd:     '#6a0dad',
           pos:       '#22C55E',
           cart:      '#F59E0B',
           manual:    '#8B5CF6',
@@ -72,17 +80,17 @@ const config: Config = {
         mono: ['JetBrains Mono', 'monospace'],
       },
       backgroundImage: {
-        'gradient-brand':   'linear-gradient(135deg, #87c540 0%, #87c540 100%)',
-        'gradient-surface': 'linear-gradient(180deg, #faf4e6 0%, #f3e7cd 100%)',
-        'gradient-teal':    'linear-gradient(135deg, #87c540 0%, #76b032 100%)',
+        'gradient-brand':   'linear-gradient(135deg, var(--erp-primary) 0%, var(--erp-primary) 100%)',
+        'gradient-surface': 'linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%)',
+        'gradient-teal':    'linear-gradient(135deg, var(--erp-primary) 0%, var(--erp-primary-hover) 100%)',
         'gradient-amber':   'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
       },
       boxShadow: {
-        'glow-teal':   '0 0 20px rgba(135,197,64,0.18)',
-        'glow-indigo': '0 0 20px rgba(61,31,59,0.12)',
-        'card':        '0 1px 3px rgba(61,31,59,0.08), 0 0 0 1px rgba(61,31,59,0.06)',
-        'card-hover':  '0 4px 16px rgba(61,31,59,0.12), 0 0 0 1px rgba(135,197,64,0.35)',
-        'modal':       '0 24px 48px rgba(61,31,59,0.22), 0 0 0 1px rgba(61,31,59,0.08)',
+        'glow-teal':   '0 0 20px rgb(var(--erp-primary-rgb) / 0.18)',
+        'glow-indigo': '0 0 20px rgb(var(--ink-rgb) / 0.12)',
+        'card':        '0 1px 3px rgb(var(--ink-rgb) / 0.08), 0 0 0 1px rgb(var(--ink-rgb) / 0.06)',
+        'card-hover':  '0 4px 16px rgb(var(--ink-rgb) / 0.12), 0 0 0 1px rgb(var(--erp-primary-rgb) / 0.35)',
+        'modal':       '0 24px 48px rgb(var(--ink-rgb) / 0.22), 0 0 0 1px rgb(var(--ink-rgb) / 0.08)',
       },
       animation: {
         'ticket-pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',

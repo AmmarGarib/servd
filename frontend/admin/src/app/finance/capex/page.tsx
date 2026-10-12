@@ -134,17 +134,17 @@ const SCOPES = [
 ] as const
 
 const PHASE_META: Record<Phase, { label: string; bg: string; fg: string }> = {
-  planning:  { label: 'Planning',   bg: 'rgb(61 31 59 / 0.12)',  fg: '#6b2f68' },
+  planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
   quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: '#a15c00' },
-  executing: { label: 'Executing',  bg: 'rgb(135 197 64 / 0.12)',   fg: '#4f7a1c' },
-  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: '#6b2f68' },
+  executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary-ink)' },
+  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: 'var(--erp-primary-ink)' },
   live:      { label: 'Live',       bg: 'rgba(34,197,94,0.15)',   fg: '#3f7d20' },
 }
 
 const STATUS_META: Record<Status, { label: string; fg: string }> = {
-  not_quoted:    { label: 'Not quoted',    fg: '#7a6178' },
+  not_quoted:    { label: 'Not quoted',    fg: 'var(--muted)' },
   quoted:        { label: 'Quoted',        fg: '#a15c00' },
-  ordered:       { label: 'Ordered',       fg: '#6b2f68' },
+  ordered:       { label: 'Ordered',       fg: 'var(--erp-primary-ink)' },
   partial_paid:  { label: 'Paid',          fg: '#3f7d20' },
   delivered:     { label: 'Delivered',     fg: '#3f7d20' },
   installed:     { label: 'Installed',     fg: '#7DD3FC' },
@@ -213,9 +213,9 @@ export default function CapexTrackerPage() {
               ? { background: 'rgba(168,85,247,0.10)', border: '1px solid rgba(168,85,247,0.45)' }
               : { background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.20)' }}>
             <div className="flex items-start justify-between gap-2">
-              <p className="font-bold text-sm" style={{ color: '#6b2f68' }}>💼 Workforce</p>
+              <p className="font-bold text-sm" style={{ color: 'var(--erp-primary-ink)' }}>💼 Workforce</p>
               <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
-                style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
+                style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
                 Standing
               </span>
             </div>
@@ -240,7 +240,7 @@ export default function CapexTrackerPage() {
               <button key={p.id} onClick={() => setSelectedId(p.id)}
                 className="w-full text-left rounded-xl p-3 transition-colors"
                 style={selectedId === p.id
-                  ? { background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                  ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-bold text-sm text-white/90 truncate">{p.name}</p>
@@ -339,7 +339,7 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
               </span>
               {project.isJointVenture && (
                 <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
+                  style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
                   Joint venture
                 </span>
               )}
@@ -355,7 +355,7 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
                 <span className="text-[10px] uppercase tracking-wider text-white/45">Partner split:</span>
                 {project.jvPartners.map((p, i) => (
                   <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+                    style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
                     {p.label} {p.pct}% · {PKR(Math.round(project.rollups.totalAskCents * p.pct / 100))}
                   </span>
                 ))}
@@ -423,8 +423,8 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
     <div className="space-y-5">
       {/* Roll-up cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Stat label="Budget envelope" value={PKR(project.budgetEnvelopeCents)} accent="#6b2f68" />
-        <Stat label="Budgeted lines"  value={PKR(project.rollups.budgetedCents)} accent="#7a6178" />
+        <Stat label="Budget envelope" value={PKR(project.budgetEnvelopeCents)} accent="var(--erp-primary-ink)" />
+        <Stat label="Budgeted lines"  value={PKR(project.rollups.budgetedCents)} accent="var(--muted)" />
         <Stat label="Committed"        value={PKR(project.rollups.committedCents)} accent={overBudget ? '#b42318' : 'var(--erp-primary-ink)'} />
         <Stat label="Paid"             value={PKR(project.rollups.paidCents)} accent="#3f7d20" />
         <Stat
@@ -449,8 +449,8 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <Stat label="On the books as assets"     value={PKR(project.books.capitalisedCents)} accent="#3f7d20" />
           <Stat label="Advanced, not capitalised"  value={PKR(project.books.notYetCapitalisedCents)} accent="#a15c00" />
-          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents)} accent="#6b2f68" />
-          <Stat label="Fees expensed"              value={PKR(project.books.expensedCents)} accent="#7a6178" />
+          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents)} accent="var(--erp-primary-ink)" />
+          <Stat label="Fees expensed"              value={PKR(project.books.expensedCents)} accent="var(--muted)" />
         </div>
       )}
 
@@ -526,7 +526,7 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <Stat label="Monthly run-rate" value={PKR(monthlyTotal)} accent="#a15c00" />
         <Stat label="Annual run-rate"  value={PKR(annualTotal)}  accent="#a15c00" />
-        <Stat label="Categories"        value={String(categories.length)} accent="#6b2f68" />
+        <Stat label="Categories"        value={String(categories.length)} accent="var(--erp-primary-ink)" />
         <Stat label="Active lines"      value={String(categories.reduce((s, c) => s + c.lineCount, 0))} accent="#3f7d20" />
       </div>
 
@@ -935,7 +935,7 @@ function LineRow({ line, onEdit }: { line: Line; onEdit: () => void }) {
         </div>
 
         <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-          style={{ color: status.fg, background: `${status.fg}1a`, border: `1px solid ${status.fg}40` }}>
+          style={{ color: status.fg, background: `color-mix(in srgb, ${status.fg} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${status.fg} 25%, transparent)` }}>
           {status.label}
         </span>
 
@@ -1028,7 +1028,7 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
             </span>
             <button type="button"
               onClick={() => setJvPartners([...jvPartners, { label: '', pct: 0 }])}
-              className="text-[10px] font-bold text-[#6b2f68] hover:underline">
+              className="text-[10px] font-bold text-primary-ink hover:underline">
               + Add partner
             </button>
           </div>
@@ -1314,7 +1314,7 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
       {line.quotes.map((q) => (
         <div key={q.id} className="rounded-lg p-3 grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 items-center"
           style={q.isWinner
-            ? { background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.4)' }
+            ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
             : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <div>
             <p className="text-sm font-bold text-white/85">{q.vendor}</p>

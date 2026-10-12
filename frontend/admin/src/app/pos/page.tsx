@@ -135,7 +135,7 @@ export default function PosPage() {
         <button
           onClick={() => setCartOpen(true)}
           className="fixed bottom-5 right-5 z-40 lg:hidden flex items-center gap-2 rounded-2xl px-5 py-3 font-bold text-sm text-black shadow-lg active:scale-95 transition-transform"
-          style={{ background: 'var(--erp-primary)', boxShadow: '0 4px 20px rgb(135 197 64 / 0.4)' }}>
+          style={{ background: 'var(--erp-primary)', boxShadow: '0 4px 20px rgb(var(--erp-primary-rgb) / 0.4)' }}>
           <span>🛒</span>
           <span>{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
         </button>

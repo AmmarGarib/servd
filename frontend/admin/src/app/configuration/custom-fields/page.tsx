@@ -69,7 +69,7 @@ export default function CustomFieldsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-white/85">{f.label}</p>
                         <code className="text-[10px] text-white/40 font-mono">{f.key}</code>
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{f.type}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{f.type}</span>
                         {f.isRequired && <span className="text-[10px] text-red-700">required</span>}
                       </div>
                       {f.helpText && <p className="text-xs text-white/40 mt-0.5">{f.helpText}</p>}

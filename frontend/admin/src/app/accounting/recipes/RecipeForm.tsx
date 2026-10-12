@@ -52,8 +52,8 @@ export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 // Shared status badge styling — reused by the recipe list + approvals inbox.
 export const recipeStatusMeta: Record<RecipeStatus, { label: string; color: string; bg: string }> = {
   iteration:        { label: 'Testing',          color: '#a15c00', bg: 'rgba(245,158,11,0.12)' },
-  pending_approval: { label: 'Pending approval',  color: '#6b2f68', bg: 'rgb(61 31 59 / 0.15)' },
-  production:       { label: 'Live',              color: '#3f7d20', bg: 'rgb(135 197 64 / 0.12)' },
+  pending_approval: { label: 'Pending approval',  color: 'var(--erp-primary-ink)', bg: 'rgb(var(--ink-rgb) / 0.15)' },
+  production:       { label: 'Live',              color: '#3f7d20', bg: 'rgb(var(--erp-primary-rgb) / 0.12)' },
 }
 
 export interface RecipeFormInitial {
@@ -464,7 +464,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                   onClick={() => setKind(t.v)}
                   className="text-left rounded-xl px-3 py-2 border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{
-                    background:  kind === t.v ? 'rgb(135 197 64 / 0.10)' : 'rgb(var(--fg-rgb) / 0.02)',
+                    background:  kind === t.v ? 'rgb(var(--erp-primary-rgb) / 0.10)' : 'rgb(var(--fg-rgb) / 0.02)',
                     borderColor: kind === t.v ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <div className="text-sm font-bold">{t.label}</div>
@@ -839,9 +839,9 @@ function CostPanel({ computed, kind, yieldGrams }: {
     const cpg = yieldGrams && yieldGrams > 0 ? v.totalRecipe / yieldGrams : null
     return (
       <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
-        <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(61 31 59 / 0.10)' }}>
+        <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(var(--ink-rgb) / 0.10)' }}>
           <p className="text-[10px] uppercase tracking-wider text-s-muted">Sub recipe</p>
-          <p className="text-base font-black mt-0.5" style={{ color: '#6b2f68' }}>Costed per gram — not sold directly</p>
+          <p className="text-base font-black mt-0.5" style={{ color: 'var(--erp-primary-ink)' }}>Costed per gram — not sold directly</p>
         </header>
         <div className="p-4 space-y-3">
           <div>
@@ -862,7 +862,7 @@ function CostPanel({ computed, kind, yieldGrams }: {
 
   return (
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
-      <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(135 197 64 / 0.08)' }}>
+      <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)' }}>
         <p className="text-[10px] uppercase tracking-wider text-s-muted">Recipe cost</p>
         <p className="text-base font-black mt-0.5" style={{ color: '#3f7d20' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
       </header>

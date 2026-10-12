@@ -119,7 +119,7 @@ function DeltaBadge({ delta, invert = false }: { delta: DeltaResult | null; inve
   }
   // invert = for metrics where "more" is bad (e.g. avg cook time)
   const positive = invert ? delta.dir === 'down' : delta.dir === 'up'
-  const color = positive ? 'text-primary-ink' : 'text-s-red'
+  const color = positive ? 'text-success' : 'text-s-red'
   const arrow = delta.dir === 'up' ? '↑' : '↓'
   return (
     <span className={`text-xs font-semibold ${color}`}>
@@ -132,7 +132,7 @@ function RankDelta({ curr, prev }: { curr: number; prev: number | null }) {
   if (prev === null) return <span className="text-xs font-bold text-primary-ink">NEW</span>
   const diff = prev - curr  // lower rank number = better; if prev > curr, rank improved
   if (diff === 0) return <span className="text-xs text-s-muted">=</span>
-  const color = diff > 0 ? 'text-primary-ink' : 'text-s-red'
+  const color = diff > 0 ? 'text-success' : 'text-s-red'
   const arrow = diff > 0 ? '↑' : '↓'
   return <span className={`text-xs font-bold ${color}`}>{arrow}{Math.abs(diff)}</span>
 }

@@ -79,7 +79,7 @@ export default function StaffLoginPage() {
   const ctaStyle = {
     background: 'var(--erp-primary)',
     color: 'var(--erp-on-primary)',
-    boxShadow: '0 4px 20px rgb(135 197 64 / 0.25)',
+    boxShadow: '0 4px 20px rgb(var(--erp-primary-rgb) / 0.25)',
   }
 
   async function submitPassword(e: React.FormEvent) {
@@ -251,8 +251,8 @@ export default function StaffLoginPage() {
       {/* Brand bar */}
       <div className="flex items-center justify-between px-6 pt-5">
         <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg flex items-center justify-center font-black text-white text-xs"
-            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 14px rgb(135 197 64 / 0.3)' }}>
+          <div className="h-7 w-7 rounded-lg flex items-center justify-center font-black text-primary-on text-xs"
+            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 14px rgb(var(--erp-primary-rgb) / 0.3)' }}>
             S
           </div>
           <span className="text-sm font-black tracking-tight text-s-text">servd</span>

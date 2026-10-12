@@ -219,7 +219,7 @@ export default function ProjectionsPage() {
             label="Year-1 combined P&L"
             value={fmtPkrWhole(summary.year1CombinedProfitCents)}
             hint={summary.year1CombinedProfitCents >= 0 ? 'profit (pre-tax)' : 'loss'}
-            color={summary.year1CombinedProfitCents >= 0 ? 'var(--erp-primary-ink)' : '#b42318'}
+            color={summary.year1CombinedProfitCents >= 0 ? 'var(--erp-success)' : '#b42318'}
           />
           <SummaryCard
             label="Capital ask"
@@ -537,7 +537,7 @@ function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative,
       <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
       {brand.months.map((m) => {
         const v = pick(m)
-        const color = highlightSign ? (v >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : negative ? '#7a6178' : 'inherit'
+        const color = highlightSign ? (v >= 0 ? 'var(--erp-success)' : '#b42318') : negative ? 'var(--muted)' : 'inherit'
         return (
           <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
             {v === 0 ? <span className="text-s-dim">—</span> : display(v)}
@@ -545,7 +545,7 @@ function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative,
         )
       })}
       <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
-          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : 'inherit' }}>
+          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-success)' : '#b42318') : 'inherit' }}>
         {cumulative ? display(brand.months[brand.months.length - 1]!.cumulativeCents) : display(total)}
       </td>
     </tr>
@@ -567,7 +567,7 @@ function CombinedRow({ label, months, pick, negative, bold, cumulative, highligh
       <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
       {months.map((m) => {
         const v = pick(m)
-        const color = highlightSign ? (v >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : negative ? '#7a6178' : 'inherit'
+        const color = highlightSign ? (v >= 0 ? 'var(--erp-success)' : '#b42318') : negative ? 'var(--muted)' : 'inherit'
         return (
           <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
             {v === 0 ? <span className="text-s-dim">—</span> : fmtPkr(v)}
@@ -575,7 +575,7 @@ function CombinedRow({ label, months, pick, negative, bold, cumulative, highligh
         )
       })}
       <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
-          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-primary-ink)' : '#b42318') : 'inherit' }}>
+          style={{ color: highlightSign ? (total >= 0 ? 'var(--erp-success)' : '#b42318') : 'inherit' }}>
         {cumulative ? fmtPkr(months[months.length - 1]!.cumulativeCents) : fmtPkr(total)}
       </td>
     </tr>

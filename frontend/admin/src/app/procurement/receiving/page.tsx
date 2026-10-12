@@ -194,9 +194,9 @@ export default function ReceivingPage() {
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(135 197 64 / 0.1)',
+              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-primary-rgb) / 0.1)',
               color: feedback.tone === 'warn' ? '#a15c00' : 'var(--erp-primary-ink)',
-              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgb(135 197 64 / 0.3)'}`,
+              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-primary-rgb) / 0.3)'}`,
             }}>
             {feedback.text}
           </div>
@@ -246,7 +246,7 @@ export default function ReceivingPage() {
         {canReceive && (<>
         <Section title="Step 1 — Match to a PO (or take a delivery without one)">
           {selectedPo ? (
-            <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(135 197 64 / 0.08)', border: '1px solid rgb(135 197 64 / 0.35)' }}>
+            <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
               <div>
                 <p className="text-sm font-bold text-white/90">{poLabel(selectedPo)} · {selectedPo.supplier.name}</p>
                 <p className="text-xs text-white/45">{selectedPo.status === 'partial' ? 'Part-received — showing what is still outstanding' : 'Sent'}</p>

@@ -387,7 +387,7 @@ export default function RidersPage() {
           { label: 'Available', value: available.length, color: 'text-primary-ink' },
           { label: 'On Delivery', value: busy.length, color: 'text-s-amber' },
           { label: 'Offline', value: offline.length, color: 'text-s-muted' },
-          { label: 'Deliveries awaiting a rider', value: unassigned.length, color: unassigned.length > 0 ? 'text-s-red' : 'text-primary-ink' },
+          { label: 'Deliveries awaiting a rider', value: unassigned.length, color: unassigned.length > 0 ? 'text-s-red' : 'text-success' },
         ].map((s) => (
           <div key={s.label} className="rounded-xl border border-s-border bg-s-surface p-4">
             <p className="text-xs text-s-muted">{s.label}</p>

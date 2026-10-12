@@ -129,7 +129,7 @@ export default function LocationsPage() {
                     {loc.concepts.map((cl) => (
                       <span key={cl.conceptId}
                         className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
                         {cl.concept.name}{cl.isPrimary ? ' ★' : ''}
                       </span>
                     ))}
@@ -319,8 +319,8 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
                 <label key={c.id}
                   className="flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors"
                   style={{
-                    background: conceptIds.includes(c.id) ? 'rgb(135 197 64 / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
-                    border: conceptIds.includes(c.id) ? '1px solid rgb(135 197 64 / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.05)',
+                    background: conceptIds.includes(c.id) ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
+                    border: conceptIds.includes(c.id) ? '1px solid rgb(var(--erp-primary-rgb) / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.05)',
                   }}>
                   <input type="checkbox" checked={conceptIds.includes(c.id)} onChange={() => toggleConcept(c.id)} className="accent-primary" />
                   <span className="text-xs font-bold text-white/85">

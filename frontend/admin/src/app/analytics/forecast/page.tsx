@@ -81,7 +81,7 @@ export default function ForecastPage() {
 
       {conceptId && isLoading && (
         <div className="flex items-center justify-center h-48">
-          <div className="animate-spin h-6 w-6 rounded-full border-2" style={{ borderColor: 'rgb(135 197 64 / 0.3)', borderTopColor: 'var(--erp-primary)' }} />
+          <div className="animate-spin h-6 w-6 rounded-full border-2" style={{ borderColor: 'rgb(var(--erp-primary-rgb) / 0.3)', borderTopColor: 'var(--erp-primary)' }} />
         </div>
       )}
 

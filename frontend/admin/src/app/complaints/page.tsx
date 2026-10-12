@@ -440,7 +440,7 @@ export default function ComplaintsPage() {
       {/* Bulk action floating bar */}
       {selectedIds.size >= 2 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl"
-          style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', boxShadow: '0 8px 32px rgb(61 31 59 / 0.18)' }}>
+          style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', boxShadow: '0 8px 32px rgb(var(--ink-rgb) / 0.18)' }}>
           <span className="text-sm font-semibold text-s-text whitespace-nowrap">
             {selectedIds.size} selected
           </span>

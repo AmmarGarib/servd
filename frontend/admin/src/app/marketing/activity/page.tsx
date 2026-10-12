@@ -30,15 +30,15 @@ interface ActivityRow {
 const ACTION_META: Record<string, { emoji: string; label: string; color: string }> = {
   'campaign.create':         { emoji: '✉️', label: 'Drafted campaign',       color: 'var(--erp-primary-ink)' },
   'campaign.send':           { emoji: '📨', label: 'Sent campaign',          color: '#3f7d20' },
-  'campaign.update':         { emoji: '✏️', label: 'Edited campaign',        color: '#7a6178' },
+  'campaign.update':         { emoji: '✏️', label: 'Edited campaign',        color: 'var(--muted)' },
   'promo.create':            { emoji: '🎟', label: 'Created promo',          color: 'var(--erp-secondary)' },
-  'promo.update':            { emoji: '✏️', label: 'Updated promo',          color: '#7a6178' },
+  'promo.update':            { emoji: '✏️', label: 'Updated promo',          color: 'var(--muted)' },
   'promo.deactivate':        { emoji: '🛑', label: 'Deactivated promo',      color: '#b42318' },
   'discount.create':         { emoji: '🏷', label: 'Added discount',         color: '#a15c00' },
-  'discount.update':         { emoji: '✏️', label: 'Updated discount',       color: '#7a6178' },
+  'discount.update':         { emoji: '✏️', label: 'Updated discount',       color: 'var(--muted)' },
   'concept.update':          { emoji: '🏢', label: 'Edited brand',           color: '#1d4ed8' },
   'storefront.layout.update': { emoji: '🎨', label: 'Updated storefront',    color: '#be185d' },
-  'media.upload':            { emoji: '🖼', label: 'Uploaded media',         color: '#6b2f68' },
+  'media.upload':            { emoji: '🖼', label: 'Uploaded media',         color: 'var(--erp-primary-ink)' },
   'content_event.create':    { emoji: '📅', label: 'Scheduled post',         color: '#F472B6' },
   'content_event.publish':   { emoji: '🚀', label: 'Published post',         color: '#3f7d20' },
 }
@@ -110,8 +110,8 @@ export default function MarketingActivityPage() {
                 <div key={u.id}
                   className="rounded-2xl p-4 cursor-pointer transition-colors"
                   style={{
-                    background: userId === u.id ? 'rgb(135 197 64 / 0.06)' : 'rgb(var(--fg-rgb) / 0.025)',
-                    border: userId === u.id ? '1px solid rgb(135 197 64 / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
+                    background: userId === u.id ? 'rgb(var(--erp-primary-rgb) / 0.06)' : 'rgb(var(--fg-rgb) / 0.025)',
+                    border: userId === u.id ? '1px solid rgb(var(--erp-primary-rgb) / 0.35)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
                   }}
                   onClick={() => setUserId(userId === u.id ? '' : u.id)}>
                   <div className="flex items-start justify-between gap-2">
@@ -152,7 +152,7 @@ export default function MarketingActivityPage() {
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="divide-y divide-white/[0.04]">
               {activity.map((row) => {
-                const meta = ACTION_META[row.action] ?? { emoji: '•', label: row.action, color: '#7a6178' }
+                const meta = ACTION_META[row.action] ?? { emoji: '•', label: row.action, color: 'var(--muted)' }
                 return (
                   <details key={row.id} className="group">
                     <summary className="cursor-pointer list-none px-4 py-3 flex items-center gap-3 hover:bg-white/[0.015]">
@@ -189,7 +189,7 @@ export default function MarketingActivityPage() {
                           <div>
                             <p className="text-[10px] font-bold text-white/30 uppercase mb-1">After</p>
                             <pre className="rounded-lg p-2 text-[10px] overflow-x-auto"
-                              style={{ background: 'rgb(135 197 64 / 0.05)', color: 'rgb(var(--fg-rgb) / 0.6)', border: '1px solid rgb(135 197 64 / 0.15)' }}>
+                              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.6)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.15)' }}>
                               {row.after ? JSON.stringify(row.after, null, 2) : '—'}
                             </pre>
                           </div>

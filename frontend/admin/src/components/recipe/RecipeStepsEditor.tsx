@@ -131,7 +131,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
             <button key={p.id} onClick={() => setActivePhase(p.id)}
               className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-colors"
               style={active
-                ? { background: 'rgb(135 197 64 / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.3)' }
+                ? { background: 'rgb(var(--erp-primary-rgb) / 0.12)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)' }
                 : { background: 'transparent', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid transparent' }}>
               <span className="mr-1">{p.emoji}</span>
               {p.label}
@@ -166,7 +166,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
             <div key={s.id} className="rounded-lg p-3 flex items-baseline gap-3 group"
               style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <span className="text-[10px] font-black tabular-nums shrink-0 rounded px-1.5 py-0.5"
-                style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{s.ordinal}</span>
+                style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{s.ordinal}</span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-white/90 leading-snug">{s.instruction}</p>
                 <div className="flex items-center gap-2 mt-1 flex-wrap text-[10px]">
@@ -202,7 +202,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
         {!drafting && (
           <button onClick={startNew}
             className="w-full rounded-lg py-2.5 text-xs font-bold transition-colors mt-1"
-            style={{ background: 'rgb(135 197 64 / 0.06)', color: 'var(--erp-primary-ink)', border: '1px dashed rgb(135 197 64 / 0.25)' }}>
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', color: 'var(--erp-primary-ink)', border: '1px dashed rgb(var(--erp-primary-rgb) / 0.25)' }}>
             + Add step
           </button>
         )}
@@ -234,7 +234,7 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
   }
   return (
     <div className="rounded-lg p-3 space-y-2"
-      style={{ background: 'rgb(135 197 64 / 0.04)', border: '1px solid rgb(135 197 64 / 0.2)' }}>
+      style={{ background: 'rgb(var(--erp-primary-rgb) / 0.04)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.2)' }}>
       <div className="space-y-1">
         <label className="block text-[9px] uppercase tracking-wider font-black text-white/45">Step instruction (English)</label>
         <textarea value={draft.instruction ?? ''} onChange={(e) => setDraft({ ...draft, instruction: e.target.value })}

@@ -37,7 +37,7 @@ const TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: string;
   social_post:         { label: 'Social Post',  color: '#3b82f6', bg: 'bg-blue-500',   emoji: '📱' },
   menu_change:         { label: 'Menu Change',  color: '#f97316', bg: 'bg-orange-500', emoji: '🍽' },
   seasonal_ingredient: { label: 'Seasonal',     color: '#3f7d20', bg: 'bg-green-500',  emoji: '🌿' },
-  deal:                { label: 'Deal',          color: '#6b2f68', bg: 'bg-purple-500', emoji: '🎁' },
+  deal:                { label: 'Deal',          color: 'var(--erp-primary-ink)', bg: 'bg-purple-500', emoji: '🎁' },
   shoot:               { label: 'Shoot',         color: '#be185d', bg: 'bg-pink-500',   emoji: '📸' },
   event_promo:         { label: 'Event/Promo',   color: '#b42318', bg: 'bg-red-500',    emoji: '🎉' },
   reminder:            { label: 'Reminder',      color: '#eab308', bg: 'bg-yellow-500', emoji: '🔔' },

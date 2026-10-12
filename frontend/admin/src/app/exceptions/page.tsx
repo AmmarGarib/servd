@@ -30,7 +30,7 @@ interface ExceptionFlag {
 }
 
 const SEV_STYLE: Record<Severity, { bg: string; fg: string; label: string }> = {
-  low:      { bg: 'rgb(61 31 59 / 0.1)',  fg: '#6b2f68', label: 'Low' },
+  low:      { bg: 'rgb(var(--ink-rgb) / 0.1)',  fg: 'var(--erp-primary-ink)', label: 'Low' },
   medium:   { bg: 'rgba(245,158,11,0.12)', fg: '#a15c00', label: 'Medium' },
   high:     { bg: 'rgba(239,68,68,0.12)',  fg: '#b42318', label: 'High' },
   critical: { bg: 'rgba(220,38,38,0.18)',  fg: '#FECACA', label: 'CRITICAL' },
@@ -127,7 +127,7 @@ export default function ExceptionInboxPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 max-w-3xl">
             <Stat value={stats.open}         label="Open" accent="#b42318" />
             <Stat value={stats.acknowledged} label="Acknowledged" accent="#a15c00" />
-            <Stat value={stats.last24h}      label="Last 24h" accent="#6b2f68" />
+            <Stat value={stats.last24h}      label="Last 24h" accent="var(--erp-primary-ink)" />
             <Stat value={stats.byKind.length} label="Distinct kinds" accent="var(--erp-primary-ink)" />
           </div>
         )}
@@ -138,7 +138,7 @@ export default function ExceptionInboxPage() {
             <button key={s} onClick={() => setStatusFilter(s)}
               className="text-xs font-bold px-3 py-1.5 rounded-full"
               style={statusFilter === s
-                ? { background: 'rgb(135 197 64 / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(135 197 64 / 0.4)' }
+                ? { background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
               {s}
             </button>
@@ -149,7 +149,7 @@ export default function ExceptionInboxPage() {
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-2">
         {flags.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
-            style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
             <p className="text-3xl mb-2">✓</p>
             <p className="font-bold text-white/85">No {statusFilter} exceptions</p>
             <p className="text-sm text-white/45 mt-1">
@@ -183,7 +183,7 @@ export default function ExceptionInboxPage() {
                   </p>
                   {f.resolution && (
                     <div className="mt-3 rounded-lg p-3 text-xs text-white/65"
-                      style={{ background: 'rgb(135 197 64 / 0.06)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+                      style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
                       <strong className="text-primary-ink">Resolved:</strong> {f.resolution}
                     </div>
                   )}

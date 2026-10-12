@@ -28,7 +28,7 @@ interface Floor {
 const STATUS_COLORS: Record<string, { fill: string; stroke: string; text: string; label: string }> = {
   available:      { fill: 'rgba(34,197,94,0.16)',   stroke: 'rgba(22,163,74,0.55)',  text: 'var(--text)', label: 'Available' },
   reserved:       { fill: 'rgba(59,130,246,0.16)',  stroke: 'rgba(59,130,246,0.55)', text: 'var(--text)', label: 'Reserved'  },
-  seated:         { fill: 'rgb(61 31 59 / 0.18)',  stroke: 'rgb(61 31 59 / 0.6)',  text: 'var(--text)', label: 'Seated'    },
+  seated:         { fill: 'rgb(var(--ink-rgb) / 0.18)',  stroke: 'rgb(var(--ink-rgb) / 0.6)',  text: 'var(--text)', label: 'Seated'    },
   ordered:        { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: 'var(--text)', label: 'Ordered'   },
   eating:         { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: 'var(--text)', label: 'Eating'    },
   check:          { fill: 'rgba(217,119,6,0.22)',   stroke: 'rgba(217,119,6,0.8)',   text: 'var(--text)', label: 'Check'     },

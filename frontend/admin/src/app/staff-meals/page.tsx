@@ -67,7 +67,7 @@ export default function StaffMealsPage() {
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-bold text-white/85">{m.staffName ?? '—'}</p>
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{m.reason.replace('_', ' ')}</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{m.reason.replace('_', ' ')}</span>
                     </div>
                     <p className="text-xs text-white/55 mt-1">{m.description}</p>
                     <p className="text-[11px] text-white/35 mt-1">{new Date(m.consumedAt).toLocaleString()}</p>

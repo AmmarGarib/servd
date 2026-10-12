@@ -175,7 +175,7 @@ export default function JournalEntryPage() {
         )}
 
         {result && (
-          <div role={result.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${result.ok ? 'text-primary-ink' : 'text-s-red'}`}>
+          <div role={result.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${result.ok ? 'text-success' : 'text-s-red'}`}>
             {result.msg}
             {result.entryId && <> <Link href={`/accounting/ledger?id=${result.entryId}`} className="underline">Open in the ledger</Link></>}
           </div>
@@ -277,7 +277,7 @@ export default function JournalEntryPage() {
                   </tr>
                   <tr>
                     <td colSpan={3} className="py-1 pr-2 text-xs font-normal text-s-muted">Difference</td>
-                    <td colSpan={2} className={`py-1 pr-2 text-right font-mono text-xs ${difference === 0 ? 'text-primary-ink' : 'text-s-red'}`}>
+                    <td colSpan={2} className={`py-1 pr-2 text-right font-mono text-xs ${difference === 0 ? 'text-success' : 'text-s-red'}`}>
                       {difference === 0 ? (debitTotal > 0 ? 'Balanced' : '—') : fmtPkr(Math.abs(difference))}
                     </td>
                     <td />

@@ -27,7 +27,7 @@ interface FoodCostData {
 }
 
 const STATUS_STYLES = {
-  good:     { badge: 's-badge-teal',  text: 'text-primary-ink',  bar: 'bg-s-teal',  label: 'On Target ✓' },
+  good:     { badge: 's-badge-green', text: 'text-success',      bar: 'bg-accent',  label: 'On Target ✓' },
   warning:  { badge: 's-badge-amber', text: 'text-s-amber', bar: 'bg-s-amber', label: 'Watch ⚠' },
   critical: { badge: 's-badge-red',   text: 'text-s-red',   bar: 'bg-s-red',   label: 'Over Budget ✕' },
 }
@@ -146,7 +146,7 @@ export default function FoodCostPage() {
               </div>
               <div className="s-card p-4">
                 <p className="metric-label">Variance</p>
-                <p className={`text-3xl font-black tabular-nums ${fc.variance > 0 ? 'text-s-red' : 'text-primary-ink'}`}>
+                <p className={`text-3xl font-black tabular-nums ${fc.variance > 0 ? 'text-s-red' : 'text-success'}`}>
                   {fc.variance > 0 ? '+' : ''}{fc.variance}%
                 </p>
                 <span className={`s-badge ${styles?.badge} text-[10px] mt-1 inline-block`}>{styles?.label}</span>

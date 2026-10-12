@@ -195,7 +195,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
         <div className="flex flex-wrap gap-1.5">
           {data.segments.slice(0, 6).map((s) => (
             <span key={s} className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{
-              background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68',
+              background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)',
             }}>{s}</span>
           ))}
         </div>

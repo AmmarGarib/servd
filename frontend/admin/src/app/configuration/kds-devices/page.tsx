@@ -50,8 +50,8 @@ export default function KdsDevicesPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-lg font-black text-white/90">{d.name}</h3>
                     {!d.isActive && <span className="text-[10px] font-bold text-white/30 px-1.5 py-0.5 rounded bg-white/5">PAUSED</span>}
-                    {station && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(135 197 64 / 0.1)', color: 'var(--erp-primary-ink)' }}>{station.name}</span>}
-                    {concept && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>{concept.name}</span>}
+                    {station && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>{station.name}</span>}
+                    {concept && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>{concept.name}</span>}
                   </div>
                   <p className="text-xs text-white/40 mt-1">
                     {d.lastSeenAt ? `Last seen ${new Date(d.lastSeenAt).toLocaleString()}` : 'Never connected'}

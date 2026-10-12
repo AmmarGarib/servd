@@ -80,21 +80,21 @@ const SCOPE_META: Record<string, { emoji: string; label: string; color: string }
   BOH:        { emoji: '🍳', label: 'Back of House',  color: '#a15c00' },
   FOH:        { emoji: '🪑', label: 'Front of House', color: 'var(--erp-secondary)' },
   AG:         { emoji: '✨', label: 'AG / Finishing', color: '#be185d' },
-  Equipment:  { emoji: '🛠', label: 'Small wares',    color: '#6b2f68' },
+  Equipment:  { emoji: '🛠', label: 'Small wares',    color: 'var(--erp-primary-ink)' },
   MEP:        { emoji: '⚡', label: 'MEP',            color: '#a15c00' },
-  Civil:      { emoji: '🏗', label: 'Civil',          color: '#7a6178' },
+  Civil:      { emoji: '🏗', label: 'Civil',          color: 'var(--muted)' },
   Tech:       { emoji: '💻', label: 'Tech',           color: '#1d4ed8' },
   Branding:   { emoji: '🎨', label: 'Branding',       color: '#b42318' },
   Permits:    { emoji: '📑', label: 'Permits',        color: '#3f7d20' },
   SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: '#3f7d20' },
-  Other:      { emoji: '📦', label: 'Other',          color: '#7a6178' },
+  Other:      { emoji: '📦', label: 'Other',          color: 'var(--muted)' },
 }
 
 const PHASE_META: Record<Project['phase'], { label: string; bg: string; fg: string }> = {
-  planning:  { label: 'Planning',   bg: 'rgb(61 31 59 / 0.12)',  fg: '#6b2f68' },
+  planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
   quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: '#a15c00' },
-  executing: { label: 'Executing',  bg: 'rgb(135 197 64 / 0.12)',   fg: 'var(--erp-primary)' },
-  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: '#6b2f68' },
+  executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary)' },
+  snagging:  { label: 'Snagging',   bg: 'rgba(168,85,247,0.12)',  fg: 'var(--erp-primary-ink)' },
   live:      { label: 'Live',       bg: 'rgba(34,197,94,0.15)',   fg: '#3f7d20' },
 }
 
@@ -249,7 +249,7 @@ export default function InvestmentDashboardPage() {
                 hint={`${projects.length} project${projects.length === 1 ? '' : 's'}`}
                 value={PKR_LAKHS(agg.totalAsk)}
                 subValue={PKR(agg.totalAsk)}
-                bg="rgb(61 31 59 / 0.05)" border="rgb(61 31 59 / 0.22)" color="#6b2f68"
+                bg="rgb(var(--ink-rgb) / 0.05)" border="rgb(var(--ink-rgb) / 0.22)" color="var(--erp-primary-ink)"
               />
               <KpiTile
                 label="Paid to date"
@@ -263,7 +263,7 @@ export default function InvestmentDashboardPage() {
                 hint={`${pctCmttd}% of ask`}
                 value={PKR_LAKHS(agg.committed)}
                 subValue={`${PKR_LAKHS(agg.committed - agg.paid)} unpaid`}
-                bg="rgb(135 197 64 / 0.05)" border="rgb(135 197 64 / 0.22)" color="var(--erp-primary)"
+                bg="rgb(var(--erp-primary-rgb) / 0.05)" border="rgb(var(--erp-primary-rgb) / 0.22)" color="var(--erp-primary)"
               />
               <KpiTile
                 label="Burn rate / mo"
@@ -295,7 +295,7 @@ export default function InvestmentDashboardPage() {
                 hint="rent advances (1310) · broker / consultant fees (6110)"
                 value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0) + (p.books?.expensedCents ?? 0), 0))}
                 subValue={`${PKR(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0), 0))} prepaid · ${PKR(projects.reduce((t, p) => t + (p.books?.expensedCents ?? 0), 0))} fees`}
-                bg="rgba(165,180,252,0.05)" border="rgba(165,180,252,0.22)" color="#6b2f68"
+                bg="rgba(165,180,252,0.05)" border="rgba(165,180,252,0.22)" color="var(--erp-primary-ink)"
               />
             </div>
 
@@ -313,7 +313,7 @@ export default function InvestmentDashboardPage() {
                 </div>
                 <div className="h-2.5 rounded-full overflow-hidden flex" style={{ background: 'rgb(var(--fg-rgb) / 0.06)' }}>
                   <div className="h-full" style={{ width: `${Math.min(100, pctPaid)}%`, background: '#a15c00' }} />
-                  <div className="h-full" style={{ width: `${Math.min(100, Math.max(0, pctCmttd - pctPaid))}%`, background: 'rgb(135 197 64 / 0.6)' }} />
+                  <div className="h-full" style={{ width: `${Math.min(100, Math.max(0, pctCmttd - pctPaid))}%`, background: 'rgb(var(--erp-primary-rgb) / 0.6)' }} />
                 </div>
               </div>
             )}
@@ -394,7 +394,7 @@ export default function InvestmentDashboardPage() {
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Spend by scope (across all projects)</p>
                 <div className="space-y-2">
                   {agg.topScopes.map((s) => {
-                    const meta = SCOPE_META[s.scope] ?? { emoji: '·', label: s.scope, color: '#7a6178' }
+                    const meta = SCOPE_META[s.scope] ?? { emoji: '·', label: s.scope, color: 'var(--muted)' }
                     const pct = (s.cents / maxScope) * 100
                     return (
                       <div key={s.scope} className="flex items-center gap-3">
@@ -459,10 +459,10 @@ export default function InvestmentDashboardPage() {
                         <span className="text-white/35 text-[10px] shrink-0 hidden sm:inline">{r.projectName}</span>
                         <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5 shrink-0"
                           style={{
-                            background: r.payment.label === 'deposit' ? 'rgb(61 31 59 / 0.15)'
+                            background: r.payment.label === 'deposit' ? 'rgb(var(--ink-rgb) / 0.15)'
                                       : r.payment.label === 'balance' ? 'rgba(34,197,94,0.15)'
                                       : 'rgba(245,158,11,0.15)',
-                            color:      r.payment.label === 'deposit' ? '#6b2f68'
+                            color:      r.payment.label === 'deposit' ? 'var(--erp-primary-ink)'
                                       : r.payment.label === 'balance' ? '#3f7d20'
                                       : '#a15c00',
                           }}>

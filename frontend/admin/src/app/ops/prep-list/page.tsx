@@ -61,9 +61,9 @@ export default function PrepListPage() {
                 <button key={c.id ?? 'all'} onClick={() => setPick(c.id)}
                   className="rounded-md px-2.5 py-1 font-bold transition-colors"
                   style={{
-                    background: on ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.04)',
+                    background: on ? 'rgb(var(--erp-primary-rgb) / 0.18)' : 'rgb(var(--fg-rgb) / 0.04)',
                     color: on ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.55)',
-                    border: on ? '1px solid rgb(135 197 64 / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
+                    border: on ? '1px solid rgb(var(--erp-primary-rgb) / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
                   }}>
                   {c.name}
                 </button>
@@ -76,9 +76,9 @@ export default function PrepListPage() {
               <button key={d} onClick={() => setDays(d)}
                 className="rounded-md px-2.5 py-1 font-bold transition-colors"
                 style={{
-                  background: days === d ? 'rgb(135 197 64 / 0.18)' : 'rgb(var(--fg-rgb) / 0.04)',
+                  background: days === d ? 'rgb(var(--erp-primary-rgb) / 0.18)' : 'rgb(var(--fg-rgb) / 0.04)',
                   color: days === d ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.55)',
-                  border: days === d ? '1px solid rgb(135 197 64 / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
+                  border: days === d ? '1px solid rgb(var(--erp-primary-rgb) / 0.4)' : '1px solid rgb(var(--fg-rgb) / 0.06)',
                 }}>
                 {d === 1 ? 'tomorrow' : `${d} days`}
               </button>

@@ -77,7 +77,7 @@ const LEDGER_LINKS: Array<{ href: string; label: string }> = [
 ]
 
 const statusColor = {
-  good:     { bar: 'bg-s-teal', text: 'text-primary-ink', badge: 's-badge-teal', label: 'On Target' },
+  good:     { bar: 'bg-accent', text: 'text-success', badge: 's-badge-green', label: 'On Target' },
   warning:  { bar: 'bg-s-amber', text: 'text-s-amber', badge: 's-badge-amber', label: 'Watch' },
   critical: { bar: 'bg-s-red', text: 'text-s-red', badge: 's-badge-red', label: 'Over Budget' },
 }
@@ -252,7 +252,7 @@ export default function AccountingHubPage() {
               </div>
               <div className="flex justify-between items-center mt-2">
                 <span className={`text-2xl font-black ${fcStatus?.text}`}>{fc.theoreticalFoodCostPct}%</span>
-                <span className={`text-sm font-semibold ${fc.variance > 0 ? 'text-s-red' : 'text-primary-ink'}`}>
+                <span className={`text-sm font-semibold ${fc.variance > 0 ? 'text-s-red' : 'text-success'}`}>
                   {fc.variance > 0 ? '+' : ''}{fc.variance}% vs target
                 </span>
               </div>

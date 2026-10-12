@@ -247,7 +247,7 @@ export default function CRMPage() {
                           no preferred concept yet (one-off / guest checkout). */}
                       {c.preferredConcept && (
                         <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded shrink-0"
-                          style={{ background: 'rgb(61 31 59 / 0.15)', color: '#6b2f68' }}>
+                          style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                           {c.preferredConcept.name}
                         </span>
                       )}
@@ -360,7 +360,7 @@ export default function CRMPage() {
                         {customerDetail.loyaltyAccount.transactions.slice(0, 5).map((tx) => (
                           <div key={tx.id} className="flex items-center justify-between text-xs">
                             <span className="text-s-muted capitalize">{tx.type}</span>
-                            <span className={tx.pointsDelta >= 0 ? 'text-primary-ink font-bold' : 'text-s-red font-bold'}>
+                            <span className={tx.pointsDelta >= 0 ? 'text-success font-bold' : 'text-s-red font-bold'}>
                               {tx.pointsDelta >= 0 ? '+' : ''}{tx.pointsDelta} pts
                             </span>
                           </div>

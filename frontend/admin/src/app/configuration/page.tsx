@@ -29,7 +29,7 @@ interface Tile {
 }
 
 const STATUS_PILL: Record<Status, { label: string; bg: string; fg: string }> = {
-  ready:      { label: 'Ready',         bg: 'rgb(135 197 64 / 0.12)',  fg: 'var(--erp-primary)' },
+  ready:      { label: 'Ready',         bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary)' },
   incomplete: { label: 'Needs setup',   bg: 'rgba(245,158,11,0.12)', fg: '#a15c00' },
   optional:   { label: 'Optional',      bg: 'rgb(var(--fg-rgb) / 0.06)', fg: 'rgb(var(--fg-rgb) / 0.55)' },
   unknown:    { label: '—',             bg: 'rgb(var(--fg-rgb) / 0.04)', fg: 'rgb(var(--fg-rgb) / 0.35)' },
@@ -261,8 +261,8 @@ export default function ConfigurationHubPage() {
           {/* Setup progress card */}
           <div className="rounded-2xl p-4 min-w-[220px]"
             style={{
-              background: 'linear-gradient(135deg, rgb(135 197 64 / 0.08), rgb(61 31 59 / 0.05))',
-              border: '1px solid rgb(135 197 64 / 0.18)',
+              background: 'linear-gradient(135deg, rgb(var(--erp-primary-rgb) / 0.08), rgb(var(--ink-rgb) / 0.05))',
+              border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)',
             }}>
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-white/40">Setup progress</p>
             <p className="text-3xl font-black mt-1" style={{ color: 'var(--erp-primary-ink)' }}>{setupPct}%</p>
@@ -314,7 +314,7 @@ function ConfigTile({ tile }: { tile: Tile }) {
         background: 'rgb(var(--fg-rgb) / 0.02)',
         border: '1px solid rgb(var(--fg-rgb) / 0.06)',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgb(135 197 64 / 0.25)'; e.currentTarget.style.background = 'rgb(135 197 64 / 0.03)' }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--erp-primary-rgb) / 0.25)'; e.currentTarget.style.background = 'rgb(var(--erp-primary-rgb) / 0.03)' }}
       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)' }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">

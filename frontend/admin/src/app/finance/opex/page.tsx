@@ -194,14 +194,14 @@ export default function OpexTrackerPage() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: 'rgba(168,85,247,0.20)', color: '#6b2f68' }}>
+                  style={{ background: 'rgba(168,85,247,0.20)', color: 'var(--erp-primary-ink)' }}>
                   Joint venture
                 </span>
                 <span className="text-sm text-white/85 font-bold">{activeTenant.name}</span>
                 <span className="text-xs text-white/40">- every cost line below splits as:</span>
                 {jvPartners.map((p, i) => (
                   <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
-                    style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+                    style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
                     {p.label} {p.pct}%
                   </span>
                 ))}
@@ -215,7 +215,7 @@ export default function OpexTrackerPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat label="Monthly run-rate" value={PKR(totalMonthly)} accent="var(--erp-primary-ink)"
             jvPartners={jvPartners} />
-          <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="#6b2f68"
+          <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="var(--erp-primary-ink)"
             jvPartners={jvPartners} />
           <Stat label="Categories over budget" value={`${overBudgetCount} / ${categories.length}`} accent={overBudgetCount > 0 ? '#b42318' : '#3f7d20'} />
           <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="#a15c00"
@@ -238,7 +238,7 @@ export default function OpexTrackerPage() {
         {/* Quick-add suggested categories */}
         {categories.length === 0 && (
           <section className="rounded-2xl p-5"
-            style={{ background: 'rgb(135 197 64 / 0.05)', border: '1px solid rgb(135 197 64 / 0.18)' }}>
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
             <h2 className="text-sm font-black text-white/85">Pick the categories you actually pay for</h2>
             <p className="text-xs text-white/55 mt-1 mb-3">Tap one to add it. You can rename, set a monthly budget, and add lines underneath.</p>
             <div className="flex flex-wrap gap-1.5">
@@ -316,7 +316,7 @@ function Stat({ label, value, accent, jvPartners }: {
         <div className="mt-1.5 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+              style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
               {p.label}: {PKR(Math.round(rawCents * p.pct / 100))}
             </span>
           ))}
@@ -367,7 +367,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
       {/* Budgeted payroll from workforce/positions — only Payroll category. */}
       {isPayroll && payrollSnap?.budget && (
         <div className="px-5 py-4 border-b border-white/[0.04]"
-          style={{ background: 'rgb(135 197 64 / 0.04)' }}>
+          style={{ background: 'rgb(var(--erp-primary-rgb) / 0.04)' }}>
           <div className="flex items-center justify-between mb-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-wider text-primary-ink">Budgeted payroll · from workforce</p>
@@ -390,7 +390,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             {positionsSummary && positionsSummary.contributions.map((c) => (
               <div key={c.id} className="flex justify-between items-baseline">
                 <span className="text-white/55 flex items-center gap-1.5">
-                  <span style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
+                  <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
                     {c.direction === 'incoming' ? '<--' : '-->'}
                   </span>
                   {c.label}
@@ -400,7 +400,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                   </span>
                 </span>
                 <span className="font-bold"
-                  style={{ color: c.direction === 'incoming' ? 'var(--erp-primary-ink)' : '#a15c00' }}>
+                  style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : '#a15c00' }}>
                   {c.direction === 'incoming' ? '-' : '+'} {PKR(c.monthlyCents)}
                 </span>
               </div>
@@ -415,7 +415,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                   <div className="mt-1 flex gap-1.5 flex-wrap justify-end">
                     {jvPartners.map((p, i) => (
                       <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
-                        style={{ background: 'rgba(168,85,247,0.10)', color: '#6b2f68' }}>
+                        style={{ background: 'rgba(168,85,247,0.10)', color: 'var(--erp-primary-ink)' }}>
                         {p.label} {p.pct}%: {PKR(Math.round(payrollSnap.budget!.netMonthlyCents * p.pct / 100))}
                       </span>
                     ))}
@@ -430,10 +430,10 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
       {/* Live payroll panel — only renders for the Payroll category */}
       {isPayroll && payrollSnap && payrollSnap.runs.length > 0 && (
         <div className="px-5 py-3 border-b border-white/[0.04]"
-          style={{ background: 'rgb(61 31 59 / 0.04)' }}>
+          style={{ background: 'rgb(var(--ink-rgb) / 0.04)' }}>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-black uppercase tracking-wider text-[#6b2f68]">Posted runs · last 6 months</p>
-            <Link href="/hr/payroll" className="text-[11px] text-[#6b2f68] hover:underline">Open payroll →</Link>
+            <p className="text-[10px] font-black uppercase tracking-wider text-primary-ink">Posted runs · last 6 months</p>
+            <Link href="/hr/payroll" className="text-[11px] text-primary-ink hover:underline">Open payroll →</Link>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {payrollSnap.runs.slice(0, 6).map((r) => (
@@ -447,10 +447,10 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
         </div>
       )}
       {isPayroll && (!payrollSnap || payrollSnap.runs.length === 0) && (
-        <div className="px-5 py-3 border-b border-white/[0.04]" style={{ background: 'rgb(61 31 59 / 0.04)' }}>
+        <div className="px-5 py-3 border-b border-white/[0.04]" style={{ background: 'rgb(var(--ink-rgb) / 0.04)' }}>
           <p className="text-xs text-white/55">
-            No payroll runs yet. <Link href="/hr/payroll" className="text-[#6b2f68] hover:underline">Run payroll</Link> to see actuals here, or
-            <Link href="/settings" className="text-[#6b2f68] hover:underline ml-1">add staff</Link> to start tracking hours.
+            No payroll runs yet. <Link href="/hr/payroll" className="text-primary-ink hover:underline">Run payroll</Link> to see actuals here, or
+            <Link href="/settings" className="text-primary-ink hover:underline ml-1">add staff</Link> to start tracking hours.
           </p>
         </div>
       )}
@@ -478,7 +478,7 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-bold text-white/90 truncate">{line.name}</p>
             {line.source !== 'manual' && (
-              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(61 31 59 / 0.12)', color: '#6b2f68' }}>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>
                 {line.source}
               </span>
             )}

@@ -37,7 +37,7 @@ export default function DietaryTagsPage() {
           items={dietary}
           onChange={setDietary}
           placeholder="e.g. Pescatarian"
-          accent="#4f7a1c"
+          accent="var(--erp-primary-ink)"
         />
         <ListEditor
           title="Allergens"
@@ -80,7 +80,7 @@ function ListEditor({ title, desc, items, onChange, placeholder, accent }: {
       <div className="flex flex-wrap gap-2 mt-4">
         {items.map((item, i) => (
           <span key={item} className="inline-flex items-center gap-2 rounded-full px-3 py-1.5"
-            style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}33` }}>
+            style={{ background: `color-mix(in srgb, ${accent} 8%, transparent)`, color: accent, border: `1px solid color-mix(in srgb, ${accent} 20%, transparent)` }}>
             <span className="text-xs font-bold">{item}</span>
             <button onClick={() => remove(i)} className="text-xs hover:text-white/100">✕</button>
           </span>
