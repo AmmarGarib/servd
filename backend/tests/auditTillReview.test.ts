@@ -305,7 +305,8 @@ describe('TILL-R5 / F7 — the Z-report', () => {
     expect(z.tipsCents).toBe(20_000)
     expect(z.salesExTipsCents).toBe(z.totalSales - 20_000)
     expect(z.giftCardCents).toBe(20_000)
-    expect(z.cancelledPaid).toEqual({ count: 1, cashCents: 115_000, cardCents: 0 })
+    expect(z.cancelledPaid).toMatchObject({ count: 1, cashCents: 115_000, cardCents: 0, cardOwedCents: 0 })
+    expect(z.cancelledPaid.orderIds).toHaveLength(1)
     expect(z.refundDueCents).toBe(115_000)
     // Company B's finance cannot read it.
     expect((await call('cashierB', 'GET', `/pos/shifts/${s}/zreport`)).statusCode).toBe(403)

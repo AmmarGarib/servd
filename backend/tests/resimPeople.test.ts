@@ -283,7 +283,8 @@ describe('PPL-R2-02 approved leave takes the day off the rota and labour cost', 
 // ─── PPL-R2-03 / PPL-R2-04 ───────────────────────────────────────────────────
 
 async function postedPool(conceptId: string, start: Date, end: Date, tips: number) {
-  return prisma.tipPool.create({ data: { conceptId, name: `Pool ${start.toISOString()}`, periodStart: start, periodEnd: end, totalTipsCents: tips, status: 'posted', postedAt: new Date() } })
+  const { tenantId } = await prisma.concept.findUniqueOrThrow({ where: { id: conceptId }, select: { tenantId: true } })
+  return prisma.tipPool.create({ data: { tenantId: tenantId!, conceptId, name: `Pool ${start.toISOString()}`, periodStart: start, periodEnd: end, totalTipsCents: tips, status: 'posted', postedAt: new Date() } })
 }
 async function payoutLines(poolId: string) {
   const je = await prisma.journalEntry.findFirst({ where: { reference: `tippool.payout:${poolId}` }, include: { lines: { include: { account: true } } } })

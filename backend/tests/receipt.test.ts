@@ -121,7 +121,7 @@ describe('buildReceiptData', () => {
 
     await prisma.taxInvoice.create({
       data: {
-        invoiceNumber: 'RCP-2026-00001', type: 'invoice', orderId: o.id, conceptId,
+        tenantId, invoiceNumber: 'RCP-2026-00001', type: 'invoice', orderId: o.id, conceptId,
         sellerLegalName: 'Receipt Cafe (Pvt) Ltd', subtotalCents: 140_000, discountCents: 10_000,
         taxableValueCents: 130_000, fbrTaxCents: 21_000, provincialTaxCents: 0, serviceChargeCents: 0, tipCents: 0, totalCents: 151_000,
       },
@@ -179,7 +179,7 @@ describe('the fiscal block (POS connector)', () => {
     const o = await mk(A)
     await prisma.taxInvoice.create({
       data: {
-        invoiceNumber: 'RCP-A-0001', type: 'invoice', orderId: o.id, conceptId: A.conceptId, sellerLegalName: 'A',
+        tenantId: A.tenantId, invoiceNumber: 'RCP-A-0001', type: 'invoice', orderId: o.id, conceptId: A.conceptId, sellerLegalName: 'A',
         subtotalCents: 87_000, discountCents: 0, taxableValueCents: 87_000, fbrTaxCents: 13_050, provincialTaxCents: 0, serviceChargeCents: 0, tipCents: 0, totalCents: 100_050,
       },
     })

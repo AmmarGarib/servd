@@ -126,8 +126,8 @@ beforeAll(async () => {
   ids.mealA = (await prisma.staffMeal.create({ data: { conceptId: cA, staffId: ids.cashA!, approvedById: ids.adminA!, description: 'Club sandwich', estimatedCostCents: 40_000 } })).id
   ids.mealB = (await prisma.staffMeal.create({ data: { conceptId: cB, staffId: ids.cashB!, approvedById: ids.cashB!, description: 'Bun kebab', estimatedCostCents: 20_000 } })).id
   const now = new Date()
-  ids.tpA = (await prisma.tipPool.create({ data: { conceptId: cA, name: 'Week A', periodStart: new Date(now.getTime() - 7 * 86_400_000), periodEnd: now } })).id
-  ids.tpB = (await prisma.tipPool.create({ data: { conceptId: cB, name: 'Week B', periodStart: new Date(now.getTime() - 7 * 86_400_000), periodEnd: now } })).id
+  ids.tpA = (await prisma.tipPool.create({ data: { tenantId: tenantA, conceptId: cA, name: 'Week A', periodStart: new Date(now.getTime() - 7 * 86_400_000), periodEnd: now } })).id
+  ids.tpB = (await prisma.tipPool.create({ data: { tenantId: tenantB, conceptId: cB, name: 'Week B', periodStart: new Date(now.getTime() - 7 * 86_400_000), periodEnd: now } })).id
 
   // Payables.
   ids.supA = (await prisma.supplier.create({ data: { name: 'Mill Co', tenantId: tenantA, paymentTermsDays: 10 } })).id

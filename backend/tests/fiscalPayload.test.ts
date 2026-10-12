@@ -82,7 +82,7 @@ describe('stored figures, never recomputed', () => {
   it('buyer only when the customer has an NTN or CNIC; servd invoice number when one exists', async () => {
     const withNtn = await mkOrder(A, { items: [KHEER2(A)], taxCents: 16_500, taxRatePct: 15, totalCents: 126_500, payments: [{ method: 'cash', amountCents: 126_500 }], customer: { name: 'Acme Traders', ntn: '7654321-0' } })
     const plain = await mkOrder(A, { items: [KHEER2(A)], taxCents: 16_500, taxRatePct: 15, totalCents: 126_500, payments: [{ method: 'cash', amountCents: 126_500 }], customer: { name: 'Walk-in' } })
-    await prisma.taxInvoice.create({ data: { invoiceNumber: 'STX-2026-0007', orderId: withNtn, conceptId: A.conceptId, sellerLegalName: 'x', subtotalCents: 110_000, taxableValueCents: 110_000, totalCents: 126_500 } })
+    await prisma.taxInvoice.create({ data: { tenantId: A.tenantId, invoiceNumber: 'STX-2026-0007', orderId: withNtn, conceptId: A.conceptId, sellerLegalName: 'x', subtotalCents: 110_000, taxableValueCents: 110_000, totalCents: 126_500 } })
     const p = (await build(withNtn)).payload
     expect(p.buyer).toEqual({ legalName: 'Acme Traders', ntn: '7654321-0' })
     expect(p.servdInvoiceNumber).toBe('STX-2026-0007')

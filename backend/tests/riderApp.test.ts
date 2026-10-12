@@ -437,7 +437,7 @@ describe('a rider sees only their own orders', () => {
     const job = (await rider('a1', 'GET', `/jobs/${mine.id}`)).json().job
     expect(job).toMatchObject({
       orderId: mine.id,
-      orderNumber: mine.id.slice(0, 8).toUpperCase(),
+      orderNumber: mine.id.slice(-8).toUpperCase(),
       stage: 'offered',
       brand: { name: 'Stackd', slug: 'riderapp-stackd' },
       company: { id: tenantA, name: 'GS Foods Fleet' },

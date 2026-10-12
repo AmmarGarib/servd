@@ -267,7 +267,7 @@ describe('points stay inside the company that issued them', () => {
     expect(await claimRedemption({ customerId: c.id, orderId: oB.id, quote: { points: 2_000, discountCents: 20_000, pointValueCents: 10 } })).toBe(false)
     expect((await loyaltyAccountOf(c.id, tenantA))?.pointsBalance).toBe(3_412)
     expect((await prisma.order.findUniqueOrThrow({ where: { id: oB.id } })).discountCents).toBe(0)
-    expect(await prisma.journalEntry.count({ where: { tenantId: tenantB, reference: { startsWith: 'loyalty.' }, description: { contains: c.id.slice(0, 8) } } })).toBe(0)
+    expect(await prisma.journalEntry.count({ where: { tenantId: tenantB, reference: { startsWith: 'loyalty.' }, description: { contains: c.id.slice(-8).toUpperCase() } } })).toBe(0)
   })
 
   it('earning at B opens B\'s own account; redeem and expiry book in the account\'s company', async () => {

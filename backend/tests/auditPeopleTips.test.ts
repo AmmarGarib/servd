@@ -7,7 +7,8 @@
 //           "not clocked in", and the late out booked a 25-hour shift that took
 //           the whole by-hours pool.
 //   HR-R7   a kitchen helper who punches only at the kiosk (no login) was never
-//           a pool member, so the login holders split the whole pot.
+//           a pool member, so the login holders split the whole pot. Staff
+//           with no login are members now (employeeId).
 //
 // Two companies throughout: company B never sees or touches A's pools.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -286,7 +287,7 @@ describe('PPL-01 a tip is pooled once and paid once', () => {
 
   it('pays a pool once, and never pays a second pool over the same tips', async () => {
     // A duplicate left over from before the rule, written straight to the table.
-    const legacy = await prisma.tipPool.create({ data: { conceptId: stackd, name: 'legacy dup', periodStart: start, periodEnd: end, totalTipsCents: 50_000 } })
+    const legacy = await prisma.tipPool.create({ data: { tenantId: tenantA, conceptId: stackd, name: 'legacy dup', periodStart: start, periodEnd: end, totalTipsCents: 50_000 } })
     await prisma.tipPoolMember.create({ data: { poolId: legacy.id, userId: users['ali']!.id, userName: 'ali', hoursWorked: 3, roleWeight: 1, shareUnits: 3 } })
 
     expect((await call('ceo', 'POST', `/tip-pools/${poolA}/post`)).statusCode).toBe(200)
@@ -321,16 +322,20 @@ describe('PPL-01 a tip is pooled once and paid once', () => {
   })
 })
 
-// ─── HR-R7: kiosk-only staff are never silently cut out of a pool ────────────
+// ─── HR-R7: staff with no login are never silently cut out of a pool ───────
+// Since 2026-10-12 they are pool members (tip_pool_members.employeeId). One
+// whose HR record does not say their tip-pool role stops the post until they
+// are added with a weight or left out by name (tipPoolCompany.test.ts covers
+// the ones whose designation does say).
 
-describe('HR-R7 kiosk-only staff (no login) stop a pool from paying their share to others', () => {
+describe('HR-R7 staff with no login and no known role stop a pool from paying their share to others', () => {
   const k0 = new Date(Date.now() - 44 * H)
   const k1 = new Date(Date.now() - 34 * H)
   const at = (h: number) => new Date(k0.getTime() + h * H)
   let draftId: string
 
-  it('lists the kiosk helper\'s hours and refuses to post until they are in the pool or left out by name', async () => {
-    await mkEmp('Kitchen Helper', tenantA, { locationId: clifton }) // no login: punches by PIN at the kiosk
+  it('lists the helper\'s hours and refuses to post until they are in the pool or left out by name', async () => {
+    await mkEmp('Kitchen Helper', tenantA, { locationId: clifton }) // no login, no designation: punches by PIN at the kiosk
     await mkEmp('KB Dishwasher', tenantB, { locationId: saddar })   // company B's kiosk-only staff
     await recordPunch({ tenantId: tenantA, employeeId: emps['Kitchen Helper']!, kind: 'in', at: at(1), source: 'kiosk', locationId: clifton, geofenceMatched: true })
     await recordPunch({ tenantId: tenantA, employeeId: emps['Kitchen Helper']!, kind: 'out', at: at(7), source: 'kiosk' })
@@ -347,43 +352,49 @@ describe('HR-R7 kiosk-only staff (no login) stop a pool from paying their share 
     // Company B's dishwasher is never in company A's pool, not even as a note.
     const excluded = pool.json().excluded as Array<{ name: string; employeeId: string; hours: number; reason: string }>
     expect(excluded.map((x) => x.name)).toEqual(['Kitchen Helper'])
-    expect(excluded[0]).toMatchObject({ employeeId: emps['Kitchen Helper'], hours: 6, reason: 'no_login' })
-    expect(pool.json().review.kioskStaff.map((x: { name: string }) => x.name)).toEqual(['Kitchen Helper'])
+    expect(excluded[0]).toMatchObject({ employeeId: emps['Kitchen Helper'], hours: 6, reason: 'no_role' })
+    expect(pool.json().review.staffWithoutRole.map((x: { name: string }) => x.name)).toEqual(['Kitchen Helper'])
 
-    // Before: this posted and gave the cashier 100% of the pot.
+    // Before HR-R7 this posted and gave the cashier 100% of the pot.
     const blind = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, {})
     expect(blind.statusCode).toBe(409)
-    expect(blind.json().error.code).toBe('KIOSK_STAFF_NOT_IN_POOL')
+    expect(blind.json().error.code).toBe('STAFF_ROLE_UNKNOWN')
     expect(blind.json().error.message).toContain('Kitchen Helper')
     // Naming somebody else, or giving no real reason, does not get past it.
-    const wrong = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, { leaveOutKioskStaff: { employeeIds: [emps['KB Dishwasher']], reason: 'not tip eligible' } })
+    const wrong = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, { leaveOutStaff: { employeeIds: [emps['KB Dishwasher']], reason: 'not tip eligible' } })
     expect(wrong.statusCode).toBe(409)
-    const noReason = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, { leaveOutKioskStaff: { employeeIds: [emps['Kitchen Helper']], reason: '' } })
+    const noReason = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, { leaveOutStaff: { employeeIds: [emps['Kitchen Helper']], reason: '' } })
     expect(noReason.statusCode).toBe(400)
     expect((await prisma.tipPool.findUniqueOrThrow({ where: { id: draftId } })).status).toBe('draft')
     expect(await prisma.tipPoolMember.count({ where: { poolId: draftId, shareCents: { gt: 0 } } })).toBe(0)
   })
 
-  it('once the helper has a login linked to their HR record, a recomputed pool pays them their hours\' share', async () => {
-    await mkUser('helper', 'boh', tenantA)
-    await prisma.hrEmployee.update({ where: { id: emps['Kitchen Helper']! }, data: { userId: users['helper']!.id } })
-    // The old draft no longer tells the whole story: refused until recomputed.
-    const stale = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, {})
-    expect(stale.statusCode).toBe(409)
-    expect(stale.json().error.code).toBe('POOL_NOT_READY')
-    expect((await call('omar', 'DELETE', `/tip-pools/${draftId}`)).statusCode).toBe(204)
+  it('added on the draft with a weight, the helper (no login) is paid their hours\' share', async () => {
+    // Company B cannot add to A's draft, nor A add B's employee.
+    expect((await call('ceoB', 'POST', `/tip-pools/${draftId}/members`, { employeeId: emps['KB Dishwasher'], hoursWorked: 6, roleWeight: 0.5 })).statusCode).toBe(404)
+    const foreign = await call('omar', 'POST', `/tip-pools/${draftId}/members`, { employeeId: emps['KB Dishwasher'], hoursWorked: 6, roleWeight: 0.5 })
+    expect(foreign.statusCode).toBe(422)
+    expect(foreign.json().error.code).toBe('MEMBER_NOT_IN_COMPANY')
+    // No weight and no role to take one from: asked for, never guessed.
+    expect((await call('omar', 'POST', `/tip-pools/${draftId}/members`, { employeeId: emps['Kitchen Helper'], hoursWorked: 6 })).json().error.code).toBe('ROLE_WEIGHT_REQUIRED')
 
-    const again = await call('omar', 'POST', '/tip-pools', { conceptId: stackd, name: 'Stackd kiosk', periodStart: k0.toISOString(), periodEnd: k1.toISOString() })
-    expect(again.statusCode).toBe(201)
-    expect(memberNames(again.json())).toEqual(['ali', 'helper'])
-    expect(again.json().review.kioskStaff).toEqual([])
-    const posted = await call('ceo', 'POST', `/tip-pools/${again.json().id}/post`, {})
+    const added = await call('omar', 'POST', `/tip-pools/${draftId}/members`, { employeeId: emps['Kitchen Helper'], hoursWorked: 6, roleWeight: 0.5 })
+    expect(added.statusCode).toBe(201)
+    expect(added.json()).toMatchObject({ userId: null, employeeId: emps['Kitchen Helper'], userName: 'Kitchen Helper', hoursWorked: 6, roleWeight: 0.5, shareUnits: 6 })
+    expect((await call('omar', 'POST', `/tip-pools/${draftId}/members`, { employeeId: emps['Kitchen Helper'], hoursWorked: 6, roleWeight: 0.5 })).statusCode).toBe(409)
+    const review = (await call('omar', 'GET', `/tip-pools/${draftId}`)).json().review
+    expect(review.staffWithoutRole).toEqual([])
+    expect(review.blockers).toEqual([])
+
+    const posted = await call('ceo', 'POST', `/tip-pools/${draftId}/post`, {})
     expect(posted.statusCode).toBe(200)
     const shares = Object.fromEntries((posted.json().members as Array<{ userName: string; shareCents: number }>).map((m) => [m.userName, m.shareCents]))
-    expect(shares).toEqual({ ali: 15_000, helper: 45_000 }) // 2 h vs 6 h of PKR 600
+    expect(shares).toEqual({ ali: 15_000, 'Kitchen Helper': 45_000 }) // 2 h vs 6 h of PKR 600
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'tippool.distribute', entity: 'TipPoolMember', after: { path: ['employeeId'], equals: emps['Kitchen Helper'] } } })
+    expect(log.tenantId).toBe(tenantA)
   })
 
-  it('an approver can leave a kiosk worker out by name, with a reason, and it is audited', async () => {
+  it('an approver can leave someone with no known role out by name, with a reason, and it is audited', async () => {
     const t0 = new Date(Date.now() - 33 * H)
     await mkEmp('Night Guard', tenantA, { locationId: clifton })
     await recordPunch({ tenantId: tenantA, employeeId: emps['Night Guard']!, kind: 'in', at: new Date(t0.getTime() + H), source: 'kiosk', locationId: clifton, geofenceMatched: true })
@@ -393,14 +404,15 @@ describe('HR-R7 kiosk-only staff (no login) stop a pool from paying their share 
     await tipOrder(stackd, 10_000, new Date(t0.getTime() + 2 * H))
     const pool = await call('omar', 'POST', '/tip-pools', { conceptId: stackd, name: 'Guard night', periodStart: t0.toISOString(), periodEnd: new Date(t0.getTime() + 6 * H).toISOString() })
     expect(pool.statusCode).toBe(201)
-    expect(pool.json().review.kioskStaff.map((x: { name: string }) => x.name)).toEqual(['Night Guard'])
+    expect(pool.json().review.staffWithoutRole.map((x: { name: string }) => x.name)).toEqual(['Night Guard'])
     // Company B cannot post it, whatever it acknowledges.
-    expect((await call('ceoB', 'POST', `/tip-pools/${pool.json().id}/post`, { leaveOutKioskStaff: { employeeIds: [emps['Night Guard']], reason: 'security, not tipped' } })).statusCode).toBe(404)
+    expect((await call('ceoB', 'POST', `/tip-pools/${pool.json().id}/post`, { leaveOutStaff: { employeeIds: [emps['Night Guard']], reason: 'security, not tipped' } })).statusCode).toBe(404)
+    // The field's old name still works.
     const ok = await call('ceo', 'POST', `/tip-pools/${pool.json().id}/post`, { leaveOutKioskStaff: { employeeIds: [emps['Night Guard']], reason: 'security, not tipped' } })
     expect(ok.statusCode).toBe(200)
     expect(ok.json().members.map((m: { userName: string; shareCents: number }) => [m.userName, m.shareCents])).toEqual([['ayesha', 10_000]])
     const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'tippool.post', entityId: pool.json().id } })
     expect(log.tenantId).toBe(tenantA)
-    expect(log.metadata).toMatchObject({ reason: 'security, not tipped', kioskStaffLeftOut: [{ employeeId: emps['Night Guard'], name: 'Night Guard', hours: 4 }] })
+    expect(log.metadata).toMatchObject({ reason: 'security, not tipped', staffLeftOut: [{ employeeId: emps['Night Guard'], name: 'Night Guard', hours: 4 }] })
   })
 })

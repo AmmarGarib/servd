@@ -285,7 +285,7 @@ describe('FOH-05 — one refund of the money', () => {
     const refunds = await prisma.payment.findMany({ where: { orderId: o.id, status: 'refunded' } })
     expect(refunds).toHaveLength(1)
     expect(await prisma.journalEntry.count({ where: { reference: { in: refunds.map((r) => `order.refund:${r.id}`) } } })).toBe(1)
-    expect(await prisma.journalEntry.count({ where: { reference: { startsWith: 'order.refund:' }, lines: { some: { memo: { contains: o.id.slice(0, 8) } } } } })).toBe(1)
+    expect(await prisma.journalEntry.count({ where: { reference: { startsWith: 'order.refund:' }, lines: { some: { memo: { contains: o.id.slice(-8).toUpperCase() } } } } })).toBe(1)
   })
 
   it('two partial refunds that together exceed the sale: the second is refused under the lock', async () => {

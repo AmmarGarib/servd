@@ -115,7 +115,7 @@ async function seedCompany(co: 'A' | 'B', hod: string, owner: string) {
   ids[co]['payroll_run'] = run.id
 
   // A posted tip pool waiting to be paid out.
-  const pool = await prisma.tipPool.create({ data: { conceptId: concept.id, name: `${P} week ${co}`, periodStart: new Date('2026-09-01'), periodEnd: new Date('2026-09-08'), status: 'posted', totalTipsCents: 12_000_00 } })
+  const pool = await prisma.tipPool.create({ data: { tenantId, conceptId: concept.id, name: `${P} week ${co}`, periodStart: new Date('2026-09-01'), periodEnd: new Date('2026-09-08'), status: 'posted', totalTipsCents: 12_000_00 } })
   ids[co]['tip_pool'] = pool.id
 
   // A stock transfer requested between two of the company's kitchens.
