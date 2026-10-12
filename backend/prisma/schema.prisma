@@ -121,6 +121,7 @@ enum PaymentGateway {
   jazzcash
   easypaisa
   none
+  card_terminal // till card charged through the POS connector's card machine (TerminalCharge); keenuSettle never touches these
 }
 
 enum ShiftStatus {
@@ -286,16 +287,19 @@ model Concept {
   invoiceAddress   String? // billing address printed on invoices
   invoicePrefix    String? // e.g. "STX-" — concept-scoped sequence prefix
 
-  // FBR PRAL Electronic POS — POSID assigned by FBR at POS registration.
-  // Required for Tier-1 businesses under SRO 1307(I)/2022. Null = concept
-  // is not registered for real-time invoice submission.
+  // Brand POS ids for fiscal filing. Since 2026-10-10 FBR/SRB filing goes
+  // ONLY through the external fiscal POS (the POS connector, backend/src/
+  // connectors); servd no longer files directly. These stay the one store of
+  // the brand's registration ids and are edited on Dev -> API -> POS connector.
+  // FBR PRAL POSID (Tier-1 businesses, SRO 1307(I)/2022). Null = not registered.
   fbrPosId Int?
 
   // SRB (Sindh Revenue Board) Electronic Sales Invoicing — POSID assigned
   // by SRB at restaurant registration. Required for restaurants located in
   // Sindh (SRB has its own provincial sales tax regime separate from FBR).
   // Null = concept is not registered with SRB (outside Sindh, or not yet
-  // registered).
+  // registered). srbPosId ALSO routes Sindh output tax to 2032 in the ledger —
+  // never null it.
   srbPosId Int?
 
   createdAt DateTime  @default(now())
@@ -1077,6 +1081,10 @@ model Customer {
   lastOrderAt        DateTime?
   totalSpentCents    Int       @default(0)
   preferredConceptId String?
+  // RETIRED (ONL-R2-01, migration 20261011160000): the wallet is per company
+  // now — CustomerWallet. This column is no longer read or written; the
+  // migration moved every non-zero balance to one company's wallet and left
+  // the value here untouched as the record of what was moved. Never read it.
   walletBalance      Int       @default(0)
 
   // ── Referral program ─────────────────────────────────────────────────────
@@ -1126,11 +1134,12 @@ model Customer {
 
   preferredConcept   Concept?                    @relation("PreferredConcept", fields: [preferredConceptId], references: [id])
   orders             Order[]
-  loyaltyAccount     LoyaltyAccount?
+  loyaltyAccounts    LoyaltyAccount[] // one per company (ONL-04)
   magicLinks         MagicLink[]
   triggerLogs        TriggerLog[]
   campaignSends      CampaignSend[]
   walletTransactions WalletTransaction[]
+  wallets            CustomerWallet[] // one per company (ONL-R2-01)
   savedAddresses     CustomerAddress[]
   reservations       Reservation[]
   guestTags          GuestTag[]
@@ -1515,19 +1524,28 @@ model StaffPasswordReset {
 
 // ─── LoyaltyAccount ───────────────────────────────────────────────────────────
 
+// One account per customer PER COMPANY (ONL-04). Points are earned, spent,
+// expired and clawed back only at the brands of the company that issued them
+// ("loyalty stays inside the company that issued it"), and that company's
+// books carry the liability (2060). A single shared account let points earned
+// at one company be spent at another, which then carried a liability it never
+// raised. Migration 20261010150300 split the old per-customer rows.
 model LoyaltyAccount {
   id             String   @id @default(uuid())
-  customerId     String   @unique
+  tenantId       String
+  customerId     String
   pointsBalance  Int      @default(0)
   lifetimePoints Int      @default(0)
-  tier           String   @default("bronze") // bronze|silver|gold
-  stampCounts    Json     @default("{}") // { "simmer": 3, "stax": 7 }
+  tier           String   @default("bronze") // the company's tier ladder (TierConfig)
+  stampCounts    Json     @default("{}") // { "simmer": 3, "stackd": 7 } — that company's brands
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   customer     Customer             @relation(fields: [customerId], references: [id])
   transactions LoyaltyTransaction[]
 
+  @@unique([tenantId, customerId])
+  @@index([customerId])
   @@map("loyalty_accounts")
 }
 
@@ -1642,8 +1660,11 @@ model Order {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  // FBR PRAL invoice number returned by PRAL after successful submission.
-  // Null until the FBR worker processes the order (fire-and-forget).
+  // READ-ONLY HISTORY since 2026-10-10: numbers from servd's old direct
+  // FBR/SRB filing. Nothing writes these after the POS-connector cutover; the
+  // fiscal number now lives on FiscalDocument. They drive the prefiled_direct
+  // skip and the receipt fallback for orders filed before the cutover.
+  // FBR PRAL invoice number (old direct filing).
   fbrInvoiceNumber String?
 
   // SRB invoice number returned after successful submission to the Sindh
@@ -1675,6 +1696,11 @@ model Order {
   complaints          OrderComplaint[]
   promoUsages         PromoCodeUsage[]
   riderJobEvents      RiderJobEvent[]
+
+  // POS connector (fiscal outbox + card machine) and pre-bills (2026-10-10)
+  fiscalDocuments FiscalDocument[]
+  terminalCharges TerminalCharge[]
+  preBills        PreBill[]
 
   @@unique([source, externalId])
   @@index([conceptId, placedAt(sort: Desc)])
@@ -3243,12 +3269,42 @@ model StorefrontPromo {
 
 // ─── WalletTransaction ────────────────────────────────────────────────────────
 
+// ─── CustomerWallet ───────────────────────────────────────────────────────────
+//
+// A customer's stored value AT ONE COMPANY (ONL-R2-01). The wallet used to be
+// one servd-wide number (Customer.walletBalance), so value company A granted
+// was spent at company B, and B's 2050 Wallet Liability went to a debit
+// balance for money it never received. CLAUDE.md: customer-facing money stays
+// inside the company that issued it. Every top-up credits the top-up's company
+// (and posts Cr 2050 there), every spend debits the ORDER's company, every
+// restore credits the order's company. Paisa. Debited only under
+// SELECT … FOR UPDATE on this row (order row first when an order is involved)
+// — modules/wallet/service.ts is the one place that moves it.
+model CustomerWallet {
+  id           String   @id @default(uuid())
+  tenantId     String
+  customerId   String
+  balanceCents Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([tenantId, customerId])
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_wallets")
+}
+
 model WalletTransaction {
   id           String   @id @default(uuid())
+  // The company whose wallet moved (ONL-R2-01). Every write sets it; null only
+  // on a row the 20261011160000 backfill could not attribute (none expected).
+  tenantId     String?
   customerId   String
   type         String // topup | spend | refund | bonus | expire
   amountCents  Int // positive = credit, negative = debit
-  balanceAfter Int
+  balanceAfter Int // the balance of THIS company's wallet after the move
   description  String?
   orderId      String?
   createdAt    DateTime @default(now())
@@ -3256,6 +3312,7 @@ model WalletTransaction {
   customer Customer @relation(fields: [customerId], references: [id])
 
   @@index([customerId, createdAt])
+  @@index([tenantId, customerId])
   @@map("wallet_transactions")
 }
 
@@ -3265,7 +3322,7 @@ model PromoCode {
   id               String   @id @default(uuid())
   tenantId         String?
   conceptId        String?
-  code             String   @unique
+  code             String
   description      String?
   discountType     String   @default("percentage") // percentage | fixed
   discountValue    Float
@@ -3285,6 +3342,8 @@ model PromoCode {
   usages  PromoCodeUsage[]
   orders  Order[]
 
+  // A code is unique within its company, never across companies (ONL-12).
+  @@unique([tenantId, code])
   @@index([tenantId])
   @@map("promo_codes")
 }
@@ -4655,6 +4714,12 @@ model Tenant {
   fleetProvided          FleetAgreement[]        @relation("FleetProvider")
   fleetReceived          FleetAgreement[]        @relation("FleetClient")
 
+  // POS connector + pre-bills (2026-10-10)
+  posConnectors   PosConnector[]   @relation("TenantPosConnectors")
+  fiscalDocuments FiscalDocument[] @relation("TenantFiscalDocuments")
+  terminalCharges TerminalCharge[] @relation("TenantTerminalCharges")
+  preBills        PreBill[]        @relation("TenantPreBills")
+
   @@map("tenants")
 }
 
@@ -5923,4 +5988,269 @@ model WaitlistVisit {
 
   @@index([list, createdAt])
   @@map("waitlist_visits")
+}
+
+// ─── POS connector (2026-10-10, owner decision) ──────────────────────────────
+// servd talks to an external fiscal POS (FBR / SRB filing — the ONLY filer) and
+// to the payment processor's card machine through vendor-neutral drivers
+// (backend/src/connectors). Spec: docs/pos-connector-api.md.
+
+enum ConnectorKind {
+  fiscal // external fiscal POS that files FBR / SRB
+  terminal // payment processor's card machine
+}
+
+enum FiscalDocKind {
+  sale
+  refund
+}
+
+enum FiscalDocStatus {
+  held // connector off / not live / brand+outlet not registered — visible backlog, never auto-sent
+  waiting // refund waiting for its sale document to be filed
+  pending // due at nextAttemptAt
+  submitting // leased by one sender (leaseUntil)
+  filed // fiscal number back
+  rejected // permanent vendor validation error — needs a fix + manual retry
+  failed // retries exhausted — manual retry only
+  skipped // AUTOMATIC ONLY: prefiled_direct | zero_value | zero_value_unsupported | no_sale_document — never an operator choice
+  manual_required // e.g. refund of a sale filed directly with SRB/FBR before cutover
+  manual_filed // operator recorded an out-of-band fiscal number
+}
+
+enum TerminalChargeKind {
+  charge
+  refund
+}
+
+enum TerminalChargeStatus {
+  pending // row created, driver not yet accepted (or start was transient)
+  sent // driver accepted; waiting for the card
+  approved // vendor approved; Payment not yet recorded
+  recorded // Payment (or refund Payment) written — success, final
+  declined // final, no money
+  cancel_requested // cancel sent, outcome not yet known
+  cancelled // final, no money
+  expired // vendor confirmed nothing charged after timeout; final
+  unknown // outcome not known — blocks the order
+  unverified // cashier said "not charged"; order released; reconciler still verifies 24h
+  void_pending // approved but servd refused the payment — auto-reversal in progress
+  voided // money given back; final
+  needs_attention // reversal failed, or unknown > 24h — manager alert; human action
+  manual_resolved // cashier recorded it from the machine slip; reconciler verifies
+}
+
+/// One per company per kind (per-company singleton rule). Secrets stored only as secretBox ciphertext.
+model PosConnector {
+  id                String        @id @default(cuid())
+  tenantId          String
+  kind              ConnectorKind
+  driver            String        @default("none") // 'none' | 'test' | 'http' | later '<vendor>'
+  enabled           Boolean       @default(false) // fiscal: live (set ONLY by go-live); terminal: shown at the till
+  liveSince         DateTime? // fiscal: first go-live
+  baseUrl           String?
+  apiKeyEnc         String?
+  apiKeyHint        String?
+  webhookSecretEnc  String?
+  webhookSecretHint String?
+  webhookToken      String        @unique // random 32-byte hex; selects the company for inbound webhooks; rotatable
+  settings          Json          @default("{}")
+  lastTestAt        DateTime?
+  lastTestOk        Boolean?
+  lastTestDetail    String?
+  lastOkAt          DateTime?
+  lastError         String?
+  lastErrorAt       DateTime?
+  updatedById       String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  tenant  Tenant           @relation("TenantPosConnectors", fields: [tenantId], references: [id])
+  charges TerminalCharge[]
+
+  @@unique([tenantId, kind])
+  @@index([tenantId])
+  @@map("pos_connectors")
+}
+
+/// The fiscal outbox: one row per sale (created ONLY at the full & final bill, i.e. completeOrder), one per refund. id doubles as the vendor idempotency key.
+model FiscalDocument {
+  id              String          @id @default(cuid())
+  tenantId        String
+  kind            FiscalDocKind
+  orderId         String
+  conceptId       String
+  locationId      String?
+  idempotencyKey  String // 'sale:<orderId>' | 'refund:<refundPaymentId>' | 'void:<orderId>'
+  saleDocumentId  String?
+  refundPaymentId String?
+  status          FiscalDocStatus @default(pending)
+  statusReason    String?
+  driver          String?
+  payload         Json
+  payloadHash     String
+  amountCents     Int
+  attempts        Int             @default(0)
+  nextAttemptAt   DateTime        @default(now())
+  leaseUntil      DateTime?
+  leaseOwner      String?
+  lastErrorCode   String?
+  lastError       String?
+  fiscalNumber    String?
+  authority       String? // 'fbr' | 'srb' | 'pra' | 'kpra' | 'bra'
+  qrPayload       String?
+  verifyUrl       String?
+  extraNumbers    Json?
+  providerRef     String?
+  fiscalAt        DateTime?
+  filedAt         DateTime?
+  isTest          Boolean         @default(false) // filed by the 'test' driver — never a real fiscal invoice
+  alertedAt       DateTime?
+  resolvedById    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  tenant      Tenant          @relation("TenantFiscalDocuments", fields: [tenantId], references: [id])
+  order       Order           @relation(fields: [orderId], references: [id])
+  attemptsLog FiscalAttempt[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, nextAttemptAt])
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseUntil])
+  @@index([orderId])
+  @@index([saleDocumentId])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, fiscalNumber])
+  @@map("fiscal_documents")
+}
+
+/// Append-only attempt log.
+model FiscalAttempt {
+  id         String   @id @default(cuid())
+  tenantId   String
+  documentId String
+  attemptNo  Int
+  op         String // 'submit' | 'lookup'
+  outcome    String // 'filed' | 'processing' | 'rejected' | 'transient' | 'unknown' | 'not_found'
+  httpStatus Int?
+  errorCode  String?
+  message    String?
+  durationMs Int
+  via        String // 'sync_till' | 'worker' | 'sweeper' | 'manual_retry' | 'webhook'
+  createdAt  DateTime @default(now())
+
+  document FiscalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([documentId])
+  @@map("fiscal_attempts")
+}
+
+/// One per push to the card machine (charge or refund).
+model TerminalCharge {
+  id               String               @id @default(cuid())
+  tenantId         String
+  kind             TerminalChargeKind   @default(charge)
+  connectorId      String
+  terminalId       String
+  orderId          String
+  shiftId          String?
+  targetPaymentId  String?
+  paymentId        String?              @unique
+  originalChargeId String?
+  amountCents      Int
+  tipCents         Int                  @default(0)
+  quoteDueCents    Int
+  idempotencyKey   String
+  status           TerminalChargeStatus @default(pending)
+  providerRef      String?
+  approvalRef      String?
+  authCode         String?
+  cardBrand        String?
+  cardLast4        String? // masked only; never a PAN
+  message          String?
+  refusalCode      String?
+  manualReason     String?
+  vendorMeta       Json?
+  reverseAttempts  Int                  @default(0)
+  nextActionAt     DateTime?
+  expiresAt        DateTime
+  lastPolledAt     DateTime?
+  pollLeaseUntil   DateTime?
+  resolvedAt       DateTime?
+  alertedAt        DateTime?
+  createdById      String
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  tenant    Tenant       @relation("TenantTerminalCharges", fields: [tenantId], references: [id])
+  connector PosConnector @relation(fields: [connectorId], references: [id])
+  order     Order        @relation(fields: [orderId], references: [id])
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, updatedAt])
+  @@index([status, nextActionAt])
+  @@index([orderId])
+  @@index([shiftId, status])
+  @@index([connectorId, providerRef])
+  @@map("terminal_charges")
+}
+
+// ─── Pre-bills (2026-10-10, owner decision) ───────────────────────────────────
+// A pre-bill is the bill printed for an open order before payment. It is NEVER
+// a fiscal document and never goes to the POS: only the full & final bill
+// (completeOrder) files. Every pre-bill is a permanent record listed in
+// Finance -> Voided pre bills (never deleted or hidden).
+
+enum PreBillStatus {
+  open // latest pre-bill of an order that is not final yet
+  superseded // a later pre-bill was printed for the same order
+  converted // the order reached its full & final bill
+  cancelled // the order was cancelled / voided / rejected before the final bill
+}
+
+model PreBill {
+  id                 String        @id @default(cuid())
+  tenantId           String
+  conceptId          String
+  locationId         String?
+  orderId            String
+  shiftId            String?
+  number             Int // per company, gap-free (PreBillCounter)
+  tableLabel         String?
+  printedById        String
+  printedAt          DateTime      @default(now())
+  tender             String // quote basis of the headline total: 'cash' | 'card'
+  lines              Json
+  subtotalCents      Int
+  discountCents      Int
+  serviceChargeCents Int
+  taxCents           Int
+  totalCents         Int
+  cardTotalCents     Int?
+  status             PreBillStatus @default(open)
+  statusAt           DateTime?
+  finalTotalCents    Int?
+  finalAt            DateTime?
+  cancelledById      String? // the MANAGER who approved the cancel/void of the order
+  cancelReason       String?
+  createdAt          DateTime      @default(now())
+
+  tenant Tenant @relation("TenantPreBills", fields: [tenantId], references: [id])
+  order  Order  @relation(fields: [orderId], references: [id])
+
+  @@unique([tenantId, number])
+  @@index([tenantId, printedAt(sort: Desc)])
+  @@index([tenantId, status])
+  @@index([orderId])
+  @@map("pre_bills")
+}
+
+/// Per-company pre-bill number sequence (one row per company, locked FOR UPDATE when issuing).
+model PreBillCounter {
+  tenantId String @id
+  next     Int    @default(1)
+
+  @@map("pre_bill_counters")
 }
