@@ -171,6 +171,10 @@ beforeAll(async () => {
   await mkStaff('adminAB', 'admin', tenantA, [tenantA, tenantB])
   await mkStaff('mgrA', 'foh_management', tenantA, [tenantA])
   await mkStaff('cashierA', 'cashier', tenantA, [tenantA])
+  // A floor role that works dispatch without being a manager (foh holds the
+  // 'dispatch' module; cashier does not, so /dispatch and /riders refuse it
+  // by module since wave 3 — UI-12).
+  await mkStaff('fohA', 'foh', tenantA, [tenantA])
   await mkStaff('mgrB', 'foh_management', tenantB, [tenantB])
 
   await mkRider('a1', tenantA, '923115550201', { lat: 24.801, lng: 67.051 })
@@ -1063,7 +1067,8 @@ describe('the hand-over code, every door', () => {
       where: { id: o.id },
       data: { status: 'completed', completedAt: new Date(), riderId: riders['a1']!.id, riderAssignedAt: new Date() },
     })
-    const res = await asStaff('cashierA', 'GET', `/riders/${riders['a1']!.id}/history`)
+    // A FOH manager (not admin/management) — the roster is the 'riders' module.
+    const res = await asStaff('mgrA', 'GET', `/riders/${riders['a1']!.id}/history`)
     expect(res.statusCode).toBe(200)
     const rows = res.json().orders as Array<Record<string, unknown>>
     expect(rows.find((r) => r['id'] === o.id)).toBeTruthy()
@@ -1085,7 +1090,7 @@ describe('"Mark delivered" by staff on a rider-app job', () => {
     expect((await rider('a1', 'POST', `/jobs/${o.id}/accept`, {})).statusCode).toBe(200)
 
     // A cashier never closes a rider-app job; a manager not while the code works.
-    expect((await markDeliveredAs('cashierA', o.id)).statusCode).toBe(403)
+    expect((await markDeliveredAs('fohA', o.id)).statusCode).toBe(403)
     const early = await markDeliveredAs('mgrA', o.id)
     expect(early.statusCode).toBe(409)
     expect(early.json().error.code).toBe('RIDER_CLOSES_WITH_CODE')
@@ -1104,7 +1109,7 @@ describe('"Mark delivered" by staff on a rider-app job', () => {
     // The fifth locks it (the rider is told a manager closes it) — now one may.
     await rider('a1', 'POST', `/jobs/${o.id}/deliver`, { otp: '0000' })
     expect((await rider('a1', 'POST', `/jobs/${o.id}/deliver`, { otp: '3579' })).statusCode).toBe(423)
-    expect((await markDeliveredAs('cashierA', o.id)).statusCode).toBe(403)
+    expect((await markDeliveredAs('fohA', o.id)).statusCode).toBe(403)
     // Company B's manager cannot reach company A's order at all.
     expect((await markDeliveredAs('mgrB', o.id)).statusCode).toBe(404)
 
@@ -1133,7 +1138,7 @@ describe('"Mark delivered" by staff on a rider-app job', () => {
     await onlyAvailable('a1')
     const offered = await mkOrder(conceptA, { status: 'ready' })
     await assignRider(offered.id, riders['a1']!.id)
-    expect((await markDeliveredAs('cashierA', offered.id)).statusCode).toBe(403)
+    expect((await markDeliveredAs('fohA', offered.id)).statusCode).toBe(403)
     const ok = await markDeliveredAs('mgrA', offered.id)
     expect(ok.statusCode).toBe(200)
     expect((await events(offered.id)).at(-1)).toMatchObject({ type: 'delivered', note: 'marked delivered by a manager — rider never accepted' })
@@ -1141,7 +1146,7 @@ describe('"Mark delivered" by staff on a rider-app job', () => {
     // Before the rider app: a rider recorded on the order, no riderAssignedAt.
     const legacy = await mkOrder(conceptA, { status: 'ready' })
     await prisma.order.update({ where: { id: legacy.id }, data: { riderId: riders['a2']!.id } })
-    const res = await markDeliveredAs('cashierA', legacy.id)
+    const res = await markDeliveredAs('fohA', legacy.id)
     expect(res.statusCode).toBe(200)
     expect(res.json().alreadyDelivered).toBe(false)
     expect((await prisma.order.findUniqueOrThrow({ where: { id: legacy.id } })).deliveredAt).toBeInstanceOf(Date)

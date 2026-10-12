@@ -140,7 +140,7 @@ describe('the order earn', () => {
     const second = await awardOrderPoints(o.id)
     expect(first?.credited).toBe(true)
     expect(second?.credited).toBe(false)
-    const acct = await prisma.loyaltyAccount.findUniqueOrThrow({ where: { customerId: c.id } })
+    const acct = await prisma.loyaltyAccount.findUniqueOrThrow({ where: { tenantId_customerId: { tenantId: tenantA, customerId: c.id } } })
     expect(acct.pointsBalance).toBe(250)
     expect((acct.stampCounts as Record<string, number>)[`rc-a-${RUN}`]).toBe(1)
     const earns = await prisma.loyaltyTransaction.findMany({ where: { orderId: o.id, type: 'earn' } })
@@ -177,7 +177,7 @@ describe('the order earn', () => {
 describe('the redeem', () => {
   it('values points at PKR 0.10 and enforces the minimum', async () => {
     const c = await mkCustomer('redeemer')
-    await prisma.loyaltyAccount.create({ data: { customerId: c.id, pointsBalance: 1000, lifetimePoints: 1000, stampCounts: {} } })
+    await prisma.loyaltyAccount.create({ data: { tenantId: tenantA, customerId: c.id, pointsBalance: 1000, lifetimePoints: 1000, stampCounts: {} } })
     const q = await quoteRedemption({ customerId: c.id, requestedPoints: 500, tenantId: tenantA, capCents: 1_000_000 })
     expect(q).toMatchObject({ points: 500, discountCents: 5_000 })
     await expect(quoteRedemption({ customerId: c.id, requestedPoints: 10, tenantId: tenantA, capCents: 1_000_000 }))
@@ -186,7 +186,7 @@ describe('the redeem', () => {
 
   it('POST /loyalty/redeem lowers the bill and the pending payment, and records the discount', async () => {
     const c = await mkCustomer('redeem-route')
-    await prisma.loyaltyAccount.create({ data: { customerId: c.id, pointsBalance: 300, lifetimePoints: 300, stampCounts: {} } })
+    await prisma.loyaltyAccount.create({ data: { tenantId: tenantA, customerId: c.id, pointsBalance: 300, lifetimePoints: 300, stampCounts: {} } })
     const o = await mkOrder(conceptA, c.id, 20_000, { status: 'received', pending: true })
     const r = await asCustomer(c.id, 'POST', '/loyalty/redeem', { orderId: o.id, pointsToRedeem: 200 })
     expect(r.statusCode).toBe(200)
@@ -200,7 +200,7 @@ describe('the redeem', () => {
 
   it('redeemPointsOnOrder refuses a closed order', async () => {
     const c = await mkCustomer('closed')
-    await prisma.loyaltyAccount.create({ data: { customerId: c.id, pointsBalance: 300, lifetimePoints: 300, stampCounts: {} } })
+    await prisma.loyaltyAccount.create({ data: { tenantId: tenantA, customerId: c.id, pointsBalance: 300, lifetimePoints: 300, stampCounts: {} } })
     const o = await mkOrder(conceptA, c.id, 20_000)
     await expect(redeemPointsOnOrder({ customerId: c.id, orderId: o.id, points: 100 })).rejects.toMatchObject({ code: 'ORDER_NOT_OPEN' })
   })
@@ -224,7 +224,7 @@ describe('tiers unlock on lifetime spend', () => {
     const st = await tierStatus(c.id, tenantA)
     expect(st.lifetimeSpendCents).toBe(1_200_000)
     expect(st.tier.slug).toBe(`rc-gold-${RUN}`)
-    const acct = await prisma.loyaltyAccount.findUniqueOrThrow({ where: { customerId: c.id } })
+    const acct = await prisma.loyaltyAccount.findUniqueOrThrow({ where: { tenantId_customerId: { tenantId: tenantA, customerId: c.id } } })
     expect(acct.tier).toBe(`rc-gold-${RUN}`)
     const r = await asCustomer(c.id, 'GET', `/loyalty/status?conceptSlug=rc-a-${RUN}`)
     expect(r.statusCode).toBe(200)
@@ -252,7 +252,8 @@ describe('one promo evaluation, percentage on food only', () => {
     expect(ok.ok && ok.discountCents).toBe(10_000)
     const low = await evaluatePromo({ code, tenantId: tenantA, conceptId: conceptA, foodSubtotalCents: 40_000 })
     expect(low).toMatchObject({ ok: false, reason: 'PROMO_MIN_ORDER' })
-    expect(promoDiscountCents({ discountType: 'fixed', discountValue: 500, maxDiscountCents: null }, 30_000)).toBe(30_000)
+    // Fixed promos are stored in paisa (PKR 500 = 50_000), capped at the bill.
+    expect(promoDiscountCents({ discountType: 'fixed', discountValue: 50_000, maxDiscountCents: null }, 30_000)).toBe(30_000)
   })
 
   it("another company's code is unknown", async () => {
@@ -262,7 +263,7 @@ describe('one promo evaluation, percentage on food only', () => {
 
   it('applies the per-customer limit when a customer is known', async () => {
     const c = await mkCustomer('promo-user')
-    const promo = await prisma.promoCode.findUniqueOrThrow({ where: { code } })
+    const promo = await prisma.promoCode.findUniqueOrThrow({ where: { tenantId_code: { tenantId: tenantA, code } } })
     const o = await mkOrder(conceptA, c.id, 100_000)
     await prisma.promoCodeUsage.create({ data: { promoCodeId: promo.id, customerId: c.id, orderId: o.id, discountCents: 10_000 } })
     const r = await evaluatePromo({ code, tenantId: tenantA, conceptId: conceptA, foodSubtotalCents: 100_000, customerId: c.id })

@@ -282,9 +282,11 @@ describe('BOOKS-03 — manual journal entries can be reversed', () => {
 describe('BOOKS-07 — the books cannot be closed through a future date', () => {
   const plusDays = (iso: string, n: number) => new Date(new Date(`${iso}T12:00:00+05:00`).getTime() + n * 86400_000 + 5 * 3600_000).toISOString().slice(0, 10)
 
-  it('refuses tomorrow (PKT) and a typo year ahead; accepts today; refuses garbage', async () => {
+  // BOOKS-R2-01: today is still trading, so it is refused too — the latest
+  // lockable date is yesterday.
+  it('refuses today, tomorrow (PKT) and a typo year ahead; accepts yesterday; refuses garbage', async () => {
     const today = fmtPktDate(new Date())
-    for (const date of [plusDays(today, 1), `${Number(today.slice(0, 4)) + 1}-12-31`]) {
+    for (const date of [today, plusDays(today, 1), `${Number(today.slice(0, 4)) + 1}-12-31`]) {
       const res = await call('adminB', 'POST', '/accounting/period-close', { lockedThrough: date, note: 'typo' })
       expect(res.statusCode).toBe(422)
       expect(res.json().error.code).toBe('LOCK_IN_FUTURE')
@@ -294,8 +296,9 @@ describe('BOOKS-07 — the books cannot be closed through a future date', () => 
 
     const ok = await call('adminB', 'POST', '/accounting/period-close', { lockedThrough: plusDays(today, -1) })
     expect(ok.statusCode).toBe(201)
-    const okToday = await call('adminB', 'POST', '/accounting/period-close', { lockedThrough: today })
-    expect(okToday.statusCode).toBe(201)
+    const noToday = await call('adminB', 'POST', '/accounting/period-close', { lockedThrough: today })
+    expect(noToday.statusCode).toBe(422)
+    expect(noToday.json().error.code).toBe('LOCK_IN_FUTURE')
     await prisma.periodLock.deleteMany({ where: { tenantId: tenantB } })
   })
 })

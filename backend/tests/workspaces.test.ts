@@ -28,7 +28,7 @@ const { permissionRoutes } = await import('../src/modules/permissions/routes.js'
 const { hrRoutes } = await import('../src/modules/hr/routes.js')
 const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
-const { MODULE_IDS, DEFAULT_MODULE_ACCESS } = await import('../src/lib/moduleAccess.js')
+const { MODULE_IDS, DEFAULT_MODULE_ACCESS, MODULE_GRANTS, rolesGrantedByDefault } = await import('../src/lib/moduleAccess.js')
 const { WORKSPACES, UNASSIGNED_MODULE_IDS, CHILD_ROLES } = await import('../src/lib/workspaces.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
 
@@ -103,9 +103,23 @@ describe('workspace definitions (lib/workspaces.ts)', () => {
   })
 
   it('role it has its defaults and a childRoles entry; every role has one', () => {
-    expect(DEFAULT_MODULE_ACCESS.it).toEqual(['integrations', 'audit_log', 'notifications', 'help'])
+    expect(DEFAULT_MODULE_ACCESS.it).toEqual(['api_whatsapp', 'api_pos', 'integrations', 'audit_log', 'notifications', 'help'])
     for (const r of ALL_ROLES) expect(CHILD_ROLES[r], r).toBeDefined()
     expect(CHILD_ROLES.owner).toEqual([])
+  })
+
+  it('Dev opens with the API section: exactly the WhatsApp and POS connectors (spec D13)', () => {
+    const dev = WORKSPACES.find((w) => w.id === 'dev')!
+    expect(dev.sections[0]).toEqual({ key: 'api', title: 'API', modules: ['api_whatsapp', 'api_pos'] })
+    expect(dev.sections.find((s) => s.key === 'systems')?.modules).toEqual(['integrations', 'notifications'])
+  })
+
+  it('Voided pre bills sits in Finance with the controls (spec §17.5)', () => {
+    const finance = WORKSPACES.find((w) => w.id === 'finance')!
+    const books = finance.sections.find((s) => s.key === 'books')!
+    expect(books.modules).toContain('voided_prebills')
+    expect(books.modules).toEqual(expect.arrayContaining(['reconciliation', 'exceptions']))
+    for (const r of ['owner', 'management', 'finance'] as const) expect(DEFAULT_MODULE_ACCESS[r], r).toContain('voided_prebills')
   })
 
   it('/permissions/me returns workspaces + childRoles; /permissions/workspaces the full definition', async () => {
@@ -119,7 +133,65 @@ describe('workspace definitions (lib/workspaces.ts)', () => {
 
     const all = await app.inject({ method: 'GET', url: '/api/v1/permissions/workspaces', headers: auth(it_) })
     expect(all.statusCode).toBe(200)
-    expect(all.json().map((w: { id: string }) => w.id)).toEqual(['operations', 'finance', 'marketing', 'hr', 'dev'])
+    expect(all.json().map((w: { id: string }) => w.id)).toEqual(['ceo', 'operations', 'finance', 'marketing', 'hr', 'dev'])
+  })
+})
+
+describe('D2: the CEO section and Operations for the F&B manager (2026-10-11)', () => {
+  const ws = (id: string) => WORKSPACES.find((w) => w.id === id)!
+
+  it('CEO holds Approvals, Companies & head offices, Logins & access and Company rules — owned by admin only', () => {
+    const ceo = ws('ceo')
+    expect(ceo.ownerRoles).toEqual(['admin'])
+    expect(ceo.sections.map((s) => s.title)).toEqual(['Overview', 'Approvals', 'Companies & head offices', 'Logins & access', 'Company rules'])
+    const of = (key: string) => ceo.sections.find((s) => s.key === key)!.modules
+    expect(of('approvals')).toEqual(['approvals'])
+    expect(of('companies')).toEqual(['tenants', 'business_info', 'onboarding'])
+    expect(of('access')).toEqual(['role_management', 'role_modules'])
+    expect(of('rules')).toEqual(['configuration', 'settings'])
+  })
+
+  it('Operations is owned by the F&B manager and holds F&B work only — no company governance', () => {
+    const ops = ws('operations')
+    expect(ops.ownerRoles).toEqual(['fnb_manager'])
+    const mods = ops.sections.flatMap((s) => s.modules)
+    for (const m of ['menu', 'recipes', 'inventory', 'procurement', 'pos', 'kds_all', 'kds_config', 'food_safety']) expect(mods, m).toContain(m)
+    for (const m of ['tenants', 'business_info', 'role_management', 'role_modules', 'configuration', 'settings', 'onboarding', 'ceo_overview', 'approvals']) {
+      expect(mods, m).not.toContain(m)
+    }
+  })
+
+  it('PPL-09 still holds: the workspace that holds configuration is the CEO\'s alone', () => {
+    // setup/routes.ts lets APPROVERS plus that workspace's owner roles edit the
+    // company-wide rules (selfie / geofence, tip split, service charge).
+    const holder = WORKSPACES.find((w) => w.sections.some((s) => s.modules.includes('configuration')))!
+    expect(holder.id).toBe('ceo')
+    expect(holder.ownerRoles).toEqual(['admin'])
+  })
+
+  it('the F&B manager owns Operations in /permissions/me and does not get a CEO section', async () => {
+    const fnb = await makeUser('fnb_manager', tenantA)
+    const me = (await app.inject({ method: 'GET', url: '/api/v1/permissions/me', headers: auth(fnb) })).json()
+    const ids = me.workspaces.map((w: { id: string }) => w.id)
+    expect(ids).toContain('operations')
+    expect(ids).not.toContain('ceo')
+    expect(me.workspaces.find((w: { id: string }) => w.id === 'operations').owner).toBe(true)
+
+    const ceo = await makeUser('admin', tenantA)
+    const meCeo = (await app.inject({ method: 'GET', url: '/api/v1/permissions/me', headers: auth(ceo) })).json()
+    // The CEO still sees everything: the CEO section first, Operations too.
+    expect(meCeo.workspaces.map((w: { id: string }) => w.id)).toEqual(['ceo', 'operations', 'finance', 'marketing', 'hr', 'dev'])
+    expect(meCeo.workspaces.find((w: { id: string }) => w.id === 'ceo').owner).toBe(true)
+    expect(meCeo.workspaces.find((w: { id: string }) => w.id === 'operations').owner).toBe(false)
+  })
+
+  it('the approvals module reaches the governance roles by default, and saved rows once (MODULE_GRANTS)', () => {
+    for (const r of ['owner', 'management', 'manager'] as const) expect(DEFAULT_MODULE_ACCESS[r], r).toContain('approvals')
+    for (const r of ['fnb_manager', 'foh_management', 'boh_management', 'finance', 'hr', 'marketing', 'brand_manager', 'it', 'cashier', 'foh', 'boh', 'kitchen', 'expediter', 'procurement'] as const) {
+      expect(DEFAULT_MODULE_ACCESS[r], r).not.toContain('approvals')
+    }
+    expect(MODULE_GRANTS).toContain('approvals')
+    expect(rolesGrantedByDefault('approvals').sort()).toEqual(['management', 'manager', 'owner'])
   })
 })
 
@@ -128,7 +200,7 @@ describe('team invites', () => {
     const fnb = await makeUser('fnb_manager', tenantA)
     const ok = await app.inject({
       method: 'POST', url: '/api/v1/auth/staff/invite', headers: auth(fnb),
-      payload: { name: 'New Cook', email: `${PREFIX}.cook.${Date.now()}@gsfoods.pk`, role: 'boh' },
+      payload: { name: 'New Cook', email: `${PREFIX}.cook.${Date.now()}@gsfoods.pk`, role: 'boh', phone: `0300${String(Date.now()).slice(-7)}` },
     })
     expect(ok.statusCode).toBe(201)
     const row = await prisma.user.findUniqueOrThrow({ where: { id: ok.json().id }, select: { tenantId: true, accountStatus: true, invitedById: true } })
@@ -159,7 +231,7 @@ describe('team invites', () => {
     const emp = await prisma.hrEmployee.create({ data: { tenantId: tenantA, employeeCode: `${PREFIX}-1`, fullName: 'Invited Cashier' } })
     const res = await app.inject({
       method: 'POST', url: '/api/v1/auth/staff/invite', headers: auth(mgr),
-      payload: { name: 'Invited Cashier', email: `${PREFIX}.cashier.${Date.now()}@gsfoods.pk`, role: 'cashier', employeeId: emp.id },
+      payload: { name: 'Invited Cashier', email: `${PREFIX}.cashier.${Date.now()}@gsfoods.pk`, role: 'cashier', employeeId: emp.id, phone: `0301${String(Date.now()).slice(-7)}` },
     })
     expect(res.statusCode).toBe(201)
     const inviteId = res.json().id as string

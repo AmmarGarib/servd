@@ -36,6 +36,14 @@ async function waitFor<T>(read: () => Promise<T>, done: (v: T) => boolean, ms = 
 }
 const settle = () => new Promise((r) => setTimeout(r, 300))
 
+// The customer's wallet at the brand's company (ONL-R2-01: the wallet is per
+// company; Customer.walletBalance is retired).
+async function walletOf(customerId: string) {
+  const concept = await prisma.concept.findUniqueOrThrow({ where: { id: conceptId }, select: { tenantId: true } })
+  const w = await prisma.customerWallet.findUnique({ where: { tenantId_customerId: { tenantId: concept.tenantId!, customerId } } })
+  return { walletBalance: w?.balanceCents ?? 0 }
+}
+
 async function customer(walletBalance = 0) {
   return prisma.customer.create({
     data: { name: 'Guest', phone: `+92300${Math.floor(Math.random() * 1e7)}`, walletBalance },
@@ -91,7 +99,7 @@ describe('cancelOrder — the one way an order ends without a sale', () => {
     expect(updated.cancelledAt).toBeInstanceOf(Date)
     expect(updated.cancellationReason).toBe('Customer called to cancel')
 
-    const cust = await waitFor(() => prisma.customer.findUniqueOrThrow({ where: { id: c.id } }), (x) => x.walletBalance === 25_000)
+    const cust = await waitFor(() => walletOf(c.id), (x) => x.walletBalance === 25_000)
     expect(cust.walletBalance).toBe(25_000)
     const p = await waitFor(() => prisma.promoCode.findUniqueOrThrow({ where: { id: promo.id } }), (x) => x.usedCount === 0)
     expect(p.usedCount).toBe(0)
@@ -100,7 +108,7 @@ describe('cancelOrder — the one way an order ends without a sale', () => {
     // Again: a no-op, not a second cancellation.
     await cancelOrder(o.id, { reason: 'Double tap', actor })
     await settle()
-    expect((await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })).walletBalance).toBe(25_000)
+    expect((await walletOf(c.id)).walletBalance).toBe(25_000)
     expect((await prisma.promoCode.findUniqueOrThrow({ where: { id: promo.id } })).usedCount).toBe(0)
     expect(await prisma.walletTransaction.count({ where: { orderId: o.id, type: 'refund' } })).toBe(1)
     const audits = await prisma.auditLog.findMany({ where: { entity: 'Order', entityId: o.id } })
@@ -120,7 +128,7 @@ describe('cancelOrder — the one way an order ends without a sale', () => {
 
     const g = await waitFor(() => prisma.giftCard.findUniqueOrThrow({ where: { id: card.id } }), (x) => x.balanceCents === 50_000)
     expect(g.balanceCents).toBe(50_000)
-    const cust = await waitFor(() => prisma.customer.findUniqueOrThrow({ where: { id: c.id } }), (x) => x.walletBalance === 5_000)
+    const cust = await waitFor(() => walletOf(c.id), (x) => x.walletBalance === 5_000)
     expect(cust.walletBalance).toBe(5_000)
     expect((await prisma.auditLog.findFirstOrThrow({ where: { entityId: o.id } })).action).toBe('expo.reject')
   })
@@ -157,7 +165,7 @@ describe('auto-cancel sweep', () => {
     expect(after.status).toBe('cancelled')
     expect(after.cancellationReason).toBe('auto_cancelled_timeout')
     expect(after.cancelledAt).toBeInstanceOf(Date)
-    const cust = await waitFor(() => prisma.customer.findUniqueOrThrow({ where: { id: c.id } }), (x) => x.walletBalance === 7_500)
+    const cust = await waitFor(() => walletOf(c.id), (x) => x.walletBalance === 7_500)
     expect(cust.walletBalance).toBe(7_500)
     expect((await prisma.auditLog.findFirstOrThrow({ where: { entityId: o.id } })).action).toBe('order.auto_cancel')
     expect((await prisma.order.findUniqueOrThrow({ where: { id: fresh.id } })).status).toBe('received')
@@ -181,7 +189,8 @@ describe('same-state writes are no-ops', () => {
     await settle()
     expect(again.status).toBe('completed')
     expect(await prisma.loyaltyTransaction.count({ where: { orderId: o.id, type: 'earn' } })).toBe(1)
-    const account = await prisma.loyaltyAccount.findUniqueOrThrow({ where: { customerId: c.id } })
+    // One account per company; this customer only has the order's company's.
+    const account = await prisma.loyaltyAccount.findFirstOrThrow({ where: { customerId: c.id } })
     expect(account.pointsBalance).toBe(earned[0]!.pointsDelta)
     // completedAt is not re-stamped either.
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).completedAt).toEqual(first.completedAt)
@@ -211,16 +220,23 @@ describe('till policy readers — lib/setup-config, for the right company', () =
     expect(o.totalCents).toBe(110_000)
   })
 
-  it('void caps come from the order company\'s refund policy', async () => {
-    await prisma.refundPolicy.create({ data: { scope: 'global', scopeId: null, tenantId: tenantA, cashierVoidLimitCents: 200_000 } })
-    await prisma.refundPolicy.create({ data: { scope: 'global', scopeId: null, tenantId: tenantB, cashierVoidLimitCents: 0 } })
+  it('void caps come from the order company\'s refund policy (and a cashier never voids alone — §17.4)', async () => {
+    // A's manager cap covers the line, B's does not: the ORDER's company decides.
+    await prisma.refundPolicy.create({ data: { scope: 'global', scopeId: null, tenantId: tenantA, cashierVoidLimitCents: 200_000, managerVoidLimitCents: 200_000 } })
+    await prisma.refundPolicy.create({ data: { scope: 'global', scopeId: null, tenantId: tenantB, cashierVoidLimitCents: 0, managerVoidLimitCents: 0 } })
     invalidateSetupCache()
     const o = await order({ status: 'preparing', source: 'pos' })
-    const voided = await voidOrderItem({
+    // Even under a generous cashier cap, a cashier with no manager PIN is refused (the cashier void cap is treated as 0).
+    await expect(voidOrderItem({
       orderId: o.id, orderItemId: o.items[0]!.id, reason: 'Wrong item rung', actorId: staffId, actorRole: 'cashier',
+    })).rejects.toMatchObject({ code: 'MANAGER_OVERRIDE_REQUIRED', statusCode: 403 })
+    const voided = await voidOrderItem({
+      orderId: o.id, orderItemId: o.items[0]!.id, reason: 'Wrong item rung', actorId: staffId, actorRole: 'foh_management',
     })
     expect(voided.status).toBe('voided')
     expect(voided.voidReason).toBe('Wrong item rung')
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order_item_void', entityId: o.items[0]!.id } })
+    expect((log.metadata as { approverId?: string }).approverId).toBe(staffId)
     expect(await prisma.auditLog.count({ where: { action: 'order_item_void', entityId: o.items[0]!.id } })).toBe(1)
   })
 

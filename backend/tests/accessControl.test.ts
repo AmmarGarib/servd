@@ -52,7 +52,7 @@ const created: string[] = []
 const PREFIX = 'acl-test'
 
 async function makeUser(opts: {
-  role: string; tenantId: string | null; pin?: string; email?: string
+  role: string; tenantId: string | null; pin?: string; email?: string; phone?: string
   isActive?: boolean; accountStatus?: 'pending' | 'active' | 'suspended'
 }) {
   const n = created.length + 1
@@ -63,6 +63,7 @@ async function makeUser(opts: {
       password: await bcrypt.hash('NotUsedInThisTest123', 4),
       role: opts.role as never,
       tenantId: opts.tenantId,
+      ...(opts.phone ? { phone: opts.phone } : {}),
       isActive: opts.isActive ?? true,
       accountStatus: opts.accountStatus ?? 'active',
       pin: opts.pin ? await bcrypt.hash(opts.pin, 4) : null,
@@ -109,6 +110,49 @@ afterAll(async () => {
   await prisma.user.deleteMany({ where: { id: { in: created } } })
   await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX}.` } } })
   await prisma.tenant.deleteMany({ where: { id: { in: [tenantA, tenantB] } } })
+})
+
+// ── D2 / D3 (2026-10-11): the CEO section moved modules, it changed no one ──
+
+describe('module defaults after the CEO section (D2) and the approvals inbox (D3)', () => {
+  // Moving module ids between workspaces is a regrouping, not an access
+  // change: every role the move does not involve keeps exactly its defaults.
+  const UNCHANGED: Record<string, string[]> = {
+    fnb_manager: ['fnb_dashboard', 'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'complaints', 'reviews', 'staff_directory', 'finance_pl', 'accounting', 'reports'],
+    foh_management: ['dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'crm', 'complaints', 'reviews', 'campaigns', 'staff_directory', 'reports', 'integrations'],
+    boh_management: ['dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'staff_directory', 'scheduling', 'reports'],
+    foh: ['pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside'],
+    boh: ['kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet', 'food_safety'],
+    kitchen: ['kds_dashboard', 'par_sheet', 'food_safety'],
+    expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet', 'food_safety'],
+    cashier: ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
+    procurement: ['procurement', 'inventory', 'reports'],
+    marketing: ['marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront'],
+    brand_manager: ['brand_dashboard', 'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront'],
+    finance: ['dashboard', 'orders', 'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'reports', 'voided_prebills'],
+    hr: ['staff_directory', 'staff_hr', 'payroll', 'scheduling'],
+    it: ['api_whatsapp', 'api_pos', 'integrations', 'audit_log', 'notifications', 'help'],
+  }
+
+  it('roles the move does not involve keep exactly their defaults', () => {
+    for (const [role, mods] of Object.entries(UNCHANGED)) {
+      expect(DEFAULT_MODULE_ACCESS[role as keyof typeof DEFAULT_MODULE_ACCESS], role).toEqual(mods)
+    }
+  })
+
+  it('the governance roles gain only the approvals entry; governance stays withheld from owner', () => {
+    const all = [...MODULE_IDS] as string[]
+    expect(DEFAULT_MODULE_ACCESS.admin).toEqual(all)
+    for (const r of ['owner', 'management', 'manager'] as const) expect(DEFAULT_MODULE_ACCESS[r], r).toContain('approvals')
+    for (const m of ['role_management', 'role_modules', 'accounting_audit']) expect(DEFAULT_MODULE_ACCESS.owner).not.toContain(m)
+  })
+
+  it('the inbox is not module-gated — it grants nothing, each module\'s own routes do', async () => {
+    for (const role of ['cashier', 'boh_management', 'hr', 'finance']) {
+      await expect(enforceModuleAccess('/api/v1/approvals', { role: role as never })).resolves.toBeUndefined()
+      await expect(enforceModuleAccess('/api/v1/approvals/counts', { role: role as never })).resolves.toBeUndefined()
+    }
+  })
 })
 
 // ── One role list ────────────────────────────────────────────────────────────
@@ -335,7 +379,7 @@ describe('pending signups', () => {
   })
 
   it('approve and reject are audited', async () => {
-    const p1 = await makeUser({ role: 'cashier', tenantId: tenantA, accountStatus: 'pending' })
+    const p1 = await makeUser({ role: 'cashier', tenantId: tenantA, accountStatus: 'pending', phone: '923001234567' })
     const p2 = await makeUser({ role: 'cashier', tenantId: tenantA, accountStatus: 'pending' })
     const pending = await app.inject({ method: 'GET', url: '/api/v1/auth/staff/pending', headers: { authorization: ceoToken } })
     expect((pending.json() as Array<{ id: string }>).map((x) => x.id)).toEqual(expect.arrayContaining([p1.id, p2.id]))

@@ -43,7 +43,7 @@ describe('naming the fault', () => {
     const s = await probeDelivery()
     expect(s.ok).toBe(false)
     expect(s.cause).toBe('unconfigured')
-    expect(s.fix).toContain('Configuration')
+    expect(s.fix).toContain('Dev → API → WhatsApp connector')
   })
 
   it('says session_dropped when the client is not linked', async () => {

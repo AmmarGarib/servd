@@ -359,8 +359,11 @@ describe('GET /storefront/quote — the page shows the server price', () => {
     const cash = await quote('cash')
     expect(cash.statusCode).toBe(200)
     expect(cash.json()).toMatchObject({ taxRatePct: 15, taxCents: 15_000, itemTotalCents: 100_000, totalCents: 115_000 })
-    const online = await quote('jazzcash')
+    // Non-cash tenders price at 8%. The online gateways aren't wired yet, so
+    // a jazzcash quote is refused (ONL-02); the wallet is the non-cash tender.
+    const online = await quote('wallet')
     expect(online.json()).toMatchObject({ taxRatePct: 8, taxCents: 8_000, totalCents: 108_000 })
+    expect((await quote('jazzcash')).statusCode).toBe(422)
   })
 
   it('refuses a basket that is not valid JSON', async () => {

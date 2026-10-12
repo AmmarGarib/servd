@@ -69,6 +69,11 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
     .split('\n').filter((line) => !line.trimStart().startsWith('--')).join('\n')
     .split(';').map((s) => s.trim()).filter(Boolean)
   for (const statement of statements) await prisma.$executeRawUnsafe(statement)
+  // Partial unique indexes that live only in later migrations (db push can't
+  // express them). Keep in step with the migration that creates each one.
+  // 20261010210100_pos_connector — at most one live card-machine charge per order.
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "terminal_charges_one_active_per_order" ON "terminal_charges" ("orderId")
+    WHERE "kind" = 'charge' AND "status" IN ('pending','sent','approved','cancel_requested','unknown')`)
 }
 
 async function seedTestAccounts(prisma: PrismaClient): Promise<void> {

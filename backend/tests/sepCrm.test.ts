@@ -15,6 +15,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { crmRoutes } from '../src/modules/crm/routes.js'
 import { walletRoutes } from '../src/modules/wallet/routes.js'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { loyaltyRoutes } from '../src/modules/loyalty/routes.js'
 import { marketingActivityRoutes } from '../src/modules/marketingActivity/routes.js'
 
@@ -53,6 +54,9 @@ beforeAll(async () => {
   tenantB = (await prisma.tenant.create({ data: { name: 'Sep B', slug: `sep-b-${RUN}` } })).id
   conceptA = (await prisma.concept.create({ data: { name: 'Brand A', slug: `sep-brand-a-${RUN}`, type: 'restaurant', tenantId: tenantA } as never })).id
   conceptB = (await prisma.concept.create({ data: { name: 'Brand B', slug: `sep-brand-b-${RUN}`, type: 'restaurant', tenantId: tenantB } as never })).id
+  // Top-ups post to the company's books (ONL-R2-01), so each needs its chart.
+  await ensureChartOfAccounts(tenantA)
+  await ensureChartOfAccounts(tenantB)
   await mkUser('mgrA', tenantA, [tenantA])
   await mkUser('mgrB', tenantB, [tenantB])
   custA = await customerWithOrders('custA', [conceptA], 6_000_000)   // A's VIP (PKR 60k)
@@ -129,7 +133,9 @@ describe('segments and campaigns belong to one company', () => {
     const until = Date.now() + 5000
     while (Date.now() < until) {
       const c = await prisma.campaign.findUnique({ where: { id: campA } })
-      if (c?.status === 'sent') break
+      // status flips to 'sent' at the claim, before the first message
+      // (W3A-RV-01); the broadcast is finished once recipientCount lands.
+      if (c?.recipientCount != null) break
       await new Promise((res) => setTimeout(res, 50))
     }
     const sends = await prisma.campaignSend.findMany({ where: { campaignId: campA }, select: { customerId: true } })
@@ -211,8 +217,11 @@ describe('wallet top-ups and reads', () => {
     expect((await call('mgrB', 'GET', `/wallet/customers/${custA}`)).statusCode).toBe(404)
     const bulk = await call('mgrB', 'POST', '/wallet/bulk-topup', { customerIds: [custA, custB], amountCents: 500 })
     expect(bulk.json().success).toBe(1)
-    const a = await prisma.customer.findUnique({ where: { id: custA }, select: { walletBalance: true } })
-    expect(a!.walletBalance).toBe(0)
+    // The wallet is per company (ONL-R2-01): nothing at A, and B's credit for
+    // its own customer sits in B's wallet only.
+    expect(await prisma.customerWallet.count({ where: { customerId: custA } })).toBe(0)
+    const b = await prisma.customerWallet.findMany({ where: { customerId: custB } })
+    expect(b.map((w) => [w.tenantId, w.balanceCents])).toEqual([[tenantB, 500]])
   })
 
   it('A can credit its own customer', async () => {

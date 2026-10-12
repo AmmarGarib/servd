@@ -29,8 +29,10 @@ describe('loyalty: account math', () => {
       },
     })
     customerId = customer.id
+    // Accounts are per company (ONL-04).
+    const tenant = await prisma.tenant.upsert({ where: { slug: 'loyalty-math' }, create: { name: 'Loyalty Math', slug: 'loyalty-math' }, update: {} })
     const account = await prisma.loyaltyAccount.create({
-      data: { customerId, pointsBalance: 0, lifetimePoints: 0, tier: 'bronze' },
+      data: { tenantId: tenant.id, customerId, pointsBalance: 0, lifetimePoints: 0, tier: 'bronze' },
     })
     accountId = account.id
   })
