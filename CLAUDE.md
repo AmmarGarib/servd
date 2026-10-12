@@ -145,10 +145,13 @@ rewritten, trust these corrections:
 
 ## Workspaces — servd is organised by owner (2026-10-04, owner decision 47)
 
-Five workspaces replace the old 18-module catalogue: **Operations** (the CEO —
-all BOH and FOH, menu, stock, buying, the till, company setup), **Finance**,
-**Marketing**, **HR**, **Dev** (IT role `it` — integrations, backups,
-webhooks, the user audit log). `backend/src/lib/workspaces.ts` is the ONE
+Six workspaces replace the old 18-module catalogue: **CEO** (role `admin`
+only — the approvals inbox, companies, logins & module access, company-wide
+rules; owner decision D2, 2026-10-11), **Operations** (owned by
+`fnb_manager` — all BOH and FOH, menu, stock, buying, the till; the CEO still
+holds every module), **Finance**, **Marketing**, **HR**, **Dev** (IT role
+`it` — integrations, backups, webhooks, the user audit log, the API
+connectors). `backend/src/lib/workspaces.ts` is the ONE
 definition (sections, module ids, owner/member roles, `childRoles`); every
 module id belongs to exactly one workspace (tested). The admin sidebar,
 `/w/<id>` homes and `/modules` read it from `GET /permissions/me` /
@@ -159,7 +162,35 @@ module id must be placed in a workspace in the same change.
   returns the whole tree under the caller. Don't build another hierarchy.
 - **Owners add logins only for roles under them** (`childRoles`;
   `POST /auth/staff/invite`), always `pending` until the CEO approves on
-  /workforce. The CEO's own `POST /auth/users` needs no approval.
+  /workforce or in the approvals inbox. The CEO's own `POST /auth/users`
+  needs no approval. A login with no company can't be approved
+  (422 `LOGIN_NEEDS_COMPANY`) — pick its company on /workforce first.
+- **One approvals inbox** (`/ceo/approvals`, `GET /approvals` +
+  `/approvals/counts`, `backend/src/modules/approvals/`; owner decision D3).
+  It READS each module's own queue as the caller (new logins, website
+  publishes, POs over the limit, recipes, HR steps, payroll, tip pools, stock
+  transfers) and every button calls the module's EXISTING approve/reject
+  route, whose own guard decides — never add a second approval engine. A new
+  approval type is a provider in that module. `/hr/approvals` ("My
+  approvals") redirects to `/ceo/approvals?type=hr_request`. Hand-over of
+  approval types to head-office HODs comes with head office (after Monday).
+- **The sidebar and the server agree (wave 3, 2026-10-11).** A role whose
+  modules include M can use M's pages (every read 200, the workspace's normal
+  writes work); a role without M is refused server-side, not just hidden.
+  Server: `GATED_PREFIXES` in `backend/src/lib/moduleAccess.ts` — each rule's
+  `anyOf` lists EVERY module whose pages (admin, tablet, till) call that path
+  (`/orders`, `/expo`, `/dispatch`, `/riders`, `/crm`, finance and HR
+  prefixes…); `readAnyOf` widens GET/HEAD only (finance reads payables under
+  `/procurement`). A new caller of a gated path adds its page's module to
+  that rule in the same change. Some modules gate inside their route files
+  (`requireModule` / `moduleGateForNewRoles` in marketing, finance, Dev
+  routes). Admin: `canOpenPath` / `modulesForPath` in
+  `frontend/admin/src/lib/moduleCatalog.ts` drive the AppShell page guard
+  ("You don't have access to this page"), the hubs' cards and cross-links.
+  The brand picker reads `GET /concepts?view=picker` (any staff role, own
+  companies' active brands); plain `/concepts` stays managers/till. Line
+  cooks and finance never get costs/codes they don't need (`costsHidden`,
+  masked gift-card codes).
 - **User audit log** (`/configuration/audit-log`, module `audit_log`):
   identity trail incl. `auth.login`, `auth.login_failed`, `auth.otp_login`,
   `auth.2fa_failed`, `auth.logout`. The books' trail
@@ -400,6 +431,7 @@ Settings → Secrets and variables → Actions:
 | `SENTRY_DSN_STOREFRONT` | (optional) Sentry DSN for storefront | |
 | `SENTRY_DSN_ADMIN` | (optional) Sentry DSN for admin | |
 | `GOOGLE_MAPS_API_KEY` | (optional) Maps JavaScript API key — switches the admin location pin picker from OpenStreetMap to Google tiles. Public/build-time: restrict it to the admin origin in Google Cloud. Without it the picker still works (OSM tiles + paste-a-Maps-link resolver). | `AIza…` |
+| `SERVD_SECRET_KEY` | **Box env, NOT a GitHub secret** — set it in the API container's environment on the box. AES-256-GCM key for stored integration secrets (POS connector API keys + webhook secrets, the WhatsApp gateway key), base64 of 32 bytes (`openssl rand -base64 32`). Never in the repo or the image. Without it no connector/WhatsApp key can be saved (503 `SECRET_KEY_MISSING`) and `/health` warns; losing it makes stored secrets unreadable (re-enter them). Once set, the WhatsApp key is encrypted on first read, so rolling the API back to a pre-connector image needs the WhatsApp key re-entered. | `q3J…=` |
 
 ### Manual fallback
 
@@ -518,6 +550,83 @@ noindex, no servd chrome / feedback / pop-ups).
 - **Not built yet:** earnings/payouts, push notifications for offers (the app
   polls), store release (EAS, icons, Play background-location declaration),
   KYC, route optimisation.
+
+### POS connector + pre-bills (2026-10-10, owner amendments binding)
+
+**The external fiscal POS is the ONLY FBR/SRB filer.** servd is the
+order-taking software; it never talks to FBR PRAL or SRB. The direct
+adapters, workers, queues, `/integrations/tax/status` and every `FBR_*` /
+`SRB_*` env var are removed — **never add a direct authority client.**
+Everything goes through `backend/src/connectors/` (README there; vendor
+contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
+
+- **The connector:** one `PosConnector` row per company per kind — `fiscal`
+  (the fiscal POS) and `terminal` (the card machine), so they can be
+  different vendors. Drivers: `none`, `test` (built in, deterministic, no
+  network, `TEST-…` numbers, receipts say `TEST — NOT A FISCAL INVOICE`) and
+  `http` ("servd connector API v1"). A real vendor is one file in
+  `connectors/drivers/` + one line in `registry.ts`. Secrets go through
+  `lib/secretBox.ts` (`SERVD_SECRET_KEY`); responses carry hints only.
+- **Transactional outbox:** the sale `FiscalDocument` is inserted inside
+  `completeOrder`'s claim transaction — **any new path that completes an
+  order goes through `completeOrder`**, never files on its own. A refund
+  after completion inserts a refund document in the refund's transaction.
+  Single flight via a DB lease, DB-driven retries, `unknown` → lookup before
+  any resubmit, a 30 s sweeper that works without Redis.
+- **Pre-bill vs full & final (FnF) bill:** a pre-bill (open order, before
+  payment; `PRE-BILL — NOT A TAX INVOICE`, `PB-<n>` per company) **never**
+  creates a fiscal document and is never sent to the POS. Only the FnF bill
+  (completion) files — exactly once per order. Cancel/void before FnF sends
+  nothing. Receipt routes answer 409 `PRE_BILL_REQUIRED` for a non-final
+  order. Every pre-bill print is a permanent `PreBill` row
+  (`modules/prebills/`) — no delete/hide/edit endpoint, never revenue, never
+  the ledger.
+- **Finance → Voided pre bills** (`/finance/voided-pre-bills`, API
+  `GET /pre-bills`, module `voided_prebills`; admin, owner, management,
+  finance): every pre-bill, flagged `ORPHANED` / `FINAL_LOWER` /
+  `LINE_VOIDS_AFTER`. Only `/pre-bills` is module-gated — the till's
+  `/pos/orders/:id/pre-bill` and `/pos/pre-bills/:id/html` never are.
+- **Manager-only voids:** every item void and every whole-order cancel/void
+  of a rung-up order needs a manager — the manager's own login or a valid
+  same-company manager PIN (`MANAGER_OVERRIDE_REQUIRED` /
+  `INVALID_MANAGER_PIN`, 403); `approverId` always recorded. A cashier or
+  server can never void alone.
+- **No skip of real sales.** There is no per-document Skip, no date-range
+  skip and no "skip held" at go-live. `skipped` is automatic only
+  (prefiled_direct, zero_value per setting, zero_value_unsupported,
+  no_sale_document). Until a company goes live its sales are `held`
+  (visible, in /health, never auto-sent); the CEO goes live and releases ALL
+  held (per company or per brand). "Record manual filing" stays.
+- **Per-company "Fiscal reporting required"** (default ON; stored on the
+  company's fiscal connector settings, read via `fiscalReportingRequired()`):
+  OFF for a test company or a non-commercial kitchen → no fiscal documents,
+  no held backlog, no alerts, receipts say "Not a tax invoice". CEO only,
+  reason required, audited, whole company — never per sale/brand/date.
+- **API section = Dev workspace → API = exactly two modules:**
+  `api_whatsapp` (`/connectors/whatsapp`, Hasham's gateway — ONE
+  platform-wide gateway, routes `/auth/integrations/whatsapp*`, module-gated
+  so the CEO's Module Access really closes it — whoever sets its URL
+  receives every company's OTPs) and
+  `api_pos` (`/connectors/pos`, module-gates `/connectors`). Configured by
+  `CONNECTOR_ADMINS` (`admin`, `it`; `lib/connectorRoles.ts`); management
+  reads the POS connector; go-live, switch-off, release and the reporting
+  switch are CEO only. Pages live under `/connectors/*`, never `/api/*`
+  (the admin rewrites `/api/:path*` to the backend).
+- `Concept.fbrPosId` / `srbPosId` stay the one store of brand POS ids (edited
+  only on the POS connector page); `srbPosId` still routes Sindh tax to 2032
+  in the ledger. Fiscal payloads use STORED order figures only — never
+  `concept.taxRate`.
+- **New default modules reach saved Module Access rows ONCE.** A saved
+  `RoleModuleAccess` row replaces the role's defaults, so a module added to
+  a role's defaults is listed in `MODULE_GRANTS` (`lib/moduleAccess.ts`);
+  `applyModuleGrants()` appends it to saved rows of the roles whose defaults
+  hold it, once (marker `settings.moduleAccess.grantsApplied`), at boot and
+  before the first override read. A later CEO untick sticks.
+- **Rollback below this release breaks WhatsApp until the key is re-entered:**
+  a server with `SERVD_SECRET_KEY` encrypts the stored gateway key on first
+  read (spec D15), and the old image sends that ciphertext as the API key —
+  signup, staff code sign-in, reset and 2FA codes stop. After any such
+  rollback re-enter the key in the old `/configuration/whatsapp` screen.
 
 ## Claude Code operating policy — model routing & parallel agents
 
