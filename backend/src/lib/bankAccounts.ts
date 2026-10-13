@@ -171,18 +171,30 @@ export async function moneyAccountCode(
 /**
  * Ledger balance (debits − credits, in paisa) of each code in `tenantId`'s
  * chart. This — not BankAccount.openingBalanceCents — is a bank's balance.
+ *
+ * `asOf` counts only entries dated on or before it (`journalEntry.entryDate
+ * <= asOf`) — the fixed-asset register ties out to the ledger at a month end.
+ * `db` reads through a transaction when the caller holds one.
  */
-export async function ledgerBalancesByCode(tenantId: string, codes: string[]): Promise<Map<string, number>> {
+export async function ledgerBalancesByCode(
+  tenantId: string,
+  codes: string[],
+  opts: { asOf?: Date; db?: Prisma.TransactionClient | typeof prisma } = {},
+): Promise<Map<string, number>> {
   const out = new Map<string, number>()
   if (codes.length === 0) return out
-  const accounts = await prisma.account.findMany({
+  const db = opts.db ?? prisma
+  const accounts = await db.account.findMany({
     where: { tenantId, code: { in: Array.from(new Set(codes)) } },
     select: { id: true, code: true },
   })
   if (accounts.length === 0) return out
-  const sums = await prisma.journalLine.groupBy({
+  const sums = await db.journalLine.groupBy({
     by: ['accountId', 'type'],
-    where: { accountId: { in: accounts.map((a) => a.id) } },
+    where: {
+      accountId: { in: accounts.map((a) => a.id) },
+      ...(opts.asOf && { journalEntry: { entryDate: { lte: opts.asOf } } }),
+    },
     _sum: { amountCents: true },
   })
   const codeOf = new Map(accounts.map((a) => [a.id, a.code]))
