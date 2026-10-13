@@ -9,12 +9,14 @@
 //   - M-01: legacy months charged out of order never push the total past
 //     cost − salvage;
 //   - impairment, change of estimate and partial outs act prospectively;
-//   - NBV at a past date; the PKT month boundary (00:30 PKT on the 1st).
+//   - NBV at a past date; the PKT month boundary (00:30 PKT on the 1st);
+//   - the one class list and the equipment guard (equipment only via CapEx).
 import { describe, it, expect } from 'vitest'
 import {
   planCharges, forecast, nextMonthlyCharge, nbvAt, periodOfPkt, lastDayPkt, endOfMonthPkt, startOfMonthPkt,
   addMonths, lastPeriodEndingBy, lifeWindow, type ScheduleAsset, type ScheduleAdjustment,
 } from '../src/modules/fixedAssets/schedule.js'
+import { looksLikeEquipment, assertNotEquipmentLine, ASSET_CLASS_DEFAULTS, SMALLWARE_TYPES } from '../src/modules/fixedAssets/classes.js'
 
 const pkt = (s: string) => new Date(`${s}+05:00`)
 const sumOf = (xs: Array<{ amountCents: number }>) => xs.reduce((t, x) => t + x.amountCents, 0)
@@ -203,7 +205,6 @@ describe('NBV at a date', () => {
 })
 
 // ── The equipment guard (classes.ts — used by bills, OpEx, petty cash, cash requests, stock items) ──
-import { looksLikeEquipment, assertNotEquipmentLine, ASSET_CLASS_DEFAULTS, SMALLWARE_TYPES } from '../src/modules/fixedAssets/classes.js'
 
 describe('the class list', () => {
   it('one list: codes per class, smallwares pooled over 24 months, land never depreciated', () => {

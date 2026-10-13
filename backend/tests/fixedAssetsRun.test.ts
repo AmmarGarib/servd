@@ -11,7 +11,8 @@
 //   - concurrent runs post once; an unfinished month is 422 MONTH_NOT_ENDED;
 //   - two companies charge into their own ledgers;
 //   - the legacy 1590 reclass runs once;
-//   - the close check blocks and chargeForClose clears it.
+//   - the close check blocks and chargeForClose clears it;
+//   - tax depreciation (IA + WDV), the CEO's freeze, deferred tax (report only).
 import { describe, it, expect } from 'vitest'
 import type { FixedAsset } from '@prisma/client'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
@@ -26,6 +27,8 @@ import {
 } from '../src/modules/fixedAssets/schedule.js'
 import { fixedAssetCloseChecks, chargeForClose } from '../src/modules/fixedAssets/closeCheck.js'
 import type { CloseCheckContext } from '../src/modules/accounting/closeCheckTypes.js'
+import { taxSchedule, freezeTaxYear, deferredTax } from '../src/modules/fixedAssets/tax.js'
+import { taxYearOf } from '../src/modules/accounting/fiscalYear.js'
 
 const cur = currentPeriodPkt()
 const m = (k: number) => addMonths(cur, k) // m(-1) = the last completed month
@@ -282,5 +285,47 @@ describe('the period-close check', () => {
     })
     expect(await cap.run(ctx(endOfMonthPkt(m(-1))))).toMatchObject({ key: 'capitalisation_pending', severity: 'warn', count: 1, cents: 55_000 })
     expect(await cap.run(ctx(endOfMonthPkt(m(-3))))).toBeNull()
+  })
+})
+
+describe('tax depreciation (H23) and deferred tax (H24)', () => {
+  it('initial allowance then WDV; a frozen year never changes; deferred tax at 29%', async () => {
+    const co = await mkCo('tax')
+    const other = await mkCo('tax-b')
+    const oven = await mkAsset(co, { name: 'Tandoor', costCents: 1_000_000, inServiceAt: new Date('2025-08-10T12:00:00+05:00'), life: 60 })
+    await chargeThrough(co.tenantId, m(-1), { postedBy: 'system' })
+
+    const ty26 = await taxSchedule(co.tenantId, 2026)
+    expect(ty26.rows).toHaveLength(1)
+    expect(ty26.rows[0]).toMatchObject({
+      assetId: oven.id, rateBp: 1500, initialAllowanceBp: 2500, openingWdvCents: 0, additionsCents: 1_000_000,
+      initialAllowanceCents: 250_000, depreciationCents: 112_500, closingWdvCents: 637_500, frozen: false,
+    })
+    const ty27 = await taxSchedule(co.tenantId, 2027)
+    expect(ty27.rows[0]).toMatchObject({ openingWdvCents: 637_500, additionsCents: 0, initialAllowanceCents: 0, depreciationCents: 95_625, closingWdvCents: 541_875 })
+    expect((await taxSchedule(other.tenantId, 2026)).rows).toHaveLength(0)
+
+    const open = taxYearOf(new Date()).taxYear
+    await expect(freezeTaxYear(co.tenantId, open, 'ceo')).rejects.toMatchObject({ code: 'TAX_YEAR_OPEN', statusCode: 422 })
+    expect(await freezeTaxYear(co.tenantId, 2026, 'ceo')).toMatchObject({ taxYear: 2026, assets: 1 })
+    await expect(freezeTaxYear(co.tenantId, 2026, 'ceo')).rejects.toMatchObject({ code: 'TAX_YEAR_FROZEN', statusCode: 409 })
+
+    // A later class-rate edit does not restate the frozen year; the next year runs on from its closing WDV.
+    await prisma.fixedAssetClass.updateMany({ where: { tenantId: co.tenantId, key: 'kitchen_equipment' }, data: { taxRateBp: 3000 } })
+    const frozen = await taxSchedule(co.tenantId, 2026)
+    expect(frozen.frozen).toBe(true)
+    expect(frozen.rows[0]).toMatchObject({ depreciationCents: 112_500, closingWdvCents: 637_500, frozen: true })
+    expect((await taxSchedule(co.tenantId, 2027)).rows[0]).toMatchObject({ openingWdvCents: 637_500, depreciationCents: 191_250 })
+
+    // Deferred tax at 30 June 2026: register NBV − tax WDV, at 29%.
+    const rows = await prisma.fixedAssetDepreciation.findMany({ where: { assetId: oven.id, period: { lte: '2026-06' } } })
+    const nbv = 1_000_000 - rows.reduce((t, r) => t + Number(r.amountCents), 0)
+    const d = await deferredTax(co.tenantId, 2026)
+    expect(d.rateBp).toBe(2900)
+    expect(d.byClass).toEqual([expect.objectContaining({
+      classKey: 'kitchen_equipment', nbvCents: nbv, taxWdvCents: 637_500, differenceCents: nbv - 637_500,
+      deferredTaxCents: Math.round(((nbv - 637_500) * 2900) / 10_000),
+    })])
+    expect(d.totals.deferredTaxCents).toBe(Math.round(((nbv - 637_500) * 2900) / 10_000))
   })
 })
