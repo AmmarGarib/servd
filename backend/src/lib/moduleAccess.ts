@@ -49,6 +49,10 @@ export const MODULE_IDS = [
   'brand_dashboard', 'fnb_dashboard',
   'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'chain',
   'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
+  // Operations → Emergency overrides (owner, 2026-10-13): send the hand-over
+  // code to the rider's number when the customer cannot receive it; log food
+  // a rider brought back as waste. The RGM, the chef and the F&B manager.
+  'emergency_overrides',
   'menu', 'components', 'recipes', 'inventory', 'kds_config', 'par_sheet', 'food_safety',
   'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics',
   // Storefront content module (decision 41): pages, pop-ups, library, drafts.
@@ -57,6 +61,9 @@ export const MODULE_IDS = [
   'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'procurement', 'reports',
   // Finance → Voided pre bills (spec §17.1): every pre-bill printed, read-only.
   'voided_prebills',
+  // Finance → Reports → Food cost variance (wave B): actual vs recipe per
+  // ingredient and brand at the price paid (FIFO lots), food / drinks / packaging.
+  'food_cost',
   'staff_directory', 'staff_hr',
   'settings', 'notifications', 'help', 'configuration', 'onboarding', 'integrations',
   // Dev → API (spec D13): Hasham's WhatsApp connector and the POS connector.
@@ -92,14 +99,18 @@ export function isRetiredModuleId(id: string): boolean { return RETIRED_SET.has(
 //   voided_prebills — GET /pre-bills: admin, owner, management, finance
 // So management holds everything except the WhatsApp connector (whose routes
 // it cannot open), owner and the legacy manager hold neither API connector.
+//   emergency_overrides — /emergency-overrides: the RGM (foh_management), the
+//     chef (boh_management), the F&B manager, management and the CEO — the
+//     people on shift who own a delivery gone wrong. Not the co-owner, not the
+//     legacy manager.
 const API_WHATSAPP_ONLY = ['api_whatsapp']
 const API_CONNECTORS = ['api_whatsapp', 'api_pos']
 const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m))
 // 'manager' mirrors 'management' for everything EXCEPT the accounting trail,
-// the API connectors and the Finance pre-bill register (none of whose routes
-// admit the legacy role).
+// the API connectors, the Finance pre-bill register (none of whose routes
+// admit the legacy role) and Emergency overrides.
 const MANAGER_MODULES = MANAGEMENT_MODULES.filter(
-  (m) => m !== 'accounting_audit' && m !== 'voided_prebills' && !API_CONNECTORS.includes(m),
+  (m) => m !== 'accounting_audit' && m !== 'voided_prebills' && m !== 'emergency_overrides' && !API_CONNECTORS.includes(m),
 )
 // Co-owner: everything the CEO sees — P&L, payroll, projections, investment —
 // EXCEPT the governance surfaces. Withholding role_management/role_modules is
@@ -107,9 +118,10 @@ const MANAGER_MODULES = MANAGEMENT_MODULES.filter(
 // grant themselves `admin`. Staff-account admin stays with the CEO for the
 // same reason (creating an admin user is equivalent to self-promotion).
 // The API connectors are the CEO's and IT's (Dev workspace, CONNECTOR_ADMINS)
-// — the routes do not admit owner, so neither does the sidebar.
+// — the routes do not admit owner, so neither does the sidebar. Emergency
+// overrides are an on-shift tool (see above), not the co-owner's.
 const OWNER_MODULES = ALL_MODULES.filter(
-  (m) => !['role_management', 'role_modules', 'accounting_audit'].includes(m) && !API_CONNECTORS.includes(m),
+  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides'].includes(m) && !API_CONNECTORS.includes(m),
 )
 // The books' own audit trail — period closes, manual journals, wage rates,
 // tip-pool postings. Per the owner: the CEO and the exec (management) only.
@@ -126,17 +138,21 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   foh_management: [
     'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
+    'emergency_overrides',
     'crm', 'complaints', 'reviews', 'campaigns',
     'staff_directory',
     'reports', 'integrations',
   ],
   // BOH managers rota the kitchen: /scheduling has always let them in
-  // (ROTA_PLANNERS), so the Rota link is theirs too (audit PPL-08).
+  // (ROTA_PLANNERS), so the Rota link is theirs too (audit PPL-08). The chef
+  // reads the food-cost variance of the kitchen they run (food_cost) and logs
+  // food a rider brought back (emergency_overrides).
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
+    'emergency_overrides',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     'procurement', 'staff_directory', 'scheduling',
-    'reports',
+    'reports', 'food_cost',
   ],
   foh:       ['pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside'],
   boh:       ['kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet', 'food_safety'],
@@ -159,18 +175,20 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'kds_all', 'kds_dashboard', 'expo_station',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
+    'emergency_overrides',
     'complaints', 'reviews',
     'staff_directory',
-    'finance_pl', 'accounting', 'reports',
+    'finance_pl', 'accounting', 'reports', 'food_cost',
   ],
   // The Finance workspace (lib/workspaces.ts). Each of these has a route that
   // lets finance in (audit BOOKS-02 / PPL-08): 'payroll' is the payroll
   // register (GET /hr/payroll/runs, read-only) and tip pools; 'capital' and
-  // 'projections' are /finance/* and /projections.
+  // 'projections' are /finance/* and /projections; 'food_cost' is
+  // /reports/food-cost.
   finance: [
     'dashboard', 'orders',
     'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation',
-    'exceptions', 'capital', 'projections', 'reports', 'voided_prebills',
+    'exceptions', 'capital', 'projections', 'reports', 'voided_prebills', 'food_cost',
   ],
   // 'payroll' = tip pools (HR runs the people side of the split); HR payroll
   // itself is staff_hr.
@@ -213,6 +231,10 @@ export const MODULE_GRANTS: readonly string[] = [
   // the saved rows of owner / management / legacy manager, whose defaults
   // are "every module except …" and so now hold it.
   'approvals',
+  // Finance wave B (2026-10-14): the food-cost variance report (fnb_manager,
+  // boh_management, finance, owner, management, legacy manager) and Emergency
+  // overrides (foh_management, boh_management, fnb_manager, management).
+  'food_cost', 'emergency_overrides',
 ]
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 
@@ -326,6 +348,11 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // or the accounting module, as the old /finance P&L was.
   { prefix: '/accounting/pl-ledger', anyOf: ['finance_pl', 'accounting'] },
   { prefix: '/accounting',    anyOf: ['accounting'] },
+  // Reports → Food cost variance (wave B; the old /accounting/food-cost page
+  // forwards here). Its own module — the 'reports' module does NOT open it
+  // (foh_management and procurement hold reports, not food costs) — and the
+  // accounting module may read it (the Accounting hub's gauge).
+  { prefix: '/reports/food-cost', anyOf: ['food_cost'], readAnyOf: ['food_cost', 'accounting'] },
   // Sales quadrants (margin) is an Accounting page (/accounting/menu-engineering).
   { prefix: '/reports/menu-engineering', anyOf: ['accounting', 'reports'] },
   { prefix: '/reports',       anyOf: ['reports'] },
@@ -337,10 +364,17 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // and PO widgets, petty cash's bill picker. Their GET routes admit
   // AP_READERS; every write (raise / approve / receive a PO, enter or pay a
   // bill, add a supplier) still needs the procurement module.
+  //
+  // Received, not billed (GRNI, wave B): finance works it as well as
+  // procurement — finance REQUESTS a write-off of goods never billed, the CEO
+  // approves it (the route's own guard decides). Before '/procurement/bills'.
+  { prefix: '/procurement/grni',            anyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/bills',           anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/payments',        anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/purchase-orders', anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
-  { prefix: '/procurement/suppliers',       anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  // 'capital' reads the supplier picker (?view=picker) of the OpEx / CapEx
+  // forms (vendor, filer status, WHT section); adding a supplier stays procurement.
+  { prefix: '/procurement/suppliers',       anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting', 'capital'] },
   { prefix: '/procurement',   anyOf: ['procurement'] },
   { prefix: '/reconciliation', anyOf: ['reconciliation'] },
   { prefix: '/gift-cards',    anyOf: ['gift_cards'] },
@@ -421,12 +455,18 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // /expo/orders/:id/fire|handoff (and the managers' /reject) — so a role
   // needs one of these modules to bump, fire or hand off a ticket.
   { prefix: '/expo',     anyOf: ['expo_station', 'kds_dashboard', 'kds_all'] },
-  // /dispatch — admin /dispatch (dispatch), /riders (riders: assign,
-  // delivered, rider status) and the tablet Dispatch screen.
+  // /dispatch — admin /dispatch (dispatch), /riders (riders: assign, rider
+  // status) and the tablet Dispatch screen. There is no staff "Delivered" any
+  // more (owner, 2026-10-13): a delivery completes only with the customer's
+  // code; when the customer cannot receive it, Emergency overrides sends it to
+  // the rider (below).
   { prefix: '/dispatch', anyOf: ['dispatch', 'riders'] },
   // /riders — the roster, history, fleet agreements: admin /riders only. The
   // rider app is /rider/* with a rider token and never reaches this.
   { prefix: '/riders',   anyOf: ['riders'] },
+  // Operations → Emergency overrides (admin page + the tablet tab): reroute
+  // the hand-over code to the rider's number, log food a rider brought back.
+  { prefix: '/emergency-overrides', anyOf: ['emergency_overrides'] },
   // CRM. The guest-context panel (GET context / PATCH notes) also sits on the
   // Reservations page (CustomerContextSidebar) and the tablet's Customer
   // screen; Reach out (POST /crm/conversations) on Complaints and Reviews;
@@ -438,7 +478,14 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   { prefix: '/crm/campaigns',          anyOf: ['campaigns', 'crm'] },
   { prefix: '/crm/behavioral-segments', anyOf: ['crm', 'campaigns'] },
   { prefix: '/crm/summary',            anyOf: ['crm', 'campaigns'] },
+  // A blocked customer's appeal is worked on the Complaints page (help desk):
+  // lifting the ban or releasing a contact (email / number) is open to the
+  // complaints module as well as CRM. Everything else under /crm/bans stays CRM.
+  { prefix: '/crm/bans/:id/lift|release-contact', pattern: /^\/crm\/bans\/[^/]+\/(lift|release-contact)$/, anyOf: ['crm', 'complaints'] },
   { prefix: '/crm',                    anyOf: ['crm'] },
+  // /complaints — the Complaints page only. Ban appeals carry the customer's
+  // phone, email and strikes, so the role arrays alone (ALL_STAFF) are too wide.
+  { prefix: '/complaints',             anyOf: ['complaints'] },
 ]
 
 /**

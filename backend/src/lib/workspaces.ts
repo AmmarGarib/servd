@@ -69,6 +69,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       { key: 'food_safety',   title: 'Food safety',      modules: ['food_safety'] },
       { key: 'front',         title: 'Front of house',   modules: ['pos', 'orders', 'refunds', 'curbside', 'reservations', 'reservations_admin', 'tables', 'dispatch', 'riders'] },
       { key: 'dashboards',    title: 'Dashboards',       modules: ['dashboard', 'ops', 'fnb_dashboard', 'chain'] },
+      // Owner, 2026-10-13: a delivery completes only with the customer's code.
+      // When it cannot, the RGM / chef / F&B manager sends the code to the
+      // rider or logs the food the rider brought back as waste.
+      { key: 'emergency',     title: 'Emergency overrides', modules: ['emergency_overrides'] },
     ],
   },
   {
@@ -84,7 +88,9 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       // control, so it sits with reconciliation and exceptions.
       { key: 'books',   title: 'Books',            modules: ['finance_pl', 'accounting', 'accounting_audit', 'reconciliation', 'exceptions', 'voided_prebills'] },
       { key: 'money',   title: 'Money & planning', modules: ['gift_cards', 'capital', 'projections', 'payroll'] },
-      { key: 'reports', title: 'Reports',          modules: ['reports'] },
+      // food_cost: the food-cost variance report (actual vs recipe at the
+      // price paid, food / drinks / packaging) — /reports/food-cost.
+      { key: 'reports', title: 'Reports',          modules: ['reports', 'food_cost'] },
     ],
   },
   {

@@ -4,18 +4,28 @@
 // in the PaymentMethod enum so old rows read and refund the way they were
 // paid, but new code never writes it. Tax: 'card' and 'raast' are the one
 // digital tax group (lib/pricing.ts CARD_TENDERS → Concept.taxRateCard).
+//
+// 'on_account' (owner, 2026-10-13): a named corporate client's bill, charged
+// to the client's account and invoiced on a monthly statement. It is NOT a
+// till tender — POST /pos/payments keeps refusing it; the till takes it only
+// through its own route (POST /pos/orders/:id/on-account, the client's QR
+// card). It is cash tax class (lib/pricing.ts tenderOf). A refund of an
+// on-account bill goes back on the account.
 
 import type { PaymentMethod } from '@prisma/client'
 
-/** Money tenders a till takes for a NEW payment. */
+/** Money tenders a till takes for a NEW payment (POST /pos/payments). */
 export const TILL_TENDERS = ['cash', 'card', 'raast'] as const
 export type TillTender = (typeof TILL_TENDERS)[number]
+
+/** A client's on-account bill — its own till route, never POST /pos/payments. */
+export const ON_ACCOUNT_TENDER = 'on_account' as const
 
 /** Retired tenders: readable and refundable, never written by new code. */
 export const LEGACY_TENDERS = ['keenu_qr'] as const
 
 /** Tenders a refund may go back on (only the way the sale was paid). */
-export const REFUND_TENDERS = ['cash', 'card', 'raast', 'keenu_qr'] as const
+export const REFUND_TENDERS = ['cash', 'card', 'raast', 'keenu_qr', ON_ACCOUNT_TENDER] as const
 export type RefundTender = (typeof REFUND_TENDERS)[number]
 
 /**
@@ -29,6 +39,7 @@ export const TENDER_LABEL: Record<string, string> = {
   cash: 'Cash',
   card: 'Card – Keenu',
   raast: 'Raast QR',
+  on_account: 'On account',
   keenu_qr: 'Keenu QR (retired)',
   comp: 'Comp',
   split: 'Split',
@@ -68,5 +79,5 @@ export const KEENU_QR_RETIRED = {
 } as const
 
 // Compile-time check: every tender here is a real PaymentMethod value.
-const _methods: readonly PaymentMethod[] = [...TILL_TENDERS, ...LEGACY_TENDERS]
+const _methods: readonly PaymentMethod[] = [...TILL_TENDERS, ...LEGACY_TENDERS, ON_ACCOUNT_TENDER, ...REFUND_TENDERS]
 void _methods

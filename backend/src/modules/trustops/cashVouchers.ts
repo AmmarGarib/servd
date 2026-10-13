@@ -43,55 +43,23 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId, type ScopeMode } from '../../lib/tenantScope.js'
 import { zInt4Cents } from '../../lib/money.js'
 import { CASH_GUARD, passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
+import { decodeEvidenceFile, sendEvidence, EVIDENCE_MAX_BYTES } from '../../lib/evidenceFile.js'
 
 // ─── Photo rules ─────────────────────────────────────────────────────────────
 
 /** The decoded photo may be at most 3 MB (the admin compresses it first). */
-export const CASH_VOUCHER_PHOTO_MAX_BYTES = 3 * 1024 * 1024
+export const CASH_VOUCHER_PHOTO_MAX_BYTES = EVIDENCE_MAX_BYTES
 /** base64 of 3 MB is 4 MB; a little room for a data-URL prefix and line breaks. */
 const DISBURSE_BODY_LIMIT = 6 * 1024 * 1024
-const PHOTO_MIN_BYTES = 32
-const PHOTO_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' } as const
-type PhotoMime = keyof typeof PHOTO_EXT
-const isPhotoMime = (m: string): m is PhotoMime => Object.prototype.hasOwnProperty.call(PHOTO_EXT, m)
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-
-const badPhoto = (message: string) => new AppError('BAD_PHOTO', message, 400)
-
-/** True when the bytes really are the declared image type (magic numbers). */
-function magicMatches(mime: PhotoMime, buf: Buffer): boolean {
-  switch (mime) {
-    case 'image/jpeg': return buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff
-    case 'image/png': return buf.length >= 8 && buf.subarray(0, 8).equals(PNG_SIGNATURE)
-    case 'image/webp': return buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP'
-  }
-}
 
 /**
- * The uploaded photo: base64 (a `data:<mime>;base64,` prefix is accepted and
- * must agree with `mime`), JPEG / PNG / WebP whose bytes match the type,
- * at most CASH_VOUCHER_PHOTO_MAX_BYTES decoded. Anything else is 400 BAD_PHOTO.
+ * The uploaded photo, checked by the one evidence decoder (lib/evidenceFile.ts):
+ * JPEG / PNG / WebP whose bytes match the type, at most
+ * CASH_VOUCHER_PHOTO_MAX_BYTES decoded. Anything else is 400 BAD_PHOTO.
  */
-export function decodeVoucherPhoto(photo: string, mime: string): { mime: PhotoMime; data: Buffer } {
-  const declared = mime.trim().toLowerCase()
-  if (!isPhotoMime(declared)) throw badPhoto('The photo must be a JPEG, PNG or WebP image')
-  let b64 = photo
-  const dataUrl = /^data:([^;,]+);base64,/i.exec(b64)
-  if (dataUrl) {
-    if (dataUrl[1]!.trim().toLowerCase() !== declared) throw badPhoto('The photo is not the image type it says it is')
-    b64 = b64.slice(dataUrl[0].length)
-  }
-  b64 = b64.replace(/\s+/g, '')
-  if (!b64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64) || b64.length % 4 === 1) throw badPhoto('The photo could not be read — send it as base64')
-  // Refuse an oversized photo before decoding it.
-  if (Math.floor((b64.length * 3) / 4) - 2 > CASH_VOUCHER_PHOTO_MAX_BYTES) {
-    throw badPhoto('The photo is larger than 3 MB — take it again at a lower resolution')
-  }
-  const data = Buffer.from(b64, 'base64')
-  if (data.length > CASH_VOUCHER_PHOTO_MAX_BYTES) throw badPhoto('The photo is larger than 3 MB — take it again at a lower resolution')
-  if (data.length < PHOTO_MIN_BYTES) throw badPhoto('The photo is empty or cut off')
-  if (!magicMatches(declared, data)) throw badPhoto('The photo is not the image type it says it is')
-  return { mime: declared, data }
+export function decodeVoucherPhoto(photo: string, mime: string): { mime: string; data: Buffer } {
+  const f = decodeEvidenceFile(photo, mime, { maxBytes: CASH_VOUCHER_PHOTO_MAX_BYTES })
+  return { mime: f.mime, data: f.bytes }
 }
 
 // ─── Shapes ──────────────────────────────────────────────────────────────────
@@ -306,13 +274,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       select: { mime: true, data: true },
     })
     if (!photo) throw new NotFoundError('Signed voucher photo')
-    const ext = isPhotoMime(photo.mime) ? PHOTO_EXT[photo.mime] : 'bin'
-    return reply
-      .header('Content-Type', isPhotoMime(photo.mime) ? photo.mime : 'application/octet-stream')
-      .header('Content-Disposition', `inline; filename="${v.number}.${ext}"`)
-      .header('Cache-Control', 'private, no-store')
-      .header('X-Content-Type-Options', 'nosniff')
-      .send(Buffer.from(photo.data))
+    return sendEvidence(reply, photo, v.number)
   })
 
   // POST / — prepare a voucher in the ACTIVE company. Touches no cash.

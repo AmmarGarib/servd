@@ -1,6 +1,7 @@
-// Vitest setup. Each test run starts with a clean schema (`prisma migrate
-// reset --force --skip-seed`) and a freshly seeded chart of accounts. The
-// suite assumes DATABASE_URL points at a disposable test database.
+// Vitest setup. Each test file starts with a clean schema (`prisma db push
+// --force-reset`, below, plus the raw-SQL objects of the migrations) and a
+// freshly seeded company-less chart of accounts. The suite assumes
+// DATABASE_URL points at a disposable test database.
 
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -125,51 +126,35 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "bank_accounts_one_raast_default_per_company" ON "bank_accounts" ("tenantId") WHERE "raastDefault" = true AND "deletedAt" IS NULL`)
 }
 
+/**
+ * The company-less chart: every template code of CHART_OF_ACCOUNTS (the one
+ * list — a code added there is seeded here too, never a hand-kept copy that
+ * drifts). The ledger is per company: postJournalEntry resolves codes inside
+ * the posting company's chart, so a test company gets its own chart from
+ * ensureChartOfAccounts(tenantId) (the same template, every code, with
+ * controlledBy on the register's codes) — that is the helper every test
+ * company uses, here or through tests/connectorsFixtures.ts.
+ *
+ * These rows carry no controlledBy: a controlled account must belong to a
+ * company (CHECK accounts_controlled_company_chk, applied above).
+ */
 async function seedTestAccounts(prisma: PrismaClient): Promise<void> {
-  const accounts: Array<{ code: string; name: string; type: 'asset'|'liability'|'equity'|'revenue'|'expense' }> = [
-    { code: '1010', name: 'Cash on Hand',                       type: 'asset' },
-    { code: '1015', name: 'Cash in POS Drawer',                 type: 'asset' },
-    { code: '1020', name: 'Bank',                               type: 'asset' },
-    { code: '1030', name: 'Card / Gateway Receivable',          type: 'asset' },
-    { code: '1110', name: 'Customer AR',                        type: 'asset' },
-    { code: '1120', name: 'Foodpanda AR',                       type: 'asset' },
-    { code: '1210', name: 'Inventory — Food',                   type: 'asset' },
-    { code: '1320', name: 'GST Input',                          type: 'asset' },
-    { code: '2010', name: 'AP Suppliers',                       type: 'liability' },
-    { code: '2020', name: 'Wages Payable',                      type: 'liability' },
-    { code: '2030', name: 'GST Output',                         type: 'liability' },
-    { code: '2050', name: 'Wallet Liability',                   type: 'liability' },
-    { code: '2060', name: 'Loyalty Liability',                  type: 'liability' },
-    { code: '2095', name: 'Tips Payable',                       type: 'liability' },
-    { code: '4001', name: 'Revenue — Simmer',                   type: 'revenue' },
-    { code: '4002', name: 'Revenue — Stax',                     type: 'revenue' },
-    { code: '4090', name: 'Revenue — Other',                    type: 'revenue' },
-    { code: '4100', name: 'Service Charges',                    type: 'revenue' },
-    { code: '5010', name: 'Food Cost',                          type: 'expense' },
-    { code: '5040', name: 'Waste',                              type: 'expense' },
-    { code: '6030', name: 'Wages — Kitchen',                    type: 'expense' },
-    { code: '6060', name: 'Marketing & Promo',                  type: 'expense' },
-    { code: '6090', name: 'Foodpanda Commission',               type: 'expense' },
-    { code: '7010', name: 'Discounts',                          type: 'expense' },
-    { code: '7020', name: 'Loyalty Redemptions',                type: 'expense' },
-    { code: '7040', name: 'Refunds',                            type: 'expense' },
-    { code: '8010', name: 'Cash Variance',                      type: 'expense' },
-  ]
   // `accounts.code` stopped being globally unique when the ledger went
   // per-company (migration 20260908120000) — it is `@@unique([tenantId, code])`
-  // now. This upsert still keyed on `code` alone, so it had been failing at
-  // argument validation ever since, taking every suite down in beforeAll.
-  //
-  // These rows are the company-less chart the posting tests fall back on, so
-  // tenantId stays null and the composite key is (null, code). Prisma cannot
-  // match a null inside a compound unique via upsert, so it's find-then-create.
-  for (const a of accounts) {
-    const existing = await prisma.account.findFirst({
-      where: { tenantId: null, code: a.code },
-      select: { id: true },
-    })
-    if (!existing) {
-      await prisma.account.create({ data: { ...a, isActive: true } })
-    }
-  }
+  // now, and Prisma cannot match a null inside a compound unique via upsert
+  // (nor does Postgres treat two nulls as a duplicate for skipDuplicates), so
+  // it's find-then-create: only the codes not already there.
+  const have = new Set((await prisma.account.findMany({
+    where: { tenantId: null },
+    select: { code: true },
+  })).map((a) => a.code))
+  await prisma.account.createMany({
+    data: CHART_OF_ACCOUNTS.filter((a) => !have.has(a.code)).map((a) => ({
+      code: a.code,
+      name: a.name,
+      type: a.type,
+      description: a.description ?? null,
+      isActive: true,
+    })),
+  })
 }
