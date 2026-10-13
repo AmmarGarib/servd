@@ -454,3 +454,11 @@ RESUME ORDER:
   finishes (watcher task bdbwlc63n); stopped before writing any code (nothing to park).
   Replan of W2-W4 briefs running: workflow wf_ec8a9510-6e2. REMIND OWNER after finance deploys (task list "Remind owner...").
 - ~23:40 UTC W1 status: done w1-hr, w1-taxsales, w1-stock (47 tests), w1-taxcore, w1-ic; w1-dlv-core cancelled (no changes); w1-bans stopped (no changes); running w1-fa-engine, w1-recon (wf_44be91d7-aa9). Build map republished with parked areas.
+- ~23:25 UTC OWNER: usage resets 8am PKT; auto-restart scheduled 03:02 UTC (8:02 PKT) via send_later trig_019AbeZagqwaVH8Bs5P7kWmu.
+  Hasnain in office 11am PKT (06:00 UTC). Owner budget: rest of this session ~50% + next session 100% ($100 plan).
+  Don't disturb running builders. Ship EVERYTHING finance; parked = PARKED.md only. Model plan: Opus for money/tax/ledger builders,
+  Sonnet for admin screens / checkout rows / guides (option 1) unless the owner says otherwise.
+  RESUME PROCEDURE: git status; read each waveb-build workflow journal (subagents/workflows/wf_*/journal.jsonl: "type":"result" lines
+  = finished agents); relaunch died agents via .handoff/wf/waveb-build.js args {ids, note:"CONTINUE: a previous run of your brief was cut
+  off by a usage limit; your files may hold its partial work — read them, keep what is right, finish, run your tests"}; then gate
+  (tsc backend+admin, each agent's tests on its own DB, patch notes) -> commit "wave B wN" -> next stage.

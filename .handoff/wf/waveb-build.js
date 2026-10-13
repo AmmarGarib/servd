@@ -16,6 +16,6 @@ const reports = await parallel(ids.map((id) => () => agent(
   `Other builders of the same wave are editing other files at the same time: touch only the files your brief says you own, ` +
   `never run git commands that change the tree (no stash / checkout / reset / commit), never run the whole test suite. ` +
   `Your final message is your report in the brief's "Report format".` + extra,
-  { label: id, phase: 'Build', model: 'opus' },
+  { label: id, phase: 'Build', model: (args?.models && args.models[id]) || args?.model || 'opus' },
 )))
 return ids.map((id, i) => ({ id, report: reports[i] }))
