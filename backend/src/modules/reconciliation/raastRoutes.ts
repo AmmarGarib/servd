@@ -101,7 +101,7 @@ async function viewContext(req: FastifyRequest, rows: ReceiptRow[]): Promise<Vie
 function capabilitiesOf(r: ReceiptRow, ctx: ViewContext) {
   const approver = (APPROVERS as string[]).includes(ctx.role)
   const ceo = ctx.role === 'admin'
-  const requester = (RAAST_VOID_REQUESTERS as readonly string[]).includes(ctx.role)
+  const requester = RAAST_VOID_REQUESTERS.includes(ctx.role)
   const voidable = ctx.voidChecks.get(r.id) === null
   const pending = pendingVoidRequest(r)
   return {
@@ -423,7 +423,7 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
   // sale was never booked. The same checks as the void (raast.ts
   // raastVoidEligibilityTx) — a request the CEO could never act on is refused
   // here. Audited in the receipt's company.
-  fastify.post<{ Params: { id: string } }>('/receipts/:id/void-request', { preHandler: requireAuth(...(RAAST_VOID_REQUESTERS as unknown as UserRole[])) }, async (req) => {
+  fastify.post<{ Params: { id: string } }>('/receipts/:id/void-request', { preHandler: requireAuth(...(RAAST_VOID_REQUESTERS as UserRole[])) }, async (req) => {
     const body = z.object({ reason: voidReasonSchema }).parse(req.body)
     const r = await receiptForWrite(req, req.params.id)
     const res = await requestRaastVoid(r.id, { actorId: req.staffUser!.id, reason: body.reason })

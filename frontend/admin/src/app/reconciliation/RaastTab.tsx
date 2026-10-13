@@ -15,15 +15,23 @@
 //   Unmatch      undo a match (CEO / co-owners).
 //   Fix reference  the cashier mistyped it (CEO / co-owners — M4; provisional,
 //                not once a bank SMS confirmed it; before/after audited).
-//   Not received the money never arrived: written off against 1110 / 8010 /
-//                1350 (CEO / co-owners; only once the sale is booked).
+//   Not received the money never arrived: written off against 1115 till
+//                clearing (the customer owes it) / 8010 (a loss) / 1350 (staff
+//                owes it) — CEO / co-owners; only once the sale is booked.
+//   Void — never booked  (RV-MONEY-1, the CEO only) a provisional payment on
+//                a cancelled bill that no entry ever put in the bank: no ledger
+//                entry, the reference stays used. Finance / management / an
+//                owner "Ask the CEO to void" (it lands in the CEO's approvals
+//                inbox); the CEO voids or turns the ask down.
 //   Re-run matching  the reference pass over the active company's unmatched
 //                credit lines of the last 60 days.
 //
 // The bank SMS log is read-only here — attaching an SMS to a bill is a till
-// action, dismissing one a manager's. Who may do what is the API's decision;
-// these role checks only hide buttons the API would refuse. Admin colour
-// tokens only; text labels, no emoji.
+// action, dismissing one a manager's. Who may do what is the API's decision:
+// every row carries the caller's capability flags (canMatch, canUnmatch,
+// canFixReference, canWriteOff, canResolve, canVoid, canRequestVoid,
+// canRejectVoidRequest) and the buttons follow them — no role list here.
+// Admin colour tokens only; text labels, no emoji.
 
 import { Fragment, useMemo, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -31,10 +39,13 @@ import { format } from 'date-fns'
 import Link from 'next/link'
 import { api, ApiError, RAAST_STATUS_LABEL, RAAST_STATUS_SHORT, type RaastReceiptStatus } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
-import { useAuthStore } from '../../store/auth'
 
-/** The API's APPROVERS (CEO + co-owners): unmatch, reference fix, write-off. */
-const RAAST_APPROVERS = ['admin', 'owner']
+/** The server's statuses — 'voided' (wave B) until lib/api.ts lists it. */
+type ReceiptStatus = RaastReceiptStatus | 'voided'
+
+const statusLabel = (s: ReceiptStatus): string =>
+  s === 'voided' ? 'Voided by the CEO — never booked, no ledger entry' : RAAST_STATUS_LABEL[s] ?? s
+const statusShort = (s: ReceiptStatus): string => (s === 'voided' ? 'Voided' : RAAST_STATUS_SHORT[s] ?? s)
 
 // ─── Types (backend modules/reconciliation/raastRoutes.ts) ───────────────────
 
@@ -55,7 +66,8 @@ interface RaastReceiptRow {
   conceptId: string
   brand: string
   shiftId: string | null
-  status: RaastReceiptStatus
+  status: ReceiptStatus
+  orderStatus: string
   amountCents: number
   tipCents: number
   bankRef: string | null
@@ -73,7 +85,23 @@ interface RaastReceiptRow {
   writeOffEntryId: string | null
   bankAccount: { id: string; name: string; bankName: string | null; last4: string | null }
   statementLine: StatementLineRef | null
+  /** A pending (or past) ask for the CEO's void. */
+  voidRequest: { at: string; by: Person | null; reason: string | null; pending: boolean } | null
+  voided: { at: string; by: Person | null; reason: string | null } | null
+  /** Why the CEO cannot void it (a provisional payment on a cancelled bill), else null. */
+  voidBlockedReason: string | null
+  // The caller's buttons (the server's rules).
+  canMatch: boolean
+  canUnmatch: boolean
+  canFixReference: boolean
+  canWriteOff: boolean
+  canResolve: boolean
+  canVoid: boolean
+  canRequestVoid: boolean
+  canRejectVoidRequest: boolean
 }
+
+interface Person { id: string; name: string | null }
 
 interface Bucket { count: number; cents: number }
 
@@ -87,6 +115,8 @@ interface ReceiptsPage {
     matched: Bucket
     needsAttention: Bucket
     unreceived: Bucket
+    voided?: Bucket
+    voidRequested?: Bucket
     unmatchedBankAlerts: number
   }
 }
@@ -128,23 +158,29 @@ interface BankAccountOpt { id: string; name: string; bankName: string | null; ra
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const STATUS_FILTERS: Array<{ value: '' | RaastReceiptStatus; label: string }> = [
+/** 'void_requested' is not a status: the payments whose void waits for the CEO (?voidRequested=1). */
+type StatusFilter = '' | ReceiptStatus | 'void_requested'
+
+const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: '', label: 'Every Raast payment' },
   { value: 'provisional', label: 'Provisional (not on a statement)' },
   { value: 'needs_attention', label: 'Needs attention' },
   { value: 'matched', label: 'Matched' },
   { value: 'unreceived', label: 'Not received (written off)' },
+  { value: 'void_requested', label: 'Waiting for the CEO to void' },
+  { value: 'voided', label: 'Voided — never booked' },
   { value: 'awaiting', label: 'Waiting at the till' },
   { value: 'cancelled', label: 'Cancelled at the till' },
 ]
 
-const CHIP: Record<RaastReceiptStatus, string> = {
+const CHIP: Record<ReceiptStatus, string> = {
   provisional:     'bg-s-amber/15 text-s-amber',
   matched:         'bg-s-teal/20 text-success',
   needs_attention: 'bg-s-red/10 text-s-red',
   unreceived:      'bg-s-red/10 text-s-red',
   awaiting:        'bg-s-bg-soft text-s-muted',
   cancelled:       'bg-s-bg-soft text-s-muted',
+  voided:          'bg-s-bg-soft text-s-muted',
 }
 
 const ALERT_STATUS_LABEL: Record<string, string> = {
@@ -154,10 +190,12 @@ const ALERT_STATUS_LABEL: Record<string, string> = {
   dismissed: 'Not a sale',
 }
 
-const CONTRA_LABEL: Record<'1110' | '8010' | '1350', string> = {
-  '1110': '1110 Customer receivable — the customer still owes it',
-  '8010': '8010 Cash over / short — a loss',
-  '1350': '1350 Staff loans & advances — recovered from staff',
+/** The write-off contras (raast.ts WRITE_OFF_CONTRAS) — 1115 first, the default. */
+type Contra = '1115' | '8010' | '1350'
+const CONTRA_LABEL: Record<Contra, string> = {
+  '1115': 'Customer owes (1115 till clearing)',
+  '8010': 'Loss (8010)',
+  '1350': 'Staff owes (1350)',
 }
 
 function fmtWhen(iso: string | null | undefined): string {
@@ -167,7 +205,7 @@ function fmtWhen(iso: string | null | undefined): string {
 function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     switch (e.code) {
-      case 'FORBIDDEN': return 'Only the CEO or a co-owner can do this.'
+      case 'FORBIDDEN': return e.message || 'You can’t do this here — ask the CEO.'
       case 'RAAST_REF_INVALID': return e.message || 'That bank reference doesn’t look right — 6–35 letters or digits, at least 3 digits.'
       case 'RAAST_REF_DISMISSED': return e.message || 'That reference belongs to a bank transfer marked “not a sale” (or money out) — it cannot be a sale.'
     }
@@ -180,15 +218,16 @@ const inputCls = 'bg-s-card border border-s-border rounded px-2 py-1 text-sm tex
 
 // ─── Tab ─────────────────────────────────────────────────────────────────────
 
+type RowAction = 'match' | 'reference' | 'unreceived' | 'unmatch' | 'resolve' | 'void' | 'void_request' | 'void_reject'
+
 export function RaastTab() {
   const qc = useQueryClient()
-  const isApprover = useAuthStore((s) => s.isRole(...RAAST_APPROVERS))
-  const [status, setStatus] = useState<'' | RaastReceiptStatus>('')
+  const [status, setStatus] = useState<StatusFilter>('')
   const [bankAccountId, setBankAccountId] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [q, setQ] = useState('')
-  const [open, setOpen] = useState<{ id: string; action: 'match' | 'reference' | 'unreceived' | 'unmatch' | 'resolve' } | null>(null)
+  const [open, setOpen] = useState<{ id: string; action: RowAction } | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const [view, setView] = useState<'receipts' | 'alerts'>('receipts')
 
@@ -196,7 +235,8 @@ export function RaastTab() {
 
   const params = useMemo(() => {
     const p = new URLSearchParams()
-    if (status) p.set('status', status)
+    if (status === 'void_requested') p.set('voidRequested', '1')
+    else if (status) p.set('status', status)
     if (bankAccountId) p.set('bankAccountId', bankAccountId)
     if (from) p.set('from', from)
     if (to) p.set('to', to)
@@ -238,7 +278,10 @@ export function RaastTab() {
     refresh()
   }
 
+  const toggle = (id: string, action: RowAction) => setOpen(open?.id === id && open.action === action ? null : { id, action })
+
   const k = first?.kpis
+  const voidAsks = k?.voidRequested?.count ?? 0
 
   return (
     <div className="space-y-4">
@@ -267,6 +310,16 @@ export function RaastTab() {
         </div>
       )}
 
+      {voidAsks > 0 && status !== 'void_requested' && (
+        <div className="s-card p-3 text-xs flex flex-wrap items-center gap-2 border-l-4 border-s-amber">
+          <span className="s-badge-amber">Void asked for</span>
+          <span className="text-s-text">
+            {voidAsks} Raast payment{voidAsks === 1 ? '' : 's'} ({fmtPkr(k?.voidRequested?.cents ?? 0)}) waiting for the CEO to void — never booked.
+          </span>
+          <button onClick={() => setStatus('void_requested')} className="ml-auto text-primary-ink font-semibold">Show them</button>
+        </div>
+      )}
+
       <div className="flex gap-1 border-b border-s-border">
         {([['receipts', 'Raast payments'], ['alerts', 'Bank SMS log']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setView(key)}
@@ -282,7 +335,7 @@ export function RaastTab() {
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-xs text-s-muted">
               <span className="block mb-0.5">Status</span>
-              <select value={status} onChange={(e) => setStatus(e.target.value as '' | RaastReceiptStatus)} className={inputCls}>
+              <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className={inputCls}>
                 {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </label>
@@ -334,11 +387,7 @@ export function RaastTab() {
                   )}
                   {rows.map((r) => {
                     const isOpen = open?.id === r.id
-                    const canMatch = r.status === 'provisional' || r.status === 'unreceived'
-                    const canFixRef = isApprover && r.status === 'provisional' && !r.smsConfirmed
-                    const canWriteOff = isApprover && r.status === 'provisional'
-                    const canUnmatch = isApprover && r.status === 'matched'
-                    const canResolve = isApprover && r.status === 'needs_attention'
+                    const pendingAsk = r.voidRequest?.pending ? r.voidRequest : null
                     return (
                       <Fragment key={r.id}>
                         <tr className="border-t border-s-border align-top">
@@ -366,7 +415,23 @@ export function RaastTab() {
                             <span className="block font-mono text-[10px] text-s-dim">{r.ledgerCode}</span>
                           </td>
                           <td className="px-3 py-2 text-xs">
-                            <span title={RAAST_STATUS_LABEL[r.status]} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${CHIP[r.status]}`}>{RAAST_STATUS_SHORT[r.status]}</span>
+                            <span title={statusLabel(r.status)} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${CHIP[r.status]}`}>{statusShort(r.status)}</span>
+                            {pendingAsk && (
+                              <span className="block mt-1">
+                                <span className="s-badge-amber text-[10px]">Void asked for</span>
+                                <span className="block text-[10px] text-s-muted">
+                                  {pendingAsk.by?.name ?? 'Finance'}, {fmtWhen(pendingAsk.at)}{pendingAsk.reason ? `: ${pendingAsk.reason}` : ''}
+                                </span>
+                              </span>
+                            )}
+                            {r.status === 'voided' && r.voided && (
+                              <span className="block mt-1 text-[10px] text-s-muted">
+                                Voided by {r.voided.by?.name ?? 'the CEO'}, {fmtWhen(r.voided.at)}{r.voided.reason ? `: ${r.voided.reason}` : ''}. No ledger entry; the reference stays used.
+                              </span>
+                            )}
+                            {r.status === 'provisional' && r.voidBlockedReason && (r.orderStatus === 'cancelled' || r.orderStatus === 'rejected' || pendingAsk) && (
+                              <span className="block mt-1 text-[10px] text-s-dim" title="Why this payment cannot be voided as never booked">Not voidable: {r.voidBlockedReason}</span>
+                            )}
                             {r.status === 'matched' && r.statementLine && (
                               <span className="block mt-1 text-[10px] text-s-muted">
                                 {r.statementLine.postedDate.slice(0, 10)} · {r.matchedAutomatically ? 'by the import' : 'by finance'}
@@ -381,11 +446,14 @@ export function RaastTab() {
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap text-xs">
                             <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
-                              {canMatch && <button onClick={() => setOpen(isOpen && open?.action === 'match' ? null : { id: r.id, action: 'match' })} className="text-primary-ink font-semibold">Match</button>}
-                              {canFixRef && <button onClick={() => setOpen(isOpen && open?.action === 'reference' ? null : { id: r.id, action: 'reference' })} className="text-s-muted hover:text-s-text">Fix reference</button>}
-                              {canWriteOff && <button onClick={() => setOpen(isOpen && open?.action === 'unreceived' ? null : { id: r.id, action: 'unreceived' })} className="text-s-red">Not received</button>}
-                              {canUnmatch && <button onClick={() => setOpen(isOpen && open?.action === 'unmatch' ? null : { id: r.id, action: 'unmatch' })} className="text-s-muted hover:text-s-text">Unmatch</button>}
-                              {canResolve && <button onClick={() => setOpen(isOpen && open?.action === 'resolve' ? null : { id: r.id, action: 'resolve' })} className="text-primary-ink font-semibold">Resolve</button>}
+                              {r.canMatch && <button onClick={() => toggle(r.id, 'match')} className="text-primary-ink font-semibold">Match</button>}
+                              {r.canFixReference && !r.smsConfirmed && <button onClick={() => toggle(r.id, 'reference')} className="text-s-muted hover:text-s-text">Fix reference</button>}
+                              {r.canWriteOff && <button onClick={() => toggle(r.id, 'unreceived')} className="text-s-red">Not received</button>}
+                              {r.canUnmatch && <button onClick={() => toggle(r.id, 'unmatch')} className="text-s-muted hover:text-s-text">Unmatch</button>}
+                              {r.canResolve && <button onClick={() => toggle(r.id, 'resolve')} className="text-primary-ink font-semibold">Resolve</button>}
+                              {r.canRequestVoid && <button onClick={() => toggle(r.id, 'void_request')} className="text-primary-ink font-semibold">Ask the CEO to void</button>}
+                              {r.canVoid && <button onClick={() => toggle(r.id, 'void')} className="text-s-red font-semibold">Void — never booked</button>}
+                              {r.canRejectVoidRequest && <button onClick={() => toggle(r.id, 'void_reject')} className="text-s-muted hover:text-s-text">Turn down the ask</button>}
                             </span>
                           </td>
                         </tr>
@@ -397,6 +465,9 @@ export function RaastTab() {
                               {open!.action === 'unreceived' && <UnreceivedPanel receipt={r} onDone={done} onCancel={() => setOpen(null)} />}
                               {open!.action === 'unmatch' && <UnmatchPanel receipt={r} onDone={done} onCancel={() => setOpen(null)} />}
                               {open!.action === 'resolve' && <ResolvePanel receipt={r} onDone={done} onCancel={() => setOpen(null)} />}
+                              {open!.action === 'void_request' && <VoidRequestPanel receipt={r} onDone={done} onCancel={() => setOpen(null)} />}
+                              {open!.action === 'void' && <VoidPanel receipt={r} onDone={done} onCancel={() => setOpen(null)} />}
+                              {open!.action === 'void_reject' && <VoidRejectPanel receipt={r} onDone={done} onCancel={() => setOpen(null)} />}
                             </td>
                           </tr>
                         )}
@@ -414,9 +485,10 @@ export function RaastTab() {
               </div>
             )}
           </div>
-          {!isApprover && (
-            <p className="text-[11px] text-s-dim">Fixing a reference, unmatching, writing off a payment as not received and resolving a payment that needs attention are for the CEO or a co-owner.</p>
-          )}
+          <p className="text-[11px] text-s-dim">
+            Fixing a reference, unmatching, writing off a payment as not received and resolving a payment that needs attention are for the CEO or a
+            co-owner. Voiding a payment that was never booked is the CEO&rsquo;s alone — finance asks for it. You see the buttons your role may use.
+          </p>
         </>
       )}
     </div>
@@ -540,7 +612,7 @@ function ReferencePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRo
 
 function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; onDone: (t: string) => void; onCancel: () => void }) {
   const [reason, setReason] = useState('')
-  const [contra, setContra] = useState<'1110' | '8010' | '1350'>('1110')
+  const [contra, setContra] = useState<Contra>('1115')
   const writeOff = useMutation({
     mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/unreceived`, { reason: reason.trim(), contraAccountCode: contra }, { tenantId: receipt.tenantId }),
     onSuccess: () => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) written off as not received: Dr ${contra} / Cr ${receipt.ledgerCode}. If the money turns up on a later statement, matching it reverses this.`),
@@ -552,7 +624,7 @@ function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptR
         <span className="font-mono">{receipt.ledgerCode}</span> and booked to the account you pick, dated today. Only once the sale is on the books
         (its shift closed).
       </p>
-      <select value={contra} onChange={(e) => setContra(e.target.value as '1110' | '8010' | '1350')} className={`${inputCls} w-full`}>
+      <select value={contra} onChange={(e) => setContra(e.target.value as Contra)} className={`${inputCls} w-full`}>
         {(Object.keys(CONTRA_LABEL) as Array<keyof typeof CONTRA_LABEL>).map((c) => <option key={c} value={c}>{CONTRA_LABEL[c]}</option>)}
       </select>
       <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="what happened (required)" className={`${inputCls} w-full`} />
@@ -632,6 +704,86 @@ function ResolvePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow;
       <div className="flex gap-3">
         <button onClick={() => resolve.mutate()} disabled={resolve.isPending || reason.trim().length < 3} className="text-primary-ink font-semibold disabled:opacity-40">
           {resolve.isPending ? 'Saving…' : 'Resolve'}
+        </button>
+        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Void, never booked (RV-MONEY-1 — the CEO only; finance asks) ───────────
+
+const VOID_EXPLAINER = 'Only for a provisional payment on a cancelled or rejected bill that no entry ever put in the bank (its drawers are closed, nothing failed, nothing was paid back). '
+  + 'Voiding makes no ledger entry and the bank reference stays used, so the same transfer can never pay another bill. '
+  + 'If the money did reach the bank, book the statement credit with the bank line’s own adjustment (Bank Imports → Adjust).'
+
+function VoidRequestPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; onDone: (t: string) => void; onCancel: () => void }) {
+  const [reason, setReason] = useState('')
+  const ask = useMutation({
+    mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/void-request`, { reason: reason.trim() }, { tenantId: receipt.tenantId }),
+    onSuccess: () => onDone(`Asked the CEO to void bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}). It is in the CEO's approvals inbox.`),
+  })
+  return (
+    <div className="space-y-2 text-xs max-w-xl">
+      <p className="text-s-muted">{VOID_EXPLAINER}</p>
+      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it was never booked (required, a sentence)" className={`${inputCls} w-full`} />
+      {ask.error && <p className="text-s-red">{errorText(ask.error)}</p>}
+      <div className="flex gap-3">
+        <button onClick={() => ask.mutate()} disabled={ask.isPending || reason.trim().length < 10} className="text-primary-ink font-semibold disabled:opacity-40">
+          {ask.isPending ? 'Sending…' : 'Ask the CEO to void'}
+        </button>
+        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+function VoidPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; onDone: (t: string) => void; onCancel: () => void }) {
+  const ask = receipt.voidRequest?.pending ? receipt.voidRequest : null
+  const [reason, setReason] = useState(ask?.reason ?? '')
+  const [understood, setUnderstood] = useState(false)
+  const voidIt = useMutation({
+    mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/void`, { reason: reason.trim() }, { tenantId: receipt.tenantId }),
+    onSuccess: () => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) is voided — never booked. No ledger entry was made; reference ${receipt.bankRef ?? '—'} stays used.`),
+  })
+  return (
+    <div className="space-y-2 text-xs max-w-xl">
+      <p className="text-s-muted">{VOID_EXPLAINER}</p>
+      {ask && (
+        <p className="text-s-text">
+          Asked for by {ask.by?.name ?? 'finance'} on {fmtWhen(ask.at)}{ask.reason ? `: “${ask.reason}”` : ''}.
+        </p>
+      )}
+      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it was never booked (required, a sentence)" className={`${inputCls} w-full`} />
+      <label className="flex items-start gap-2 text-s-text">
+        <input type="checkbox" className="mt-0.5 accent-primary" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
+        <span>No ledger entry is made. The statement credit, if the money arrived, is booked with the bank-line adjustment.</span>
+      </label>
+      {voidIt.error && <p className="text-s-red">{errorText(voidIt.error)}</p>}
+      <div className="flex gap-3">
+        <button onClick={() => voidIt.mutate()} disabled={voidIt.isPending || !understood || reason.trim().length < 10} className="text-s-red font-semibold disabled:opacity-40">
+          {voidIt.isPending ? 'Voiding…' : `Void ${fmtPkr(receipt.amountCents)} — never booked`}
+        </button>
+        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+function VoidRejectPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; onDone: (t: string) => void; onCancel: () => void }) {
+  const [note, setNote] = useState('')
+  const reject = useMutation({
+    mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/void-request/reject`, { note: note.trim() }, { tenantId: receipt.tenantId }),
+    onSuccess: () => onDone(`The ask to void bill #${receipt.orderRef}'s Raast payment was turned down; the payment stays provisional.`),
+  })
+  return (
+    <div className="space-y-2 text-xs max-w-xl">
+      <p className="text-s-muted">The payment stays provisional — finance matches it, or a CEO / co-owner marks it not received once its sale is booked.</p>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="a note for finance (required)" className={`${inputCls} w-full`} />
+      {reject.error && <p className="text-s-red">{errorText(reject.error)}</p>}
+      <div className="flex gap-3">
+        <button onClick={() => reject.mutate()} disabled={reject.isPending || note.trim().length < 3} className="text-primary-ink font-semibold disabled:opacity-40">
+          {reject.isPending ? 'Saving…' : 'Turn down the ask'}
         </button>
         <button onClick={onCancel} className="text-s-muted">Cancel</button>
       </div>

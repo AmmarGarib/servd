@@ -83,7 +83,7 @@ export const OPEN_FINANCE_STATUSES: RaastReceiptStatus[] = ['provisional', 'need
 export const WRITE_OFF_CONTRAS = ['1115', '8010', '1350'] as const
 export type WriteOffContra = (typeof WRITE_OFF_CONTRAS)[number]
 /** Who may ask the CEO to void a receipt (the void itself is the CEO's — role admin). */
-export const RAAST_VOID_REQUESTERS = ['admin', 'owner', 'management', 'finance'] as const
+export const RAAST_VOID_REQUESTERS: readonly string[] = ['admin', 'owner', 'management', 'finance']
 
 const WRITE_OFF_SOURCE = 'raast.unreceived'
 

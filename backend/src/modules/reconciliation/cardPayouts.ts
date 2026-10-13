@@ -52,7 +52,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { flagException } from '../../lib/exceptions.js'
-import { invalidateSetupCache } from '../../lib/setup-config.js'
+import { invalidateSetupCache, getOperationsConfig } from '../../lib/setup-config.js'
 import { ACCT, reverseJournalEntry } from '../accounting/journal.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import type { CloseCheck, CloseCheckContext, CloseProblem } from '../accounting/closeCheckTypes.js'
@@ -180,8 +180,8 @@ export const isPayoutBank = (s: CardSettlementSettings, bankAccountId: string | 
  * over the stored settings. The payout bank must be a live, active, linked
  * BANK of the company (422 BANK_ACCOUNT_NOT_IN_COMPANY / BANK_ACCOUNT_NOT_LINKED /
  * BANK_ACCOUNT_NOT_A_BANK); enabling needs one (422 PAYOUT_BANK_REQUIRED).
- * startDay: today (PKT) on the first enable; it may be set to an earlier day
- * only after the last manual split that cleared 1030 (422
+ * startDay: today (PKT) whenever matching is switched on without one; a given
+ * one must be after the last manual split that cleared 1030 (422
  * START_DAY_BEFORE_MANUAL_SPLIT) — days before it were cleared by hand.
  */
 export async function saveCardSettlementSettings(db: typeof defaultPrisma, tenantId: string, patch: Partial<CardSettlementSettings>, actorId: string): Promise<{ before: CardSettlementSettings; after: CardSettlementSettings }> {
@@ -207,12 +207,18 @@ export async function saveCardSettlementSettings(db: typeof defaultPrisma, tenan
       )
     }
   }
-  if (after.enabled && !after.startDay) after.startDay = dayStr(today)
+  // Switching matching ON starts afresh today unless a (checked) start day is
+  // given: days of a spell with matching off were cleared by hand, unclaimed.
+  if (after.enabled && (!before.enabled || !after.startDay) && (patch.startDay === undefined || patch.startDay === null)) {
+    after.startDay = dayStr(today)
+  }
 
   const json = JSON.parse(JSON.stringify(after)) as Prisma.InputJsonValue
-  const row = await opsConfigRow(db, tenantId)
-  if (row) await db.operationsConfig.update({ where: { id: row.id }, data: { cardSettlement: json, updatedById: actorId } })
-  else await db.operationsConfig.create({ data: { scope: 'global', scopeId: null, tenantId, cardSettlement: json, updatedById: actorId } })
+  // The company's one OperationsConfig row — lib/setup-config.ts is the one
+  // place that creates it.
+  const row = (await opsConfigRow(db, tenantId)) ?? (await getOperationsConfig(tenantId).then(() => opsConfigRow(db, tenantId)))
+  if (!row) throw new AppError('SETTINGS_ROW_MISSING', 'The company\'s finance settings could not be found — try again', 500)
+  await db.operationsConfig.update({ where: { id: row.id }, data: { cardSettlement: json, updatedById: actorId } })
   invalidateSetupCache()
   return { before, after }
 }

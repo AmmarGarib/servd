@@ -15,7 +15,7 @@ import { ZodError } from 'zod'
 import { AppError, errorResponse } from '../src/lib/errors.js'
 import { prisma, mkCompany, mkUser, mkRaastAccount, type Company, type Who } from './connectorsFixtures.js'
 import { setupRoutes } from '../src/modules/setup/routes.js'
-import { resolveRaastAccount } from '../src/connectors/raast/accounts.js'
+import { resolveRaastAccount, NON_BANK_MONEY_CODES, isRaastBankCode } from '../src/connectors/raast/accounts.js'
 
 let app: FastifyInstance
 let A: Company
@@ -112,8 +112,11 @@ describe('the company default Raast account', () => {
     expect(r3.statusCode).toBe(422)
   })
 
-  it('a Raast account must post to a BANK code — never cash, the drawer, 1030 or receivables (422 RAAST_NOT_A_BANK_CODE)', async () => {
-    for (const code of ['1010', '1015', '1030', '1110']) {
+  it('a Raast account must post to a BANK code — never cash, the drawer, 1030, receivables or till clearing (422 RAAST_NOT_A_BANK_CODE)', async () => {
+    expect(NON_BANK_MONEY_CODES).toEqual(expect.arrayContaining(['1010', '1015', '1030', '1110', '1115']))
+    expect(isRaastBankCode('1115')).toBe(false)
+    expect(isRaastBankCode('1021')).toBe(true)
+    for (const code of ['1010', '1015', '1030', '1110', '1115']) {
       const bad = await mkBank(A, { code })
       const r = await call(financeA, 'PATCH', `/setup/bank-accounts/${bad.id}`, { raastDefault: true })
       expect(r.statusCode, `${code}: ${r.body}`).toBe(422)
@@ -126,7 +129,7 @@ describe('the company default Raast account', () => {
       await prisma.concept.update({ where: { id: A.conceptId }, data: { raastBankAccountId: bad.id } })
       const resolved = await resolveRaastAccount(prisma, A.tenantId, A.conceptId)
       expect(resolved?.bankAccountId).not.toBe(bad.id)
-      if (resolved) expect(['1010', '1015', '1030', '1110']).not.toContain(resolved.ledgerCode)
+      if (resolved) expect(['1010', '1015', '1030', '1110', '1115']).not.toContain(resolved.ledgerCode)
       await prisma.concept.update({ where: { id: A.conceptId }, data: { raastBankAccountId: null } })
       await prisma.bankAccount.update({ where: { id: bad.id }, data: { deletedAt: new Date(), isActive: false } })
     }
