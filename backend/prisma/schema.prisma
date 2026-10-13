@@ -3383,7 +3383,8 @@ model FleetAgreement {
 
 // What a provider's fleet charges a client per trip (H30, wave B). History: a new row from a month on; never edited.
 // The row's (tenantId, clientTenantId) must be the agreement's (providerTenantId, clientTenantId): composite FK
-// fleet_rates_agreement_pair_fkey in SQL (Prisma cannot express it; migration 20261014090000). CHECKs
+// fleet_rates_agreement_pair_fkey in SQL (migration 20261014090000; not declared here). `prisma migrate diff` against
+// a live database proposes DROPPING it — delete that line from any generated migration. CHECKs
 // fleet_rates_rate_chk / fleet_rates_period_chk / fleet_rates_parties_chk are SQL only too. RLS lets either company
 // read the row.
 model FleetRate {
@@ -3412,8 +3413,9 @@ model FleetRate {
 // 'ic.transfer:<id>' in both books. Sources: manual (finance prepares, CEO approves), fleet (system, monthly),
 // cod (a fleet rider's unpaid COD, booked by finance in both companies), ho_recharge (reserved for D1).
 // debtorEntryId / creditorEntryId @unique are journal-entry uuids — globally unique by construction; a deliberate
-// exception to "unique keys are per company". CHECKs ic_* are SQL only (migration 20261014090000). RLS lets either
-// company read the row.
+// exception to "unique keys are per company". CHECKs ic_amount_chk, ic_parties_chk, ic_kind_chk, ic_status_chk,
+// ic_source_chk, ic_sourceref_chk and ic_method_chk are SQL only (migration 20261014090000). RLS lets either company
+// read the row.
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model IntercompanyTransfer {
   id                    String    @id @default(uuid())
@@ -7688,8 +7690,9 @@ model CashVoucherSettlement {
 }
 
 // What a box spend or a request's receipts bought (wave B). Exactly one owner (movementId or settlementId): CHECK
-// petty_cash_spend_lines_owner_chk, plus _amount_chk / _kind_chk / _stock_chk / _capex_chk — all SQL only (migration
-// 20261014090000). INT4 per line (≤ the box spend / request).
+// petty_cash_spend_lines_owner_chk, plus petty_cash_spend_lines_amount_chk / petty_cash_spend_lines_kind_chk /
+// petty_cash_spend_lines_stock_chk / petty_cash_spend_lines_capex_chk — all SQL only (migration 20261014090000).
+// INT4 per line (≤ the box spend / request).
 model PettyCashSpendLine {
   id              String   @id @default(cuid())
   tenantId        String
