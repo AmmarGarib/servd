@@ -746,24 +746,24 @@ model GiftCard {
   recipientEmail  String?
   message         String?
 
-  issuedById      String? // staff user; null for storefront purchase
-  conceptId       String? // null = redeemable everywhere
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-  voidedAt        DateTime?
-  voidReason      String?
+  issuedById            String? // staff user; null for storefront purchase
+  conceptId             String? // null = redeemable everywhere
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  voidedAt              DateTime?
+  voidReason            String?
   // Finance gaps (2026-10-13): how the card was paid for, so its issue entry
   // debits the right account and a void can send the value back the same way.
   // 'promotional' cards are given away (Dr 6060 at issue, never cash).
-  kind            GiftCardKind @default(sold)
-  paymentMethod   String? // cash | card | bank_transfer; null for promotional / storefront
-  bankAccountId   String? // the bank a bank_transfer sale landed in (same company)
-  expiredAt       DateTime?
-  voidDisposition String? // refund | payment_not_received | forfeit
+  kind                  GiftCardKind @default(sold)
+  paymentMethod         String? // cash | card | bank_transfer; null for promotional / storefront
+  bankAccountId         String? // the bank a bank_transfer sale landed in (same company)
+  expiredAt             DateTime?
+  voidDisposition       String? // refund | payment_not_received | forfeit
   // H11 breakage (wave B, INT4: a card is ≤ PKR 100k): value taken to 4200 (sold) / 6060 (promotional) at the card's
   // FIRST expiry, or a CEO forfeit of a sold card. A refund that later puts value back on an expired card waits for a
   // manager (never swept).
-  breakageCents         Int       @default(0)
+  breakageCents         Int          @default(0)
   breakageAt            DateTime?
   // Expired but breakage could not be booked yet (issue entry missing — ISSUE_NOT_BOOKED — or the posting was
   // refused). The sweep and the 'giftcard.expire' reposter retry these; null = nothing pending.
@@ -2646,15 +2646,15 @@ model SupplierCreditApplication {
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierBillLine {
-  id              String  @id @default(uuid())
-  billId          String
-  inventoryItemId String?
-  poLineId        String? // 3-way match link
-  description     String
-  quantity        Float
-  unitCostCents   BigInt
-  lineTotalCents  BigInt
-  returnQty       Float? // credit note lines: stock sent back to the supplier
+  id                 String  @id @default(uuid())
+  billId             String
+  inventoryItemId    String?
+  poLineId           String? // 3-way match link
+  description        String
+  quantity           Float
+  unitCostCents      BigInt
+  lineTotalCents     BigInt
+  returnQty          Float? // credit note lines: stock sent back to the supplier
   // Food cost wave B (GRNI, H17)
   receiptLineId      String? // a stock line matched to a receipt line (else poLineId); one of them is required for a stock line
   expenseAccountCode String? // a line that is NOT stock names its 6xxx account (assertExpenseCode); equipment refused (USE_CAPEX)
@@ -3150,14 +3150,14 @@ model AuditLog {
 // Reversing entries posted *after* lock date for an event before it ARE allowed
 // (they post in the open period with their own date), preserving auditability.
 model PeriodLock {
-  id            String   @id @default(uuid())
+  id             String   @id @default(uuid())
   // Company whose books are closed. Closing GS Foods' August must not freeze
   // GSX Viva's ledger, so the lock — and the posting check — is per company.
-  tenantId      String?
-  lockedThrough DateTime // inclusive — books are closed up to and including this date
-  lockedBy      String // user ID
-  lockedAt      DateTime @default(now())
-  note          String?
+  tenantId       String?
+  lockedThrough  DateTime // inclusive — books are closed up to and including this date
+  lockedBy       String // user ID
+  lockedAt       DateTime @default(now())
+  note           String?
   /// Blocking close checks the CEO closed over (wave B close checklist): [{key, count, cents, months}]; null = none.
   overrides      Json?
   overrideReason String?
@@ -4459,6 +4459,22 @@ model OperationsConfig {
   pii_export_row_threshold Int     @default(100) // bulk customer/recipe export above this auto-flags
   shrinkage_trend_weeks    Int     @default(4) // window for chronic shrinkage detection
 
+  // Fixed assets v2 policy (wave B; edited only via PATCH /accounting/fixed-assets/policy). Depreciation is ALWAYS
+  // automatic (owner) — there is deliberately no on/off switch.
+  capexUncapitalisedAlertDays Int    @default(30)
+  capexAdvanceOverdueDays     Int    @default(45)
+  deferredTaxRateBp           Int    @default(2900) // H24: report only, 29%
+  assetTagPrefix              String @default("FA-")
+  // Withholding (H8/H28): { '153_1_a': {filerBps, nonFilerBps}, '153_1_b': …, '153_1_c': …, '155': … }.
+  // null = defaults in lib/withholding.ts, with withholdingTaxPct as the 153_1_a filer rate. ONE writer:
+  // PUT /accounting/withholding/rates (PATCH /setup/operations-config no longer accepts withholdingTaxPct).
+  withholdingRates            Json?
+  // Card payouts (H12): { enabled, payoutBankAccountId, unitMode ('company'|'brand'|'terminal'), mdrBps, feeTaxBps,
+  // lagDays, toleranceBps, maxBatchDays, maxFeeBps, startDay }. null = card payout matching off.
+  cardSettlement              Json?
+  // Cash requests (H3): receipts due within N days of payment; the daily worker then converts the rest.
+  cashAdvanceSettleDays       Int    @default(30)
+
   updatedAt   DateTime @updatedAt
   updatedById String?
   tenant      Tenant?  @relation("TenantOperationsConfigs", fields: [tenantId], references: [id])
@@ -4632,6 +4648,10 @@ model CapexProject {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
+  // The per-outlet 'Equipment & smallwares' project used by Quick buy (projectType 'equipment_only'; wave B).
+  // One live standing project per (company, outlet): partial unique capex_projects_standing in SQL (migration
+  // 20261014090000; not declared here).
+  isStanding          Boolean   @default(false)
 
   lines CapexLine[]
 
@@ -4674,13 +4694,24 @@ model CapexLine {
   sortOrder            Int       @default(0)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
+  // Wave B — the ONE treatment override (the per-payment body field is removed) + vendor tax
+  supplierId           String?
+  // capital | prepaid | deposit | expense; null = automatic (capexTreatmentOf); locked once a payment posts.
+  // CHECK capex_lines_treatment_chk (SQL only).
+  treatment            String?
+  inputTaxCents        BigInt    @default(0)
+  inputTaxAuthority    String? // fbr | srb | pra | kpra | bra → taxAuthorities.inputTaxCodeFor (never a free code)
+  whtSection           String? // 153_1_a | 153_1_b | 153_1_c | 155 | none; null = supplier.defaultWhtSection ?? by treatment
 
-  project  CapexProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  quotes   CapexQuote[]
-  payments CapexPayment[]
+  project        CapexProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  quotes         CapexQuote[]
+  payments       CapexPayment[]
+  supplierRecord Supplier?      @relation("CapexLineSupplier", fields: [supplierId], references: [id], onDelete: SetNull)
+  fixedAssets    FixedAsset[]
 
   @@index([projectId])
   @@index([status])
+  @@index([supplierId])
   @@map("capex_lines")
 }
 
@@ -4739,47 +4770,66 @@ model OpexCategory {
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model OpexLine {
-  id            String    @id @default(cuid())
-  categoryId    String
-  conceptId     String?
-  projectId     String? // optional link to a CapexProject (build-out + run together = full TCO)
-  name          String // 'Office rent — Lahore', 'KE bill — Karachi kitchen'
-  vendor        String?
-  vendorContact String?
-  amountCents   BigInt // expected per-period amount
-  cadence       String    @default("monthly") // 'monthly' | 'quarterly' | 'annual' | 'per_use'
-  nextDueDate   DateTime?
-  paymentMethod String? // 'bank_transfer' | 'card' | 'cash' | 'auto_debit'
-  bankAccountId String?
+  id                String    @id @default(cuid())
+  categoryId        String
+  conceptId         String?
+  projectId         String? // optional link to a CapexProject (build-out + run together = full TCO)
+  name              String // 'Office rent — Lahore', 'KE bill — Karachi kitchen'
+  vendor            String?
+  vendorContact     String?
+  amountCents       BigInt // expected per-period amount
+  cadence           String    @default("monthly") // 'monthly' | 'quarterly' | 'annual' | 'per_use'
+  nextDueDate       DateTime?
+  paymentMethod     String? // 'bank_transfer' | 'card' | 'cash' | 'auto_debit'
+  bankAccountId     String?
   // Source: 'manual' for hand-entered; 'payroll'/'license'/'subscription' link to internal data.
-  source        String    @default("manual")
-  isActive      Boolean   @default(true)
-  notes         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  source            String    @default("manual")
+  isActive          Boolean   @default(true)
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  // Wave B — supplierId wins over the free-text vendor (kept for legacy lines; filled from the supplier name)
+  supplierId        String?
+  whtSection        String? // 153_1_a | 153_1_b | 153_1_c | 155 | null = none
+  inputTaxAuthority String? // fbr | srb | pra | kpra | bra (usual)
 
   category OpexCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   payments OpexPayment[]
+  supplier Supplier?     @relation(fields: [supplierId], references: [id], onDelete: SetNull)
 
   @@index([categoryId])
   @@index([projectId])
   @@index([nextDueDate])
+  @@index([supplierId])
   @@map("opex_lines")
 }
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model OpexPayment {
-  id            String    @id @default(cuid())
-  lineId        String
-  periodStart   DateTime
-  periodEnd     DateTime
-  expectedCents BigInt // forecast for this period
-  actualCents   BigInt? // what hit the bank (null until paid)
-  paidAt        DateTime?
-  paymentRef    String?
-  receiptUrl    String?
-  notes         String?
-  createdAt     DateTime  @default(now())
+  id                String    @id @default(cuid())
+  lineId            String
+  periodStart       DateTime
+  periodEnd         DateTime
+  expectedCents     BigInt // forecast for this period
+  actualCents       BigInt? // what hit the bank (null until paid)
+  paidAt            DateTime?
+  paymentRef        String?
+  receiptUrl        String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  // Wave B — actualCents stays the CASH that left the bank; invoice = actualCents + whtCents;
+  // expense = invoice − inputTaxCents (budget/variance compare the EXPENSE).
+  inputTaxCents     BigInt    @default(0)
+  inputTaxAuthority String?
+  whtCents          BigInt    @default(0)
+  whtSection        String?
+  whtRateBps        Int?
+  filerStatus       String? // snapshot at payment
+  whtOverrideReason String?
+  // expense | prepaid (H25: Dr 1310, released monthly by PrepaidRelease). CHECK opex_payments_treatment_chk (SQL only).
+  treatment         String    @default("expense")
+  coversFrom        String? // 'YYYY-MM' (prepaid)
+  coversMonths      Int?
 
   line OpexLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
 
@@ -4792,17 +4842,33 @@ model OpexPayment {
 // Cash-flow page sums these by dueDate to show outflow timeline.
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model CapexPayment {
-  id              String    @id @default(cuid())
-  lineId          String
-  label           String // 'deposit' | 'midpoint' | 'balance' | 'extra'
-  amountCents     BigInt
-  dueDate         DateTime?
-  paidAt          DateTime?
-  paidAmountCents BigInt? // null until paid; supports partial
-  paymentRef      String? // bank ref, cheque #, transaction ID
-  notes           String?
-  createdAt       DateTime  @default(now())
-  bankAccountId   String? // the company bank account it was paid from
+  id                         String    @id @default(cuid())
+  lineId                     String
+  label                      String // 'deposit' | 'midpoint' | 'balance' | 'extra'
+  amountCents                BigInt
+  dueDate                    DateTime?
+  paidAt                     DateTime?
+  paidAmountCents            BigInt? // null until paid; supports partial
+  paymentRef                 String? // bank ref, cheque #, transaction ID
+  notes                      String?
+  createdAt                  DateTime  @default(now())
+  bankAccountId              String? // the company bank account it was paid from
+  // Wave B — withholding snapshot (lib/withholding.ts computeWithholding), prepaid term, deposits
+  whtCents                   BigInt    @default(0) // fixed when first marked paid
+  whtSection                 String?
+  whtRateBps                 Int?
+  filerStatus                String? // snapshot at payment
+  whtOverrideReason          String?
+  coversFrom                 String? // 'YYYY-MM' — required for treatment 'prepaid' (422 PREPAID_TERM_REQUIRED on new rows)
+  coversMonths               Int?
+  depositReturnedCents       BigInt    @default(0)
+  depositForfeitedCents      BigInt    @default(0)
+  depositReturnedAt          DateTime?
+  depositReturnMethod        String?
+  depositReturnBankAccountId String?
+  // 'finance' = entered in CapEx; 'cash' = created from a petty-cash spend line / cash-request settlement line of
+  // kind 'capex' (that line's capexPaymentId is the one-time guard, per company).
+  source                     String    @default("finance")
 
   line CapexLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
 
@@ -5029,25 +5095,29 @@ model Domain {
 //   - Per-tenant billing customer ID, plan tier (next iteration)
 
 model Tenant {
-  id             String    @id @default(cuid())
-  slug           String    @unique
-  name           String
-  industry       String? // 'qsr' | 'cafe' | 'fine_dining' | 'cloud_kitchen' | 'biryani' | 'multi_brand'
-  countryCode    String    @default("PK") // ISO 3166-1 alpha-2 — drives currency, tax regime
-  currency       String    @default("PKR")
-  timezone       String    @default("Asia/Karachi")
-  isActive       Boolean   @default(true)
+  id                 String    @id @default(cuid())
+  slug               String    @unique
+  name               String
+  industry           String? // 'qsr' | 'cafe' | 'fine_dining' | 'cloud_kitchen' | 'biryani' | 'multi_brand'
+  countryCode        String    @default("PK") // ISO 3166-1 alpha-2 — drives currency, tax regime
+  currency           String    @default("PKR")
+  timezone           String    @default("Asia/Karachi")
+  isActive           Boolean   @default(true)
   // Joint-venture metadata. When isJointVenture=true, every cost line viewed
   // under this tenant (OpEx, positions, contributions) renders with partner-
   // split chips so the operator can see at a glance "who pays what". Stored
   // as JSON array: [{ label: 'Viva', pct: 60 }, { label: 'Garibsons', pct: 40 }].
   // Percentages should sum to 100 but we don't enforce — the chips display
   // whatever was entered, the operator can correct.
-  isJointVenture Boolean   @default(false)
-  jvPartners     Json? // [{label, pct}, ...]
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  deletedAt      DateTime?
+  isJointVenture     Boolean   @default(false)
+  jvPartners         Json? // [{label, pct}, ...]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+  /// Financial year end month 1-12 (H29: 30 June = 6; wave B). Reports split earnings into "retained b/f" and
+  /// "profit for the year to date" (virtual roll-forward, no closing journal). CEO-only, audited.
+  /// CHECK tenants_fy_end_month_chk (SQL only).
+  fiscalYearEndMonth Int       @default(6)
 
   concepts               Concept[]
   users                  User[]
@@ -5100,6 +5170,17 @@ model Tenant {
   raastReceipts  RaastReceipt[]  @relation("TenantRaastReceipts")
   bankSmsDevices BankSmsDevice[] @relation("TenantBankSmsDevices")
   bankSmsAlerts  BankSmsAlert[]  @relation("TenantBankSmsAlerts")
+
+  // Inter-company (wave B, H30)
+  counterpartyAccounts  Account[]              @relation("AccountCounterparty")
+  icTransfersAsDebtor   IntercompanyTransfer[] @relation("IcTransferDebtor")
+  icTransfersAsCreditor IntercompanyTransfer[] @relation("IcTransferCreditor")
+  fleetRatesProvided    FleetRate[]            @relation("FleetRateProvider")
+  fleetRatesCharged     FleetRate[]            @relation("FleetRateClient")
+
+  // Cash requests + petty cash in the ledger (wave B, 2026-10-14)
+  cashVoucherSettlements CashVoucherSettlement[] @relation("TenantCashVoucherSettlements")
+  pettyCashSpendLines    PettyCashSpendLine[]    @relation("TenantPettyCashSpendLines")
 
   @@map("tenants")
 }
@@ -5186,6 +5267,9 @@ model Location {
   transfersFrom    StockTransfer[]   @relation("TransferFrom")
   transfersTo      StockTransfer[]   @relation("TransferTo")
   expoPushTokens   ExpoPushToken[]
+  // Fixed assets v2 (2026-10-14)
+  fixedAssets      FixedAsset[]      @relation("FixedAssetLocation")
+  fixedAssetPools  FixedAssetPool[]  @relation("FixedAssetPoolLocation")
 
   @@index([tenantId])
   @@map("locations")
@@ -5336,40 +5420,68 @@ model MediaAsset {
 // supplier's bill so we can detect price manipulation or short-shipments
 // before the bill is paid (3-way match: PO qty / GRN qty / Bill qty).
 model GoodsReceipt {
-  id           String   @id @default(cuid())
-  poId         String? // matched PO if scanned at dock
-  supplierId   String
-  receivedById String // user who accepted delivery
-  receivedAt   DateTime @default(now())
-  photoUrl     String? // dock-door photo (required if config)
-  notes        String?
-  status       String   @default("pending") // pending | accepted | disputed | partial
-  varianceFlag Boolean  @default(false) // true if any line variance > threshold
+  id                 String   @id @default(cuid())
+  poId               String? // matched PO if scanned at dock
+  supplierId         String
+  receivedById       String // user who accepted delivery
+  receivedAt         DateTime @default(now())
+  photoUrl           String? // dock-door photo (required if config)
+  notes              String?
+  status             String   @default("pending") // pending | accepted | disputed | partial
+  varianceFlag       Boolean  @default(false) // true if any line variance > threshold
+  // Food cost wave B (2026-10-14)
+  tenantId           String? // the supplier's company (backfilled); every new row sets it
+  locationId         String?
+  // Decision P6: a no-PO receipt created for food bought with cash. Its lines are born billed (billedQty =
+  // receivedQty), it posts NOTHING itself (no 2015): the cash document's own entry carries Dr 12x0 / Cr 1011|1355.
+  // One receipt per cash document (unique below), so the same food can't come in twice. CHECK
+  // goods_receipts_settled_chk (both or neither, known types) is SQL only.
+  settledByType      String? // 'petty_cash_movement' | 'cash_voucher_settlement'
+  settledById        String?
+  settledAccountCode String? // the credit side the cash document books (1011 box / 1355 advance)
 
   lines GoodsReceiptLine[]
 
+  @@unique([tenantId, settledByType, settledById])
   @@index([supplierId, receivedAt])
   @@index([status])
+  @@index([tenantId, receivedAt])
   @@map("goods_receipts")
 }
 
 model GoodsReceiptLine {
-  id              String  @id @default(cuid())
-  receiptId       String
-  inventoryItemId String? // null when receiving non-inventoried items
-  description     String // human-readable; mirrors PO line
-  poQty           Float? // ordered qty (when matched)
-  receivedQty     Float // what actually arrived
-  poUnitCostCents Int? // expected unit cost
-  unit            String  @default("kg")
-  variancePct     Float? // (receivedQty - poQty) / poQty
-  notes           String?
+  id                    String    @id @default(cuid())
+  receiptId             String
+  inventoryItemId       String? // null when receiving non-inventoried items
+  description           String // human-readable; mirrors PO line
+  poQty                 Float? // ordered qty (when matched)
+  receivedQty           Float // what actually arrived
+  poUnitCostCents       Int? // expected unit cost
+  unit                  String    @default("kg")
+  variancePct           Float? // (receivedQty - poQty) / poQty
+  notes                 String?
   // The PO line this receipt line was matched to, so a receipt can be traced
   // back to what was ordered.
-  poLineId        String?
+  poLineId              String?
+  // Food cost wave B — lots + GRNI (H16/H17)
+  lotUnitCostCents      Int? // the unit cost the receipt's lot(s) opened at (pending-bill price, else PO, else dock)
+  billedQty             Float     @default(0) // quantity a bill has matched (GRNI open = receivedQty − billedQty)
+  // GRNI write-off (supplier will never bill): finance/procurement REQUESTS, the CEO approves (approvals inbox type
+  // 'grni_writeoff'); a CEO-raised request applies at once (decision 27). Posts 'procurement.grni_writeoff:<id>'.
+  // The claim is a conditional update (writeOffRequestedAt IS NULL); the partial unique
+  // goods_receipt_lines_one_open_writeoff is SQL-only documentation (migration 20261014090000).
+  writeOffRequestedAt   DateTime?
+  writeOffRequestedById String?
+  writeOffReason        String?
+  writtenOffAt          DateTime?
+  writtenOffById        String?
+  writeOffEntryId       String?
 
-  receipt GoodsReceipt       @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
+  receipt   GoodsReceipt       @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  poLine    PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
+  lots      StockLot[]
+  matches   GrniMatch[]
+  billLines SupplierBillLine[] @relation("BillLineReceiptLine")
 
   @@index([receiptId])
   @@index([poLineId])
@@ -5394,6 +5506,9 @@ model PrepBatch {
   photoUrl         String? // photo of finished prep
   notes            String?
   createdAt        DateTime @default(now())
+  // Food cost wave B
+  locationId       String?
+  drawValueCents   BigInt? // FIFO value drawn by an ad-hoc batch ('inventory.prep_draw:<id>')
 
   @@index([staffId, createdAt])
   @@index([recipeId])
@@ -5412,11 +5527,16 @@ model PhysicalCount {
   countedAt   DateTime @default(now())
   status      String   @default("pending") // pending | completed | reviewed
   notes       String?
+  // Food cost wave B: spot | opening (opening → 3020, H19; finance/CEO/management only). CHECK
+  // physical_counts_kind_chk (SQL only).
+  kind        String   @default("spot")
+  locationId  String?
 
   lines PhysicalCountLine[]
 
   @@index([countedAt])
   @@index([tenantId, countedAt])
+  @@index([tenantId, kind, countedAt])
   @@map("physical_counts")
 }
 
@@ -5428,12 +5548,133 @@ model PhysicalCountLine {
   physicalQty     Float // what was physically counted
   variancePct     Float? // (physical - system) / system
   reason          String? // free-text justification
+  // Food cost wave B
+  unitCostCents   Int? // opening counts: the unit cost entered (default the latest purchase price)
+  valueCents      BigInt? // signed value posted (count_loss FIFO value / count_gain or opening lot value)
 
   count PhysicalCount @relation(fields: [countId], references: [id], onDelete: Cascade)
 
   @@index([countId])
   @@index([inventoryItemId])
   @@map("physical_count_lines")
+}
+
+// ─── Food cost on FIFO lots (wave B, 2026-10-14; H16/H17) ────────────────────
+// Owner: costing is REAL-TIME at the PO price of the ingredients actually being
+// cooked (FIFO lots). lib/stockLedger.ts is the ONLY writer of these tables.
+
+// One lot of stock at one cost. tenantId = the item's company (never null; company-less items are refused on every
+// stock write). FIFO order = receivedAt, then id. The open-lot index stock_lots_open_fifo (partial, remainingQty > 0)
+// and CHECKs stock_lots_class_chk / stock_lots_remaining_chk / stock_lots_source_chk are SQL only (migration
+// 20261014090000; not declared here).
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers); the per-unit cost
+// stays INT4.
+model StockLot {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  inventoryItemId     String
+  locationId          String? // outlet tag; per-outlet pools are the NEXT build
+  sourceType          String // goods_receipt_line | count_gain | opening | fifo_cutover | legacy_return
+  // goods_receipt_line: '<receiptLineId>:<grniMatchId|po|dock>' (a receipt line may open SEVERAL lots: a pending-bill
+  // quantity at the billed price + the rest at the PO price); legacy_return: '<orderItemId>:<event>';
+  // count_gain/opening: '<countLineId>'; fifo_cutover: '<tenantId>'.
+  sourceId            String
+  receiptLineId       String?
+  costClass           String // food | beverage | packaging
+  receivedAt          DateTime
+  qtyIn               Float // purchase units
+  remainingQty        Float
+  unitCostCents       Int // per purchase unit (INT4 per-unit stock cost)
+  valueInCents        BigInt
+  remainingValueCents BigInt // exact: the last draw takes the remainder, so lots and 12x0 never drift by rounding
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  inventoryItem InventoryItem     @relation(fields: [inventoryItemId], references: [id])
+  receiptLine   GoodsReceiptLine? @relation(fields: [receiptLineId], references: [id], onDelete: SetNull)
+  movements     StockMovement[]
+
+  @@unique([tenantId, sourceType, sourceId, inventoryItemId])
+  @@index([tenantId, inventoryItemId, receivedAt])
+  @@index([receiptLineId])
+  @@map("stock_lots")
+}
+
+// THE lot ledger, append-only. Every stock change writes these rows in the document's own transaction.
+// CHECKs stock_movements_kind_chk / stock_movements_class_chk are SQL only (migration 20261014090000).
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
+model StockMovement {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  inventoryItemId     String
+  lotId               String?
+  lotKey              String   @default("") // lotId or '' (part of the idempotency key)
+  // receipt | opening | fifo_cutover | count_gain | count_loss | sale | sale_return | sale_void | waste | prep_draw |
+  // supplier_return | cost_adjust | class_reclass | legacy_return | issue_on_receipt | shortfall_settle |
+  // transfer_out | transfer_in ('transfer_*' reserved for per-outlet stock, the next build; wave B never writes them)
+  kind                String
+  qty                 Float // signed, purchase units
+  valueCents          BigInt // signed lot value moved
+  unitCostCents       Int
+  costClass           String
+  theoreticalQty      Float? // sale rows: the recipe quantity
+  shortfallQty        Float? // sale rows: needed but not on the books (clamped)
+  shortfallValueCents BigInt? // memo at the latest purchase price; settled from the next lot within 7 days ('shortfall_settle')
+  settlesMovementId   String? // shortfall_settle rows: the sale row whose shortfall this settles
+  conceptId           String?
+  brandShares         Json? // brand-less waste/count/prep/5060/issue: [{conceptId, share}] as posted (H20)
+  locationId          String?
+  orderId             String?
+  orderItemId         String?
+  sourceType          String
+  sourceId            String
+  occurredAt          DateTime
+  createdById         String?
+  createdAt           DateTime @default(now())
+
+  lot StockLot? @relation(fields: [lotId], references: [id])
+
+  @@unique([tenantId, sourceType, sourceId, inventoryItemId, kind, lotKey])
+  @@index([tenantId, occurredAt])
+  @@index([tenantId, inventoryItemId, occurredAt])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([lotId])
+  @@index([settlesMovementId])
+  @@map("stock_movements")
+}
+
+// What a bill line matched against received stock (GRNI, H17). CHECK grni_matches_status_chk is SQL only.
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers); per-unit costs
+// stay INT4.
+model GrniMatch {
+  id                   String    @id @default(uuid())
+  tenantId             String
+  billId               String
+  billLineId           String
+  receiptLineId        String? // null while billed but not yet received (pending)
+  poLineId             String?
+  qty                  Float
+  receiptUnitCostCents Int?
+  billedUnitCostCents  Int
+  grniCents            BigInt // debited to 2015 by the bill
+  priceDiffCents       BigInt    @default(0)
+  absorbedCents        BigInt    @default(0) // to stock still on hand (12x0)
+  usedCents            BigInt    @default(0) // to 5060 (stock already used)
+  status               String    @default("live") // live | pending | void
+  settledAt            DateTime?
+  createdAt            DateTime  @default(now())
+
+  bill        SupplierBill      @relation(fields: [billId], references: [id])
+  billLine    SupplierBillLine  @relation(fields: [billLineId], references: [id])
+  receiptLine GoodsReceiptLine? @relation(fields: [receiptLineId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([billId])
+  @@index([billLineId])
+  @@index([receiptLineId])
+  @@index([poLineId, status])
+  @@map("grni_matches")
 }
 
 // ExceptionFlag — universal anomaly signal. Anywhere in the codebase fires
@@ -5507,6 +5748,7 @@ model PettyCashBox {
   deletedAt       DateTime?
 
   movements    PettyCashMovement[]
+  // Cash requests paid from this box (optional on the request side since wave B: picked at pay).
   cashVouchers CashVoucher[]
 
   @@index([conceptId])
@@ -5514,10 +5756,13 @@ model PettyCashBox {
   @@map("petty_cash_boxes")
 }
 
+// Wave B (petty cash in the ledger): tenantId stamped on every new write (backfilled from the box); RLS policy
+// petty_cash_movements_rls is the tenant policy with legacy NULL rows visible to staff (migration 20261014090000).
+// CHECK petty_cash_movements_source_chk is SQL only.
 model PettyCashMovement {
   id                String   @id @default(cuid())
   boxId             String
-  type              String // 'topup' | 'spend' | 'reconcile' | 'transfer'
+  type              String // 'topup' | 'spend' | 'reconcile' | 'transfer' | 'return' (wave B: change handed back)
   amountCents       Int // signed: + topup, - spend
   category          String? // expense category (drives JE account)
   reason            String // free-text description
@@ -5530,10 +5775,27 @@ model PettyCashMovement {
   supplierPaymentId String?
   createdById       String
   createdAt         DateTime @default(now())
+  // Petty cash in the ledger (wave B, 2026-10-14)
+  tenantId          String? // stamped on every new write; backfilled from the box
+  source            String? // garibsons | safe | bank | till | cash_request | opening | box
+  accountCode       String? // the counter account of the posting (2210 / 1010 / bank code / 1015 / 1355 / 8010 …)
+  bankAccountId     String?
+  shiftId           String?
+  cashMovementId    String? // the drawer 'payout' CashMovement a 'till' top-up wrote (entry key 'pettycash.till_topup:<cashMovementId>')
+  transferRef       String? // TRF-xxxxxxxx (was only inside reason)
+  cashVoucherId     String? // the request it paid, or whose change it took back
+  conceptId         String?
+  journalEntryId    String? // set when booked (UI 'Booked'); re-stamped after a syncSourcePosting repost
 
-  box PettyCashBox @relation(fields: [boxId], references: [id])
+  box         PettyCashBox            @relation(fields: [boxId], references: [id])
+  lines       PettyCashSpendLine[]
+  attachments CashVoucherAttachment[]
 
+  @@unique([tenantId, cashMovementId])
   @@index([boxId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([cashVoucherId])
+  @@index([transferRef])
   @@map("petty_cash_movements")
 }
 
@@ -5915,19 +6177,21 @@ model FixedAsset {
   conceptId             String? // brand it serves; null = shared across brands
   locationId            String?
   name                  String
-  // kitchen_equipment | furniture_fixtures | it_equipment | vehicles | leasehold
+  // Since v2 (wave B) holds a FixedAssetClass.key: kitchen_equipment | furniture_fixtures | it_equipment | vehicles |
+  // leasehold | buildings | power_equipment | office_equipment | smallwares | land
   category              String
-  assetTag              String?
+  assetTag              String? // unique per company (backfill de-duplicated and filled blanks with FA-NNNNN)
   serialNumber          String?
-  supplier              String?
+  supplier              String? // free-text vendor name (legacy); supplierId below is the vendor master link
   acquiredAt            DateTime
-  costCents             BigInt
+  costCents             BigInt // cost still on the books (originalCostCents = when capitalised)
   salvageCents          BigInt    @default(0)
   usefulLifeMonths      Int
   // Credit side of the acquisition entry: 1020 bank, 1010 cash, 2010 payable.
   // Always set: every asset is capitalised (3010 for equipment already owned).
   acquisitionCreditCode String?
-  status                String    @default("active") // active | disposed
+  // active | disposed | voided — CHECK fixed_assets_status_chk (SQL only)
+  status                String    @default("active")
   disposedAt            DateTime?
   disposalProceedsCents BigInt?
   notes                 String?
@@ -5935,20 +6199,66 @@ model FixedAsset {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  depreciation FixedAssetDepreciation[]
+  // ── Fixed assets v2 (wave B, 2026-10-14; owner: depreciation automatic, no threshold, smallwares pooled) ──
+  // CHECKs fixed_assets_quantity_chk / fixed_assets_kind_chk and the partial unique fixed_assets_capex_unit_live
+  // (one live asset per CapEx line unit) are SQL only (migration 20261014090000; not declared here).
+  kind                    String    @default("individual") // individual | pool_layer
+  poolId                  String?
+  quantity                Int       @default(1) // units still on the books (pool layer: units left)
+  originalQuantity        Int       @default(1)
+  originalCostCents       BigInt    @default(0) // cost when capitalised; costCents = cost still on the books
+  inServiceAt             DateTime? // depreciation starts this PKT month (legacy null = acquiredAt)
+  method                  String    @default("straight_line") // straight_line | none (land)
+  capexLineId             String? // THE link to CapEx (the 'capex-line:' notes prefix is never read again)
+  capexLineUnit           Int       @default(0) // 0 = a single-unit line or a pool layer; 1..N = unit n of a line split into N ≥ 2 assets
+  supplierId              String?
+  warrantyUntil           DateTime?
+  documentUrls            Json?
+  photoUrls               Json?
+  leaseEndsAt             DateTime?
+  inputTaxCents           BigInt    @default(0)
+  inputTaxCode            String? // snapshot of the 132x code debited (from taxAuthorities.inputTaxCodeFor)
+  carriedAccumulatedCents BigInt    @default(0) // accumulated brought in by a pool-unit transfer
+  splitFromAssetId        String?
+  disposalKind            String? // sale | scrap | lost | stolen
+  disposalReason          String?
+  voidedAt                DateTime?
+  voidReason              String?
 
+  depreciation   FixedAssetDepreciation[]
+  concept        Concept?                 @relation("FixedAssetConcept", fields: [conceptId], references: [id], onDelete: SetNull)
+  location       Location?                @relation("FixedAssetLocation", fields: [locationId], references: [id], onDelete: SetNull)
+  supplierRecord Supplier?                @relation("FixedAssetSupplier", fields: [supplierId], references: [id], onDelete: SetNull)
+  pool           FixedAssetPool?          @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  capexLine      CapexLine?               @relation(fields: [capexLineId], references: [id], onDelete: Restrict)
+  events         FixedAssetEvent[]
+  taxYears       FixedAssetTaxYear[]
+
+  @@unique([tenantId, assetTag])
   @@index([tenantId, status])
+  @@index([tenantId, category])
+  @@index([tenantId, conceptId])
+  @@index([tenantId, locationId])
+  @@index([poolId])
+  @@index([capexLineId])
   @@map("fixed_assets")
 }
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model FixedAssetDepreciation {
-  id          String   @id @default(uuid())
-  tenantId    String
-  assetId     String
-  period      String // 'YYYY-MM'
-  amountCents BigInt
-  postedAt    DateTime @default(now())
+  id           String    @id @default(uuid())
+  tenantId     String
+  assetId      String
+  period       String // 'YYYY-MM'
+  amountCents  BigInt
+  postedAt     DateTime  @default(now())
+  // Fixed assets v2 (wave B)
+  accumCode    String    @default("1590") // accumulated account the charge credited (legacy 1590; 1591-1599 from v2)
+  conceptId    String? // brand charged (snapshot)
+  locationId   String?
+  postedPeriod String? // month the entry actually landed in when posted late; null = its own month
+  revision     Int       @default(1)
+  reversedAt   DateTime?
 
   asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
@@ -5956,6 +6266,161 @@ model FixedAssetDepreciation {
   @@unique([assetId, period])
   @@index([tenantId, period])
   @@map("fixed_asset_depreciation")
+}
+
+// ONE asset class list per company (wave B), seeded from fixedAssets/classes.ts ASSET_CLASS_DEFAULTS
+// (ensureAssetClasses adds missing keys only, so operator edits survive).
+model FixedAssetClass {
+  id                    String   @id @default(uuid())
+  tenantId              String
+  key                   String // kitchen_equipment|furniture_fixtures|it_equipment|vehicles|leasehold|buildings|power_equipment|office_equipment|smallwares|land
+  label                 String
+  costAccountCode       String
+  accumAccountCode      String? // null = not depreciated (land)
+  depreciable           Boolean  @default(true)
+  pooled                Boolean  @default(false) // smallwares true
+  defaultLifeMonths     Int?
+  taxRateBp             Int      @default(0)
+  taxInitialAllowanceBp Int      @default(0)
+  isActive              Boolean  @default(true)
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+  @@map("fixed_asset_classes")
+}
+
+// Smallwares pool per outlet × brand × type (H21; owner: smallwares grouped and tracked). Uniqueness (with COALESCE
+// on the brand) is the SQL expression index fixed_asset_pools_key (migration 20261014090000; not declared here).
+model FixedAssetPool {
+  id          String   @id @default(uuid())
+  tenantId    String
+  locationId  String
+  conceptId   String?
+  classKey    String // smallwares (or any class marked pooled)
+  typeKey     String // knives | ladles_utensils | bowls | plates | trays | cutlery | glassware | pots_pans | bar_tools | storage | other
+  label       String
+  isActive    Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  location Location          @relation("FixedAssetPoolLocation", fields: [locationId], references: [id], onDelete: Restrict)
+  concept  Concept?          @relation("FixedAssetPoolConcept", fields: [conceptId], references: [id], onDelete: SetNull)
+  layers   FixedAsset[]
+  events   FixedAssetEvent[]
+
+  @@index([tenantId, locationId])
+  @@map("fixed_asset_pools")
+}
+
+// The register's own request queue + history (read by the approvals inbox provider 'fixed_asset_request'). Owner:
+// disposals / scraps / write-downs — finance requests, the CEO approves. CHECK fixed_asset_events_status_chk and the
+// partial uniques fixed_asset_events_pending_capitalise (one pending capitalisation per CapEx line) and
+// fixed_asset_events_one_pending_per_asset (one pending request of a kind per asset) are SQL only.
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
+model FixedAssetEvent {
+  id             String    @id @default(uuid())
+  tenantId       String
+  assetId        String?
+  poolId         String?
+  capexLineId    String?
+  parentEventId  String? // per-layer allocation rows of a pool write-off / pool transfer
+  kind           String // capitalise|disposal|pool_write_off|pool_write_off_alloc|impairment|change_estimate|transfer|pool_transfer|pool_transfer_alloc|void|undispose|count
+  status         String    @default("pending") // pending | posted | rejected | cancelled
+  effectiveDate  DateTime
+  payload        Json // zod-validated per kind
+  amountCents    BigInt? // headline amount for the inbox (cost, proceeds, impairment, NBV out)
+  costOutCents   BigInt?
+  accumOutCents  BigInt?
+  reason         String
+  requestedById  String
+  requestedAt    DateTime  @default(now())
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  postedAt       DateTime?
+  journalEntryId String?
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  asset FixedAsset?     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  pool  FixedAssetPool? @relation(fields: [poolId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@index([assetId, effectiveDate])
+  @@index([poolId])
+  @@index([capexLineId])
+  @@index([parentEventId])
+  @@map("fixed_asset_events")
+}
+
+// ITO Third-Schedule tax depreciation per asset per tax year (Jul-Jun, ending year), frozen by the CEO (H23).
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
+model FixedAssetTaxYear {
+  id                    String   @id @default(uuid())
+  tenantId              String
+  assetId               String
+  taxYear               Int
+  rateBp                Int
+  openingWdvCents       BigInt
+  additionsCents        BigInt
+  initialAllowanceCents BigInt
+  depreciationCents     BigInt
+  disposalProceedsCents BigInt
+  closingWdvCents       BigInt
+  frozenAt              DateTime @default(now())
+  frozenById            String
+
+  asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, assetId, taxYear])
+  @@index([tenantId, taxYear])
+  @@map("fixed_asset_tax_years")
+}
+
+// One row per automatic run (depreciation, prepaid releases, register checks) per company — the audit trail of the
+// worker. BOOKS-06: chargedCents is BIGINT paisa.
+model FixedAssetRun {
+  id            String    @id @default(uuid())
+  tenantId      String
+  kind          String // depreciation | prepaid_release | checks
+  throughPeriod String
+  triggeredBy   String // 'worker' | userId
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  chargedCount  Int       @default(0)
+  chargedCents  BigInt    @default(0)
+  lateCount     Int       @default(0)
+  failedCount   Int       @default(0)
+  error         String?
+
+  @@index([tenantId, startedAt])
+  @@map("fixed_asset_runs")
+}
+
+// Monthly release of a prepayment to expense (H25, wave B): CapEx rent advances (Dr 6010 / Cr 1310) and OpEx payments
+// of treatment 'prepaid' (Dr the category's expense code / Cr 1310). ONE engine: accounting/prepaidReleases.ts.
+// Polymorphic source (no FK). 'prepaid.release:<sourceType>:<sourceId>:<YYYY-MM>' is the journal key.
+// CHECK prepaid_releases_source_chk is SQL only. BOOKS-06: amountCents is BIGINT paisa.
+model PrepaidRelease {
+  id           String    @id @default(uuid())
+  tenantId     String
+  sourceType   String // capex_payment | opex_payment
+  sourceId     String
+  period       String // 'YYYY-MM'
+  amountCents  BigInt
+  postedPeriod String? // month it landed in when posted late
+  revision     Int       @default(1)
+  reversedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([tenantId, sourceType, sourceId, period])
+  @@index([tenantId, period])
+  @@map("prepaid_releases")
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6000,12 +6465,20 @@ model ReceivableInvoice {
   // Income tax the customer withheld at source (s.153) and paid to FBR for
   // us: Dr 1330 — it settles that part of the invoice.
   whtCents           BigInt    @default(0)
+  // Wave B — kind adds 'statement' (an on-account client's monthly statement: AR-ST-YYYY-NNNN, no issue entry, never
+  // a tax invoice); status adds 'written_off'. Still due = total − paid − credited − withheld − writtenOff.
+  // CHECK receivable_invoices_written_off_chk is SQL only.
+  customerAccountId  String?
+  periodFrom         DateTime?
+  periodTo           DateTime?
+  writtenOffCents    BigInt    @default(0)
 
   payments ReceivablePayment[]
 
   @@unique([tenantId, number])
   @@index([tenantId, status, dueDate])
   @@index([originalInvoiceId])
+  @@index([tenantId, customerAccountId, status])
   @@map("receivable_invoices")
 }
 
@@ -6016,7 +6489,9 @@ model ReceivablePayment {
   invoiceId      String
   amountCents    BigInt
   receivedAt     DateTime
-  method         String // bank | cash | cheque | card
+  // bank | cash | cheque | card | wht | st_withheld (wave B: sales tax the CLIENT withheld, H13,
+  // 'receivable.st_withheld:<id>' Dr 1335 / Cr 1110 — never 'stwh', which is OUR withholding as agent, 2041)
+  method         String
   reference      String?
   createdById    String?
   createdAt      DateTime  @default(now())
@@ -6025,6 +6500,8 @@ model ReceivablePayment {
   // its entry is reversed and the invoice owes it again.
   reversedAt     DateTime?
   reversedReason String?
+  taxAuthority   String? // st_withheld: fbr | srb | pra | kpra | bra (from the issue entry / the statement's brands)
+  writeOffId     String? // a recovery of a written-off amount
 
   invoice ReceivableInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
@@ -6040,26 +6517,212 @@ model ReceivablePayment {
 // (journalEntryId, linked = true) — never posted twice.
 // BOOKS-06: money columns are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SalesTaxPayment {
-  id                String   @id @default(uuid())
-  tenantId          String
-  authority         String // fbr | pra | srb | kpra | bra | wht
-  periodFrom        DateTime
-  periodTo          DateTime
-  outputSetOffCents BigInt   @default(0)
-  inputSetOffCents  BigInt   @default(0)
-  paidCents         BigInt   @default(0)
-  paidAt            DateTime
-  bankAccountId     String?
-  cprNumber         String? // the challan / CPR number
-  journalEntryId    String?
-  linked            Boolean  @default(false)
-  notes             String?
-  createdById       String?
-  createdAt         DateTime @default(now())
+  id                          String   @id @default(uuid())
+  tenantId                    String
+  // fbr | pra | srb | kpra | bra | wht | stwh | salary_tax | eobi | sessi (wave B statutory challans, H7:
+  // Dr 2042/2043/2044 / Cr money). @@unique([tenantId, authority, periodFrom]) = one challan per scheme per month.
+  authority                   String
+  periodFrom                  DateTime
+  periodTo                    DateTime
+  outputSetOffCents           BigInt   @default(0)
+  inputSetOffCents            BigInt   @default(0)
+  paidCents                   BigInt   @default(0)
+  paidAt                      DateTime
+  bankAccountId               String?
+  cprNumber                   String? // the challan / CPR number
+  journalEntryId              String?
+  linked                      Boolean  @default(false)
+  notes                       String?
+  createdById                 String?
+  createdAt                   DateTime @default(now())
+  // Sales tax withheld by customers (1335, H13) set off against this authority's output in this payment.
+  customerWithheldSetOffCents BigInt   @default(0)
 
   @@unique([tenantId, authority, periodFrom])
   @@index([tenantId, paidAt])
   @@map("sales_tax_payments")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Card payouts at payout (H12, wave B): one Keenu payout bank line matched to the card sales of the days it covers.
+// Days are keyed per (company, unit, day); unit = 'company' by default, 'brand:<conceptId>' / 'terminal:<terminalId>'
+// when a company has several Keenu MIDs. CHECK card_settlements_status_chk is SQL only.
+// BOOKS-06: money columns are BIGINT paisa (lib/money.ts returns them as JS numbers).
+// ════════════════════════════════════════════════════════════════════════════
+
+model CardSettlement {
+  id              String   @id @default(uuid())
+  tenantId        String
+  unit            String   @default("company") // 'company' | 'brand:<conceptId>' | 'terminal:<terminalId>' (per Keenu MID)
+  bankAccountId   String
+  statementLineId String
+  journalEntryId  String?
+  grossCents      BigInt
+  feeCents        BigInt
+  feeTaxCents     BigInt   @default(0) // informational split of feeCents (all of it is 6080, H12)
+  netCents        BigInt
+  dayFrom         String // YYYY-MM-DD PKT
+  dayTo           String
+  status          String // auto | confirmed | manual_adjust (a BOOKS-11 manual split that claimed the days)
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  days CardSettlementDay[]
+
+  @@unique([tenantId, statementLineId])
+  @@index([tenantId, dayTo])
+  @@map("card_settlements")
+}
+
+model CardSettlementDay {
+  id           String @id @default(uuid())
+  tenantId     String
+  settlementId String
+  unit         String @default("company")
+  day          String // YYYY-MM-DD PKT
+  grossCents   BigInt
+
+  settlement CardSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, unit, day])
+  @@index([settlementId])
+  @@map("card_settlement_days")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// On-account clients (owner, 2026-10-13): named corporate clients with a credit limit; the client gets a QR card the
+// cashier scans; NO manager approval per bill; finance invoices monthly (ReceivableInvoice kind 'statement').
+// Per company. Limits are company-level money → BIGINT; a charge is per ticket → INT4 (like Payment).
+// CHECKs customer_accounts_chk / customer_account_charges_chk are SQL only (migration 20261014090000).
+// ════════════════════════════════════════════════════════════════════════════
+
+model CustomerAccount {
+  id                        String    @id @default(uuid())
+  tenantId                  String
+  number                    String // OA-0001 per company (advisory lock)
+  legalName                 String
+  tradeName                 String?
+  ntn                       String?
+  strn                      String?
+  cnic                      String?
+  address                   String?
+  contactName               String?
+  contactPhone              String?
+  contactEmail              String?
+  creditLimitCents          BigInt    @default(0)
+  requestedCreditLimitCents BigInt? // an increase waiting for the CEO
+  limitRequestedById        String?
+  limitRequestedAt          DateTime?
+  termsDays                 Int       @default(30)
+  overdueGraceDays          Int       @default(7)
+  requiresReference         Boolean   @default(false)
+  conceptIds                String[]  @default([]) // empty = every brand of the company (each id validated to the company)
+  status                    String    @default("pending") // pending | active | suspended | closed
+  statusReason              String?
+  approvedById              String?
+  approvedAt                DateTime?
+  createdById               String
+  notes                     String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  cards   CustomerAccountCard[]
+  charges CustomerAccountCharge[]
+
+  @@unique([tenantId, number])
+  @@unique([tenantId, legalName])
+  @@index([tenantId, status])
+  @@map("customer_accounts")
+}
+
+model CustomerAccountCard {
+  id            String    @id @default(uuid())
+  tenantId      String
+  accountId     String
+  label         String // "Reception", "Mr Khan"
+  tokenHash     String // sha256 hex of the normalised code; the code is never stored or logged
+  tokenHint     String // last 4 chars
+  issuedById    String
+  issuedAt      DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedById   String?
+  revokedReason String? // rotated | lost | <text>
+  lastUsedAt    DateTime?
+
+  account CustomerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, tokenHash])
+  @@index([tenantId, accountId])
+  @@map("customer_account_cards")
+}
+
+// One row per on-account bill. Per-ticket money stays INT4 like Payment.
+model CustomerAccountCharge {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  accountId          String
+  cardId             String?
+  orderId            String
+  paymentId          String
+  conceptId          String
+  shiftId            String?
+  amountCents        Int
+  taxCents           Int      @default(0)
+  refundedCents      Int      @default(0)
+  reference          String? // client PO / who signed
+  chargedById        String
+  chargedAt          DateTime @default(now())
+  statementInvoiceId String? // ReceivableInvoice kind 'statement' (claimed only once the sale is BOOKED)
+
+  account CustomerAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([tenantId, orderId])
+  @@unique([tenantId, paymentId])
+  @@index([tenantId, accountId, statementInvoiceId])
+  @@index([statementInvoiceId])
+  @@map("customer_account_charges")
+}
+
+// Bad-debt write-offs (H15 'direct'; owner: the CEO approves every one; a CEO-raised request applies at once).
+// One open request per invoice: partial unique receivable_write_offs_one_open (SQL only); CHECK
+// receivable_write_offs_chk is SQL only. BOOKS-06: money columns are BIGINT paisa.
+model ReceivableWriteOff {
+  id             String    @id @default(uuid())
+  tenantId       String
+  invoiceId      String
+  amountCents    BigInt
+  reason         String
+  status         String    @default("requested") // requested | approved | rejected | cancelled
+  requestedById  String
+  requestedAt    DateTime  @default(now())
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  journalEntryId String?
+  recoveredCents BigInt    @default(0)
+
+  attachments ReceivableWriteOffAttachment[]
+
+  @@index([tenantId, status])
+  @@index([invoiceId])
+  @@map("receivable_write_offs")
+}
+
+model ReceivableWriteOffAttachment {
+  id           String   @id @default(uuid())
+  tenantId     String
+  writeOffId   String
+  fileName     String
+  mime         String // image/jpeg|png|webp | application/pdf (lib/evidenceFile.ts)
+  sizeBytes    Int
+  data         Bytes
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  writeOff ReceivableWriteOff @relation(fields: [writeOffId], references: [id], onDelete: Cascade)
+
+  @@index([writeOffId])
+  @@map("receivable_write_off_attachments")
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6448,6 +7111,7 @@ enum RaastReceiptStatus {
   cancelled // intent cancelled or expired before payment
   unreceived // finance wrote it off: never arrived in the bank
   needs_attention // an SMS or a settle could not complete it cleanly — a person decides
+  voided // the CEO voided a provisional receipt whose sale was never booked (RV-MONEY-1); no ledger entry; bankRef stays claimed
 }
 
 enum RaastConfirmedVia {
@@ -6732,43 +7396,52 @@ model PreBillCounter {
 /// cashier-recorded payment). Company = the order's brand's company.
 /// 'provisional' until a bank-statement line matches it ('matched').
 model RaastReceipt {
-  id              String             @id @default(cuid())
-  tenantId        String
-  orderId         String
-  conceptId       String
-  shiftId         String?
-  targetPaymentId String? // a pending check-split portion this receipt settles
-  paymentId       String?            @unique // null while awaiting / cancelled / needs_attention
-  bankAccountId   String
-  ledgerCode      String // snapshot of BankAccount.accountCode when recorded — the ledger debits this
+  id                String             @id @default(cuid())
+  tenantId          String
+  orderId           String
+  conceptId         String
+  shiftId           String?
+  targetPaymentId   String? // a pending check-split portion this receipt settles
+  paymentId         String?            @unique // null while awaiting / cancelled / needs_attention
+  bankAccountId     String
+  ledgerCode        String // snapshot of BankAccount.accountCode when recorded — the ledger debits this
   // Per-ticket money (the bill share + tip the customer transfers): INT4 like Payment.amountCents.
-  amountCents     Int
-  tipCents        Int                @default(0)
-  dueCents        Int // the bill due when created
-  bankRef         String? // normalised (connectors/raast/reference.ts); required from 'provisional' on
-  bankRefRaw      String?
-  status          RaastReceiptStatus @default(awaiting)
-  confirmedVia    RaastConfirmedVia?
-  confirmedAt     DateTime?
-  confirmedById   String?
-  cashierVerified Boolean            @default(false) // the cashier ticked "I saw it arrive on the counter device"
-  smsAlertId      String?            @unique
-  smsConfirmedAt  DateTime?
+  amountCents       Int
+  tipCents          Int                @default(0)
+  dueCents          Int // the bill due when created
+  bankRef           String? // normalised (connectors/raast/reference.ts); required from 'provisional' on
+  bankRefRaw        String?
+  status            RaastReceiptStatus @default(awaiting)
+  confirmedVia      RaastConfirmedVia?
+  confirmedAt       DateTime?
+  confirmedById     String?
+  cashierVerified   Boolean            @default(false) // the cashier ticked "I saw it arrive on the counter device"
+  smsAlertId        String?            @unique
+  smsConfirmedAt    DateTime?
   // An SMS settling this intent holds a short lease so the alert's own
   // finishing write and a racing cashier confirm never overwrite each other.
-  settlingUntil   DateTime?
-  statementLineId String?            @unique
-  matchedAt       DateTime?
-  matchedById     String? // null = matched automatically
-  expiresAt       DateTime? // awaiting only
-  cancelReason    String?
-  attentionReason String?
-  flaggedAt       DateTime?
-  writeOffEntryId String?
-  idempotencyKey  String
-  createdById     String
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  settlingUntil     DateTime?
+  statementLineId   String?            @unique
+  matchedAt         DateTime?
+  matchedById       String? // null = matched automatically
+  expiresAt         DateTime? // awaiting only
+  cancelReason      String?
+  attentionReason   String?
+  flaggedAt         DateTime?
+  writeOffEntryId   String?
+  idempotencyKey    String
+  createdById       String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  // CEO void of a receipt whose sale was never booked (RV-MONEY-1, wave B; owner: CEO ONLY): finance may request,
+  // only the CEO voids. No ledger entry; bankRef stays claimed. After a void, refund-due, the Z-report and hand-back
+  // exclude it.
+  voidRequestedAt   DateTime?
+  voidRequestedById String?
+  voidRequestReason String?
+  voidedAt          DateTime?
+  voidedById        String?
+  voidReason        String?
 
   tenant        Tenant             @relation("TenantRaastReceipts", fields: [tenantId], references: [id])
   order         Order              @relation(fields: [orderId], references: [id])
@@ -6874,14 +7547,24 @@ model BankSmsAlert {
 // paper is uploaded. Only that upload puts it in cash: it then becomes ONE
 // petty-cash spend on its box (PettyCashMovement). Generating, signing or
 // printing a voucher never touches cash.
+//
+// CASH REQUESTS (wave B, owner 2026-10-13 — replaces the voucher flow; the
+// table cash_vouchers is kept and IS the cash request): anyone who needs cash
+// RAISES a request → HOD signs → director (CEO) approves → the box custodian
+// (Jamil sb) pays and marks it paid (NO photo needed) as an ADVANCE (Dr 1355 /
+// Cr 1011) → the holder uploads receipt(s) (CashVoucherSettlement) which book
+// the expense. Receipts are due by dueBy; the daily worker converts the
+// unsettled rest to an HR staff loan or the director's current account (H3).
 
 enum CashVoucherStatus {
-  draft // prepared, not yet signed by the HOD
-  hod_signed // signed by the HOD — waiting for the director
-  approved // signed by the director — print, cashier signs and pays
-  disbursed // signed photo uploaded — booked as a petty-cash spend
+  draft // raised; waiting for the HOD
+  hod_signed // waiting for the director
+  approved // the custodian (Jamil sb) pays
+  disbursed // paid as an ADVANCE (Dr 1355 / Cr 1011); receipts due by dueBy (legacy: signed photo uploaded)
   rejected // the director refused it (with a note)
   cancelled // withdrawn before payment
+  settled // receipts + change returned cover the amount
+  converted // the unsettled rest moved to the director's current account (1356) or an HR staff loan (1350)
 }
 
 model CashVoucher {
@@ -6898,7 +7581,9 @@ model CashVoucher {
   department          String?
   // Paid out of a petty-cash box (INT4 like PettyCashMovement), so INT4.
   amountCents         Int
-  boxId               String // the cash box it is paid from — its custodian is the cashier
+  // The cash box it is paid from — its custodian is the cashier. Nullable since wave B: the custodian or a keeper
+  // picks it at pay.
+  boxId               String?
   status              CashVoucherStatus @default(draft)
   preparedById        String
   hodSignedById       String?
@@ -6918,32 +7603,122 @@ model CashVoucher {
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
+  // ── Cash requests (wave B, 2026-10-14) ──
+  // payeeUserId (above) = the HOLDER (who must bring receipts). New requests: default the raiser. Legacy rows are
+  // NOT backfilled (the old preparedById was the HOD): a disbursed row with no holder is 'needs review' — keepers
+  // only, never flagged or converted until finance names the holder.
+  // Counters are INT4 like amountCents; CHECK cash_vouchers_counters_chk (settled + returned + converted ≤ amount)
+  // is SQL only (migration 20261014090000).
+  dueBy            DateTime? // receipts due = disbursedAt + OperationsConfig.cashAdvanceSettleDays
+  settledCents     Int       @default(0) // receipts booked (Σ settlements)
+  returnedCents    Int       @default(0) // change handed back to a box
+  convertedCents   Int       @default(0) // moved to a staff loan or the director's account
+  settledAt        DateTime?
+  overdueFlaggedAt DateTime?
+  convertedTo      String? // 'staff_loan' | 'director_account'
+  convertedAt      DateTime?
+  convertedById    String? // a user id, or 'system' (the daily worker, H3 default)
+  conversionNote   String?
+  hrLoanRecordId   String?
+
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
-  box         PettyCashBox            @relation(fields: [boxId], references: [id])
+  // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).
+  box         PettyCashBox?           @relation(fields: [boxId], references: [id], onDelete: Restrict)
   attachments CashVoucherAttachment[]
+  settlements CashVoucherSettlement[]
 
   @@unique([tenantId, seq])
+  @@unique([tenantId, hrLoanRecordId])
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, status, dueBy])
   @@map("cash_vouchers")
 }
 
-/// The photo of the signed paper voucher. Stored in the database (file
-/// storage is not configured on every server); the admin compresses it first.
+/// THE store for petty-cash paper (wave B): the photo of a signed paper voucher (legacy), or a receipt attached to a
+/// cash request's settlement, a direct box spend (movementId) or a box (boxId; company = the box's). Stored in the
+/// database (file storage is not configured on every server); the admin compresses it first. Bytes are NEVER
+/// selected in lists. CHECK cash_voucher_attachments_owner_chk (voucherId, boxId or movementId set) is SQL only.
 model CashVoucherAttachment {
   id           String   @id @default(cuid())
   tenantId     String
-  voucherId    String
-  kind         String   @default("signed_voucher")
-  mime         String // image/jpeg | image/png | image/webp
+  voucherId    String? // WAS required (before wave B)
+  kind         String   @default("signed_voucher") // 'signed_voucher' (legacy paper photo) | 'receipt'
+  mime         String // image/jpeg | image/png | image/webp (receipts may also be application/pdf, lib/evidenceFile.ts)
   sizeBytes    Int
   data         Bytes
   uploadedById String
   createdAt    DateTime @default(now())
+  settlementId String?
+  movementId   String?
+  boxId        String? // a direct box-spend receipt (company = the box's)
 
-  tenant  Tenant      @relation("TenantCashVoucherAttachments", fields: [tenantId], references: [id])
-  voucher CashVoucher @relation(fields: [voucherId], references: [id])
+  tenant     Tenant                 @relation("TenantCashVoucherAttachments", fields: [tenantId], references: [id])
+  voucher    CashVoucher?           @relation(fields: [voucherId], references: [id], onDelete: Restrict) // Restrict kept from the original required relation
+  settlement CashVoucherSettlement? @relation(fields: [settlementId], references: [id])
+  movement   PettyCashMovement?     @relation(fields: [movementId], references: [id])
 
   @@index([voucherId])
   @@index([tenantId])
+  @@index([settlementId])
+  @@index([movementId])
+  @@index([boxId])
   @@map("cash_voucher_attachments")
+}
+
+// One batch of receipts the holder of a cash request brought back (wave B). Each books its lines' expense / stock /
+// capex against 1355 (the advance). INT4: ≤ the request amount.
+model CashVoucherSettlement {
+  id            String   @id @default(cuid())
+  tenantId      String
+  voucherId     String
+  seq           Int // 1.. per request
+  totalCents    Int // INT4, ≤ the request amount
+  note          String?
+  submittedById String
+  createdAt     DateTime @default(now())
+
+  tenant      Tenant                  @relation("TenantCashVoucherSettlements", fields: [tenantId], references: [id])
+  voucher     CashVoucher             @relation(fields: [voucherId], references: [id])
+  lines       PettyCashSpendLine[]
+  attachments CashVoucherAttachment[]
+
+  @@unique([tenantId, voucherId, seq])
+  @@index([tenantId, createdAt])
+  @@map("cash_voucher_settlements")
+}
+
+// What a box spend or a request's receipts bought (wave B). Exactly one owner (movementId or settlementId): CHECK
+// petty_cash_spend_lines_owner_chk, plus _amount_chk / _kind_chk / _stock_chk / _capex_chk — all SQL only (migration
+// 20261014090000). INT4 per line (≤ the box spend / request).
+model PettyCashSpendLine {
+  id              String   @id @default(cuid())
+  tenantId        String
+  movementId      String? // a direct box spend
+  settlementId    String? // a cash request's receipts
+  kind            String // 'expense' | 'stock' | 'capex'
+  categoryKey     String? // PAYOUT_CATEGORIES key (expense)
+  // debit: 6xxx (expense; 5010-5030 only on a history-backfill pick of a pre-FIFO spend), 1210/1220/1230 by class
+  // (stock), 1340 (capex)
+  accountCode     String
+  amountCents     Int
+  conceptId       String?
+  description     String
+  inventoryItemId String? // stock
+  quantity        Float? // stock
+  unit            String? // stock: must convert to the item's purchase unit (422 UNIT_MISMATCH)
+  locationId      String? // outlet tag — must be a Location of the line's company (422 LOCATION_NOT_IN_COMPANY)
+  receiptLineId   String? // stock: the GoodsReceiptLine of the settled receipt (decision P6)
+  capexLineId     String? // capex: the CapEx line (same company)
+  capexPaymentId  String? // capex: the CapexPayment this line created (one-time guard, per company)
+  createdAt       DateTime @default(now())
+
+  tenant     Tenant                 @relation("TenantPettyCashSpendLines", fields: [tenantId], references: [id])
+  movement   PettyCashMovement?     @relation(fields: [movementId], references: [id])
+  settlement CashVoucherSettlement? @relation(fields: [settlementId], references: [id])
+
+  @@unique([tenantId, capexPaymentId])
+  @@index([tenantId, createdAt])
+  @@index([movementId])
+  @@index([settlementId])
+  @@map("petty_cash_spend_lines")
 }
