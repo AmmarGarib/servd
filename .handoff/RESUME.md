@@ -446,3 +446,11 @@ RESUME ORDER:
   (lg uxp d cur good); pass 2 re-recording a b c. Outputs $SP/vid/out/<k>-<page>.mp4/.jpg. NEXT: artifact page with all videos.
   Preview links preview-{a,b,c,d,current}.garibsons.app return 530 (origin = an office PC, not the prod box).
 - Prod DB per repo = Neon cloud (deploy/docker-compose.yml); told owner; Baqar to confirm via deploy\.env.production DATABASE_URL.
+- ~23:20 UTC OWNER PARKED two areas until finance is sorted ("stop these 2 cleanly, keep whatever you've started in place, remind me
+  after finance sorted"): A Delivery & customers (code-only delivery, emergency overrides, strikes/bans/appeals, COD per rider) and
+  B Corporate clients on account (+ till-clearing 1115). KEPT in finance: bad-debt write-off (CEO), H13 client withholding, Raast void,
+  delivery-fee GST rows + 4110 unwind, Box given. Spec + original briefs: $SP/waveB/parked/ (PARKED.md). w1-dlv-core brief replaced by
+  a cancel notice (original in parked/). w1-bans: its workflow wf_15d8e85d-090 (task wrxwtd7t9) is stopped as soon as w1-stock
+  finishes (watcher task bdbwlc63n); stopped before writing any code (nothing to park).
+  Replan of W2-W4 briefs running: workflow wf_ec8a9510-6e2. REMIND OWNER after finance deploys (task list "Remind owner...").
+- ~23:40 UTC W1 status: done w1-hr, w1-taxsales, w1-stock (47 tests), w1-taxcore, w1-ic; w1-dlv-core cancelled (no changes); w1-bans stopped (no changes); running w1-fa-engine, w1-recon (wf_44be91d7-aa9). Build map republished with parked areas.

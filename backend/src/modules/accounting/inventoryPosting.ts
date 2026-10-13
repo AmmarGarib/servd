@@ -42,7 +42,6 @@ import { ledgerBalancesByCode } from '../../lib/bankAccounts.js'
 import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { brandSharesJson, brandUsageShares, parseBrandShares, splitCents, type BrandShare } from '../../lib/brandShare.js'
 import { lotValuation, readFifoCutoverAt, STOCK_SOURCE } from '../../lib/stockLedger.js'
-import { VOID_WASTE_REASON } from '../inventory/voidWaste.js'
 import {
   ACCT, lateDatingFor, postJournalEntry, withLateNote,
   type JournalLineInput, type PostingFailure, type RepostOptions,
@@ -62,10 +61,12 @@ export const PREP_DRAW_SOURCE_TYPE = 'inventory.prep_draw'
 /**
  * Waste of a SOLD line (void after fire, cancel after fire, returned food) is
  * booked once per line under 'pos.void_waste:<orderItemId>' by
- * inventory/voidWaste.ts — never again per waste log here.
- * TODO(wave Z): read inventory/voidWaste.ts VOID_WASTE_REASONS once w2-sale exports it.
+ * inventory/voidWaste.ts — never again per waste log here. Same list as
+ * voidWaste.ts VOID_WASTE_REASONS; kept as literals (not imported) because
+ * voidWaste.ts posts through this module, and a top-level read of an import
+ * inside that cycle would fail at load.
  */
-const SOLD_LINE_WASTE_REASONS: ReadonlySet<string> = new Set([VOID_WASTE_REASON, 'cancelled_after_fire', 'returned_food'])
+const SOLD_LINE_WASTE_REASONS: ReadonlySet<string> = new Set(['void_after_fire', 'cancelled_after_fire', 'returned_food'])
 
 const asClass = (v: string): CostClass => ((COST_CLASSES as readonly string[]).includes(v) ? (v as CostClass) : 'food')
 const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

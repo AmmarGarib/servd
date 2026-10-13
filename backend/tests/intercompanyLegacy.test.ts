@@ -19,7 +19,7 @@ const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
 const { ensureChartOfAccounts } = await import('../src/lib/chartOfAccounts.js')
 const { postJournalEntry } = await import('../src/modules/accounting/journal.js')
-const { parsePktEndOfDay } = await import('../src/modules/accounting/dates.js')
+const { parsePktEndOfDay, fmtPktDate } = await import('../src/modules/accounting/dates.js')
 const { intercompanyRoutes } = await import('../src/modules/intercompany/routes.js')
 const legacy = await import('../src/modules/intercompany/legacy.js')
 const { intercompanyCloseChecks } = await import('../src/modules/intercompany/closeChecks.js')
@@ -177,8 +177,13 @@ describe('the write-off', () => {
 
   it("the later drift stays the close checklist's control_tieout warning", async () => {
     const check = intercompanyCloseChecks.find((c) => c.key === 'control_tieout')!
-    const p = await check.run({ db: prisma, tenantId: A, prevLock: null, newLock: parsePktEndOfDay('2026-10-12'), months: ['2026-10'], isYearEnd: false })
+    // Through today (the write-off is dated today) only the 700 drift is left…
+    const today = parsePktEndOfDay(fmtPktDate(new Date()))
+    const p = await check.run({ db: prisma, tenantId: A, prevLock: null, newLock: today, months: [], isYearEnd: false })
     expect(p).toMatchObject({ key: 'control_tieout', severity: 'warn', count: 1, cents: 700 })
-    expect(await check.run({ db: prisma, tenantId: B, prevLock: null, newLock: parsePktEndOfDay('2026-10-12'), months: ['2026-10'], isYearEnd: false })).toBeNull()
+    // …a close of an earlier day still shows the residue as it stood then.
+    const before = await check.run({ db: prisma, tenantId: A, prevLock: null, newLock: parsePktEndOfDay('2026-10-12'), months: [], isYearEnd: false })
+    expect(before!.cents).toBe(25_700)
+    expect(await check.run({ db: prisma, tenantId: B, prevLock: null, newLock: today, months: [], isYearEnd: false })).toBeNull()
   })
 })

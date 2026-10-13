@@ -379,10 +379,11 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     const viewer = actorOf(req)
     const companies = []
     for (const tenantId of scope.tenantIds) {
-      const [tieOut, ...legacy] = await Promise.all([
-        controlTieOut(prisma, tenantId, asOf),
-        ...LEGACY_CODES.map((code) => legacyDifference(prisma, tenantId, code)),
-      ])
+      // One after the other: the first read of a company's loyalty settings
+      // may write its defaults, and two at once would race.
+      const tieOut = await controlTieOut(prisma, tenantId, asOf)
+      const legacy = []
+      for (const code of LEGACY_CODES) legacy.push(await legacyDifference(prisma, tenantId, code))
       companies.push({
         tenantId, name: names.get(tenantId) ?? null, tieOut, legacy,
         canWriteOff: isCeo(viewer.role) && viewer.memberTenantIds.includes(tenantId),

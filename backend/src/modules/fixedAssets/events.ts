@@ -160,6 +160,19 @@ function json(o: Record<string, unknown>): Prisma.InputJsonObject {
   return JSON.parse(JSON.stringify(o)) as Prisma.InputJsonObject
 }
 
+/**
+ * An event's payload, validated for its kind (400 ZodError on a bad one).
+ * A history row the v2 migration wrote for a pre-v2 disposal carries
+ * {"legacy": true} and is returned as stored — it is never applied.
+ */
+export function parseEventPayload(kind: string, raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as { legacy?: unknown }).legacy === true) {
+    return raw as Record<string, unknown>
+  }
+  return parsePayload(kind, raw)
+}
+
+// Strict: what a request carries and what an approval applies (never the legacy shape).
 function parsePayload(kind: string, raw: unknown): Record<string, unknown> {
   const schema = (PAYLOAD_SCHEMAS as Record<string, z.ZodTypeAny>)[kind]
   if (!schema) throw new AppError('BAD_EVENT_KIND', `Unknown fixed-asset request kind "${kind}"`, 422)

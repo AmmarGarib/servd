@@ -551,13 +551,14 @@ export async function postReclass(tenantId: string, amounts: ReclassAmounts, use
       ...(sessiCents > 0 ? [ACCT.SOCIAL_SECURITY_PAYABLE] : []),
     ])
     const memo = `Statutory reclass (H7): ${note}`.slice(0, 250)
-    const lines: JournalLineInput[] = [
+    const all: JournalLineInput[] = [
       { accountCode: LEGACY_STATUTORY_CODE, type: 'debit', amountCents: statutory, memo },
       { accountCode: LEGACY_SALARY_TAX_CODE, type: 'debit', amountCents: salaryTaxCents, memo },
       { accountCode: ACCT.EOBI_PAYABLE, type: 'credit', amountCents: eobiCents, memo: `${memo} — EOBI` },
       { accountCode: ACCT.SOCIAL_SECURITY_PAYABLE, type: 'credit', amountCents: sessiCents, memo: `${memo} — SESSI / PESSI` },
       { accountCode: ACCT.SALARY_TAX_PAYABLE, type: 'credit', amountCents: salaryTaxCents, memo: `${memo} — salary tax` },
-    ].filter((l) => l.amountCents > 0) as JournalLineInput[]
+    ]
+    const lines = all.filter((l) => l.amountCents > 0)
     const entryDate = new Date()
     const posted = await postJournalEntry({
       tenantId,

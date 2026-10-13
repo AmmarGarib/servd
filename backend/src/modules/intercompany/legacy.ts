@@ -82,7 +82,7 @@ async function loyaltySubledgerAt(db: Db, tenantId: string, asOf?: Date): Promis
 /** What 2050 / 2060 hold as liabilities (credits − debits) at `asOf`. */
 async function ledgerLiabilitiesAt(db: Db, tenantId: string, asOf?: Date): Promise<Map<string, number>> {
   const raw = await ledgerBalancesByCode(tenantId, [...LEGACY_CODES], { ...(asOf && { asOf }), db: db as Prisma.TransactionClient })
-  return new Map(LEGACY_CODES.map((c) => [c, -(raw.get(c) ?? 0)]))
+  return new Map(LEGACY_CODES.map((c) => [c, 0 - (raw.get(c) ?? 0)]))
 }
 
 // ─── The tie-out ─────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ export async function controlTieOut(db: Db, tenantId: string, asOf: Date): Promi
   })
   const g = await giftCardBooksCheck(tenantId, tenant?.name ?? '')
   rows.push({
-    code: '2080', label: 'Gift cards', ledgerCents: g.ledgerCents, subledgerCents: g.expectedCents, differenceCents: g.differenceCents,
+    code: '2080', label: 'Gift cards', ledgerCents: g.ledgerCents || 0, subledgerCents: g.expectedCents || 0, differenceCents: g.differenceCents || 0,
     asOf: new Date().toISOString(),
     note: g.unexplainedCents !== g.differenceCents
       ? `As of now (Gift cards → Books check): ${g.issueNotBooked.count} card sale(s) never booked explain part of it; unexplained ${g.unexplainedCents} paisa`

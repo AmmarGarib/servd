@@ -91,6 +91,17 @@ afterAll(async () => {
   await app?.close()
 })
 
+describe('capabilities', () => {
+  it('GET /companies lists the caller\'s companies and what they may do (no role list in the page)', async () => {
+    const fin = await call(finAB, 'GET', '/companies')
+    expect(fin.statusCode).toBe(200)
+    expect(fin.json().companies.map((c: { id: string }) => c.id).sort()).toEqual([A, B].sort())
+    expect(fin.json().can).toEqual({ prepare: true, decide: false })
+    expect((await call(ceoAB, 'GET', '/companies')).json().can).toEqual({ prepare: true, decide: true })
+    expect((await call(ceoC, 'GET', '/companies')).json().companies.map((c: { id: string }) => c.id)).toEqual([C])
+  })
+})
+
 describe('pair accounts', () => {
   it('are created once in both charts, against the right counterparty, skipping an operator code', async () => {
     // The operator already used 1450 in A for something else.

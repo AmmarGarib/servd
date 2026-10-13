@@ -242,8 +242,11 @@ export async function withholdingRoutes(fastify: FastifyInstance): Promise<void>
       const prev = await withholdingRatesFor(tx, tenantId)
       const rates: WhtRates = Object.fromEntries(WHT_SECTIONS.map((s) => [s, { ...prev.rates[s] }])) as WhtRates
       for (const [section, r] of given) rates[section as WhtSection] = { filerBps: r.filerBps, nonFilerBps: r.nonFilerBps }
+      const stored: Prisma.InputJsonObject = Object.fromEntries(
+        WHT_SECTIONS.map((s) => [s, { filerBps: rates[s].filerBps, nonFilerBps: rates[s].nonFilerBps }]),
+      )
       const data = {
-        withholdingRates: rates as unknown as Prisma.InputJsonValue,
+        withholdingRates: stored,
         // The legacy single % stays the goods (153(1)(a)) filer rate.
         withholdingTaxPct: rates['153_1_a'].filerBps / 10_000,
         updatedById: req.staffUser!.id,

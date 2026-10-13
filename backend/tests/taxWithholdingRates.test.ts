@@ -28,6 +28,11 @@ import {
   computeWithholding, defaultSectionForCapex, withholdingRatesFor, DEFAULT_WHT_RATES, WHT_SECTIONS,
 } from '../src/lib/withholding.js'
 import { MAX_MONEY_CENTS } from '../src/lib/money.js'
+import {
+  AUTHORITIES, AUTHORITY_LIST, TAX_AUTHORITY_KEYS, OUTPUT_TAX_ACCOUNTS as TA_OUTPUT_TAX_ACCOUNTS,
+  outputTaxCodeFor, inputTaxCodeFor, authorityOfOutputCode, authorityOfInputCode,
+} from '../src/modules/accounting/taxAuthorities.js'
+import { outputTaxCodeFor as legacyOutputTaxCodeFor, OUTPUT_TAX_ACCOUNTS } from '../src/modules/accounting/orderPosting.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let app: FastifyInstance
@@ -229,5 +234,32 @@ describe('computeWithholding — the one rule', () => {
     expect(defaultSectionForCapex('prepaid', 'kitchen_buildout')).toBe('155')
     expect(defaultSectionForCapex('expense', 'refurb')).toBe('153_1_b')
     expect(defaultSectionForCapex('deposit', 'kitchen_buildout')).toBeNull()
+  })
+})
+
+describe('the authority table (accounting/taxAuthorities.ts)', () => {
+  it('codes per authority; input and output codes map back', () => {
+    expect(TAX_AUTHORITY_KEYS).toEqual(['fbr', 'pra', 'srb', 'kpra', 'bra'])
+    expect(TAX_AUTHORITY_KEYS.map((k) => [AUTHORITIES[k].outputCode, inputTaxCodeFor(k)])).toEqual([
+      ['2030', '1320'], ['2031', '1321'], ['2032', '1322'], ['2033', '1323'], ['2034', '1324'],
+    ])
+    for (const a of AUTHORITY_LIST) {
+      expect(authorityOfOutputCode(a.outputCode)).toBe(a.key)
+      expect(authorityOfInputCode(a.inputCode)).toBe(a.key)
+    }
+    expect(authorityOfOutputCode('2040')).toBeNull()
+    expect(authorityOfInputCode('1335')).toBeNull()
+    expect(() => inputTaxCodeFor('xyz' as never)).toThrow(/Unknown sales tax authority/)
+  })
+
+  it('the same answers as the order / shift posting (orderPosting.ts re-exports this in W2)', () => {
+    const cases = [
+      { province: 'SD', srbPosId: null }, { province: 'sd ', srbPosId: null }, { province: 'PB', srbPosId: null },
+      { province: 'KP', srbPosId: null }, { province: 'BL', srbPosId: null }, { province: 'ICT', srbPosId: 7 },
+      { province: null, srbPosId: 7 }, { province: null, srbPosId: null }, { province: '', srbPosId: null },
+    ]
+    for (const c of cases) expect(outputTaxCodeFor(c)).toBe(legacyOutputTaxCodeFor(c))
+    expect(outputTaxCodeFor(null)).toBe('2030')
+    expect([...TA_OUTPUT_TAX_ACCOUNTS]).toEqual([...OUTPUT_TAX_ACCOUNTS])
   })
 })

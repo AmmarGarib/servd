@@ -261,9 +261,11 @@ async function fifoHeadCost(db: Db, itemId: string): Promise<number | null> {
 export async function refreshItemCostTx(tx: Tx, itemId: string): Promise<void> {
   const cost = await fifoHeadCost(tx, itemId)
   if (cost == null) return
-  await tx.inventoryItem.updateMany({ where: { id: itemId, NOT: { unitCostCents: cost } }, data: { unitCostCents: cost } })
-  // A null estimate is not matched by NOT (SQL NULL) — set it too.
-  await tx.inventoryItem.updateMany({ where: { id: itemId, unitCostCents: null }, data: { unitCostCents: cost } })
+  // (A null estimate is not matched by NOT — SQL NULL — hence the OR.)
+  await tx.inventoryItem.updateMany({
+    where: { id: itemId, OR: [{ unitCostCents: null }, { NOT: { unitCostCents: cost } }] },
+    data: { unitCostCents: cost },
+  })
 }
 
 /** The cache after a change: currentStock = Σ remainingQty; unitCostCents = the FIFO head. */
@@ -271,8 +273,8 @@ async function syncItemTx(tx: Tx, itemId: string): Promise<void> {
   const agg = await tx.stockLot.aggregate({ where: { inventoryItemId: itemId }, _sum: { remainingQty: true } })
   let stock = agg._sum.remainingQty ?? 0
   if (Math.abs(stock) < LOT_OPEN_EPS) stock = 0
-  await tx.inventoryItem.update({ where: { id: itemId }, data: { currentStock: stock } })
-  await refreshItemCostTx(tx, itemId)
+  const cost = await fifoHeadCost(tx, itemId)
+  await tx.inventoryItem.update({ where: { id: itemId }, data: { currentStock: stock, ...(cost != null ? { unitCostCents: cost } : {}) } })
 }
 
 // ─── Reading ─────────────────────────────────────────────────────────────────
@@ -809,6 +811,15 @@ export async function addLotTx(tx: Tx, a: {
   const value = a.valueCents ?? Math.round(a.qty * a.unitCostCents)
   if (!Number.isInteger(value) || value < 0) throw new AppError('INVALID_COST', 'A lot value must be whole paisa, zero or more', 422)
   assertMoneyFits(value, `${item.name} (quantity × unit cost)`)
+
+  if (a.receiptLineId) {
+    // The receipt line is the receiving company's document: the receipt's company (else its supplier's) must be the item's.
+    const line = await tx.goodsReceiptLine.findUnique({ where: { id: a.receiptLineId }, select: { inventoryItemId: true, receipt: { select: { tenantId: true, supplierId: true } } } })
+    if (!line) throw new AppError('RECEIPT_LINE_NOT_FOUND', `Receipt line ${a.receiptLineId} not found`, 404)
+    const lineCompany = line.receipt.tenantId
+      ?? (await tx.supplier.findUnique({ where: { id: line.receipt.supplierId }, select: { tenantId: true } }))?.tenantId ?? null
+    if (lineCompany !== item.tenantId || (line.inventoryItemId && line.inventoryItemId !== item.id)) throw crossCompany(`Receipt line ${a.receiptLineId}`)
+  }
 
   const existing = await tx.stockLot.findUnique({
     where: { tenantId_sourceType_sourceId_inventoryItemId: { tenantId: item.tenantId, sourceType: a.lotSourceType, sourceId: a.lotSourceId, inventoryItemId: item.id } },

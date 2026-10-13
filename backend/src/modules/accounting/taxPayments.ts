@@ -51,6 +51,9 @@ import { assertMoneyFits, sumCents, toCents } from '../../lib/money.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay, pktToday } from './dates.js'
 import { AUTHORITIES, isAuthorityKey, outputTaxCodeFor, type AuthorityKey } from './taxAuthorities.js'
+// salesTaxReturn.ts may import from this file too (customerWithheldAvailable):
+// keep every use of these imports inside functions, never at module top level,
+// so the import cycle stays safe.
 import {
   WITHHOLDING, TAX_PAYMENT_SOURCE, TAX_RECLASS_SOURCE,
   debitBalanceAt, misroutedOutputTax, type WithholdingKey,
