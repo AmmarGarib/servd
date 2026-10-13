@@ -1,0 +1,92 @@
+{
+ "items": [
+  {
+   "id": "TILL-R1",
+   "status": "fixed",
+   "note": "Backend was already done by the interrupted pass: GET /pos/shifts/:id/open-tickets (the drawer's own cashier or a manager; other company gets 404), the OPEN_TICKETS 409 carries details.openTickets, and openTicketsOf skips tickets with dueCents <= the tender rounding, so a PKR 0 voided ticket no longer blocks the close. I added the UI. tillApi.ts gains closeDrawer(shiftId, cents, {notes, confirmOpenTickets}), fetchDrawerOpenTickets and isOpenTicketsError. The shared admin ApiError drops error.details, so the till reads the list from the new route instead. New components/pos/OpenTicketsCloseConfirm.tsx lists each ticket (table, ref, time, due) and offers Go back / Close anyway, which resends with confirmOpenTickets:true. /pos/shift now shows every close error, where before it failed silently. /reconciliation lists the tickets from its Z-report (refetched on the 409) with the same Close anyway. Tests: auditTillReview R1 (two companies)."
+  },
+  {
+   "id": "TILL-R2",
+   "status": "not_fixed",
+   "note": "The till side is done; the root fix needs giftCards/service.ts, which is not in my file list. applyGiftCardTender now runs the redeem, the bill change and applyCoverageTx in ONE transaction under lockOrderTx whenever giftCards/service.js exports redeemGiftCardTx(tx, input). Until then it falls back to the old unlocked path, so production still has the race. New tests/auditTillGiftCard.test.ts supplies a reference redeemGiftCardTx through vi.mock and proves it: a cash tender holding the order lock and paying in full, then the card, gives ORDER_NOT_OPEN with the card untouched and the bill unchanged. Card-first still works, and company B's card gets 404. I also checked that the same test FAILS on the old path (card drained). The required change is in needsOtherFiles."
+  },
+  {
+   "id": "TILL-R3",
+   "status": "fixed",
+   "note": "Done in the interrupted pass, which I reviewed. voidOrderItem, under the order lock: if what is paid still fits the bill without the line, it lowers the bill. If the order is fully paid but still open, it voids the line and refunds removedCents on the latest tender that can cover it, through the shared writeRefundTx (a refund row plus postRefundPayment in the same transaction). A cash refund needs the refunder's open drawer of the order's company. The last line gives VOID_LAST_LINE (cancel instead). Part-paid with payments above the reduced bill still gives ORDER_PARTLY_PAID. Tests: auditTillReview R3 (5 cases, including company B getting 404)."
+  },
+  {
+   "id": "TILL-R4",
+   "status": "not_fixed",
+   "note": "Partly fixed. The SRB part is fixed (interrupted pass, reviewed): refundOrder files taxableRefundCents(order, prior, this). This removes the tip proportionally and cumulatively, and never returns more than total minus tip, both for the inline return and for the queued kind:'return' job. Test: a tipped 794 card refund files 594. The FBR part is NOT fixed: TotalSaleValue/TotalBillAmount come from adapters/fbr/index.ts, which is not my file (see needsOtherFiles)."
+  },
+  {
+   "id": "TILL-R5",
+   "status": "fixed",
+   "note": "I kept totalSales/grossCents as takings (cash + card), so the screen arithmetic and the ledger tender debits still agree, as the second verifier argued. The backend now also returns tipsCents and salesExTipsCents (interrupted pass). The admin Z-report view (/pos/shift) now shows 'of which Tips' and 'Sales excl. Tips' rows. Test: auditTillReview R5/F7."
+  },
+  {
+   "id": "TILL-R7",
+   "status": "fixed",
+   "note": "Interrupted pass, reviewed. Both settle routes (POST /check-split/payments/:id/settle and /pos/payments/:id/settle) call assertShiftOf(order tenant, shiftId, true) before assertDrawerOperator, so a company-A drawer and a made-up id both get 422 SHIFT_NOT_IN_COMPANY. Test: auditTillReview R7 (two companies, both routes; same-company NOT_YOUR_SHIFT is still 403)."
+  },
+  {
+   "id": "F1",
+   "status": "not_fixed",
+   "note": "The admin till (/pos, components/pos) has no void or refund UI. Voids happen on app/orders/[id]/page.tsx and refunds on app/refunds/page.tsx, neither of which is in my file list. Exact changes are in needsOtherFiles."
+  },
+  {
+   "id": "F2",
+   "status": "fixed",
+   "note": "Same work as TILL-R1: both /pos/shift and /reconciliation handle 409 OPEN_TICKETS, list the tickets and offer Close anyway. The /pos/shift Z-report view now also shows the open tickets left (count, due, one row per ticket), the refund due on cancelled tickets, and gift-card tenders."
+  },
+  {
+   "id": "F3",
+   "status": "not_needed",
+   "note": "Checked pos/waiter/page.tsx:86-94. It already mints a random newIdempotencyKey() per submission, keyed on the ordered content (not the drawer), reuses it on retries and clears it on success. The button is also disabled while the request is pending."
+  },
+  {
+   "id": "F4",
+   "status": "fixed",
+   "note": "tablet/src/lib/printer.ts: ReceiptOrder gains status, banner, refunds and refundedCents. buildReceipt(order, {duplicate}) prints the REFUNDED / PARTLY REFUNDED / CANCELLED / DUPLICATE banners at the top and again at the foot, in double height so they fit 32 columns. It also prints one 'Refund <method> -Rs x' line per refund with its time, plus a bold Refunded total. printReceipt(orderId, {duplicate}) passes the option through. The tablet has no node_modules, so I checked it by an isolated strict tsc compile (with a stub api) and a byte dump run."
+  },
+  {
+   "id": "F5",
+   "status": "fixed",
+   "note": "'posting_failed' is in ExceptionKind (lib/exceptions.ts), and pos/service.ts has no cast left on flagException. I also replaced the `body.category as never` in pos/routes.ts (cash-movement pay-out) with `as PayoutCategory | undefined`; zod already validates it against PAYOUT_CATEGORIES."
+  },
+  {
+   "id": "F6",
+   "status": "fixed",
+   "note": "Verified first: procurement/service.ts createPaymentTx calls postSupplierPayment(payment.id, { tx }) inside its transaction (line ~657). The after-save calls were then removed from trustops/routes.ts (~365) and pos/service.ts. Test: auditTillReview F6 (one 'supplier.payment' entry, company A's tenantId, bill paid)."
+  },
+  {
+   "id": "F7",
+   "status": "fixed",
+   "note": "getZReport returns giftCardCents (sales.totals.giftCardAppliedCents), cancelledPaid {count, cashCents, cardCents} and refundDueCents (cancelled-but-paid less what was already refunded on those orders). The /pos/shift Z-report view shows them. Test: auditTillReview R5/F7."
+  },
+  {
+   "id": "F8",
+   "status": "fixed",
+   "note": "The comment at pos/service.ts ~398-405 now says the FinancialEntry row is gone (owner decision 39) and that completion runs in orders/service completeOrder."
+  }
+ ],
+ "filesChanged": [
+  "/home/user/servd/backend/src/modules/pos/service.ts",
+  "/home/user/servd/backend/src/modules/pos/routes.ts",
+  "/home/user/servd/backend/src/modules/checkSplit/routes.ts",
+  "/home/user/servd/backend/src/lib/exceptions.ts",
+  "/home/user/servd/backend/src/modules/trustops/routes.ts",
+  "/home/user/servd/backend/tests/auditTillReview.test.ts",
+  "/home/user/servd/backend/tests/auditTillGiftCard.test.ts",
+  "/home/user/servd/frontend/admin/src/components/pos/tillApi.ts",
+  "/home/user/servd/frontend/admin/src/components/pos/OpenTicketsCloseConfirm.tsx",
+  "/home/user/servd/frontend/admin/src/components/pos/README.md",
+  "/home/user/servd/frontend/admin/src/app/pos/shift/page.tsx",
+  "/home/user/servd/frontend/admin/src/app/reconciliation/page.tsx",
+  "/home/user/servd/tablet/src/lib/printer.ts"
+ ],
+ "tests": "DB servd_test_fix2_till, Redis db 21. I ran 19 files: auditTillGiftCard (new, 3), auditTillReview (12), auditTillMoney (36), auditTillShift (11), auditTillUi (8), auditSplit (12), auditOrdersRefund (4), cashDrawer (17), receipt (3), auditLedgerSales (14), auditOrdersFollowup, auditOrdersIngest (8), auditOrdersKitchen (9), booksLedger (16), booksReconcile (18), customersReconcile (25), orderLifecycle (11), ordersReconcile (16) and sepContent (30). Result: 266 of 267 pass. The one failure is auditOrdersFollowup 'R7 \u2014 the pacing worker never fires a later course' (line 425: course-1 lines are not 'preparing' after processCoursePacingTick). It fails the same way when run alone. It is kitchen pacing in the orders area and touches none of my files. I confirmed the new TILL-R2 race test FAILS on the old unlocked path (card drained on a bill already paid in cash) and passes on the locked path. tsc --noEmit is clean in backend and frontend/admin. The tablet has no node_modules, so printer.ts got an isolated strict tsc check plus a run of buildReceipt.",
+ "needsOtherFiles": "1) TILL-R2 (required; till side already wired), backend/src/modules/giftCards/service.ts: add `export async function redeemGiftCardTx(tx: Prisma.TransactionClient, input: RedeemGiftCardInput): Promise<RedeemGiftCardResult>`. Its body is the current body of redeemGiftCard's transaction, and its first statement must be `await tx.$queryRaw\\`SELECT id FROM orders WHERE id = ${input.orderId} FOR UPDATE\\``. Inline that SQL; do not import lockOrderTx from pos/service, which would be a circular import. The order's status, totalCents and paid payments must then be read after that lock. redeemGiftCard(input) becomes `prisma.$transaction((tx) => redeemGiftCardTx(tx, input))`. pos/service.applyGiftCardTender picks it up automatically: one transaction with lockOrderTx, then redeemGiftCardTx, then applyCoverageTx. tests/auditTillGiftCard.test.ts then runs against the real function, because its mock only fills in a missing export. The storefront caller (storefront/routes.ts:1062) gets the lock for free.\n2) TILL-R4 FBR part, backend/src/adapters/fbr/index.ts buildFbrDataForOrder (~line 272): pass `totalCents: order.totalCents - (order.tipCents ?? 0)`, so that both TotalSaleValue (totalCents - taxCents) and TotalBillAmount leave the tip out. This matches the line items, which already exclude it. Also check any other refund path outside the till that calls submitSrbReturnForRefund or queues kind:'return' with a raw refund amount (e.g. the orders/refunds engine). It should pass `taxableRefundCents(order, alreadyRefunded, amount)` from pos/service.ts, not the raw tender refund.\n3) F1, frontend/admin/src/app/orders/[id]/page.tsx voidLine.onSuccess (~line 258): read the void response `{ order: {totalCents, taxCents, serviceChargeCents, discountCents}, removedCents, splitCleared, refund: {amountCents, method} | null }`. Keep invalidating ['order-detail', id]. If `splitCleared`, tell the cashier ('The split was cleared because the bill changed. Re-split it') and link or route to `/orders/${id}/split`. If `refund`, show 'PKR x refunded by <method>'. Handle the new error codes ORDER_PARTLY_PAID / VOID_LAST_LINE / OPEN_DRAWER_REQUIRED with their messages. frontend/admin/src/app/refunds/page.tsx (method select ~line 191): offer only the methods present on the order's `payments` with status 'paid' and amountCents > 0. Default to that tender when only one exists, and hide the select's blank 'auto' option when there is a single tender.\n4) Optional, frontend/admin/src/lib/api.ts: ApiError drops `error.details`. Keeping it (`throw new ApiError(res.status, data.error.code, data.error.message, data.error.details)`) would let UIs read 409 payloads directly. The till works around this today with GET /pos/shifts/:id/open-tickets. posApi.closeShift could also take `confirmOpenTickets`, though /pos/shift and /reconciliation now use tillApi.closeDrawer.",
+ "prodNotes": "No schema change and no migration. Deploy the API and the admin together. The new admin close flow uses GET /pos/shifts/:id/open-tickets and confirmOpenTickets, and the API's OPEN_TICKETS 409 has no client that sends confirmOpenTickets other than this admin. On an old admin a drawer with an unpaid ticket cannot be closed (the original TILL-R1 symptom). TILL-R2 stays open in production until giftCards/service.ts exports redeemGiftCardTx (needsOtherFiles 1). Until then a gift card redeemed at the same moment as a cash or card tender on the same bill can still charge the guest twice. If it happens, the fix is a refund and a card re-credit. The tablet printer change is source only; it reaches devices with the next tablet build. receipt-data has no duplicate flag, so the tablet must call printReceipt(orderId, { duplicate: true }) for reprints. Existing tipped refunds already filed with SRB over-claimed GST on the tip (about tip\u00d7rate/(1+rate) each) and are not corrected retroactively. If any exist, the accountant should review the SRB sales-returns for refunded orders with tipCents > 0."
+}

@@ -1,0 +1,138 @@
+{
+ "summary": "Everything the CEO does today sits inside the Operations workspace, which role 'admin' (the CEO) owns. Its 'company' section (ceo_overview, business_info, tenants, role_management, role_modules, settings, configuration, onboarding) is listed next to kitchen, menu, stock and the till. fnb_manager is only a member of that workspace. So nothing can be handed to an F&B manager without also handing over company governance. Some ownership logic hangs off that grouping too: setup/routes.ts works out who may edit company-wide operating rules from \"the owner roles of the workspace that holds 'configuration'\". If someone simply makes fnb_manager the owner of Operations, the F&B manager can silently edit the selfie/geofence and tip-split rules, which audit fix PPL-09 deliberately prevented.\n\nApprovals are spread across about 20 separate checks in 10 modules. Each uses its own hard-coded role list: ADMIN_ONLY, APPROVERS (admin+owner), PAYROLL_APPROVERS, MANAGERS, the HR form steps (HOD/HR/MGMT) or OVERRIDE_APPROVERS (manager PIN). They also have five different screens. The CEO can only see two queues, as badges on the sidebar identity card, and those badges disappear when the count is zero: pending logins (/workforce?status=pending) and storefront changes (/storefront?tab=approvals). Purchase-order approvals live inside a tab on /procurement. Recipe approvals are a sub-link under Recipes. HR management steps sit in \"My approvals\" (/hr/approvals), which is hidden for the CEO because the CEO has no linked employee record or team. That explains \"I don't know where my CEO approval thing is\".\n\nNo delegation of any kind exists. The only way to widen who approves is to change role arrays in code or give someone a broader role ('owner'/'management'), which grants every approval type in every company at once.\n\nProposal:\n(1) Add a sixth workspace, \"CEO\" (owned by admin), in backend/src/lib/workspaces.ts. Move the company and governance modules into it, and hand Operations' owner seat to fnb_manager. The CEO still sees Operations, because admin holds every module.\n(2) Build one approvals registry on the backend (lib/approvals.ts). Each module registers its type with a label, a pending-count and list query (scoped by company), a deep link, its default approver roles and whether it may be delegated. A single GET /approvals endpoint aggregates those. One page, /approvals, replaces \"My approvals\" for everyone. The CEO sees it as \"Approvals\" at the top of the CEO workspace, with counts per type.\n(3) Add one ApprovalDelegation table (per company: approvalType, delegateUserId, grantedBy, optional expiresAt, revokedAt). A single helper, canApprove(req, type, tenantId), reads it. Each module's existing approve route switches from requireAuth(ADMIN_ONLY...) to that helper. No module gets its own approval engine and no approval rows are copied: each module's own status column stays the only record of an item's state.",
+ "existing": [
+  {
+   "what": "Workspace definitions: the ONE sidebar grouping (Operations owned by 'admin' = CEO, with a 'company' section of CEO modules mixed into F&B work)",
+   "where": "/home/user/servd/backend/src/lib/workspaces.ts",
+   "notes": "WorkspaceDef.id is a union 'operations'|'finance'|'marketing'|'hr'|'dev', so a 'ceo' workspace means widening it. CHILD_ROLES already gives fnb_manager the right to invite foh_management/boh_management/floor roles. Tests in /home/user/servd/backend/tests/workspaces.test.ts pin the workspace id list (['operations','finance','marketing','hr','dev']) and 'every module in exactly one workspace'. Has uncommitted edits by another agent; coordinate."
+  },
+  {
+   "what": "Role catalogue + approver role sets",
+   "where": "/home/user/servd/backend/src/lib/roles.ts; /home/user/servd/backend/src/modules/auth/middleware.ts:225-233",
+   "notes": "ADMIN_ONLY=['admin'], APPROVERS=['admin','owner'], MANAGERS=[admin, owner, manager, management, foh_management, boh_management, fnb_manager], OVERRIDE_APPROVERS (manager-PIN approvers) = admin, owner, management, fnb_manager, foh/boh_management. Also PAYROLL_APPROVERS=['admin','owner','management'] (hr/routes.ts:47), HR_APPROVERS/MGMT_APPROVERS (hr/logic.ts:558-559), CONNECTOR_ADMINS=['admin','it'] (lib/connectorRoles.ts)."
+  },
+  {
+   "what": "Module access defaults + enforcement (role defaults \u222a RoleModuleAccess override \u222a user allow/deny)",
+   "where": "/home/user/servd/backend/src/lib/moduleAccess.ts",
+   "notes": "admin = ALL_MODULES. fnb_manager defaults already cover an F&B manager's full scope, and also include finance_pl + accounting. The 'owner' role (co-owner) gets everything except role_management, role_modules, accounting_audit and the API connectors. RoleModuleAccess (schema.prisma:4864) is ONE global row per role with NO tenantId, which conflicts with the company-separation rule. A new 'approvals' module id would go in MODULE_IDS and the frontend ModuleId union (frontend/admin/src/lib/appRoles.ts)."
+  },
+  {
+   "what": "Sidebar construction",
+   "where": "/home/user/servd/frontend/admin/src/components/ui/AppShell.tsx (NavLinks ~l.100-200, UserIdentityCard ~l.620-700); /home/user/servd/frontend/admin/src/lib/moduleCatalog.ts; GET /permissions/me + /permissions/workspaces in /home/user/servd/backend/src/modules/permissions/routes.ts",
+   "notes": "Groups come from /permissions/me.workspaces. MODULE_PAGES maps module\u2192pages. The 'company' pages are tenants\u2192/onboarding,/configuration/domains; role_management\u2192/workforce?status=pending; role_modules\u2192/configuration/role-modules; configuration\u2192/configuration; ceo_overview\u2192/home (Dashboards). The CEO approval badges are fetched only for isSuper and are hidden when the count is 0 (l.676-700). PERSONAL_PAGES 'My approvals' (/hr/approvals) shows only when the user has a team or pendingApprovals>0, so never for the unlinked CEO."
+  },
+  {
+   "what": "Operations-rule editors derived from the workspace owner",
+   "where": "/home/user/servd/backend/src/modules/setup/routes.ts:74-86",
+   "notes": "OPERATIONS_RULE_EDITORS = APPROVERS + ownerRoles of the workspace holding 'configuration'. Moving Operations ownership to fnb_manager without moving 'configuration' would widen PATCH /setup/operations-config (selfie, geofence, tip split, service charge) to F&B managers, which PPL-09 deliberately prevented."
+  },
+  {
+   "what": "APPROVAL: staff login approvals (invited logins are pending until approved)",
+   "where": "GET /auth/staff/pending (auth/routes.ts:934), PATCH /auth/staff/:id/approve (l.1056), PATCH /auth/staff/:id/reject (l.1137); invites POST /auth/staff/invite (l.957)",
+   "notes": "Approver: 'admin' only. Company-scoped (read scope + company-less legacy rows). Audited as 'user.approve'. UI: /workforce?status=pending (frontend/admin/src/app/workforce/page.tsx); /configuration/pending-approvals is a redirect. Badge on the identity card + the 'Pending logins' item."
+  },
+  {
+   "what": "APPROVAL: storefront publish (draft\u2192submit\u2192approve/schedule/reject, rollback, delete)",
+   "where": "/home/user/servd/backend/src/modules/siteLayouts/routes.ts:436 approve, :474 reject, :513 rollback, :576 delete (const CEO = ADMIN_ONLY at l.68)",
+   "notes": "Approver: admin only (decision 41). Each publish writes a SiteLayoutVersion (approvedById). UI: /storefront?tab=approvals (components/storefront/ApprovalsPanel.tsx, PENDING_LAYOUTS_KEY), queue GET /site-layouts?status=pending. The storefront module is being rebuilt in parallel; keep this check point."
+  },
+  {
+   "what": "APPROVAL: purchase orders over the per-company threshold",
+   "where": "/home/user/servd/backend/src/modules/procurement/routes.ts:350 approve, :356 reject, queue GET /procurement/approvals :617, threshold GET/PUT /procurement/settings/approval-threshold :690/:695",
+   "notes": "Approver: ADMIN_ONLY. Threshold is per company. UI: an approvals tab inside /procurement (app/procurement/page.tsx ~l.1326). No sidebar entry."
+  },
+  {
+   "what": "APPROVAL: recipe sign-off (RecipeStatus pending_approval)",
+   "where": "/home/user/servd/backend/src/modules/recipes/routes.ts:591 GET /recipes/pending-approval, :1139 POST /:id/approve, :1192 POST /:id/reject",
+   "notes": "Approver: APPROVERS (admin, owner). UI: /accounting/recipes/approvals (sub-link under Recipes)."
+  },
+  {
+   "what": "APPROVAL: HR records engine (leave, OT, attendance corrections, shift swaps, loans, offers, promotions, transfers, salary revisions, resignations/terminations, F&F, requisitions, payroll adjustments, reviews, ER cases)",
+   "where": "/home/user/servd/backend/src/modules/hr/forms.ts (workflow per section), /home/user/servd/backend/src/modules/hr/logic.ts:558-597 canActOnStep, /home/user/servd/backend/src/modules/hr/routes.ts:1073 POST /hr/records/:section/:id/decide, :1499 GET /hr/approvals (approvalsWaitingOn), /me/swaps/:id/respond :1668",
+   "notes": "Steps are HOD (reporting manager via HrEmployee.managerId, with HR as fallback), HR (hr/admin/owner/management) and MGMT (admin/owner/management). The CEO can override any step (recorded as an override), but the inbox hides override-only items. Separation of duties is built in. Audited as hr.<section>.<decision>. UI: /hr/approvals ('My approvals'). This is the existing 'what is waiting on me' resolver; /hr/team counts it. canActOnStep is the natural place to read a delegation for the 'management' step."
+  },
+  {
+   "what": "APPROVAL: payroll run approve / reopen / lock / mark paid",
+   "where": "/home/user/servd/backend/src/modules/hr/routes.ts:1328 approve, :1348 reopen, :1358 lock, :1375 paid",
+   "notes": "Approver: PAYROLL_APPROVERS (admin, owner, management). UI: /hr/payroll/[id]."
+  },
+  {
+   "what": "CEO-only money controls (no queue, the CEO acts directly)",
+   "where": "accounting/routes.ts:146 POST /accounting/journal (manual journal), :258 /journal/:id/reverse, :766 /period-close, :721 /period-close/reopen; financePlanning/routes.ts:612 /capex/:id/post-payments, :643 /capex/lines/:lineId/capitalise; allocations/routes.ts:43,103,117 rules; setup/routes.ts:585 refund-policy, :797/:817 chart-of-accounts; opex :326, procurement :636, reconciliation :267 post-unposted backfills; crosschecks :417 delete exception",
+   "notes": "All ADMIN_ONLY. Manual journals have NO submit/approve flow: only the CEO can post one, so finance cannot prepare one for approval. UI under the Finance workspace pages (/accounting/journal, /accounting/period-close, /finance/capex)."
+  },
+  {
+   "what": "APPROVAL-like: tip pool post/pay, bank-rec adjustment",
+   "where": "tipPools/routes.ts:565 /:id/post, :704 /:id/pay; reconciliation/routes.ts:139 /bank/lines/:id/adjust",
+   "notes": "Approver: APPROVERS (admin, owner). UI: /tip-pools, /reconciliation."
+  },
+  {
+   "what": "APPROVAL: stock transfers",
+   "where": "/home/user/servd/backend/src/modules/stockTransfers/routes.ts:136 PATCH /:id/approve",
+   "notes": "Approver: MANAGERS (any manager tier). This is F&B work and stays with Operations; it should not go in the CEO inbox."
+  },
+  {
+   "what": "Real-time manager-PIN overrides (discount/price over cap, voids, comps, refunds, payouts, petty-cash over cap, staff meals)",
+   "where": "/home/user/servd/backend/src/modules/auth/managerPin.ts verifyManagerPin; pos/service.ts:192,216,1277-1289,1793,2393; trustops/routes.ts:302-313",
+   "notes": "Approver: OVERRIDE_APPROVERS of the same company, at the till. Stored as approvedById on WasteLog, PettyCashMovement, StaffMeal, etc. This is not a queue, so it does not belong in the inbox; its caps are a CEO setting."
+  },
+  {
+   "what": "CEO-only governance switches (actions, not queues)",
+   "where": "connectors/routes.ts:380 /fiscal/go-live, :397 /fiscal/switch-off, :408 /fiscal/reporting-required, :504 /fiscal/documents/release; permissions/routes.ts:101 PUT /role-modules; tenants/routes.ts:38,181,390,430 (list, merge, edit, apply-template); concepts/routes.ts:276,307 (create/delete brand); auth/routes.ts:1668 POST /users, :1815 PATCH /users/:id, :2094 DELETE, :610 reissue-password, :666 2fa reset; hr/routes.ts:920 separations/deactivate-logins; paymentGateways :116; domains :130; auth :1283-1337 email integration",
+   "notes": "These are the natural content of a CEO workspace. UI is scattered: /connectors/pos (Dev), /configuration/role-modules, /onboarding, /configuration/domains, /workforce."
+  },
+  {
+   "what": "F&B work wrongly locked to the CEO",
+   "where": "/home/user/servd/backend/src/modules/stations/routes.ts:113,127,159 (POST/PATCH/DELETE /stations ADMIN_ONLY)",
+   "notes": "An F&B manager cannot add or edit kitchen stations today, although KDS config is in fnb_manager's defaults. Recipe approval (admin/owner) is a similar case."
+  },
+  {
+   "what": "Head-office building blocks already present (relevant to who the HODs are)",
+   "where": "schema.prisma: Department.isHeadOffice (l.5357), TenantContribution + ContributionCategory head_office (l.5400-5440), Position.tenantCostShareCents; TenantMember (l.4696) multi-company logins; FleetAgreement (l.3101)",
+   "notes": "A head-office person is today a login that belongs to several companies (TenantMember) with an HrEmployee in each. No HeadOffice entity exists. A separate mapping covers head office; the delegation table should key on company (tenantId) and accept head-office membership as the eligibility test once that exists."
+  },
+  {
+   "what": "Audit helper",
+   "where": "/home/user/servd/backend/src/lib/audit.ts:56 audit()",
+   "notes": "Reuse for delegation granted, revoked and used. Approve routes already audit (user.approve, hr.*.approved, SiteLayoutVersion); add 'via delegation <id>' to those same rows."
+  }
+ ],
+ "gaps": "1. There is no CEO workspace. CEO governance and F&B work share one 'Operations' workspace owned by 'admin', so the F&B part cannot be handed over without the governance part.\n2. There is no single approvals inbox. The CEO's queues are spread across the identity-card badges (hidden at zero), /workforce?status=pending, /storefront?tab=approvals, a tab inside /procurement, /accounting/recipes/approvals, /hr/approvals (hidden for the CEO), /hr/payroll/[id] and /tip-pools. No endpoint gives counts per type.\n3. There is no delegation. Every approve check is a hard-coded role array (ADMIN_ONLY / APPROVERS / PAYROLL_APPROVERS / MGMT_APPROVERS), so the authority cannot be given to one named head-office person, for one type, in one company. The only lever is a broad role ('owner'/'management'), which grants every approval in every company.\n4. Manual journals have no prepare\u2192approve flow; only the CEO can post them.\n5. OPERATIONS_RULE_EDITORS (setup/routes.ts) is derived from whoever owns the workspace that holds 'configuration'. Changing Operations ownership without moving 'configuration' would widen company-wide rule edits to F&B managers.\n6. Some F&B work is still locked to the CEO: stations create/edit/delete, recipe approval, refund policy.\n7. RoleModuleAccess is global (no tenantId), which breaks the company-separation rule. Module access is a CEO surface, so this matters when the CEO workspace is built.\n8. No HeadOffice entity exists to say who counts as a head-office HOD (being mapped separately).\n9. The frontend ModuleId union and the workspace tests hard-code the current five workspaces.",
+ "options": [
+  {
+   "option": "A. CEO workspace split only: add workspace 'ceo' (ownerRoles ['admin']) with sections Approvals / Companies (tenants, business_info, onboarding, head offices later) / Access (role_management, role_modules) / Rules & switches (configuration, settings). Set Operations ownerRoles to ['fnb_manager'] and drop the 'company' section from it. Pin OPERATIONS_RULE_EDITORS to APPROVERS explicitly. Open stations CRUD to fnb_manager. Admin still sees everything.",
+   "pros": "Small. Uses only the existing workspaces.ts / moduleAccess.ts / sidebar mechanism, with no new table. The owner, as admin, keeps Operations, and handing it over later just means creating an fnb_manager login. Fixes the sidebar confusion straight away.",
+   "cons": "Does not fix the scattered approvals or delegation. Workspace tests, the frontend ModuleId union and the /w/[id] homes all need updating. The fiscal go-live and period-reopen buttons stay on their Dev/Finance pages, with only links from CEO.",
+   "size": "S"
+  },
+  {
+   "option": "B. A + a unified approvals inbox through a registry: lib/approvals.ts registers each existing queue (staff_login, storefront_publish, purchase_order, recipe, hr_record_step, payroll_run, tip_pool, bank_adjustment, capex_posting, plus period_reopen/manual_journal as actions). Each entry has count(tenantIds), list(req), deepLink, defaultRoles and delegable. GET /approvals returns counts per type plus items for the caller. One /approvals page: the CEO opens it from the CEO workspace, and everyone else gets it as 'My approvals', replacing /hr/approvals, which redirects. Inline approve/reject calls each module's EXISTING endpoint.",
+   "pros": "One place, and the same count drives the sidebar badges, the identity card and /team. No second engine: state stays in each module's own table, and approvalsWaitingOn becomes one registry provider. Company-scoped by construction (resolveTenantScope).",
+   "cons": "/hr/approvals and the new page overlap, so under the duplicate rule the owner must agree to replace it. Each provider needs a list query (most already exist). Still no delegation.",
+   "size": "M"
+  },
+  {
+   "option": "C. B + reassignable approval authority: one table ApprovalDelegation { id, tenantId (required, indexed), approvalType, delegateUserId, grantedById, note, expiresAt?, revokedAt?, revokedById?, createdAt } with @@index([tenantId, approvalType]). One helper, assertCanApprove(req, type, tenantId) \u2192 { via: 'role' | 'delegation', delegationId }. Each approve route swaps requireAuth(...ADMIN_ONLY) for requireAuth(...ALL_STAFF) + assertCanApprove after resolving the row's company. canActOnStep reads it for the 'management' step. CEO-only CRUD at /approvals/delegations (POST create binds to a company the CEO picks; foreign-company delegate \u2192 422). Grant, revoke and each use are audited, and the existing approve audit rows carry the delegation id. Non-delegable types are flagged in the registry.",
+   "pros": "Exactly what the owner asked for: per type, optionally per company, revocable, audited, with no per-module engine. The delegate's inbox fills automatically from the same registry. Two-company tests fit naturally (a delegate in B gets 404/403 on A's items).",
+   "cons": "Touches about 12 approve routes in money and auth-adjacent modules (procurement, recipes, siteLayouts, auth staff approve, HR, payroll, tip pools, reconciliation), so the orchestrator must verify it. It needs the head-office definition to restrict who may be a delegate. A schema migration is needed.",
+   "size": "L"
+  },
+  {
+   "option": "D. A generic approval engine: an ApprovalRequest row mirrored for every pending item across modules, with its own state machine.",
+   "pros": "Uniform data model, and SLAs, escalation and reminders are easy to add later.",
+   "cons": "It creates a second source of truth beside each module's status column (PurchaseOrder.status, Recipe.status, HrRecord.status, SiteLayout draft state), which is exactly the duplicate pattern the standing rule forbids. Rows would drift, and every module's state machine would need rewriting.",
+   "size": "XL"
+  }
+ ],
+ "recommendation": "Do C in three steps: A, then B, then C, in that order, each shippable on its own. Do NOT do D.\n\nStep A, the split, in backend/src/lib/workspaces.ts:\n- New workspace id 'ceo' titled \"CEO\" with ownerRoles ['admin'] and memberRoles [].\n- Sections: Approvals (new module id 'approvals'); Companies ('tenants', 'business_info', 'onboarding', plus head offices when built); People & access ('role_management', 'role_modules'); Rules & switches ('configuration', 'settings').\n- Operations: ownerRoles becomes ['fnb_manager']. Remove the 'company' section and keep kitchen, menu, stock, food safety, front of house and dashboards. ceo_overview (/home) stays in Dashboards.\n- Make OPERATIONS_RULE_EDITORS an explicit list (APPROVERS) in setup/routes.ts so moving workspaces never changes who edits company rules.\n- Open stations CRUD to fnb_manager (it is F&B work).\n- Give the fiscal go-live, period close/reopen and refund-policy pages a link from Rules & switches, but leave each page where it is (no duplicate pages).\n- Update tests/workspaces.test.ts, the frontend ModuleId union and the role-modules page.\n\nStep B: lib/approvals.ts as a registry over the existing queues. GET /approvals returns { type, label, count, deepLink, items? } scoped with resolveTenantScope. One /approvals page with counts per type and inline approve/reject that calls each module's existing endpoint. Flag to the owner that this replaces /hr/approvals ('My approvals'); on agreement, redirect the old route. The AppShell badges and /team's pendingApprovals read this one count, and the identity-card badges point to /approvals and stay visible as an 'Approvals' item even at zero. Leave the manager-PIN till overrides and stock-transfer approvals out (real-time or F&B-level).\n\nStep C: the ApprovalDelegation table (tenantId required, company-scoped from the first commit) plus assertCanApprove(). Wire it into the approve checks of the delegable types:\n- purchase_order (procurement/routes.ts:350/356 and GET /procurement/approvals)\n- recipe (recipes/routes.ts:591/1139/1192)\n- storefront_publish (siteLayouts approve/reject only; rollback/delete stay CEO)\n- hr_management_step (canActOnStep)\n- payroll_run, tip_pool, bank_adjustment, staff_login for floor and manager roles below fnb_manager\n\nKeep non-delegable: role_modules, companies/head offices, admin/owner/management logins, period reopen, fiscal go-live/switch-off, journal reversal (unless the owner says otherwise).\n\nThe CEO keeps approval rights alongside any delegate. Delegation is audited on grant, revoke and use, and an optional expiresAt covers holidays. Every approve route ships with a two-company test.\n\nCoordinate with the head-office mapping: the eligibility rule (the delegate must belong to the head office that covers that company) plugs into the POST /approvals/delegations validation.",
+ "questionsForOwner": [
+  "Which approvals may you hand to a head-office HOD, and which stay yours alone? Suggested: hand-overable are purchase orders over the limit, recipes, storefront publishing, HR final sign-off, payroll approval, tip pools, bank-rec adjustments and new floor/kitchen logins. Yours only are module access, companies and head offices, new manager-or-above logins, reopening a closed month, fiscal go-live and reversing journals. Agree?",
+  "When you give an approval type to an HOD, should it be for one company at a time, or for every company under their head office (including companies added later)?",
+  "Once delegated, is the HOD's approval final, or should anything above an amount still need your second sign-off?",
+  "Today co-owners (role 'owner') can approve recipes, tip pools, payroll, bank adjustments and till overrides. Keep that, or should only you plus the people you delegate to approve?",
+  "There is already a 'My approvals' page (/hr/approvals) for HR requests. OK to replace it with one Approvals page that shows every kind of approval (yours in CEO, everyone else's under 'My approvals'), rather than building a second inbox next to it?",
+  "Company-wide operating rules (clock-in selfie/geofence, tip split, service charge, refund policy) and Locations: should they stay CEO-only in the new CEO section, or move to the F&B manager?",
+  "Should the F&B manager be able to add/edit kitchen stations and sign off recipes without you? (Today both are CEO-only.)",
+  "Should the F&B manager keep seeing the accounting ledger and P&L by default, as they do today, or only the F&B dashboard?"
+ ]
+}

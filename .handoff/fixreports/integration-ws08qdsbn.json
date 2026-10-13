@@ -1,0 +1,241 @@
+{
+  "summary": "Apply the remaining cross-file leftovers from the POS connector cutover (money guards, connector routes, docs/config, tablet + admin UI), then adversarially review and fix",
+  "agentCount": 4,
+  "logs": [
+    "[review:I1] failed: You've hit your session limit · resets 2:20pm (UTC)",
+    "[review:I2] failed: You've hit your session limit · resets 2:20pm (UTC)"
+  ],
+  "result": [
+    {
+      "stream": "I1",
+      "built": {
+        "summary": "I1 (backend money guards and storefront tip) is done. The gift-card and loyalty paths can no longer move a bill while the card machine is charging it. The storefront writes tip_cents in the order insert. The postRefundPayment cancelled-branch item is not_needed: no production code reaches it.\n\n(a) Card-machine guard:\n- `giftCards/service.ts` `redeemGiftCardTx` calls `assertNoActiveTerminalChargeTx` right after its order `FOR UPDATE`. It uses a static import: `connectors/terminal/guard.ts` imports only `lib/prisma` and `lib/errors`, so there is no import cycle.\n- `loyalty/service.ts`: `adjustOrderBill` now runs in one transaction (`adjustOrderBillTx`). It locks the order row, calls the guard, then moves the total and the pending rows. The guard applies both ways: lowering the bill, and the storefront's put-back that raises it.\n- `redeemPointsOnOrder` is one transaction:\n  - lock the order row;\n  - read status, owner and paid payments under the lock (404 / ORDER_NOT_OPEN);\n  - call the guard;\n  - check ALREADY_REDEEMED under the lock;\n  - quote, claim the points and lower the bill;\n  - book the redeem after commit.\n- Two concurrent redeems on one order used to be able to both pass; now exactly one does.\n- The discount is now capped at what is still owed (total minus paid), the same as gift cards. A paid-up order gives 422 NOTHING_DUE.\n- `claimRedemption` (storefront) now also takes the order lock before the loyalty-account row. It is not guarded, because it only raises discountCents and never moves the bill.\n- Lock order is order row first, then everything else, matching every till caller. A test runs a gift card and a points redeem on one order at once; both apply and there is no deadlock.\n\n(b) Storefront tip: `OrderDTO` (`_types/order.ts`) now has `tip_cents?: number`. In `storefront/routes.ts` I removed `tipInInsert` and the later `orderPatch.tipCents` write; the DTO now sends `tip_cents: body.tipCents`. The ingestOrder ceiling (payment.amountCents + wallet_amount_cents) always holds the tip:\n- With a wallet top-up, the tip stays inside payment.amountCents.\n- With the wallet as the method, the wallet share covers the tip.\n\n(c) postRefundPayment cancelled branch: not_needed. `writeRefundTx` (pos/service) is the only code that writes refund Payment rows:\n- `refundOrder` sends every cancelled or rejected ticket to `refundDueOnCancelledTicket`, which books through `bookCancelledHandBackTx` (the R5-A/B/C-correct unwind), never through postRefundPayment.\n- The TILL-R3 void path calls `assertVoidable` under the order lock, so it only runs on open orders.\n- No script or backfill calls postRefundPayment.\n\nThe branch is reachable only by calling postRefundPayment directly, which `auditLedgerFollowups` does for the simple case (drawer closes after the cancel), where its Dr 1110 / Cr drawer entry is correct. No test can show a production failure. Changing it to refuse would break that test. Making it delegate would need orderPosting to import pos/service, which is a cycle. So `orderPosting.ts` is unchanged.",
+        "items": [
+          {
+            "id": "1",
+            "status": "fixed",
+            "note": "W4-MONEY-1 item 3. redeemGiftCardTx: guard right after the order FOR UPDATE, via a static import (no cycle: guard.ts imports only lib/prisma and lib/errors). loyalty: adjustOrderBill and redeemPointsOnOrder lower or raise the bill only inside a transaction that locks the order row first and then calls assertNoActiveTerminalChargeTx. On a refusal: 409 TERMINAL_CHARGE_ACTIVE {chargeId}, and the points, discount, card and bill are all unchanged. claimRedemption also takes the order lock first, so the lock order matches the till. Extras that came out of the locked transaction: redeemPointsOnOrder is race-free (one ALREADY_REDEEMED); the discount is capped at what is still owed (new 422 NOTHING_DUE when nothing is owed)."
+          },
+          {
+            "id": "9",
+            "status": "fixed",
+            "note": "Last bullet only (the other optional bullets belong to other streams): _types/order.ts OrderDTO now has tip_cents?: number; the tipInInsert fallback and the post-insert orderPatch.tipCents write are removed from storefront/routes.ts; the insert always sends tip_cents: body.tipCents. This is consistent with ingestOrder's ceiling (payment + wallet share)."
+          },
+          {
+            "id": "build-LEFT storefront tip_cents (+ fix-orders 3/4)",
+            "status": "fixed",
+            "note": "Same change as item 9. A test proves a wallet-as-method checkout with a PKR 100 tip stores tipCents=10,000 with total 0. Another proves ingestOrder takes a tip up to payment + wallet and refuses more (INVALID_TIP)."
+          },
+          {
+            "id": "money-followups fix: orderPosting postRefundPayment cancelled branch",
+            "status": "not_needed",
+            "note": "Not a live gap. writeRefundTx is the only writer of refund Payment rows. For a cancelled or rejected order, refundOrder always goes through refundDueOnCancelledTicket, which books with bookCancelledHandBackTx (the R5-A/B/C-correct unwind). The TILL-R3 void refund calls assertVoidable under the order lock, so it only runs on open orders. No script or backfill calls postRefundPayment. Making the branch refuse would break auditLedgerFollowups, which calls it directly for the simple, correct case; making it delegate would need orderPosting to import pos/service, which is a cycle. orderPosting.ts is unchanged. Possible later hardening: move the unwind and hand-back helpers into accounting/."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/giftCards/service.ts",
+          "/home/user/servd/backend/src/modules/loyalty/service.ts",
+          "/home/user/servd/backend/src/modules/storefront/routes.ts",
+          "/home/user/servd/backend/src/_types/order.ts",
+          "/home/user/servd/backend/tests/integrationMoney.test.ts"
+        ],
+        "tests": "`npx tsc --noEmit -p .` in backend: exit 0.\n\nDB servd_test_i1 (created, then dropped). 12 files, 168 tests, all pass:\n- integrationMoney (new, 11)\n- auditMoneyFollowups (21)\n- auditTillGiftCard (3)\n- auditLedgerLoyalty (9)\n- terminalGuards (10)\n- fiscalTill (24)\n- auditOnlineCheckout (30)\n- customersReconcile (25)\n- loyalty (4)\n- auditLedgerSales (14)\n- auditLedgerFollowups (9)\n- auditOrdersIngest (8)\n\nWhat the new tests in tests/integrationMoney.test.ts cover:\n- **Admin gift-card redeem (POST /gift-cards/redeem) on an online order with an active charge:** 409 TERMINAL_CHARGE_ACTIVE {chargeId}. The card balance, total, pending row and redemptions are unchanged. The charge statuses pending, approved and unknown are refused the same way. Once the charge is final, the card applies.\n- **Storefront redeemGiftCard:** refused the same way.\n- **Two companies, gift cards:** B's CEO gets 404 on A's order, and B's card is 404 on A's order.\n- **POST /loyalty/redeem with an active charge:** 409, with points, discount, bill and loyalty transactions unchanged. After the charge is final it redeems once; a second attempt gets ALREADY_REDEEMED.\n- **adjustOrderBill:** refuses ±cents while a charge is in flight, then moves the bill and the pending row together.\n- **Two concurrent redeemPointsOnOrder on one order:** exactly one succeeds and the points are taken once.\n- **A gift card and points at the same time on one order:** both land, with no deadlock.\n- **Discount cap:** capped at what is still owed; NOTHING_DUE on a paid-up order.\n- **Two companies, loyalty:** another customer's order is 404, and points held at B can't pay A's bill.\n- **Storefront tip:** a wallet-as-method checkout with a tip writes tipCents in the insert; ingestOrder enforces the tip ceiling.\n\nMutation check: with the guards commented out, 4 of the 11 new tests fail.",
+        "needsOtherFiles": "1. backend/src/modules/orders/service.ts (optional): IngestOrderDTO (`OrderDTO & { tip_cents?: number }`) can now be plain `OrderDTO`, since `OrderDTO` has tip_cents. Then storefront/routes.ts can import `OrderDTO`; the current code compiles either way.\n2. backend/src/_types/order.d.ts (optional): regenerate it, or add the same `tip_cents?: number` after `wallet_amount_cents`. tsc resolves `@servd/types` to index.ts, so nothing breaks today.\n3. packages/types OrderDTO (optional): add `tip_cents?: number` to keep the shared types in step.\n4. Storefront/mobile loyalty-redeem clients (optional): POST /loyalty/redeem can now return 409 TERMINAL_CHARGE_ACTIVE and 422 NOTHING_DUE; show the server message.",
+        "prodNotes": "No schema change, no migration, no env change.\n\nBehaviour changes:\n1. **Card machine:** while it is charging a bill, these return 409 TERMINAL_CHARGE_ACTIVE and change nothing:\n   - an admin gift-card redeem on an online order;\n   - a storefront gift-card redeem;\n   - POST /loyalty/redeem;\n   - any loyalty bill adjustment.\n   Before this, only the till's gift-card tender was blocked.\n2. **POST /loyalty/redeem:**\n   - The discount is now capped at what is still owed (total minus paid), not the whole total.\n   - An order with nothing owed returns 422 NOTHING_DUE.\n   - Two simultaneous redeems on one order can no longer both pass.\n3. **Storefront tip:** orders write tipCents in the same insert as the total, including wallet-paid checkouts. There is no second write any more."
+      },
+      "review": [],
+      "fix": null
+    },
+    {
+      "stream": "I2",
+      "built": {
+        "summary": "I finished all five I2 items (4, 5, 6, 7 and the first bullet of 9) and added two-company tests for the route scoping. Backend tsc is clean, and 212 tests pass across 20 suites: 19 suite files plus a rerun of the deliveryWatch pair.\n\n- **Item 6 (connectors/routes.ts):**\n  - GET /fiscal/documents and GET /terminal/charges now list only the ACTIVE company: `activeTenantId(req, 'the POS connector belongs to one company')`, `fiscalCounts([tenantId])`, and `tenantId` on every item. This holds even when the portfolio header is on.\n  - A `conceptId` filter naming a brand outside the active company returns 404.\n  - An operator with no active company now gets 422 NO_ACTIVE_COMPANY. Before, it was 200 with an empty list. This matches what GET /connectors already did.\n  - PUT /fiscal/brand-pos-ids caps both ids at 2147483647, so an oversized id gets a 400 instead of a Postgres 500.\n  - I removed the now-unused `tenantIdsOf` helper and the `conceptWhere`/`TenantIdWhere` imports.\n- **Item 7:**\n  - `chargeView` returns `targetPaymentId` (null on a sale charge), and the `TerminalChargeView` interface has it.\n  - GET /pos/orders/:orderId/fiscal now allows `FISCAL_READERS = [...new Set([...CASHIERS, 'finance', 'management'])]`. It is still scoped by `scopeTenantWhere(req,'write')`, `lastError` is still managers-only through `isManager`, and retry is still managers-only.\n- **Item 9, first bullet (media/routes.ts):**\n  - GET /media/upload-url returns 503 STORAGE_NOT_CONFIGURED, with `details.missing`, when any of R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_PUBLIC_URL is unset or blank. It uses the same list as /health `checks.uploadStorage`.\n  - The check runs after the type, kind and brand checks, so those still return their 422s first. No MediaAsset row is created.\n  - The admin LibraryPanel already handles this code, per the sf-quickfix fix report.\n- **Item 5:** the three deliveryWatch `fix:` strings and the header comment now say \"admin → Dev → API → WhatsApp connector\".\n- **Item 4 (docs/config, placeholders only):**\n  - backend/README.md: dropped the FBR worker mention and the FBR_API_KEY/FBR_POS_ID line, and added a SERVD_SECRET_KEY line with no value. I also fixed \"Fastify 4\" to 5 and removed the stale Foodpanda/Careem webhook-secret env line.\n  - lib/README.md: removed fbr.ts, plus hmac.ts and permissions.ts, which no longer exist. Added secretBox.ts, connectorRoles.ts, tenantScope.ts and moduleAccess.ts.\n  - workers/README.md: removed fbrSubmission.ts and orderIngestion.ts (also gone) and added fiscalConnector.ts and terminalConnector.ts.\n  - src/README.md: the adapters line no longer lists Foodpanda/Careem/FBR, and there is a new connectors/ entry.\n  - .env.docker.template: the FBR_*/SRB_* block is replaced by the secrets-at-rest comment and an empty `SERVD_SECRET_KEY=`.\n  - infra/staging.tfvars.example: the fbr block is replaced by the fix-W2 `servd_secret_key = \"\"` block.",
+        "items": [
+          {
+            "id": "4",
+            "status": "fixed",
+            "note": "W4-RG-5 docs/config done by hand; scripts/generate-readmes.ts does not exist. No real secret anywhere, only empty placeholders. Besides the requested lines I also removed README entries for files that no longer exist (lib/hmac.ts, lib/permissions.ts, workers/orderIngestion.ts) and the stale Foodpanda/Careem env line, and changed Fastify 4 to 5."
+          },
+          {
+            "id": "5",
+            "status": "fixed",
+            "note": "deliveryWatch.ts fix strings (3) plus the header comment now point to admin → Dev → API → WhatsApp connector. Updated the one assertion in tests/deliveryWatch.test.ts that checked for 'Configuration'."
+          },
+          {
+            "id": "6",
+            "status": "fixed",
+            "note": "GET /fiscal/documents and GET /terminal/charges use the active company only, with fiscalCounts([tenantId]) and tenantId on each item. A conceptId filter outside the active company returns 404. No active company returns 422 (was 200 with an empty list; updated the connectorsRoutes.test.ts expectation). brand-pos-ids ids are capped at 2147483647."
+          },
+          {
+            "id": "7",
+            "status": "fixed",
+            "note": "chargeView and TerminalChargeView have targetPaymentId. GET /pos/orders/:orderId/fiscal is widened to CASHIERS + finance + management (de-duplicated), still company-scoped; lastError stays managers-only."
+          },
+          {
+            "id": "9",
+            "status": "fixed",
+            "note": "First bullet only (media 503 STORAGE_NOT_CONFIGURED with details.missing; exports missingStorageEnv and R2_REQUIRED_ENV). The other item-9 bullets (finance link card, keyAtRest, _types tip_cents) are not in my file set."
+          },
+          {
+            "id": "W2 build 2 / W3a build 4 (deliveryWatch copy)",
+            "status": "fixed",
+            "note": "Same as item 5."
+          },
+          {
+            "id": "W2 build 5 (.env.docker.template)",
+            "status": "fixed",
+            "note": "Same as item 4."
+          },
+          {
+            "id": "W2 fix 2 (infra/staging.tfvars.example)",
+            "status": "fixed",
+            "note": "Same as item 4."
+          },
+          {
+            "id": "W3a fix R7 (.max on brand-pos-ids)",
+            "status": "fixed",
+            "note": "Same as item 6."
+          },
+          {
+            "id": "W3b fix 1-2 (chargeView targetPaymentId, widen fiscal roles)",
+            "status": "fixed",
+            "note": "Same as item 7."
+          },
+          {
+            "id": "sf-quickfix storage/media STORAGE_NOT_CONFIGURED",
+            "status": "fixed",
+            "note": "Same as item 9, first bullet."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/connectors/routes.ts",
+          "/home/user/servd/backend/src/connectors/terminal/service.ts",
+          "/home/user/servd/backend/src/modules/connectors/posRoutes.ts",
+          "/home/user/servd/backend/src/workers/deliveryWatch.ts",
+          "/home/user/servd/backend/src/modules/media/routes.ts",
+          "/home/user/servd/backend/README.md",
+          "/home/user/servd/backend/src/README.md",
+          "/home/user/servd/backend/src/lib/README.md",
+          "/home/user/servd/backend/src/workers/README.md",
+          "/home/user/servd/.env.docker.template",
+          "/home/user/servd/infra/staging.tfvars.example",
+          "/home/user/servd/backend/tests/integrationConnectors.test.ts",
+          "/home/user/servd/backend/tests/connectorsRoutes.test.ts",
+          "/home/user/servd/backend/tests/deliveryWatch.test.ts"
+        ],
+        "tests": "Setup: created a private test DB servd_test_i2 (prisma db push) and dropped it afterwards. All runs used DATABASE_URL=…/servd_test_i2, REDIS_URL=redis://127.0.0.1:6379/10 and NODE_ENV=test.\n\nThe first combined run had one failure, the deliveryWatch copy assertion. After updating it, the deliveryWatch pair passed 10/10 on rerun. Combined, 212 tests pass across 20 suites:\n- integrationConnectors 9/9 (new)\n- connectorsRoutes 20/20, connectorsUnit 14/14, connectorsWhatsapp 11/11\n- fiscalTill 24/24, fiscalPayload 14/14, fiscalSend 16/16, fiscalOutbox 15/15, fiscalQueue 2/2\n- terminalCharge 9/9, terminalGuards 10/10, terminalRefund 8/8, terminalReversal 5/5, terminalTimeout 9/9\n- storefrontQuickfix 16/16, posWebhook 6/6, healthConnectors 4/4\n- deliveryWatch 7/7, deliveryWatchAlerts 3/3\n\n`npx tsc --noEmit -p .` in backend exits 0.\n\nNew two-company tests in tests/integrationConnectors.test.ts:\n- A CEO who belongs to both companies, active in A, sees only A's documents and charges, with and without x-servd-portfolio: 1. Each item has tenantId A, and the counts are A's only. Company B sees only its own rows.\n- A brand from the other company as conceptId → 404, including for that CEO in portfolio mode.\n- No active company → 422 on both lists.\n- A refund charge returns targetPaymentId; a sale charge returns null.\n- brand-pos-ids: 2147483648 and 9999999999 → 400 and the brand is unchanged; 2147483647 is accepted; another company's brand → 404.\n- GET /pos/orders/:id/fiscal: finance and management of company A → 200 (finance gets lastError null, management sees it); cashier → 200; company B finance → 404; kitchen → 403; finance retry → 403.\n- media: R2 unset → 503 STORAGE_NOT_CONFIGURED naming the missing vars, no asset created; a bad file type is still 422; with R2 set → 200 and the asset is bound to the active company.",
+        "needsOtherFiles": "1. (Optional, docs) CLAUDE.md, 'POS connector + pre-bills' section: note that GET /connectors/fiscal/documents and GET /connectors/terminal/charges list the ACTIVE company only (422 NO_ACTIVE_COMPANY without one; a conceptId of another company returns 404 even in portfolio view), and that GET /media/upload-url returns 503 STORAGE_NOT_CONFIGURED when R2_* is unset.\n2. (Optional, frontend/admin connector pages, not mine) If the documents or charges list page passes a portfolio-wide brand filter, it should offer only the active company's brands, because another company's brand now returns 404. The admin can also show the new `tenantId` per item and `targetPaymentId` on refund charges.\n3. (Optional) backend/src/index.ts /health uploadStorage: it can import `missingStorageEnv` / `R2_REQUIRED_ENV` from modules/media/routes.ts, or a lib file if moved, so the list is kept in one place. Today the same four names are written out in both places.",
+        "prodNotes": "1. Behaviour change on Dev → API → POS connector: the fiscal documents list and the card charges list now always show the operator's ACTIVE company. This is true even with the \"All companies\" portfolio view on. A two-company CEO switches company to see the other company's outbox.\n2. Library uploads now fail fast with 503 STORAGE_NOT_CONFIGURED, naming the missing variables, when R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY or R2_PUBLIC_URL is unset on the box. Before, the API signed a URL to an undefined host and the upload failed later in the browser. Check /health `checks.uploadStorage` before Monday.\n3. .env.docker.template and infra/staging.tfvars.example now hold only an empty SERVD_SECRET_KEY / servd_secret_key placeholder. The real key is still set only in the API container's environment on the box."
+      },
+      "review": [],
+      "fix": null
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:I1",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "aa041f0ec4d1a71a8",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791718820103,
+      "queuedAt": 1791718820071,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I1 (backend money guards and storefront tip) is done. The g…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…",
+      "promptFramed": true,
+      "lastProgressAt": 1791719257008,
+      "tokens": 186694,
+      "toolCalls": 40,
+      "durationMs": 436904,
+      "resultPreview": "{\"summary\":\"I1 (backend money guards and storefront tip) is done. The gift-card and loyalty paths can no longer move a bill while the card machine is charging it. The storefront writes tip_cents in the order insert. The postRefundPayment cancelled-branch item is not_needed: no production code reaches it.\\n\\n(a) Card-machine guard:\\n- `giftCards/service.ts` `redeemGiftCardTx` calls `assertNoActiveT…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:I2",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "ab9cdffe112e1c4eb",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791718820103,
+      "queuedAt": 1791718820072,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I finished all five I2 items (4, 5, 6, 7 and the first bull…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…",
+      "promptFramed": true,
+      "lastProgressAt": 1791719285830,
+      "tokens": 145130,
+      "toolCalls": 46,
+      "durationMs": 465122,
+      "resultPreview": "{\"summary\":\"I finished all five I2 items (4, 5, 6, 7 and the first bullet of 9) and added two-company tests for the route scoping. Backend tsc is clean, and 212 tests pass across 20 suites: 19 suite files plus a rerun of the deliveryWatch pair.\\n\\n- **Item 6 (connectors/routes.ts):**\\n  - GET /fiscal/documents and GET /terminal/charges now list only the ACTIVE company: `activeTenantId(req, 'the PO…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:I1",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a6f79061314bbe328",
+      "model": "claude-opus-5-5",
+      "state": "error",
+      "startedAt": 1791719257036,
+      "queuedAt": 1791719257010,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /home/user/servd/backend && sed -n 95,140p src/modules/r…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…",
+      "promptFramed": true,
+      "lastProgressAt": 1791719342973,
+      "error": "You've hit your session limit · resets 2:20pm (UTC)",
+      "tokens": 119667,
+      "toolCalls": 16,
+      "durationMs": 85936
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "review:I2",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "af6de11b1e1aa7f5b",
+      "model": "claude-opus-5-5",
+      "state": "error",
+      "startedAt": 1791719285838,
+      "queuedAt": 1791719285835,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "ls backend/src/workers/ | head -50; head -40 backend/src/wo…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…",
+      "promptFramed": true,
+      "lastProgressAt": 1791719344475,
+      "error": "You've hit your session limit · resets 2:20pm (UTC)",
+      "tokens": 109379,
+      "toolCalls": 21,
+      "durationMs": 58637
+    }
+  ],
+  "totalTokens": 560870,
+  "totalToolCalls": 123
+}

@@ -1,0 +1,796 @@
+{
+  "summary": "Re-run the simulated shifts per area against the current code: confirm each original finding is fixed, adapt to intended behaviour changes, hunt regressions, then adversarially verify every new finding",
+  "agentCount": 7,
+  "logs": [
+    "foh: 2 low findings kept unverified",
+    "boh: 2 low findings kept unverified"
+  ],
+  "result": [
+    {
+      "area": "foh",
+      "originals": [
+        {
+          "id": "FOH-01",
+          "status": "fixed",
+          "evidence": "GET /concepts as cashier and waiter (foh) returns 200 with only GS Foods' 3 brands and till fields (taxRateCash 15 / taxRateCard 8, no taxRate). KGC cashier sees only Grill House. ?view=picker also 200. Admin /pos reads /concepts (pos/page.tsx:64-74). 02-login-connector.ts"
+        },
+        {
+          "id": "FOH-02",
+          "status": "fixed",
+          "evidence": "Checked in code, since the admin UI was not driven. PaymentModal now pays shown.dueCents from GET /pos/orders/:id/quote and POST /pos/quote (tillApi.ts:169,200), and nothing client-side computes GST. On the API, POST /pos/quote gave 287500, the same as the ring-up. The card quote for O1 was 367200 at 8%, and the card payment was accepted at that amount."
+        },
+        {
+          "id": "FOH-03",
+          "status": "fixed",
+          "evidence": "Voiding Kheer with GS manager PIN lowered the order from 327750 to 212750 (taxCents 27750; Margarita also voided). The receipt shows 1x Karahi, sub 185000 + tax 27750 = 212750, and the cash payment at the lowered bill returned 201. A void on a part-paid split bill lowered the bill, cleared the pending portion, and the quote then showed due 43125. 04-mid.ts, 09-edges.ts"
+        },
+        {
+          "id": "FOH-04",
+          "status": "fixed",
+          "evidence": "Two cashiers paying concurrently returned [400 ALREADY_PAID, 201], leaving 1 row and collecting 333500 on a 333500 bill. A double tap with no key gave [201, 400] and 1 row. A triple tap with the same key gave 201×3 (2 replayed) and 1 row. Reusing the key with a different amount returned 409 IDEMPOTENCY_KEY_REUSED."
+        },
+        {
+          "id": "FOH-05",
+          "status": "fixed",
+          "evidence": "Concurrent full refunds returned [200, 400 REFUND_EXCEEDS_PAID]: 166750 refunded on a 166750 sale, with 1 order.refund journal entry."
+        },
+        {
+          "id": "FOH-06",
+          "status": "fixed",
+          "evidence": "30 keyless concurrent ring-ups (15 GS waiter, 15 KGC cashier) created 30 distinct orders, all 201. The server key is pos-<uuid>, e.g. pos-3906ca9f-…."
+        },
+        {
+          "id": "FOH-07",
+          "status": "fixed",
+          "evidence": "A KGC cashier reusing a GS Foods idempotency key gets 409 IDEMPOTENCY_KEY_REUSED and never the GS order."
+        },
+        {
+          "id": "FOH-08",
+          "status": "fixed",
+          "evidence": "A menu modifier sent with priceDeltaCents -140000 is re-priced from the menu (+35000, total 207000). A free-text negative add-on returns 422 NEGATIVE_MODIFIER. Another item's modifier returns 422 INVALID_MODIFIER. unitPriceCents 100 returns 403 PRICE_OVERRIDE_BLOCKED."
+        },
+        {
+          "id": "FOH-09",
+          "status": "fixed",
+          "evidence": "A payment on a cancelled order returns 409 ORDER_NOT_OPEN. Money already taken before a cancel (split portion) is booked at close as 1110 refund-due, not revenue, and the hand-back nets it out (12-more.ts ledger)."
+        },
+        {
+          "id": "FOH-10",
+          "status": "fixed",
+          "evidence": "A 2-way all-card check-split re-prices before splitting into portions of 199800 each. The order completes at taxRatePct 8, total 399600, which equals the single-card price."
+        },
+        {
+          "id": "FOH-11",
+          "status": "fixed",
+          "evidence": "The cash_variance flag (PKR -750) and the consecutive_voids flags carry tenantId A. GET /crosschecks/exceptions shows them to the GS CEO; the KGC CEO's inbox is empty."
+        },
+        {
+          "id": "FOH-12",
+          "status": "fixed",
+          "evidence": "/reports/sales for today (A) shows orders 19, gross 4609800, tax 478850 (equal to the 2030 balance), tips 60000, refunds 504700, net 3393750. Net equals ledger 4001 3610000 − 7030 172500 − 7010 43750. B shows 2 orders, 677900."
+        },
+        {
+          "id": "FOH-13",
+          "status": "fixed",
+          "evidence": "A triple-tap open shift returns [201, 400 SHIFT_OPEN, 400], leaving 1 open row."
+        },
+        {
+          "id": "FOH-14",
+          "status": "fixed",
+          "evidence": "A card payment of quote + 50000 with tipCents 50000 returns 201: order tipCents 50000, total 411800 (bill 361800 at 8%). A cash tip with change works. Z tips = 60000, and the shift close credits 2095 60000."
+        },
+        {
+          "id": "FOH-15",
+          "status": "fixed",
+          "evidence": "Pay or comp onto another cashier's drawer returns 403 NOT_YOUR_SHIFT; a cash drop on another drawer also returns NOT_YOUR_SHIFT. A manager paying onto cashier2's drawer gets 201."
+        },
+        {
+          "id": "FOH-16",
+          "status": "fixed",
+          "evidence": "A void on a completed order (even by a manager) returns 422 ORDER_PAID."
+        },
+        {
+          "id": "FOH-17",
+          "status": "fixed",
+          "evidence": "A full refund of a customer's card order posts loyalty.earn.reversal (Dr 2060 28620 / Cr 6060), leaving the 2060 balance at 0."
+        },
+        {
+          "id": "FOH-18",
+          "status": "fixed",
+          "evidence": "After the full refund of the customer's only order, the customer's firstOrderAt and lastOrderAt are null and totalSpentCents is 0 (it was 286200)."
+        },
+        {
+          "id": "FOH-19",
+          "status": "fixed",
+          "evidence": "POST /auth/staff/:id/sign-in-code by the GS FOH manager returns 201 with a code. The cashier redeems it at /auth/staff/otp/verify (200, role cashier); reusing it fails. The KGC manager gets 404 and a cashier gets 403. The production-mode 503 OTP_UNAVAILABLE message was not re-run."
+        },
+        {
+          "id": "FOH-20",
+          "status": "fixed",
+          "evidence": "A waiter-rung ticket (no key, no drawer) appears in the till's open-ticket list (GET /orders?conceptId&source=pos&status=received,…) for the cashier. The waiter printed a pre-bill (PB-2), and the cashier settled it with one cash tender (201, completed). The admin PaymentModal accepts an existing ticket (ticket prop)."
+        },
+        {
+          "id": "FOH-21",
+          "status": "fixed",
+          "evidence": "Close without confirm returns 409 OPEN_TICKETS listing the tickets (e.g. 4 unpaid worth PKR 4655). Close with confirmOpenTickets returns 200, and the Z-report includes openTickets plus unassignedOpenTickets."
+        },
+        {
+          "id": "FOH-22",
+          "status": "fixed",
+          "evidence": "An unknown customerId returns 422 CUSTOMER_NOT_FOUND."
+        },
+        {
+          "id": "FOH-23",
+          "status": "fixed",
+          "evidence": "A refunded order's receipt carries a REFUNDED banner and the refund line (-PKR 2862.00). ?duplicate=1 adds a reprint marker."
+        },
+        {
+          "id": "FOH-24",
+          "status": "fixed",
+          "evidence": "tenderedCents 1000 on a 63250 cash payment returns 400 TENDERED_LESS_THAN_DUE; the same check applies on the split-portion settle."
+        },
+        {
+          "id": "FOH-25",
+          "status": "fixed",
+          "evidence": "After 8 refunds on brands with no invoiceLegalName, the API log has 0 '[invoice] auto credit-note failed' lines and 0 HTTP 500s."
+        },
+        {
+          "id": "FOH-26",
+          "status": "fixed",
+          "evidence": "Paying onto a closed drawer returns SHIFT_CLOSED 'This drawer is closed — open a new shift'."
+        }
+      ],
+      "coverage": [
+        {
+          "journey": "Sign-in: cashier password refused, OTP code sign-in (cashier, waiter, KGC cashier), manager/CEO password, manager-issued in-person sign-in code",
+          "result": "pass",
+          "note": "USE_CODE_LOGIN for floor password. Sign-in code: GS FOH manager 201, KGC manager 404, cashier 403, single use. The production-mode OTP_UNAVAILABLE path was not run."
+        },
+        {
+          "journey": "Till brand list / modules (FOH-01)",
+          "result": "pass",
+          "note": "/concepts and ?view=picker return 200 for cashier/foh, own company only, till fields only. Cashier modules: dashboard, pos, orders, curbside, tables."
+        },
+        {
+          "journey": "Fiscal connector setup as CEO (test driver, company A); company B left unconfigured",
+          "result": "pass",
+          "note": "PUT /connectors/fiscal {driver:test}, test with dryRun returns TEST-SRB-…, FOH manager gets 403, go-live without POS id returns NOT_READY, KGC CEO cannot set Grill's id via A (404)."
+        },
+        {
+          "journey": "Open drawers with float, double-tap open, /pos/shifts/current",
+          "result": "pass"
+        },
+        {
+          "journey": "Ring dine-in, takeaway, waiter (keyless) tickets with modifiers and notes; station routing; idempotent resend",
+          "result": "pass",
+          "note": "Socket fan-out checked: order:new reaches only the owning company's manager room; a KGC socket naming the Simmer concept/station received nothing."
+        },
+        {
+          "journey": "Pre-bill (PB-n per company), receipt 409 PRE_BILL_REQUIRED before payment, ALREADY_FINAL after; waiter pre-bill; pre-bill on part-paid bill",
+          "result": "pass"
+        },
+        {
+          "journey": "Cash with change, card with 8% re-price via quote, split tender in one call, check-split all-card (8%) and 3-way cash, tips on card and cash",
+          "result": "pass"
+        },
+        {
+          "journey": "Discounts: 10% cashier, 25% needs GS PIN, KGC PIN refused; discount + card re-price on pre-discount base",
+          "result": "pass",
+          "note": "Confusing error code for a wrong PIN (FOH-R2-03)."
+        },
+        {
+          "journey": "Add-on and price-override protections (FOH-08)",
+          "result": "pass"
+        },
+        {
+          "journey": "Manager-only voids (§17.4): cashier/waiter without PIN 403, KGC/wrong PIN INVALID_MANAGER_PIN, GS or CEO PIN ok, signed-in manager alone ok, free line still needs manager, approverId in audit, bill lowered, stock/KDS emit",
+          "result": "pass",
+          "note": "PIN brute force is not throttled (FOH-R2-01)."
+        },
+        {
+          "journey": "Manager-only cancel of rung-up order; pre-bill becomes cancelled with cancelledById; no fiscal doc; payment after cancel refused",
+          "result": "pass"
+        },
+        {
+          "journey": "Cancel of a part-paid split bill, then hand-back refund; ledger 1110 refund-due path",
+          "result": "pass"
+        },
+        {
+          "journey": "Comp (cap + PIN), comp remainder in cash, staff meal comp",
+          "result": "pass"
+        },
+        {
+          "journey": "Refunds: partial cash with PIN, full card by manager, refund again blocked, comped order refund capped at paid, tipped order full refund (2095 reversed), refund of a sale closed on an earlier drawer",
+          "result": "pass",
+          "note": "Loyalty reversal posted, rollups recomputed, fiscal refund docs waiting, then filed after the sale."
+        },
+        {
+          "journey": "Receipts / reprint: FULL & FINAL heading, REFUNDED banner, duplicate marker, voided lines vs totals consistent, fiscal number + TEST marker",
+          "result": "pass"
+        },
+        {
+          "journey": "Cash movements: drop, pay-out with PIN, KGC PIN refused, other cashier's drawer refused",
+          "result": "pass"
+        },
+        {
+          "journey": "Concurrency: two cashiers same bill, double/triple tap with and without key, concurrent refunds, 30 keyless ring-ups across companies, cross-company key reuse, two cashiers ringing the same table",
+          "result": "pass"
+        },
+        {
+          "journey": "Company separation: KGC cashier/manager/CEO vs GS orders, receipts, quotes, pre-bills, payments, voids, cancels, refunds, comps, splits, Z, close, cash movements, tables, menu, fiscal docs, terminal charges, PINs, pre-bill list, exceptions, sales report, sockets",
+          "result": "pass",
+          "note": "All 404/422/403 as appropriate; nothing from A visible to B."
+        },
+        {
+          "journey": "Close drawers: OPEN_TICKETS 409 then confirm, short PKR 750 / over PKR 200 / exact; Z-report expected cash matches an independent recomputation; variance flag in the CEO inbox",
+          "result": "pass"
+        },
+        {
+          "journey": "Ledger: every entry balanced and company-stamped, 1010/1015/1030, revenue, GST at tender split equal to the sum of order taxCents, tips 2095, discounts 7010, comps 7030, over/short 8010, refunds and loyalty reversal",
+          "result": "pass",
+          "note": "15+ entries, 0 unbalanced, 0 untenanted, 0 cross-company lines. GST moves from 2030 to 2032 once the brand has an srbPosId; refunds of earlier sales reverse the account the sale used."
+        },
+        {
+          "journey": "Reports: /reports/sales agrees with the ledger and Z; sales-tax return equals the 2030 balance",
+          "result": "pass"
+        },
+        {
+          "journey": "Fiscal: held until go-live, CEO go-live, release all held, TEST numbers on receipts and receipt-data, new sale files at the till synchronously, refund CN filed, cancelled order no doc; company B held/no_connector; reporting switch OFF (CEO only, reason required)",
+          "result": "partial",
+          "note": "Works as designed. A held backlog stays stuck after reporting OFF (FOH-R2-02)."
+        },
+        {
+          "journey": "Finance → Voided pre bills: flags ORPHANED / FINAL_LOWER / LINE_VOIDS_AFTER, per-company list, role gate",
+          "result": "pass",
+          "note": "CEO sees A's 5 pre-bills with correct flags; the KGC CEO sees only B's; FOH manager, cashier and KGC manager get 403 (roles admin/owner/management/finance by design). No finance-role user in fixtures."
+        },
+        {
+          "journey": "Card machine (test terminal for A): config, charge start, TERMINAL_CHARGE_ACTIVE on void/cancel/cash/split/comp, SHIFT_HAS_ACTIVE_CHARGE on close, second charge refused, cancel, approve with tip records payment and files fiscal, keyed ref with terminal_offline audited, MANUAL_CARD_REF_DISABLED when allowManualRef off, terminal refund by manager (cashier 403), B cannot read A's charge",
+          "result": "pass",
+          "note": "Gift-card/loyalty bill changes during an active charge were not exercised (gift cards and loyalty are another area)."
+        },
+        {
+          "journey": "Approvals inbox counts (CEO)",
+          "result": "pass",
+          "note": "Only counts read; all 0 in this FOH data set."
+        },
+        {
+          "journey": "Admin UI (FOH-02 / FOH-20 client code)",
+          "result": "partial",
+          "note": "Verified by reading frontend code plus the API behaviour it relies on; no browser run (no next build/dev allowed)."
+        },
+        {
+          "journey": "API log review",
+          "result": "pass",
+          "note": "0 HTTP 500s; no error lines except /health 503 (WhatsApp/SMTP/R2 unset by design)."
+        }
+      ],
+      "envNotes": "Local only. Postgres DB servd_sim_foh_r2 was built with prisma db push plus the 0_init raw-SQL objects and the terminal_charges partial unique index (backend/.sim/foh-r2/00-rawsql.ts). Fixtures are the same as the first run (01-setup.ts): GS Foods (Simmer/Stackd/Flipd), Karachi Grill Co (Grill House), CEO, FOH manager with PIN, 2 cashiers and a waiter for A; CEO, FOH manager with PIN and a cashier for B; one customer. The API ran from the current uncommitted tree on 127.0.0.1:4111 (NODE_ENV=development, ENABLE_WORKERS=true, JWT secrets sim-…-foh-r2-…), started 14:47:43 UTC and stopped 15:02 UTC; the PIDs were killed and port 4111 then answered nothing.\n\nRedis deviation: the shared Redis on 6379 has only 16 databases, so the assigned db 21 does not exist ('DB index is out of range'). I ran a private redis-server on 127.0.0.1:6421 (32 dbs, no persistence) and used db 21 there, then shut it down at the end. My first attempt ran `redis-cli -n 21 flushdb` against the shared server. The SELECT failed and redis-cli printed OK, so it most likely flushed db 0 on the shared Redis. db 0 was not assigned to any agent and was empty afterwards, but I cannot prove it held nothing before. The first API start, also pointed at the invalid db 21, ran for about 20 seconds and was killed before any test traffic.\n\nThe fiscal connector was set to the built-in 'test' driver for company A only, through PUT /connectors/fiscal as the CEO. Before go-live, A's documents were held; then the CEO set Simmer's srbPosId, tested, went live and released. Company B was left unconfigured, and later the KGC CEO switched its reporting OFF. The test card machine was enabled for A only during 08-terminal.ts, then set back to driver 'none'. Nothing external was called and no message was sent (WhatsApp/SMTP unset; the dev OTP copies were read from phone_otps).\n\nScripts: /home/user/servd/backend/.sim/foh-r2/ (02-login-connector, 03-lunch, 04-mid, 05-race-sep, 06-close, 07-fiscal, 08-terminal, 09-edges, 09b-taxacct, 10-dinner-close, 11-sockets, 12-more, 13-pin). Evidence JSON and sim.log: /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/foh-r2/. API log: /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/foh-r2-api.log. socket.io-client is not installed in backend/node_modules, so the socket check imported the copy in frontend/admin/node_modules. No tracked file was edited.",
+      "confirmed": [
+        {
+          "id": "FOH-R2-01",
+          "severity": "high",
+          "title": "Manager PINs can be guessed without limit: no throttle, lockout, audit or alert on wrong PINs, and every void, cancel, refund and comp now rests on that PIN",
+          "repro": "As cashier1 (OTP session), ring an order with 2 lines. Send POST /pos/orders/:id/void {orderItemId:<line 2>, reason:'x', managerOverridePin:'<guess>'} 200 times (20 in parallel per batch) with PINs 200000..200199. Then send the real FOH manager PIN.",
+          "expected": "Wrong manager PINs are rate-limited per cashier/device (lockout after a few failures, like the login limiter), each failure is audited, and repeated failures raise an exception flag for the owner. The CLAUDE.md §17.4 separation of duties ('a cashier or server can never void alone') depends on the PIN staying secret.",
+          "actual": "All 200 guesses return 403 INVALID_MANAGER_PIN, at about 5 guesses per second (38.8 s for 200), with 0 exception flags and 0 audit rows. The real PIN is accepted immediately afterwards (200). PINs may be 4 digits (PIN_FORMAT 4–8), and a guess matches ANY manager of the company, including the CEO's PIN. At this rate a 4-digit PIN falls in well under an hour of background requests from a cashier token. The same unthrottled check sits behind the discount override, cash pay-outs, comps, refunds and order cancel.",
+          "evidence": "backend/.sim/foh-r2/13-pin.ts output: pin.burst {attempts:200, ms:38822, perSecond:5, codes:{INVALID_MANAGER_PIN:200}}; pin.trail {exceptions:0, audits:[]}; pin.correctAfterBurst 200. Also 12-more.ts: 15 sequential wrong PINs, then the correct PIN is accepted.",
+          "suspectedCause": "backend/src/modules/auth/managerPin.ts:56-76 (verifyManagerPin loops bcrypt.compare over every manager of the company with no attempt counter); callers requireManagerApproval (backend/src/modules/pos/service.ts:1436-1453), ensureCapOrManagerOverride (:1388) and the discount gate (:202) never record failures.",
+          "suggestedFix": "Count failed manager-PIN attempts per actor (and per order) in the redisFast-backed limiter used for login (e.g. 5 per 15 min), then return 429 MANAGER_PIN_LOCKED. Audit 'manager_pin.failed' with the actor and order, flag an exception for the company after N failures, and consider requiring 6+ digit manager PINs.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "high",
+            "reason": "The finding is real, and it is not one of the intended changes. §17.4 says a wrong PIN gets a 403 INVALID_MANAGER_PIN. It does not say guesses are unlimited, and the isWeakPin comment in managerPin.ts says weak-PIN rejection is \"Not a substitute for lockout\". The code has a single verifier, verifyManagerPin (backend/src/modules/auth/managerPin.ts:56-76). It loads every active approver in the company and runs bcrypt.compare against each one. There is no attempt counter, no Redis call, no audit and no flag. None of its callers record failures either:\n- requireManagerApproval (pos/service.ts:1436-1453), used by line void and /orders/:id/cancel\n- ensureCapOrManagerOverride (:1388-1427), used by refund, comp and void caps\n- the discount and price-override gates (:202, :225)\n- staff meal (:1964)\n- till pay-out (:2981)\n- trustops petty cash (trustops/routes.ts:342)\n\nOther secrets in the same codebase are throttled. The HR kiosk PIN locks after 5 tries in 15 minutes (hr/kioskPin.ts:20). The self-service PIN change is limited to 5 and 6 attempts, and its comment says that is exactly to stop \"grinding the 10^4 PIN space\" (auth/routes.ts:94-99). The manager-override PIN is the most powerful of these and has no limit at all.\n\nThe only brake is the global @fastify/rate-limit: 200 per minute (index.ts:260). It runs at onRequest, before requireAuth sets req.staffUser, so it is keyed on the client IP, not the user as the code comment claims. Changing IP gives a fresh bucket.\n\nOne correction to the original evidence: the sim's \"5 guesses/s\" was measured on loopback, which isInternalRequest exempts from the limiter. In production the ceiling is about 200 guesses per minute per public IP. That does not change the conclusion. About 9.8k non-weak 4-digit PINs at 200 per minute takes about 49 minutes worst case for one manager. Any approver's PIN matches, so with k approvers the expected time is roughly 49/(k+1) minutes, and less again with a second IP. 6-digit PINs (about 83 hours per IP) are allowed but not required.\n\nI am keeping severity at high. The attacker must be an authenticated insider (cashier or server), but that is exactly the actor §17.4 exists to stop. The payoff is unattributed voids, cancels, refunds, comps, pay-outs and over-cap discounts, all recorded against a manager, including the CEO's PIN, which unlocks discounts above the manager cap. There is zero audit or alert trail of the guessing.",
+            "evidence": "I reproduced it with a vitest file kept at /home/user/servd/backend/.sim/foh-r2/verify/zzverify_foh_0.test.ts. To run it, I copied it to tests/ and deleted the copy afterwards. It ran against my own database, servd_test_rv_foh_0, created and later dropped. For Redis I used 6424/26, because 6379 only has 16 databases. Setup: two companies; company A has foh_management (PIN 5821), admin/CEO (PIN 6047) and a cashier; company B has its own manager.\n\nResults:\n1. Line void: 100 wrong 6-digit PINs (in parallel batches of 20) plus 5 wrong 4-digit PINs. Output: [rv.void.burst] {\"attempts\":105,\"codes\":{\"INVALID_MANAGER_PIN\":105},\"auditsDuring\":[],\"flagsDuring\":0}. The real PIN was then accepted: [rv.void.correctAfterBurst] 200 voided.\n2. POST /orders/:id/cancel: 30 wrong PINs, then the CEO's PIN. Output: [rv.cancel.burst] {\"codes\":{\"INVALID_MANAGER_PIN\":30},\"auditsDuring\":0,\"flagsDuring\":0}; [rv.cancel.ceoPin] 200; audit order.cancel approverId equals the CEO. So a guess matches any approver of the company.\n3. Company B's manager PIN at company A gives INVALID_MANAGER_PIN. Company separation holds; this is not part of the finding.\n4. Global limiter with the production config: one public X-Forwarded-For IP gave {\"INVALID_MANAGER_PIN\":180,\"RL_429\":30}. The same cashier token from a second IP was not throttled (answered INVALID_MANAGER_PIN), which confirms the limiter is keyed per IP at onRequest (index.ts:256-270, plugin defaultHook 'onRequest'; requireAuth sets staffUser in preHandler, middleware.ts:128/157).\n5. Redis db 26 held no keys after the run: the manager-PIN path never touches a limiter.\n\nCode: managerPin.ts:56-76 has no counter; pos/service.ts:1419-1420, 1448-1450, 1964-1965 and 2981-2982 throw INVALID_MANAGER_PIN with no audit or flag. Compare hr/kioskPin.ts:20,46-53 (KIOSK_PIN_LIMIT 5/15min with recordFailure) and auth/routes.ts:94-99 (PIN_CHANGE limits, \"stops a borrowed session grinding the 10^4 PIN space\").\n\nNo tracked files were modified. The temporary tests/zzverify_foh_0.test.ts was deleted."
+          }
+        }
+      ],
+      "rejected": [],
+      "lows": [
+        {
+          "id": "FOH-R2-02",
+          "severity": "low",
+          "title": "Turning 'Fiscal reporting required' OFF leaves the company's earlier held documents stuck forever; release refuses and /health keeps warning",
+          "repro": "Company B (no fiscal connector) rings and pays 3 sales; each creates a FiscalDocument held/no_connector. As the KGC CEO: PUT /connectors/fiscal/reporting-required {required:false, reason:'Second company is a test kitchen for now'} returns 200. Then POST /connectors/fiscal/documents/release {} and GET /health.",
+          "expected": "CLAUDE.md: reporting OFF means 'no fiscal documents, no held backlog, no alerts'. The pre-switch held backlog should either be resolvable by the CEO (e.g. released/closed as not-required, audited) or stop counting in /health and the connector counts.",
+          "actual": "New sales correctly create no document, and the receipt says 'Not a tax invoice'. But the 3 earlier documents stay 'held' permanently: release returns 409 NOT_LIVE 'Go live with the fiscal POS before releasing held sales'. GET /connectors (B) shows counts.held 3, and /health fiscalConnector stays 'warn' with '3 sales held in total until go-live / registration'. A non-commercial company never goes live, so the warning never clears.",
+          "evidence": "07-fiscal.ts: B.reportingOff {fiscalReportingRequired:false}; B.sale.reportingOff {fiscal:null, docs:0, receiptLine:'Not a tax invoice…'}; docs.B.end {'sale:held/no_connector':3}; B.connector counts.held 3. 11-sockets.ts: B.release.reportingOff 409 NOT_LIVE. 10-dinner-close.ts: health.fiscal '…3 sales held in total until go-live / registration'.",
+          "suspectedCause": "backend/src/modules/connectors/routes.ts:406-426 (the reporting switch changes only the setting); backend/src/connectors/health.ts:31-53 (counts every held document regardless of the company's switch); releaseHeld requires a live connector.",
+          "suggestedFix": "When the CEO switches reporting OFF, show the existing held backlog and let the CEO close it as 'skipped: reporting_not_required' in the same audited action, or at least exclude companies with reporting OFF from the /health held count. Keep 'no operator skip' for companies that file."
+        },
+        {
+          "id": "FOH-R2-03",
+          "severity": "low",
+          "title": "A wrong or other-company manager PIN on an over-cap discount says 'Manager PIN required' (DISCOUNT_OVER_CAP) instead of INVALID_MANAGER_PIN; the discount alert is filed as kind 'high_value_void' with no order id",
+          "repro": "As cashier1: POST /pos/orders {conceptId:Simmer, items:[Beef Nihari, 2x Garlic Naan], discountCents:43750, discountReason:'bday', managerOverridePin:<KGC manager PIN or '999999'>}. Separately, apply a 25% discount with the GS manager PIN, then GET /crosschecks/exceptions as the CEO.",
+          "expected": "A PIN that was sent but is wrong returns 403 INVALID_MANAGER_PIN, as on void, cancel, refund, comp and pay-out. The discount alert has a discount kind and points to the order.",
+          "actual": "The response is 403 DISCOUNT_OVER_CAP 'Discount of 50% exceeds the 10% cap for cashier. Manager PIN required.', so the cashier is told to enter a PIN they just entered. The authorised 25% discount appears in the CEO inbox as kind 'high_value_void', title '25% discount on POS order', with entityId null.",
+          "evidence": "04-mid.ts: disc.25.kgcPin -> DISCOUNT_OVER_CAP; 13-pin.ts: pin.discountRoute {code:'DISCOUNT_OVER_CAP', message:'…Manager PIN required.'}; q-flags.ts: {k:'high_value_void', co:'A', t:'25% discount on POS order', e:null}.",
+          "suspectedCause": "backend/src/modules/pos/service.ts:201-209 (one error for 'no PIN' and 'bad PIN'); :250-261 (flagException kind 'high_value_void', no entityId because the order is not created yet).",
+          "suggestedFix": "Throw INVALID_MANAGER_PIN when managerOverridePin is present but does not verify. Use a 'discount_above_cap' kind and set entityId after the order is created (or flag after the insert)."
+        }
+      ]
+    },
+    {
+      "area": "boh",
+      "originals": [
+        {
+          "id": "BOH-01",
+          "status": "fixed",
+          "evidence": "Ring fries+Classic, a manager (gmA) voids the Classic, then expo fires. Fire returns {fired:1}, the burger stays 'voided', and it is not on the grill queue, even with ?states=all (v_originals.out BOH-01)."
+        },
+        {
+          "id": "BOH-02",
+          "status": "fixed",
+          "evidence": "After a manager voids the Classic, the order drops from 218500/28500 to 51750/6750 and a cash payment of 51750 gets 201. A cashier alone gets 403 MANAGER_OVERRIDE_REQUIRED. The audit row order_item_void records approverId=gmA."
+        },
+        {
+          "id": "BOH-03",
+          "status": "fixed",
+          "evidence": "DELETE /stations/{Simmer Hot Line} -> 409 STATION_IN_USE {menuItems:1,recipeSteps:0,openTickets:0}. The station is not deleted."
+        },
+        {
+          "id": "BOH-04",
+          "status": "fixed",
+          "evidence": "A held item stays on GET /expo/station/:id/queue?states=all as 'held'. The default queue leaves it out on purpose for bump-only tablets. Bumping while held gives 409 ITEM_ON_HOLD. A recall puts the item back on the queue as 'recalled', sets the order back to 'preparing', and handoff gives 409 NOT_READY until the remake is re-bumped. Recall on a completed till sale is still 200, which is by design: recallBlock lets a till sale through because it completes at payment (orders/service.ts:1461)."
+        },
+        {
+          "id": "BOH-05",
+          "status": "fixed",
+          "evidence": "Expo fire on [fries c1, Classic c2] returns {fired:1,course:1,heldCourses:[2]}. Only the fries go to preparing. fire-course {course:2} -> 200 fired:1."
+        },
+        {
+          "id": "BOH-06",
+          "status": "fixed",
+          "evidence": "For an order with course 1 fries and course 2 Classic, at ring-up both have scheduledFireAt=null. After 36 s both are still 'pending' and the order is still 'received', so the worker no longer fires course 2 or a received order. Expo Fire now overrides pacing; that is reported separately as BOH-R2-01."
+        },
+        {
+          "id": "BOH-07",
+          "status": "fixed",
+          "evidence": "5 kg beef with estimatedCostCents:100 -> 400 PHOTO_REQUIRED, quoting 'worth PKR 9,250' (server cost). 1 kg with a photo -> 201 with estimatedCostCents=185000. Ledger: Dr 5040 185000 / Cr 1210 185000 in company A."
+        },
+        {
+          "id": "BOH-08",
+          "status": "fixed",
+          "evidence": "A freezer reading of -9C with a corrective action raises an ExceptionFlag with tenantId = company A. It shows in CEO A's /crosschecks/exceptions and not in CEO B's."
+        },
+        {
+          "id": "BOH-09",
+          "status": "fixed",
+          "evidence": "Role procurement (buyerA): create PO 201, list POs 200, bills 200, reorder 200, submit 200 (approved), mark-sent 200 (sent). /permissions/me = [procurement, inventory, reports]."
+        },
+        {
+          "id": "BOH-10",
+          "status": "changed_by_design",
+          "evidence": "An auto-86'd croissant is still sold at the till (201, log line '[auto-86] till sold ... recount the ingredients'), as documented in orders/service.ts:455-475. The storefront refuses it (400 ITEM_UNAVAILABLE). A chef's manual 86 of the Flat White is refused at the till: 409 ITEM_UNAVAILABLE."
+        },
+        {
+          "id": "BOH-11",
+          "status": "fixed",
+          "evidence": "Voiding an unfired Classic gives the stock back: beef 8.10 -> 7.95 at ring-up -> 8.10 after the void. The audit row stock.void_restore puts back beef 0.15, bun 1, cheese 1. A line that was already fired stays consumed by design (see BOH-R2-03)."
+        },
+        {
+          "id": "BOH-12",
+          "status": "fixed",
+          "evidence": "Counting buns 5 short posts inventory.count:<id> in company A: Dr 5050 30000 / Cr 1210 30000. A mixed count posts both directions balanced (cheese +4: Dr 1210 16000 / Cr 5050 16000; oil -2: Dr 5050 110000 / Cr 1210 110000). A zero-variance count posts nothing."
+        },
+        {
+          "id": "BOH-13",
+          "status": "fixed",
+          "evidence": "Beef PO 20 kg @1800 is received, then a bill at @1850 re-averages item cost to 185000 and posts Dr 1210 3699991 + Dr 5060 9 / Cr 2010 3700000 when the goods were fully received first. This is correct only when the bill follows a full receipt; see BOH-R2-02 for a bill before or after a partial receipt."
+        },
+        {
+          "id": "BOH-14",
+          "status": "fixed",
+          "evidence": "A below-threshold submit gives {status:'approved'} with sentAt null. Explicit send to a supplier with no contact -> 400 NO_CONTACT. mark-sent {channel:'phone'} -> 'sent'. Receiving an approved but unsent PO -> 400 PO_NOT_SENT."
+        },
+        {
+          "id": "BOH-15",
+          "status": "fixed",
+          "evidence": "After 40 croissants are received, GET /kds/auto-86/back-in-stock?conceptId=stackd lists 'Butter Croissant'. Company B's list is empty, and B naming A's brand -> 404. The chef turns it back on with PATCH /menu/items/:id/availability -> 200, and the storefront menu shows it again."
+        },
+        {
+          "id": "BOH-16",
+          "status": "fixed",
+          "evidence": "POST /orders/:id/fire-course {course:2} -> 200. The grill socket receives item:updated{status:'preparing'} and expo:fire for the burger."
+        }
+      ],
+      "coverage": [
+        {
+          "journey": "Re-run of all 16 original BOH findings against the current tree (v_originals.ts)",
+          "result": "pass",
+          "note": "15 fixed, BOH-10 changed by design (auto-86 still sold at the till, manual 86 refused). Evidence: scratchpad/audit/boh-r2/originals.json and v_originals.out."
+        },
+        {
+          "journey": "Fiscal connector set-up: CEO PUT /connectors/fiscal {driver:'test'}, test connection, brand POS ids, go-live, release held",
+          "result": "pass",
+          "note": "Company B left unconfigured; B cannot set A's brand POS ids (404); a manager cannot go live (403). Before go-live: 15 sale documents 'held' (statusReason 'no_connector' even with the test driver configured; label only). After release and the sweeper, every completed order has exactly one sale document, filed with a TEST-FBR-... number. No document for the cancelled order, none orphaned, none for company B. Receipt shows 'TEST — NOT A FISCAL INVOICE FBR Fiscal Invoice: TEST-FBR-…'."
+        },
+        {
+          "journey": "POS ring-up -> KDS station routing (Flipd Grill/Fry)",
+          "result": "pass",
+          "note": "Lines go to the right stations; my-stations restricts line cooks to their own stations."
+        },
+        {
+          "journey": "KDS sockets per company (order:new, item:updated, order:updated, expo:fire)",
+          "result": "pass",
+          "note": "Company A grill/fry/expo/chef sockets receive the events. Company B's cook, CEO, and a B cook naming A's station id in the handshake receive nothing."
+        },
+        {
+          "journey": "Cross-company kitchen writes (bump, fire, fire-course, handoff, void, pre-bill on A's order as B)",
+          "result": "pass",
+          "note": "All 404."
+        },
+        {
+          "journey": "Pre-bill on an open order; receipt refused until final; Finance -> Voided pre bills flags",
+          "result": "pass",
+          "note": "PB-1 and PB-2 numbered per company. Receipt 409 PRE_BILL_REQUIRED while open. A line void after the pre-bill gives flags FINAL_LOWER and LINE_VOIDS_AFTER. Company B's list is empty."
+        },
+        {
+          "journey": "KDS hold / resume / bump / recall / expo hand-off",
+          "result": "pass",
+          "note": "Held is shown with ?states=all; bump while held gives 409 ITEM_ON_HOLD; recall reopens the order; hand-off is refused until the remake is re-bumped."
+        },
+        {
+          "journey": "Expo fire by course + fire-course",
+          "result": "pass",
+          "note": "Course 1 only, heldCourses reported, and fire-course emits to the station."
+        },
+        {
+          "journey": "Course pacing (worker + expo)",
+          "result": "fail",
+          "note": "The worker respects courses and received orders, but expo Fire overrides the schedule (BOH-R2-01)."
+        },
+        {
+          "journey": "Storefront order (customer login) -> routing -> expo -> hand-off -> completion ledger + fiscal",
+          "result": "pass",
+          "note": "order.complete JE in A: Dr 1010 218500 / Cr 4004 190000 / Cr 2030 28500 / Dr 5010 48675 / Cr 1210 48675, balanced. Fiscal doc held, then filed. The storefront refuses an auto-86'd item (400 ITEM_UNAVAILABLE)."
+        },
+        {
+          "journey": "Manager-only voids/cancels (own login, PIN, wrong PIN, other company's PIN)",
+          "result": "pass",
+          "note": "Cashier alone 403 MANAGER_OVERRIDE_REQUIRED; another company's PIN and a wrong PIN 403 INVALID_MANAGER_PIN. The head chef's own login is accepted. approverId is recorded. Cancelling a received order needs a PIN and restores its stock."
+        },
+        {
+          "journey": "86 manual / auto-86 / back-in-stock / storefront menu",
+          "result": "pass",
+          "note": "Line cook can 86 and un-86; company B toggling A's item -> 404."
+        },
+        {
+          "journey": "Recipe-based depletion, void restore, sub-recipe explosion",
+          "result": "partial",
+          "note": "Correct for sold and unfired-voided lines. A fired-then-voided line is consumed with no waste or COGS (BOH-R2-03)."
+        },
+        {
+          "journey": "Waste log (line cook boh, kitchen role, photo threshold, unit mismatch, negative stock, cross-company)",
+          "result": "pass",
+          "note": "boh can log; kitchen role 403; cost computed on the server; photo needed above PKR 500; UNIT_MISMATCH and NEGATIVE_STOCK 422; B -> 404. Ledger Dr 5040 / Cr 1210 in A. Waste responses hide cost for boh. 500 g on a kg item gives 422; the error code was not captured."
+        },
+        {
+          "journey": "Stock count (boh_management, boh, kitchen, cross-company) + ledger",
+          "result": "pass",
+          "note": "Balanced 5050/1210 entries in both directions; no entry when there is no variance; kitchen 403; B -> 404."
+        },
+        {
+          "journey": "Component recipe, prep batch, par sheet",
+          "result": "partial",
+          "note": "Par sheet lists only sub-recipes used by plates, with made-today from A's own batches, and B does not see A's. A component batch is a yield record (by design). A cross-company recipeId is accepted (BOH-R2-04)."
+        },
+        {
+          "journey": "Staff meal (comp with staffMealFor)",
+          "result": "pass",
+          "note": "Cashier without PIN 403; GM comp creates a StaffMeal in A (cost PKR 415.25); B does not see it. Comp booked to 7030 at shift close; a fiscal sale doc is filed for the comped order."
+        },
+        {
+          "journey": "Food safety (presets, temperatures, corrective action, cleaning, separation)",
+          "result": "pass",
+          "note": "Out-of-range without an action gives 400 CORRECTIVE_ACTION_REQUIRED. B -> 404 on A's unit and task. The breach flag lands in A's exceptions inbox."
+        },
+        {
+          "journey": "Procurement: threshold -> approvals inbox -> CEO approve -> mark-sent -> partial/over receipt -> bill (variance, duplicate) -> void -> payment -> AP aging",
+          "result": "partial",
+          "note": "Approvals inbox shows the PO for A only. Chef self-approve 403; self-receipt SELF_APPROVAL_BLOCKED; duplicate bill 409; payments Dr 2010 / Cr 1020 balanced. Bill before full receipt and its void mis-book the variance (BOH-R2-02)."
+        },
+        {
+          "journey": "Procurement and inventory company separation",
+          "result": "pass",
+          "note": "B gets 404 on A's PO/bill/payment/inventory PATCH/supplier list; B PO with an A item -> 422; with an A supplier -> 404. Company B's own PO -> receive -> bill posts Dr 1210 / Cr 2010 in B."
+        },
+        {
+          "journey": "Access matrix (wave 3) for kitchen, boh, expediter, boh_management, procurement, finance, cashier",
+          "result": "pass",
+          "note": "Floor roles see no cost fields (/recipes/by-item, station queue, inventory, waste logs). Kitchen has no inventory/recipes list. The procurement role buys. Finance gets /pre-bills, exceptions and PO reads. The brand picker (/concepts?view=picker) returns own-company brands for every role (B cook sees only Tandoor House)."
+        },
+        {
+          "journey": "Stock transfer (new location, request/approve/ship/receive, separation)",
+          "result": "partial",
+          "note": "See BOH-R2-06."
+        },
+        {
+          "journey": "Recipe edit / submit / approve workflow",
+          "result": "partial",
+          "note": "Self-approve 403, B -> 404. A production recipe is edited live with no approval (BOH-R2-05)."
+        },
+        {
+          "journey": "Till shift close -> sale ledger with COGS",
+          "result": "pass",
+          "note": "shift.close JE in A balanced (8,070,175 each side): Dr 1015, Dr 7030 comps, Dr 5010 / Cr 1210 per brand, Cr 4004 / 4002 revenue, Cr 2030 GST. My close sent closingFloat 0 because cashiers cannot read /zreport (403), so the 3,835,000 variance to 8010 is a simulation artefact, not a finding. The close summary shows voids:0 / voidsCount:0 despite several line voids (voidsCount = refunded payments); not assessed (FOH area)."
+        },
+        {
+          "journey": "Ledger sanity across the run",
+          "result": "pass",
+          "note": "Final dump: 16 entries, 0 unbalanced, 0 cross-company lines, 0 without a company."
+        },
+        {
+          "journey": "API log review",
+          "result": "pass",
+          "note": "No 5xx apart from /health 503 (degraded by design: no WhatsApp/SMTP/R2). One prisma:error for the expected duplicate-bill unique violation (returned as 409). Expected [auto-86] and croissant shortfall warnings."
+        }
+      ],
+      "envNotes": "The local API ran from the current uncommitted tree on 127.0.0.1:4112 against DB servd_sim_boh_r2 (prisma db push plus the 0_init raw SQL and the terminal_charges partial index from tests/setup.ts). It was started at 2026-10-11T14:47:59Z with ENABLE_WORKERS=true and OTP_DEV_ECHO=1, so floor-staff WhatsApp codes were read from the local log; nothing was sent. The API was stopped at the end and port 4112 confirmed down.\n\nREDIS INCIDENT, please read: the box's shared Redis has only 16 databases, so the assigned db 22 does not exist ('ERR DB index is out of range'). Before starting, I ran `redis-cli -n 22 flushdb`. The SELECT failed and redis-cli carried on against db 0, so I accidentally FLUSHED shared Redis db 0 (around 14:47Z). Anything another agent kept in db 0 at that moment (rate-limit counters, BullMQ jobs) was wiped. My first API start also ran with redis errors. I then ran a private redis-server on 127.0.0.1:6422 (databases 32, no persistence, data dir scratchpad/audit/boh-r2/redis) and used db 22 there; it has been shut down. Other r2 agents given Redis db indices of 16 or more on 6379 (e.g. the foh-r2 API on 4111) are probably hitting the same out-of-range errors.\n\nFiscal: company A was configured through the real /connectors routes as the CEO with the built-in 'test' driver, then went live and released its held documents (TEST-FBR-… numbers). Company B was left unconfigured.\n\nFixtures: setup.ts was reused from round 1 (two companies, 14 staff, recipes, suppliers). Every action went over HTTP with real tokens; the only direct DB writes were laborMinutes on two recipes (as in round 1) and a customer fixture.\n\nSimulation artefacts, not bugs: a first script crash left about 8 orders rung without a shiftId, and they were settled before close. The shift close used closingFloat 0, so the 8010 variance is mine.\n\nScripts are in /home/user/servd/backend/.sim/boh-r2/ (v_originals.ts, s1_kitchen.ts, s2_ops.ts, s3_close.ts, s3b_close.ts, s4_misc.ts, q1-q3). Outputs and evidence are in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/boh-r2/ (originals.json, s1-s4.json, *.out). The API log is at scratchpad/audit/boh-r2-api.log. No tracked file was edited.",
+      "confirmed": [
+        {
+          "id": "BOH-R2-01",
+          "severity": "medium",
+          "title": "Expo 'Fire' ignores the course-pacing schedule: shorter dishes fire at once, so pacing never takes effect",
+          "repro": "Recipe labour: Classic laborMinutes 8, Fries 3 (fixture). (1) POST /api/v1/pos/orders (cashierA) {conceptId: Flipd, items:[Classic x1, Fries x1]} (same course). (2) Read order_items: Classic scheduledFireAt=now, Fries scheduledFireAt=now+5min. (3) POST /api/v1/expo/orders/{id}/fire (expoA). Variant: ring the same order, pay it at once with POST /pos/payments (status completed), wait 36 s, then POST /expo/orders/{id}/fire.",
+          "expected": "Fire starts the longest dish now and leaves the shorter ones to the pacing worker at their scheduledFireAt, so the course plates together. The orders/service.ts:673-695 header says the schedule is re-anchored when the order is fired out of 'received'.",
+          "actual": "Fire returns {fired:2} and both lines go to 'preparing' with the same firedAt (14:54:30.522), while the fries' re-anchored scheduledFireAt is 14:59:30.531. In the paid-first variant the worker fires the burger on schedule, then expo Fire fires the fries 5 minutes early. Every path through expo defeats pacing, so fries finish about 5 minutes before the burger.",
+          "evidence": "s1.json 'pacing same course': afterFire=[Classic preparing firedAt 14:54:30.522 scheduledFireAt 14:54:30.531, Fries preparing firedAt 14:54:30.522 scheduledFireAt 14:59:30.531]. q3_pace output: after 36s Classic preparing / Fries pending; expo fire -> {fired:1}, Fries preparing at 15:02:43 although scheduled for 15:07:07.",
+          "suspectedCause": "backend/src/modules/expo/routes.ts:268: toFire = order.items.filter(i => isFireable(i) && courseOf(i) === course). There is no check on scheduledFireAt, and fireOrderItems (expo/fire.ts) claims any pending line.",
+          "suggestedFix": "In the expo fire route, fire only lines of the course whose scheduledFireAt is null or <= now and leave later ones to processCoursePacingTick. Return them as 'paced' so the expo screen can show 'fries fire at 14:59'. Optionally add an explicit 'fire all now' override.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "medium",
+            "reason": "The finding holds. None of the intended changes cover it, and it is not a setup mistake. In POST /expo/orders/:id/fire (backend/src/modules/expo/routes.ts:268), `toFire = order.items.filter(i => isFireable(i) && courseOf(i) === course)` does not look at scheduledFireAt. The route then calls updateOrderStatus(id, 'preparing'). Inside transitionOrder (orders/service.ts around line 1050) that starts a fire-and-forget scheduleCoursePacing to re-anchor the schedule. Straight after, the route calls fireOrderItems on every pending line of the course. fireOrderItems (expo/fire.ts) claims any line that is pending and not voided, so the shorter dish starts at the same moment as the longest one. The re-anchored scheduledFireAt is written but nothing uses it. The project says pacing should work: the orders/service.ts pacing header and the transitionOrder comment both say the schedule is (re)anchored when the order is fired out of 'received' so the course plates together, and the admin Help page ('How do course pacing and \"fires in 4:32\" work?') says shorter items auto-fire later. Expo Fire is the only way the UI starts an order: the admin /expo 'Fire' button and the tablet KDS FIRE both call POST /expo/orders/:id/fire, and no UI sends PATCH received→preparing. So pacing only works when the pacing worker reaches a paid-first till sale before expo presses Fire. The paid-first variant is weaker than reported: once the worker fires the burger, the order moves to the 'inProgress' column. The Fire button exists only under 'Awaiting Fire', so firing the fries early after that needs a direct API call. In the UI, expo pressing Fire within the worker's 30 s tick after payment fires both lines, the same as the main bug. Severity stays medium: a documented kitchen feature does not work on the main path, with no money, security or company-separation impact.",
+            "evidence": "Reproduced with /home/user/servd/backend/.sim/boh-r2/verify/zzverify_boh_0.test.ts (config .sim/boh-r2/verify/vitest.config.ts). DB: servd_test_rv_boh_0. Redis: db 14, because this Redis server only has 16 databases and db 26 gives 'ERR DB index is out of range'. Fixture: Classic laborMinutes 8 on Grill, Fries 3 on Fry, same course, expediter token; all 4 tests passed.\nA) Online order (status received): pacing at creation set Fries scheduledFireAt 5 min after Classic. POST /expo/orders/:id/fire returned 200 {fired:2, course:1}. Afterwards Classic and Fries were both 'preparing' with the same firedAt 15:07:19.670Z, while Fries' re-anchored scheduledFireAt was 15:12:19.687Z.\nB) Control, same order sent to 'preparing' through updateOrderStatus with no expo fire, then processCoursePacingTick: Classic 'preparing', Fries 'pending' (scheduled 15:12:20). Pacing works when expo is not involved.\nC) Till sale rung up unpaid with createPosOrder (status received): expo fire returned {fired:2} and both lines have firedAt 15:07:21.543Z, while Fries was scheduled for 15:12:21.551Z.\nD) Paid first (status completed): the order is in 'awaitingFire' until the worker ticks. After processCoursePacingTick, Classic is 'preparing', Fries is 'pending' and the order is in the 'inProgress' column. A direct POST /expo/orders/:id/fire then returned {fired:1} and Fries went to 'preparing' at 15:07:23.629Z although it was scheduled for 15:12:22.056Z. The admin expo page renders 'Fire' only in the Awaiting Fire column (frontend/admin/src/app/expo/page.tsx:305), so this last step needs an API call.\nThe test file sits in the git-excluded backend/.sim directory and no tracked files were changed."
+          }
+        },
+        {
+          "id": "BOH-R2-02",
+          "severity": "medium",
+          "title": "A supplier bill posted before the goods are fully received books price variance to 5060 as 'already used' and revalues unrelated stock; voiding it then over-reverses and leaves cost below the PO price",
+          "repro": "Chicken 8 kg @ PKR 950 on hand. (1) POST /procurement/purchase-orders (chefA) 60 kg @95000 -> submit (over threshold) -> CEO approve -> POST .../mark-sent {channel:'phone'}. (2) POST .../receive (gmA, photo) 40 kg. (3) POST /procurement/bills (gmA) {poId, lines:[60 kg @100000]}. (4) POST .../receive the remaining 20 kg. (5) POST /procurement/bills/{id}/void {reason}.",
+          "expected": "Price variance applies only to the quantity actually received: 40 kg x PKR 50 to stock, and the rest held until the remaining 20 kg arrive. Nothing goes to 5060 'already used', because no chicken was used. Voiding the bill returns item cost to the PO price (950) with 5060 netting to zero.",
+          "actual": "Bill: cost re-averaged 950 -> 1000/kg on all 48 kg, including the 8 kg bought earlier. JE Dr 1210 5,940,000 + Dr 5060 60,000 / Cr 2010 6,000,000; the 60,000 is the variance on 12 kg that were never received, expensed as used. After the last 20 kg: 985.29/kg. Void: cost drops to 941.17/kg, below the price ever paid, with JE supplier.bill.void.price Dr 5060 60,016 / Cr 1210 60,016. Net result of a voided bill: PKR 600 expensed to 5060, and stock undervalued by the same amount. Bill-before-receipt case (first run, beef PO never received): bill posted Dr 1210 3,642,000 + Dr 5060 58,000 and re-priced the 8.4 kg already on hand from 1800 to 1850/kg.",
+          "evidence": "s2.json 'partial receipt + full bill': chicken afterReceive {48, 95000}, afterBill {48, 100000}, ledger d 1210 5940000 / d 5060 60000 / c 2010 6000000; 'rest of delivery' {68, 98529}; 'bill void' {68, 94117} with void.price d 5060 60016 / c 1210 60016. v_originals.out ledger dump: JE supplier.bill:8f4d3133 Dr 1210 3642000 | Dr 5060 58000 | Cr 2010 3700000 for a PO whose receive returned 400 PO_NOT_SENT.",
+          "suspectedCause": "backend/src/modules/accounting/supplierPosting.ts:111 (share = min(onHand, billedQty)/billedQty uses total on-hand stock, not the PO line's received quantity) and billVarianceLines (~:66, variance over the billed quantity). The void path (revalueForBillVariance with the opposite sign) recomputes share from current on-hand stock instead of reversing what was absorbed at posting.",
+          "suggestedFix": "Compute the variance on min(billed, received-to-date) of the PO line, and carry the rest forward until the next receipt (or apply it on receipt). On void, reverse exactly the absorbed amount recorded at posting (store it on the bill or in ItemPriceHistory) rather than re-deriving it from current stock.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "low",
+            "reason": "The finding holds up and is not one of the intended behaviour changes. A test run against my own DB reproduced every figure exactly.\n\n**Cause:** `revalueForBillVariance` (`backend/src/modules/accounting/supplierPosting.ts`, around lines 111-115) computes `share = min(onHand, billedQty)/billedQty` from the item's whole on-hand stock. It never looks at the PO line's `quantityReceived`. `billVarianceLines` takes the variance over the full billed quantity.\n\n**Wrong result on billing:** Any billed quantity that has not arrived yet is treated as already used. Its share of the price difference is booked to 5060, and the stock that is on hand, including older unrelated stock, is re-averaged. The header comment assumes billed = received, and this case breaks it.\n\n**Wrong result on void:** `postSupplierBillVoid` re-derives the share from stock on hand at void time. It does not reverse what the bill actually absorbed. After a later receipt, share goes from 0.8 to 1, so the void takes out more than was put in. It then books the excess to 5060 as \"used since billed\", although nothing was used.\n\n**Not a setup mistake:**\n- Roles were normal: buyer raised and submitted the PO, a manager who is not the raiser received it, and a manager billed and voided.\n- The PO was approved and sent.\n- Nothing in `createBill` or the route blocks billing more than was received. `matchBill` only reports it as a mismatch (\"Billed 60, received 40\").\n\n**Why the severity is low, not medium:**\n- **Hard to reach today.** The only shipped bill client, the admin `CreateBillForm` (`frontend/admin/src/app/procurement/page.tsx`, around line 704), sends only description, quantity and unit cost. It never sends `poLineId` or `inventoryItemId`, so `billVarianceLines` returns nothing and this code never runs from the UI. No tablet or other client sends `poLineId`. Only a direct API caller can trigger it.\n- **Mostly a timing and classification error.** Total expense over the stock's life still equals what was paid. The variance is pulled into 5060 early, and the item's cost stays understated afterwards (it affects recipe costing, and after a void the cost sits below any price paid).\n- **Small amounts.** About PKR 600 per incident in the repro, and the 3-way match flags the bill.\n\nIt becomes medium as soon as any client links bill lines to PO lines.",
+            "evidence": "**Test file:** `/home/user/servd/backend/.sim/boh-r2/verify/zzverify_boh_1.test.ts`, config `vitest.boh1.config.ts`. It ran against `servd_test_rv_boh_1`, which I have since dropped. Redis db 27 does not exist on this server (16 dbs max), so I used db 11. The `.sim` folder is git-excluded and no tracked file was touched. The one failing assertion was my own price-history query (`orderBy` on a field that doesn't exist), not the scenario.\n\n**Case 1: partial receipt, full bill, rest of delivery, void.** Setup: Chicken 8 kg @ 95000 on hand. PO for 60 @ 95000, approved and marked sent.\n\n| Step | Stock / cost (paisa) | Ledger |\n|---|---|---|\n| Receive 40 | 48 kg @ 95000 | none |\n| Bill 60 @ 100000 | 48 kg @ 100000 (all 48 kg re-priced) | Dr 1210 5,940,000, Dr 5060 60,000 / Cr 2010 6,000,000 |\n| Receive the other 20 | 68 kg @ 98529 | none |\n| Void the bill | 68 kg @ 94117 | `supplier.bill.void.price`: Dr 5060 60,016 / Cr 1210 60,016 |\n\n- `matchBill` at the bill step: mismatch, \"Billed 60, received 40\".\n- After the void: net 5060 = +60,016 and net 1210 = -60,016. Stock value is 6,399,956 against 6,460,000 at the PO price.\n- Every one of the 68 kg was bought at 950/kg, yet the item ends at 941.17/kg.\n\n**Case 2: bill on a PO never received.** Setup: Beef 8.4 kg @ 180000 on hand, PO for 20 @ 180000 sent but never received.\n\n- Bill 20 @ 185000 posts Dr 1210 3,642,000, Dr 5060 58,000 / Cr 2010 3,700,000.\n- The 8.4 kg already on hand is re-priced from 180000 to 185000.\n\n**Code involved:**\n- `supplierPosting.ts`: `const share = Math.min(onHand, l.quantity) / l.quantity` uses all stock on hand, with no link to the PO line's received quantity.\n- `postSupplierBillVoid` calls `revalueForBillVariance` with the variance negated against stock on hand now. It then sets `trueUp = absorbedNow + absorbedAtBill` and books that to 5060.\n\n**Reachability:** In the admin `procurement/page.tsx` `CreateBillForm`, the lines map to `{description, quantity, unitCostCents}` only, with no `poLineId`. `poLineId` appears only on the receiving page. The existing test (`auditProcurement.test.ts`, BOH-13) covers stock used before the bill, but not billing before full receipt."
+          }
+        },
+        {
+          "id": "BOH-R2-03",
+          "severity": "medium",
+          "title": "A line voided after it was fired keeps its stock out but never reaches waste or COGS; the cost later shows up as unexplained count shrinkage",
+          "repro": "(1) POST /pos/orders (cashierA) Classic + fries; POST /expo/orders/{id}/fire. (2) POST /pos/orders/{id}/void (gmA) {orderItemId:<Classic>, reason:'guest left'} -> 200. (3) Pay, then close the shift.",
+          "expected": "The cooked dish's ingredients are recorded as waste (WasteLog + Dr 5040 / Cr 1210) or costed in COGS, so the inventory GL follows the stock that physically left.",
+          "actual": "Beef stays deducted (25.6 -> 25.6 after the void; the void's audit metadata has stockSkipped:'cooked'). No waste log is created. The shift-close COGS (cogsForSoldLines) skips voided lines, so 1210 is never credited for that 0.15 kg. 1210 is overstated until a stock count books the gap to 5050 shrinkage, under the wrong cause.",
+          "evidence": "s3.json 'void after fire': {void:200, beef:[25.6,25.6]}. s4.json 'voids: stock outcome' shows one void with stockSkipped:'cooked', restored 0. shift.close JE COGS lines only (Dr 5010 654225/79200). lib/recipeCost.ts:378 filters status !== 'voided'.",
+          "suspectedCause": "backend/src/modules/pos/service.ts:1616 (restoreVoidedLineStockTx returns 'cooked' and does nothing else); backend/src/lib/recipeCost.ts:378 (COGS excludes voided lines).",
+          "suggestedFix": "When a fired line is voided, write a WasteLog (reason 'void_after_fire') at recipe cost and post Dr 5040 / Cr 1210 in the order's company in the void's transaction. Alternatively, include fired-then-voided lines in the shift COGS.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "medium",
+            "reason": "Confirmed. When a line is voided after it was fired, its stock stays deducted, but no waste log and no journal entry are written. COGS at shift close (and at completion for online orders) skips voided lines, so account 1210 (Inventory — Food) is never credited for that stock. None of the intended changes cover this. Manager-only voids work as designed: the cashier got 403 MANAGER_OVERRIDE_REQUIRED and the GM got 200 with approverId recorded. Keeping a cooked line's stock out on purpose (\"the food was made\", BOH-11) is also intended, but nothing books the food's cost to waste or COGS. No setup mistake explains it: the order was fired through the real expo route, voided by a foh_management user in the same company, paid, and the shift was closed with the chart from ensureChartOfAccounts.\n\nOne part of the finding is wrong. It says the cost \"later shows up as unexplained count shrinkage\". It does not. The count route compares the counted quantity with currentStock, which already has the beef taken out. A count of what is physically there finds no difference, and postStockCount returns reason 'no_variance'. So the gap never reaches 5050 or any other account. 1210 stays higher than the stock value permanently, by the plate cost of every line voided after firing. The only manual workaround is the inventory waste route, and it takes the stock off currentStock again, so the beef would be counted out twice. Medium is the right rating: the books drift and food cost is understated, but no cross-company leak and no customer money is affected.",
+            "evidence": "Code:\n- backend/src/modules/pos/service.ts:1616 `if (!unfired) return { restored: {}, skipped: 'cooked' }`. Nothing else runs for a fired line: no WasteLog, no 5040/1210 posting.\n- backend/src/lib/recipeCost.ts:378 `cogsForSoldLines` filters `l.status !== 'voided'`. It is used by the shift-close COGS (accounting/shiftPosting.ts:406) and the online COGS (accounting/orderPosting.ts:191).\n- crosschecks/routes.ts:292-299 takes systemQty from currentStock. countPosting.ts:41-43 posts only physicalQty - systemQty, so a count never sees the gap.\n- inventory/routes.ts:45-46: a manual waste entry decrements currentStock again.\n\nReproduction: /home/user/servd/backend/.sim/boh-r2/verify/zzverify_boh_2.test.ts, run with config vitest.boh2.config.ts against DB servd_test_rv_boh_2 and Redis 127.0.0.1:6424 db 28. Port 6379 allows only 16 databases, so db 28 needed the 6424 instance. Setup: Classic (beef 0.15 kg at PKR 2000/kg) plus Fries (potato 0.2 kg at PKR 200/kg), till order, POST /expo/orders/:id/fire (both lines 'preparing').\n- Cashier void → 403 MANAGER_OVERRIDE_REQUIRED (intended).\n- GM void → 200, stockRestored {}, audit metadata stockSkipped 'cooked' with approverId set.\n- Beef after ring-up 25.6, after the void still 25.6. WasteLog count 0.\n- Paid (cash 51,750 paisa), shift closed. The shift.close journal entry has only Dr 5010 4000 / Cr 1210 4000 (fries). No beef cost, and 5040 net is 0.\n- POST /crosschecks/physical-counts at the on-hand quantities → 201, ledger {posted:false, reason:'no_variance'}.\n- Valuation: stock value moved -34,000 paisa, GL 1210 moved -4,000. Gap 30,000 paisa, exactly the voided Classic's plate cost (0.15 × 200,000), and it stays after the count.\n\nNo tracked files were changed. The verifier lives in the git-excluded backend/.sim/ folder, and nothing was placed in tests/."
+          }
+        },
+        {
+          "id": "BOH-R2-04",
+          "severity": "medium",
+          "title": "A prep batch accepts another company's sub-recipe id: it is stored on the batch and the batch's inputs are not deducted from stock",
+          "repro": "POST /api/v1/crosschecks/prep-batches as cookB (company B kitchen) {recipeId: <company A's 'Flipd smash sauce' component id>, itemName:'dough', inputs:[{inventoryItemId:<B Atta>, qtyDrawn:2, unit:'kg'}], actualYieldQty:3, unit:'kg'}",
+          "expected": "422 (cross-company attach on create, per CLAUDE.md 'never trust an id from the client'), or the recipe is resolved inside the active company only.",
+          "actual": "201: the PrepBatch row is stamped tenantId B with recipeId = company A's recipe, and B's flour is not deducted, because the batch counts as a sub-recipe yield record. The same ad-hoc batch without recipeId deducts 2 kg (flour 70 -> 68). A cook in any company can log a stock-free batch by citing any component id.",
+          "evidence": "s4.json 'prep batch citing other company recipe': withAsRecipe {s:201, recipeId:'A component', tenant:'B'}, adHoc 201, flour [70,68] (only the ad-hoc batch deducted).",
+          "suspectedCause": "backend/src/modules/crosschecks/routes.ts:182-184: prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' } }) has no company scope, and recipeId is written unchecked at :188.",
+          "suggestedFix": "Resolve recipeId through subRecipeIdsForCompany(tenantId), or check that the recipe's ingredients and plates belong to the active company. Return 422 RECIPE_NOT_IN_COMPANY otherwise, and add a two-company test.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "low",
+            "reason": "The finding holds up, and it is not one of the intended behaviour changes. POST /crosschecks/prep-batches checks that each input stock item belongs to the active company, but it never checks recipeId. Line 183 in backend/src/modules/crosschecks/routes.ts runs `prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' } })` with no company filter. Line 188 then writes `recipeId: body.recipeId ?? null` unchecked, and any id is accepted, including one that doesn't exist. Recipe has no tenantId column, and the route never calls the existing company resolver `subRecipeIdsForCompany(tenantId)` from par-sheet/routes.ts. That breaks the CLAUDE.md rule \"never trust an id from the client … cross-company attach on create → 422\". The setup is not at fault: cookB is a plain `kitchen` user in company B, the route allows ALL_STAFF, and /crosschecks has no module gate.\n\nI lowered severity from medium to low:\n(a) Nothing leaks into company A. A's par sheet keeps 0 batches for its sub-recipe, because batchesForDay filters batches by which company owns the input items. A's GET /prep-batches does not list B's batch, and the yield exception is stamped with B.\n(b) The stock damage stays inside company B. The skipped draw of B's flour is never taken later either, because B's plates never use A's sub-recipe. B's stock stays overstated until the next physical count, which then records it as shrinkage.\n(c) A B cook can get the same \"batch that draws no stock\" with B's own sub-recipe ids. Inputs are never matched against the recipe's ingredients, so citing a B component with unrelated ingredients has the same effect. Crossing companies only adds a cross-company reference in the data.\n(d) A's sub-recipe ids are not listed to B users. Exploiting this needs a leaked id, or a shared-staff login that belongs to both companies.\n\nIt is still a real company-separation defect under the standing rule. The fix: resolve recipeId through `subRecipeIdsForCompany(tenantId)` and return 422 otherwise, and ideally also check the inputs against the recipe.",
+            "evidence": "I reproduced it with a temporary vitest file, /home/user/servd/backend/.sim/boh-r2/verify/zzverify_boh_3.test.ts, using config vitest.boh3.config.ts in the same folder. It ran against its own database, servd_test_rv_boh_3, created for the run and dropped afterwards. Nothing was placed in tests/ and no tracked file was changed. The Redis db 29 setting failed with \"DB index is out of range\", but this route does not use Redis.\n\nSetup: two companies. Company A has the 'Flipd smash sauce' sub-recipe, used by a Flipd plate; subRecipeIdsForCompany(A) contains it and subRecipeIdsForCompany(B) does not. Company B has Atta at 70 kg and its own 'Viva dough' sub-recipe used by its Naan plate. The caller is a company B user with role 'kitchen'.\n\nResults:\n- Batch citing A's sub-recipe: 201, the stored recipeId is A's sub-recipe, the batch is stamped with company B, and flour stays 70 -> 70 (nothing drawn).\n- Same batch with no recipe: 201, flour 70 -> 68.\n- Batch citing B's own sub-recipe: 201, flour 68 -> 68. Skipping the draw here is by design.\n- Batch citing a random, non-existent UUID: 201, the bogus id is stored, flour 68 -> 66.\n- Company A's par sheet: A's sub-recipe shows 0 batches.\n- Company B's par sheet: B's own sub-recipe shows 1 batch.\n- Company A's GET /crosschecks/prep-batches does not include B's batch.\n\nCode: backend/src/modules/crosschecks/routes.ts lines 182-184 (the lookup has no company filter) and line 188 (recipeId stored unchecked); the scoped helper is subRecipeIdsForCompany in backend/src/modules/par-sheet/routes.ts:39."
+          }
+        }
+      ],
+      "rejected": [],
+      "lows": [
+        {
+          "id": "BOH-R2-05",
+          "severity": "low",
+          "title": "A live (production) recipe's ingredients can be rewritten by any manager with no re-approval",
+          "repro": "PUT /api/v1/recipes/{Classic recipe id} (chefA, boh_management) {ingredients:[...existing, {prepRecipeId:<sauce>, quantity:30, unit:'g'}]} -> 200; recipe.status stays 'production'. POST /recipes/{id}/submit -> 409 BAD_STATUS.",
+          "expected": "If recipe approval is meant to gate what production costs and depletes (the approvals inbox labels recipe approval 'goes into production and sets the live menu price'), changing a production recipe should create a revision for approval or move it back to iteration.",
+          "actual": "The edit applies immediately: the next sale explodes the new sauce (oil 27.132 -> 27.114) and COGS changes. The CEO's approvals inbox never sees the change. This was not exercised in round 1; whether it is intended is an owner decision.",
+          "evidence": "s4.json 'recipe approval': edit 200, statusAfterEdit 'production', submit 409 BAD_STATUS; 'sale after approval' oil [27.132, 27.114].",
+          "suspectedCause": "backend/src/modules/recipes/routes.ts:1080-1110 (PUT /recipes/:id updates any status in place).",
+          "suggestedFix": "Owner decision: either require a revision and approval for production recipes (copy to iteration, swap on approve), or document that managers may edit live recipes and add an audit row with before/after cost."
+        },
+        {
+          "id": "BOH-R2-06",
+          "severity": "low",
+          "title": "Stock transfers: the requester can approve their own transfer, and receiving one moves no stock",
+          "repro": "POST /api/v1/stock-transfers (chefA) {inventoryItemId: rice, fromLocationId: Clifton, toLocationId: DHA, quantity:5, unit:'kg'} -> 201; PATCH /stock-transfers/{id}/approve (chefA, same user) -> 200; PATCH .../ship -> 200; PATCH .../receive {receivedQuantity:5} (gmA) -> 200",
+          "expected": "Self-approval is refused, as for POs (403) and receipts (SELF_APPROVAL_BLOCKED). The transfer shows in the CEO approvals inbox for a second person. If stock is per company and not per location, the UI or API says the transfer is paperwork only.",
+          "actual": "The requester approves their own transfer, so the item is pulled from the CEO's inbox before anyone else sees it; gmA's later approve gets 409. Rice stock is 25 -> 25 after receive. Company separation holds: B create -> 422, B cancel -> 404.",
+          "evidence": "s4.json 'stock transfer': selfApprove {s:200}, gmApprove 409, ship 200, receive 200, rice [25,25], chefB_create_on_A 422, chefB_cancel_A 404, inboxHas true (before approval).",
+          "suspectedCause": "backend/src/modules/stockTransfers/routes.ts:136 (approve: MANAGERS, no requestedById !== approver check).",
+          "suggestedFix": "Refuse approve when requestedById === the caller (403 SELF_APPROVAL_BLOCKED), as receiving does. Document, or implement, what a received transfer does to stock."
+        }
+      ]
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Simulate"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "sim:foh",
+      "phaseIndex": 1,
+      "phaseTitle": "Simulate",
+      "agentId": "a30141ab47c40d415",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791729984957,
+      "queuedAt": 1791729984925,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Local only. Postgres DB servd_sim_foh_r2 was built with pri…",
+      "promptPreview": "You are RE-RUNNING a simulated shift for servd (repo /home/user/servd; CLAUDE.md is the rulebook), a multi-company restaurant ERP whose real staff onboard on Monday. Last night an audit simulated shifts per area and found bugs; since then ~300 files were changed to fix them (UNCOMMITTED working tree — that IS the code under test). Your job: (1) prove each ORIGINAL finding of your area is now fixed…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731054831,
+      "tokens": 340771,
+      "toolCalls": 87,
+      "durationMs": 1069873,
+      "resultPreview": "{\"originals\":[{\"id\":\"FOH-01\",\"status\":\"fixed\",\"evidence\":\"GET /concepts as cashier and waiter (foh) returns 200 with only GS Foods' 3 brands and till fields (taxRateCash 15 / taxRateCard 8, no taxRate). KGC cashier sees only Grill House. ?view=picker also 200. Admin /pos reads /concepts (pos/page.tsx:64-74). 02-login-connector.ts\"},{\"id\":\"FOH-02\",\"status\":\"fixed\",\"evidence\":\"Checked in code, since…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "sim:boh",
+      "phaseIndex": 1,
+      "phaseTitle": "Simulate",
+      "agentId": "a946f77eb0b8ab573",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791729984958,
+      "queuedAt": 1791729984925,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "The local API ran from the current uncommitted tree on 127.…",
+      "promptPreview": "You are RE-RUNNING a simulated shift for servd (repo /home/user/servd; CLAUDE.md is the rulebook), a multi-company restaurant ERP whose real staff onboard on Monday. Last night an audit simulated shifts per area and found bugs; since then ~300 files were changed to fix them (UNCOMMITTED working tree — that IS the code under test). Your job: (1) prove each ORIGINAL finding of your area is now fixed…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731090569,
+      "tokens": 303922,
+      "toolCalls": 92,
+      "durationMs": 1104906,
+      "resultPreview": "{\"originals\":[{\"id\":\"BOH-01\",\"status\":\"fixed\",\"evidence\":\"Ring fries+Classic, a manager (gmA) voids the Classic, then expo fires. Fire returns {fired:1}, the burger stays 'voided', and it is not on the grill queue, even with ?states=all (v_originals.out BOH-01).\"},{\"id\":\"BOH-02\",\"status\":\"fixed\",\"evidence\":\"After a manager voids the Classic, the order drops from 218500/28500 to 51750/6750 and a ca…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "verify:foh:FOH-R2-01",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a96b87493051df7e1",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791731054868,
+      "queuedAt": 1791731054840,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731335646,
+      "tokens": 122857,
+      "toolCalls": 29,
+      "durationMs": 280771,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"high\",\"reason\":\"The finding is real, and it is not one of the intended changes. §17.4 says a wrong PIN gets a 403 INVALID_MANAGER_PIN. It does not say guesses are unlimited, and the isWeakPin comment in managerPin.ts says weak-PIN rejection is \\\"Not a substitute for lockout\\\". The code has a single verifier, verifyManagerPin (backend/src/modules/auth/managerPin.ts:56-…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "verify:boh:BOH-R2-01",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a986acd6d46de90ed",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791731090579,
+      "queuedAt": 1791731090575,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731268232,
+      "tokens": 121298,
+      "toolCalls": 30,
+      "durationMs": 177653,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"medium\",\"reason\":\"The finding holds. None of the intended changes cover it, and it is not a setup mistake. In POST /expo/orders/:id/fire (backend/src/modules/expo/routes.ts:268), `toFire = order.items.filter(i => isFireable(i) && courseOf(i) === course)` does not look at scheduledFireAt. The route then calls updateOrderStatus(id, 'preparing'). Inside transitionOrder (…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "verify:boh:BOH-R2-02",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ae1041cf45495fe43",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791731268246,
+      "queuedAt": 1791731090575,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731440134,
+      "tokens": 121451,
+      "toolCalls": 30,
+      "durationMs": 171884,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"low\",\"reason\":\"The finding holds up and is not one of the intended behaviour changes. A test run against my own DB reproduced every figure exactly.\\n\\n**Cause:** `revalueForBillVariance` (`backend/src/modules/accounting/supplierPosting.ts`, around lines 111-115) computes `share = min(onHand, billedQty)/billedQty` from the item's whole on-hand stock. It never looks at …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "verify:boh:BOH-R2-03",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "abceaa091f60e907e",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791731335650,
+      "queuedAt": 1791731090576,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731520113,
+      "tokens": 136182,
+      "toolCalls": 41,
+      "durationMs": 184463,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"medium\",\"reason\":\"Confirmed. When a line is voided after it was fired, its stock stays deducted, but no waste log and no journal entry are written. COGS at shift close (and at completion for online orders) skips voided lines, so account 1210 (Inventory — Food) is never credited for that stock. None of the intended changes cover this. Manager-only voids work as designe…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "verify:boh:BOH-R2-04",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "abba75f068adaf11b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791731440138,
+      "queuedAt": 1791731090576,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731562632,
+      "tokens": 106679,
+      "toolCalls": 21,
+      "durationMs": 122494,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"low\",\"reason\":\"The finding holds up, and it is not one of the intended behaviour changes. POST /crosschecks/prep-batches checks that each input stock item belongs to the active company, but it never checks recipeId. Line 183 in backend/src/modules/crosschecks/routes.ts runs `prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' } })` with no company …"
+    }
+  ],
+  "totalTokens": 1253160,
+  "totalToolCalls": 330
+}

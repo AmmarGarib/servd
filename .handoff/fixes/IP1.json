@@ -1,0 +1,363 @@
+{
+  "summary": "Apply the cross-file follow-ups from the till, admin-UI and HR fix runs (alert kinds, per-order PIN limits on cancels, PIN-lock messages, rota leave cells, brand pickers), then adversarially review and fix",
+  "agentCount": 6,
+  "logs": [],
+  "result": [
+    {
+      "stream": "IB",
+      "built": {
+        "summary": "I did NEEDS.md items 6, 7, 10 and 3. Two follow-ups sit in files I don't own: resimTill.test.ts now has 7 failing assertions because they check the old flag kinds, and the admin exceptions page has no icons for the 3 new kinds. ExceptionFlag.kind is a plain String column in schema.prisma, not a Postgres enum, so the 3 new kinds were added to the ExceptionKind type with no migration. The new tests/integrationPass1.test.ts covers all four items across two companies, and its 11 tests pass. The owned suites pass, except resimTill.test.ts. resimTill fails only on those 7 old-kind assertions; with them updated (tried in a temporary copy that has been deleted) all 20 of its tests pass. `tsc --noEmit` reports no errors.",
+        "items": [
+          {
+            "id": "6",
+            "status": "fixed",
+            "note": "Added 'manager_pin_failed', 'discount_above_cap' and 'price_override' to ExceptionKind in lib/exceptions.ts (String column, so no migration). Switched the three call sites: managerPin.ts recordPinFailure ('self_approval' -> 'manager_pin_failed'), and in pos/service.ts createPosOrder the discount flag ('comp_above_threshold' -> 'discount_above_cap') and the price-override flag ('high_value_void' -> 'price_override'). metadata.realKind is kept on the PIN and discount flags so older readers still work. The admin exceptions page has no icons for the new kinds (see needsOtherFiles). Not changed: tipPools/routes.ts:785 and financePlanning/routes.ts:157,162 still use 'high_value_void' for non-void events; they were outside this task."
+          },
+          {
+            "id": "7",
+            "status": "fixed",
+            "note": "Both requireManagerApproval calls in orders/routes.ts (POST /:id/cancel and POST /:id/refused-at-door) now pass orderId: order.id. Wrong PINs sent through void, cancel and refused-at-door now share one per-order count; the test checks that 5 such PINs lock the order with 429, even for a right PIN."
+          },
+          {
+            "id": "10",
+            "status": "fixed",
+            "note": "trustops POST /petty-cash/movements, top-up over the box limit: verifyManagerPin now gets the actor (req.staffUser.id) and action 'petty_cash_topup'. A PIN that is sent but doesn't verify (wrong, or another company's manager) now gets 403 INVALID_MANAGER_PIN; no PIN still gets 403 TOPUP_OVER_LIMIT. Wrong PINs are audited against the sender and count toward the PIN limit."
+          },
+          {
+            "id": "3",
+            "status": "fixed",
+            "note": "hr/attendance.ts recordPunch 'in': when the rota cell kind is 'leave', the new record's remark is 'Punched in on an approved leave day'. The rota is looked up per company, so a leave record in company A never marks a company-B day (tested)."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/lib/exceptions.ts",
+          "/home/user/servd/backend/src/modules/auth/managerPin.ts",
+          "/home/user/servd/backend/src/modules/pos/service.ts",
+          "/home/user/servd/backend/src/modules/orders/routes.ts",
+          "/home/user/servd/backend/src/modules/trustops/routes.ts",
+          "/home/user/servd/backend/src/modules/hr/attendance.ts",
+          "/home/user/servd/backend/tests/integrationPass1.test.ts"
+        ],
+        "tests": "Test DB servd_test_ip1_b, Redis 6390/21.\n- New tests/integrationPass1.test.ts, two companies: 11/11 pass. It covers:\n  - the wrong-PIN lock flags kind manager_pin_failed in company A only;\n  - an authorised discount over the cap is flagged discount_above_cap on the order; company B's PIN gets INVALID_MANAGER_PIN and no flag;\n  - a price override is flagged price_override in company A;\n  - a wrong PIN on cancel is audited against the order;\n  - wrong PINs across void, cancel and refused-at-door lock the order after 5 (429 MANAGER_PIN_LOCKED), with one flag in A; a signed-in manager can still cancel;\n  - company B gets 404 cancelling A's order;\n  - petty cash: no PIN gets TOPUP_OVER_LIMIT, a wrong or company-B PIN gets INVALID_MANAGER_PIN (audited with action 'petty_cash_topup'), A's PIN gets 201, and B's operator gets 404 on A's box;\n  - the leave remark appears on A's day and not on B's.\n- Existing suites: attendanceRota 23/23, auditTillReview 12/12, managerVoids 14/14, sepTrustops 18/18, auditTillShift 11/11 and receiving 10/10 all pass.\n- resimTill: 13/20. All 7 failures are assertions on the old kinds (see needsOtherFiles). With those assertions updated in a temporary copy (since deleted), resimTill passes 20/20.\n- `npx tsc --noEmit`: no errors.",
+        "needsOtherFiles": "1. backend/tests/resimTill.test.ts (owner: till run). Update it to the new kinds; it has 7 failing assertions until then.\n   - Lines 131, 155, 168 and 242: change `kind: 'self_approval'` to `kind: 'manager_pin_failed'`. Line 134 (metadata.realKind) can stay.\n   - Line 349: change `toBe('comp_above_threshold')` to `toBe('discount_above_cap')`.\n   - With those changes the suite passes 20/20.\n2. frontend/admin/src/app/exceptions/page.tsx: KIND_EMOJI (around lines 39-59) has no entry for 'manager_pin_failed', 'discount_above_cap' or 'price_override'.\n   - It also has no entry for the existing fiscal_*, terminal_*, food_safety_temperature and posting_failed kinds.\n   - The map uses emoji as icons. CLAUDE.md bans emoji structural icons; that rule is written for the storefront, but on the admin page they should still become SVG icons or text labels.\n   - The page should also show a readable label for each kind ('Manager PIN lockout', 'Discount above cap', 'Price override').\n3. Optional, outside this task:\n   - tipPools/routes.ts:785 and financePlanning/routes.ts:157,162 still use kind 'high_value_void' for events that aren't voids.\n   - The pos/service.ts notifyOwnerIfThreshold (~line 1527) default branch is unchanged.",
+        "prodNotes": "- No migration is needed: ExceptionFlag.kind is a String column.\n- Flags already in prod keep their old kinds:\n  - PIN lockouts are kind 'self_approval' with metadata.realKind 'manager_pin_failed'.\n  - Discount flags are 'comp_above_threshold' with realKind 'discount_above_cap'.\n  - Price overrides are 'high_value_void' with no realKind; they can be told apart by the title 'Price override on POS order'.\n- If the owner's inbox or reports should group old and new together, they need to read metadata.realKind, or the old rows need a one-off data update (not done).\n- New behaviour on the petty-cash API: a top-up over the limit sent with a wrong PIN now gets 403 INVALID_MANAGER_PIN instead of TOPUP_OVER_LIMIT. Those wrong PINs now count toward the 5-per-15-minute PIN lockout and are audited as manager_pin.failed."
+      },
+      "review": [
+        {
+          "id": "IB-RV-1",
+          "severity": "medium",
+          "title": "The backend suite is red: resimTill.test.ts still checks the old flag kinds (7 failures)",
+          "file": "/home/user/servd/backend/tests/resimTill.test.ts",
+          "scenario": "I ran it on DB servd_test_ip1_b_rv with Redis 6390/24: resimTill 13/20, with 7 failures. Lines 131, 155, 168 and 242 query kind 'self_approval', and line 349 expects 'comp_above_threshold'. The code now writes 'manager_pin_failed' and 'discount_above_cap', so the queries find 0 rows (expected 1), and line 349 gets 'discount_above_cap'. Until that file changes, any full-suite gate before commit or deploy fails. The other suites pass: integrationPass1 11/11, sepTrustops 18/18, managerVoids 14/14, receiving 10/10 and orderLifecycle 11/11. tsc --noEmit is clean.",
+          "fix": "In resimTill.test.ts (the till run owns it), change kind 'self_approval' to 'manager_pin_failed' at lines 131, 155, 168 and 242. At line 349 change toBe('comp_above_threshold') to toBe('discount_above_cap'), and keep line 348's not.toBe('high_value_void')."
+        },
+        {
+          "id": "IB-RV-2",
+          "severity": "low",
+          "title": "prodNotes give the wrong legacy kinds for the existing prod rows",
+          "file": "/home/user/servd/backend/src/modules/pos/service.ts",
+          "scenario": "prodNotes say prod PIN-lock flags are 'self_approval' with realKind 'manager_pin_failed', and discount flags are 'comp_above_threshold' with realKind 'discount_above_cap'. Both of those are only in the uncommitted tree; the PIN limiter and recordPinFailure don't exist in HEAD at all. In HEAD (git show HEAD:backend/src/modules/pos/service.ts lines 139 and 154), BOTH the discount flag and the price-override flag are kind 'high_value_void', with no metadata.realKind. So the prod inbox has discount and price-override rows labelled 'High-value void'. A one-off data update written from prodNotes (WHERE kind='comp_above_threshold' AND metadata->>'realKind'='discount_above_cap') would match nothing and leave every old discount in place as a fake void.",
+          "fix": "Correct the prod note. Old discount flags are kind 'high_value_void' with title '<n>% discount on POS order'. Old price overrides are 'high_value_void' with title 'Price override on POS order'. No 'manager_pin_failed' rows exist in prod. If the owner wants old rows regrouped, key the data update on those titles."
+        },
+        {
+          "id": "IB-RV-3",
+          "severity": "low",
+          "title": "An order-level PIN lock flag blames the last sender for all 5 wrong PINs",
+          "file": "/home/user/servd/backend/src/modules/auth/managerPin.ts",
+          "scenario": "Item 7 now feeds cancel and refused-at-door into the shared per-order bucket, so cross-door order locks will happen more often. In recordPinFailure, when only the ORDER bucket fills (orderLocked && !actorLocked), the title is `${who}: 5 wrong manager PINs — overrides locked`, and actorId is the person whose one PIN filled the bucket. Reproduced by integrationPass1 test '7 — wrong PINs spread over void, cancel and refused-at-door': c1 sends 2 wrong PINs on void, c2 sends 2 on cancel, and c3 sends 1 on refused-at-door. The single flag reads '<c3>: 5 wrong manager PINs' with actorId c3, though c3 sent one. The description also says 'Manager-PIN approvals are locked for 15 minutes', but only that order is locked. The owner inbox points at the wrong cashier as the suspected PIN-guesser.",
+          "fix": "When the flag is an order lock and not an actor lock, use a title like '5 wrong manager PINs on one order — PIN approvals for this order locked'. Leave actorId null, or put the senders from the window in metadata instead of blaming the last one, and say 'for this order' in the description."
+        },
+        {
+          "id": "IB-RV-4",
+          "severity": "low",
+          "title": "needsOtherFiles item 2 (exceptions page labels and emoji) is stale",
+          "file": "/home/user/servd/frontend/admin/src/app/exceptions/page.tsx",
+          "scenario": "The builder asks for labels and icons for the new kinds in KIND_EMOJI. The working tree (changed by another run, 49+/23-) has already replaced KIND_EMOJI with a text-only KIND_LABEL map. It covers manager_pin_failed, discount_above_cap, price_override, posting_failed, fiscal_* and terminal_*, and a kindOf() helper lets metadata.realKind win. If the orchestrator acts on item 2, it will redo or conflict with work already done.",
+          "fix": "Close item 2 as done; no further change is needed. One optional detail: the 'Distinct kinds' stat counts the raw kind from /crosschecks/exceptions/stats, while the list shows realKind. These differ only on rows where realKind differs from kind, and none remain after this change."
+        }
+      ],
+      "fix": {
+        "summary": "I checked all four findings. All four were real; one needed a code change in my files, and the other three are notes or work for other owners.\n\n- **IB-RV-3 (fixed)** in /home/user/servd/backend/src/modules/auth/managerPin.ts, in `recordPinFailure`.\n  - **Sender locked (or sender and order both locked):** behaviour is the same as before. The flag names the sender. The description now says approvals *by that sender* are locked, and adds \"and so are PIN approvals for this order\" when the order filled too. `metadata.lock` is 'actor' or 'actor_and_order'.\n  - **Only the order locked:** the title is now '5 wrong manager PINs on one order — PIN approvals for this order locked' and `actorId` is null. The description says 'for this order' and lists everyone who sent a wrong PIN, with counts. That list comes from the order's `manager_pin.failed` audit rows in the last 15 minutes, in the same company. `metadata.lock` is 'order' and `metadata.senders` holds `[{userId, name, attempts}]`.\n- **IB-RV-1 (confirmed, not my file):** resimTill.test.ts fails 7 of 20 on my own DB, exactly as the reviewer said. I tried the proposed change on a patched copy in the scratchpad, with my IB-RV-3 change included, and all 20 pass. Line 168 matches on `entityId`, not `actorId`, so it still finds the order-lock flag now that `actorId` is null. The change is listed under needsOtherFiles.\n- **IB-RV-2 (confirmed, prod note corrected below):** at HEAD there is no `recordPinFailure` and no `flagException` in managerPin.ts. In pos/service.ts both the discount flag and the price-override flag are `kind 'high_value_void'` with no `metadata.realKind`. The only `comp_above_threshold` at HEAD is the real comp branch of the refund/void/comp cap (line 829), which this change does not touch.\n- **IB-RV-4 (confirmed, close item 2 as already done):** exceptions/page.tsx already has the text-only `KIND_LABEL` map and a `kindOf()` helper that prefers `realKind`. No further change; nothing for the orchestrator to do.",
+        "items": [
+          {
+            "id": "IB-RV-1",
+            "status": "not_fixed",
+            "note": "Confirmed: resimTill fails 7/20. The file belongs to the till run, so it is listed under needsOtherFiles. The proposed change (4x 'self_approval'→'manager_pin_failed', line 349 →'discount_above_cap') passes 20/20 on a scratchpad copy, with the IB-RV-3 change included."
+          },
+          {
+            "id": "IB-RV-2",
+            "status": "fixed",
+            "note": "Prod note corrected. HEAD writes discount and price-override flags as kind 'high_value_void' with no metadata.realKind. Their titles are '<n>% discount on POS order' and 'Price override on POS order'. HEAD has no PIN-lock flags, so no 'manager_pin_failed' or 'self_approval' PIN rows exist in prod. Real comps ('comp_above_threshold' from the cap path) are a different thing and must not be touched."
+          },
+          {
+            "id": "IB-RV-3",
+            "status": "fixed",
+            "note": "In managerPin.ts recordPinFailure, a flag for an order-only lock now has actorId null. Its title is '5 wrong manager PINs on one order — PIN approvals for this order locked', the description says 'for this order' and lists the senders, and metadata has lock:'order' and senders[{userId,name,attempts}] from the order's manager_pin.failed audit rows in the 15-minute window. Sender locks still name the sender, with metadata.lock 'actor' or 'actor_and_order'. Tests are in integrationPass1 parts 6 and 7."
+          },
+          {
+            "id": "IB-RV-4",
+            "status": "not_needed",
+            "note": "Confirmed: exceptions/page.tsx already uses a text-only KIND_LABEL map plus a kindOf() helper that prefers realKind, covering the new kinds. NEEDS item 2 / TU item 6 'check exception list UI' can be closed."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/auth/managerPin.ts",
+          "/home/user/servd/backend/tests/integrationPass1.test.ts"
+        ],
+        "tests": "I ran these on my own DB servd_test_ib_rvfix (created with prisma db push, dropped afterwards), using Redis 6390/22.\n- integrationPass1 passes 11/11. Part 7 now checks that an order-only lock has actorId null, the order title, 'for this order' in the description, lock:'order', senders {c1:2, c2:2, c3:1}, and no flag against any single sender. Part 6 checks that a lone sender is still named, with lock 'actor_and_order'.\n- These suites pass: managerVoids 14/14, sepTrustops 18/18, accessControl 28/28, auditAuthPeople 21/21 and resimOnline 34/34.\n- resimTill as committed is still 13/20, which is IB-RV-1. A scratchpad copy with the proposed 5-line change passes 20/20.\n- `tsc --noEmit` is clean.",
+        "needsOtherFiles": "backend/tests/resimTill.test.ts (till run), needed so the full suite passes:\n- Lines 131, 155, 168 and 242: change `kind: 'self_approval'` to `kind: 'manager_pin_failed'`.\n- Line 349: change `toBe('comp_above_threshold')` to `toBe('discount_above_cap')`, and keep line 348's `not.toBe('high_value_void')`.\n- Checked on a patched copy: 20/20 pass with the IB-RV-3 change.\n\nfrontend/admin/src/app/exceptions/page.tsx: nothing to do; close NEEDS item 2 / TU item 6. One optional detail: the 'Distinct kinds' stat counts the raw `kind`, but no new rows differ from their `realKind`.",
+        "prodNotes": "Correction to the earlier prod note (IB-RV-2):\n- **Discount flags in prod:** HEAD writes them as kind 'high_value_void', title '<n>% discount on POS order', with no metadata.realKind.\n- **Price-override flags in prod:** also kind 'high_value_void', title 'Price override on POS order', with no metadata.realKind.\n- **PIN-lock flags:** none exist in prod, because HEAD has no PIN limiter. So there are no 'manager_pin_failed' rows and no PIN-related 'self_approval' rows.\n\nIf the owner wants the old rows moved to their real kinds, key the one-off update on kind = 'high_value_void' plus those exact titles:\n- Discount rows: `title LIKE '%\\% discount on POS order'` → 'discount_above_cap'.\n- Price-override rows: `title = 'Price override on POS order'` → 'price_override'.\n- Do not touch 'comp_above_threshold' rows: they are real comps from the refund/void/comp cap.\n\nThe new kinds only take effect if the ExceptionKind column accepts them as a plain string/text type, which is how the integrationPass1 tests insert them. If the column is a Postgres enum, the migration must add 'manager_pin_failed', 'discount_above_cap' and 'price_override'."
+      }
+    },
+    {
+      "stream": "IF",
+      "built": {
+        "summary": "Done: NEEDS.md items 9, 11, 1 and 2, plus the exceptions page labels. Admin tsc passes. I added a shared helper, frontend/admin/src/components/pos/pinErrors.ts. It holds isManagerPinLocked, pinLockMinutes and managerPinLockedMessage, which reads ApiError.details.retryAfterSec and returns \"Too many wrong PINs. A manager must sign in, or try again in N minute(s).\" It also holds WRONG_PIN_MESSAGE (\"That PIN is not right…\"). These PIN prompts now use it: void line, cancel order (approvalErrorMessage), refund (refundErrorMessage, and the refund retry loop stops prompting once locked), the till comp PIN and ring-up error in PaymentModal, and the till pay-out panel. Two things to know. (a) The admin till has no discount entry at all: store.setDiscount is never called and ring-up never sends managerOverridePin. So the \"discount prompt\" is the comp PIN in PaymentModal. It now shows INVALID_MANAGER_PIN as \"That PIN is not right\", while MANAGER_OVERRIDE_REQUIRED keeps its \"above your limit\" text. The ring-up error line also maps INVALID_MANAGER_PIN and the lock-out; any other ring-up error, including DISCOUNT_OVER_CAP, shows the server's message. (b) The tablet has no manager-PIN prompts (it never sends managerOverridePin), so I did not touch it. The scheduling page now has the Cell kind/source 'leave' and leaveId (matching backend hr/rota.ts RotaCell). A leave cell reads \"Leave\" on a secondary-token tint. The day dialog says \"On approved leave.\" and points to HR → Leave, and it hides the shift Set, Set/Add hours and Day off controls. RecordDetail shows a LeaveRotaEffects block on approved leave records. It lists \"Shifts removed from the rota\" (date, times, brand name from the shared ['concepts','brand-picker'] query, role) and \"Swaps now uncovered\" (date, shift, colleague). On menu-engineering the brand list now uses ['concepts','brand-picker'] and /concepts?view=picker, the same key and shape as BrandPicker. On the exceptions page I replaced the KIND_EMOJI icons and the emoji in the header with plain KIND_LABEL text for every backend ExceptionKind. That includes manager_pin_failed, discount_above_cap, price_override, posting_failed, void_after_fire and the fiscal/terminal kinds. metadata.realKind is used when present, with a readable fallback for unknown kinds.",
+        "items": [
+          {
+            "id": "9",
+            "status": "fixed",
+            "note": "New components/pos/pinErrors.ts. VoidLineDialog: lock and wrong PIN clear the PIN box and show the lock message. refundEngine: refundErrorMessage and approvalErrorMessage handle MANAGER_PIN_LOCKED and INVALID_MANAGER_PIN; the refund retry loop stops on a lock and its re-prompt says 'That PIN is not right'. PaymentModal: comp PIN and ring-up errors handle the lock and INVALID_MANAGER_PIN ('That PIN is not right'); MANAGER_OVERRIDE_REQUIRED keeps the 'above your limit' text. app/pos/shift/DrawerPanels.tsx (the till pay-out PIN): payoutErrorMessage covers MANAGER_OVERRIDE_REQUIRED, INVALID_MANAGER_PIN and the lock, and clears the PIN. The admin till has no discount entry UI (setDiscount is never called), so the comp PIN is the discount-type prompt. The tablet has no manager-PIN prompts."
+          },
+          {
+            "id": "11",
+            "status": "fixed",
+            "note": "menu-engineering/page.tsx: queryKey ['concepts','brand-picker'] calling api.get<Concept[]>('/concepts?view=picker') with staleTime 60s, same key and shape as BrandPicker and the scheduling page. The page uses only id and name."
+          },
+          {
+            "id": "1",
+            "status": "fixed",
+            "note": "scheduling/page.tsx: Cell kind/source widened with 'leave' and leaveId. The cell shows a 'Leave' label on a secondary-token tint (color-mix with var(--erp-secondary)). The day dialog says 'On approved leave.' and links to HR → Leave. Shift Set, Set/Add hours and Day off are hidden on a leave cell (the API answers 409 ON_LEAVE)."
+          },
+          {
+            "id": "2",
+            "status": "fixed",
+            "note": "RecordDetail.tsx: LeaveRotaEffects on approved leave records lists data._shiftsRemoved ('Shifts removed from the rota': date, start–end, brand name, role) and data._swapsAffected ('Swaps now uncovered': date, shiftName, 'swap with {colleagueName}'), with the note that cancelling the leave does not put the hours back."
+          },
+          {
+            "id": "exceptions-labels",
+            "status": "fixed",
+            "note": "app/exceptions/page.tsx: KIND_LABEL covers every backend ExceptionKind plus void_after_fire. kindOf() prefers metadata.realKind. Kind codes without a label fall back to readable text. The emoji kind icons and the emoji in the header were removed (text only)."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/components/pos/pinErrors.ts (new)",
+          "/home/user/servd/frontend/admin/src/components/pos/VoidLineDialog.tsx",
+          "/home/user/servd/frontend/admin/src/components/pos/PaymentModal.tsx",
+          "/home/user/servd/frontend/admin/src/app/pos/shift/DrawerPanels.tsx",
+          "/home/user/servd/frontend/admin/src/app/refunds/refundEngine.ts",
+          "/home/user/servd/frontend/admin/src/app/scheduling/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/menu-engineering/page.tsx",
+          "/home/user/servd/frontend/admin/src/components/hr/RecordDetail.tsx",
+          "/home/user/servd/frontend/admin/src/app/exceptions/page.tsx"
+        ],
+        "tests": "frontend/admin `npx tsc --noEmit -p .` passes. I bundled pinErrors.ts with esbuild and ran it on sample errors: retryAfterSec 840 gives '14 minutes', 30 gives '1 minute', no details gives 'a few minutes', and other errors give null. The admin has no test runner. Backend contract checks on a scratch DB servd_test_ip1_f (Redis 6390/22, dropped afterwards): tests/resimPeople.test.ts all pass, including the leave cell kind/leaveId and _shiftsRemoved. tests/resimTill.test.ts: 7 of 30 fail. The lock contract is not one of them (429 MANAGER_PIN_LOCKED with error.details.retryAfterSec > 0 passes). Six assertions find 0 flags where they expect 1, and one expects kind 'comp_above_threshold' but gets 'discount_above_cap'. Most likely the backend kind rename (NEEDS item 6) has landed but this test file still expects the old kinds. None of my files are backend.",
+        "needsOtherFiles": "1) backend/tests/resimTill.test.ts: the flag-kind assertions most likely still expect the old kinds after the item-6 rename (manager-PIN flags 'self_approval' → 'manager_pin_failed', discount 'comp_above_threshold' → 'discount_above_cap'). 6 PIN-lock tests count 0 flags instead of 1, and line 349 expects comp_above_threshold. Whoever owns that test (the till/backend stream) should check the new kinds. 2) frontend/admin/src/app/finance/petty-cash/page.tsx (top-up manager PIN; not mine): it should show managerPinLockedMessage(e) from components/pos/pinErrors.ts for a 429 MANAGER_PIN_LOCKED, and WRONG_PIN_MESSAGE once trustops/routes.ts answers INVALID_MANAGER_PIN (NEEDS item 10). 3) Optional, frontend/admin till: there is no discount entry in the admin till (usePosStore.setDiscount is never called and ringUp never sends managerOverridePin). If cashiers are to give discounts from the admin till, a discount + manager-PIN field is needed in PaymentModal step 1 or PosCart, and it should send managerOverridePin with POST /pos/orders. 4) Optional: backend/src/modules/hr/routes.ts writes _shiftsRemoved/_swapsAffected with `as unknown as Prisma.InputJsonValue`. It is a JSON-value cast and looks harmless, but CLAUDE.md asks that `as unknown` on DB writes be justified.",
+        "prodNotes": "Frontend only, no API or schema change. The admin exceptions page no longer shows emoji or raw kind codes: each flag shows a plain label, using metadata.realKind when present, and hovering shows the code. Approved leave records now list the removed rota hours and the uncovered swaps. The text says cancelling the leave does not put the hours back, which is how the backend behaves today. Change that line if the owner decides cancelling should restore them (open owner question in NEEDS.md). The PIN lock-out text is built from retryAfterSec, so it follows the server's limit (5 per 15 min today) without a frontend change."
+      },
+      "review": [
+        {
+          "id": "IF-RV-1",
+          "severity": "medium",
+          "title": "Staff meal at the admin till always needs a manager PIN, but the tender has no PIN box; the error asks for a PIN the cashier cannot enter",
+          "file": "/home/user/servd/frontend/admin/src/components/pos/PaymentModal.tsx",
+          "scenario": "compOrder in backend pos/service.ts (around line 2050) says every staff meal needs a manager at any amount. A cashier with no approver role sends no PIN, so the server answers 403 MANAGER_OVERRIDE_REQUIRED ('Manager PIN required for a staff meal'). In PaymentModal the Manager PIN input only shows when method === 'comp' (around line 621). The staff_meal block (around line 563) has only the 'Staff member' field. The error line (around line 636) then shows 'This comp is above your limit — enter a manager PIN and try again.', but the screen has no box to enter it. The only way through is to switch to Comp, type the PIN, and switch back, because the hidden managerPin state is still sent (line 202). If that hidden PIN is wrong, the cashier sees 'That PIN is not right' with no visible field, and each try counts toward their 5-per-15-minute actor lock. So on onboarding day a cashier cannot ring up a staff meal from the admin till. This gap existed before this stream, but item 9 covers this file's till PIN prompts and this error text.",
+          "fix": "Show the Manager PIN input when method is 'comp' or 'staff_meal' (for staff_meal, label it 'Manager PIN (every staff meal needs a manager)' and hide it when the signed-in user is an override approver). For staff_meal, MANAGER_OVERRIDE_REQUIRED should read 'A staff meal needs a manager — enter a manager’s PIN.', not the comp 'above your limit' text. Clear managerPin in pickMethod when the tender changes, so a PIN typed under one tender is never sent hidden under another."
+        },
+        {
+          "id": "IF-RV-2",
+          "severity": "low",
+          "title": "Refund retry loop asks for a third PIN and never sends it",
+          "file": "/home/user/servd/frontend/admin/src/app/refunds/refundEngine.ts",
+          "scenario": "refundThroughEngine loops for attempt 0..2, and each catch shows window.prompt. Attempt 0 (no PIN) gets MANAGER_OVERRIDE_REQUIRED and prompts for PIN 1. Attempt 1 (PIN 1 wrong) gets INVALID_MANAGER_PIN and prompts 'That PIN is not right. Manager PIN:'. Attempt 2 (PIN 2 wrong) prompts again. The manager then types the correct PIN, but the loop has ended and throws Error('Manager PIN not accepted') without sending it. The refund fails with a message that wrongly implies the right PIN was rejected. The loop existed before this stream, but this stream reworded its re-prompt and says the loop is handled.",
+          "fix": "Make the loop limit one more than the prompt count, or stop prompting on the last iteration: for example, `for (let attempt = 0; attempt < 4; attempt++)`, or do not prompt when attempt === 2 and rethrow err, so refundErrorMessage shows WRONG_PIN_MESSAGE."
+        },
+        {
+          "id": "IF-RV-3",
+          "severity": "low",
+          "title": "resimTill.test.ts still expects the old exception kinds and fails 7 of 30 tests",
+          "file": "/home/user/servd/backend/tests/resimTill.test.ts",
+          "scenario": "I reproduced this on servd_test_ip1_f_rv with Redis 6390/25. resimPeople passes 10/10. resimTill fails 7/30, and the lock contract (429 MANAGER_PIN_LOCKED with details.retryAfterSec) passes. The failures come from count queries on kind 'self_approval' (lines 131, 155, 168, 242), but managerPin.ts now writes kind 'manager_pin_failed'. Line 349 expects 'comp_above_threshold', but pos/service.ts writes 'discount_above_cap'. The backend code and the admin labels agree with each other; only the test file is stale. The builder already handed this off. It is not in this stream's files, but the suite stays red until someone fixes it.",
+          "fix": "In resimTill.test.ts, query kind 'manager_pin_failed' for the PIN-lock flags (lines 131, 155, 168, 242) and expect 'discount_above_cap' at line 349. The till/backend stream that owns the test makes this change."
+        }
+      ],
+      "fix": {
+        "summary": "I checked all three findings and they are all real. I fixed IF-RV-1 and IF-RV-2 in the files I own. IF-RV-3 is a stale test file that belongs to another stream, so I handed it off without changing it.\n\n- **IF-RV-1 (staff meal at the admin till):** Confirmed. Backend `compOrder` (pos/service.ts around line 2052) asks for a manager PIN on every staff meal unless the user is an override approver. PaymentModal only showed a PIN box under Comp, and its error text talked about the comp limit. Changes in `PaymentModal.tsx`:\n  - The Staff meal tender now has a \"Manager PIN (every staff meal needs a manager)\" box. It is hidden when the signed-in user is an override approver, using the existing `useIsManager()` from managerRole.ts, which reads the server's approver list.\n  - `pickMethod` clears the PIN when the tender changes.\n  - A PIN is only sent when its box is visible on the current tender, so a hidden PIN can no longer be sent or count toward the cashier's 5-per-15-minute lock.\n  - For a staff meal, `MANAGER_OVERRIDE_REQUIRED` now reads \"A staff meal needs a manager — enter a manager’s PIN.\"\n  - The two rules (when to show the box, and the error wording) are now small functions in pinErrors.ts, `tenderNeedsPinBox` and `compOverrideMessage`, so they can be tested.\n  - I also changed the Staff member placeholder from \"Name or employee code\" to \"Employee code\". The server (pos/routes.ts around line 443) only matches an employee code or a user id, so typing a name always failed.\n- **IF-RV-2 (refund retry loop):** Confirmed. The loop showed a third PIN prompt and then ended without sending that PIN. In `refundThroughEngine` it now runs `REFUND_PIN_PROMPTS` (3) prompts plus one more request, so every PIN typed is sent. After the last prompt it throws the server's own refusal, so `refundErrorMessage` shows `WRONG_PIN_MESSAGE` instead of the misleading \"Manager PIN not accepted\". A 429 lock-out still stops asking straight away.\n- **IF-RV-3 (resimTill.test.ts):** Confirmed by reading the code: managerPin.ts writes `manager_pin_failed`, pos/service.ts writes `discount_above_cap` for the discount flag, and the test still queries `self_approval` (lines 131, 155, 168, 242) and expects `comp_above_threshold` (line 349). I did not run that suite. The fix is listed under needsOtherFiles.",
+        "items": [
+          {
+            "id": "IF-RV-1",
+            "status": "fixed",
+            "note": "PaymentModal: the Staff meal tender has a Manager PIN box (hidden for override approvers via useIsManager). The PIN is cleared when the tender changes and is only sent when its box is visible. The staff-meal MANAGER_OVERRIDE_REQUIRED text is new. The placeholder now says 'Employee code' because the server does not match names. The rules are tenderNeedsPinBox and compOverrideMessage in pinErrors.ts."
+          },
+          {
+            "id": "IF-RV-2",
+            "status": "fixed",
+            "note": "refundEngine: the loop sends one more request than it has prompts (REFUND_PIN_PROMPTS = 3), so the PIN typed at the third prompt is sent. After that it rethrows the server's refusal, which shows WRONG_PIN_MESSAGE; the generic 'Manager PIN not accepted' is gone."
+          },
+          {
+            "id": "IF-RV-3",
+            "status": "not_fixed",
+            "note": "Real, but backend/tests/resimTill.test.ts is not my file. Confirmed by reading the code: managerPin.ts writes 'manager_pin_failed' and pos/service.ts:264 writes 'discount_above_cap'. I did not run the suite. Handed off under needsOtherFiles."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/components/pos/PaymentModal.tsx",
+          "/home/user/servd/frontend/admin/src/components/pos/pinErrors.ts",
+          "/home/user/servd/frontend/admin/src/app/refunds/refundEngine.ts"
+        ],
+        "tests": "The admin app has no test runner, so I wrote a 6-test vitest suite in the scratchpad and ran it with backend's vitest: /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/ifrv/ifrv.test.ts. It mocks lib/api and imports the real refundEngine.ts and pinErrors.ts. All 6 pass:\n- The third prompt's PIN is sent and the refund succeeds (4 requests, 3 prompts).\n- A wrong PIN after the last prompt gives WRONG_PIN_MESSAGE with no fourth prompt.\n- A 429 lock-out stops asking and says 'try again in 10 minutes'.\n- Cancelling the prompt passes the refusal through.\n- The PIN-box rule is right for every tender, including a manager on Staff meal.\n- The staff-meal and comp error lines are worded correctly.\n\nRun it with: cd backend && npx vitest run --config <scratch>/ifrv/vitest.config.mjs --root <scratch>/ifrv.\n\nAdmin `tsc --noEmit` exits 0. No backend files changed, so I did not run the backend suites.",
+        "needsOtherFiles": "backend/tests/resimTill.test.ts (IF-RV-3, owned by the till/backend stream): change kind 'self_approval' to 'manager_pin_failed' at lines 131, 155, 168 and 242, and change the expectation at line 349 from 'comp_above_threshold' to 'discount_above_cap'. The backend code and the admin labels already agree with each other; only the test is stale.",
+        "prodNotes": "No backend or schema change. The till and refund fixes ship with the admin image."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:IB",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a5bc5d547761cf7fb",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791790883995,
+      "queuedAt": 1791790883963,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I did NEEDS.md items 6, 7, 10 and 3. Two follow-ups sit in …",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. Fix runs just landed (uncommitted tree). Their follow-ups for files they did not own are listed in /home/user/servd/.handoff/fixes/NEEDS.md (items numbered) with full context in /home/user/servd/.handoff/fixes/TU.json and PO.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation, a…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791144857,
+      "tokens": 132042,
+      "toolCalls": 31,
+      "durationMs": 260861,
+      "resultPreview": "{\"summary\":\"I did NEEDS.md items 6, 7, 10 and 3. Two follow-ups sit in files I don't own: resimTill.test.ts now has 7 failing assertions because they check the old flag kinds, and the admin exceptions page has no icons for the 3 new kinds. ExceptionFlag.kind is a plain String column in schema.prisma, not a Postgres enum, so the 3 new kinds were added to the ExceptionKind type with no migration. Th…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:IF",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a4ea53ed7302281fb",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791790883995,
+      "queuedAt": 1791790883963,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Done: NEEDS.md items 9, 11, 1 and 2, plus the exceptions pa…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. Fix runs just landed (uncommitted tree). Their follow-ups for files they did not own are listed in /home/user/servd/.handoff/fixes/NEEDS.md (items numbered) with full context in /home/user/servd/.handoff/fixes/TU.json and PO.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation, a…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791192137,
+      "tokens": 166665,
+      "toolCalls": 55,
+      "durationMs": 307089,
+      "resultPreview": "{\"summary\":\"Done: NEEDS.md items 9, 11, 1 and 2, plus the exceptions page labels. Admin tsc passes. I added a shared helper, frontend/admin/src/components/pos/pinErrors.ts. It holds isManagerPinLocked, pinLockMinutes and managerPinLockedMessage, which reads ApiError.details.retryAfterSec and returns \\\"Too many wrong PINs. A manager must sign in, or try again in N minute(s).\\\" It also holds WRONG_P…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:IB",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "af4aeb577aae6d997",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791144901,
+      "queuedAt": 1791791144861,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. Fix runs just landed (uncommitted tree). Their follow-ups for files they did not own are listed in /home/user/servd/.handoff/fixes/NEEDS.md (items numbered) with full context in /home/user/servd/.handoff/fixes/TU.json and PO.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation, a…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791376025,
+      "tokens": 153941,
+      "toolCalls": 32,
+      "durationMs": 231123,
+      "resultPreview": "{\"findings\":[{\"id\":\"IB-RV-1\",\"severity\":\"medium\",\"title\":\"The backend suite is red: resimTill.test.ts still checks the old flag kinds (7 failures)\",\"file\":\"/home/user/servd/backend/tests/resimTill.test.ts\",\"scenario\":\"I ran it on DB servd_test_ip1_b_rv with Redis 6390/24: resimTill 13/20, with 7 failures. Lines 131, 155, 168 and 242 query kind 'self_approval', and line 349 expects 'comp_above_thre…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "review:IF",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "aee524bd8d1120e4c",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791192145,
+      "queuedAt": 1791791192142,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. Fix runs just landed (uncommitted tree). Their follow-ups for files they did not own are listed in /home/user/servd/.handoff/fixes/NEEDS.md (items numbered) with full context in /home/user/servd/.handoff/fixes/TU.json and PO.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation, a…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791397121,
+      "tokens": 147853,
+      "toolCalls": 43,
+      "durationMs": 204976,
+      "resultPreview": "{\"findings\":[{\"id\":\"IF-RV-1\",\"severity\":\"medium\",\"title\":\"Staff meal at the admin till always needs a manager PIN, but the tender has no PIN box; the error asks for a PIN the cashier cannot enter\",\"file\":\"/home/user/servd/frontend/admin/src/components/pos/PaymentModal.tsx\",\"scenario\":\"compOrder in backend pos/service.ts (around line 2050) says every staff meal needs a manager at any amount. A cash…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "fix:IB",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a8fc0c4e0b07d48a9",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791376032,
+      "queuedAt": 1791791376028,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all four findings. All four were real; one needed…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. Fix runs just landed (uncommitted tree). Their follow-ups for files they did not own are listed in /home/user/servd/.handoff/fixes/NEEDS.md (items numbered) with full context in /home/user/servd/.handoff/fixes/TU.json and PO.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation, a…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791621000,
+      "tokens": 100963,
+      "toolCalls": 22,
+      "durationMs": 244967,
+      "resultPreview": "{\"summary\":\"I checked all four findings. All four were real; one needed a code change in my files, and the other three are notes or work for other owners.\\n\\n- **IB-RV-3 (fixed)** in /home/user/servd/backend/src/modules/auth/managerPin.ts, in `recordPinFailure`.\\n  - **Sender locked (or sender and order both locked):** behaviour is the same as before. The flag names the sender. The description now…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "fix:IF",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "ac1cd5d73bec7e7ad",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791397126,
+      "queuedAt": 1791791397123,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all three findings and they are all real. I fixed…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. Fix runs just landed (uncommitted tree). Their follow-ups for files they did not own are listed in /home/user/servd/.handoff/fixes/NEEDS.md (items numbered) with full context in /home/user/servd/.handoff/fixes/TU.json and PO.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation, a…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791524769,
+      "tokens": 112542,
+      "toolCalls": 26,
+      "durationMs": 127643,
+      "resultPreview": "{\"summary\":\"I checked all three findings and they are all real. I fixed IF-RV-1 and IF-RV-2 in the files I own. IF-RV-3 is a stale test file that belongs to another stream, so I handed it off without changing it.\\n\\n- **IF-RV-1 (staff meal at the admin till):** Confirmed. Backend `compOrder` (pos/service.ts around line 2052) asks for a manager PIN on every staff meal unless the user is an override…"
+    }
+  ],
+  "totalTokens": 814006,
+  "totalToolCalls": 209
+}

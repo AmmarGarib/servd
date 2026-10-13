@@ -1,0 +1,331 @@
+{
+  "summary": "Apply the remaining cross-file follow-ups from the fix runs (books receiving hook, loyalty flags, fiscal contract docs, admin pages; then pre-orders and course pacing), then adversarially review and fix",
+  "agentCount": 6,
+  "logs": [],
+  "result": [
+    {
+      "stream": "BK2",
+      "built": {
+        "summary": "BK2 books follow-ups are done. NEEDS items 12, 13, 18, 19 and 20 are fixed, all only in files I own. Item 12 (RB-3): receiveGoods now applies a supplier bill's carried price variance itself, inside its own transaction and keyed on the receipt, so resimBooks' 'RB-3' test passes without the manual bridge. Item 13: bookEarn and bookRedeem now raise one high posting_failed flag in the owning company when the ledger really refuses a loyalty posting. Item 18: the wipe script deletes customer wallets before customers. Items 19 and 20: the shared FiscalPayload type and the vendor contract both carry the delivery charge, the bill discount, the totals identity and the extra tenders, and the change is backward compatible. New two-company test file added. backend tsc is clean, and all 14 requested suites pass (189 tests), plus 4 nearby loyalty, wallet and reservation suites (88 tests).",
+        "items": [
+          {
+            "id": "12",
+            "status": "fixed",
+            "note": "backend/src/modules/procurement/receiving.ts imports applyCarriedBillVarianceTx from accounting/supplierPosting.js. Inside receiveGoods' transaction, right after the PurchaseOrderLine quantityReceived increment (only when quantityReceived > 0), it calls applyCarriedBillVarianceTx(tx, { poLineId, quantity, supplierId: supplier.id, receiptId: receipt.id }). The header comment is updated. There is no import cycle: supplierPosting imports only prisma, journal and setup-config. At that point the PO lock is held and applyReceiptLine has already moved the stock. resimBooks' helper now sees the hook and stops bridging by hand, and 'RB-3: receiving applies the carried variance by itself' passes on its own (resimBooks 18/18)."
+          },
+          {
+            "id": "13",
+            "status": "fixed",
+            "note": "backend/src/modules/loyalty/service.ts: new LOYALTY_NOTHING_TO_POST set (tx_not_found, not_earn_tx, not_redeem_tx, zero_value) and a private flagLoyaltyRefusal(kind, txId, reason) helper. On a refused reason or a thrown error, bookEarn and bookRedeem call journal.flagPostingFailed with: the company of the points account (else the order's brand's company); sourceType 'loyalty.earn' or 'loyalty.redeem'; sourceId = the loyalty tx id; entity = Order/orderId when the tx has an order, else LoyaltyTransaction/txId; the order's conceptId; and a 2060 title. This uses the same key as orders/service ensureLoyaltyEarnBooked and the reconciliation backfill's resolvePostingFailed, so one refusal gives one flag and the backfill closes it. The functions still never throw."
+          },
+          {
+            "id": "18",
+            "status": "fixed",
+            "note": "backend/scripts/wipe-and-reset.ts: added ['customerWallets', () => prisma.customerWallet.deleteMany()] right after walletTransactions and before customers, with a comment explaining the FK is ON DELETE RESTRICT."
+          },
+          {
+            "id": "19",
+            "status": "fixed",
+            "note": "backend/src/connectors/types.ts FiscalPayload.totals: added optional deliveryChargeCents and billDiscountCents (absent = 0). The totalCents comment now says it is the BILL (Order.totalCents + walletAmountCents + gift-card redemptions), not Order.totalCents alone. Also added an identity comment and clarified that discountCents is capped at saleValueCents. payload.ts's local FiscalTotals alias is now redundant but harmless (not my file)."
+          },
+          {
+            "id": "20",
+            "status": "fixed",
+            "note": "docs/pos-connector-api.md: added a backward-compatibility note at the top (version stays 1). §2 now states the identity Σ lines.taxable + tax + service + tip + delivery − billDiscount = totalCents; says totalCents is the bill; documents both optional fields (delivery untaxed; bill discount only when line taxable is 0, taken after tax, tax spread by gross × rate); says a mismatch is never sent (fiscal_failed / totals_mismatch); documents the wallet, gift_card, pending cash-on-delivery cash and comp tenders; and says payment.mode treats the wallet as card and ignores comp and gift_card. The example has deliveryChargeCents: 0. Refunds now say delivery and bill discount are split pro rata, with the same identity against refundAmountCents. In §5, SRB discountAmount and FBR Discount include billDiscountCents, FBR TotalSaleValue is floored at 0 and includes the delivery charge, service charge and tip, and FBR PaymentMode counts the wallet and gift card as 1."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/procurement/receiving.ts",
+          "/home/user/servd/backend/src/modules/loyalty/service.ts",
+          "/home/user/servd/backend/scripts/wipe-and-reset.ts",
+          "/home/user/servd/backend/src/connectors/types.ts",
+          "/home/user/servd/docs/pos-connector-api.md",
+          "/home/user/servd/backend/tests/integrationPass2Books.test.ts"
+        ],
+        "tests": "Test DB servd_test_ip2_b on Redis 6390/24.\n\n- backend `npx tsc --noEmit`: exit 0. The new test file also typechecks (exit 0) under a scratchpad tsconfig that extends the backend's.\n- Requested suites, run together (14 files, 189/189 passed): resimBooks 18, receiving 10, auditProcurement 20, sepProcurement 14, apAging 8, auditLedgerLoyalty 9, loyalty 4, fiscalPayload 14, fiscalOutbox 15, fiscalQueue 2, fiscalSend 16, fiscalTill 24, resimFiscal 22, integrationPass2Books 13.\n- Nearby suites (4 files, 88/88 passed): resimOnline 34, resimWallet 21, auditOnlineReservations 24, reservations 9.\n\nThe new tests/integrationPass2Books.test.ts covers, with two companies:\n- **RB-3:** a bill booked before the goods, then two partial receipts, each lands its slice once, with an audit row in company A carrying the receiptId. Re-running the old manual bridge for the same receipt moves nothing. A delivery with no bill stays at the PO price.\n- **Loyalty refusal:** with company A's period closed, a refused earn raises one high flag in A, and booking it again adds no second flag. An earn on an order is flagged on the Order with its conceptId. A refused redeem is flagged on the order. An unknown tx or the wrong kind raises no flag. Company B's earn posts, and B has no flags.\n- **Wipe order:** checked in the script, and the FK really restricts.\n- **Fiscal type and doc:** payloads typed against the shared FiscalPayload with delivery, bill discount and the older shape all pass totalsCheck. The types.ts and doc wording is checked.",
+        "needsOtherFiles": "1. backend/src/modules/orders/service.ts ~1932, comment only: 'Its liability posting (bookEarn) only logs a refusal, so the earn is checked here and a refused one flagged' is now stale. bookEarn flags the refusal itself. ensureLoyaltyEarnBooked stays useful as the check after the earn, and it dedups onto the same Order flag. Suggested wording: 'bookEarn flags a refusal itself; this re-checks the earn reached the books (same flag key, so never two flags)'.\n2. Optional: backend/src/connectors/fiscal/payload.ts can drop the local `FiscalTotals = FiscalPayload['totals'] & {…}` alias and totalsOf(). The fields are on the shared type now, so the intersection is a no-op. It is harmless to leave.\n3. Still open from F (not mine): docs/TAX_SETUP.md §2 reporting-OFF note; frontend/admin/src/lib/connectorsApi.ts heldNote and reporting-PUT types; FiscalSetup.tsx / PosStatus.tsx should show heldNote, REPORTING_OFF and TOTALS_MISMATCH.",
+        "prodNotes": "- **Ship item 12 with the bill-variance fix (RB-3).** Receiving now revalues stock for bills booked before the delivery. Until both land together, deliveries against an already-billed PO stay at the PO price.\n- **More flags after deploy.** Loyalty earn and redeem refusals (closed period, missing company, a 2060/6060/7020 account missing from a company's chart) now open high-severity posting_failed flags in that company's inbox. Expect some at first wherever a period is locked through recent days. Clear them with Reconciliation → Backfill unposted once the cause is fixed.\n- **Vendor contract.** The change is backward compatible (version stays 1). Vendors should be told that lines plus tax alone no longer always equal totalCents: delivery charge, bill discount and wallet / gift-card tenders are now in the bill.",
+        "ownerQuestions": "Should a refused loyalty redeem stay high severity like order completions? Redeem refusals usually come from a closed period, and the backfill re-posts them. Currently both earn and redeem are high (flagPostingFailed's fixed severity)."
+      },
+      "review": [
+        {
+          "id": "BK2-RV-1",
+          "severity": "high",
+          "title": "Receiving now applies a bill's carried variance to whatever stock is left after the delivery, with no 5060 split, so stock that was below zero ends up with a wildly wrong unit cost, or 1210 drifts away from the stock valuation",
+          "file": "/home/user/servd/backend/src/modules/accounting/supplierPosting.ts",
+          "scenario": "Repro: scratch test rv/rb3neg.test.ts on servd_test_ip2_b_rv. It passes and prints the figures below. Setup: company A, beef at 1,000/kg (100,000 paisa) with currentStock -9 because recipe sales ran ahead of the delivery, which is typical on a go-live day with no opening count. PO for 10 kg at 1,000. Supplier bill for 10 kg at 1,200 is booked BEFORE the goods, so the whole 2,000 variance is carried in 1210. Then receiveGoods brings in 10 kg. The new hook calls applyCarriedBillVarianceTx, whose revalueItem spreads the full 200,000 paisa over onHand = max(0, -9 + 10) = 1 kg, and unitCostCents becomes 300,000 (3,000/kg against a billed price of 1,200). Do the same with the goods received first and the bill second: postSupplierBill puts 9/10 of the variance to 5060 and the cost becomes 120,000. So the item's cost, recipe costing and the COGS of the next sale depend on whether the bill or the goods arrived first. With stock at -15 and the bill first, the receipt leaves stock at -5, revalueItem moves nothing (absorbedCents 0), and the applied audit row still uses up all 10 kg. The 200,000 paisa stays in 1210 with no stock behind it and no 5060 entry, so 1210 ≠ Σ stock × cost permanently until the bill is voided. Goods first for the same case books the 200,000 to 5060. The function existed before, but until this change it had no production caller. BK2's receiving.ts hook is what puts it on every PO receipt.",
+          "fix": "In applyCarriedBillVarianceTx, do the same split that postSupplierBill does at posting time. Revalue only the share still on hand: absorb targetCents × min(onHand, qty) / qty, clamping to the stock that was there before the receipt plus qty. Post the rest, and the rounding gap targetCents − absorbedCents, as Dr/Cr 5060 against 1210 in the bill's company. Do this in the same transaction (postJournalEntry with tx), dated the receipt, and decide what happens under PERIOD_LOCKED: either refuse the receipt or flag posting_failed. Record usedCents on the applied audit row so postSupplierBillVoid's true-up stays exact. This change belongs in supplierPosting.ts, which BK2 does not own. Also add a test for 'bill first, stock below zero'."
+        },
+        {
+          "id": "BK2-RV-2",
+          "severity": "low",
+          "title": "Carried variances on bills posted before this release are never applied for goods already received, and are only partly applied for later receipts",
+          "file": "/home/user/servd/backend/src/modules/procurement/receiving.ts",
+          "scenario": "Before BK2, applyCarriedBillVarianceTx had no production caller (only the resimBooks test bridge). Take a live bill booked before its goods (carriedQty 10, carriedCents C), with 4 kg received before this deploy and nothing applied. The next receipt of 6 kg after the deploy starts with doneQty = 0, because no applied rows exist for the earlier 4 kg. It applies 6/10 of C, and the other 4/10 of C stays in 1210 with no stock behind it. A line that was fully received before the deploy keeps all of C in 1210 for good. Nothing is ever applied twice: the effect is under-application and 1210 drift.",
+          "fix": "Add a one-off catch-up, as a reconciliation action or script, owned by the books stream. For each live bill with a 'supplier.bill.variance' record whose carriedQty is above the applied quantity, take the quantity received after the bill was recorded (goods_receipt_lines on that PO line after recordedAt). Apply the missing slices with receiptId set to the old receipt, or expense them to 5060 when the stock is gone. Add it to prodNotes alongside 'ship item 12 with RB-3'."
+        },
+        {
+          "id": "BK2-RV-3",
+          "severity": "low",
+          "title": "Stale comment in orders/service says bookEarn only logs a refusal",
+          "file": "/home/user/servd/backend/src/modules/orders/service.ts",
+          "scenario": "Around line 1932, the comment 'Its liability posting (bookEarn) only logs a refusal, so the earn is checked here and a refused one flagged' is now wrong. bookEarn raises the posting_failed flag itself. ensureLoyaltyEarnBooked then adds no second flag, because flagPostingFailed dedups on (Order, orderId, 'loyalty.earn'). I checked: the flag keys match in loyalty/service, orders/service and backfillOrders resolvePostingFailed and step 2b. Only the comment is misleading; behaviour is correct.",
+          "fix": "Reword the comment to: 'bookEarn flags a refusal itself; this re-checks the earn reached the books (same flag key, so never two flags)'. orders/service.ts is not BK2's file."
+        }
+      ],
+      "fix": {
+        "summary": "Checked all three findings. Each is real. RV-1 and RV-2 need changes in backend/src/modules/accounting/supplierPosting.ts, which this stream does not own. I wrote that change, tested it, and saved it as a patch: /home/user/servd/.handoff/fixes/BK2-RV-supplierPosting.patch (a copy is in my scratchpad). `git apply --check` passes against the current tree. The patch makes three changes:\n(1) applyCarriedBillVarianceTx now splits the carried variance at the receipt the same way postSupplierBill does at posting. Of each slice, only the share still on hand is revalued; that share is min(stock after the receipt, quantity received) / quantity received. The rest of the slice, plus the rounding gap, is posted Dr/Cr 5060 against 1210 in the bill's company, inside the same transaction. The entry's sourceType is 'supplier.bill.variance.receipt' and its sourceId is the applied audit row id. The applied audit row now also records usedCents. If the period is closed, the receipt is refused with PERIOD_LOCKED, the same as a bill.\n(2) postSupplierBillVoid adds Σ applied usedCents to its true-up, so a void also gives back the 5060 share that receipts expensed.\n(3) New applyMissedCarriedBillVariances({ tenantIds, dryRun }) is the one-off catch-up for RV-2. It runs one company at a time and one PO line per transaction. For each PO line it applies min(received quantity no live bill has matched yet, carried quantity not yet applied). The share still on hand is stock now less what the item received after the line's last receipt; the rest goes to 5060. Running it twice changes nothing the second time. It also adds an optional onHandQty input to applyCarriedBillVarianceTx.\nIn my own files: receiving.ts comments now describe the split and the closed-period refusal. receiving.ts now also writes GoodsReceiptLine.poLineId. That column was added in migration 20260927 but receiveGoods never filled it.\nTest file backend/tests/integrationPass2Books.test.ts has 5 new tests in their own company C. They cover:\n- stock -9 with the bill first: cost 120,000 and 180,000 to 5060, the same as goods first\n- stock -15: 200,000 to 5060, and a void leaves 1210 and 5060 at zero\n- stock at or above zero: no change and no 5060 entry\n- the RV-2 catch-up: a partly received line ends at 120,000; goods already sold go to 5060; a dry run changes nothing; a second run does nothing; company B's run touches nothing\n- a closed period refuses the receipt and nothing moves.\nRV-3 is only a comment in orders/service.ts, which is not my file.",
+        "items": [
+          {
+            "id": "BK2-RV-1",
+            "status": "not_fixed",
+            "note": "Real. I confirmed it: unpatched, the new tests fail as reported (the -9 case gives cost 300,000; the -15 case leaves usedCents/5060 missing). The fix is in supplierPosting.ts, which I don't own. It is ready as .handoff/fixes/BK2-RV-supplierPosting.patch and tested: with it applied through a vitest alias, all 18 tests in integrationPass2Books pass, the 8 related suites pass (120 tests), and tsc of src plus the test file is clean. In my own file, receiving.ts, only the comments changed, plus the GoodsReceiptLine.poLineId fill. The patch MUST land in the same release as the receiving hook (NEEDS 12)."
+          },
+          {
+            "id": "BK2-RV-2",
+            "status": "not_fixed",
+            "note": "Real: before this, applyCarriedBillVarianceTx had no production caller. The catch-up applyMissedCarriedBillVariances is in the same supplierPosting patch, with tests (partial receipt, goods sold, dry run, idempotent, other company untouched). It still needs a runner; see needsOtherFiles."
+          },
+          {
+            "id": "BK2-RV-3",
+            "status": "not_fixed",
+            "note": "Real, but only the comment is wrong; behaviour is correct. The comment is now at backend/src/modules/orders/service.ts lines 2160-2161, not ~1932. That file is not mine; see needsOtherFiles."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/procurement/receiving.ts",
+          "/home/user/servd/backend/tests/integrationPass2Books.test.ts",
+          "/home/user/servd/.handoff/fixes/BK2-RV-supplierPosting.patch"
+        ],
+        "tests": "All runs used my own DB, servd_test_bk2fix, and Redis on port 6390/24.\n- With the supplierPosting patch (vitest alias config in my scratchpad): integrationPass2Books 18/18 pass. apAging, auditLedgerFollowups, auditProcurement, baseLayers, receiving, resimBooks, resimKitchen and resimOnline: 120 pass, 2 skipped (skipped before as well).\n- Without the patch (repo as it is now): the 5 new BK2-RV tests fail and reproduce the reviewer's figures. The other 13 tests in the file pass, and the 8 related suites still pass.\n- tsc --noEmit on src plus the test file, with the patch applied in a scratch copy: clean.\nCommand once the patch is applied: cd /home/user/servd/backend && DATABASE_URL=postgresql://postgres@127.0.0.1:5432/servd_test_ip2_b REDIS_URL=redis://127.0.0.1:6390/24 JWT_SECRET=test-secret-for-local-verification-only-not-a-real-key JWT_REFRESH_SECRET=test-refresh-secret-for-local-verification-only NODE_ENV=test npx vitest run tests/integrationPass2Books.test.ts tests/resimBooks.test.ts tests/receiving.test.ts tests/auditProcurement.test.ts tests/apAging.test.ts",
+        "needsOtherFiles": "1. backend/src/modules/accounting/supplierPosting.ts (books/BK owner). Run `git apply .handoff/fixes/BK2-RV-supplierPosting.patch`; it was made against the current file (md5 914c8ee2…). This must go into the SAME release as receiving.ts's applyCarriedBillVarianceTx hook (NEEDS 12). Without it, every PO receipt where the stock was below zero gives the item a wrong cost or lets 1210 drift. If the patch can't land, take the hook back out of receiving.ts instead. The 5 BK2-RV tests in integrationPass2Books fail until the patch is in.\n2. A runner for applyMissedCarriedBillVariances (RV-2), owned by books. Either add a reconciliation action next to the existing backfills in accounting/reconciliation routes (CEO/finance only, tenantIds from resolveTenantScope(req), dryRun first), or add a script backend/scripts/catchup-carried-bill-variance.ts. The script should loop over prisma.tenant.findMany ids and call applyMissedCarriedBillVariances({ tenantIds:[id], dryRun: process.argv.includes('--apply') ? false : true }), then print rows and summary.\n3. backend/src/modules/orders/service.ts lines 2160-2161 (RV-3): replace the comment 'Its liability posting (bookEarn) only logs a refusal, so the earn is checked here and a refused one flagged (BOOKS-R2-01).' with 'bookEarn flags a refusal itself; this re-checks the earn reached the books (same flag key, so never two flags) (BOOKS-R2-01).'",
+        "prodNotes": "Ship item 12 (the receiving hook) together with the supplierPosting patch (RB-3 + BK2-RV-1). After deploy, run the RV-2 catch-up once per company: dry run first, check the rows, then apply. Run it only AFTER the patch is live, so that goods already sold go to 5060 and do not re-price today's stock. It posts adjusting entries dated today to 5060/1210 in each bill's company, and a closed current period refuses them. Receiving now refuses a delivery with PERIOD_LOCKED only in this case: a bill was booked before the goods, the stock was below zero, and today falls in a closed period. Normally period close only runs up to yesterday.",
+        "ownerQuestions": "When a bill booked before its goods meets stock that was below zero, the receipt is now refused if today's period is closed (the same rule as for bills). Is that acceptable, or should the receipt go through and raise a posting_failed flag instead?"
+      }
+    },
+    {
+      "stream": "FE2",
+      "built": {
+        "summary": "FE2 (admin page follow-ups) is done. NEEDS items 14, 15 and 17 are fixed, and tsc in frontend/admin is clean.\n\nItem 14: the period-close page now defaults to yesterday in Pakistan time, and the date input stops at yesterday. The same limit disables the Close button. The help text now says today is still trading and names the latest date that can be closed. If the API refuses anyway (422 LOCK_IN_FUTURE), its own message, which names that date, is shown in the alert. The helper is a local function, so lib/money.ts is unchanged.\n\nItem 15: the reconciliation backfill panel is the component BackfillUnposted.tsx, which reconciliation/page.tsx imports. I did not touch page.tsx because another stream has it modified. The panel is now titled \"Postings that never reached the books\" and keeps the shifts table. It adds a \"Sales, points and refunds\" section built from orders.summary and orders.rows:\n- The summary gives one line per type (Sale / Points earned / Points spent / Refund), with counts for to post, posted, in a closed period and errors.\n- The table shows what, order, day (Pakistan time), outcome and detail.\n- Outcomes in plain words: would_post = \"Will post on its own day\", posted = \"Posted\", locked = \"Its day is closed — not posted; for the accountant\", error = \"Error — not posted\". The table also covers already_posted, would_resolve, resolved and not_refunded. Any other reason shows as \"Skipped\" with the reason in the detail column.\n- The Post button count now includes order rows.\n\nItem 17:\n- **Receiving page:** it reads the role from useAuthStore.isRole against the backend MANAGERS list. Non-managers see a notice \"A manager takes the delivery in.\" and a read-only \"Due at the dock\" list: open POs with what is still due, and the ?poId= one highlighted with --erp-primary. They also see Recent deliveries. They get no steps, no inputs and no Accept button, and the /inventory query only runs for managers. Managers keep the full form.\n- **Procurement page:** managers see \"Receive\". Everyone else sees \"View at dock\", which opens the same dock page read-only.\n- **Role descriptions:** the procurement description in lib/appRoles.ts and the procurement blurb in workforce/page.tsx now read \"Supplier chat and POs. Sees deliveries at the dock; a manager receives\". In those two files I changed only those lines.\n\nNew colours are tokens only. No emoji was added.",
+        "items": [
+          {
+            "id": "14",
+            "status": "fixed",
+            "note": "period-close/page.tsx: default date and input max are yesterday (Pakistan time); the LOCK_IN_FUTURE message is shown as the API sends it."
+          },
+          {
+            "id": "15",
+            "status": "fixed",
+            "note": "Done in reconciliation/BackfillUnposted.tsx, the component that calls POST /reconciliation/backfill-unposted: orders.summary per type plus an orders.rows table, outcomes in plain words."
+          },
+          {
+            "id": "17",
+            "status": "fixed",
+            "note": "Receiving page is read-only for non-managers with the note; on the procurement page only managers get Receive, others get 'View at dock'; procurement descriptions updated in appRoles.ts and workforce/page.tsx."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/app/accounting/period-close/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/reconciliation/BackfillUnposted.tsx",
+          "/home/user/servd/frontend/admin/src/app/procurement/receiving/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/procurement/page.tsx",
+          "/home/user/servd/frontend/admin/src/lib/appRoles.ts",
+          "/home/user/servd/frontend/admin/src/app/workforce/page.tsx"
+        ],
+        "tests": "frontend/admin: `npx tsc --noEmit -p .` is clean. Backend contract check: I created a throwaway DB servd_test_fe2_ui with `prisma db push`, ran tests/resimBooks.test.ts (Redis 6390/25), and 18/18 passed; this covers LOCK_IN_FUTURE and the backfill's orders rows and summary. I dropped the DB afterwards. No new backend test, because nothing in the backend changed. The UI was not run in a browser (no next dev or build, per the rules).",
+        "needsOtherFiles": "None needed. Optional: (a) the manager-role list ['admin','owner','manager','management','foh_management','boh_management','fnb_manager'] is now copied in five admin files: crm, naughty-list and riders, plus my two procurement pages. A shared export in lib (for example lib/roles.ts) would remove the copies. (b) reconciliation/page.tsx (owned by another stream) could rename its section heading if it refers to \"shifts\" only, since the panel now covers sales, points and refunds too.",
+        "prodNotes": "Frontend only; no schema change. The reconciliation panel works whether or not the API returns the `orders` field, so it is safe if the admin image ships before the API image.",
+        "ownerQuestions": "Two questions. (1) Decision 27 says buyers do not receive deliveries, and this change is built on that: procurement sees the dock read-only. Confirm. (2) A manager who raised a PO still sees \"Receive\"; the server refuses at submit because whoever raised a PO cannot receive it. Should the UI hide Receive for the PO's creator up front? That needs the PO's createdBy in the purchase-orders list response."
+      },
+      "review": [
+        {
+          "id": "FE2-RV-01",
+          "severity": "medium",
+          "title": "The manager who raised a PO is still offered Receive, the PO is preselected, and every Accept is refused with 403 and logs a high-severity exception flag",
+          "file": "/home/user/servd/frontend/admin/src/app/procurement/receiving/page.tsx",
+          "scenario": "Owner decision 27 says whoever raised a PO cannot receive it; only the CEO is exempt. Take a boh_management or fnb_manager user who raises a PO. On /procurement, PoActions shows them 'Receive' because canReceive only checks MANAGERS. On /procurement/receiving?poId=…, the PO loads into the form. When they press 'Accept delivery', POST /crosschecks/receiving calls assertNotSelfApproval and returns 403 SELF_APPROVAL_BLOCKED. It also writes a high-severity 'self_approval' ExceptionFlag ('Self-approval blocked: receive goods'). This is confirmed by backend/tests/receiving.test.ts:137-138, which I ran green on servd_test_ip2_f_rv. So an honest click shows the user a red error and puts a high-severity alert in the CEO's exceptions inbox. The builder sent this to the owner as a question and said the fix 'needs the PO's createdBy in the purchase-orders list response'. That premise is wrong. GET /procurement/purchase-orders (procurement/routes.ts:303, `include` returns all scalars) and GET /crosschecks/receiving/open-pos (crosschecks/routes.ts:73) both already return `createdBy`. The receiving page's pos array already has it.",
+          "fix": "Add `createdBy?: string | null` to the OpenPo and PurchaseOrder types. Make it so the user can receive only if they are a manager and either their role is 'admin' or `po.createdBy !== user.id`. Use that rule in PoActions (show 'View at dock' or a short 'You raised this, a colleague receives it' instead of Receive) and in the receiving page (skip the ?poId= preselect for the PO's creator, and disable or mark that PO in the Step 1 picker). Use the store's user.id. No backend change is needed, and decision 27 already covers the owner question."
+        },
+        {
+          "id": "FE2-RV-02",
+          "severity": "low",
+          "title": "The read-only dock view says 'No purchase orders waiting' when its reads were actually refused",
+          "file": "/home/user/servd/frontend/admin/src/app/procurement/receiving/page.tsx",
+          "scenario": "canOpenPath lets any role holding the 'procurement' module open /procurement/receiving, and the CEO can grant that module to, say, finance. The page's reads (/crosschecks/receiving, /receiving/open-pos, /receiving/suppliers) only accept PROCUREMENT_TEAM, which is MANAGERS plus procurement. For such a user every query returns 403, `pos` falls back to `[]`, and the new read-only section shows 'No purchase orders waiting to be received.' with 'Recent deliveries · 0'. The user is told the dock is empty when they were in fact refused. The procurement page sends exactly these non-managers here through the new 'View at dock' button.",
+          "fix": "Read `error` from the open-pos and receipts queries. When either fails, show its message (for example in the existing ErrorBanner style) instead of the empty-state text."
+        }
+      ],
+      "fix": {
+        "summary": "I confirmed both findings and fixed both. A test that checks the backend behaviour these pages rely on passes. The existing receiving suite passes 10/10, and the admin typecheck is clean.\n\nFE2-RV-01 was real. The backend blocks whoever raised a PO from receiving it, unless their role is `admin`. Each blocked attempt returns 403 `SELF_APPROVAL_BLOCKED` and logs a high-severity `self_approval` exception flag. Both `GET /procurement/purchase-orders` and `GET /crosschecks/receiving/open-pos` already return `createdBy`, so no backend change was needed.\n- **/procurement:** `PurchaseOrder` now has `createdBy`, and both pages check it with a new `raisedByMe(po, user)` helper. A manager who raised the PO now sees \"View at dock\" instead of \"Receive\". The button's tooltip says \"You raised this PO, so a colleague receives it\". Non-managers get the tooltip \"A manager takes the delivery in\".\n- **/procurement/receiving:** `OpenPo` now has `createdBy`. Opening `?poId=` no longer preselects the PO when it is the user's own, and a note says \"You raised PO X, so a colleague receives it.\" In the Step 1 picker, the user's own POs are disabled and labelled \"You raised this, a colleague receives it\", so they can never reach \"Accept delivery\" and trigger the 403 and the flag. The CEO, and POs with no creator on file, can still be received, as on the server.\n\nFE2-RV-02 was real. The dock reads only admit `PROCUREMENT_TEAM`, so a role such as finance that was given the procurement module gets 403 on them. The page now reads `error` from the open-POs and recent-deliveries queries and shows each failure in a red banner with the server's message. When a read fails it no longer says \"No purchase orders waiting to be received.\" or shows \"Recent deliveries · 0\". This applies to both the read-only view and the manager view. `ErrorBanner` now takes a `label`, and the save error keeps \"Save failed:\".\n\nNothing was rejected. I only edited the two procurement pages. The other files listed under my stream (period-close, the reconciliation page, `appRoles.ts` and the workforce page) were not part of these two findings, so I left them alone.",
+        "items": [
+          {
+            "id": "FE2-RV-01",
+            "status": "fixed",
+            "note": "Confirmed against backend/src/lib/separation-of-duties.ts (only role admin is exempt; blocked attempts raise a high-severity flag). Both PO list endpoints already return createdBy. Added createdBy to the PurchaseOrder and OpenPo types and a raisedByMe() check in both pages. /procurement: the PO's raiser sees 'View at dock' with a tooltip instead of 'Receive'. /procurement/receiving: ?poId= is not preselected for the raiser and a note is shown instead; the raiser's own POs are disabled and labelled in the Step 1 picker. CEO and POs with no creator on file can still be received, as on the server."
+          },
+          {
+            "id": "FE2-RV-02",
+            "status": "fixed",
+            "note": "Confirmed: open-pos and GET /crosschecks/receiving are PROCUREMENT_TEAM only (a finance user gets 403, checked in the scratch test). The receiving page now reads both query errors and shows a red banner with the server message. When a read fails it hides the 'No purchase orders waiting' text and the 'Recent deliveries · 0' count. This applies to the read-only and manager views. ErrorBanner now takes a label."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/app/procurement/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/procurement/receiving/page.tsx"
+        ],
+        "tests": "The admin frontend has no unit-test setup, so the UI change itself is not tested. Instead I added a backend test that checks the server behaviour the UI depends on, and ran it against a new test DB, servd_test_fe2_dock (dropped afterwards), with Redis on 6390/25: 2/2 pass. The test lives in the scratchpad at /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/fe2/dockContract.test.ts (it runs with the vitest.config.ts next to it), not in the repo. It checks that both PO lists return createdBy, that company B cannot see company A's PO, that the PO's raiser gets 403 SELF_APPROVAL_BLOCKED while another manager (fnb_manager) receives it with 201, and that finance gets 403 with a message on both dock reads. The existing backend/tests/receiving.test.ts passes 10/10 on the same DB. `npx tsc --noEmit -p frontend/admin` passes.",
+        "needsOtherFiles": "Optional: the scratchpad test fe2/dockContract.test.ts could be copied into the repo as backend/tests/receivingDockContract.test.ts (or merged into backend/tests/receiving.test.ts) so that a future change cannot drop createdBy from the PO lists without a test failing. I don't own those files, so I didn't add it.",
+        "prodNotes": "Frontend only, no backend or schema change. The pages hide or disable Receive using the same rule the server applies, so the server stays the authority."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:BK2",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "aff671d111e8c04c3",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791176232,
+      "queuedAt": 1791791176187,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "BK2 books follow-ups are done. NEEDS items 12, 13, 18, 19 a…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. All fix runs landed (uncommitted tree). Their follow-ups for files they did not own are numbered in /home/user/servd/.handoff/fixes/NEEDS.md, with full context in /home/user/servd/.handoff/fixes/{BK,WF,PO,TU}.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation; ledger rules; POS…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791591140,
+      "tokens": 157327,
+      "toolCalls": 45,
+      "durationMs": 414907,
+      "resultPreview": "{\"summary\":\"BK2 books follow-ups are done. NEEDS items 12, 13, 18, 19 and 20 are fixed, all only in files I own. Item 12 (RB-3): receiveGoods now applies a supplier bill's carried price variance itself, inside its own transaction and keyed on the receipt, so resimBooks' 'RB-3' test passes without the manual bridge. Item 13: bookEarn and bookRedeem now raise one high posting_failed flag in the owni…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:FE2",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a64aa406fe68541a8",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791176232,
+      "queuedAt": 1791791176187,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "FE2 (admin page follow-ups) is done. NEEDS items 14, 15 and…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. All fix runs landed (uncommitted tree). Their follow-ups for files they did not own are numbered in /home/user/servd/.handoff/fixes/NEEDS.md, with full context in /home/user/servd/.handoff/fixes/{BK,WF,PO,TU}.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation; ledger rules; POS…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791355375,
+      "tokens": 115769,
+      "toolCalls": 29,
+      "durationMs": 179141,
+      "resultPreview": "{\"summary\":\"FE2 (admin page follow-ups) is done. NEEDS items 14, 15 and 17 are fixed, and tsc in frontend/admin is clean.\\n\\nItem 14: the period-close page now defaults to yesterday in Pakistan time, and the date input stops at yesterday. The same limit disables the Close button. The help text now says today is still trading and names the latest date that can be closed. If the API refuses anyway (…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:FE2",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a0ae95ebe0fa91622",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791355405,
+      "queuedAt": 1791791355378,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. All fix runs landed (uncommitted tree). Their follow-ups for files they did not own are numbered in /home/user/servd/.handoff/fixes/NEEDS.md, with full context in /home/user/servd/.handoff/fixes/{BK,WF,PO,TU}.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation; ledger rules; POS…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791489554,
+      "tokens": 117913,
+      "toolCalls": 30,
+      "durationMs": 134148,
+      "resultPreview": "{\"findings\":[{\"id\":\"FE2-RV-01\",\"severity\":\"medium\",\"title\":\"The manager who raised a PO is still offered Receive, the PO is preselected, and every Accept is refused with 403 and logs a high-severity exception flag\",\"file\":\"/home/user/servd/frontend/admin/src/app/procurement/receiving/page.tsx\",\"scenario\":\"Owner decision 27 says whoever raised a PO cannot receive it; only the CEO is exempt. Take a …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "fix:FE2",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a4ea70f18dd14c526",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791489560,
+      "queuedAt": 1791791489557,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I confirmed both findings and fixed both. A test that check…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. All fix runs landed (uncommitted tree). Their follow-ups for files they did not own are numbered in /home/user/servd/.handoff/fixes/NEEDS.md, with full context in /home/user/servd/.handoff/fixes/{BK,WF,PO,TU}.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation; ledger rules; POS…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791626052,
+      "tokens": 100007,
+      "toolCalls": 17,
+      "durationMs": 136492,
+      "resultPreview": "{\"summary\":\"I confirmed both findings and fixed both. A test that checks the backend behaviour these pages rely on passes. The existing receiving suite passes 10/10, and the admin typecheck is clean.\\n\\nFE2-RV-01 was real. The backend blocks whoever raised a PO from receiving it, unless their role is `admin`. Each blocked attempt returns 403 `SELF_APPROVAL_BLOCKED` and logs a high-severity `self_a…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "review:BK2",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "ab6dca1b619f4d40f",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791591146,
+      "queuedAt": 1791791591143,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. All fix runs landed (uncommitted tree). Their follow-ups for files they did not own are numbered in /home/user/servd/.handoff/fixes/NEEDS.md, with full context in /home/user/servd/.handoff/fixes/{BK,WF,PO,TU}.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation; ledger rules; POS…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791821031,
+      "tokens": 160701,
+      "toolCalls": 29,
+      "durationMs": 229884,
+      "resultPreview": "{\"findings\":[{\"id\":\"BK2-RV-1\",\"severity\":\"high\",\"title\":\"Receiving now applies a bill's carried variance to whatever stock is left after the delivery, with no 5060 split, so stock that was below zero ends up with a wildly wrong unit cost, or 1210 drifts away from the stock valuation\",\"file\":\"/home/user/servd/backend/src/modules/accounting/supplierPosting.ts\",\"scenario\":\"Repro: scratch test rv/rb3n…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "fix:BK2",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a58164a6b0f668511",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791791821037,
+      "queuedAt": 1791791821033,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Checked all three findings. Each is real. RV-1 and RV-2 nee…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. All fix runs landed (uncommitted tree). Their follow-ups for files they did not own are numbered in /home/user/servd/.handoff/fixes/NEEDS.md, with full context in /home/user/servd/.handoff/fixes/{BK,WF,PO,TU}.json (result[].built/fix .needsOtherFiles). CLAUDE.md is the rulebook (company separation; ledger rules; POS…",
+      "promptFramed": true,
+      "lastProgressAt": 1791792497362,
+      "tokens": 168271,
+      "toolCalls": 42,
+      "durationMs": 676325,
+      "resultPreview": "{\"summary\":\"Checked all three findings. Each is real. RV-1 and RV-2 need changes in backend/src/modules/accounting/supplierPosting.ts, which this stream does not own. I wrote that change, tested it, and saved it as a patch: /home/user/servd/.handoff/fixes/BK2-RV-supplierPosting.patch (a copy is in my scratchpad). `git apply --check` passes against the current tree. The patch makes three changes:\\n…"
+    }
+  ],
+  "totalTokens": 819988,
+  "totalToolCalls": 192
+}

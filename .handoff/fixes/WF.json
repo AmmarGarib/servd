@@ -1,0 +1,313 @@
+{
+  "summary": "Fix every confirmed finding from the shift re-runs (till/PIN, books, fiscal payload, wallet per company, online ops, people/HR, kitchen), then adversarially review and fix",
+  "agentCount": 6,
+  "logs": [],
+  "result": [
+    {
+      "stream": "W",
+      "built": {
+        "summary": "Stream W is done; both findings are fixed. The earlier stopped attempt had already written the per-company wallet model, the migration, modules/wallet/service.ts and the rewritten wallet/routes.ts. I reviewed those and kept them, apart from one small change: balanceInView moved from wallet/routes.ts into wallet/service.ts so the CRM routes can use it too.\n\nThe rest of the work is finished:\n- **Storefront** (quote, checkout, /account): checkout reads only the wallet of the brand's company. When the wallet is the payment method, the amount is held up front under the wallet row's lock, tied to the order once the order exists, and released to the same company's wallet if the order is never written. The \"use my wallet\" toggle takes the money after the order exists, locking the order row first and then the wallet row. /storefront/account now shows the wallet and wallet history for the company of ?conceptSlug=, plus a `wallets[]` list of every company's balance.\n- **Refund and cancel restores** (orderPosting step 3): the wallet share goes back to the order's company's wallet through restoreOrderWallet. It runs once per order, under the order row lock. The existing 'order.refund_wallet' entry still posts Cr 2050 in the order's company.\n- **CRM** (customer card, segments, /crm/customers/:id/context): the wallet balance shown is the wallet at the companies in view only.\n- **Admin top-up modal**: you now choose goodwill or paid (cash, card or bank). It sends kind/tender/description, shows errors, and says the credit lands at the active company.\n- **ONL-R2-06**: checkout deletes a pending payment of PKR 0 or less once gift card, wallet and points are applied. /pos/cod-due now filters amountCents > 0.\n\nCustomer.walletBalance has no reader or writer left in src/. Top-ups post in the same transaction as the credit, in the top-up's company: goodwill is Dr 6060 Marketing & Promo / Cr 2050; paid is Dr 1010 cash, 1030 card or 1020 bank / Cr 2050. If the posting fails (period lock or missing chart code), the credit rolls back too.",
+        "items": [
+          {
+            "id": "ONL-R2-01",
+            "status": "fixed",
+            "note": "Per-company CustomerWallet (tenantId + customerId unique, paisa, indexed; CHECK balance >= 0, NOT VALID) with WalletTransaction.tenantId. modules/wallet/service.ts is the only code that moves a balance.\n\nPostings:\n- Goodwill top-up: Dr 6060 / Cr 2050. 6060 Marketing & Promo is the closest fit in lib/chartOfAccounts.ts; there is no dedicated goodwill code.\n- Paid top-up: Dr 1010, 1030 or 1020 / Cr 2050.\n- All in the top-up's company, in the same transaction as the credit.\n\nSpending:\n- Uses the ORDER's company wallet only. A wallet-paid order at another company's brand gets 422; the toggle takes 0 there.\n- Completion still posts Dr 2050 in the order's company.\n- Cancel or refund restores to that company's wallet once.\n\nLocking: the wallet row is locked FOR UPDATE on every debit, with the order row locked first.\n\nMigration 20261011160000 moves each non-zero Customer.walletBalance to the company of the customer's latest completed order (else the oldest active company). It tags history: rows tied to an order get that order's company, other rows get the customer's home company. It leaves Customer.walletBalance in place, unread, and is safe to re-run (tested twice via psql).\n\nTests: two companies.\n- A's balance cannot pay B's order (quote, checkout as payment method, toggle, and spendWalletOnOrder all checked).\n- Top-ups post balanced entries in the right company.\n- A top-up / spend / cancel / refund run keeps 2050 at or above 0 in both companies. 2050 equals wallets plus wallet shares on open orders, and every entry balances.\n- Concurrent checkouts and concurrent restores are tested.\n- Reads (storefront, /wallet/me, /wallet/customers, CRM card and context) show only the company's wallet."
+          },
+          {
+            "id": "ONL-R2-06",
+            "status": "fixed",
+            "note": "After gift card, wallet and points are applied, storefront checkout deletes pending payment rows of PKR 0 or less. /pos/cod-due now filters amountCents > 0, so legacy PKR 0 rows are hidden too. Tests:\n- A gift-card-covered order has no payment row.\n- cod-due lists a real amount owed but not the legacy 0 row or the covered order, and company B does not see A's rows.\n- A normal cash order keeps its pending row."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/prisma/schema.prisma (CustomerWallet + WalletTransaction.tenantId, from the earlier attempt, reviewed)",
+          "/home/user/servd/backend/prisma/migrations/20261011160000_customer_wallet_per_company/migration.sql (earlier attempt, reviewed and tested)",
+          "/home/user/servd/backend/src/modules/wallet/service.ts",
+          "/home/user/servd/backend/src/modules/wallet/routes.ts",
+          "/home/user/servd/backend/src/modules/storefront/routes.ts",
+          "/home/user/servd/backend/src/modules/crm/routes.ts",
+          "/home/user/servd/backend/src/modules/accounting/orderPosting.ts",
+          "/home/user/servd/backend/src/modules/pos/routes.ts",
+          "/home/user/servd/frontend/admin/src/app/crm/page.tsx",
+          "/home/user/servd/backend/tests/resimWallet.test.ts (new)",
+          "/home/user/servd/backend/tests/auditOnlineCheckout.test.ts",
+          "/home/user/servd/backend/tests/sepCrm.test.ts",
+          "/home/user/servd/backend/tests/orderLifecycle.test.ts",
+          "/home/user/servd/backend/tests/integrationMoney.test.ts",
+          "/home/user/servd/backend/tests/wave3Marketing.test.ts"
+        ],
+        "tests": "New suite: tests/resimWallet.test.ts, 18 tests, all passing.\n\nExisting wallet-related suites now seed and read the per-company wallet instead of Customer.walletBalance:\n- auditOnlineCheckout (30)\n- sepCrm (17)\n- orderLifecycle (11)\n- integrationMoney (12)\n- wave3Marketing (21)\n\nAll pass.\n\nAlso re-run and green: booksReconcile, auditReports, auditLedgerSales, auditOrdersRefund, auditTillGiftCard, storefrontQuickfix, groupOrderSubmit, booksLedger, customersReconcile, loyalty, auditLedgerLoyalty, auditMoneyFollowups, auditLedgerFollowups, journal, customerRollups, campaignAudience (184 tests).\n\nTypecheck:\n- `npx tsc --noEmit -p .` is clean in frontend/admin.\n- In backend it is clean now. An earlier run failed only on another stream's in-progress orders/service.ts (postRefundOrFlag, postCompletionOrFlag and ensureLoyaltyEarnBooked undefined). Those errors were gone on the final run.\n\nTest DB: servd_test_rf_w; Redis 6390/5.",
+        "needsOtherFiles": "1. backend/scripts/wipe-and-reset.ts: add `['customerWallets', () => prisma.customerWallet.deleteMany()],` next to the `walletTransactions` line, before `customers`. customer_wallets has an FK to customers (ON DELETE RESTRICT), so the wipe fails without it.\n2. backend/scripts/wipe-orders.ts (optional): it deletes wallet transactions tied to orders without touching balances. That was already true before this change; mention it only if someone uses that script on real data.\n3. Any future writer of wallet value (e.g. a tier monthlyCompCents credit, which has no writer today) must go through wallet/service.ts topUpWallet or creditWalletTx with a tenantId — never Customer.walletBalance.",
+        "prodNotes": "**Deploy order:**\n- Migration 20261011160000 must run before the new API image serves traffic.\n- It creates customer_wallets and adds wallet_transactions.tenantId.\n- It moves each non-zero Customer.walletBalance to ONE company: the company of the customer's latest completed order, else the oldest active company. It does not zero or drop the old column, and it is safe to re-run.\n- Rolling back to an older image after the migration brings back the global Customer.walletBalance as it was when migrated; anything spent from the per-company wallets in between would be spendable again.\n\n**Ledger, one-off clean-up before Monday:**\n- The migration does not touch the books. Top-ups made before this release never posted Cr 2050, and wallet spends at another company's brand debited that company's 2050. Both companies' 2050 can be in debit today (the sim showed GS -48,600 and KGC -32,400 paisa).\n- Finance should post a one-off adjusting entry per company so that 2050 = SUM(customer_wallets.balanceCents) for that company. `SELECT \"tenantId\", SUM(\"balanceCents\") FROM customer_wallets GROUP BY 1;` gives the target per company. The contra account is probably 6060 for past goodwill; for inter-company spends it is the owner's call (see ownerQuestions).\n\n**Behaviour changes:**\n- /wallet/topup now posts an entry. It fails (nothing credited) if the company's chart lacks 6060/2050/1010/1020/1030 or the period is locked. ensureChartOfAccounts at boot covers the chart.\n- Admin CRM top-up now asks goodwill vs paid (cash/card/bank).\n- Gift-card- or wallet-covered storefront orders no longer get a PKR 0 pending payment row.\n- Legacy 0 rows stay in the database but are hidden from /pos/cod-due.",
+        "ownerQuestions": "1. Goodwill top-ups are expensed to 6060 Marketing & Promo, because the chart has no dedicated goodwill or customer-compensation account. Should there be one (e.g. 6065 Customer Goodwill)?\n2. For the one-off 2050 clean-up: should past cross-company wallet spends (company B debited its 2050 for value A granted) be settled as an inter-company balance between A and B, or simply written off per company (Dr 6060 / Cr 2050)?\n3. Migrated legacy balances all go to one company per customer: the company of their latest completed order. A customer whose old balance came from the other company will now find it spendable only at the brands of their latest-order company. Is that acceptable, or should any balances be re-homed by hand before Monday?"
+      },
+      "review": [
+        {
+          "id": "W-RV-01",
+          "severity": "medium",
+          "title": "Wallet migration aborts if any customer has a negative legacy walletBalance. The comment says NOT VALID prevents this, but it does not.",
+          "file": "/home/user/servd/backend/prisma/migrations/20261011160000_customer_wallet_per_company/migration.sql",
+          "scenario": "The migration runs its steps in this order. First CREATE TABLE customer_wallets, which starts empty. Second ADD CONSTRAINT customer_wallets_balance_non_negative CHECK (balanceCents >= 0) NOT VALID. Third the INSERT ... SELECT cu.walletBalance for every customer with walletBalance <> 0. NOT VALID only skips rows that already exist when the constraint is added. Rows inserted afterwards are still checked. So one customer with walletBalance < 0 makes the INSERT fail, and the whole migration fails. In prod that means `prisma migrate deploy` fails and the new API image does not come up. The comment says the opposite: \"NOT VALID: a legacy negative balance moved below does not block the release.\" I reproduced it on a scratch DB with tenants, customers (c1=500, c2=-200), concepts, orders and wallet_transactions. psql -f migration.sql fails with ERROR: new row for relation \"customer_wallets\" violates check constraint \"customer_wallets_balance_non_negative\" (Failing row ... c2, -200). The suite's migration test (resimWallet.test.ts, around line 455) only seeds a positive balance, so it never hits this. HEAD code always guarded debits (updateMany walletBalance gte), so a negative balance in prod is unlikely. Nothing in the migration or the release notes checks for one, though, and the comment wrongly promises the release is safe.",
+          "fix": "Move the DO $$ block that adds customer_wallets_balance_non_negative (NOT VALID) so it runs AFTER the INSERT INTO customer_wallets. NOT VALID then does exempt the legacy rows, as the comment intends. An alternative is to insert GREATEST(cu.walletBalance, 0) and RAISE NOTICE with the customers that were clamped. Add a negative-balance case to the migration test. Before deploy, run SELECT count(*) FROM customers WHERE \"walletBalance\" < 0 on prod."
+        },
+        {
+          "id": "W-RV-02",
+          "severity": "low",
+          "title": "A failed wallet restore on refund or cancel is only logged and never flagged. The Cr 2050 restore entry still posts, so 2050 drifts above the wallets without anyone being told.",
+          "file": "/home/user/servd/backend/src/modules/accounting/orderPosting.ts",
+          "scenario": "In postOrderRefund step 3 (around lines 843-870), `await restoreOrderWallet(orderId, reason)` sits in a try/catch that only calls console.error. Nothing is pushed into `results`. For a refunded order (sold=true), the code then posts 'order.refund_wallet' (Dr revenue/tax shares, Cr 2050) anyway. Example: restoreOrderWallet throws because its interactive transaction timed out waiting on the order row lock (the restore now takes the lock with SELECT ... FOR UPDATE), or the brand has no company (ORDER_HAS_NO_COMPANY), or the DB has a transient error. The customer's wallet at the order's company is never given back. 2050 is still credited, so the books owe value that no wallet holds. That breaks the invariant the builder claims and tests: 2050 = wallets + open-order shares. postRefundOrFlag only flags failures that appear in `results`, so no posting_failed flag is raised, and Reconciliation → Backfill (backfillOrders step 3) never retries the restore. The customer silently loses the credit. This pattern was in HEAD too, but this stream rewrote the block and now claims the invariant.",
+          "fix": "In step 3, push a failure result when restoreOrderWallet throws, e.g. results.push({ posted:false, entryId:null, reason:`wallet_restore_failed: ${msg}` }). Skip the 'order.refund_wallet' posting in that case, or better, make the restore credit and its Cr 2050 entry one transaction, as the gift-card and loyalty restores already are (restoreOrderWallet takes a tx or returns a callback). postRefundOrFlag then flags the failure, and a backfill re-run restores and posts together. The existing 'refund' WalletTransaction claim keeps the retry idempotent."
+        }
+      ],
+      "fix": {
+        "summary": "I checked both review findings against the current tree. Both were real, and both are fixed with regression tests.\n\nW-RV-01 (migration): I did not use the reviewer's main suggestion of moving the NOT VALID CHECK to after the INSERT. A NOT VALID CHECK still checks every UPDATE. A wallet carried over at -200 could then never be credited back to a still-negative amount, so a refund or top-up for that customer would fail every time. Reads already clamp to 0 (walletBalanceAt), so the customer would see 0 and be unable to receive credit. I used the reviewer's alternative instead:\n- Only POSITIVE legacy balances get a customer_wallets row.\n- Each negative balance gets a RAISE NOTICE (customer id and amount). It stays on the legacy Customer.walletBalance column, which is kept and not read.\n- The CHECK is now fully validated, not NOT VALID.\n- The header comment now explains this and gives the query to run on prod before the release.\nI confirmed the new test fails against the old INSERT (WHERE <> 0) with the reviewer's exact \"violates check constraint\" error, and passes with the fix.\n\nW-RV-02 (wallet restore on refund):\n- `restoreOrderWallet(orderId, reason, { book })` now runs a `book(tx, amount)` callback inside the same transaction as the credit. postOrderRefund step 3 posts the 'order.refund_wallet' entry (Dr revenue/tax shares, Cr 2050) through that tx, so the wallet credit and its entry happen together or not at all.\n- If the posting is refused (period lock, missing code, no company, timeout), nothing moves. The failure is now added to `results` through `fail()`, so postRefundOrFlag raises a posting_failed flag, and a Backfill re-run restores and books together, once.\n- When an earlier run already restored the wallet but its entry failed (the old code path), `book` still runs. Its posting is idempotent on the order, so the missing entry catches up and the wallet is not credited a second time.\n- A guard throws if the order's wallet share changed between computing the lines and taking the lock.\n- I updated the header comment in orderPosting.ts.",
+        "items": [
+          {
+            "id": "W-RV-01",
+            "status": "fixed",
+            "note": "Did not just move the NOT VALID CHECK after the INSERT. NOT VALID still checks UPDATEs, so a negative wallet could never be credited again. Instead, only walletBalance > 0 is moved in, each negative legacy balance gets a RAISE NOTICE and stays on customers.walletBalance, the CHECK is fully validated, and the comment explains this and gives the prod check query. New test: a -200 customer and a +500 customer, migration run twice, no wallet for the -200 customer, the CHECK is validated, and the customer can be topped up afterwards. The test fails with the old WHERE <> 0."
+          },
+          {
+            "id": "W-RV-02",
+            "status": "fixed",
+            "note": "restoreOrderWallet takes opts.book and runs it inside its own transaction. postOrderRefund step 3 posts order.refund_wallet with { tx } inside that callback, and any failure is pushed into results (postRefundOrFlag flags it). If a restore was made earlier without its entry, the entry is posted on the next run. Tests: period-locked refund → wallet, claim and 2050 unchanged, posting_failed flag raised in company A; after unlock, two re-runs → credited once, Cr 2050 = share, in A's chart only. A legacy restore without its entry gets the entry later, with no second credit."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/prisma/migrations/20261011160000_customer_wallet_per_company/migration.sql",
+          "/home/user/servd/backend/src/modules/wallet/service.ts",
+          "/home/user/servd/backend/src/modules/accounting/orderPosting.ts",
+          "/home/user/servd/backend/tests/resimWallet.test.ts"
+        ],
+        "tests": "On a fresh servd_test_rf_w DB with Redis on 6390/5: tests/resimWallet.test.ts has 21 tests, 3 of them new, and all pass. A mutation check shows the new migration test fails against the old INSERT condition. The related existing suites also pass: resimBooks, integrationMoney, auditLedgerSales, booksLedger, auditMoneyFollowups, sepCrm, wave3Marketing, booksReconcile, auditLedgerLoyalty, resimFiscal, auditReports, orderLifecycle and auditOnlineCheckout. Across all 14 files, 227 of 227 tests pass. `npx tsc --noEmit -p .` in backend is clean.",
+        "prodNotes": "Before deploying, run this on prod: SELECT id, \"walletBalance\" FROM customers WHERE \"walletBalance\" < 0; Any rows it returns get no customer_wallets row. The migration prints a NOTICE for each one, and the debt stays on the legacy column for manual follow-up. No negatives are expected, because the old code guarded every debit. A refund whose wallet entry is refused (for example, the period is closed) now leaves the customer's wallet uncredited until the cause is fixed and Reconciliation → Backfill is re-run. It is flagged as posting_failed, in the same way as the gift-card and loyalty restores.",
+        "needsOtherFiles": ""
+      }
+    },
+    {
+      "stream": "F",
+      "built": {
+        "summary": "Stream F is done; all three findings are fixed. None of my owned files had changes from the stopped attempt (mtimes were all from 2026-10-11), so this was a fresh, complete pass.\n\nONL-R2-02: the fiscal sale payload is now built from the order's stored figures, and totals.totalCents is the full bill. The bill is Order.totalCents + walletAmountCents + the gift-card redemptions (giftCardAppliedOf), with any tip recorded only on a tender folded in by withTenderTips. This is the same value the ledger books. The delivery fee goes in a new optional field, totals.deliveryChargeCents. Order has no fee column, so the fee is what is left of the bill on a delivery order. On any other order, a leftover means the stored figures are wrong.\n\nTenders now list:\n- paid payment rows;\n- pending rows, capped at the charged amount (this covers COD cash);\n- `wallet` and `gift_card`.\n\nThe mode ignores comp and gift_card and counts the wallet as card-class. A COD sale is now mode cash, FBR PaymentMode 2 and SRB modeOfPay Cash.\n\ntotalsCheck() asserts all of the following, for sales and refunds alike:\n- the lines' taxable value + tax + service + tip + delivery equals totalCents;\n- the line tax adds up to totals.taxCents;\n- the taxable value equals the sale value less the discount;\n- no figure is negative.\n\nbuildRefundPayload works from the sale's bill (the same base as the ledger's refundShareOf) and takes a delivery-charge share. Rounding on a tiny refund is clamped, so the parts always add up to the refund amount.\n\nWhat the outbox does when the check fails:\n- **Sale enqueue:** the document is stored as failed / totals_mismatch, and a fiscal_failed ExceptionFlag is written in the same transaction (it does not throw, so the till's completion is never blocked). It is never filed and never auto-skipped.\n- **Zero-value skip:** now keyed on the bill, so a sale paid by wallet or gift card is no longer skipped as zero_value.\n- **Refund enqueue and promoting a waiting refund:** the same check is applied.\n- **sendOnce:** a last check before submitting, so a pending document frozen before this fix is failed rather than submitted.\n- **releaseHeld:** still rebuilds every never-sent held sale from the order. Held documents from before this fix therefore go out with the bill, the fee and the tenders; one that still does not add up becomes failed and is flagged.\n- **retryDocument on a totals_mismatch document:** rebuilds a never-sent sale from the order. If it is still wrong it returns 409 TOTALS_MISMATCH. If it is right it goes back to pending, held or waiting as usual.\n\nBOOKS-R2-02 / FOH-R2-02: there is no skip. A company's held documents are left exactly as they are. /health no longer counts held documents of companies with reporting OFF (health.reportingOffTenantIds). GET /connectors still shows counts.held and adds a heldNote. The reporting-required PUT returns heldCount and heldNote, and records heldCount in the audit row. releaseHeld refuses with 409 REPORTING_OFF while reporting is off. Switched back ON, the documents count in /health again and release as before. All of this is covered by a two-company test.",
+        "items": [
+          {
+            "id": "ONL-R2-02",
+            "status": "fixed",
+            "note": "Payload totals are now the bill. Delivery fee is the new optional field totals.deliveryChargeCents (wire contract still version 1). Wallet, gift card and pending COD cash are listed as tenders instead of being subtracted. totalsCheck() runs on sales and refunds; a document that fails it becomes failed/totals_mismatch with a fiscal_failed flag and is never filed. The refund builder uses the same rules, including a fee share. Held documents from before the fix are rebuilt on release; pending ones from before the fix are stopped at send, and Retry rebuilds them. The zero-value skip now uses the bill, so a real sale paid by wallet or gift card is never skipped. The FBR/SRB reference mappings are unchanged: TotalSaleValue = total − tax now includes the fee, and the SRB saleValue is still the food only."
+          },
+          {
+            "id": "BOOKS-R2-02",
+            "status": "fixed",
+            "note": "With reporting OFF, /health excludes the company's held documents. They stay held (no skip) and listed, with a heldNote on GET /connectors. The switch's response and audit carry heldCount. Release returns 409 REPORTING_OFF while reporting is off. Switched back ON, they count and release as before."
+          },
+          {
+            "id": "FOH-R2-02",
+            "status": "fixed",
+            "note": "Same fix as BOOKS-R2-02. Release while reporting is OFF now says REPORTING_OFF instead of NOT_LIVE. Turning reporting back on and going live releases them as usual. Record manual filing still works on each document."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/connectors/fiscal/payload.ts",
+          "/home/user/servd/backend/src/connectors/fiscal/outbox.ts",
+          "/home/user/servd/backend/src/connectors/health.ts",
+          "/home/user/servd/backend/src/modules/connectors/routes.ts",
+          "/home/user/servd/backend/tests/resimFiscal.test.ts",
+          "/home/user/servd/backend/tests/fiscalOutbox.test.ts"
+        ],
+        "tests": "New file tests/resimFiscal.test.ts, 12 tests, all passing:\n- COD delivery (fee 15000 + tip 10000): total 341250 = lines + tax + tip + fee, cash tender, FBR TotalSaleValue 3000, and a full refund's saleValue equals the sale's (275000);\n- PKR 1,000 gift card: bill 333500, gift_card tender, FBR TotalSaleValue 2900, refund tax shares match the ledger base;\n- wallet-paid sale: bill 59400, mode card, FBR value positive, not skipped with fileZeroValue off;\n- sale covered in full by a gift card;\n- wallet top-up + loyalty discount + service charge;\n- refund-builder sums for tiny and tipped refunds;\n- a mismatched order gets a failed document and a flag, Retry returns 409, and after fixing the order Retry gives pending; company B gets 404 on it;\n- a negative remainder on a delivery is a mismatch, not a negative fee;\n- a pre-fix pending document is stopped at send (no submit), then rebuilt and filed;\n- a pre-fix held document is rebuilt on release with the bill, fee and tenders;\n- a refund document follows the same rules;\n- two-company reporting OFF/ON (held kept, /health ignores B's only, the note, 409 REPORTING_OFF, back ON releases, A untouched).\n\ntests/fiscalOutbox.test.ts: the two synthetic zero-value fixtures now carry a full discount (a zero bill with priced lines no longer adds up).\n\nRan 32 suites (405 tests), all passing:\n- the fiscal and connector suites: resimFiscal, fiscalPayload, fiscalOutbox, fiscalSend, fiscalTill, fiscalQueue, healthConnectors, connectorsRoutes, connectorsUnit, connectorsWhatsapp, integrationConnectors, legacyDrain;\n- the terminal suites: terminalCharge, terminalGuards, terminalRefund, terminalReversal, terminalTimeout;\n- the order, till and online suites: preBills, receipt, removedTaxPath, managerVoids, posWebhook, resimTill, auditMoneyFollowups, auditTillReview, auditTillGiftCard, auditOnlineCheckout, auditOrdersRefund, auditLedgerSales, ordersReconcile, orderLifecycle, groupOrderSubmit.\n\nSome fixtures in auditMoneyFollowups, auditTillGiftCard and terminalGuards (orders with no lines, or a line inserted straight into the DB) now log totals_mismatch. That is the new guard working on data that does not add up; their assertions still pass.\n\nnpx tsc --noEmit -p . in backend: clean.\n\nDB servd_test_rf_f, Redis 6390/4.",
+        "needsOtherFiles": "1) backend/src/connectors/types.ts, in FiscalPayload.totals: add `deliveryChargeCents?: number  // delivery fee, untaxed (ONL-R2-02); absent = 0`. Change the totalCents comment to `// the BILL: Order.totalCents + walletAmountCents + gift-card redemptions = lines + tax + service + tip + delivery`. After that, payload.ts's local FiscalTotals alias is redundant but harmless.\n\n2) docs/pos-connector-api.md:\n- In the sale example and the 'How servd builds the figures' bullets: totals.totalCents is the bill. Lines' taxable + taxCents + serviceChargeCents + tipCents + deliveryChargeCents = totalCents exactly. deliveryChargeCents is the untaxed delivery fee (optional, absent = 0, a backward-compatible addition).\n- Tenders can include `wallet`, `gift_card` and the cash still pending on a cash-on-delivery order. `payment.mode` ignores comp and gift_card and treats the wallet as card.\n- Refunds also split deliveryChargeCents pro rata, and lines + tax + tip + service + delivery = refundAmountCents.\n- In §5, FBR TotalSaleValue = (totalCents − taxCents) now includes the fee, service and tip.\n- servd never sends a document whose totals do not add up (it is flagged fiscal_failed / totals_mismatch).\n\n3) docs/TAX_SETUP.md §2 (reporting OFF): add that sales held before the switch-off are kept (never skipped). They are not counted in /health or alerts. Release refuses with REPORTING_OFF while reporting is off. Switched back on, they release as usual, or each can be recorded as filed by hand.\n\n4) Admin, frontend/admin/src/lib/connectorsApi.ts:\n- add `heldNote: string | null` to the GET /connectors type;\n- change the reporting-required PUT result type to `{ fiscalReportingRequired: boolean; heldCount: number; heldNote: string | null }`.\n\n5) Admin pages, frontend/admin/src/components/connectors/FiscalSetup.tsx and PosStatus.tsx (and/or app/connectors/pos/page.tsx):\n- show heldNote next to the held count;\n- in the CEO's switch-off confirmation, state the held count (from GET counts.held);\n- show the REPORTING_OFF 409 message on Release;\n- show TOTALS_MISMATCH (409 on Retry) and statusReason 'totals_mismatch' in the submissions list.\n\n6) Optional, for the WALLET stream (schema owner): add `Order.deliveryFeeCents Int @default(0)` and write it in orders/service.ts ingestOrder from `opts.price.deliveryFeeCents`. Then in payload.ts use `order.deliveryFeeCents` instead of the leftover, and keep totalsCheck to catch real mismatches.",
+        "prodNotes": "No migration and no deploy-order dependency.\n\n- **Held documents on the box:** sales held before go-live, including legacyDrain 'legacy_unfiled', are rebuilt from the order on release with the corrected bill, fee and tenders. Any whose stored figures do not add up become failed/totals_mismatch with a fiscal_failed Inbox flag instead of being filed. Expect a few of these if older orders carry hand-edited figures. Each can be fixed and retried, or filed by hand.\n- **Old pending or failed documents:** a document already queued (pending) with a pre-fix payload is stopped at send (failed, TOTALS_MISMATCH, never submitted). Retry rebuilds it from the order if it was never sent.\n- **Old filed documents:** documents already filed (only by the TEST driver so far) are not touched.\n- **Full refunds of wallet or gift-card orders whose sale was held before this fix:** the 'void:' remainder was computed from the old net amountCents. If such an order was fully refunded before release, its credit note may be smaller than the bill. Check after the first release: for refunded orders, the refund documents should add up to the sale's amountCents.\n- **Companies with reporting OFF:** their existing held rows stay, as intended. /health stops warning about them right after deploy.",
+        "ownerQuestions": "The ported FBR mapping (toFbrInvoiceFields, docs §5) uses PaymentMode 1 = card, 2 = cash, 3 = wallet/QR. My understanding of the PRAL spec is 1 Cash, 2 Card, 3 Gift Voucher, 4 Loyalty Card, 5 Mixed, 6 Cheque, but I could not confirm it here. It is reference-only (the fiscal POS vendor does the real mapping). Should IT confirm the codes with the vendor before go-live? I left the mapping unchanged."
+      },
+      "review": [
+        {
+          "id": "F-RV-1",
+          "severity": "medium",
+          "title": "Real, correctly priced sales fail totals_mismatch and are never filed when the discount covers all of the food (loyalty above the food value, or a 100% discount at the till)",
+          "file": "/home/user/servd/backend/src/connectors/fiscal/payload.ts",
+          "scenario": "Both the storefront and the till let a loyalty redemption go past the food value. Storefront checkout caps loyalty at Math.max(0, subtotal), where subtotal = priceOrder total less promo, so GST and the delivery fee are included (storefront/routes.ts ~880). The till's redeemPointsOnOrder caps it at total − paid. priceOrder also lets a staff discount reach itemTotal + tax, and an admin can approve a 100% discount.\n\nBut buildFiscalSaleTx clamps discountCents to saleValueCents (line 226) and spreads the order's tax by taxable × rate (line 229). Once every line's taxable value is 0, allocateTaxCents returns all zeros, so the line tax (0) never matches Order.taxCents. totalsCheck fails, and enqueueFiscalSaleTx stores the sale as failed/totals_mismatch with a high-severity fiscal_failed flag. This check runs before the zero_value check, so a sale whose bill is fully covered by points, which used to be skipped as zero_value, is now flagged instead.\n\nReproduced on servd_test_rf_f_rv:\n- **R1:** Kheer 55000 at card 8% (tax 4400). Points worth 57000 are within the 59400 cap, leaving 2400 paid by card. Result: totals {saleValue 55000, discount 55000, taxable 0, tax 4400, total 2400}, and the document is 'failed'.\n- **R2:** 2× Kheer at cash 15%, with a discount of 110000 (100% of the food). The customer pays the GST of 16500. Problem: \"line tax 0 is not the order's tax 16500\". The document is 'failed'.\n\nRetry rebuilds from the same stored figures and returns 409 TOTALS_MISMATCH every time. 'Fix the order' is not possible, because the figures are right: the ledger books these sales correctly. These real sales can only be filed by hand, and each one raises a high-severity Inbox alert. The builder's claim that a mismatch 'means the stored figures are wrong' is false for these paths.",
+          "fix": "Make the payload able to express a discount larger than the food, instead of treating it as bad data. Either:\n(a) In buildFiscalSaleTx, when the lines' taxable total is 0 or the discount exceeds saleValueCents, spread the stored tax by gross × rate (tax is levied on the pre-discount value; see priceOrder). Carry the excess discount (stored discount + promo − saleValue) in an explicit field, such as totals.billDiscountCents, and include it in totalsCheck: taxable + tax + service + tip + delivery − billDiscount = total. A docs/types change follows for the vendor contract.\nOr (b) in the owning streams, cap loyalty and staff discounts at the food value, so the stored figures always fit the contract: storefront/routes.ts capCents = food − promo; loyalty/service.ts redeemPointsOnOrder caps at the order's remaining food value; pricing.ts priceOrder clamps discount ≤ itemTotalCents.\nAt minimum, run the zero-value skip before the mismatch check when the bill is 0, so a sale fully covered by points is skipped as before rather than flagged. Add regression tests for R1 and R2."
+        },
+        {
+          "id": "F-RV-2",
+          "severity": "low",
+          "title": "sendOnce's totals gate runs before the 'unknown → look up first' step, so an in-doubt document is marked failed without the lookup, its UNKNOWN marker is overwritten, and the alert wrongly says it was not sent",
+          "file": "/home/user/servd/backend/src/connectors/fiscal/outbox.ts",
+          "scenario": "Take a pending sale document whose payload was built before the fix (for example a wallet or delivery order). It was already submitted once and its outcome is in doubt: attempts 1, lastErrorCode 'UNKNOWN_TIMEOUT' or 'UNKNOWN_LEASE_EXPIRED' set by the sweeper, or a providerRef.\n\nAt line 627, sendOnce runs totalsCheck before the mayExist/lookup block at line 646. It sets the document to failed/TOTALS_MISMATCH and overwrites lastErrorCode, which wipes the UNKNOWN signal. It then raises a fiscal_failed alert whose text (mismatchText) says the document \"was NOT sent to the fiscal POS\".\n\nreproduced: test driver (lookup capability on), doc pending, attempts 1, UNKNOWN_TIMEOUT.\n- sendOnce returned 'failed' and made 0 getDocumentStatus calls.\n- retryDocument then returned 409 \"The figures still do not add up…\". retryMismatch rebuilds only when attempts === 0, so the document is stuck.\n\nThe vendor may in fact have filed it, since the test driver's lookup would report it filed. The operator is told it was never sent and is pushed to file it by hand on the portal, which risks a double filing. This breaks the outbox rule 'unknown → lookup before any resubmit'. Today only the TEST driver has been live, so the exposure is small, but the same thing happens to any in-doubt document after a vendor goes live.",
+          "fix": "In sendOnce, move the totalsCheck gate after the step-3 lookup, so it guards only an actual submit or resubmit. Alternatively, skip the gate when mayExist and do the lookup first: if the lookup reports filed, applyFiled takes it.\n\nWhen the gate does fail a document that may already exist at the vendor:\n- keep the UNKNOWN lastErrorCode (or record it in lastError);\n- don't say 'NOT sent' in the alert.\n\nIn retryMismatch, let a sale with attempts > 0 and a 'not found' lookup result be rebuilt as well. Otherwise it can never leave failed except by manual filing. Add a regression test: pending, attempts 1, UNKNOWN_*, old payload → a lookup happens and the document is filed or left recoverable."
+        }
+      ],
+      "fix": {
+        "summary": "Both review findings were real, and both are fixed in files this stream owns, with regression tests.\n\nF-RV-1 (payload.ts): I took option (a), so the payload can now express a discount bigger than the food. Option (b), capping loyalty and staff discounts at the food value, would have meant editing other streams' files, and the stored figures are correct anyway: the ledger books these sales properly.\n- **How the payload carries it:** buildFiscalSaleTx still discounts each food line only down to zero. Once no line has any taxable value left, the stored GST is spread over the lines by gross × rate (GST is charged on the pre-discount value). Whatever discount is left over goes in a new optional field, totals.billDiscountCents, which is present only when it is above zero, so every other payload and its hash stay the same.\n- **The totals check:** it is now lines + tax + service + tip + delivery − bill discount = bill. It rejects a bill discount while any line still has taxable value, and treats a negative bill discount as a negative figure.\n- **Delivery fee:** the leftover-amount step that works out the fee now subtracts the bill discount, so a delivery fee stays visible when points cover the food and the GST.\n- **Refunds:** buildRefundPayload returns its pro-rata share of the bill discount too, in both the pro-rata path and the voided-line path. A full refund of such a sale returns no taxable value, all of the tax and the bill discount, which matches how the ledger's refundShareOf books it. Line tax falls back to the sale's own line tax when no value is returned, and a rounding cent goes to the bill discount or the tax.\n- **SRB/FBR reference mappings:** the bill discount is now counted in SRB's discountAmount and FBR's Discount. FBR's TotalSaleValue can no longer be negative.\n- **Results:** R1 now builds {saleValue 55000, discount 55000, taxable 0, tax 4400, billDiscount 2000, total 2400}, passes the check, goes to pending and files. R2 adds up with no bill discount needed. A bill fully covered by points is skipped as zero_value again.\n\nF-RV-2 (outbox.ts): I moved the totals check in sendOnce to after the step-3 lookup, so it now only guards a real submit or resubmit.\n- **Lookup says filed:** the filing is recorded.\n- **Lookup fails:** the document goes back to pending and keeps its UNKNOWN marker.\n- **Lookup says not found:** the document fails as TOTALS_MISMATCH with the existing \"NOT sent\" text, which is true in that case.\n- **No lookup possible:** the document fails but keeps its UNKNOWN_* or PROCESSING code. lastError starts with \"TOTALS_MISMATCH (an earlier submit's outcome is unknown)\", and the alert is \"Fiscal document in doubt\". The alert tells people not to file it on the authority portal until the fiscal POS has been checked.\n\nretryMismatch now rebuilds a sale whenever the vendor cannot already have it, so a sale with attempts > 0 is no longer stuck. For a document that might already be at the vendor, Retry asks the fiscal POS first: if filed, it records the filing; if not found, it rebuilds; otherwise it refuses with a 409 FISCAL_IN_DOUBT and leaves the document as it was. A new helper, mayExistAtVendor, is used by both sendOnce and retryMismatch.\n\nI rejected neither finding. I made no changes to health.ts or connectors/routes.ts; they did not need any.",
+        "items": [
+          {
+            "id": "F-RV-1",
+            "status": "fixed",
+            "note": "payload.ts: billDiscountCents (only when > 0) for the discount above the food. Line tax is spread by gross × rate once no line has taxable value. totalsCheck subtracts the bill discount and rejects one while lines still carry value. The delivery-fee remainder includes it. Refunds return their pro-rata share of it, with line tax falling back to the sale's line tax. SRB/FBR mappings count it as discount, and FBR TotalSaleValue is never negative. R1 builds the expected totals and files; R2 adds up; a fully-points-paid bill is skipped as zero_value again."
+          },
+          {
+            "id": "F-RV-2",
+            "status": "fixed",
+            "note": "outbox.ts: the totals check now runs after the lookup. A document the vendor may hold keeps its UNKNOWN/PROCESSING code, and its alert says 'in doubt', never 'NOT sent'. retryMismatch rebuilds any sale the vendor cannot have. For one the vendor might have, it asks the fiscal POS first: filed → records it, not found → rebuilds, otherwise 409 FISCAL_IN_DOUBT."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/connectors/fiscal/payload.ts",
+          "/home/user/servd/backend/src/connectors/fiscal/outbox.ts",
+          "/home/user/servd/backend/tests/resimFiscal.test.ts"
+        ],
+        "tests": "npx tsc --noEmit -p . in backend passes. I added 10 tests to backend/tests/resimFiscal.test.ts:\n- R1, with the full and partial refund sweep and the outbox refund going to pending\n- R2\n- a bill fully covered by points is skipped as zero_value\n- a delivery where loyalty covers the food, the GST and part of the fee keeps the fee shown\n- a bill discount is refused while lines still carry value\n- five in-doubt tests: the vendor has it (lookup files it, nothing submitted, no alert); the lookup fails (stays pending and keeps its UNKNOWN marker); the vendor does not have it ('NOT sent', then Retry rebuilds even with attempts > 0 and it files); no lookup possible (in-doubt alert, Retry refused with 409, then filed by lookup once lookup is available again); a failed in-doubt sale whose lookup cannot answer gets 409 and is not rebuilt.\nCompany B gets 404 retrying company A's documents.\n\nI ran resimFiscal plus every suite that touches fiscal code (25 files, 328 tests), all passing. That covers fiscalPayload, fiscalOutbox, fiscalSend, fiscalTill, fiscalQueue, connectorsRoutes, connectorsUnit, connectorsWhatsapp, healthConnectors, integrationConnectors, receipt, preBills, managerVoids, posWebhook, legacyDrain, removedTaxPath, resimTill, auditMoneyFollowups, auditTillReview and the terminal* suites. They ran on my own database servd_test_rf_f_fix (dropped afterwards) with Redis db 21 on port 6390.",
+        "needsOtherFiles": "Two changes outside this stream's files, both documentation and types only, nothing that runs:\n- backend/src/connectors/types.ts: in FiscalPayload.totals, add `deliveryChargeCents?: number` and `billDiscountCents?: number` (payload.ts currently adds both locally through its FiscalTotals type). Also correct the comment on totalCents: it is the bill (Order.totalCents + wallet + gift cards), not Order.totalCents.\n- docs/pos-connector-api.md (the vendor contract v1): document the optional totals.billDiscountCents. It is the discount above the food value (for example loyalty points that also cover the GST or the delivery fee), applied after tax. It appears only when lines' taxable total is 0, and the identity becomes Σ lines.taxable + tax + service + tip + delivery − billDiscount = total. In that case line tax is spread by gross × rate.\nOptional: an admin view of fiscal documents that lists totals could show billDiscountCents.",
+        "prodNotes": "Payloads with no discount above the food value build exactly as before, so their hashes do not change. Payloads already stored are not touched. A sale that failed as totals_mismatch because of a discount above the food value can now be Retried: it is rebuilt from the order, adds up, and goes to pending or held. For a document left in doubt, Retry may now ask the fiscal POS before it does anything; that lookup can take up to 5 s."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:W",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a1ae3c09aa01b82dd",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791788825113,
+      "queuedAt": 1791788825091,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stream W is done; both findings are fixed. The earlier stop…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789732500,
+      "tokens": 224039,
+      "toolCalls": 70,
+      "durationMs": 907385,
+      "resultPreview": "{\"summary\":\"Stream W is done; both findings are fixed. The earlier stopped attempt had already written the per-company wallet model, the migration, modules/wallet/service.ts and the rewritten wallet/routes.ts. I reviewed those and kept them, apart from one small change: balanceInView moved from wallet/routes.ts into wallet/service.ts so the CRM routes can use it too.\\n\\nThe rest of the work is fin…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:F",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a272061c6e09ae62b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791788825113,
+      "queuedAt": 1791788825092,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stream F is done; all three findings are fixed. None of my …",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790129990,
+      "tokens": 254500,
+      "toolCalls": 71,
+      "durationMs": 1304876,
+      "resultPreview": "{\"summary\":\"Stream F is done; all three findings are fixed. None of my owned files had changes from the stopped attempt (mtimes were all from 2026-10-11), so this was a fresh, complete pass.\\n\\nONL-R2-02: the fiscal sale payload is now built from the order's stored figures, and totals.totalCents is the full bill. The bill is Order.totalCents + walletAmountCents + the gift-card redemptions (giftCar…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:W",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "ab04915d20a8b4bb2",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789732565,
+      "queuedAt": 1791789732504,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790135662,
+      "tokens": 171996,
+      "toolCalls": 48,
+      "durationMs": 403094,
+      "resultPreview": "{\"findings\":[{\"id\":\"W-RV-01\",\"severity\":\"medium\",\"title\":\"Wallet migration aborts if any customer has a negative legacy walletBalance. The comment says NOT VALID prevents this, but it does not.\",\"file\":\"/home/user/servd/backend/prisma/migrations/20261011160000_customer_wallet_per_company/migration.sql\",\"scenario\":\"The migration runs its steps in this order. First CREATE TABLE customer_wallets, whi…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "review:F",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "ab66dd3fb2ad69f40",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791790129997,
+      "queuedAt": 1791790129994,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790468379,
+      "tokens": 180131,
+      "toolCalls": 54,
+      "durationMs": 338381,
+      "resultPreview": "{\"findings\":[{\"id\":\"F-RV-1\",\"severity\":\"medium\",\"title\":\"Real, correctly priced sales fail totals_mismatch and are never filed when the discount covers all of the food (loyalty above the food value, or a 100% discount at the till)\",\"file\":\"/home/user/servd/backend/src/connectors/fiscal/payload.ts\",\"scenario\":\"Both the storefront and the till let a loyalty redemption go past the food value. Storefr…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "fix:W",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "af4cb3c95f4da9605",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791790135667,
+      "queuedAt": 1791790135665,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked both review findings against the current tree. Bo…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790500013,
+      "tokens": 120204,
+      "toolCalls": 26,
+      "durationMs": 364346,
+      "resultPreview": "{\"summary\":\"I checked both review findings against the current tree. Both were real, and both are fixed with regression tests.\\n\\nW-RV-01 (migration): I did not use the reviewer's main suggestion of moving the NOT VALID CHECK to after the INSERT. A NOT VALID CHECK still checks every UPDATE. A wallet carried over at -200 could then never be credited back to a still-negative amount, so a refund or t…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "fix:F",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a21f1a377bddb37c0",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791790468385,
+      "queuedAt": 1791790468382,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Both review findings were real, and both are fixed in files…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791791004580,
+      "tokens": 171428,
+      "toolCalls": 30,
+      "durationMs": 536195,
+      "resultPreview": "{\"summary\":\"Both review findings were real, and both are fixed in files this stream owns, with regression tests.\\n\\nF-RV-1 (payload.ts): I took option (a), so the payload can now express a discount bigger than the food. Option (b), capping loyalty and staff discounts at the food value, would have meant editing other streams' files, and the stored figures are correct anyway: the ledger books these …"
+    }
+  ],
+  "totalTokens": 1122298,
+  "totalToolCalls": 299
+}

@@ -1,0 +1,799 @@
+{
+  "summary": "Re-run the simulated shifts per area against the current code: confirm each original finding is fixed, adapt to intended behaviour changes, hunt regressions, then adversarially verify every new finding",
+  "agentCount": 8,
+  "logs": [
+    "people: 3 low findings kept unverified",
+    "online: 4 low findings kept unverified"
+  ],
+  "result": [
+    {
+      "area": "people",
+      "originals": [
+        {
+          "id": "PPL-01",
+          "status": "fixed",
+          "evidence": "Second Stackd pool over the same window: 409 POOL_OVERLAP; a partial overlap (by finance) also 409. Two legacy pools over one Simmer window, both already posted (inserted via DB): pay A 200, pay B 409 POOL_OVERLAP 'Not paid…'. Only one payout entry exists (d:2095:50000 c:1020:50000)."
+        },
+        {
+          "id": "PPL-02",
+          "status": "fixed",
+          "evidence": "Stackd pool members were Ali Raza and Rafay Cook (both Clifton). Danish Iqbal, who worked DHA (Flipd) in the same window, was left out. The Flipd pool held only Danish."
+        },
+        {
+          "id": "PPL-03",
+          "status": "fixed",
+          "evidence": "Rafay's in was moved to 18:00 PKT yesterday. Next day /time-clock/status gives punchedIn:false with missedClockOut.since. Clock-in gives 201 with a missedClockOut note and opens a new day. Yesterday is closed as missing_punch with only the in, so no 25 h span. A clock-out on a missed in gives notClockedIn plus a note and writes no out. The kiosk path gives 409 MISSED_CLOCK_OUT, then the next punch is an in. The HR correction (18:00–23:30) puts Rafay into a pool at 5.5 h."
+        },
+        {
+          "id": "PPL-04",
+          "status": "fixed",
+          "evidence": "409 PHONE_IN_USE on: a duplicate invite while the first holder is pending; one after the holder is active ('+92 300…' form); CEO POST /auth/users; PATCH to a held number; and KB creating GS Rabia's number (the message hides the holder). Ali and Rabia could still sign in with a code afterwards. An office role (hr) on the same number is allowed, as designed."
+        },
+        {
+          "id": "PPL-05",
+          "status": "fixed",
+          "evidence": "400 PHONE_REQUIRED on: a cashier invite with no phone, CEO create of a kitchen login with no phone, clearing a kitchen login's phone, and approving a legacy pending cashier row that has no phone."
+        },
+        {
+          "id": "PPL-06",
+          "status": "fixed",
+          "evidence": "KB CEO GET /auth/users lists 3 rows (kb.ceo, kb.hr and a company-less legacy row), 0 from GS. PATCH, DELETE, reissue-password and sign-in-code on a GS login are all 404. Creating a login into GS gives 422 CROSS_TENANT. The GS CEO's delete writes user.delete under GS."
+        },
+        {
+          "id": "PPL-07",
+          "status": "fixed",
+          "evidence": "Refused: negative gross on create and on PATCH (400 'cannot be negative'), basic above gross (400 BASIC_OVER_GROSS), a negative allowance (400) and a negative adjustment amount (400). A 5,000,000 deduction gave Rabia net -1,000,000, and approve was blocked with 409 RUN_INCOMPLETE naming her. After cancel and recalc: accrual credit to 2020 is 47,629,808, payment debit to 2020 is 47,629,808, and 2020 ends at 0."
+        },
+        {
+          "id": "PPL-08",
+          "status": "fixed",
+          "evidence": "Finance gets 200 on /gift-cards, /finance/capital-ledger, /projections and /tip-pools. HR gets 200 on /tip-pools and /auth/users. foh_management gets 403 on capital, projections and tip-pools. The only remaining matrix mismatches are manager reads of /auth/audit-log (documented as intended) and /scheduling GET for everyone (the rota is ALL_STAFF read; labor-cost stays gated)."
+        },
+        {
+          "id": "PPL-09",
+          "status": "fixed",
+          "evidence": "PATCH /setup/operations-config gives 403 for foh_management, boh_management and management. The CEO gets 200, audited as operations_config.update under GS. KB's config is untouched."
+        },
+        {
+          "id": "PPL-10",
+          "status": "fixed",
+          "evidence": "After Imran's login was suspended (access 401, refresh 401), the payroll run shows the warning 'Imran Shah: their login is switched off in Workforce but HR still has them as active…'. His Workforce row carries payroll {employeeId, status:'active'}."
+        },
+        {
+          "id": "PPL-11",
+          "status": "fixed",
+          "evidence": "Login after a reissued password returns user.mustChangePassword:true, and GET /auth/account agrees. /password/change-authed returns 200, the old token is then 401, and re-login gives mustChangePassword:false. frontend/admin/src/app/account/password/page.tsx exists, and login/page.tsx:113 redirects there. Code-login roles get false."
+        },
+        {
+          "id": "PPL-12",
+          "status": "fixed",
+          "evidence": "The original repro now refuses: POST /scheduling on an approved leave day gives 409 ON_LEAVE, and PATCH of a shift on a leave day gives 409 ON_LEAVE. The rota and labour cost still show leave days as worked, reported separately as PPL-R2-02."
+        },
+        {
+          "id": "PPL-13",
+          "status": "fixed",
+          "evidence": "ESS POST /hr/me/records/shift_swap returns 201. Approval waits for the colleague (409 PARTNER_NOT_ACCEPTED), and an outsider cannot answer (404). The partner accepts (200), the HOD approves (200), and the rota shows Ali on Dinner and Rabia on Lunch on 10-14 (source 'swap'). Refusals: swapping into a partner's leave day (409 PARTNER_ON_LEAVE), a past day (400) and a KB employee (422)."
+        },
+        {
+          "id": "PPL-14",
+          "status": "fixed",
+          "evidence": "For an fnb_manager's first PIN: no password gives 400 PASSWORD_REQUIRED, a wrong password gives 400 WRONG_PASSWORD, '1234' gives 400 WEAK_PIN, and the right password gives 200 'PIN set.'. Later changes need the current PIN. A cashier gets 403 PIN_NOT_FOR_ROLE. A colliding PIN gives 409 PIN_COLLISION and is audited."
+        },
+        {
+          "id": "PPL-15",
+          "status": "fixed",
+          "evidence": "Terminate Danish, then POST /hr/separations/deactivate-logins (CEO) returns {deactivated:1}. The user row is {isActive:false, accountStatus:'suspended'} and his token is 401. The same sweep run by the KB CEO deactivates 0."
+        }
+      ],
+      "coverage": [
+        {
+          "journey": "Fiscal connector setup (GS on the test driver, KB unconfigured)",
+          "result": "partial",
+          "note": "PUT /connectors/fiscal {driver:'test'} as the CEO -> 200 (isTest, not live). KB shows driver 'none'. Three POS sales filed one 'sale' FiscalDocument each, all 'held' in GS, as expected before go-live. Go-live and TEST-… numbers were not exercised; that belongs to the FOH/books areas."
+        },
+        {
+          "journey": "Invites for child roles (POST /auth/staff/invite)",
+          "result": "pass",
+          "note": "Escalation refused (foh_mgmt->hr 403, hr->finance 403, it->any 403). Off-domain email 400. Duplicate phone 409, missing floor phone 400."
+        },
+        {
+          "journey": "CEO approval + ONE approvals inbox (/approvals, /approvals/counts, inline actions)",
+          "result": "pass",
+          "note": "The CEO inbox lists GS pending logins with approve/reject actions. A login with no company gets disabledReason, and approving it gives 422 LOGIN_NEEDS_COMPANY. KB's inbox shows none of GS. A KB approve on a GS invite gives 404; foh_mgmt gets 403. HR leave went HOD (Omar) then HR (Sana), each approved through the action the inbox returned."
+        },
+        {
+          "journey": "First login: floor code sign-in, password roles, must-change nudge, password change",
+          "result": "pass",
+          "note": "Code sign-in works with codes read from phone_otps in dev. Password-forgot with no channel gives 503 RESET_UNAVAILABLE. mustChangePassword travels on login and the 2FA path. change-authed revokes old tokens."
+        },
+        {
+          "journey": "In-person sign-in code (new)",
+          "result": "pass",
+          "note": "foh_mgmt -> cashier 201, and the code redeems. boh_mgmt -> cashier 403. For a manager login: 400 NOT_A_CODE_LOGIN. KB -> GS: 404. Audited under the target's company."
+        },
+        {
+          "journey": "Manager override PIN (first self-set, change, collision)",
+          "result": "pass"
+        },
+        {
+          "journey": "2FA enrol / challenge / wrong code / reset",
+          "result": "pass",
+          "note": "Start and enable work. Login returns a challenge, a wrong code gives OTP_WRONG (audited auth.2fa_failed), the right code gives a session, and the challenge token is rejected as an access token (401). KB reset of a GS user: 404. CEO reset: 200, revokes sessions."
+        },
+        {
+          "journey": "Cross-company staff admin (/auth/users list/patch/delete/create, reissue)",
+          "result": "pass"
+        },
+        {
+          "journey": "Role/module access: /permissions/me vs API (12 roles x 16 endpoints)",
+          "result": "partial",
+          "note": "All original mismatches are fixed. Remaining: managers can read /auth/audit-log (documented as intended), and /scheduling GET is open to all staff (by design). A per-user moduleDeny of staff_hr does not close /hr/records/* (PPL-R2-01)."
+        },
+        {
+          "journey": "HR employee records, departments, designations, salary validation, links",
+          "result": "pass",
+          "note": "Negative and over-gross salaries refused. KB HR gets 404 on GS employees. A foreign manager or branch gives 422. Linking a GS login from KB gives 404."
+        },
+        {
+          "journey": "Team tree (GET /hr/team)",
+          "result": "pass"
+        },
+        {
+          "journey": "Time clock in/out/status, missed clock-out, correction",
+          "result": "pass",
+          "note": "The day passing was simulated by moving the ClockLog row and its attendance punch back. The missed-out rule was also checked as a pure function: 14:00->02:00 and 15:00->03:15 are shifts, 18:00->09:00 is missed, 05:30->17:30 is a shift."
+        },
+        {
+          "journey": "Kiosk punches (kiosk-only staff)",
+          "result": "pass",
+          "note": "In/out work. The KB device gives 401 BAD_KIOSK_PIN, a wrong PIN gives 401, and a missed out gives 409 MISSED_CLOCK_OUT, then an in. Any staff token can serve as the kiosk device (pre-existing, by design)."
+        },
+        {
+          "journey": "Breaks",
+          "result": "not_run",
+          "note": "There is still no break punch endpoint; shift master has breakMinutes only."
+        },
+        {
+          "journey": "Leave (ESS -> HOD -> HR), balance",
+          "result": "pass",
+          "note": "Self-approve 403, KB HR 404, over-balance 400 LEAVE_BALANCE."
+        },
+        {
+          "journey": "Rota / scheduling on leave days",
+          "result": "partial",
+          "note": "Create and patch on leave give 409 ON_LEAVE. The roster and pre-existing shifts still show the person working, and labour cost counts it (PPL-R2-02)."
+        },
+        {
+          "journey": "Roster + ESS shift swap (partner accept -> HOD -> rota)",
+          "result": "pass"
+        },
+        {
+          "journey": "Overtime (ESS -> HOD -> HR -> payroll)",
+          "result": "pass",
+          "note": "The employee's injected multiplier and approvedHours were ignored. Paid 3 h x 21,635 x 2 = 129,808, which appears on the payslip and in 6031. The HOD hours override was not re-tested: my script put approvedHours under data, which the API ignores; it belongs at the top level."
+        },
+        {
+          "journey": "Tip pools: rung at the real till, overlap, brand membership, kiosk staff, post/pay, ledger",
+          "result": "partial",
+          "note": "Overlap, membership and kiosk staff all behave correctly. Only approvers can post or pay; KB gets 404. Two low issues: the payout account is not validated (PPL-R2-03), and a pool can be paid before the till closes (PPL-R2-04)."
+        },
+        {
+          "journey": "Payroll run (salaried + OT), warnings, approve/lock/paid, journal (6030/6031/6035/2020/1020)",
+          "result": "pass",
+          "note": "The accrual and payment balance in GS: d:6031:24,629,808 d:6030:19,200,000 d:6035:3,800,000 / c:2020:47,629,808; payment d:2020 / c:1020 for the same amount. HR and finance cannot approve (403). KB HR gets 404 on the GS run. The KB run is separate."
+        },
+        {
+          "journey": "Payslips and ESS isolation",
+          "result": "pass"
+        },
+        {
+          "journey": "Leavers: Workforce suspend, HR separation sweep, sessions die",
+          "result": "pass"
+        },
+        {
+          "journey": "User audit log (auth.login, login_failed, otp_login, 2fa_failed, logout + user.*)",
+          "result": "pass",
+          "note": "All are present and filed under the target's company. The KB CEO sees 12 KB-only rows. The logout token is 401 afterwards."
+        },
+        {
+          "journey": "Company clock-in / tip rules (operations-config)",
+          "result": "pass"
+        },
+        {
+          "journey": "Company separation throughout People",
+          "result": "pass",
+          "note": "No GS data was reachable from KB logins on any route tested. Ledger: all lines are on the entry's own company's accounts (0 cross-company lines)."
+        },
+        {
+          "journey": "API log review",
+          "result": "pass",
+          "note": "No ERROR-level lines and no unexpected 5xx. The only 500 was the deliberate ACCOUNT_NOT_FOUND triggered by my unknown-account payout probe."
+        }
+      ],
+      "envNotes": "DB: postgresql://postgres@127.0.0.1:5432/servd_sim_people_r2 (prisma db push, plus the 0_init raw-SQL section and the terminal_charges partial index, as in tests/setup.ts). The shared Redis has only 16 databases, so 'db 23' does not exist (ERR DB index is out of range). I ran a private redis-server on 127.0.0.1:6423 (db 0, no persistence), as the other r2 agents did on 6421/6422, and shut it down at the end. API: port 4113, NODE_ENV=development, ENABLE_WORKERS=true, started 2026-10-11T14:49:16Z from the current working tree, stopped by PID at about 15:01Z (port confirmed down). Edits other agents made after 14:49Z are not in this run. No WhatsApp, SMTP or FBR/SRB config, so nothing was sent. Floor and 2FA codes were read from phone_otps (kept in dev). Between code requests I deleted phone_otps and email_otps to stand in for the 30 s resend cooldown, which also counts email OTP rows. Fixtures written with Prisma: two companies (GS Foods: Stackd and Simmer at Clifton Block 5, Flipd at DHA Phase 6; Karachi Bites: Bun Kebab Co at Saddar), leadership and owner logins, and menu items. Everything else went through HTTP with real logins: invites, approvals, HR, clocking, the till (open shift, orders, card and cash payments with tips, close), pools and payroll. Simulated rows: a forgotten clock-out (ClockLog plus attendance moved to 18:00 PKT yesterday), a legacy pending login with no phone, one with no company, and two legacy overlapping posted pools. The fiscal connector for GS was set to the 'test' driver but not taken live, so documents are 'held'. Scripts are in backend/.sim/people-r2/ (a_onboarding, a2, b_hr, b2, b3, c_money, c2, c3, d_access, e_extra, e2, e3, f_final, plus h.ts, setup.ts, rawsql.ts). The step log is in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/people-r2/journal.log, and the API log is …/scratchpad/audit/people-r2-api.log. Side note, not a finding: Stackd and Simmer share the Clifton branch in my fixtures, so a Clifton worker would count in both brands' pools (branch-based by design).",
+      "confirmed": [
+        {
+          "id": "PPL-R2-01",
+          "severity": "high",
+          "title": "Module Access does not close the HR record back office: an HR login with staff_hr and payroll switched off can still list, export, create and approve payroll adjustments",
+          "repro": "1) CEO: PATCH /api/v1/auth/users/<mehwish2.hr> {moduleDeny:['staff_hr','payroll']} -> 200. 2) Mehwish logs in: GET /permissions/me -> modules ['staff_directory','scheduling']; GET /hr/employees -> 403, GET /hr/payroll/runs -> 403, GET /tip-pools -> 403 (gated correctly). 3) Mehwish: GET /hr/records/payroll_adjustment -> 200 with every adjustment and its amount (bonus:2500000, bonus:100000, deduction:5000000); the same for /hr/records/loan, final_settlement, termination, resignation, offer, attendance and leave (all 200); GET /hr/records/leave/export.csv -> 200. 4) Mehwish: POST /hr/records/payroll_adjustment {data:{employee:<Ali>, month:'2026-10-20', kind:'bonus', amount:100000}} -> 201. 5) Sana (HR) raises a PKR 25,000 bonus for Rabia (POST /hr/records/payroll_adjustment, status submitted). Mehwish: POST /hr/records/payroll_adjustment/<id>/decide {decision:'approved'} -> 200, status 'approved', approvals[0].byName 'Mehwish Ali'. The bonus now flows into the next payroll.",
+          "expected": "CLAUDE.md wave 3: a role without module M is refused server-side, not just hidden. Once the CEO removes staff_hr, the HR-admin record routes (list, read, create, patch, stage, export, and the HR approval step) refuse that login with 403. Only ESS (/hr/me*), HOD steps and /hr/approvals stay open.",
+          "actual": "Only the /hr/employees, /hr/payroll, /hr/documents and similar prefixes are gated. Everything under /hr/records/* is HR_ADMIN by role only, so a revoked HR login keeps full read access to pay-sensitive records and can raise and approve pay-driving adjustments.",
+          "evidence": "journal.log [E] deny.hr_records_reads {payroll_adjustment:200, loan:200, final_settlement:200, leave:200, attendance:200, resignation:200, termination:200, offer:200}; [E] deny.write_record 201; [E] deny.export_csv 200; [E3] 'denied HR (staff_hr+payroll off) approves PKR 25,000 bonus' 200, row {status:'approved', approvals:[{role:'hr', byName:'Mehwish Ali'}]}. This gap already existed in run 1 (people/journal.log:327 '/hr/records/leave 200' after moduleDeny) but was not among the original findings.",
+          "suspectedCause": "backend/src/lib/moduleAccess.ts:369-372 deliberately leaves /hr/records/* ungated because a prefix rule cannot tell self-service and HOD steps from the admin list. backend/src/modules/hr/routes.ts then guards those admin handlers with requireAuth(...HR_ADMIN) only: GET /records/:section :973, GET /records/:section/:id :1000, POST :1007, PATCH :1012, stage :1134, export.csv :1191, offer create-employee :1210. decide :1073 lets any 'hr' role act on an HR step.",
+          "suggestedFix": "Add requireModule('staff_hr') (or the moduleGateForNewRoles helper) to the HR_ADMIN handlers under /hr/records listed above. In decide, require staff_hr when the step role is 'hr' (HOD steps and ESS stay ALL_STAFF). Add a test: an HR login with moduleDeny staff_hr gets 403 on list, create, export and an HR-step decide.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "medium",
+            "reason": "The finding holds. None of the intended changes cover it, and the setup was not wrong. CLAUDE.md wave 3 says \"a role without M is refused server-side, not just hidden\". The moduleAccess.ts header says every HR_ADMIN role holds staff_hr by default, \"so nobody loses access unless the CEO has switched it off for them\". So once the CEO switches staff_hr off, the HR back office should close.\n\nIt closes for /hr/employees, /hr/payroll and /hr/sections. It does not close for /hr/records/*. GATED_PREFIXES (moduleAccess.ts:369-372) leaves that prefix ungated on purpose, because a prefix rule cannot tell the self-service and HOD routes from the admin list. Nothing replaced it inside hr/routes.ts:\n- The admin record handlers check the role only, with requireAuth(...HR_ADMIN): list :973, read :1000, create :1007, patch :1012, stage :1134, export.csv :1191, offer create-employee :1210.\n- decide (:1073) is open to ALL_STAFF. Its only check is canActOnStep, which approves any 'hr' step for any HR_APPROVERS role, whatever its modules.\n- requireModule and moduleGateForNewRoles are not used anywhere in modules/hr.\n\nI reproduced every step. The fixture was correct: role hr, a same-company tenantMember, effective modules = staff_directory + scheduling, and the control routes answered 403.\n\nSeverity is medium, down from high. The bypass needs a login whose role is already an HR admin (admin, owner, management or hr) that the CEO has deliberately restricted through Module Access. Deactivating the login or changing its role does close it. An approved bonus still waits for a payroll run, which only admin, owner or management can approve before it is paid. The gap is still real: the CEO's documented control does not protect salary-sensitive HR records, and the restricted login can still write and approve them. Loan, termination and settlement approvals take effect through finalApproval and applyDueEffects.\n\nFix: add requireModule('staff_hr') to the HR_ADMIN /hr/records handlers. In decide, require it when the step role is 'hr'. HOD steps and the ESS routes stay ALL_STAFF.",
+            "evidence": "Reproduction. The test file was tests/zzverify_people_0.test.ts; it was deleted after the run, and a copy is archived at /home/user/servd/backend/.sim/people-r2/verify/zzverify_people_0.test.ts. It ran against a fresh database, servd_test_rv_people_0, which was created by db push and dropped afterwards. Redis db 26 does not exist on this box; that is harmless because these routes do not use Redis.\n\nFixture: tenant A, with mehwish (role hr, moduleDeny ['staff_hr','payroll'], a member of tenant A), sana (hr, no restriction), employees Ali and Rabia, and the real hrRoutes mounted through Fastify inject with the real auth middleware.\n\nResults:\n- Effective modules for mehwish: ['staff_directory','scheduling'].\n- Controls are refused correctly: GET /hr/employees 403, GET /hr/payroll/runs 403, GET /hr/sections 403.\n- GET /hr/records/{payroll_adjustment, loan, final_settlement, termination, resignation, offer, attendance, leave} all return 200. The list includes 'bonus:2500000'.\n- GET /hr/records/payroll_adjustment/:id returns 200, and GET /hr/records/payroll_adjustment/export.csv returns 200.\n- POST /hr/records/payroll_adjustment returns 201 (status submitted), and PATCH /hr/records/payroll_adjustment/:id returns 200.\n- Sana raises a PKR 25,000 bonus for Rabia (201, submitted). Mehwish's POST .../decide {decision:'approved'} returns 200. The database row now has status 'approved' and approvals [{role:'hr', byName:'mehwish'}].\n\nCode:\n- backend/src/lib/moduleAccess.ts:369-372: the comment on deliberately leaving /hr/records/* ungated.\n- backend/src/modules/hr/routes.ts:974, 1000, 1007, 1012, 1134, 1191, 1210 use requireAuth(...HR_ADMIN) only. Line 1073 (decide) uses requireAuth(...ALL_STAFF) plus canActOnStep.\n- backend/src/modules/hr/logic.ts:587 lets an 'hr' step through for any HR_APPROVERS role, with no module check."
+          }
+        },
+        {
+          "id": "PPL-R2-02",
+          "severity": "medium",
+          "title": "The rota and labour cost still show staff working on their approved leave days (standing roster, and shifts that existed before the leave was approved)",
+          "repro": "1) HR: POST /hr/records/shift Lunch 11:00-19:00. POST /hr/records/roster {data:{employee:<Ali>, shift:<Lunch>, from:'2026-10-01', weeklyOff:['monday']}}, approved by HOD Omar. 2) Omar: POST /scheduling {conceptId:<stackd>, employeeId:<Ali>, date:'2026-10-21', startTime:'12:00', endTime:'20:00'} -> 201 (made before the leave). 3) Ali: POST /hr/me/records/leave {from:'2026-10-20', to:'2026-10-21'}, approved by HOD then HR. 4) Omar: GET /scheduling?conceptId=<stackd>&weekStart=2026-10-19. 5) GET /scheduling/labor-cost?conceptId=<stackd>&weekStart=2026-10-19.",
+          "expected": "The leave days show as leave/off with no minutes, and labour cost leaves them out. Approving leave over a day that already has an exception shift either warns or removes that shift. rota.ts's own comment says: 'The rota never puts someone on a day HR has them away'.",
+          "actual": "10-20: {kind:'shift', source:'roster', 11:00-19:00}. 10-21: {kind:'shift', source:'exception', 12:00-20:00}. Neither cell marks leave. Labour cost counts Ali at 45.5 h / PKR 9,843.75 for the week, including both leave days. The leave approval returned no warning about the existing shift. Only new POST/PATCH shifts are refused (ON_LEAVE).",
+          "evidence": "journal.log [B3] PPL12.ali_week_after_roster (cells above); [B2] PPL12.raw_shift_rows [{date:'2026-10-21', 12:00-20:00}]; [D] rota.labor_cost_leave_week {byEmployee:[{name:'Ali Raza', hours:45.5, totalCents:984375}, …]}; rotaDay(…,'2026-10-20') -> kind 'shift' source 'roster'.",
+          "suspectedCause": "backend/src/modules/hr/rota.ts:116 rotaFor builds cells from roster, approved swaps and exceptions, and never reads approved leave. approvedLeaveOn (rota.ts:~219) is used only by the scheduling create/patch/copy routes and by swaps (scheduling/routes.ts:146,170,207). Leave final approval (hr finalApproval) does not look at existing scheduled_shifts.",
+          "suggestedFix": "In rotaFor, overlay approved full-day leave as a 'leave' cell (no segments, 0 minutes), so /scheduling, labor-cost, attendance-late and the tip-pool rota fallback all agree. On final leave approval, list or flag (or remove, with an audit row) exception shifts on the leave days.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "medium",
+            "reason": "The finding is real. It is not one of the intended changes and not a setup mistake. The rota builder (`rotaFor`) never looks at approved leave. The PPL-12 fix only blocks new or changed shifts on leave days. Standing roster days and shifts entered before the leave still show as worked on the /scheduling week and are counted in labour cost. Approving the leave does nothing to existing shifts and gives no warning. The comment in `rota.ts` promises the opposite (\"The rota never puts someone on a day HR has them away\"), so this is a gap in the PPL-12 fix, not a design choice.\n\nMedium is the right rating. No money is posted wrongly, no company data leaks between companies, and payroll reads the leave record directly. But the rota and its cost are wrong: a manager plans cover with someone who is away, and labour cost overstates hours. If the person punches in on a leave day, attendance also judges lateness against the roster shift.",
+            "evidence": "Code trace:\n- `backend/src/modules/hr/rota.ts:116-201` `rotaFor` builds each day from three sources only: approved roster records, approved `shift_swap` records, and `scheduled_shift` exceptions. It never queries `section: 'leave'`.\n- `approvedLeaveOn` (`rota.ts:219`) is called only from:\n  - `scheduling/routes.ts:146` (POST)\n  - `scheduling/routes.ts:171` (PATCH)\n  - its own inline leave filter in copy-week (`scheduling/routes.ts:211-215`)\n  - `hr/routes.ts:298` (swap partner check)\n- `finalApproval` (`hr/routes.ts:337-353`), `onFinalApproval` and `applyDueEffects` never touch `scheduledShift`. A grep of `src/modules/hr` for `scheduledShift` finds only `rota.ts`.\n- The /scheduling grid and labour cost (`scheduling/routes.ts:99`, `:233`), attendance late marking (`attendance.ts:227`, `:351`) and the tip-pool brand fallback (`tipPools/routes.ts:227`) all read `rotaFor`/`rotaDay`.\n- The admin page `frontend/admin/src/app/scheduling/page.tsx` has no client-side leave overlay.\n\nReproduction: `/home/user/servd/backend/.sim/people-r2/verify/zzverify_people_1.test.ts`. It ran against DB `servd_test_rv_people_1` and Redis db 27. The temporary `tests/` copy has been deleted. Every step went over HTTP:\n1. HR (Sana) created the Lunch shift 11:00-19:00 and the \"Annual\" leave type (both 201 approved). She filed Ali's roster from 2026-10-01 with Monday off, and HOD Omar approved it (200 approved).\n2. Omar added an exception shift for 2026-10-21, 12:00-20:00 (201).\n3. Labour cost for the week of 10-19: 48 h, PKR 13,846.15.\n4. Ali applied for leave 10-20 to 10-21 through self-service (201 submitted, 2 days). HOD Omar approved (200 submitted), then HR Sana approved (200 approved). The response is the bare record with no warnings field.\n5. Control: a new shift on 10-20 is refused with 409 ON_LEAVE, so the write-side fix works.\n6. GET /scheduling for that week:\n   - 10-20: kind 'shift', source 'roster', 11:00-19:00, 480 min\n   - 10-21: kind 'shift', source 'exception', 12:00-20:00, 480 min\n7. Labour cost after approval: still 48 h, PKR 13,846.15, unchanged from before the leave.\n8. `rotaDay(tA, Ali, '2026-10-20')` returns kind 'shift', source 'roster'.\n9. The exception row for 10-21 is still in the database.\n10. Company B's HR gets 404 on company A's week, so company separation holds.\n\nMy figures (48 h) differ from the finding's (45.5 h, PKR 9,843.75) only because the salary and shift setup differ; the behaviour is the same."
+          }
+        }
+      ],
+      "rejected": [],
+      "lows": [
+        {
+          "id": "PPL-R2-03",
+          "severity": "low",
+          "title": "Tip-pool payout accepts any ledger account as the paying account (for example a revenue account); an unknown code is an HTTP 500",
+          "repro": "Pool posted (Flipd, PKR 400). CEO: POST /api/v1/tip-pools/<id>/pay {paidFromAccountCode:'4003'} -> 200. Separately: {paidFromAccountCode:'4000'} (not in the chart) -> 500 ACCOUNT_NOT_FOUND.",
+          "expected": "Only a cash or bank account of the pool's company (1010/1015/1020 or a configured bank account) can fund a payout; anything else is 422.",
+          "actual": "The journal posts d:2095:40000 c:4003:40000 ('Revenue — Strata'): the tips paid to staff are booked as extra revenue and no cash leaves. An unknown code returns 500.",
+          "evidence": "journal.log [C3] 'pay flipd from revenue 4003 Revenue — Strata 200', payout je 'd:2095:40000 c:4003:40000'; [C] tips.pay_from_revenue_acct 500 ACCOUNT_NOT_FOUND. Pre-existing: HEAD has the same unvalidated body.paidFromAccountCode. The admin page (frontend/admin/src/app/tip-pools/page.tsx:87) always sends {}, so this is reachable only through the API by an approver.",
+          "suspectedCause": "backend/src/modules/tipPools/routes.ts:708 (z.string().optional(), no whitelist) and :715 (cashAccount = body.paidFromAccountCode ?? ACCT.BANK). accounting/journal.ts:134-138 throws ACCOUNT_NOT_FOUND as 500.",
+          "suggestedFix": "Validate paidFromAccountCode against the company's cash and bank asset accounts and return 422 otherwise. Or drop the parameter until the UI offers a cash/bank picker."
+        },
+        {
+          "id": "PPL-R2-04",
+          "severity": "low",
+          "title": "A tip pool can be posted and paid while the till shift that took those tips is still open, leaving Tips Payable 2095 in debit until the till closes",
+          "repro": "Ali opens a till (POST /pos/shifts/open) and takes Stackd orders with tips of PKR 300 (card) and PKR 200 (cash). He clocks out, but the till stays open. HR: POST /tip-pools for Stackd over that window -> 201 with no blockers. CEO: /post -> 200, /pay -> 200. Ali closes the till afterwards.",
+          "expected": "Either the draft review blocks posting or paying while a till shift that took tips in the window is still open, or the tip liability is credited when the tip is taken. 2095 should never go into debit.",
+          "actual": "The payout posted d:2095:50000 at 14:56:46. The tips reached 2095 only when the till closed at 14:57:28 (shift close credits 2095), so in between the balance sheet showed Tips Payable at -50,000. After the close it nets correctly (2095 = 40,000, the unpaid Flipd pool).",
+          "evidence": "[C] pos.tip_liability_entries [] right after the sales; [C] tips.payout_journal d:2095:50000 c:1020:50000; [C3] close 200, then '2095 balance (credit+) 40000'. Ledger overall balanced (d = c = 95,855,966), and no line is on another company's account.",
+          "suspectedCause": "backend/src/modules/tipPools/routes.ts:365-396 reviewDraft checks clock-in state, branches and kiosk staff, but not open till shifts. accounting/shiftPosting.ts:472 credits 2095 only at shift close.",
+          "suggestedFix": "Add a reviewDraft blocker for open till shifts holding orders with tipCents > 0 inside the window ('close the till first'), and re-check it in /pay."
+        },
+        {
+          "id": "PPL-R2-05",
+          "severity": "low",
+          "title": "/health still says floor staff 'cannot sign in at all' without WhatsApp, although a manager can now issue an in-person sign-in code",
+          "repro": "With no WHATSAPP_* set and 4 active floor logins: GET /health. Then foh_management: POST /api/v1/auth/staff/<cashier>/sign-in-code -> 201 {code}; the cashier: POST /auth/staff/otp/verify with it -> 200.",
+          "expected": "The health detail points the owner to the working fallback, e.g. 'until WhatsApp is configured, managers sign floor staff in with an in-person code from Workforce'.",
+          "actual": "staffCodeLogin: error — 'WhatsApp … is not configured and 4 floor-role staff have no other way in. They cannot sign in at all.'",
+          "evidence": "Final /health details.staffCodeLogin; [A] signin_code.omar_for_ali 201, signin_code.redeem 200 cashier, audited user.signin_code_issue under GS.",
+          "suspectedCause": "backend/src/index.ts:614 (the message predates POST /auth/staff/:id/sign-in-code, auth/routes.ts:2159).",
+          "suggestedFix": "Reword the check (and consider 'warn' rather than 'error') to name the in-person code path."
+        }
+      ]
+    },
+    {
+      "area": "online",
+      "originals": [
+        {
+          "id": "ONL-01",
+          "status": "fixed",
+          "evidence": "Admin payload {discountType:'fixed', discountValue:15000} -> 201. Quote on a PKR 2,300 basket gives promo.discountCents 15000 ('PKR 150 off'), total 249500. The checkout order has promoDiscountCents 15000 and total 249500 (v2_rest.out ONL01)."
+        },
+        {
+          "id": "ONL-02",
+          "status": "fixed",
+          "evidence": "keenu, jazzcash and easypaisa all get 422 PAYMENT_METHOD_UNAVAILABLE at checkout and at /quote. No non-cash storefront orders were created. GET /storefront/payment-methods returns ['cash'] (v1_money.out ONL02)."
+        },
+        {
+          "id": "ONL-03",
+          "status": "fixed",
+          "evidence": "COD delivery with tip 10000: response total 341250 / tip 10000, pending cash 341250, rider cashToCollect 341250. Ledger d1010:341250 c4002:290000 c2095:10000 c2032:41250 (no 1030). After pay-in, a full refund of 341250 returns 200 and the refund JE reverses 2095."
+        },
+        {
+          "id": "ONL-04",
+          "status": "fixed",
+          "evidence": "Loyalty accounts are now per company. Sana has 13225 pts at GS Foods and none at KGC. Redeeming 2000 at kgc-bbq gets 400 LOYALTY_BELOW_MINIMUM from both quote and checkout. 2060 is positive per company (gs 152150, later karachi-grill 22200 from its own earn)."
+        },
+        {
+          "id": "ONL-05",
+          "status": "fixed",
+          "evidence": "The gift-card order completion JE is d1010:164500, d2080:100000, c4002:230000, c2032:34500. A full refund books order.refund_giftcard c2080:100000 and restores the card to 100000."
+        },
+        {
+          "id": "ONL-06",
+          "status": "fixed",
+          "evidence": "A full refund writes the reversal (-1645 pts, earn marked reversed) and books 'loyalty.earn.reversal' d2060:16450 / c6060:16450 in gs-foods."
+        },
+        {
+          "id": "ONL-07",
+          "status": "fixed",
+          "evidence": "Redeemed 300 pts (13225 -> 12925). After the manager cancel the balance is back to 13225, with a reversal +300 and 'loyalty.redeem.reversal' d7020:3000 / c2060:3000."
+        },
+        {
+          "id": "ONL-08",
+          "status": "fixed",
+          "evidence": "5 public bookings of 6 at 20:00 PKT with one 6-top: [201, 409 SLOT_FULL x4]. The booking is given table T3. Availability afterwards is {available:false, tablesAvailable:0}. Anonymous-share cap is consistent with availability (s7_res_cap.out)."
+        },
+        {
+          "id": "ONL-09",
+          "status": "fixed",
+          "evidence": "Unauthenticated booking to 03335550101 returns notified {whatsapp:false, email:false, reminders:false} and reminder24hSentAt is set at creation. No [notify] line for that number in the API log. A signed-in customer with her own verified contact gets notified true."
+        },
+        {
+          "id": "ONL-10",
+          "status": "fixed",
+          "evidence": "/auth/customer/request for a stranger number creates no customer row (customers 2 -> 2). '03001234567' and '+92 300 1234567' resolve to the existing '923001234567' (no duplicate). Per-contact cap: 5 x 200 then 429 MAGIC_LINK_LIMIT."
+        },
+        {
+          "id": "ONL-11",
+          "status": "fixed",
+          "evidence": "The API log has 0 'verify?token=' or 'reserve/confirm/<token>' strings. The notify lines are masked: '[notify] email not sent (no SMTP configured) — to s***@example.pk, message'."
+        },
+        {
+          "id": "ONL-12",
+          "status": "fixed",
+          "evidence": "KGC manager creates FLAT150 -> 201. A second FLAT150 in GS Foods -> 409 PROMO_CODE_TAKEN ('Your company already has a promo with this code'). A KGC quote with FLAT150 uses KGC's 10% promo."
+        },
+        {
+          "id": "ONL-13",
+          "status": "fixed",
+          "evidence": "At 19:55 PKT 'Dinner specials' (19:00-23:30) is visible and 'Lunch' (12:00-16:00) is hidden. Ordering the lunch item directly gets 400 ITEM_UNAVAILABLE 'Lunch box is only served 12:00–16:00'."
+        },
+        {
+          "id": "ONL-14",
+          "status": "fixed",
+          "evidence": "Flipd hours 10:00-11:00 PKT. At 19:55 checkout and quote get 409 BRAND_CLOSED, and the menu shows ordering.open:false with a message. (See the new finding ONL-R2-03 on the pre-order path this opens.)"
+        },
+        {
+          "id": "ONL-15",
+          "status": "fixed",
+          "evidence": "A KGC card at Stackd gets 422 GIFT_CARD_NOT_VALID_HERE before anything is created (card balance untouched at 100000). The quote reports giftCardError for foreign and unknown codes alike."
+        },
+        {
+          "id": "ONL-16",
+          "status": "changed_by_design",
+          "evidence": "Before pay-in, refund gets 422 CASH_NOT_PAID_IN ('pay it in (POS → cash due) first'). The manager opens a drawer and settles the rider's cash via /pos/payments/:id/settle (listed in GET /pos/cod-due). After that the cash refund returns 200 from the drawer, and method:'card' gets 422 REFUND_METHOD_NOT_TENDERED."
+        }
+      ],
+      "coverage": [
+        {
+          "journey": "Fiscal connector setup via /connectors as CEO (test driver, brand POS ids, test + dry run, go-live, release held)",
+          "result": "pass",
+          "note": "A configured with 'test'. B left unconfigured (its sales stay held, no_connector). Management cannot PUT (403). Documents were held before go-live. After release all filed TEST-SRB-…, refunds TEST-SRB-CN-…. A sale after go-live filed at completion and the receipt shows the TEST number. Payload figures are wrong for some orders (ONL-R2-02)."
+        },
+        {
+          "journey": "Public storefront for two companies (concepts with tenantId, menus, ordering state, payment methods)",
+          "result": "pass",
+          "note": "Time sections now follow PKT; closed brand refused."
+        },
+        {
+          "journey": "Customer sign-up (code read from DB, dev keeps undelivered codes) + password sign-in; magic link caps",
+          "result": "pass"
+        },
+        {
+          "journey": "Delivery zones: inner fee, outer fee, below minimum, outside area",
+          "result": "pass",
+          "note": "15000 / 30000 / 400 BELOW_ZONE_MINIMUM / 422 OUTSIDE_DELIVERY_AREA."
+        },
+        {
+          "journey": "Promos: fixed (admin payload), percentage, per-customer limit, other company's code, per-company uniqueness, usage released on auto-cancel",
+          "result": "pass"
+        },
+        {
+          "journey": "Online card gateways",
+          "result": "pass",
+          "note": "Refused with 422 PAYMENT_METHOD_UNAVAILABLE (cash only), by design."
+        },
+        {
+          "journey": "COD delivery with tip end to end: kitchen -> assign -> rider accept/pick-up/deliver with code -> cash-due pay-in -> full refund",
+          "result": "pass"
+        },
+        {
+          "journey": "Kitchen sign-in with manager-issued code (no WhatsApp), kitchen queue (no hand-over code, no cost fields), module gates (dispatch/riders/gift-cards 403, cancel FORBIDDEN)",
+          "result": "pass"
+        },
+        {
+          "journey": "Auto-dispatch offer, decline -> re-offer to the other rider, code lock after 5 wrong codes, Delivered override (kitchen 403, fnb_manager 200)",
+          "result": "pass"
+        },
+        {
+          "journey": "Fleet agreement A->B: single-company manager refused, CEO creates, GS rider auto-offered a KGC order, events tenantId=B / riderTenantId=A, KGC ledger, KGC pay-in + refund, A cannot settle/refund KGC's order",
+          "result": "pass"
+        },
+        {
+          "journey": "Rider/staff/customer token isolation, company-B rider on A job",
+          "result": "pass"
+        },
+        {
+          "journey": "Order tracking authorization (other customer 404; company B manager 404)",
+          "result": "pass"
+        },
+        {
+          "journey": "Gift card: issue, apply at checkout, ledger 2080, unusable card refused, restore on refund, full gift-card cover",
+          "result": "partial",
+          "note": "Ledger correct. Fiscal payload understates (ONL-R2-02). PKR 0 cash-due row (ONL-R2-06)."
+        },
+        {
+          "journey": "Loyalty per company: earn, redeem, cancel restore, refund reversal, cross-company refusal, perks per brand",
+          "result": "partial",
+          "note": "All fixed. A partial refund keeps all points (ONL-R2-05)."
+        },
+        {
+          "journey": "Wallet: manager top-up, wallet toggle, wallet as method, cancel restore",
+          "result": "fail",
+          "note": "Restore on cancel works. Top-up unbooked and spendable at another company (ONL-R2-01)."
+        },
+        {
+          "journey": "Manager-only cancel of an online order: cashier without PIN 403 MANAGER_OVERRIDE_REQUIRED, other-company PIN and wrong PIN 403 INVALID_MANAGER_PIN, own-company manager PIN 200 with approverId + approvedByPin audited; expo reject managers-only",
+          "result": "pass"
+        },
+        {
+          "journey": "Pre-bill vs final bill on an online order: receipt 409 PRE_BILL_REQUIRED while open, PB-1 printed (company B 404), converted at completion, one sale document, Voided pre bills list scoped per company",
+          "result": "pass"
+        },
+        {
+          "journey": "Reservations: public booking capacity + anonymous share, messaging only to verified own contact, host confirm, company B 404, seat race (one 409), no-show managers-only, guest cancel via token",
+          "result": "partial",
+          "note": "The staff booking path has no capacity check (ONL-R2-04)."
+        },
+        {
+          "journey": "Group order (create/join/add, foreign item refused, submit)",
+          "result": "pass",
+          "note": "dine_in ticket with split/pending payment, as before."
+        },
+        {
+          "journey": "Waitlist sign-up + per-phone caps on unauthenticated senders (waitlist code, rider OTP, cart abandon ignores body contact)",
+          "result": "pass"
+        },
+        {
+          "journey": "Curbside: vehicle required before the order is written, 'I'm here', staff curbside list",
+          "result": "pass"
+        },
+        {
+          "journey": "Reviews after delivery (owner 201, other customer 404)",
+          "result": "pass"
+        },
+        {
+          "journey": "Scheduled pre-order",
+          "result": "fail",
+          "note": "Accepted and auto-cancelled 30 min later (ONL-R2-03)."
+        },
+        {
+          "journey": "Socket fan-out: company B manager receives none of company A's order events",
+          "result": "pass"
+        },
+        {
+          "journey": "Drawer close for rider pay-ins + ledger integrity (all 30+ JEs balanced, no cross-company account lines, every JE has a company)",
+          "result": "pass",
+          "note": "shift.close d1015/c1010 704750. Variance 0."
+        },
+        {
+          "journey": "Terminal (card machine) TERMINAL_CHARGE_ACTIVE guards",
+          "result": "not_run",
+          "note": "Belongs to the FOH/till area; no terminal configured for online orders."
+        }
+      ],
+      "envNotes": "The API ran from the current uncommitted tree on 127.0.0.1:4114 with DB servd_sim_online_r2 (prisma db push, then the 0_init raw-SQL section and the terminal_charges partial index, as in tests/setup.ts). Fixtures were seeded with Prisma: backend/.sim/online-r2/setup.ts and s0_more_fixtures.ts. The assigned Redis db 24 does not exist on the shared Redis at 6379 (16 DBs; the first start logged 'ERR DB index is out of range' for every worker while /health said redis ok). So I started my own redis-server on 127.0.0.1:6424 with 32 DBs, used db 24 there, reset the DB and restarted. The final API start was 2026-10-11T14:53:59Z (PIDs 8465/8478/8479/8490). Earlier aborted runs are in api-run0-badredis.log. Other agents' edits after 14:53:59Z are not in what I tested. Scripts are in /home/user/servd/backend/.sim/online-r2/ (j0_connector, v1_money, v2_rest = originals; s1-s12 = shift journeys). Outputs (*.out), http.log, je.sql and poll_cancel.out are in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/online-r2/, and the API log is ../online-r2-api.log. All actions went over HTTP with real logins: passwords for management/CEO/fnb_manager/finance, manager-issued sign-in codes for kitchen/host/cashier, signup codes read from phone_otps, rider OTP read from DB. A few fixtures were set directly in the DB: test menu sections, Flipd hours, and deleting my own mistaken FLAT150 promo. No WhatsApp/SMTP/gateway config was present, nothing was sent, and no production host was contacted. No tracked file was edited. The route-level per-IP rate limits (5/5 min) did not trigger from 127.0.0.1 locally, so only the per-contact caps were exercised. At the end the API processes were killed and my Redis was shut down (nosave).",
+      "confirmed": [
+        {
+          "id": "ONL-R2-01",
+          "severity": "high",
+          "title": "Customer wallet top-ups never reach the ledger, and the wallet can be spent at another company, leaving both companies' 2050 Wallet Liability with a debit balance",
+          "repro": "1) GS Foods manager (mgr-a, management): POST /api/v1/wallet/topup {customerId:<Sana>, amountCents:50000, description:'Goodwill — late delivery'} -> 201. 2) Sana: POST /api/v1/storefront/orders {conceptSlug:'kgc-bbq' (Karachi Grill Co), type:'pickup', paymentGateway:'wallet', items:[Raita x2]} -> 201. 3) KGC manager walks it to completed via PATCH /orders/:id/status. 4) Also a GS order paid by wallet: same with conceptSlug 'stackd', Mint lemonade x1.",
+          "expected": "A top-up is booked in the issuing company (e.g. Dr goodwill/expense or cash, Cr 2050). Stored value stays in the company that issued it (CLAUDE.md: 'gift cards, loyalty, promos… stay inside the company that issued them'), as gift cards and loyalty now do.",
+          "actual": "The top-up writes only Customer.walletBalance and a WalletTransaction. No journal entry exists (0 JEs). The GS-funded wallet paid KGC's order: walletAmountCents 32400, total 0. KGC's ledger: 'order.complete d2050:32400, c4090:30000, c2030:2400'. Account balances after the shift: 2050 gs-foods cr-dr = -48600, karachi-grill = -32400. Both are debit balances on a liability that was never credited, and KGC carries a liability for money GS Foods granted.",
+          "evidence": "s2_shift.out: wallet.topup {status:201, ledgerForTopup:0}; wallet.spendAtOtherCompany order [201,32400,0]; wallet.kgcLedger; wallet.2050 [{karachi-grill:-32400}]. s4_close.out: 2050 [gs-foods -48600, karachi-grill -32400].",
+          "suspectedCause": "backend/src/modules/wallet/routes.ts:9-28 (creditWallet updates Customer.walletBalance with no postJournalEntry). Customer.walletBalance is one global number (no tenantId), and storefront/routes.ts (wallet-as-method / useWallet, around :858-890) never checks which company funded it. orderPosting.ts:307 debits 2050 in the order's company.",
+          "suggestedFix": "Make wallet balances per company (like LoyaltyAccount), or refuse a wallet at a brand whose company did not fund it. Post every top-up (Dr 6xxx goodwill or the tender / Cr 2050) in the top-up's company. Add a two-company test.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "high",
+            "reason": "The finding is real. It is not one of the intended changes, and it is not a setup mistake.\n\n**Top-up never reaches the ledger.** `creditWallet` (`backend/src/modules/wallet/routes.ts:9-28`) writes only `Customer.walletBalance` and a `WalletTransaction`. Both `/wallet/topup` and `/wallet/bulk-topup` use it. Neither path calls `postJournalEntry`.\n- Nothing else credits 2050 for a top-up either. The only 2050 credits are the refund restores in `orderPosting.ts`.\n- No worker or report turns `WalletTransaction` rows into ledger entries.\n- Spending, though, does debit 2050 in the order's company (`orderPosting.ts:307`, `shiftPosting.ts:415`). So every wallet spend drives 2050 towards a debit balance. The spend also books revenue and output GST against a liability that was never funded, so goodwill shows up as sales instead of as an expense.\n\n**The wallet ignores company boundaries.** `Customer.walletBalance` is one global column with no `tenantId`, and `WalletTransaction` has no tenant column.\n- Storefront checkout (`storefront/routes.ts:880-936` and quote `:637-657`) takes the wallet at any brand without checking which company funded it.\n- Loyalty in the same checkout is scoped with `tenantId: concept.tenantId`.\n- The top-up route is company-scoped (`findCustomerInScope`, 'create'), which makes the asymmetry plain: company B's manager cannot fund the wallet (404), but B's brand can spend what company A funded.\n- This breaks CLAUDE.md's \"customer-facing stored value stays inside the company that issued it\" rule and its rule that ledger postings take the company from the source document.\n\n**Not explained by any intended change.** The list (manager voids, pre-bills, POS connector, terminal, wave-3 access, approvals, membership) has nothing on the wallet. The docs record no owner decision that the wallet is platform-wide.",
+            "evidence": "**Reproduction.** I wrote a vitest file against a fresh database, `servd_test_rv_online_0` (built with `db push`, the per-company chart set up via `ensureChartOfAccounts`).\n- A copy is kept at `/home/user/servd/backend/.sim/online-r2/verify/zzverify_online_0.test.ts`.\n- It ran temporarily as `backend/tests/zzverify_online_0.test.ts` and has been deleted.\n- Redis db 26 does not exist on this local server (only 16 databases), so the Redis client logged \"DB index out of range\". The wallet path doesn't need Redis, so this has no effect on the result.\n\n**Setup:**\n- Two companies, GS and KGC, each with one brand.\n- Each company has a `management`-role manager with company membership.\n- Customer Sana has one completed order at GS, so she counts as a GS customer.\n\n**Results (the test passed):**\n- KGC manager `POST /wallet/topup` for Sana: 404, as designed.\n- GS manager `POST /wallet/topup` of 50,000: 201 `{newBalance:50000}`. Journal entries created by the top-up: 0.\n- Sana `POST /storefront/orders` at the KGC brand with `paymentGateway: 'wallet'` (2 × 15,000): 201 `{walletAmountCents:32400, totalCents:0}`. The GS-funded wallet paid KGC's order.\n- After `postOrderCompletion`, KGC's journal entry is `d2050:32400 c4090:30000 c2030:2400`.\n- 2050 net credit afterwards: GS 0, KGC −32,400. KGC carries a debit balance on a liability it never credited, plus revenue and GST for value GS gave away.\n- Sana's wallet balance afterwards: 17,600. Her follow-up wallet order at GS was refused with 422 only because 17,600 is less than the bill. If it had gone through, GS's 2050 would go debit the same way, matching the reported −48,600.\n\n**Code references:**\n- `wallet/routes.ts:9-28` (`creditWallet` has no posting)\n- `schema.prisma` `Customer.walletBalance` (no `tenantId`); `WalletTransaction` (no `tenantId`)\n- `storefront/routes.ts:882-936` (no company check on the wallet)\n- `orderPosting.ts:306-307` (Dr 2050 in the order's company)\n\n**Severity: high.** This is money and company separation: wrong liability balances, revenue and GST recognised with no source of funds, and stored value crossing companies. It is not a blocker, because top-ups are manager-only and probably rare. The same cross-company leak also applies to refund restores: a refunded KGC wallet order credits KGC's 2050, and that wallet can then be spent at GS."
+          }
+        },
+        {
+          "id": "ONL-R2-02",
+          "severity": "high",
+          "title": "Fiscal sale documents send totals that do not add up: the delivery fee is missing, and gift-card or wallet value is subtracted from totalCents. FBR TotalSaleValue comes out understated, and negative on wallet-paid orders",
+          "repro": "With company A's fiscal connector on the 'test' driver, live (POST /connectors/fiscal/go-live) and held documents released: complete (a) a COD delivery (Stackd, 2x Club + lemonade, fee 15000, tip 10000), (b) a pickup paid PKR 1,000 by gift card, (c) a pickup paid entirely by wallet (POST /storefront/orders paymentGateway:'wallet'), (d) a pickup fully covered by a gift card. Then read fiscal_documents.payload.",
+          "expected": "Per docs/pos-connector-api.md, lines + tax + service + tip = totals.totalCents. totals.totalCents is the bill (what the ledger books as revenue + GST). Gift card / wallet appear as tenders. FBR TotalSaleValue = total − tax = the ex-tax sale.",
+          "actual": "(a) 7e14bb4e: saleValue 275000, tax 41250, tip 10000, total 341250. Lines+tax+tip = 326250 (the 15000 fee is nowhere). Its refund document puts the fee into the lines (saleValue 290000), so the credit note exceeds the sale's saleValue (275000). (b) 09e9178a: lines+tax = 264500 but totalCents 164500. FBR TotalSaleValue = 130000 instead of 230000. The full-refund credit note reverses only saleValue 130000. (c) d6f706e7 wallet order: saleValue 45000, tax 3600, totalCents 0, so FBR TotalSaleValue = -3600, filed as TEST-SRB-B311D8E887. (d) gift-card-covered: totalCents 0, tax 9750, filed. All of these have payment.tenders [] (COD cash is still pending at completion, and gift card / wallet are never listed). Ledger revenue for the same orders is correct (e.g. c4002:230000 with d2080:100000).",
+          "evidence": "s3_fiscal.out JOURNEY docs.figures lines (matches:false for 7e14bb4e, 6bd3316e, 09e9178a, 6d17920b, d6f706e7). s11.out fullGiftCover.fiscal totals {taxCents:9750, totalCents:0}. The payload JSON was dumped from fiscal_documents for 09e9178a.",
+          "suspectedCause": "backend/src/connectors/fiscal/payload.ts: ORDER_INCLUDE.payments (:93) takes only paid rows (so no gift card, wallet or pending COD tender). Totals (:201-224) use order.totalCents (net of gift card and wallet), and no field carries order.deliveryFeeCents. buildRefundPayload (:258+) derives the returned value as amount − tax − tip − service, so it absorbs the fee and diverges from the sale.",
+          "suggestedFix": "Build totals from stored components: add the delivery fee as a line or a deliveryChargeCents total. Set totalCents = saleValue − discount + tax + service + fee + tip (the bill). List gift card, wallet and pending cash as tenders. Assert sum(lines)+tax+fee+tip+service == totalCents before inserting the document, and make the refund builder use the same components. Add tests for delivery, gift-card, wallet and loyalty orders.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "high",
+            "reason": "The finding holds. It is not one of the intended behaviour changes, and it is not a setup mistake.\n\n**Code cause, in `backend/src/connectors/fiscal/payload.ts`:**\n- `buildFiscalSaleTx` sets `totals.totalCents = order.totalCents`. On an Order, `totalCents` is only what is still owed: the storefront checkout subtracts the wallet (`storefront/routes.ts` 885-911), and `redeemGiftCard` reduces it (`giftCards/service.ts:53` `totalCents: { decrement }`).\n- The ledger values the bill as `totalCents + walletAmountCents + giftCardApplied` (`orderPosting.ts` `refundShareOf`).\n- Order has no delivery-fee column. `priceOrder` adds the fee into `totalCents`, but the payload carries no field for it.\n- `ORDER_INCLUDE.payments` (:93) takes only paid rows. Pending COD cash, gift card and wallet therefore never appear as tenders.\n\n**What follows:**\n- Sale lines + tax + service + tip do not add up to `totals.totalCents`.\n- The FBR mapping `TotalSaleValue = totalCents − taxCents` (the formula in docs §5 that vendors are told to use) comes out understated, or negative.\n- `buildRefundPayload` takes the returned value as amount − tax − tip − service, so a refund absorbs the fee and no longer matches its sale.\n\n**Not an intended change.** CLAUDE.md and the connector docs only say that fiscal payloads use stored order figures, with no wallet or gift-card netting. Nothing documents leaving these out. The old direct FBR adapter (git history) had the same `totalCents − taxCents`, so the bug is old and was carried over into the connector. It still matters, because this path now files every sale.\n\n**Reproduced.** I used real storefront checkouts (POST `/storefront/orders`) and real `completeOrder` (outbox plus the test driver, which is live). Company A has its POS ids set. DB `servd_test_rv_online_1`, Redis db 27.\n- **(a) COD delivery** (2× Club + lemonade, fee 15000, tip 10000):\n  - The payload has saleValue 275000, tax 41250, tip 10000 and total 341250. Lines + tax + tip = 326250, so the fee is missing.\n  - The ledger books Cr 4090 290000, which includes the fee.\n  - A full-refund credit note has saleValue 290000, more than the sale's 275000. Its SRB return shows taxAmount 435 against the sale's 412.5, so SRB tax would be over-reversed.\n  - Tenders are [], so FBR PaymentMode is 1 and SRB modeOfPay is \"Card\" for a cash order taxed at 15%.\n- **(b) PKR 1,000 by gift card:**\n  - totalCents 164500 while lines + tax = 264500.\n  - FBR TotalSaleValue 1300 (should be 2300) and TotalBillAmount 1645, while the Items sum to 2645.\n  - A full-tender credit note returns all the tax (34500) but only saleValue 130000.\n  - The ledger is correct: Dr 2080 100000, Cr 4090 230000.\n- **(c) Wallet-paid pickup:** totalCents 0, tax 3600, filed as TEST-SRB-C174DCEA43 with FBR TotalSaleValue −36.00.\n- **(d) Pickup fully covered by a gift card:** totalCents 0, tax 17250, filed with FBR TotalSaleValue −172.50.\n\n**A worse effect the finding does not mention.** Since totalCents is 0 here, `enqueueFiscalSaleTx` (`outbox.ts:110`) treats these orders as zero-value bills. In test (e) I set `fileZeroValue: false`, a supported setting meant for comps and staff meals. A real wallet-paid sale was then SKIPPED as `zero_value` and never filed, while the ledger still booked revenue 45000 and output tax 3600. The same applies to sales covered in full by a gift card. This breaks the CLAUDE.md rule \"No skip of real sales\".\n\n**Severity: high, not blocker.** These are wrong tax-filing figures (negative or understated FBR sale value, a missing fee, credit notes that don't match their sale, cash shown as card), plus possible silent skips of real sales. They go out on every gift-card, wallet, delivery and COD order. It falls short of a blocker because no company is live on a real vendor yet; only the test driver files, and it accepts any figures. The SRB mapping takes its values from the lines, so its sale value and tax are right for gift-card and wallet orders. The FBR mapping and the payload totals are wrong.",
+            "evidence": "Verifier: `/home/user/servd/backend/.sim/online-r2/verify/zzverify_online_1.test.ts` with config `vitest.online1.config.ts` in the same folder. All 5 tests pass. Output is in the scratchpad file `v1.out` (VERIFY_OUT block).\n\n**(a) COD delivery**\n- Payload totals: saleValue 275000, tax 41250, tip 10000, totalCents 341250. Lines + tax + tip + service = 326250, so the totals do not match.\n- FBR: TotalBillAmount 3412.5, TotalSaleValue 3000, Items sum 3162.5, PaymentMode 1 (card).\n- SRB: modeOfPay \"Card\".\n- Ledger: Dr 1010 341250 | Cr 4090 290000 | Cr 2095 10000 | Cr 2032 41250.\n- Full-refund credit note: saleValue 290000 > 275000; SRB return taxAmount 435 vs sale 412.5.\n\n**(b) Gift card PKR 1,000**\n- totals.totalCents 164500 while lines + tax = 264500.\n- FBR: TotalSaleValue 1300, TotalBillAmount 1645, Items sum 2645.\n- Ledger: Dr 1010 164500 | Dr 2080 100000 | Cr 4090 230000 | Cr 2032 34500.\n- Full-tender credit note: tax 34500, saleValue 130000.\n\n**(c) Wallet order**\n- Filed TEST-SRB-C174DCEA43 with amountCents 0, totals tax 3600 and totalCents 0.\n- FBR TotalSaleValue −36.\n- Ledger: Dr 2050 48600 | Cr 4090 45000 | Cr 2032 3600.\n\n**(d) Gift card full cover**\n- Filed TEST-SRB-0E3643E3F8 with totalCents 0 and tax 17250.\n- FBR TotalSaleValue −172.5.\n\n**(e) Wallet order with `fileZeroValue: false`**\n- Fiscal document status `skipped`, reason `zero_value`. The bill was 48600 and the ledger still booked revenue and output tax.\n\n**Code references**\n- `payload.ts:93`: only paid payments are read.\n- `payload.ts:210` and `:223`: `totalCents` is `order.totalCents`.\n- No delivery-fee field exists in the payload.\n- `payload.ts:281`: refund returned value = amount − tax − tip − service.\n- `payload.ts:390`: `TotalSaleValue = totalCents − taxCents`.\n- `outbox.ts:110`: the zero-value skip.\n- `storefront/routes.ts:895-911`: the wallet is subtracted from the total.\n- `giftCards/service.ts:53`: gift card decrements `totalCents`.\n- `orderPosting.ts:442`: the ledger values the order as total + wallet + gift card.\n\nNo tracked files were changed: `backend/.sim/` is git-excluded, and nothing was placed in `tests/`."
+          }
+        },
+        {
+          "id": "ONL-R2-03",
+          "severity": "medium",
+          "title": "A pre-order (scheduledFor) goes to the kitchen queue at once and is auto-cancelled 30 minutes later. scheduledFor is also now the way to order from a closed brand",
+          "repro": "At 19:55 PKT, with Flipd closed (hours 10:00-11:00): POST /api/v1/storefront/orders {conceptSlug:'flipd', type:'pickup', paymentGateway:'cash', scheduledFor:'<tomorrow>T05:30:00Z' (10:30 PKT), items:[Double smash]} -> 201 (status 'received', isPreOrder true). GET /api/v1/orders?status=received (manager) lists it now. Wait for the order-auto-cancel worker.",
+          "expected": "A pre-order is held until near its time (or at least is exempt from the 30-minute 'never acknowledged' sweep), and scheduledFor is bounded (for example within the brand's next opening days).",
+          "actual": "Order ffdc147e (scheduledFor 2026-10-12 05:30Z, placed 14:55:41Z) was cancelled by the worker at 15:30:00 ('[orderAutoCancel] cancelling 3 stalled order(s)'). The customer's pre-order for tomorrow is gone, and the customer is notified of a cancellation. If staff confirm it instead, the 2-hour 'confirmed' sweep (keyed on placedAt) cancels it. isPreOrder is written but read nowhere. scheduledFor has no upper bound. The storefront web checkout does not send scheduledFor today, so this hits API/mobile callers.",
+          "evidence": "poll_cancel.out row 'ffdc147e | cancelled | 2026-10-12 05:30:00 | 2026-10-11 14:55:41.961 | 2026-10-11 15:30:00.404 | servd | t'. v2_rest.out ONL14 preorderTomorrow1030 [201]. s5_more.out preorder.inKitchenQueue {status:'received'}.",
+          "suspectedCause": "backend/src/workers/orderAutoCancel.ts:66-87 filter on placedAt with no scheduledFor/isPreOrder exclusion. backend/src/modules/storefront/serviceHours.ts:158 orderTime accepts any future scheduledFor, and storefront/routes.ts:755 uses it to skip the BRAND_CLOSED check. grep shows isPreOrder is only written (orders/service.ts:565).",
+          "suggestedFix": "Exclude pre-orders from both sweeps until scheduledFor minus the prep window, or measure staleness from scheduledFor. Keep pre-orders off the kitchen queue until near their time. Cap scheduledFor (for example 7 days and inside opening hours) in orderTime/assertOpenForOrders.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "low",
+            "reason": "The finding holds up. I reproduced it against my own DB (servd_test_rv_online_2, Redis db 28) using the real storefront and expo routes and the real sweep.\n\n**It is not an intended change.** Pre-orders are a deliberate feature: the ONL-14 test in tests/auditOnlineCheckout.test.ts expects a pre-order for an open slot to get 201 and isPreOrder true. Nothing in CLAUDE.md says such an order should be auto-cancelled.\n\n**What I confirmed:**\n- With the brand closed now (hours start two hours from now), an order for now gets 409 BRAND_CLOSED.\n- A pre-order for tomorrow, inside opening hours, gets 201 with status 'received' and isPreOrder true. It appears straight away in GET /expo/queue under awaitingFire, with nothing marking it as tomorrow's.\n- The order was backdated 35 minutes and runCancelSweep() was run. It is cancelled with reason auto_cancelled_timeout, even though scheduledFor is about 23 hours away.\n- If staff confirm it and 125 minutes pass, the 2-hour 'confirmed' sweep cancels it too.\n- A same-day pre-order 2.5 hours out is cancelled at 31 minutes, before its slot.\n- scheduledFor 300 days ahead is accepted (201).\n\n**Cause, all as the finding says:**\n- workers/orderAutoCancel.ts filters on placedAt only, with no scheduledFor or isPreOrder exclusion.\n- isPreOrder is written in one place (orders/service.ts:565) and read nowhere.\n- orderTime() in storefront/serviceHours.ts accepts any future time.\n- ingestOrder also emits the KDS new-order event and deducts stock at creation.\n\n**One correction to the finding.** \"scheduledFor is the way to order from a closed brand\" is only partly true. The brand must be open at the chosen time; otherwise the order still gets 409 BRAND_CLOSED. That check is intended ONL-14 behaviour. The real gaps are the missing upper bound and the order going to the kitchen at once.\n\n**Why I rated it low, not medium:** no shipped client sends scheduledFor. I found no use in the storefront checkout, the mobile app, the admin or the tablet, so a real customer cannot hit this today. Only direct API callers can, and the mobile app has not shipped. It becomes medium or higher as soon as any client offers ordering for later.",
+            "evidence": "Verifier: /home/user/servd/backend/.sim/online-r2/verify/zzverify_online_2.test.ts. I ran it temporarily as tests/zzverify_online_2.test.ts and deleted that copy afterwards. All 5 tests passed:\n- [V] order-now while closed 409 BRAND_CLOSED\n- [V] preorder tomorrow 201 {\"status\":\"received\",\"isPreOrder\":true,\"scheduledFor\":\"2026-10-12T18:05:43Z\"}\n- [V] expo queue status 200 in awaitingFire: true\n- [V] after sweep {\"status\":\"cancelled\",\"reason\":\"auto_cancelled_timeout\",\"scheduledFor\":\"2026-10-12T18:05:43Z\",\"isPreOrder\":true}\n- [V] confirmed preorder after sweep {\"status\":\"cancelled\",...}\n- [V] preorder +300d 201 2027-08-07T18:05:44Z\n- [V] same-day preorder after sweep cancelled\n\nCode:\n- /home/user/servd/backend/src/workers/orderAutoCancel.ts:66-87: the where clauses are {status:'received', source in servd/cart, placedAt < now-30m} and {status:'confirmed', placedAt < now-2h}, with no scheduledFor or isPreOrder term.\n- /home/user/servd/backend/src/modules/storefront/serviceHours.ts:158-164: orderTime() has no upper bound.\n- /home/user/servd/backend/src/modules/storefront/routes.ts:755-756 and 964-965: the pre-order is checked for opening hours at its own time, then ingested as an ordinary 'received' order.\n- /home/user/servd/backend/src/modules/orders/service.ts:565: the only place isPreOrder is used, and it is a write. After the transaction, ingestOrder calls emitOrderNew and deductInventoryForOrder straight away.\n- /home/user/servd/backend/src/modules/expo/routes.ts:136-141: awaitingFire lists every 'received' order.\n- grep over frontend/storefront/src, mobile/src, frontend/admin/src and tablet/src finds no sender or reader of scheduledFor or isPreOrder."
+          }
+        },
+        {
+          "id": "ONL-R2-04",
+          "severity": "medium",
+          "title": "Staff (host) phone bookings have no capacity check: two parties of 4 are accepted for the only free 4-top with no table and no warning, and the clash surfaces at seating",
+          "repro": "Host (foh, signed in with a manager-issued code): POST /api/v1/reservations {conceptId:<stackd>, partySize:4, startTime:'<tomorrow>T15:00:00Z', guestName:'Ali Raza', guestPhone:'03004445556'}, then the same for 'Usman Tariq'. At that time T3 is held by a public booking and T2 is the only 4-top. Then seat both at T2.",
+          "expected": "The same rule as public booking (capacity.ts planSeat): refuse (409 SLOT_FULL), or at least return a warning or overbooking flag so the host knows no table can seat the second party.",
+          "actual": "Both get 201 with tableId null and no warning. Public availability for the slot shows {available:false, tablesAvailable:0}. Seating both concurrently gives [409 TABLE_CONFLICT, 200], so one party is turned away at the door. This is the ONL-08 failure mode through the staff door.",
+          "evidence": "s2_shift.out res.staffBook {first:[201,'no table'], second:[201,'no table']}, res.availability2 {available:false, tablesAvailable:0}, res.seatRace [409,'TABLE_CONFLICT',200]. http.log POST /reservations bodies.",
+          "suspectedCause": "backend/src/modules/reservations/routes.ts:210-300 (staff POST /) only runs checkTableConflict when a tableId is sent. planSeat is used only by the public route and availability.",
+          "suggestedFix": "Run planSeat in the staff create path under the same advisory lock. Auto-assign a table, or return 409 SLOT_FULL with an explicit 'overbook' override that a manager can set.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "low",
+            "reason": "The finding holds up. The staff create route (POST /reservations, backend/src/modules/reservations/routes.ts:210-363) only checks capacity when the caller sends a tableId (checkTableConflict, lines 221-230). It never runs planSeat and never takes the reservations:<concept> advisory lock. Only GET /availability (line 868) and POST /public (lines 1146-1173) apply the ONL-08 rule. The ONL-08 fix report (.handoff/fixreports/online.md) says that fix covered public bookings only. Neither CLAUDE.md nor the list of intended changes says staff bookings may overbook, so this is not an intended change. It is not a setup mistake either: role foh has the 'reservations' module, and the route allows every staff role.\n\nThe gap is wider than one extra party. The admin \"New reservation\" dialog (frontend/admin/src/app/reservations/page.tsx:371/431) defaults to \"— Waitlist (assign later) —\" with no table. So the normal host phone booking skips any check: it gets 201 with no table, carries no warning or flag, and the guest is sent a \"reservation confirmed\" WhatsApp. The one thing still working is that these bookings count against public availability, so online guests correctly get SLOT_FULL.\n\nI rate it low rather than medium. No money, tax, auth or cross-company data is involved. The database exclusion constraint still stops two parties being seated at one table. A host can see the day's book and the unassigned list, and booking with a named table gets 409 TABLE_CONFLICT. Some unchecked host bookings are also a legitimate override (for example, pushing tables together for a big group). What is really missing is a warning or overbook flag, so the ONL-08 failure (the clash only shows at the door) can still happen through the staff route.",
+            "evidence": "Reproduced with backend/.sim/online-r2/verify/zzverify_online_3.test.ts (config: vitest.online3.config.ts in the same folder; DB servd_test_rv_online_3, Redis db 29; nothing placed in tests/, no tracked files changed). 3/3 tests passed.\n\nSetup: Stackd has T1 (2 seats), T2 (4) and T3 (6). T1 and T3 are held by existing website bookings at tomorrow 20:00 PKT, so T2 is the only free 4-top.\n\nResults:\n- Availability before (party of 4): {available:false, reason:'sign_in', tablesAvailable:1}. That is T2, held back from unverified guests by the unverified share.\n- foh host POST /reservations for 'Ali Raza' (party of 4): 201, tableId null, waitlist false.\n- Same for 'Usman Tariq': 201, tableId null. The response has no warning, overbook or capacity field.\n- A third booking, a party of 6 with no 6-top free: also 201, tableId null.\n- Availability after (party of 2): {available:false, tablesAvailable:0}.\n- Seating both at T2: first 200, second 409 TABLE_CONFLICT.\n- Contrast: the same two bookings sent with tableId T2 give 201, then 409 TABLE_CONFLICT. The check only runs when a table is named.\n- A party of 12 (largest table is 6) is also accepted, with no fit check.\n\nCode:\n- routes.ts:221 `if (body.tableId && !body.waitlist) { checkTableConflict(...) }` is the only capacity check on the staff route.\n- planSeat is used only at routes.ts:868 (availability) and :1162 (public).\n- capacity.ts:10-11 expects tableless staff bookings (\"a staff booking the host has not placed yet\") but only counts them for other bookings."
+          }
+        }
+      ],
+      "rejected": [],
+      "lows": [
+        {
+          "id": "ONL-R2-05",
+          "severity": "low",
+          "title": "A partial refund keeps 100% of the loyalty points earned on the order",
+          "repro": "Complete a COD delivery of 199000 (Bilal earns 1990 pts). Pay it in, then POST /api/v1/pos/orders/:id/refund {amountCents:45000, reason:'Missing drink', shiftId} -> 200. Same on KGC order cb029c68 (refund 20000 of 222000).",
+          "expected": "Points earned on the refunded part are clawed back pro rata, with the matching 2060/6060 reversal.",
+          "actual": "The earn of 1990 (and 2220 at KGC) stays, with no reversal row and no JE. Reversal only happens when the order is refunded in full, so 99% refunds keep all points.",
+          "evidence": "psql loyalty_transactions for 6bd3316e and cb029c68: only 'earn' rows, reversedAt false. ledger: order.refund 45000 has no loyalty line.",
+          "suspectedCause": "backend/src/modules/accounting/orderPosting.ts:681-700 (restores run only on status 'refunded' or cancel). orders/service.ts:1096.",
+          "suggestedFix": "On a partial refund, reverse round(earn × refund / order total) points with a pro-rata 'loyalty.earn.reversal'. Or document 'points kept on partial refunds' as policy."
+        },
+        {
+          "id": "ONL-R2-06",
+          "severity": "low",
+          "title": "A storefront order fully covered by a gift card leaves a PKR 0 'cash/pending' row that shows up in the rider/counter cash-due list",
+          "repro": "Customer: POST /api/v1/storefront/orders {conceptSlug:'stackd', type:'pickup', paymentGateway:'cash', tipCents:2000, giftCardCode:<card with PKR 5,000>, items:[Almond croissant]} -> 201 total 0. Complete it. Manager: GET /api/v1/pos/cod-due.",
+          "expected": "No pending cash row when nothing is due, and the cash-due list never shows a PKR 0 entry.",
+          "actual": "The payment row is 'cash/pending/0'. GET /pos/cod-due lists '38b15941: 0' alongside the real riders' cash.",
+          "evidence": "s11.out fullGiftCover pay ['cash/pending/0']. s12 output codDueZero [...,'38b15941:0'].",
+          "suspectedCause": "backend/src/modules/pos/routes.ts:254-265 (cod-due has no amountCents > 0 filter). The checkout writes the pending payment even when the gift card or wallet covers the whole bill.",
+          "suggestedFix": "Skip or close the pending payment when it reaches 0, and filter amountCents > 0 in /pos/cod-due."
+        },
+        {
+          "id": "ONL-R2-07",
+          "severity": "low",
+          "title": "GET /orders?status=<unknown value> answers 500 INTERNAL_ERROR instead of 400",
+          "repro": "As management: GET /api/v1/orders?status=out_for_delivery",
+          "expected": "400 VALIDATION_ERROR naming the allowed statuses.",
+          "actual": "500 {error:{code:'INTERNAL_ERROR'}}. The API log shows PrismaClientValidationError at orders/service.ts:856 (status: 'out_for_delivery' is not an OrderStatus).",
+          "evidence": "http.log '2026-10-11T14:58:35.274Z GET /orders?status=out_for_delivery -> 500'. API log [14:58:35.272] ERROR Invalid prisma.order.findMany() invocation.",
+          "suspectedCause": "backend/src/modules/orders/routes.ts:63 list route passes the raw status query param to listOrders (orders/service.ts:856) without enum validation.",
+          "suggestedFix": "Validate status with z.nativeEnum(OrderStatus), or a comma list of it, in the list route."
+        },
+        {
+          "id": "ONL-R2-08",
+          "severity": "low",
+          "title": "/health reports redis 'ok' while every Redis command fails because the configured DB index is invalid",
+          "repro": "Start the API with REDIS_URL=redis://127.0.0.1:6379/24 against a Redis that has 16 databases. GET /health.",
+          "expected": "checks.redis = error (SELECT failed), since BullMQ workers and the rate limiter cannot use Redis.",
+          "actual": "/health returned redis:'ok' and loginRateLimit:'ok', while the log showed '[Redis] error: ERR DB index is out of range', '[reservation] worker error: ERR DB index is out of range', '[loyaltyTriggers] worker error …'. This was environment-induced (my first start). It matters only if prod REDIS_URL carries a bad index, but the health check would hide it.",
+          "evidence": "scratchpad/audit/online-r2/api-run0-badredis.log (6 'ERR DB index' lines) and the /health body captured at 14:49:30.",
+          "suspectedCause": "backend/src/index.ts:532 pings redisFast. PING succeeds on a connection whose SELECT failed.",
+          "suggestedFix": "Check a command that needs the selected DB (for example GET of a sentinel key), or listen for the client 'error'/'ready' state."
+        }
+      ]
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Simulate"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "sim:people",
+      "phaseIndex": 1,
+      "phaseTitle": "Simulate",
+      "agentId": "a9521df4fc7906867",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791730092071,
+      "queuedAt": 1791730092039,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "DB: postgresql://postgres@127.0.0.1:5432/servd_sim_people_r…",
+      "promptPreview": "You are RE-RUNNING a simulated shift for servd (repo /home/user/servd; CLAUDE.md is the rulebook), a multi-company restaurant ERP whose real staff onboard on Monday. Last night an audit simulated shifts per area and found bugs; since then ~300 files were changed to fix them (UNCOMMITTED working tree — that IS the code under test). Your job: (1) prove each ORIGINAL finding of your area is now fixed…",
+      "promptFramed": true,
+      "lastProgressAt": 1791730980841,
+      "tokens": 352066,
+      "toolCalls": 89,
+      "durationMs": 888770,
+      "resultPreview": "{\"originals\":[{\"id\":\"PPL-01\",\"status\":\"fixed\",\"evidence\":\"Second Stackd pool over the same window: 409 POOL_OVERLAP; a partial overlap (by finance) also 409. Two legacy pools over one Simmer window, both already posted (inserted via DB): pay A 200, pay B 409 POOL_OVERLAP 'Not paid…'. Only one payout entry exists (d:2095:50000 c:1020:50000).\"},{\"id\":\"PPL-02\",\"status\":\"fixed\",\"evidence\":\"Stackd pool…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "sim:online",
+      "phaseIndex": 1,
+      "phaseTitle": "Simulate",
+      "agentId": "ae844f029367845ae",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791730092071,
+      "queuedAt": 1791730092040,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "The API ran from the current uncommitted tree on 127.0.0.1:…",
+      "promptPreview": "You are RE-RUNNING a simulated shift for servd (repo /home/user/servd; CLAUDE.md is the rulebook), a multi-company restaurant ERP whose real staff onboard on Monday. Last night an audit simulated shifts per area and found bugs; since then ~300 files were changed to fix them (UNCOMMITTED working tree — that IS the code under test). Your job: (1) prove each ORIGINAL finding of your area is now fixed…",
+      "promptFramed": true,
+      "lastProgressAt": 1791732711434,
+      "tokens": 366863,
+      "toolCalls": 159,
+      "durationMs": 2619361,
+      "resultPreview": "{\"originals\":[{\"id\":\"ONL-01\",\"status\":\"fixed\",\"evidence\":\"Admin payload {discountType:'fixed', discountValue:15000} -> 201. Quote on a PKR 2,300 basket gives promo.discountCents 15000 ('PKR 150 off'), total 249500. The checkout order has promoDiscountCents 15000 and total 249500 (v2_rest.out ONL01).\"},{\"id\":\"ONL-02\",\"status\":\"fixed\",\"evidence\":\"keenu, jazzcash and easypaisa all get 422 PAYMENT_MET…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "verify:people:PPL-R2-01",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a208de5cf0b61514b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791730980869,
+      "queuedAt": 1791730980848,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731107128,
+      "tokens": 119798,
+      "toolCalls": 21,
+      "durationMs": 126259,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"medium\",\"reason\":\"The finding holds. None of the intended changes cover it, and the setup was not wrong. CLAUDE.md wave 3 says \\\"a role without M is refused server-side, not just hidden\\\". The moduleAccess.ts header says every HR_ADMIN role holds staff_hr by default, \\\"so nobody loses access unless the CEO has switched it off for them\\\". So once the CEO switches staff…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "verify:people:PPL-R2-02",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a8038fc76160e419a",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791731107132,
+      "queuedAt": 1791730980848,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791731264835,
+      "tokens": 135272,
+      "toolCalls": 31,
+      "durationMs": 157703,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"medium\",\"reason\":\"The finding is real. It is not one of the intended changes and not a setup mistake. The rota builder (`rotaFor`) never looks at approved leave. The PPL-12 fix only blocks new or changed shifts on leave days. Standing roster days and shifts entered before the leave still show as worked on the /scheduling week and are counted in labour cost. Approving …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "verify:online:ONL-R2-01",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a159e5a59e3d0855f",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791732711451,
+      "queuedAt": 1791732711442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791732836161,
+      "tokens": 114949,
+      "toolCalls": 30,
+      "durationMs": 124709,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"high\",\"reason\":\"The finding is real. It is not one of the intended changes, and it is not a setup mistake.\\n\\n**Top-up never reaches the ledger.** `creditWallet` (`backend/src/modules/wallet/routes.ts:9-28`) writes only `Customer.walletBalance` and a `WalletTransaction`. Both `/wallet/topup` and `/wallet/bulk-topup` use it. Neither path calls `postJournalEntry`.\\n- No…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "verify:online:ONL-R2-02",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "abc44899f9401aa9a",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791732711451,
+      "queuedAt": 1791732711442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791732972705,
+      "tokens": 179116,
+      "toolCalls": 58,
+      "durationMs": 260604,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"high\",\"reason\":\"The finding holds. It is not one of the intended behaviour changes, and it is not a setup mistake.\\n\\n**Code cause, in `backend/src/connectors/fiscal/payload.ts`:**\\n- `buildFiscalSaleTx` sets `totals.totalCents = order.totalCents`. On an Order, `totalCents` is only what is still owed: the storefront checkout subtracts the wallet (`storefront/routes.ts…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "verify:online:ONL-R2-03",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "aca9818cbf1d81678",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791732836165,
+      "queuedAt": 1791732711442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791732972970,
+      "tokens": 112094,
+      "toolCalls": 29,
+      "durationMs": 136804,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"low\",\"reason\":\"The finding holds up. I reproduced it against my own DB (servd_test_rv_online_2, Redis db 28) using the real storefront and expo routes and the real sweep.\\n\\n**It is not an intended change.** Pre-orders are a deliberate feature: the ONL-14 test in tests/auditOnlineCheckout.test.ts expects a pre-order for an open slot to get 201 and isPreOrder true. Not…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "verify:online:ONL-R2-04",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a6f343d753a3a4117",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791732972709,
+      "queuedAt": 1791732711442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791733115747,
+      "tokens": 128786,
+      "toolCalls": 31,
+      "durationMs": 143037,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"low\",\"reason\":\"The finding holds up. The staff create route (POST /reservations, backend/src/modules/reservations/routes.ts:210-363) only checks capacity when the caller sends a tableId (checkTableConflict, lines 221-230). It never runs planSeat and never takes the reservations:<concept> advisory lock. Only GET /availability (line 868) and POST /public (lines 1146-117…"
+    }
+  ],
+  "totalTokens": 1508944,
+  "totalToolCalls": 448
+}

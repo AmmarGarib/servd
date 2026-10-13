@@ -1,0 +1,35 @@
+{
+ "items": [
+  {
+   "id": "F1",
+   "status": "fixed",
+   "note": "frontend/admin/src/app/team/page.tsx: the phone field label now changes with the role. For cashier, foh, boh, kitchen and expediter (the same list as the server's OTP_LOGIN_ROLES) it reads 'Mobile number (required \u2014 they sign in with a code sent here)' and the field is required. For other roles it reads 'optional for this role; required for cashiers, servers and kitchen staff'. Submitting a code-login role without a number now shows an error before anything is sent, using the same words as the server's PHONE_REQUIRED message."
+  },
+  {
+   "id": "F2",
+   "status": "fixed",
+   "note": "frontend/admin/src/components/ui/AppShell.tsx: added a 'Change password / PIN' link to /account/password in the sidebar user footer, between the identity card and Clock out. The collapsed sidebar shows it as a padlock icon with a tooltip. Nothing else in AppShell was changed."
+  },
+  {
+   "id": "F3",
+   "status": "fixed",
+   "note": "There was a lock-out risk. The membership-only staff screens and company switcher meant a login tied to its company only by users.tenantId could lose that company on its first switch. Fixed by the earlier interrupted attempt and checked now. tenants/routes.ts /switch records the company being left as a TenantMember row and allows switching into one's own primary company. A new data-only, idempotent migration (backend/prisma/migrations/20261010200000_auth_membership_backfill/migration.sql, NOT EXISTS + ON CONFLICT DO NOTHING) does two things: it makes every live login's primary company a membership, and it enrols only the GS Foods CEO account (ammar.garib@gsfoods.pk, role admin) in every live company. Tests in auditAuthReview.test.ts (AUTH-R1 block) cover these cases, all passing. An admin with only User.tenantId still sees, edits and switches into their company. Company B's CEO is refused company A with NOT_A_MEMBER, and nothing is recorded. The migration is run twice: it is idempotent, does not widen another company's CEO, and skips deleted companies."
+  },
+  {
+   "id": "F4",
+   "status": "fixed",
+   "note": "The earlier attempt made the phone rules refuse only new conflicts (AUTH-R7 tests). PHONE_IN_USE applies only when the number actually changes, a login moves into a floor role, or a suspended login is switched back on. Office logins never collide. A legacy floor login with no phone can still be renamed, reactivated and moved between floor roles. Two floor logins already sharing a number can still be edited. Code sign-in still refuses when two active floor logins share a number, as it did before these fixes. This session closed one more gap. PATCH /auth/users/:id now treats a phone re-sent exactly as stored as unchanged. Before, a legacy number that fails today's format check (e.g. 7 digits) made the whole save fail with INVALID_PHONE, even for a rename. A newly typed bad number is still refused. Two tests added: the legacy-number edit case, and company B's CEO getting 404 on company A's legacy login."
+  }
+ ],
+ "filesChanged": [
+  "/home/user/servd/frontend/admin/src/app/team/page.tsx",
+  "/home/user/servd/frontend/admin/src/components/ui/AppShell.tsx",
+  "/home/user/servd/backend/src/modules/auth/routes.ts",
+  "/home/user/servd/backend/tests/auditAuthReview.test.ts",
+  "/home/user/servd/backend/prisma/migrations/20261010200000_auth_membership_backfill/migration.sql (from the earlier interrupted attempt, checked and unchanged)",
+  "/home/user/servd/backend/src/modules/tenants/routes.ts (from the earlier interrupted attempt, checked and unchanged)"
+ ],
+ "tests": "Ran against DB servd_test_fix2_auth and Redis db 21. 13 files, 304 passed and 4 skipped, 0 failed. Files: auditAuthReview (19 tests, 2 new), auditAuthPeople, auditAuthOnline, accessControl, workspaces, passwordReset, staffOtpLogin, auditPeopleAccess, dualContactVerification, riderApp, waitlist, hrModule, auditOnlineReservations. `npx tsc --noEmit -p .` reports 0 errors in backend and 0 in frontend/admin.",
+ "needsOtherFiles": "None. Optional, from the earlier report: hr/service.ts could warn when an HR employee's linked login is suspended (the payroll side of PPL-10). The auth middleware's memberTenantIds must keep counting users.tenantId as membership; the switch and backfill logic depend on it.",
+ "prodNotes": "1) Deploy order: run migration 20261010200000_auth_membership_backfill with or before the new API. Without it, a login tied to its company only by users.tenantId still sees that company, but the CEO loses sight of companies he is not a member of. The /tenants/mine list, the staff list and hire approvals no longer give the admin role every company. The migration enrols only ammar.garib@gsfoods.pk (role admin, not deleted) in every live company, so check that this is the CEO's real login email on the box. If it is not, add his TenantMember rows by hand (scripts/ensure-ceo-tenant-memberships.ts). 2) Before Monday, check the live DB for two things. First, active or pending floor logins (cashier, foh, boh, kitchen, expediter) that share a normalised number: code sign-in already refuses both, and the server now logs '[auth] code sign-in refused: N active floor logins share the number ending XXXX'. Second, floor logins with no phone: they show 'No phone' on Workforce and cannot sign in by code. These rows stay editable, but approving a pending one without a phone, or with a number already in use, is refused. 3) API changes callers will notice (from the earlier fixes): POST /auth/password/change-authed now returns 200 with a new session instead of 204. A wrong current password or PIN now returns 400 instead of 401. Creating a staff login needs an active or explicit company."
+}

@@ -108,6 +108,7 @@ enum PaymentMethod {
   split
   comp
   raast // Raast QR — instant bank transfer to the company's receiving account (digital tax rate, like card)
+  on_account // a named on-account client's bill (owner 2026-10-13): Dr 1110 at the close, billed on a monthly statement; CASH tax class; own route POST /pos/orders/:id/on-account, never POST /pos/payments
 }
 
 enum PaymentStatus {
@@ -341,6 +342,16 @@ model Concept {
   raastBankAccountId String?
   raastBankAccount   BankAccount?           @relation("ConceptRaastAccount", fields: [raastBankAccountId], references: [id], onDelete: SetNull)
 
+  // The brand's primary service vessel: 'plate' (dine-in on plates; packaging only for takeaway / delivery / "box given")
+  // or 'packaging' (packaging IS the vessel on every order — Stackd). Required when a brand is created; a change applies
+  // from then on (snapshotted on OrderItem.serviceVessel at ring-up). CHECK concepts_service_vessel_chk (SQL only).
+  // Owner 2026-10-13 (FINAL packaging rule). There is no plateWearPct: Recipe.qFactorPct is the one plate allowance.
+  serviceVessel String @default("plate")
+
+  // Fixed assets v2 (2026-10-14)
+  fixedAssets     FixedAsset[]     @relation("FixedAssetConcept")
+  fixedAssetPools FixedAssetPool[] @relation("FixedAssetPoolConcept")
+
   @@index([tenantId])
   @@map("concepts")
 }
@@ -481,6 +492,8 @@ model Modifier {
 
   group         ModifierGroup       @relation(fields: [groupId], references: [id])
   orderItemMods OrderItemModifier[]
+  // What ONE unit of this add-on uses (Recipe kind 'modifier'; food cost wave B).
+  recipe        Recipe?             @relation("ModifierRecipe")
 
   @@map("modifiers")
 }
@@ -747,6 +760,15 @@ model GiftCard {
   bankAccountId   String? // the bank a bank_transfer sale landed in (same company)
   expiredAt       DateTime?
   voidDisposition String? // refund | payment_not_received | forfeit
+  // H11 breakage (wave B, INT4: a card is ≤ PKR 100k): value taken to 4200 (sold) / 6060 (promotional) at the card's
+  // FIRST expiry, or a CEO forfeit of a sold card. A refund that later puts value back on an expired card waits for a
+  // manager (never swept).
+  breakageCents         Int       @default(0)
+  breakageAt            DateTime?
+  // Expired but breakage could not be booked yet (issue entry missing — ISSUE_NOT_BOOKED — or the posting was
+  // refused). The sweep and the 'giftcard.expire' reposter retry these; null = nothing pending.
+  breakagePendingAt     DateTime?
+  breakagePendingReason String?
 
   redemptions GiftCardRedemption[]
 
@@ -1213,11 +1235,16 @@ model CustomerStrike {
   reversalReason String?
   recordedById   String? // staff user id (or null = system)
   recordedAt     DateTime  @default(now())
+  // The company whose incident it is (the order's / reservation's brand's company, or the ACTIVE company for a
+  // manual CRM strike). Strikes count and bans apply PER COMPANY (owner 2026-10-13). NULL only for legacy
+  // unattributable rows.
+  tenantId       String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId, recordedAt])
   @@index([kind, recordedAt])
+  @@index([tenantId, customerId])
   @@map("customer_strikes")
 }
 
@@ -1235,7 +1262,10 @@ model CustomerBan {
   deviceFingerprints String[] @default([])
 
   reason     String // free-form: "3 strikes — see strikes table"
-  // The company that raised the ban (owner decision 15); null = every company (legacy).
+  // The company that raised the ban (owner decision 15). Since wave B (2026-10-14) ALWAYS written: the company
+  // that raised the ban. A legacy NULL = applies to every company and can be lifted by the CEO (admin) only.
+  // One active AUTO ban per (company, customer) — partial unique index customer_bans_one_active_auto_per_company
+  // in SQL (migration 20261014090000; not declared here).
   tenantId   String?
   bannedById String? // null = auto-promoted by system at 3-strike threshold
   bannedAt   DateTime  @default(now())
@@ -1246,7 +1276,9 @@ model CustomerBan {
   // Optional TTL — null = permanent. Lets operator set "1-year cooldown" if they want.
   expiresAt  DateTime?
 
-  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // Help-desk appeals of this ban (OrderComplaint kind 'ban_appeal').
+  appeals  OrderComplaint[] @relation("BanAppeals")
 
   @@index([email])
   @@index([phone])
@@ -1677,6 +1709,19 @@ model Order {
   cancelledAt        DateTime?
   cancellationReason String?
 
+  // Delivery fee (owner 2026-10-13 + H9; wave B, per-ticket INT4): the zone fee BEFORE GST, and the GST charged on
+  // it at the order's tender rate (round(fee × rate / 100)). taxCents = food GST + deliveryFeeTaxCents. Written by
+  // ingestOrder from priceOrder; 0 on legacy orders (no backfill — their fee stays in brand revenue).
+  deliveryFeeCents        Int       @default(0)
+  deliveryFeeTaxCents     Int       @default(0)
+  // Emergency override (a): the hand-over code was sent to the RIDER (once per order; conditional claim on null).
+  handoverReroutedAt      DateTime?
+  handoverRerouteRiderId  String? // assignRider / unassign refuse another rider while set and undelivered
+  handoverRerouteAttempts Int? // deliveryOtpAttempts at the reroute (then reset to 0; riderScoring reads this)
+  // Emergency override (b): the food came back and was booked as waste.
+  returnedAt              DateTime?
+  returnCause             String? // 'refused' | 'unreachable' | 'other' — CHECK orders_return_cause_chk (SQL only)
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -1760,6 +1805,15 @@ model OrderItem {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
+  // Packaging (wave B, owner's FINAL packaging rule 2026-10-13): the brand's service vessel at ring-up, and "Box given"
+  // for a dine-in line whose leftovers were boxed. The line's packaging is consumed (FIFO, Dr 5030 / Cr 1230) when
+  // packagingApplies(order, line): takeaway/delivery → yes; serviceVessel 'packaging' → yes; dine-in plate → only if
+  // boxGiven. CHECK order_items_service_vessel_chk (SQL only).
+  serviceVessel String? // 'plate' | 'packaging' (null on legacy rows = read the brand's current vessel)
+  boxGiven      Boolean   @default(false)
+  boxGivenAt    DateTime?
+  boxGivenById  String?
+
   order     Order               @relation(fields: [orderId], references: [id])
   menuItem  MenuItem?           @relation(fields: [menuItemId], references: [id])
   station   Station?            @relation(fields: [stationId], references: [id])
@@ -1813,6 +1867,14 @@ model Payment {
   lastRetryAt   DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+
+  // H5 'rider' (wave B): delivered COD booked by finance as owed by the rider. Own rider: Dr 1351 / Cr 1010
+  // ('cod.rider_debt:<paymentId>', codRiderDebtEntryId). Fleet rider of another company: an IntercompanyTransfer
+  // (source 'cod', codRiderDebtTransferId). Reversed in settlePayment when the rider hands the cash in.
+  codRiderDebtAt         DateTime?
+  codRiderDebtById       String?
+  codRiderDebtEntryId    String?
+  codRiderDebtTransferId String?
 
   order        Order         @relation(fields: [orderId], references: [id])
   shift        Shift?        @relation(fields: [shiftId], references: [id])
@@ -1981,7 +2043,10 @@ model InventoryItem {
   unit           String // e.g. "kg", "pcs", "litres"
   parLevel       Float     @default(0)
   currentStock   Float     @default(0)
-  unitCostCents  Int? // cost per unit (paisa) — moving average of deliveries
+  // Cost per purchase unit (paisa). Since wave B (food cost on FIFO lots) = the FIFO HEAD cost: the oldest open lot,
+  // else the latest lot, else the typed estimate. Every recipe/pricing/menu-engineering screen reads it. Editable only
+  // while the item has no lots (422 COST_FROM_DELIVERIES — existing error name kept).
+  unitCostCents  Int?
   // The negotiated price on the sourcing sheet. A reference only; never the cost.
   listPriceCents Int?
   // Edible portion after trim/peel/loss. The Recipe page uses this as the
@@ -1990,11 +2055,15 @@ model InventoryItem {
   yieldPct       Float     @default(100)
   // Dietary tags surfaced on Recipe / Menu pages — e.g. ['dairy','gluten'].
   allergens      String[]  @default([])
-  // Coarse classification used for ingredient picker grouping: 'protein',
-  // 'produce', 'dairy', 'dry_goods', 'sauce', 'packaging', 'other'.
+  // Classification: protein | produce | dairy | dry_goods | sauce | beverage | packaging | other — z.enum in the
+  // route (lib/inventoryClass.ts INVENTORY_CATEGORIES; legacy values normalised by migration 20261014090000).
+  // Cost class: beverage → 1220/5020, packaging → 1230/5030, everything else food (1210/5010).
   category       String?
   supplierId     String?
   notes          String?
+  // Unmeasured consumables (oil, salt, items on no recipe): each receipt is issued straight to cost of sales
+  // ('issue_on_receipt', an explained bucket of the food-cost report) instead of waiting for a count.
+  issueOnReceipt Boolean   @default(false)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
@@ -2008,6 +2077,7 @@ model InventoryItem {
   wasteLogs          WasteLog[]
   components         Component[]
   stockTransfers     StockTransfer[]
+  lots               StockLot[]
 
   @@index([tenantId])
   @@map("inventory_items")
@@ -2020,19 +2090,28 @@ model WasteLog {
   inventoryItemId    String
   quantity           Float
   unit               String
-  reason             String // spoilage | over_prep | expired | damaged | other
-  estimatedCostCents Int?
+  // spoilage | over_prep | expired | damaged | other | void_after_fire | cancelled_after_fire | returned_food |
+  // transit_loss | remake
+  reason             String
+  estimatedCostCents Int? // since wave B = the FIFO value taken from the lots
   photoUrl           String? // required when waste cost > photoRequiredAboveCents (OperationsConfig)
   approvedById       String? // supervisor who approved (PIN-verified)
   notes              String?
   recordedById       String?
   recordedAt         DateTime @default(now())
+  // Food cost wave B (2026-10-14)
+  tenantId           String? // the item's company (backfilled); every new row sets it
+  conceptId          String? // brand charged (else the usage split, H20)
+  locationId         String? // outlet tag (per-outlet stock is the NEXT build)
+  orderItemId        String? // a sold line wasted (void_after_fire | cancelled_after_fire | returned_food); key pos.void_waste:<orderItemId>
 
   inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
   recordedBy    User?         @relation(fields: [recordedById], references: [id])
 
   @@index([inventoryItemId, recordedAt(sort: Desc)])
   @@index([recordedAt(sort: Desc)])
+  @@index([tenantId, recordedAt])
+  @@index([orderItemId])
   @@map("waste_logs")
 }
 
@@ -2066,6 +2145,15 @@ model Supplier {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
+  // Withholding (H8/H28, wave B) — the ONE vendor master (OpEx/CapEx vendors are Suppliers).
+  filerStatus         String    @default("unknown") // filer | non_filer | exempt | unknown (unknown = filer rate + 'Check ATL' warning)
+  whtExemptCertNo     String? // s.153 exemption certificate (belongs to the supplier, never per payment)
+  whtExemptUntil      DateTime?
+  defaultTaxAuthority String? // fbr | srb | pra | kpra | bra — who usually charges us sales tax
+  defaultWhtSection   String? // 153_1_a | 153_1_b | 153_1_c | 155 | none
+  // System supplier rows (never offered in pickers, never billed): 'cash_purchases' = the supplier of every
+  // receipt settled by a petty-cash spend / cash request (wave B decision P6). One per company (unique below).
+  systemKind          String?
 
   assignedStaff  User?                  @relation("SupplierAssignee", fields: [assignedStaffId], references: [id], onDelete: SetNull)
   tenant         Tenant?                @relation("TenantSuppliers", fields: [tenantId], references: [id], onDelete: SetNull)
@@ -2076,7 +2164,11 @@ model Supplier {
   priceHistory   ItemPriceHistory[]
   conversations  SupplierConversation[]
   portalTokens   SupplierPortalToken[]
+  opexLines      OpexLine[]
+  fixedAssets    FixedAsset[]           @relation("FixedAssetSupplier")
+  capexLines     CapexLine[]            @relation("CapexLineSupplier")
 
+  @@unique([tenantId, systemKind])
   @@index([tenantId])
   @@index([whatsappPhone])
   @@index([email])
@@ -2094,9 +2186,12 @@ model Supplier {
 //               be consumed as an ingredient inside a plate recipe (quantity in
 //               grams × cost-per-gram). Components feed their cost into the
 //               plates that use them and never carry an opex/portion allocation.
+//   modifier  — what ONE unit of a menu modifier (add-on) uses (wave B). Recipe.modifierId set, no menuItemId,
+//               no packaging section.
 enum RecipeKind {
   plate
   component
+  modifier // what ONE unit of a menu modifier (add-on) uses; Recipe.modifierId set, no menuItemId, no packaging section
 }
 
 // Recipe lifecycle — independent of `kind`. A recipe starts in `iteration`
@@ -2162,7 +2257,8 @@ model Recipe {
   // The food-cost % the operator wants this item to run at (Menu Engineering
   // "price to hit target" suggestion = plateCost ÷ target%). Default 30.
   targetFoodCostPct       Float        @default(30)
-  // Packaging as % of selling price (takeaway boxes, lids, bags). Default 8%.
+  // RETIRED 2026-10-14 (wave B): no longer read or written — packaging is the recipe's Packaging section
+  // (RecipeIngredient.section 'packaging'). Column kept (no data dropped).
   packagingPct            Float        @default(8)
   // What the operator actually charges on the menu. Null = defaults to
   // the computed Target Price. Stored as cents (paisa) per servd convention.
@@ -2191,10 +2287,16 @@ model Recipe {
   // Active/featured flags for menu engineering — independent of season
   isActive Boolean @default(true)
 
+  // kind 'modifier' (wave B): what ONE unit of a menu modifier uses. Company via modifier → group → menu item → brand.
+  // @unique on a uuid FK (one recipe per modifier) — globally unique by construction, like menuItemId @unique above;
+  // a deliberate exception to "unique keys are per company" (the route still resolves the modifier's company first).
+  modifierId String? @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   menuItem     MenuItem?           @relation(fields: [menuItemId], references: [id])
+  modifier     Modifier?           @relation("ModifierRecipe", fields: [modifierId], references: [id], onDelete: SetNull)
   ingredients  RecipeIngredient[]
   // Back-relation: rows where this recipe appears as a prep component on
   // another recipe (only meaningful for prep recipes). Used to detect when
@@ -2253,6 +2355,11 @@ model RecipeIngredient {
   yieldPct        Float   @default(1.0) // 0.01–1.0, e.g. 0.75 = 75% yield. N/A for prep components (already yielded by the prep batch); kept at 1.0.
   unit            String // unit label for display
   notes           String?
+  // 'ingredients' | 'packaging' (wave B; CHECK recipe_ingredients_section_chk, SQL only). Packaging lines:
+  // packaging-class items only, plate recipes only. A sale uses the dish's packaging when packagingApplies(order,
+  // line) (owner's FINAL rule: takeaway/delivery, a packaging-vessel brand, or "box given" on a dine-in line). A
+  // recipe may have no packaging (warning PACKAGING_MISSING only for a packaging-vessel brand).
+  section         String  @default("ingredients")
 
   recipe        Recipe         @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id])
@@ -2495,6 +2602,12 @@ model SupplierBill {
   kind           String    @default("bill") // bill | credit_note
   originalBillId String?
   creditedCents  BigInt    @default(0)
+  // H8 (wave B): the authority that charged the bill's sales tax → its input account (fbr 1320, pra 1321, srb 1322,
+  // kpra 1323, bra 1324). Default 'fbr' = today's 1320. Credit notes credit the bill's own code.
+  taxAuthority   String    @default("fbr")
+  // Snapshot of how whtCents was worked out (lib/withholding.ts computeWithholding).
+  whtSection     String?
+  whtRateBps     Int?
 
   supplier        Supplier                     @relation(fields: [supplierId], references: [id])
   po              PurchaseOrder?               @relation(fields: [poId], references: [id])
@@ -2502,6 +2615,7 @@ model SupplierBill {
   applications    SupplierPaymentApplication[]
   creditsGiven    SupplierCreditApplication[]  @relation("CreditNoteApplications")
   creditsReceived SupplierCreditApplication[]  @relation("BillCreditApplications")
+  grniMatches     GrniMatch[]
 
   @@unique([supplierId, billNumber])
   @@index([supplierId, status])
@@ -2541,12 +2655,18 @@ model SupplierBillLine {
   unitCostCents   BigInt
   lineTotalCents  BigInt
   returnQty       Float? // credit note lines: stock sent back to the supplier
+  // Food cost wave B (GRNI, H17)
+  receiptLineId      String? // a stock line matched to a receipt line (else poLineId); one of them is required for a stock line
+  expenseAccountCode String? // a line that is NOT stock names its 6xxx account (assertExpenseCode); equipment refused (USE_CAPEX)
 
   bill          SupplierBill       @relation(fields: [billId], references: [id], onDelete: Cascade)
   inventoryItem InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
   poLine        PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
+  receiptLine   GoodsReceiptLine?  @relation("BillLineReceiptLine", fields: [receiptLineId], references: [id], onDelete: SetNull)
+  matches       GrniMatch[]
 
   @@index([billId])
+  @@index([receiptLineId])
   @@map("supplier_bill_lines")
 }
 
@@ -2609,11 +2729,25 @@ model Account {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
+  /// Who controls postings to this account (journal.ts postJournalEntry) — ONE controlled-account mechanism (wave B):
+  ///   'intercompany' — "Due from/to <company>" of ONE company pair: only sourceType 'ic.*'
+  ///   'head_office'  — D1 head-office links (reserved): only sourceType 'ho.*'
+  ///   'fixed_asset'  — the register-controlled codes 1500-1599 + 2012: system postings 'fixed_asset.*' /
+  ///                    'capex.*' pass; any other source needs input.controlledOverride {reason} (manual JE,
+  ///                    bank-line adjust) and the caller raises fixed_asset_gl_mismatch.
+  /// NULL = an ordinary account. CHECKs accounts_controlled_by_chk / accounts_controlled_company_chk /
+  /// accounts_ic_counterparty_chk and the partial unique accounts_ic_pair_side (one Due-from and one Due-to per
+  /// company pair) are SQL only (migration 20261014090000; not declared here).
+  controlledBy         String?
+  counterpartyTenantId String?
+
   tenant       Tenant?       @relation("TenantAccounts", fields: [tenantId], references: [id])
+  counterparty Tenant?       @relation("AccountCounterparty", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
   journalLines JournalLine[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, controlledBy])
   @@map("accounts")
 }
 
@@ -2826,6 +2960,9 @@ model TaxInvoice {
   serviceChargeCents Int @default(0)
   tipCents           Int @default(0)
   totalCents         Int
+  // Delivery charge before GST (wave B, H9): inside taxableValueCents and totalCents, plus its own TaxInvoiceLine.
+  // totalCents = max(0, subtotal + deliveryFee + tax + serviceCharge + tip − discount) — equals the bill.
+  deliveryFeeCents   Int @default(0)
 
   // Reference to the original invoice when this is a credit note
   originalInvoiceId String?
@@ -3021,6 +3158,9 @@ model PeriodLock {
   lockedBy      String // user ID
   lockedAt      DateTime @default(now())
   note          String?
+  /// Blocking close checks the CEO closed over (wave B close checklist): [{key, count, cents, months}]; null = none.
+  overrides      Json?
+  overrideReason String?
 
   tenant Tenant? @relation("TenantPeriodLocks", fields: [tenantId], references: [id])
 
@@ -3188,6 +3328,9 @@ enum RiderJobEventType {
   delivered
   otp_failed
   unassigned
+  code_rerouted // Emergency override: the hand-over code was sent to the rider (actorId = the manager)
+  door_problem // the rider reported a problem at the door (no code / refused / unreachable) — never an outcome
+  returned // Emergency override: the food came back and was booked as waste (actorId = the manager)
 }
 
 // Append-only trail of every step of every rider job. Stamped with BOTH
@@ -3205,6 +3348,7 @@ model RiderJobEvent {
   lng           Float?
   note          String?
   createdAt     DateTime          @default(now())
+  actorId       String? // the staff user behind an override event (code_rerouted, returned); null for rider / system steps
 
   rider Rider @relation(fields: [riderId], references: [id], onDelete: Cascade)
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -3228,12 +3372,89 @@ model FleetAgreement {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  provider Tenant @relation("FleetProvider", fields: [providerTenantId], references: [id])
-  client   Tenant @relation("FleetClient", fields: [clientTenantId], references: [id])
+  provider Tenant      @relation("FleetProvider", fields: [providerTenantId], references: [id])
+  client   Tenant      @relation("FleetClient", fields: [clientTenantId], references: [id])
+  rates    FleetRate[]
 
   @@unique([providerTenantId, clientTenantId])
   @@index([clientTenantId])
   @@map("fleet_agreements")
+}
+
+// What a provider's fleet charges a client per trip (H30, wave B). History: a new row from a month on; never edited.
+// The row's (tenantId, clientTenantId) must be the agreement's (providerTenantId, clientTenantId): composite FK
+// fleet_rates_agreement_pair_fkey in SQL (Prisma cannot express it; migration 20261014090000). CHECKs
+// fleet_rates_rate_chk / fleet_rates_period_chk / fleet_rates_parties_chk are SQL only too. RLS lets either company
+// read the row.
+model FleetRate {
+  id               String   @id @default(uuid())
+  tenantId         String // provider (the riders' company), owner of the row
+  clientTenantId   String
+  agreementId      String
+  fromPeriod       String // 'YYYY-MM'
+  ratePerTripCents Int // INT4 per trip; 0 = not charged from this month
+  setById          String
+  note             String?
+  createdAt        DateTime @default(now())
+
+  agreement FleetAgreement @relation(fields: [agreementId], references: [id], onDelete: Restrict)
+  provider  Tenant         @relation("FleetRateProvider", fields: [tenantId], references: [id], onDelete: Restrict)
+  client    Tenant         @relation("FleetRateClient", fields: [clientTenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, agreementId, fromPeriod])
+  @@index([tenantId])
+  @@index([clientTenantId])
+  @@map("fleet_rates")
+}
+
+// One movement between TWO companies' books, posted in both or neither (H30, wave B). DEBTOR (tenantId) owes/pays:
+// its "Due to <creditor>" moves; CREDITOR (counterpartyTenantId): its "Due from <debtor>" moves. Same reference
+// 'ic.transfer:<id>' in both books. Sources: manual (finance prepares, CEO approves), fleet (system, monthly),
+// cod (a fleet rider's unpaid COD, booked by finance in both companies), ho_recharge (reserved for D1).
+// debtorEntryId / creditorEntryId @unique are journal-entry uuids — globally unique by construction; a deliberate
+// exception to "unique keys are per company". CHECKs ic_* are SQL only (migration 20261014090000). RLS lets either
+// company read the row.
+// BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
+model IntercompanyTransfer {
+  id                    String    @id @default(uuid())
+  tenantId              String // debtor
+  counterpartyTenantId  String // creditor
+  kind                  String // charge | settlement | netting
+  source                String    @default("manual") // manual | fleet | cod | ho_recharge
+  sourceRef             String? // fleet: 'fleet:<agreementId>:<YYYY-MM>'; cod: 'cod:<paymentId>'; null for manual
+  period                String? // 'YYYY-MM' a charge is for
+  amountCents           BigInt
+  entryDate             DateTime // the date in BOTH books
+  debtorAccountCode     String? // charge: debtor's Dr account (fleet: 6035; cod: 1351)
+  creditorAccountCode   String? // charge: creditor's Cr account (fleet: 6990 recharges recovered; cod: 1010)
+  conceptSplit          Json? // charge: [{conceptId, cents}] on the debtor's Dr lines
+  method                String? // settlement: bank | cash
+  debtorBankAccountId   String?
+  creditorBankAccountId String?
+  bankReference         String?
+  memo                  String
+  status                String    @default("submitted") // submitted | posted | rejected | reversed
+  preparedById          String
+  preparedAt            DateTime  @default(now())
+  decidedById           String?
+  decidedAt             DateTime?
+  decisionNote          String?
+  selfApproved          Boolean   @default(false)
+  debtorEntryId         String?   @unique
+  creditorEntryId       String?   @unique
+  reversedById          String?
+  reversedAt            DateTime?
+  reversalReason        String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  debtor   Tenant @relation("IcTransferDebtor", fields: [tenantId], references: [id], onDelete: Restrict)
+  creditor Tenant @relation("IcTransferCreditor", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, counterpartyTenantId, sourceRef])
+  @@index([tenantId, status, entryDate])
+  @@index([counterpartyTenantId, status, entryDate])
+  @@map("intercompany_transfers")
 }
 
 // ─── RiderRating ──────────────────────────────────────────────────────────────
@@ -3347,9 +3568,19 @@ model OrderComplaint {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  concept Concept @relation(fields: [conceptId], references: [id])
-  order   Order?  @relation(fields: [orderId], references: [id])
+  // Ban appeals via the help desk (wave B, owner 2026-10-13: people change numbers). Every complaint reader
+  // filters kind='complaint'. CHECK order_complaints_kind_chk and the partial unique
+  // order_complaints_one_open_appeal_per_ban (one OPEN appeal per ban) are SQL only (migration 20261014090000).
+  kind         String  @default("complaint") // 'complaint' | 'ban_appeal'
+  banId        String? // ban_appeal: the CustomerBan appealed (a brand of the ban's company is conceptId)
+  contactPhone String? // from the customer session / WhatsApp sender — never client-supplied
 
+  concept Concept      @relation(fields: [conceptId], references: [id])
+  order   Order?       @relation(fields: [orderId], references: [id])
+  ban     CustomerBan? @relation("BanAppeals", fields: [banId], references: [id], onDelete: SetNull)
+
+  @@index([banId])
+  @@index([kind, status])
   @@map("order_complaints")
 }
 

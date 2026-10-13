@@ -1,0 +1,220 @@
+{
+  "summary": "Apply the remaining cross-file leftovers from the POS connector cutover (money guards, connector routes, docs/config, tablet + admin UI), then adversarially review and fix",
+  "agentCount": 3,
+  "logs": [],
+  "result": [
+    {
+      "stream": "I3",
+      "built": {
+        "summary": "I3 is finished. All the admin edits typecheck (`npx tsc --noEmit -p .` in frontend/admin is clean), and tablet/src/lib/printer.ts typechecks under a scratch tsconfig that resolves from rider/node_modules (also clean).\n\n1. **Refund money taken (the one that matters for Monday).** /orders/[id] now shows \"Money taken: PKR x — Refund\" when all three hold:\n   - the order is cancelled or rejected;\n   - money taken at the till is still owed back;\n   - the signed-in user is a manager.\n\n   The banner opens a dialog that posts to the refund route (`POST /pos/orders/:id/refund`). The dialog:\n   - lets the manager pick the tender (only tenders that still have money left);\n   - lets them enter an amount, capped at the smaller of what is owed overall and what is left on that tender;\n   - asks for a reason, and a photo when the refund policy requires one.\n\n   The server's codes are shown in plain words: NOTHING_TO_REFUND, REFUND_EXCEEDS_DUE, REFUND_METHOD_NOT_TENDERED, REFUND_EXCEEDS_TENDER and OPEN_DRAWER_REQUIRED. OVER_CAP and MANAGER_OVERRIDE_REQUIRED come through the existing refund messages. After a refund, the success line reads `refundDueLeftCents` to say how much is still owed. The amount owed is worked out on the page using the server's own rule. A scratch script compared it with the backend's `refundDueCents` on 5 cases and they matched. The header \"Refund\" button is now also hidden on rejected orders, where it used to open a cancel that could not succeed.\n\n2. **Orders list Reprint.** The button now shows only when the order already has a full & final bill (completed, refunded, cancelled, rejected, or paid in full). It prints through the shared print helpers as a DUPLICATE. If the server answers 409 PRE_BILL_REQUIRED, it offers to print a pre-bill instead. I also removed the emoji icons on that page and added a \"refunded\" status colour and filter option.\n\n3. **api.ts.** `ApiError` now keeps the server's `error.details`. Both error paths read the error body safely, so an HTML 502 from a proxy still becomes an `ApiError`. Content-Type is sent only when the request has a body. The one other place that builds an `ApiError` (tillApi.ts, 3 arguments) still compiles.\n\n4. **Tablet printer.** Held sales print \"Fiscal invoice: not yet issued.\", and paid orders still waiting to complete print \"Fiscal invoice: issued when the / order is completed.\" This matches the HTML bill in receipt.ts. The receipt's fiscal type gained the two optional status fields.\n\n5. **WhatsApp connector page.** It now shows how the gateway key is stored (encrypted, plaintext, unreadable or none), with what to do for the plaintext and unreadable cases. The old \"Stored encrypted\" note under the key field was not always true, so I reworded it.\n\nThe finance link card is not needed (/finance only redirects; the sidebar already reaches /finance/voided-pre-bills). The connector field locking and the refund-to-card dialog were both already built, so I changed neither.",
+        "items": [
+          {
+            "id": "2",
+            "status": "fixed",
+            "note": "tablet/src/lib/printer.ts fiscalLines: rawStatus 'held' prints ['Fiscal invoice: not yet issued.']; statusReason 'awaiting_completion' prints ['Fiscal invoice: issued when the', 'order is completed.']; anything else keeps the old pending text. Added optional rawStatus and statusReason to ReceiptFiscal, matching what receipt.ts returns (both null on a sale with no document yet). Same three cases as the HTML bill (receipt.ts ~L500). Typechecked under a scratch tsconfig resolving from rider/node_modules: clean."
+          },
+          {
+            "id": "3",
+            "status": "fixed",
+            "note": "frontend/admin/src/app/orders/page.tsx: Reprint shows only when the order has a final bill (completed/refunded/cancelled/rejected, or paid rows >= totalCents, the same rule as isFinalBill). reprintReceipt now uses tillApi fetchReceiptHtml(duplicate)+printHtml; on 409 PRE_BILL_REQUIRED it asks and prints the pre-bill (printPreBill), otherwise alerts the readable error. Also removed the emoji icons (printer, fire, check, pin) and added refunded colour + filter."
+          },
+          {
+            "id": "8",
+            "status": "fixed",
+            "note": "frontend/admin/src/lib/api.ts: ApiError gains a 4th optional `details`. request() and download() build errors through a new errorFrom(), which keeps data.error.details and tolerates a non-JSON body (proxy 502 HTML). Content-Type: application/json only when options.body != null. Constructor callers checked: api.ts itself and components/pos/tillApi.ts:292 (3 args, still valid). tsc clean."
+          },
+          {
+            "id": "9",
+            "status": "fixed",
+            "note": "Admin bullets only. keyAtRest is shown on /connectors/whatsapp: a badge plus what to do for plaintext/unreadable, through a local type that extends WhatsappStatus. The finance/page.tsx link card is not needed: /finance just redirects to /accounting/pl-ledger, and /finance/voided-pre-bills is already reached through moduleCatalog/appRoles (voided_prebills). The backend bullets (media 503, _types tip_cents) belong to other streams."
+          },
+          {
+            "id": "W3 connector page fields",
+            "status": "not_needed",
+            "note": "Already built in components/connectors/FiscalSetup.tsx: while the fiscal POS is live, the driver and base URL inputs are disabled (locked = live || !canEdit), with a banner saying why. connectorErrorText already maps 409 SWITCH_OFF_FIRST. These match the server's switchOffFirst checks (driver, baseUrl)."
+          },
+          {
+            "id": "W3 refund-to-card dialog",
+            "status": "not_needed",
+            "note": "Already built in app/refunds (RefundOptions.tsx + refundEngine.ts, not my files). The photo upload is sent when policy.requirePhotoEvidence is on (refundChoiceReady blocks without it). refundErrorMessage shows OVER_CAP and MANAGER_OVERRIDE_REQUIRED, and refundOnCardMachine passes photoUrl. Nothing to change."
+          },
+          {
+            "id": "Admin \"Refund money taken\" action",
+            "status": "fixed",
+            "note": "frontend/admin/src/app/orders/[id]/page.tsx: shows 'Money taken: PKR x — Refund' only when status is cancelled/rejected, money is still owed back, and useIsManager() is true. The owed amount mirrors the server's refundDueCents (drawer receipts on a shift, comps excluded, less refunds handed back), with the per-tender split from refundDueOf. The MoneyTakenModal sends POST /pos/orders/:id/refund {amountCents, reason, method, photoUrl?} through refundThroughEngine (its manager-PIN prompt applies). It maps NOTHING_TO_REFUND / REFUND_EXCEEDS_DUE / REFUND_METHOD_NOT_TENDERED / REFUND_EXCEEDS_TENDER / OPEN_DRAWER_REQUIRED; OVER_CAP and MANAGER_OVERRIDE_REQUIRED go through refundErrorMessage. It reports refundDueLeftCents, then refreshes the order and the fiscal panel. The header Refund/Cancel button is hidden for rejected orders too."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/lib/api.ts",
+          "/home/user/servd/frontend/admin/src/app/orders/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/orders/[id]/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/connectors/whatsapp/page.tsx",
+          "/home/user/servd/tablet/src/lib/printer.ts"
+        ],
+        "tests": "- `npx tsc --noEmit -p .` in frontend/admin: clean, after all edits.\n- tablet: tablet/ has no node_modules, so I typechecked printer.ts (and the api.ts it imports) with a scratch tsconfig in the scratchpad (`tabletc/tsconfig.json`). It extends rider/node_modules/expo/tsconfig.base.json and resolves from rider/node_modules: clean.\n- The admin has no test runner. To check the money-owed rule, a scratch tsx script compared the page's moneyTakenOf against the backend's real refundDueCents on 5 cases: cash only; cash+card with a part refund; a pending gateway card plus a comp; no shift; a completed order. All matched (5000/5000, 6000/6000, 3000/3000, 0/0, 0/0), with the expected per-tender split.\n- No backend files were touched, so the backend suite was not re-run.",
+        "needsOtherFiles": "1. frontend/admin/src/lib/connectorsApi.ts (optional): add `keyAtRest?: 'none' | 'encrypted' | 'plaintext' | 'unreadable'` to `interface WhatsappStatus`. The WhatsApp page declares it locally for now, as `type WhatsappView = WhatsappStatus & { keyAtRest?: … }`. Once it is on WhatsappStatus, the local type can go.\n2. frontend/admin/src/components/pos/tillApi.ts:292 (optional): pass the 4th argument, `new ApiError(res.status, body?.error?.code ?? 'PRINT_FAILED', body?.error?.message ?? …, body?.error?.details)`, so printable-page errors keep details like every other API error.\n3. frontend/admin/src/lib/api.ts `ordersApi.cancel` is now only used by the orders list's bulk cancel and sends `{reason}` with no manager PIN. A non-manager's bulk cancel gets 403 MANAGER_OVERRIDE_REQUIRED, which the bulk bar shows as an alert. That is acceptable, but if the owner wants bulk cancel for cashiers, it should call refundEngine `cancelOrderWithApproval` with one PIN prompt. No change is required.\n4. Backend (optional), connectors/terminal/service.ts and pos/service.ts `assertRefundAllowed`: a card-machine refund on a CANCELLED/REJECTED ticket is refused (assertRefundableStatus throws NOT_REFUNDABLE). So the new 'Refund money taken' dialog records a card hand-back as a manual card refund, which staff make on the machine by hand. To refund those through the machine, assertRefundAllowed needs a branch that checks refundDueOf / assertRefundDue for cancelled and rejected orders, the way refundOrder already does.",
+        "prodNotes": "- **Refund money taken (new on the order page).** A manager opens the order and taps Refund on the \"Money taken: PKR x\" banner. The banner appears only when a cancelled or rejected ticket still holds till money, and only for managers.\n  - Cash comes out of the manager's own open drawer. With no shift open they get \"open your shift at the till first\".\n  - Card and Keenu QR hand-backs are records only: staff refund on the machine or Keenu by hand first. servd cannot yet drive a card-machine refund on a cancelled ticket (needsOtherFiles 4).\n  - The order stays cancelled, and nothing goes to the fiscal POS.\n- **Orders list.** Reprint now appears only for orders that have a full & final bill, and every reprint is marked DUPLICATE. An unpaid order is offered a pre-bill (not a tax invoice) instead.\n- **Tablet bills.** Held sales now print \"Fiscal invoice: not yet issued.\", and paid online orders not yet completed print \"Fiscal invoice: issued when the order is completed.\" This closes prodNotes item 3 of the W4 cutover. Tablets need a new build to pick it up; Expo was not run here.\n- **Admin API client.** It no longer sends Content-Type on requests without a body (GET, DELETE, empty POST). A non-JSON error page (a Cloudflare 502) now shows as \"Request failed (502)\" instead of a JavaScript error.\n- **WhatsApp connector page.** It now warns when the gateway key is stored unencrypted (SERVD_SECRET_KEY not on the box) or is unreadable (the box's SERVD_SECRET_KEY differs from the one that encrypted the key: re-enter the key)."
+      },
+      "review": [
+        {
+          "id": "I3-RV-1",
+          "severity": "medium",
+          "title": "The 'Refund money taken' cash refund always uses the manager's own open drawer, with no way to pick one",
+          "file": "/home/user/servd/frontend/admin/src/app/orders/[id]/page.tsx",
+          "scenario": "A cashier takes PKR 5,000 cash on ticket T, then T is cancelled. An fnb_manager opens /orders/T in admin. They see 'Money taken: PKR 5,000', choose Cash and press Refund. MoneyTakenModal calls refundThroughEngine without a shiftId (and does not read usePosStore().shiftId as RefundOptions.tsx:184 does). The server's refundDrawerOf (backend pos/service.ts ~L2355) then looks only for the manager's own open shift. Back-office managers normally have none, so the server returns 422 OPEN_DRAWER_REQUIRED and the dialog says 'open your shift at the till first'. The route already accepts `shiftId`, and assertDrawerOperator lets a manager name any open drawer of the company. So the cash cannot be handed back from the drawer that actually holds it (the cashier's), and the only way through is for the manager to open a drawer of their own just to pay the cash out. This is the main Monday flow the builder delivered.",
+          "fix": "In MoneyTakenModal, when method === 'cash', send `shiftId`. Use usePosStore.getState().shiftId when it is set. Otherwise offer a picker of the open drawers of the order's company (the existing open-shifts read), defaulting to the drawer that holds the ticket's cash receipt (the payment's shiftId if that shift is still open). Pass the chosen value through refundThroughEngine's existing `shiftId` field. Map OPEN_DRAWER_REQUIRED to 'pick the open drawer the cash leaves from'."
+        },
+        {
+          "id": "I3-RV-2",
+          "severity": "low",
+          "title": "The refund amount field misreads '1,500' as PKR 1 and sends it",
+          "file": "/home/user/servd/frontend/admin/src/app/orders/[id]/page.tsx",
+          "scenario": "In MoneyTakenModal the amount is `Math.round(parseFloat(amount || '0') * 100)`. A manager types '1,500' (the way PKR amounts are written on every other screen). parseFloat stops at the comma and returns 1, so amountCents = 100, and amountOk is true because it is above 0 and under the cap. The button reads 'Refund PKR 1.00' and the server books a PKR 1 refund. Inputs like '1500abc' are also accepted, as 1500. The guest is still owed the rest, and the drawer and books now show a stray refund.",
+          "fix": "Strip thousands separators and reject anything that is not a plain decimal before converting. For example: `const clean = amount.replace(/,/g, '').trim(); const ok = /^\\d+(\\.\\d{1,2})?$/.test(clean)`, and compute amountCents only when ok (otherwise NaN, which disables the button)."
+        },
+        {
+          "id": "I3-RV-3",
+          "severity": "low",
+          "title": "The orders-list Reprint button shows to expediter and finance, but the receipt route refuses them with 403",
+          "file": "/home/user/servd/frontend/admin/src/app/orders/page.tsx",
+          "scenario": "expediter and finance both hold the 'orders' module (DEFAULT_MODULE_ACCESS), so they can open /orders. hasFinalBill(order) shows them Reprint on every completed order. GET /pos/receipt/:id (and the pre-bill fallback POST /pos/orders/:id/pre-bill) is requireAuth(...CASHIERS), which leaves both roles out. Every click ends in a 403 FORBIDDEN alert. The same applies to the detail page's Print bill / Print pre-bill buttons. This is the 'UI shows a button the API refuses' pattern that wave 3 set out to remove.",
+          "fix": "Show Reprint (and the detail page's print buttons) only to roles in the server's CASHIERS list. Either expose that list next to roles.overrideApprovers in GET /permissions/role-modules and add a useCanPrintBill() hook, or gate the buttons on the 'pos' module via canOpenPath('/pos', ...). Alternatively, if finance should reprint bills, widen the receipt route's roles on the backend."
+        },
+        {
+          "id": "I3-RV-4",
+          "severity": "low",
+          "title": "The WhatsApp 'unreadable' warning overstates the outage and gives a fix that fails when SERVD_SECRET_KEY is missing",
+          "file": "/home/user/servd/frontend/admin/src/app/connectors/whatsapp/page.tsx",
+          "scenario": "With keyAtRest 'unreadable' the page says 'no code can send' and 'Re-enter the API key below'. Two problems: (a) backend lib/whatsapp.ts config() falls back to the WHATSAPP_API_KEY environment variable, so codes still send when the box has one. (b) 'unreadable' also happens when the box has no SERVD_SECRET_KEY at all (the server's own hint says 'SERVD_SECRET_KEY missing'). In that case saveWhatsappSettings throws 503 SECRET_KEY_MISSING, so the suggested re-entry always fails. An operator following the banner after a box rebuild that lost the env var gets a save error and no path forward.",
+          "fix": "Change the 'unreadable' detail to: 'The saved key was encrypted with a SERVD_SECRET_KEY this server does not have. Codes only send if the server environment has its own WHATSAPP_API_KEY. Restore the original SERVD_SECRET_KEY on the box, or set a SERVD_SECRET_KEY and then re-enter the API key here (saving needs SERVD_SECRET_KEY).' Optionally cross-check data.apiKeyHint / health to say which case applies."
+        },
+        {
+          "id": "I3-RV-5",
+          "severity": "low",
+          "title": "The new 'refunded' status pill hard-codes Tailwind purple instead of a theme token",
+          "file": "/home/user/servd/frontend/admin/src/app/orders/page.tsx",
+          "scenario": "STATUS_COLORS adds `refunded: 'bg-purple-100/20 text-purple-700'`. CLAUDE.md says never to hard-code a colour in a page: admin colours go through the tokens (secondary purple #5a2156, ink #3d1f3b). Every other pill in the map uses s-* tokens. Refunded orders will render in Tailwind's stock violet, not the servd secondary, and won't follow the theme.",
+          "fix": "Use the token classes, e.g. `refunded: 'bg-secondary/15 text-secondary'` (or the s-* equivalent used for the other statuses)."
+        }
+      ],
+      "fix": {
+        "summary": "I checked all five findings against the code. All five were real, and all five are fixed. The new test file passes 10 of 10 on its own test database, and `tsc --noEmit` on the admin is clean. I did not run the full backend suite.\n\n- **I3-RV-1 (fixed):** the cash refund dialog on a cancelled ticket now has a \"The cash leaves from\" picker. It offers this till's drawer (if one is open in this browser), then the drawer or drawers that took the cash on this ticket (newest first), then \"My own open drawer\", which sends no shiftId so the server uses the manager's own drawer.\n  - It defaults to this till's drawer, otherwise the drawer that took the cash. The chosen drawer is sent as `shiftId` through `refundThroughEngine`.\n  - If the server answers SHIFT_CLOSED, the dialog marks that drawer closed, disables it and moves the pick to the next one.\n  - OPEN_DRAWER_REQUIRED now reads \"pick the open drawer the cash leaves from\". SHIFT_NOT_IN_COMPANY and NOT_YOUR_SHIFT have their own messages too.\n  - There is no route that lists every open drawer of a company, so the picker shows only drawers this page already knows about. A route for a full list is in needsOtherFiles, as optional.\n- **I3-RV-2 (fixed):** the amount field now uses `parsePkrToCents`. It accepts plain digits or correctly grouped thousands with up to 2 decimals and converts with whole-number maths (\"1,500\" becomes 150000 paisa). Anything else (\"1,5\", \"1500abc\", \"1e3\", \"-3\", \".5\") gives NaN, which keeps the button disabled.\n- **I3-RV-3 (fixed):** Reprint on the orders list, and Print bill / Print pre-bill / the fiscal panel's reprint on the detail page, now show only when the new `useCanPrintBill()` hook allows it.\n  - It uses the server's `roles.cashiers` list when the API sends one.\n  - Until then it falls back to: a role in `roles.overrideApprovers`, or a login that can open `/pos`. With the default modules this gives exactly the server's CASHIERS list for every role (tested), so expediter and finance no longer see the buttons.\n- **I3-RV-4 (fixed):** the WhatsApp \"unreadable key\" message now uses the reviewer's wording. It no longer says \"no code can send\"; it says codes only send if the box has its own WHATSAPP_API_KEY, and that saving a key needs SERVD_SECRET_KEY. The page also reads `connectorSecretKey` from /health to say which case applies: if the server has a different SERVD_SECRET_KEY, re-entering the key works; if it has none, a save will fail until IT sets one.\n- **I3-RV-5 (fixed):** the 'refunded' status pill now uses theme tokens (`bg-s-indigo/20 text-s-indigo`, the servd secondary purple) on both orders pages. The detail page had the same hard-coded purple from before this change.\n\n**Ownership note:** I added two new files under `frontend/admin/src/components/pos/`: `handBack.ts` (plain helpers the backend test loads directly) and `useCanPrintBill.ts` (the hook). I did not edit `managerRole.ts`, which I don't own. I also added the new test file `backend/tests/i3HandBackUi.test.ts`.",
+        "items": [
+          {
+            "id": "I3-RV-1",
+            "status": "fixed",
+            "note": "MoneyTakenModal has a drawer picker built by cashDrawerChoices: this till's drawer first if one is open here, then the drawer(s) that took the cash, then 'My own open drawer' (sends no shiftId). Default is the till's drawer, else the drawer that took the cash. The pick is sent as shiftId via refundThroughEngine. On SHIFT_CLOSED the drawer is marked closed and the pick moves on. Error messages: OPEN_DRAWER_REQUIRED says 'pick the open drawer the cash leaves from'; SHIFT_CLOSED, SHIFT_NOT_IN_COMPANY and NOT_YOUR_SHIFT have their own. The route behaviour the dialog relies on is tested with two companies: no shiftId 422, the cashier's drawer 200 with the refund row on it, a closed drawer 422 SHIFT_CLOSED, company B's drawer 422, company B's manager 404, another cashier 403. No route lists every open drawer, so the picker shows only drawers known from the ticket and this till (see needsOtherFiles)."
+          },
+          {
+            "id": "I3-RV-2",
+            "status": "fixed",
+            "note": "parsePkrToCents accepts plain digits or correctly grouped thousands with at most 2 decimals and converts with whole-number maths; anything else is NaN, which keeps the button disabled. Tested: '1,500' gives 150000, '0.29' gives 29, and 15 bad inputs give NaN."
+          },
+          {
+            "id": "I3-RV-3",
+            "status": "fixed",
+            "note": "New hook useCanPrintBill() (wraps canPrintBill): uses roles.cashiers from GET /permissions/role-modules when the API sends it; otherwise a role in overrideApprovers or a login that can open /pos. Gates Reprint on the orders list, and on the detail page the Print bill / Print pre-bill buttons, the 'Print pre-bill' offer after an error, and OrderFiscalPanel's onReprint. Tested: for every role, the fallback with default modules equals the server's CASHIERS list; expediter and finance get 403 from GET /pos/receipt and POST /pos/orders/:id/pre-bill."
+          },
+          {
+            "id": "I3-RV-4",
+            "status": "fixed",
+            "note": "The 'unreadable' detail now uses the reviewer's text: codes only send with an environment WHATSAPP_API_KEY, and saving needs SERVD_SECRET_KEY. A second line read from /health checks.connectorSecretKey says which case applies: 'ok' means the server has a different key, so re-entering the API key works; anything else means the box has no usable key, so a save will fail until IT sets one."
+          },
+          {
+            "id": "I3-RV-5",
+            "status": "fixed",
+            "note": "refunded pill is now 'bg-s-indigo/20 text-s-indigo' (the servd secondary purple) in both app/orders/page.tsx and app/orders/[id]/page.tsx; the detail page had the same hard-coded Tailwind purple from before this change."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/app/orders/[id]/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/orders/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/connectors/whatsapp/page.tsx",
+          "/home/user/servd/frontend/admin/src/components/pos/handBack.ts",
+          "/home/user/servd/frontend/admin/src/components/pos/useCanPrintBill.ts",
+          "/home/user/servd/backend/tests/i3HandBackUi.test.ts"
+        ],
+        "tests": "cd /home/user/servd/backend && DATABASE_URL=postgresql://postgres@127.0.0.1:5432/servd_test_i3 REDIS_URL=redis://127.0.0.1:6379/11 JWT_SECRET=... JWT_REFRESH_SECRET=... NODE_ENV=test npx vitest run tests/i3HandBackUi.test.ts gives 10/10 passed (amount parsing, drawer choices, print-button roles for every role, and the two-company route checks for the cash refund and the bill routes). cd frontend/admin && npx tsc --noEmit -p tsconfig.json is clean. The full backend suite was not re-run.",
+        "needsOtherFiles": "1) backend/src/modules/permissions/routes.ts, GET /permissions/role-modules: add `cashiers: CASHIERS` (import from '../auth/middleware.js') next to `overrideApprovers` in the `roles` object. Once the API sends it, useCanPrintBill uses the server's exact list instead of the fallback. 2) Optional, backend/src/modules/pos/routes.ts: a route such as `GET /pos/shifts/open?orderId=<id>` (open to MANAGERS, scoped to the order's company through scopeTenantWhere 'write' with assertShiftOf-style company checks, 404 for a foreign order) returning `[{ id, openedAt, cashierName }]` for that company's open drawers. The refund dialog could then list every open drawer by cashier name, not only the ones it knows from the ticket and this till. Not needed for Monday: the drawer that took the cash plus SHIFT_CLOSED handling already covers the main flow.",
+        "prodNotes": "No schema or backend change. The print buttons are now hidden from expediter and finance, and from any role without the 'pos' module that is not a manager; this matches what the server already enforced. If the CEO grants 'pos' to a role that is not a cashier, Reprint will show for that role and still get 403 until needsOtherFiles item 1 lands."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:I3",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a0a29d15ec8b5fefc",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791729875977,
+      "lastProgressAt": 1791729875977,
+      "cached": true,
+      "resultPreview": "{\"summary\":\"I3 is finished. All the admin edits typecheck (`npx tsc --noEmit -p .` in frontend/admin is clean), and tablet/src/lib/printer.ts typechecks under a scratch tsconfig that resolves from rider/node_modules (also clean).\\n\\n1. **Refund money taken (the one that matters for Monday).** /orders/[id] now shows \\\"Money taken: PKR x — Refund\\\" when all three hold:\\n   - the order is cancelled o…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:I3",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a17a2f1d5e790c458",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791729875999,
+      "queuedAt": 1791729875977,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…",
+      "promptFramed": true,
+      "lastProgressAt": 1791730146850,
+      "tokens": 168269,
+      "toolCalls": 51,
+      "durationMs": 270851,
+      "resultPreview": "{\"findings\":[{\"id\":\"I3-RV-1\",\"severity\":\"medium\",\"title\":\"The 'Refund money taken' cash refund always uses the manager's own open drawer, with no way to pick one\",\"file\":\"/home/user/servd/frontend/admin/src/app/orders/[id]/page.tsx\",\"scenario\":\"A cashier takes PKR 5,000 cash on ticket T, then T is cancelled. An fnb_manager opens /orders/T in admin. They see 'Money taken: PKR 5,000', choose Cash an…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "fix:I3",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "ab6e5becfa0949e7b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791730146887,
+      "queuedAt": 1791730146858,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all five findings against the code. All five were…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. The POS connector cutover (W4) just landed (uncommitted working tree, full suite green: 105 files / 1522 tests). CLAUDE.md is the rulebook — read its 'POS connector + pre-bills' section and the standing rules (company separation via lib/tenantScope.ts, empty scope DENIES, foreign rows 404 / cross-company attac…",
+      "promptFramed": true,
+      "lastProgressAt": 1791730490851,
+      "tokens": 166185,
+      "toolCalls": 63,
+      "durationMs": 343963,
+      "resultPreview": "{\"summary\":\"I checked all five findings against the code. All five were real, and all five are fixed. The new test file passes 10 of 10 on its own test database, and `tsc --noEmit` on the admin is clean. I did not run the full backend suite.\\n\\n- **I3-RV-1 (fixed):** the cash refund dialog on a cancelled ticket now has a \\\"The cash leaves from\\\" picker. It offers this till's drawer (if one is open…"
+    }
+  ],
+  "totalTokens": 334454,
+  "totalToolCalls": 114
+}

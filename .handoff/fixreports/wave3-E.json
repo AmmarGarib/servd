@@ -1,0 +1,220 @@
+{
+  "summary": "Wave 3: make each role's server access match the modules its sidebar grants (UI-06..UI-15, HR-R8), then adversarially review and fix",
+  "agentCount": 3,
+  "logs": [],
+  "result": [
+    {
+      "stream": "E",
+      "built": {
+        "summary": "Stream E is done. The API now has module gates on /orders, /expo, /dispatch, /riders and /crm. Each gate lists every module whose pages call that path, counting admin pages, the tablet and the till. As a result IT, marketing, HR and procurement can no longer read the order pipeline or the refundable-orders list, boh_management can no longer read the CRM, and only dispatch/rider roles can open the rider roster and dispatch board. The till, KDS and expo roles keep everything they use. To exempt one CRM path I added an optional `pattern` field to the gate rules: the guest-context panel (`/crm/customers/:id/context|notes`) used on the Reservations page. The admin shell now has a page guard. If the current page's modules are not in the user's modules from GET /permissions/me, it shows a \"You don't have access to this page\" panel with a link to the user's workspace. The guard also covers /kds and /pos. Workspace homes, My team, the approvals inbox, My HR, account and help are always open, and the CEO sees everything. A script check confirmed every sidebar page of every role still opens. The brand picker now reads GET /concepts?view=picker, which any staff role can call and which returns only its own companies' active brands (id, name, slug, logo, colour). Background 403s stay silent. Reports are open to every role holding 'reports', but company revenue still goes only to FINANCIALS_VIEWERS; the other roles get order counts (see judgement calls). The Email page moved under the WhatsApp connector module, so management, the co-owner and foh_management no longer see a link that answers 403. The Configuration hub and the Accounting hub now show only the tiles and cards the user can open.",
+        "items": [
+          {
+            "id": "UI-12",
+            "status": "fixed",
+            "note": "New gates in backend/src/lib/moduleAccess.ts. /orders allows orders, refunds, curbside, pos, kds_dashboard, kds_all, expo_station, riders or dispatch. /expo allows expo_station, kds_dashboard or kds_all. /dispatch allows dispatch or riders. /riders allows riders only. CRM: context/notes allow crm or reservations; /crm/conversations allows crm, complaints or reviews (the 'Reach out' button); campaigns, behavioral-segments and summary allow campaigns or crm; everything else under /crm needs crm. The refunds-page leak came from GET /orders?status=…, so the /orders gate closes it. The /finance/projections leak was already closed in the working tree (the '/projections' gate); the test confirms foh_management and boh_management get 403 there. I listed every caller before gating: admin pages, tablet (KDS/expo, Dispatch, Curbside, Customer, Floor), till (tillApi.ts), KDS socket hook, rider app (/rider*, rider token, never staff-gated — tested), storefront and mobile (customer tokens, never reach this check), and the approvals inbox (none of its internal calls hit these paths). The till's /pos/* and the KDS /order-items/* are deliberately left ungated. AppShell page guard added, using canOpenPath / modulesForPath in moduleCatalog.ts."
+          },
+          {
+            "id": "UI-13",
+            "status": "fixed",
+            "note": "BrandPicker now calls GET /concepts?view=picker (concepts/routes.ts). Every staff role gets the active brands of its own companies, scoped through scopeTenantWhere('read'), so an empty scope returns nothing. The plain GET /concepts keeps its gate (managers get full rows, cashier/foh get till rows, everyone else 403). Providers.tsx already skipped 403 toasts on background queries while user-initiated failures still toast, so no change was needed there. I also marked the sidebar's /kds/stations query and the Accounting hub widgets as background."
+          },
+          {
+            "id": "UI-15",
+            "status": "fixed",
+            "note": "Email moved from the 'integrations' module to 'api_whatsapp', whose default holders are admin and it, matching the route's CONNECTOR_ADMINS. That hides it from management, foh_management and the co-owner in the sidebar, the workspace homes, /modules and the Configuration hub, which now filters its tiles with canOpenPath. /configuration/whatsapp was already permanently redirected to /connectors/whatsapp. Reports: /sales, /top-items, /stations, /by-source and /demand-forecast now admit REPORT_READERS (all manager tiers plus finance and procurement) and sit behind the 'reports' gate. Revenue split: rupees on /sales and /by-source (gross, net, tax, refunds) go to FINANCIALS_VIEWERS only; everyone else gets order counts, orders by hour and orders by channel (`volumeOnly`). Item revenue on /top-items stays with FINANCE_TEAM. The reports page hides the rupee cards and columns when they are not sent. /menu-engineering (margin): MANAGERS + finance, gate 'accounting' or 'reports'. /delivery is unchanged (MANAGERS)."
+          },
+          {
+            "id": "HR-R8",
+            "status": "fixed",
+            "note": "In accounting/page.tsx every card, KPI and link is filtered by canOpenPath against GET /permissions/me. Tip pools needs 'payroll', Gift cards 'gift_cards', Payroll (/hr/payroll) 'staff_hr' or 'payroll', and the Audit log needs 'accounting_audit' plus a role in ACCOUNTING_AUDIT_ROLES (admin, management). The vendor and PO widgets only load with the procurement module, recipes with the recipes module, and food cost only when the user can open /accounting/food-cost. These widget queries no longer toast on 403."
+          },
+          {
+            "id": "admin-page-guard",
+            "status": "fixed",
+            "note": "The PageGuard in AppShell covers both the main area and the full-screen /kds and /pos pages. /login, /kds/login, /supplier and /reset-password are not guarded. If /permissions/me fails, the guard lets the page through (the API still refuses the data). While /me is loading, it renders nothing."
+          }
+        ],
+        "judgementCalls": "1) Company revenue in Reports (please confirm). The brief asked for \"sales\" to open to every role holding 'reports'. But the owner policy written in auth/middleware.ts says revenue reports exclude operational managers. I opened the endpoints but return rupees only to FINANCIALS_VIEWERS; foh_management, boh_management and procurement see order counts, orders by hour and orders by channel. To give the floor managers rupees too, change `seesRevenue()` in reports/routes.ts to allow REPORT_READERS.\n2) Procurement newly reads item mix, station times and the demand forecast, because it holds 'reports' by default. Item revenue is stripped for procurement.\n3) Margin quadrants (/reports/menu-engineering): finance is newly allowed (it is the Accounting → Sales quadrants page). foh_management and boh_management keep the access they already had, so I did not narrow it to FINANCIALS_VIEWERS.\n4) Cashier loses dispatch. Cashier holds no dispatch or riders module, so /dispatch and /riders now answer 403 for it, including the tablet Dispatch tab and staff \"Mark delivered\" on old pre-rider-app orders. foh (which holds dispatch) keeps it. In riderApp.test.ts I swapped cashier for foh in those tests and used the FOH manager for the delivery-history test (the code is still hidden).\n5) fnb_manager no longer lists /crm/customers or bans (it holds no crm module). It keeps the guest panel on Reservations and 'Reach out' from Complaints/Reviews. The tablet Customer screen's search was already refused for foh and cashier by the route's role list; now fnb_manager is refused too.\n6) A saved Module Access row (from the CEO's role matrix) that lacks orders, pos, curbside or kds_* would now block that role's reads of /orders and /expo. Ringing up a sale (/pos/*) and the KDS bump (/order-items/*) are never gated. For roles saved with their defaults, nothing changes.\n7) Gate-rule format: I added an optional `pattern` field and a one-line matcher change in enforceModuleAccess. A plain path prefix cannot tell /crm/customers/:id/context apart from the customer list. DEFAULT_MODULE_ACCESS and MODULE_GRANTS are untouched.\n8) Page guard behaviour. Any /configuration/* page with no catalogue entry of its own falls under the 'configuration' module (CEO, co-owner, management). The expediter cannot open the bare /kds picker but can open /kds/<station>. Kitchen cannot open the /expo page, though the API still serves it the queue for the KDS.\n9) The brand picker list is opt-in through ?view=picker. The plain /concepts list is not widened, so the brand editor never receives a narrow row in place of a full one.",
+        "filesChanged": [
+          "/home/user/servd/backend/src/lib/moduleAccess.ts",
+          "/home/user/servd/backend/src/modules/reports/routes.ts",
+          "/home/user/servd/backend/src/modules/concepts/routes.ts",
+          "/home/user/servd/backend/tests/wave3Gates.test.ts",
+          "/home/user/servd/backend/tests/riderApp.test.ts",
+          "/home/user/servd/frontend/admin/src/lib/moduleCatalog.ts",
+          "/home/user/servd/frontend/admin/src/components/ui/AppShell.tsx",
+          "/home/user/servd/frontend/admin/src/components/ui/BrandPicker.tsx",
+          "/home/user/servd/frontend/admin/src/app/accounting/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/configuration/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/reports/page.tsx"
+        ],
+        "tests": "backend/tests/wave3Gates.test.ts (new, 14 tests) passes. It covers:\n- it, marketing, brand_manager, hr and procurement get 403 on the pipeline, the refunds list and order detail;\n- boh_management gets 403 on /crm/customers, a profile and the guest context;\n- roles without dispatch/riders get 403 on /riders and /dispatch/board; roles without expo/KDS get 403 on /expo/queue;\n- a full role-by-path check of /orders, /expo/queue, /dispatch/board and /riders against DEFAULT_MODULE_ACCESS;\n- till roles (cashier, foh) and KDS roles (kitchen, boh, expediter, boh_management) still get 200 on what they use;\n- company B gets 404 or an empty list on company A's riders, orders, customers and guest context, and on concepts in reports;\n- a CEO role override in RoleModuleAccess opens the gate and removing it closes it again; per-user moduleAllow and moduleDeny work;\n- the rider app (/rider/me with a rider token), /order-items and /pos are untouched;\n- ?view=picker works for every role and returns only its own companies' brands, with exactly the narrow fields;\n- the operational reports match the 'reports' module for every role; the floor managers get counts only while finance gets rupees; procurement gets no item revenue; the margin report is 200 for finance, 404 for finance in company B, 403 for procurement.\n\nTargeted runs all pass: riderApp (47, after the cashier→foh expectation change), auditReports, reports, booksReports, auditPeopleAccess, approvalsInbox, dispatch, sepCrm, wave3Marketing, the till, orders and connector suites, and 16 others.\n\nFull backend suite: 104 of 105 files and 1490 tests passed, 4 skipped. The 4 failures were in wave3Marketing (campaign 409 handling and CRM figures), a file another agent was editing at the time; it passes 21/21 when re-run. Both `npx tsc --noEmit` checks are clean (backend and frontend/admin). Test DBs created: servd_test_w3e and servd_test_w3e2.",
+        "needsOtherFiles": "1) frontend/admin/src/app/settings/integrations/page.tsx (around line 198): show the `<Link href=\"/configuration/email\">` card only when `canOpenPath('/configuration/email', me.role, me.modules)` is true (import usePermissions from hooks/useCan and canOpenPath from lib/moduleCatalog). foh_management holds 'integrations', so it sees this link, and the page now shows the no-access panel.\n2) tablet/app/(staff)/_layout.tsx: NAV shows every tab to every role. Read GET /permissions/me once and hide tabs the role cannot use:\n   - Dispatch unless modules include 'dispatch' or 'riders'\n   - KDS unless 'kds_dashboard', 'kds_all' or 'expo_station'\n   - Customer unless 'crm' (its search calls /crm/customers)\n   - Curbside unless 'curbside', 'orders' or 'pos'\n   Admin sees everything.\n3) frontend/admin/src/components/connectors/FiscalSubmissions.tsx (lines 122, 186) and TerminalCharges.tsx (line 78): render the order id as plain text instead of `<Link href={`/orders/${id}`}>` when `!canOpenPath('/orders', me.role, me.modules)`. IT holds api_pos but not 'orders', so the link lands on the no-access panel.\n4) frontend/admin/src/app/complaints/page.tsx (line 332) and app/orders/page.tsx (line 396), app/orders/[id]/page.tsx (line 524): hide the cross-module links (`/orders?search=` for marketing; `/crm?…` for roles without crm) using canOpenPath.\n5) CLAUDE.md (orchestrator): note that /orders, /expo, /dispatch, /riders and /crm are now module-gated; that a new caller of those paths needs its page's module added to that path's rule in moduleAccess.ts; and that the admin page guard uses lib/moduleCatalog.ts canOpenPath."
+      },
+      "review": [
+        {
+          "id": "W3E-RV-1",
+          "severity": "high",
+          "title": "The page guard blocks /time-clock, the admin's only punch screen, for every role without staff_directory",
+          "file": "/home/user/servd/frontend/admin/src/lib/moduleCatalog.ts",
+          "scenario": "moduleCatalog lists /time-clock only under staff_directory (line 216), so modulesForPath('/time-clock') returns ['staff_directory']. The new PageGuard in AppShell.tsx therefore shows the 'You don't have access to this page' panel to cashier, foh, kitchen, boh, expediter, finance, marketing, brand_manager, procurement and IT, because none of them hold staff_directory. The API is open to all of these roles: POST /time-clock/punch-in, /punch-out, /status and /kiosk/punch are requireAuth(...ALL_STAFF) in backend/src/modules/timeclock/routes.ts, and app/time-clock/page.tsx calls itself 'the one punch screen in the admin (decision 32)', covering both 'Me' and kiosk mode. Before this change any login could open /time-clock and punch. Now office roles have no way to clock in from the admin at all, and a kiosk device signed in as a floor login stops working, so attendance and the payroll fed by it lose those punches. I confirmed it by running canOpenPath against DEFAULT_MODULE_ACCESS for every role. The builder's script only checked sidebar links, and /time-clock is not in any of these roles' sidebars, so the check missed it.",
+          "fix": "Add '/time-clock' to ALWAYS_OPEN_PREFIXES in moduleCatalog.ts. It is a personal page and the API scopes the punch to the caller. Keep the staff_directory sidebar entry for managers. Add a check that every page whose reads are ALL_STAFF stays openable."
+        },
+        {
+          "id": "W3E-RV-2",
+          "severity": "medium",
+          "title": "Kitchen and expediter can no longer log prep batches from the par sheet",
+          "file": "/home/user/servd/frontend/admin/src/components/ui/AppShell.tsx",
+          "scenario": "kitchen and expediter hold par_sheet but not inventory. The Par sheet page (app/par-sheet/page.tsx lines 64, 71 and 153) sends them to /inventory/prep ('Log a batch' and the per-row 'Log batch?recipeId='). /inventory/prep is catalogued under 'inventory', so the PageGuard now shows the no-access panel. Before this change the page worked for them: GET /par-sheet/preps and POST /crosschecks/prep-batches are both ALL_STAFF, and the inputs come from the preps list. Only GET /inventory returned 403, as a toast. The par sheet's 'Made' column is filled only by these prep batches, so the line cooks' prep logging stops.",
+          "fix": "Either list /inventory/prep under par_sheet as well as inventory in MODULE_PAGES, which modulesForPath already treats as 'any of', or move the batch logger to a par_sheet path. The page should also stop requiring GET /inventory for floor roles, for example by marking that query background or enabling it only for STOCK_READERS."
+        },
+        {
+          "id": "W3E-RV-3",
+          "severity": "medium",
+          "title": "Demand forecast and Sales quadrants are still unusable for the roles newly let into their reports",
+          "file": "/home/user/servd/frontend/admin/src/app/analytics/forecast/page.tsx",
+          "scenario": "The builder opened /reports/demand-forecast to REPORT_READERS (adding procurement and finance) and /reports/menu-engineering to FINANCE_TEAM (adding finance). The pages behind them still fill their brand selector from plain GET /concepts, which conceptView refuses with 403 for any role that is neither a manager nor a cashier. I reproduced this on servd_test_w3e_rv: procurement gets 403 on GET /concepts and 200 on demand-forecast; finance gets 403 on GET /concepts and 200 on both demand-forecast and menu-engineering. /analytics/forecast is in the default 'reports' module of procurement and finance. Its select stays empty, the forecast query is `enabled: !!conceptId`, so it never runs, and the user gets a red 'Role not allowed' toast. /accounting/menu-engineering, finance's Sales quadrants page, has the same problem: it works only if a brand is already chosen in the sidebar picker. This breaks the principle that every read a role's default-module pages make returns 200.",
+          "fix": "In app/analytics/forecast/page.tsx and app/accounting/menu-engineering/page.tsx, read GET /concepts?view=picker under their own query key (e.g. ['concepts','brand-picker']), or reuse the BrandPicker's list. They only need id and name."
+        },
+        {
+          "id": "W3E-RV-4",
+          "severity": "low",
+          "title": "The expediter is still sent to /kds, which the guard now blocks",
+          "file": "/home/user/servd/frontend/admin/src/lib/moduleCatalog.ts",
+          "scenario": "/kds maps only to kds_dashboard. The expediter holds kds_all and expo_station, so it gets the no-access panel on /kds. Judgement call 8 discloses this, but several paths still send the expediter there. app/kds/login/page.tsx redirects every signed-in user to /kds, and that route is described as 'bookmarked on kitchen screens and pinned to home screens'. app/expo/page.tsx and FirstRunTour also link to /kds. The /kds page itself names the expediter as an intended user ('Roles without an assignment list (admin/management/expediter) see every active station'). An expediter who opens the kitchen screen from its bookmark lands on the no-access panel mid-service.",
+          "fix": "Treat the bare /kds as kds_dashboard or kds_all, for example by adding /kds to kds_all's pages or extending the existing kds_all special case in modulesForPath to pathname === '/kds'. Alternatively, have /kds/login send expo_station holders to /expo."
+        },
+        {
+          "id": "W3E-RV-5",
+          "severity": "low",
+          "title": "The claim that the KDS bump is never gated is false: the real bump goes through the gated /expo prefix",
+          "file": "/home/user/servd/backend/src/lib/moduleAccess.ts",
+          "scenario": "The header comment, the /orders rule comment and judgement call 6 all say the KDS bump (/order-items/*) stays ungated, so 'a mis-configured matrix must never stop … a ticket being bumped'. The bump the admin station page and the tablet actually call is POST /expo/steps/:id/bump (admin app/kds/[station]/page.tsx:132, app/kds/page.tsx:270, tablet kds/[stationId].tsx:112). Fire and handoff are POST /expo/orders/:id/fire and /handoff. All of these sit behind the new '/expo' gate (expo_station / kds_dashboard / kds_all). If the CEO saves a Module Access row for kitchen, boh or expediter without those modules, or sets a per-user moduleDeny, line cooks get 403 on bump, fire and handoff mid-service. The owner is told this cannot happen. None of the tests checks an /expo write with a saved override.",
+          "fix": "Either exempt the /expo write paths (steps/:id/bump, orders/:id/fire, orders/:id/handoff) from the gate, for example with a pattern rule placed before '/expo' or by gating only the GET queue reads, or correct the comments and judgement call 6 so the owner knows that a Module Access change can stop the KDS. Add a test with a saved kitchen row that lacks kds_dashboard."
+        }
+      ],
+      "fix": {
+        "summary": "I checked all five review findings against the working tree. RV-1, RV-2, RV-4 and RV-5 are fixed in files I own, with tests. RV-3 is a real defect, but the fix belongs in two page files I don't own, so the exact change is in needsOtherFiles.\n\n- **RV-1:** `/time-clock` is now in `ALWAYS_OPEN_PREFIXES` in `frontend/admin/src/lib/moduleCatalog.ts`, so every login can open the punch screen again.\n- **RV-2:** `/inventory/prep` is now also listed under `par_sheet`, as a \"Log a prep batch\" sub-link. Kitchen and expediter can open the batch logger from the par sheet again.\n- **RV-4:** `modulesForPath` now lets `kds_all` holders open the bare `/kds` as well as `/kds/<station>`. The expediter's bookmark and the redirect from `/kds/login` work again; `/kds/config` still needs `kds_config`.\n- **RV-5:** I corrected the comments in `backend/src/lib/moduleAccess.ts` (header, the `/orders` block and the `/expo` rule) rather than exempting the `/expo` writes. The comments now say plainly that the kitchen screen is module-gated for reads AND for bump, fire and hand-off. The tablet's mark-ready (`PATCH /orders/:id/status`) is under the `/orders` gate. A Module Access row that leaves a kitchen role none of expo_station, kds_dashboard or kds_all stops that role's KDS. Only the per-item `PATCH /order-items/:id/status` and the till's `/pos/*` stay ungated. Why not exempt the writes: the queue reads are gated as well, so with the modules removed there is nothing on screen to bump.\n\nNew tests in `backend/tests/wave3Gates.test.ts`:\n- every page in each role's sidebar opens for that role, checked against `canOpenPath` from the frontend catalogue for every role in `ALL_ROLES`\n- `/time-clock`: the page opens and `GET /time-clock/status` answers 200 for every role; the other personal pages stay open\n- the prep batch logger: kitchen and expediter open the page, read `/par-sheet/preps` and `/crosschecks/prep-batches`, and log a batch from company A's stock. They get 404 trying to draw company B's item, and company B's kitchen sees none of company A's batches.\n- `/kds` and `/kds/<station>` open for a role exactly when it holds kds_dashboard or kds_all\n- a saved kitchen Module Access row: with only kds_all the KDS writes still pass; with no kitchen module they are refused. The test restores whatever row was there before.",
+        "items": [
+          {
+            "id": "W3E-RV-1",
+            "status": "fixed",
+            "note": "Added '/time-clock' to ALWAYS_OPEN_PREFIXES in moduleCatalog.ts. Its API (status, punch-in/out, kiosk/punch) is ALL_STAFF and punches only the caller; /media/upload-url, used for the selfie, is ALL_STAFF too. The Time clock link stays in the staff_directory sidebar. Tested: the page opens for every role and /time-clock/status returns 200 for every role."
+          },
+          {
+            "id": "W3E-RV-2",
+            "status": "fixed",
+            "note": "par_sheet now also lists { label: 'Log a prep batch', href: '/inventory/prep', sub: true }. modulesForPath treats tied hrefs as any-of, so inventory and par_sheet holders both open it. The rest of /inventory stays inventory-only. The page still makes an unconditional GET /inventory, which returns 403 (a toast) for kitchen and expediter. That is in a file I don't own; see needsOtherFiles. Tested: kitchen and expediter read preps and batches and log a batch; a foreign-company item gives 404; company B sees none of company A's batches."
+          },
+          {
+            "id": "W3E-RV-3",
+            "status": "not_fixed",
+            "note": "Confirmed: analytics/forecast/page.tsx and accounting/menu-engineering/page.tsx read plain GET /concepts, which conceptView refuses (403) for finance and procurement. Neither file is mine; the exact change is in needsOtherFiles. I chose not to make plain GET /concepts fall back to the narrow picker row for other roles. The Brand editor (marketing, 'brands' module) fills its whole form from that endpoint, and a narrow row there reads as a wiped brand. ?view=picker already serves every staff role, scoped to its own companies, and is tested."
+          },
+          {
+            "id": "W3E-RV-4",
+            "status": "fixed",
+            "note": "The kds_all special case in modulesForPath now covers pathname === '/kds' as well as '/kds/<station>'. The /kds page's reads (/kds/my-stations and /kds/unrouted, both ALL_STAFF, plus /expo/station/:id/queue, gated to anyOf expo_station/kds_dashboard/kds_all) all admit the expediter. Tested: /kds and /kds/grill open exactly when a role holds kds_dashboard or kds_all, /kds/config stays closed to the expediter, and /kds/my-stations returns 200."
+          },
+          {
+            "id": "W3E-RV-5",
+            "status": "fixed",
+            "note": "I corrected the comments instead of exempting the writes. The header comment, the /orders block and the /expo rule in moduleAccess.ts now say the KDS reads AND writes (bump, fire, hand-off under /expo; mark-ready at PATCH /orders/:id/status) are module-gated. Only PATCH /order-items/:id/status and /pos/* stay ungated. GATED_PREFIXES itself is unchanged. New test with a saved kitchen row: with only kds_all, bump, fire, hand-off and the queue all pass; with no kitchen module they are refused; /order-items/x/status is never gated."
+          }
+        ],
+        "judgementCalls": "1. RV-5, the kitchen screen stays under Module Access, writes included. If the CEO saves a Module Access row (or a per-user deny) that leaves kitchen, boh or expediter with none of expo_station, kds_dashboard or kds_all, that role's KDS stops working: it can neither read the queues nor bump, fire or hand off a ticket. The tablet's \"mark ready\" (PATCH /orders/:id/status) likewise needs one of the modules behind the /orders gate. I kept it this way because module access is THE control (decision 34), and because exempting only the writes while the queue reads stay gated would leave nothing on screen to bump. The comments now say this instead of claiming the bump can never be stopped. Only the per-item bump (PATCH /order-items/:id/status) and the till's /pos/* stay ungated. Owner: untick the kitchen modules only for a role that should not run the line. If you'd rather the matrix could never stop the KDS, the alternative is to drop the kitchen modules from the /expo and /orders gates entirely.\n2. RV-1, /time-clock is open to every login whatever its modules, as it was before wave 3. The punch API is ALL_STAFF and acts only on the caller, or on the employee whose code and PIN are entered in kiosk mode. The punch report (/time-clock/logs) keeps its own role guard.\n3. RV-2, kitchen and expediter (and any par_sheet holder) can open the prep batch logger at /inventory/prep and see a \"Log a prep batch\" sub-link under Par sheet. The batch POST was already open to every role and draws only the active company's own stock (a foreign item gives 404). The rest of Inventory (/inventory, count, low stock) stays inventory-only.\n4. RV-4, the expediter (kds_all) can open the bare Kitchen view /kds and its station pages. Its sidebar still doesn't list \"Kitchen view\" (that link is kds_dashboard's), but /kds/login and the bookmarks now land on a working page.\n5. RV-3, I did not loosen plain GET /concepts for other roles. Finance and procurement get the brand list through ?view=picker (id and name only, own companies), once the page edits in needsOtherFiles are applied.",
+        "filesChanged": [
+          "/home/user/servd/frontend/admin/src/lib/moduleCatalog.ts",
+          "/home/user/servd/backend/src/lib/moduleAccess.ts",
+          "/home/user/servd/backend/tests/wave3Gates.test.ts"
+        ],
+        "tests": "Ran `cd backend && DATABASE_URL=postgresql://postgres@127.0.0.1:5432/servd_test_w3e REDIS_URL=redis://127.0.0.1:6379/30 JWT_SECRET=... JWT_REFRESH_SECRET=... NODE_ENV=test npx vitest run tests/wave3Gates.test.ts`: 19/19 pass, 5 of them new. The new tests import canOpenPath and pagesForModules straight from frontend/admin/src/lib/moduleCatalog.ts, and the test app now also registers the timeclock, kds, par-sheet and crosschecks routes. `npx tsc --noEmit -p .` in backend and in frontend/admin shows no errors in my files.",
+        "needsOtherFiles": "RV-3 (owner of these pages): in /home/user/servd/frontend/admin/src/app/analytics/forecast/page.tsx (lines 24-27) and /home/user/servd/frontend/admin/src/app/accounting/menu-engineering/page.tsx (lines 41-44), replace\n  useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts'), ... })\nwith\n  useQuery({ queryKey: ['concepts', 'brand-picker'], queryFn: () => api.get<Concept[]>('/concepts?view=picker'), staleTime: 60_000 })\nBoth pages use only c.id and c.name, and the picker row has both. The ['concepts','brand-picker'] key is the one BrandPicker uses, so the cache is shared and stays separate from the full ['concepts'] rows. GET /concepts?view=picker serves every staff role the active brands of its own companies; this is tested in wave3Gates 'UI-13'.\n\nRV-2 follow-up (owner of /home/user/servd/frontend/admin/src/app/inventory/prep/page.tsx, line 30): the GET /inventory query returns 403 (a red toast) for kitchen and expediter, who don't hold inventory. Mark it as a background read and don't retry on 403:\n  useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory'), meta: { background: true }, retry: (n, e) => !(e instanceof ApiError && e.status === 403) && n < 1 })\n(import ApiError from '../../../lib/api'). The page only uses `items` for the ad-hoc input picker, through itemById. Sub-recipe batches take their inputs from /par-sheet/preps, so those still work. The background meta is the opt-out already in components/ui/Providers.tsx."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:E",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a97f48c438258018d",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791715677902,
+      "queuedAt": 1791715677885,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stream E is done. The API now has module gates on /orders, …",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. WAVE 3 = ROLE <-> ROUTE ACCESS ALIGNMENT. A UI crawl signed in as every role (findings in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/ui/report.json; per-role crawls with every request + status in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scrat…",
+      "promptFramed": true,
+      "lastProgressAt": 1791717290817,
+      "tokens": 336761,
+      "toolCalls": 123,
+      "durationMs": 1612915,
+      "resultPreview": "{\"summary\":\"Stream E is done. The API now has module gates on /orders, /expo, /dispatch, /riders and /crm. Each gate lists every module whose pages call that path, counting admin pages, the tablet and the till. As a result IT, marketing, HR and procurement can no longer read the order pipeline or the refundable-orders list, boh_management can no longer read the CRM, and only dispatch/rider roles c…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:E",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a0c520b7aa09fc33f",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791717290847,
+      "queuedAt": 1791717290820,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. WAVE 3 = ROLE <-> ROUTE ACCESS ALIGNMENT. A UI crawl signed in as every role (findings in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/ui/report.json; per-role crawls with every request + status in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scrat…",
+      "promptFramed": true,
+      "lastProgressAt": 1791717739343,
+      "tokens": 228131,
+      "toolCalls": 76,
+      "durationMs": 448495,
+      "resultPreview": "{\"findings\":[{\"id\":\"W3E-RV-1\",\"severity\":\"high\",\"title\":\"The page guard blocks /time-clock, the admin's only punch screen, for every role without staff_directory\",\"file\":\"/home/user/servd/frontend/admin/src/lib/moduleCatalog.ts\",\"scenario\":\"moduleCatalog lists /time-clock only under staff_directory (line 216), so modulesForPath('/time-clock') returns ['staff_directory']. The new PageGuard in AppSh…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "fix:E",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "afe77ab40922e83b8",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791717739351,
+      "queuedAt": 1791717739347,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all five review findings against the working tree…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. WAVE 3 = ROLE <-> ROUTE ACCESS ALIGNMENT. A UI crawl signed in as every role (findings in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/ui/report.json; per-role crawls with every request + status in /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scrat…",
+      "promptFramed": true,
+      "lastProgressAt": 1791717991023,
+      "tokens": 145983,
+      "toolCalls": 36,
+      "durationMs": 251672,
+      "resultPreview": "{\"summary\":\"I checked all five review findings against the working tree. RV-1, RV-2, RV-4 and RV-5 are fixed in files I own, with tests. RV-3 is a real defect, but the fix belongs in two page files I don't own, so the exact change is in needsOtherFiles.\\n\\n- **RV-1:** `/time-clock` is now in `ALWAYS_OPEN_PREFIXES` in `frontend/admin/src/lib/moduleCatalog.ts`, so every login can open the punch scre…"
+    }
+  ],
+  "totalTokens": 710875,
+  "totalToolCalls": 235
+}

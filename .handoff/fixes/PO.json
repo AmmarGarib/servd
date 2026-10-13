@@ -1,0 +1,347 @@
+{
+  "summary": "Fix every confirmed finding from the shift re-runs (till/PIN, books, fiscal payload, wallet per company, online ops, people/HR, kitchen), then adversarially review and fix",
+  "agentCount": 6,
+  "logs": [],
+  "result": [
+    {
+      "stream": "P",
+      "built": {
+        "summary": "Stream P: all four findings are fixed in backend/src/modules/hr/routes.ts, hr/rota.ts and tipPools/routes.ts. The earlier attempt had already done most of PPL-R2-01 in hr/routes.ts. I reviewed that work, kept it, and wrote the tests for it. PPL-R2-02, -03 and -04 are new work. backend tsc is clean. The new two-company test file passes 8/8, and 270 tests across 12 related suites pass.",
+        "items": [
+          {
+            "id": "PPL-R2-01",
+            "status": "fixed",
+            "note": "The earlier partial work was reviewed and kept. The /hr/records list, read, create, PATCH, stage, export.csv and offer create-employee routes now check requireModule('staff_hr') on top of HR_ADMIN. In decide, staff_hr is needed for an 'hr' step, and for an HOD step that HR takes because the employee has no manager with a login. A real reporting manager's step, a management step and the CEO never need it. Without staff_hr, HR's power to cancel or submit someone else's record and the full /hr/lookups view fall back to self-service, and the /hr/approvals queue (which the CEO inbox reads) stops listing HR steps for that login. Tests: a login with moduleDeny staff_hr gets 403 on list, read, export, create, PATCH, stage, cancel and HR-step decide, and creates nothing. Company B's HR gets 404 on decide. An HR login that holds the module still approves. Self-service leave, the HOD step by a foh_management user without staff_hr, and the HR step by HR with the module all still work."
+          },
+          {
+            "id": "PPL-R2-02",
+            "status": "fixed",
+            "note": "rotaFor now loads approved full-day leave for the people on the grid and turns those days into kind 'leave', source 'leave', with leaveId, no segments and 0 minutes. Leave takes precedence over roster, swap and exception. Half-day leave is not overlaid. /scheduling, labour cost, attendance-late and the tip-pool rota fallback all read rotaFor and now agree. When leave is finally approved (finalApproval: decide, submit, or create with no workflow), clearShiftsOnLeave deletes that person's /scheduling working-hour rows on the leave days, for this company's brands only. Day-off rows are kept. The removed rows are recorded on the leave as data._shiftsRemoved, which the decide response returns, and audited as hr.leave.shifts_removed. The Prisma filter keeps null-role rows (OR role null / role not OFF_MARK). Test: a roster day and a pre-existing exception become leave cells with 0 minutes, labour cost drops by 16 h, the exception row is deleted, listed and audited, the day after is the roster again, half-day leave stays a shift, and company B gets 404."
+          },
+          {
+            "id": "PPL-R2-03",
+            "status": "fixed",
+            "note": "New payingAccount(tenantId, code). The default is 1020. A code must be an active ASSET account in the pool's own company's chart, and either 1010, 1015, 1020-1029, or a code a live BankAccount of that company points at. Not in the chart → 422 ACCOUNT_NOT_IN_CHART. Not cash or bank (revenue, 2095, other assets) → 422 NOT_A_CASH_ACCOUNT. The check runs before the status claim, so nothing posts. Tests: 4003, 9999, 2095, company B's 1021 and a non-bank asset are each 422 and the pool stays posted. 1010, a configured bank on 1150, and the default 1020 each post Dr 2095 / Cr <code>, stamped with tenant A."
+          },
+          {
+            "id": "PPL-R2-04",
+            "status": "fixed",
+            "note": "New openTillsHoldingTips(conceptId, window). It looks for open Shifts with a payment on a completed or refunded order of that brand that has tips and was completed inside the window. If any exist, reviewDraft adds a blocker ('<cashier>'s till ... still open ... close the till first'), so POST /:id/post returns 409 POOL_NOT_READY. /pay re-checks and returns 409 TILL_OPEN with { openTills } (also covers pools posted before this rule). The check is per brand, so another company's open till never blocks. Test: the draft review and post are blocked, an already-posted pool's pay is 409 with no journal entry, B's pool is blocked only by B's own till, A gets 404 on B's pool, and after the till closes the blocker clears and pay posts d:2095 / c:1020."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/hr/routes.ts",
+          "/home/user/servd/backend/src/modules/hr/rota.ts",
+          "/home/user/servd/backend/src/modules/tipPools/routes.ts",
+          "/home/user/servd/backend/tests/resimPeople.test.ts"
+        ],
+        "tests": "cd backend && npx tsc --noEmit -p . is clean. vitest was run against a fresh DB, servd_test_rf_p (db push, dropped afterwards), with Redis on 6390/7. New suite: tests/resimPeople.test.ts, 8/8 passing. Existing suites, all passing: approvalsInbox, attendanceRota, auditPeopleAccess, auditPeopleHr, auditPeopleTips, dedupeSmall, hrModule, wave3Finance, workspaces, wave3DevHr, auditAuthPeople. Total across the 12 files: 270/270.",
+        "needsOtherFiles": "frontend/admin/src/app/scheduling/page.tsx (stream that owns the admin scheduling page):\n- Line 19: widen the Cell type to kind 'shift'|'off'|'leave'|'none', source '...'|'leave', and add leaveId?: string|null.\n- Around line 149-153: render a 'Leave' label for c.kind === 'leave'. Today it shows a blank cell.\n- Line 202: show 'On approved leave' in the day detail.\n- Line 222: hide the Set hours / Add hours button on a leave cell. The API already refuses it with 409 ON_LEAVE.\n\nfrontend/admin/src/components/hr/RecordDetail.tsx (optional): on an approved leave, list data._shiftsRemoved (date, startTime-endTime, conceptId) as 'Shifts removed from the rota', so the manager knows what to cover.\n\nfrontend/admin/src/app/tip-pools/page.tsx: no change needed. It sends {} to /pay and shows the error message, which covers TILL_OPEN.\n\nbackend/src/modules/hr/attendance.ts (optional): around line 256, add a remark such as 'Punched in on an approved leave day' when cell.kind === 'leave'. Today such a punch is just present with no late check.\n\nbackend/src/modules/scheduling/routes.ts:173 (pre-existing, not mine): the `role: { not: OFF_MARK }` filter silently drops rows whose role is NULL (SQL NOT on a nullable column). The overlap check may miss null-role shifts. Use OR: [{ role: null }, { role: { not: OFF_MARK } }].",
+        "prodNotes": "No schema change and no migration.\n\nBehaviour changes at deploy:\n1. An HR-role login whose Module Access has staff_hr unticked loses /hr/records back-office access and HR-step approvals at once. Every HR_ADMIN role holds staff_hr by default, so only logins the CEO deliberately restricted are affected.\n2. Leave that is already approved immediately shows as 'leave' on /scheduling and comes out of labour cost and attendance-late. Exception shifts that already sit on approved leave days are NOT deleted for old leave. They are hidden by the overlay and only deleted for leave approved after deploy. If a shift-row cleanup is wanted, it is a one-off script.\n3. Tip-pool /pay with a non-cash/bank paidFromAccountCode now returns 422. The admin UI never sends one, so the UI is unaffected.\n4. A tip pool cannot be posted or paid while a till holding its window's tips is open. Staff will see 'close the till first'.\n\nUntil the admin scheduling page knows kind 'leave', leave days render as a blank cell. Deploy the frontend change with this or soon after.",
+        "ownerQuestions": "On final leave approval, existing /scheduling working-hour shifts on the leave days are deleted, recorded on the leave record and in the audit log. If that leave is later cancelled, the shifts are not restored, so the manager re-adds them from the list. Is that acceptable, or should approval only flag the shifts and leave them in place? Today the rota overlay hides them either way."
+      },
+      "review": [
+        {
+          "id": "RV-P-01",
+          "severity": "medium",
+          "title": "PPL-R2-04 only checks whether the till is open. A closed till whose ledger posting failed or has not run yet still lets the pool pay, so Tips Payable 2095 goes into debit",
+          "file": "backend/src/modules/tipPools/routes.ts",
+          "scenario": "openTillsHoldingTips (routes.ts:377) filters on `shift: { status: 'open' }`. Closing a till marks the Shift closed straight away. postShiftClose then runs fire-and-forget (pos/service.ts:1251-1259), and only that posting credits 2095 (shiftPosting.ts:471). Two cases slip through. (a) The close posting is refused: a locked period, or an unbalanced entry (BOOKS-07 raises an exception, but the shift stays closed with no entry). The tips never reach 2095, yet reviewDraft shows no blocker, and /post and /pay both go through. /pay posts Dr 2095 / Cr 1020 for tips the books do not hold, which is exactly the debit balance PPL-R2-04 was meant to prevent. (b) A pay that lands between the close response and the async posting does the same. The builder's own test demonstrates (a): it sets the till to `status: 'closed'` with a plain prisma update and no shift.close journal entry, then asserts /pay posts d:2095:50000. There, 2095 is debited for tips that were never credited. The claim in the comment that the check 'can only over-block, never under-block' is wrong for this case.",
+          "fix": "Treat a till as still holding its tips until its close is on the books. Block when the order's home shift (homeShiftOf) is open, or is closed with no posted shift-close journal entry for it (sourceType/reference shift.close:<shiftId>). In the TILL_OPEN/blocker text, name the failed-posting case ('the till closed but its takings did not reach the books — see Exceptions'). A simpler belt-and-braces check also works: inside the /pay transaction, refuse when the company's 2095 credit balance is less than pool.totalTipsCents. Add a test where a closed till has no shift-close entry and /pay must return 409."
+        },
+        {
+          "id": "RV-P-02",
+          "severity": "low",
+          "title": "PPL-R2-02: approving leave over an approved shift swap silently leaves the swapped shift uncovered. The swap stays approved and nothing is flagged or listed",
+          "file": "backend/src/modules/hr/routes.ts",
+          "scenario": "Reproduced on servd_test_rf_p_rv. Setup: Ali is rostered on Lunch 11:00-19:00 and Rabia on Dinner 17:00-01:00. An approved shift_swap on 2026-11-10 has Ali employeeId and swapWith Rabia. Rabia's sick leave for 2026-11-10 is then approved: HOD Omar, then HR Hina, final status 'approved'. The decide response carries no _shiftsRemoved and no warning. GET /scheduling for that week shows Ali kind 'shift', source 'swap', 17:00-01:00, and Rabia kind 'leave'. Ali's own Lunch 11:00-19:00, which the swap had moved to Rabia, now has nobody on it, and nothing tells the manager. clearShiftsOnLeave (routes.ts:~400) only looks at scheduled_shifts. It never looks at approved shift_swap records on the leave days, whether the person on leave is the requester or the partner. checkSwapPartner guards a swap approved AFTER the leave, but not leave approved after the swap. The finding's expected result was that approving leave over an existing shift 'either warns or removes that shift'.",
+          "fix": "In finalApproval for a full-day leave, also find approved shift_swap records in the same company on the leave days where employeeId = the person on leave or data.swapWith = them. Then either cancel them (status 'cancelled', with an audit row), or at least list them on the leave as data._swapsAffected, the way _shiftsRemoved is listed, and audit them, so the manager knows which shift to cover. Add a test that approves leave for a swap partner and asserts the swap is flagged or cancelled."
+        },
+        {
+          "id": "RV-P-03",
+          "severity": "low",
+          "title": "PPL-R2-01 is incomplete: an HR login with staff_hr switched off still reads the HR back-office people lists, including employees' phone numbers and personal emails",
+          "file": "backend/src/modules/hr/routes.ts",
+          "scenario": "Reproduced. Mehwish is role hr with moduleDeny ['staff_hr','payroll']. GET /hr/people-reconcile -> 200 and returns loginsWithoutRecord (email, phone, role) plus employeesWithoutLogin with phone and personalEmail. GET /hr/logins -> 200 and returns every company login, its role and the employee it links to. GET /hr/separations/logins -> 200. These handlers are requireAuth(...HR_ADMIN) only (routes.ts ~935, ~970, ~1000), and none of their paths match a GATED_PREFIXES rule in lib/moduleAccess.ts. That breaks the wave-3 rule that a role without M is refused server-side, and the finding's expected result that only ESS, HOD steps and /hr/approvals stay open once staff_hr is removed.",
+          "fix": "Use HR_BACK_OFFICE (requireAuth(...HR_ADMIN) + requireModule('staff_hr')) on GET /hr/logins, GET /hr/people-reconcile and GET /hr/separations/logins. Alternatively, add '/hr/people-reconcile', '/hr/logins' and '/hr/separations' rules with anyOf ['staff_hr'] to GATED_PREFIXES; that is the moduleAccess.ts owner's file, so it goes under needsOtherFiles. Extend resimPeople.test.ts with 403 checks for these three paths for mehwish, and 200 for sana."
+        }
+      ],
+      "fix": {
+        "summary": "I checked all three reviewer findings and all three were real, so I fixed each one with regression tests. The 10 related suites pass (248 tests) and backend tsc is clean.\n\nRV-P-01 (tip pool): the old check in tipPools/routes.ts only asked whether a till was open. I replaced it with `tillsHoldingTips`. For each tipped order in the pool's window it finds the order's home till with `homeShiftOf`, the till that books the sale. A till now blocks the pool in two cases: it is still open, or it is closed but has no `shift.close:<shiftId>` journal entry, meaning its close posting was refused or has not run yet. The draft review blocker and the 409 TILL_OPEN on /pay both name the second case: \"closed but its takings did not reach the books — see Exceptions, and re-post it from Reconciliation → Backfill unposted\". Tips on orders with no till receipt (online orders) post with the order, so they never block.\n\nRV-P-02 (leave over a shift swap): final approval of a full-day leave now also finds approved shift_swap records in the same company on the leave days, where the person on leave is either the requester or the swap partner (`data.swapWith`). Each one is listed on the leave as `data._swapsAffected`: swap id, date, which side the person is on, the colleague, and the shift that now has nobody on it (the toShift if the requester is on leave, the fromShift if the partner is). Each is also audited as `hr.leave.swaps_affected`. I deliberately left the swap approved rather than cancelling it, because cancelling only moves the gap to the colleague's original shift. The manager gets a named shift to cover either way.\n\nRV-P-03 (HR people lists): GET /hr/logins, /hr/people-reconcile and /hr/separations/logins now use HR_BACK_OFFICE (requireAuth(...HR_ADMIN) + requireModule('staff_hr')). No admin page other than the HR employee page (which already needs staff_hr) calls these, so nothing in the admin loses access.",
+        "items": [
+          {
+            "id": "RV-P-01",
+            "status": "fixed",
+            "note": "tillsHoldingTips: a till blocks when its home shift is open, or closed with no shift.close:<id> entry. Blocker and 409 text name the failed or not-yet-posted case. New test: a till closed with no entry gets 409 TILL_OPEN 'did not reach the books' and the pool stays posted with no payout lines; after the shift.close entry is posted, the payout goes through as Dr 2095 / Cr 1020. Company B's till still blocks only B."
+          },
+          {
+            "id": "RV-P-02",
+            "status": "fixed",
+            "note": "flagSwapsOnLeave in finalApproval: company-scoped approved swaps on the leave days, with the person on leave as requester or swapWith partner, are written to the leave as _swapsAffected and audited as hr.leave.swaps_affected. The swap stays approved on purpose: cancelling it only moves the gap. Tested for both the partner side (the reviewer's Rabia/Ali scenario) and the requester side; a company-B swap is untouched."
+          },
+          {
+            "id": "RV-P-03",
+            "status": "fixed",
+            "note": "HR_BACK_OFFICE (staff_hr module gate) on GET /hr/logins, /hr/people-reconcile and /hr/separations/logins. Test: mehwish (staff_hr denied) gets 403 on all three, sana gets 200, and company B's HR sees only B's logins."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/tipPools/routes.ts",
+          "/home/user/servd/backend/src/modules/hr/routes.ts",
+          "/home/user/servd/backend/tests/resimPeople.test.ts"
+        ],
+        "tests": "Command: DATABASE_URL=postgresql://postgres@127.0.0.1:5432/servd_test_rf_p REDIS_URL=redis://127.0.0.1:6390/7 … npx vitest run on resimPeople, attendanceRota, auditAuthPeople, auditPeopleAccess, auditPeopleHr, auditPeopleTips, hrModule, wave3DevHr, accessControl and auditAuthReview. Result: 10 files, 248 tests, all passing. `npx tsc --noEmit -p .` in backend is clean.",
+        "needsOtherFiles": "Optional, not required: the admin leave-record view (frontend/admin) does not show `_shiftsRemoved` or the new `_swapsAffected` on a leave record. If managers should see what to cover without opening the audit log, the leave detail could list data._swapsAffected[] as 'Swap on {date}: {shiftName} now uncovered (swap with {colleagueName})'.",
+        "prodNotes": "The tip pool payout (/pay) and the draft review now also block when a till closed but its shift.close posting is missing, not only when the till is still open. A pool over a till whose close was refused (for example a locked period or an unbalanced entry) stays unpaid until that close is re-posted from Reconciliation → Backfill unposted."
+      }
+    },
+    {
+      "stream": "O",
+      "built": {
+        "summary": "I finished all five findings in stream O. All 27 tests in the new tests/resimOnline.test.ts pass, and `npx tsc --noEmit -p .` in backend is clean.\n\n- **Already done before I resumed:** the orders list status check (`parseStatusFilter`), the 7-day `scheduledFor` cap in `orderTime()`, and the sweep exclusion in `orderAutoCancel.ts`. I reviewed and kept all three.\n- **New this session:**\n  - Staff (host) bookings are now held to the same capacity rule as public bookings, under the same booking lock, with a manager overbook.\n  - The /health Redis check now re-runs SELECT for the configured database and reads a sentinel key, with a timeout.\n  - The floor-staff sign-in health check is now 'warn' and points to the manager's in-person code.\n  - On the staff booking route, a foreign brand now answers 404 instead of 403.\n  - The `source: body.source as never` cast is gone from the staff booking create.\n\nTo make the two health checks testable I put them in a new file, `backend/src/lib/healthProbes.ts`, because `index.ts` starts the server when imported. `index.ts` changes only in the /health handler and one import line.\n\nThe kitchen-queue part of ONL-R2-03 is in files I don't own, so it is listed under needsOtherFiles.",
+        "items": [
+          {
+            "id": "ONL-R2-03",
+            "status": "fixed",
+            "note": "Partly fixed; the kitchen-queue part needs other files. Done: workers/orderAutoCancel.ts now starts both sweep clocks (30-min 'received', 2-h 'confirmed') at the later of placedAt and scheduledFor. A pre-order for tomorrow is no longer cancelled half an hour after it is placed. It is still swept if nobody acknowledges it 30 min after its own time. storefront/serviceHours.ts orderTime() refuses a time more than 7 days ahead (422 SCHEDULE_TOO_FAR, with maxScheduledFor) and a value that is not a date (400 INVALID_SCHEDULE; it used to fall back to 'now' silently). The existing assertOpenForOrders check still requires the brand to be open at the scheduled time. Tests cover tomorrow's pre-order kept, a same-day 2.5 h pre-order kept, a confirmed pre-order kept, a late pre-order swept, and the cap. Not done: keeping pre-orders off the kitchen queue until near their time, and deferring the stock deduction. That logic lives in expo/routes.ts and orders/service.ts (see needsOtherFiles)."
+          },
+          {
+            "id": "ONL-R2-04",
+            "status": "fixed",
+            "note": "Staff POST /reservations, when the booking has no table and is not on the waiting list, now takes the same pg_advisory_xact_lock('reservations:<concept>') as the public route and runs planSeat. It assigns the planned table, or answers 409 SLOT_FULL; details are {overbookAllowed, managerRequired}, and the message differs for 'no table free' and 'no table seats N'. Overbook: send {overbook:true, overbookReason}. A manager role (isOverrideApprover) approves on their own login; anyone else needs managerOverridePin from a manager of the brand's company (requireManagerApproval). Without a PIN the answer is 403 MANAGER_OVERRIDE_REQUIRED; another company's PIN gets 403 INVALID_MANAGER_PIN. An overbooked booking is stored without a table, notes say 'Overbooked: <reason>', the response carries overbooked:true, and a 'reservation.overbook' audit row records the approver, whether a PIN was used, and the reason, in the brand's company. An overbook that turns out not to be needed is an ordinary booking. A booking on a named table keeps the existing conflict check; waiting-list entries are unchanged. Also: the company check now runs before the membership check (foreign brand gives 404, not 403), and the 'as never' cast on source is gone. Tests: two-company, PIN refusals, audit row, and two concurrent bookings for the last table giving 201 and 409."
+          },
+          {
+            "id": "ONL-R2-07",
+            "status": "fixed",
+            "note": "GET /orders?status= now goes through parseStatusFilter (z.nativeEnum(OrderStatus)). It accepts one status, a comma list, or a repeated param; blanks are ignored. An unknown value answers 400 VALIDATION_ERROR naming the bad and the allowed values, instead of a Prisma 500. Tests cover the 400 and a two-company check that the filtered list stays inside the caller's company (B naming A's brand gets 404)."
+          },
+          {
+            "id": "ONL-R2-08",
+            "status": "fixed",
+            "note": "I confirmed that with an out-of-range DB index, ioredis stays on db 0 and both PING and GET answer, so a sentinel GET on its own would not catch it. The /health handler now calls redisHealthProbe(redisFast), which re-runs SELECT for the configured database (a no-op when the index is valid; it fails with 'ERR DB index is out of range' otherwise) and then GETs a sentinel key. Both run under a 1.5 s timeout. Tests on the private Redis (port 6390, 32 databases) cover a valid index (passes), index 9999 (PING still says PONG but the probe fails), and an unreachable port (fails within 1.5 s)."
+          },
+          {
+            "id": "PPL-R2-05",
+            "status": "fixed",
+            "note": "staffCodeLogin without WhatsApp is now 'warn' instead of 'error'. The message says sign-in codes cannot be sent and that until WhatsApp is set up a manager signs floor staff in with an in-person code from Workforce ('Sign-in code' next to their name). The message for the case with no floor staff was reworded the same way. A floor login with no phone stays 'error', because the in-person code is also tied to the phone number. The logic is a pure function, staffCodeLoginHealth, with unit tests."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/workers/orderAutoCancel.ts",
+          "/home/user/servd/backend/src/modules/storefront/serviceHours.ts",
+          "/home/user/servd/backend/src/modules/reservations/routes.ts",
+          "/home/user/servd/backend/src/modules/orders/routes.ts",
+          "/home/user/servd/backend/src/index.ts",
+          "/home/user/servd/backend/src/lib/healthProbes.ts",
+          "/home/user/servd/backend/tests/resimOnline.test.ts"
+        ],
+        "tests": "New: tests/resimOnline.test.ts passes 27/27 (DB servd_test_rf_o, Redis 127.0.0.1:6390/6). Neither server was running, so I started Postgres with pg_ctlcluster 16 main and a private redis-server on port 6390 with 32 databases.\n\nExisting suites that touch my files, run together: 337 of 345 pass. Passing: auditOnlineReservations, reservations, orderLifecycle, managerVoids, wave3Gates, auditOrdersFollowup, auditTillMoney, auditTillReview, booksReconcile, dedupeSmall, fiscalTill, groupOrderSubmit, ordersReconcile, riderApp, terminalGuards, staffOtpLogin, healthConnectors.\n\nFailing, in code other streams are changing now, not in my files:\n- 7 wallet tests in auditOnlineCheckout (422 and wallet amounts; the WALLET stream's schema, wallet routes and customer_wallet_per_company migration are in progress). The ONL-14 pre-order tests in that file pass.\n- 1 test in auditTillShift (BOH-11 stock given back on cancel). That is in orders/service.ts and inventory, which were mid-edit; tsc was briefly failing in orders/service.ts while I worked.\n\n`npx tsc --noEmit -p .` in backend is clean.",
+        "needsOtherFiles": "1. **backend/src/modules/expo/routes.ts** (around lines 136-141), for ONL-R2-03: awaitingFire lists every 'received' order. Leave out orders whose scheduledFor is later than now plus the prep window (e.g. 45 min), with `where: { OR: [{ scheduledFor: null }, { scheduledFor: { lte: new Date(Date.now() + PREP_MS) } }] }`. Optionally return them in a separate 'scheduled' list so expo can see tomorrow's pre-orders, labelled with their time.\n2. **backend/src/modules/kds/routes.ts**: any new-ticket list should use the same scheduledFor filter.\n3. **backend/src/modules/orders/service.ts** (ingestOrder, after the transaction), for ONL-R2-03: emitOrderNew and deductInventoryForOrder run straight away for a pre-order. Either leave them until scheduledFor minus the prep window (a small worker that fires due pre-orders), or at least mark the emitted event with scheduledFor/isPreOrder so KDS screens can hold the ticket.\n4. **backend/src/modules/storefront/routes.ts** (around lines 975-976): set is_pre_order to `when.scheduled`, not `!!body.scheduledFor`. Send scheduled_for only when `when.scheduled`; a past scheduledFor is treated as 'now' but is currently stored and flagged as a pre-order.\n5. **frontend/admin/src/app/reservations/page.tsx** (New reservation dialog), for ONL-R2-04:\n   - On a 409 SLOT_FULL, show the message.\n   - When details.overbookAllowed is set, offer 'Overbook (manager)' with a reason field. Add a manager PIN field when details.managerRequired is true.\n   - Resend with {overbook:true, overbookReason, managerOverridePin?}.\n   - The default (no table, not waitlist) now gets a table assigned automatically; show the returned table label.\n6. **Optional, backend/src/modules/reservations/routes.ts PATCH /:id** (my file, outside this finding): changing the time or party size of a booking with no table still skips planSeat. Same rule if the owner wants it.",
+        "prodNotes": "- **No schema change and no migration.**\n- **Booking behaviour change (deploy the API and the admin dialog together):** staff and phone bookings that used to go in with no table now get a table assigned automatically, or a 409 SLOT_FULL. Until the admin dialog handles that 409 (needsOtherFiles item 5), hosts will see a plain error for a full slot and should use 'Mark as waitlist' or ask a manager.\n  - Managers can overbook through the API now. Floor hosts need a manager's PIN, so managers should have a PIN set on Workforce before Monday.\n  - Existing bookings with no table are not touched; planSeat still counts them.\n- **Pre-orders:** after deploy, pre-orders already in the database survive the auto-cancel sweep until 30 min after their own time. A scheduledFor more than 7 days ahead now gets 422 SCHEDULE_TOO_FAR. No shipped client sends scheduledFor.\n- **/health:**\n  - A prod REDIS_URL with a bad DB index will now show redis: error, and loginRateLimit: warn with it. On a valid setup nothing changes.\n  - staffCodeLogin drops from error to warn when WhatsApp is not configured, so overall health may turn from degraded to ok-with-warnings. Check whether the deploy webhook or monitoring keys on 'error'.",
+        "ownerQuestions": "1. Is 7 days the right limit for how far ahead a pre-order can be scheduled? If yes, should it become a per-brand setting?\n2. Overbooking: I allowed a manager's own login or a manager's PIN, with a reason, audited (the same rule as voids). Should the CEO be notified, or an exception be raised in the inbox, when a booking goes past capacity?"
+      },
+      "review": [
+        {
+          "id": "O-RV-1",
+          "severity": "high",
+          "title": "An overbooked booking blocks every other booking in its time window, staff and online, even when most tables are free",
+          "file": "backend/src/modules/reservations/capacity.ts",
+          "scenario": "I reproduced this in /home/user/servd/backend/.sim/review-o/zzReviewO.test.ts (DB servd_test_rf_o_rv, Redis 6390/16). Setup: a brand with two 6-tops and six 4-tops. A manager overbooks a party of 12 (POST /reservations {partySize:12, overbook:true, overbookReason:'two six-tops pushed together'}), which is the case ONL-R2-04's overbook was built for. That returns 201 with tableId null and overbooked:true. A host then books a party of 2 at the same time and gets 409 SLOT_FULL ('No table for 2 is free'), and public GET /reservations/availability for that slot shows {available:false, tablesAvailable:0}, although eight tables are free. Cause: the overbook is stored with no table, so planSeat counts it as an unplaced party. placeParties() returns ok:false as soon as one existing party fits no table (capacity.ts placeParties: `if (i === -1) { placed.push(null); return { ok: false, ... } }`). planSeat then answers tableId null for every new party. The same happens with a smaller overbook (a party of 4 when the 4-tops are taken but 2-tops are free), and with old staff bookings that have no table and already exceed capacity. One overbook closes the brand's whole book, online included, for about 90 minutes either side of that time, and every later host booking then needs a manager PIN.",
+          "fix": "Tracked files are read-only for me; this needs whoever owns capacity.ts / reservations/routes.ts. In planSeat, when placing the EXISTING unplaced parties, skip a party that fits no free table and keep going, instead of failing the whole plan. That party is already over capacity on purpose and must not use up tables it cannot sit at. Only the new party's placement should decide ok. Or exclude overbooked rows from `overlapping` in the staff, public and availability queries; that needs a real marker (a column or a source/flag), not the 'Overbooked:' text in notes. Add a regression test: overbook a party of 12 with 8 tables, then a party of 2 at the same time gets 201 and availability shows the slot available."
+        },
+        {
+          "id": "O-RV-2",
+          "severity": "medium",
+          "title": "A staff booking that names a table skips the capacity rule and the booking lock, so it double-books a table that a booking with no table needs",
+          "file": "backend/src/modules/reservations/routes.ts",
+          "scenario": "Reproduced in the same review test. Company B has one 4-top (B4) and an existing staff booking for a party of 4 at 20:00 with no table. Every staff booking made before this change looks like that, and prodNotes says those rows are left as they are. A host booking another party of 4 at 20:00 with no table correctly gets 409 SLOT_FULL. The same host picks B4 in the New reservation dialog's Table select and sends tableId and gets 201. checkTableConflict only looks for rows already ON B4, and the named-table path takes neither pg_advisory_xact_lock('reservations:<concept>') nor planSeat. Two parties of 4 are now booked for the only 4-top, and the clash shows up at the door: this is the ONL-R2-04 failure through the other branch of the same route. It also races with a public or tableless booking that holds the lock and has placed a booking with no table on B4 in its plan.",
+          "fix": "In POST /reservations, run named-table bookings (not waiting-list ones) inside the same transaction and advisory lock as well. Remove the named table from the free tables and check that every overlapping booking with no table can still be placed: call placeParties on (free minus the named table) with the unplaced parties, or call planSeat with the named table counted as held. If they cannot all be placed, answer 409 SLOT_FULL with the same overbookAllowed/managerRequired details, and accept the existing manager overbook. Do the same for PATCH /:id when the table, time or party size changes (the builder already noted the time and party-size part). Add a regression test: an existing booking with no table for 4, one 4-top, a named-table booking for 4 at the same time gets 409."
+        },
+        {
+          "id": "O-RV-3",
+          "severity": "medium",
+          "title": "ONL-R2-03 is reported as fixed, but pre-orders now stay alive while the kitchen queue, expo caps and rider dispatch still go by placedAt",
+          "file": "backend/src/workers/riderDispatch.ts",
+          "scenario": "Before this change a pre-order was cancelled 30 minutes after it was placed. Now it lives up to 7 days in 'received', or in 'confirmed' if the kitchen acknowledges it.\n(a) GET /expo/queue awaitingFire still lists every 'received' order ordered by placedAt asc with take:50 (expo/routes.ts ~143-147). Once a company has 50 or more pre-orders for the coming week, every new order for now drops off expo's awaiting-fire list. The kitchen also sees tomorrow's tickets with no time on them and may cook them.\n(b) runDispatchSweep picks delivery orders with status confirmed/preparing/ready and placedAt within the last 6 h (DISPATCH_WINDOW_MS). A delivery pre-order the kitchen confirms today for tomorrow is offered to a rider straight away. A pre-order placed more than 6 h before its time is never offered automatically when it is cooked at its time.\n(c) inProgress has take:80 ordered by placedAt, so confirmed pre-orders crowd it in the same way.\nStock is also deducted when the order is placed (orders/service.ts ingestOrder). The builder listed (a) and the stock deduction under needsOtherFiles, but marked the finding 'fixed'. (b) and the expo cap problem are not listed anywhere.",
+          "fix": "Mark ONL-R2-03 as partly fixed until these are done.\n- expo/routes.ts awaitingFire and inProgress: add `OR: [{ scheduledFor: null }, { scheduledFor: { lte: now + PREP_MS } }]`. Optionally list later pre-orders separately, labelled with their time.\n- riderDispatch.ts runDispatchSweep: replace `placedAt >= now - DISPATCH_WINDOW_MS` with the effective time, greatest(placedAt, scheduledFor) within the window. Also skip orders whose scheduledFor is later than now plus the prep window, so a rider is never offered tomorrow's delivery today.\n- Defer emitOrderNew and the stock deduction for pre-orders, as the builder suggested.\n- Set is_pre_order to `when.scheduled` in storefront/routes.ts (builder item 4)."
+        }
+      ],
+      "fix": {
+        "summary": "I verified all three review findings. O-RV-1 and O-RV-2 were real and are fixed in backend/src/modules/reservations/routes.ts, with regression tests. O-RV-3 is also real, but every file it needs belongs to another stream, so I list the exact changes under needsOtherFiles. ONL-R2-03 should be reported as PARTLY fixed until those changes land: the auto-cancel sweep now waits for a pre-order's own time, but the expo queue, rider dispatch, stock deduction and is_pre_order still go by placedAt.\n\nO-RV-1: routes.ts now has a helper, seatPlan(), that wraps planSeat from capacity.ts. It places the existing bookings without a table largest first. A booking that fits no table left is set aside: it is already past capacity on purpose (a manager overbook, or an older staff booking), so it holds no table on paper and no longer closes the window. Staff create, PATCH, public POST /reservations/public and GET /reservations/availability all use it. The window still fills normally: the test fills 8 tables with 8 parties around a legacy party of 20 that is set aside, and the 9th party gets SLOT_FULL.\n\nO-RV-2: a staff booking that names a table now runs inside the same transaction and per-brand advisory lock as the tableless path. strandsTableless() refuses the table with 409 SLOT_FULL ({overbookAllowed, managerRequired}) when a booking without a table that could be seated needs it. A manager overbook (own login, or a host with a same-company manager PIN; reason required; audited as reservation.overbook) is now accepted with a named table, so I removed the old 400 that blocked overbook with a tableId. PATCH /:id runs the same check under the lock when the time, length, party size, table or waiting-list flag of a live booking changes. It accepts overbook, overbookReason and managerOverridePin (audited with via:'edit'). An edit that touches none of those, such as a name or a note, is never refused. While there I also fixed:\n- PATCH now finds the row through scopeTenantWhere(req,'write') instead of the raw tenantFilter, so an empty scope denies and a foreign id is 404.\n- A durationMin-only PATCH used to be ignored; it now updates endTime.",
+        "items": [
+          {
+            "id": "O-RV-1",
+            "status": "fixed",
+            "note": "Reproduced the reviewer's scenario (two 6-tops, six 4-tops, manager overbooks 12, host books 2). In routes.ts, seatPlan() sets aside existing bookings without a table that fit nothing, so only the new party's placement decides. Used by staff create, PATCH, public booking and availability. Tests: the overbook-12 then party-of-2 case (201, and availability shows the slot available with at least 6 tables), the window still filling to SLOT_FULL past a legacy party of 20, and pure-rule cases."
+          },
+          {
+            "id": "O-RV-2",
+            "status": "fixed",
+            "note": "POST /reservations with a named table now takes the brand's advisory lock in the transaction and refuses with 409 SLOT_FULL ({overbookAllowed, managerRequired}) when the table would strand a placeable booking without a table. A manager overbook (own login or PIN, reason, audited) is now allowed with a named table. PATCH /:id runs the same check under the lock when time, length, party size, table or waiting-list status changes, and accepts a manager overbook. Tests: named-table 409 with nothing stored, a free 2-top still bookable, PIN overbook on a named table audited, PATCH onto the needed table refused, a party grown into a full window refused then allowed by a manager overbook, a rename on an overbooked row allowed, and two-company checks (404 brand, 422 TABLE_NOT_IN_BRAND, 404 on PATCH of the other company's booking)."
+          },
+          {
+            "id": "O-RV-3",
+            "status": "not_fixed",
+            "note": "Confirmed all three claims. expo/routes.ts awaitingFire (status received, ordered by placedAt, take 50) and inProgress (take 80) have no scheduledFor filter. riderDispatch.ts runDispatchSweep filters on placedAt >= now - DISPATCH_WINDOW_MS (6 h). storefront/routes.ts sets is_pre_order: !!body.scheduledFor even when the time is in the past. None of these files are mine; exact changes are under needsOtherFiles. ONL-R2-03 must be reported as PARTLY fixed: only the auto-cancel sweep (orderAutoCancel.ts, already done and tested) waits for the pre-order's own time."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/reservations/routes.ts",
+          "/home/user/servd/backend/tests/resimOnline.test.ts"
+        ],
+        "tests": "npx tsc --noEmit -p . in backend: clean (exit 0). Run with DB servd_test_rf_o and Redis 6390/6:\n- tests/resimOnline.test.ts: 34/34 pass, including the 7 new O-RV-1/O-RV-2 tests (two companies).\n- Existing suites: auditOnlineReservations (24), reservations (9), auditOnlineCheckout (30), auditOrdersFollowup (16), orderLifecycle (11), ordersReconcile (16), wave3Gates (19), dedupeSmall (15). 140/140 pass.",
+        "needsOtherFiles": "O-RV-3 (owners of these files):\n1) backend/src/modules/expo/routes.ts, around lines 143-153. In both the awaitingFire query (status 'received', take 50) and the inProgress query (status confirmed/preparing, take 80), add `OR: [{ scheduledFor: null }, { scheduledFor: { lte: new Date(Date.now() + PREP_MS) } }]` to `where` (PREP_MS for example 60 min). Optionally return later pre-orders in a separate `upcoming` list carrying scheduledFor, so the kitchen sees the time and does not cook tomorrow's ticket.\n2) backend/src/workers/riderDispatch.ts runDispatchSweep, around line 155. Replace `placedAt: { gte: now - DISPATCH_WINDOW_MS }` with an effective-time window: `AND: [{ OR: [{ scheduledFor: null, placedAt: { gte: now - DISPATCH_WINDOW_MS } }, { scheduledFor: { gte: now - DISPATCH_WINDOW_MS, lte: new Date(now.getTime() + PREP_MS) } }] }]`. A rider is then never offered tomorrow's delivery today, and a pre-order placed more than 6 h before its time is still dispatched at its time. Order by scheduledFor ?? placedAt.\n3) backend/src/modules/storefront/routes.ts, around lines 977-978. Use the already computed `when = orderTime(body.scheduledFor)`: `scheduled_for: when.scheduled ? when.at.toISOString() : null, is_pre_order: when.scheduled`. A past scheduledFor is 'now', not a pre-order.\n4) backend/src/modules/orders/service.ts ingestOrder: defer emitOrderNew and the stock deduction for an order with isPreOrder or a future scheduledFor until it is released to the kitchen at scheduledFor - PREP_MS (needs a small release sweep).\n\nOptional tidy-up, backend/src/modules/reservations/capacity.ts (untracked, no listed owner): the set-aside rule now lives in routes.ts (placeableRows/seatPlan/strandsTableless) because capacity.ts is not in my ownership. Whoever owns capacity.ts may move those three helpers into it and update its header comment ('A booking WITHOUT one ... is given one on paper'), adding that a booking which fits no table is set aside. Behaviour does not change.",
+        "prodNotes": "Behaviour changes at the host stand:\n1) A manager overbook, or an old booking without a table that is already over capacity, no longer closes the brand's book for the window around it. Other parties, staff and online, can book the tables that are still free.\n2) Naming a table on the New reservation dialog can now answer 409 SLOT_FULL when a booking without a table at that time needs that table. Hosts can pick another table, or a manager can overbook (own login, or the manager PIN, plus a reason).\n3) Editing a booking's time, length, party size or table runs the same capacity check. Name, phone and notes edits are never refused.\nThe admin dialog does not yet send overbook, overbookReason or managerOverridePin on create or edit, so for now a host must ask a manager to make the overbook through the API. A frontend follow-up would add a 'Manager overbook' prompt on SLOT_FULL when details.overbookAllowed is set."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:P",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "aea0f1fc20bc7e628",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791788822399,
+      "queuedAt": 1791788822374,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stream P: all four findings are fixed in backend/src/module…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789503476,
+      "tokens": 188368,
+      "toolCalls": 60,
+      "durationMs": 681077,
+      "resultPreview": "{\"summary\":\"Stream P: all four findings are fixed in backend/src/modules/hr/routes.ts, hr/rota.ts and tipPools/routes.ts. The earlier attempt had already done most of PPL-R2-01 in hr/routes.ts. I reviewed that work, kept it, and wrote the tests for it. PPL-R2-02, -03 and -04 are new work. backend tsc is clean. The new two-company test file passes 8/8, and 270 tests across 12 related suites pass.\",…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:O",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "ac094b38d84d7d844",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791788822399,
+      "queuedAt": 1791788822375,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I finished all five findings in stream O. All 27 tests in t…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789527691,
+      "tokens": 177694,
+      "toolCalls": 54,
+      "durationMs": 705291,
+      "resultPreview": "{\"summary\":\"I finished all five findings in stream O. All 27 tests in the new tests/resimOnline.test.ts pass, and `npx tsc --noEmit -p .` in backend is clean.\\n\\n- **Already done before I resumed:** the orders list status check (`parseStatusFilter`), the 7-day `scheduledFor` cap in `orderTime()`, and the sweep exclusion in `orderAutoCancel.ts`. I reviewed and kept all three.\\n- **New this session:…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:P",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a076803117e32b603",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789503500,
+      "queuedAt": 1791789503479,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789905763,
+      "tokens": 189768,
+      "toolCalls": 44,
+      "durationMs": 402262,
+      "resultPreview": "{\"findings\":[{\"id\":\"RV-P-01\",\"severity\":\"medium\",\"title\":\"PPL-R2-04 only checks whether the till is open. A closed till whose ledger posting failed or has not run yet still lets the pool pay, so Tips Payable 2095 goes into debit\",\"file\":\"backend/src/modules/tipPools/routes.ts\",\"scenario\":\"openTillsHoldingTips (routes.ts:377) filters on `shift: { status: 'open' }`. Closing a till marks the Shift cl…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "review:O",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a4cc6eeed4ced1693",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789527694,
+      "queuedAt": 1791789527692,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789818705,
+      "tokens": 162038,
+      "toolCalls": 42,
+      "durationMs": 291010,
+      "resultPreview": "{\"findings\":[{\"id\":\"O-RV-1\",\"severity\":\"high\",\"title\":\"An overbooked booking blocks every other booking in its time window, staff and online, even when most tables are free\",\"file\":\"backend/src/modules/reservations/capacity.ts\",\"scenario\":\"I reproduced this in /home/user/servd/backend/.sim/review-o/zzReviewO.test.ts (DB servd_test_rf_o_rv, Redis 6390/16). Setup: a brand with two 6-tops and six 4-t…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "fix:O",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "abfa47c52cd62db0f",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789818717,
+      "queuedAt": 1791789818711,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I verified all three review findings. O-RV-1 and O-RV-2 wer…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790207486,
+      "tokens": 139448,
+      "toolCalls": 30,
+      "durationMs": 388769,
+      "resultPreview": "{\"summary\":\"I verified all three review findings. O-RV-1 and O-RV-2 were real and are fixed in backend/src/modules/reservations/routes.ts, with regression tests. O-RV-3 is also real, but every file it needs belongs to another stream, so I list the exact changes under needsOtherFiles. ONL-R2-03 should be reported as PARTLY fixed until those changes land: the auto-cancel sweep now waits for a pre-or…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "fix:P",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a225f3cfe818ac772",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789905768,
+      "queuedAt": 1791789905765,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all three reviewer findings and all three were re…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790212603,
+      "tokens": 137638,
+      "toolCalls": 35,
+      "durationMs": 306834,
+      "resultPreview": "{\"summary\":\"I checked all three reviewer findings and all three were real, so I fixed each one with regression tests. The 10 related suites pass (248 tests) and backend tsc is clean.\\n\\nRV-P-01 (tip pool): the old check in tipPools/routes.ts only asked whether a till was open. I replaced it with `tillsHoldingTips`. For each tipped order in the pool's window it finds the order's home till with `hom…"
+    }
+  ],
+  "totalTokens": 994954,
+  "totalToolCalls": 265
+}

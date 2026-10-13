@@ -1,0 +1,143 @@
+{
+  "summary": "WhatsApp ordering on the one shared number starts with a brand menu (owner decision) — build, adversarial review, fix",
+  "agentCount": 3,
+  "logs": [],
+  "result": {
+    "built": {
+      "summary": "WhatsApp ordering now starts with a brand menu, so one shared GS Foods number can take orders for every brand. I finished the earlier half-done edits to conversation.ts and wa-session.ts rather than starting over, and added the new test file. Type check passes, and all 43 tests in the four WhatsApp-related files pass.\n\nWhat changed:\n\n1. **Brand menu.** A new session, a greeting, or the words menu, brands, switch, change brand or kitchens sends a list of the brands taking orders right now, across every company. A brand is listed only if it is active, not deleted, switched on for the storefront, open by its opening hours (the same `orderingState` check checkout uses), belongs to a company, and has at least one priced, available dish. There is no separate \"online ordering\" switch on brands; the storefront uses the show-on-storefront switch plus opening hours, so I used the same. Names go through `formatBrandName`, the copy has no emoji and no exclamation marks, and the list stops at 10 rows (WhatsApp's limit). With exactly one brand open it goes straight to that brand; with none it says \"Ordering is closed right now.\" and when each brand next opens. The customer can tap a brand or type its number or name; an unknown reply sends the menu again. A brand that is hidden from the storefront is never named in a reply.\n\n2. **Picking a brand.** It sets the session's brand id, slug and company, then the existing flow carries on. Categories, items, reorders and pricing all check that items belong to the chosen brand. A cart never mixes brands: picking another brand while holding a cart asks \"Switch to X\" or \"Keep my cart\", and picking the same brand keeps the cart.\n\n3. **Returning members** (matched by phone) are greeted by first name. If the brand of their last order still takes orders, the greeting skips the menu and offers \"Reorder last\" and \"See the menu\" (plus \"Other kitchens\" when more than one brand is open). Otherwise they get the brand menu. Reorder copies only that brand's available items at today's prices, and never replaces a cart in progress.\n\n4. **Placing the order.** The order is created at the chosen brand, so it lands in that brand's company and is taxed at that brand's cash GST rate. Before placing, it now does the same checks checkout does: the brand is still open, every item is served at this time of day, and the brand's company has not banned the customer. Customer-facing refusals are shown to the customer. No loyalty, wallet, gift card or promo is redeemed on WhatsApp, so nothing in `ingestOrder` was weakened. Earned points accrue at the brand's company on completion, and the points balance shown is that company's.\n\n5. **`WHATSAPP_DEFAULT_CONCEPT` is optional.** Missing or wrong, it is ignored without an error. When it names a brand that takes orders, that brand is listed first. It is also the fallback when the brand list cannot be read.\n\n6. **Old Redis sessions keep working.** Sessions are now version 2 with three new fields. Older sessions are cleaned up and upgraded when read. A pre-menu session that already has a brand gets its company looked up on the next message, and a session with no brand loses any cart and goes back to the start.\n\nI also changed the \"switch\" step so that typing \"switch\" there counts as yes rather than reopening the menu, and rewrote the adapter README.",
+      "filesChanged": [
+        "/home/user/servd/backend/src/adapters/whatsapp/conversation.ts",
+        "/home/user/servd/backend/src/lib/wa-session.ts",
+        "/home/user/servd/backend/src/adapters/whatsapp/README.md",
+        "/home/user/servd/backend/tests/whatsappBrandMenu.test.ts"
+      ],
+      "tests": "`npx tsc --noEmit -p .` in backend: no errors.\n\n`vitest run tests/whatsappBrandMenu.test.ts tests/auditLedgerFollowups.test.ts tests/whatsappConfig.test.ts tests/connectorsWhatsapp.test.ts` against servd_test_wa and Redis db 18: 4 files, 43 tests, all pass. The existing F4 WhatsApp order test needed no changes.\n\nThe new file `whatsappBrandMenu.test.ts` has 10 tests:\n- The menu lists only the two ordering brands across companies A and B. Hidden, inactive, deleted, closed-by-hours, nothing-to-sell and no-company brands are left out; a brand stored as \"simmer\" shows as \"Simmer\"; nothing sent has \"!\" or emoji.\n- With one brand open there is no menu, and the session goes straight to that brand and its company.\n- With no brand open the bot says ordering is closed and when the closed brand next opens.\n- An unknown list reply, or an unknown or not-listed brand, sends the menu again; typing \"2\" picks the second listed brand.\n- A missing env var does not throw; when set, its brand is listed first; a wrong slug is ignored.\n- Picking company B's brand places the order at B's brand, in company B, at B's 13% cash GST (tax 13,000 on 100,000); another brand's category gives nothing.\n- Switching brand with a cart asks first. \"Keep\" keeps the cart; \"menu\" then the same brand keeps it; \"switch\" empties it and moves the session to B's brand and company.\n- A returning member is greeted by first name. \"Reorder last\" uses the brand of the newest order, with today's price and quantities. When that brand is closed, the member gets \"Welcome back\" and the brand menu, and a stale reorder tap explains the brand is not taking orders.\n- An old Redis session with a brand but no company is upgraded on read and still places the order in company A at 15%.\n- A stored session with no brand cannot keep a cart or stay on a brand-only step.\n\nAll WhatsApp sends and notify are mocked; nothing calls a gateway.",
+      "needsOtherFiles": "CLAUDE.md (orchestrator): add a short \"WhatsApp ordering (owner, 2026-10-12)\" note covering:\n- One shared GS Foods number; the conversation starts with a brand menu across companies.\n- Which brands are listed: active, not deleted, `storefrontVisible`, open per `orderingState`, belong to a company, have a priced available dish.\n- One brand open skips the menu; a cart never mixes brands.\n- Orders land in the chosen brand's company at its cash GST; no loyalty, wallet or promo redemption on WhatsApp.\n- `WHATSAPP_DEFAULT_CONCEPT` is optional (listed first and used as fallback when set; ignored when missing).\n- Contract lives in `backend/src/adapters/whatsapp/README.md`.\n\nNo /health check, .env example, compose file or doc in the repo mentions `WHATSAPP_DEFAULT_CONCEPT`, so nothing else needs changing.\n\nOptional: `tests/auditLedgerFollowups.test.ts:328` still sets `WHATSAPP_DEFAULT_CONCEPT`. It is harmless and the test still passes.",
+      "prodNotes": "- Deploy is safe whether or not `WHATSAPP_DEFAULT_CONCEPT` is set on the box. Leave it set to keep the current brand listed first, or remove it. It no longer throws when missing (before, every new conversation crashed without it).\n- Conversations in progress at deploy time carry on: old Redis sessions are upgraded when read, and their company is looked up on the next message.\n- Customers now see every company's open brands on the one number.\n- A brand appears in the WhatsApp menu only if it has opening hours covering now (a brand with no hours set counts as open, as on the storefront) and at least one available priced dish.\n- WhatsApp orders are now refused when the brand is closed, an item is outside its served hours, or the customer is banned at that company. These are the same rules as checkout, and the customer is told why.\n- \"menu\" now opens the brand list; before, it restarted the conversation.\n- The brand list stops at 10 brands (WhatsApp's limit).",
+      "ownerQuestions": "1. Should the menu also offer a brand that is closed now but opens later, as a pre-order? Right now it only lists brands that are open this minute and says when the others open.\n2. Should WhatsApp orders be able to redeem loyalty points, wallet balance or a promo? Today they redeem none of these, so no money crosses companies. Any of them would have to come from the chosen brand's company."
+    },
+    "review": [
+      {
+        "id": "WA-RV-1",
+        "severity": "high",
+        "title": "A brand that has been switched off or deleted still takes WhatsApp orders from a session already on it",
+        "file": "/home/user/servd/backend/src/adapters/whatsapp/conversation.ts",
+        "scenario": "The 'can this brand take orders' rule only runs when the brand is picked (orderingBrands in pickBrand, chooseBrand and the reorder path). Later steps (browsing, category, cart, confirm) and placeOrder never check it again. priceCart loads the brand with a plain findUnique by id, and placeOrder only checks opening hours (orderingState), items served now, and bans. Each saveSession resets the 30-minute expiry, so an active conversation never ages out. The same gap applies to Redis sessions from before the brand menu, which carry the old default brand. Reproduced on servd_test_wa_rv: a session on brand A with a cart, tap Confirm, then set A to isActive=false and deletedAt=now. orderingBrands() no longer includes A, but tapping 'Place order' replies '*Order Placed* at Alpha.' and the order row exists at the inactive, deleted brand. Storefront checkout refuses an inactive brand (it looks the brand up with isActive: true). Turning off a brand's storefront switch mid-session also does not stop the order.",
+        "fix": "In placeOrder, before the hours check, refuse unless the brand still passes the same rule as the menu. Either check that orderingBrands() includes session.conceptId, or load the brand with { id, isActive: true, deletedAt: null, storefrontVisible: true, tenantId: { not: null } } and throw AppError('BRAND_CLOSED', '<Brand> is not taking orders right now.', 409); BRAND_CLOSED is already customer-facing. Ideally run the same check in sendToMenu and proceedToConfirm, sending the customer back to the brand menu. Add a test: deactivate or delete the brand after Confirm, tap Place order, expect no order."
+      },
+      {
+        "id": "WA-RV-2",
+        "severity": "high",
+        "title": "Customers who type their replies get stuck: the switch question repeats forever, and the category, cart and confirm steps never move on",
+        "file": "/home/user/servd/backend/src/adapters/whatsapp/conversation.ts",
+        "scenario": "The production sender in lib/whatsapp.ts turns sendInteractiveList and sendButtons into plain text: bullet lines ('• Mains') and numbered options ('1. Switch to Bravo Grill', '2. Keep my cart'). So in production no list_reply or button_reply ever comes back, only typed text. The new switch step does not accept a typed '1' or '2': SWITCH_ANSWER only matches yes, y, no, n, keep or switch, so handleSwitch sends 'Switch kitchens and empty your cart?' again on every reply. Reproduced: two '1' replies gave the same question twice. The new returning-member greeting ('1. Reorder last / 2. See the menu / 3. Other kitchens') only reacts to button ids, so typing '1' or 'reorder last' does not reorder. The older steps have the same problem: typing 'Mains' or '1' at the category list re-sends the category list (step stays browsing, cart stays empty), and typing 'Confirm order' in the cart, or 'Place order' at confirm, re-prompts. So over the configured gateway nobody can complete a WhatsApp order, and the brand menu is the only step that accepts typed answers. The cart, confirm and category part was already broken before this change. The switch and greeting part is new.",
+        "fix": "Store the options each prompt showed in the session (for example session.lastOptions: [{ id, title }]) and, at every step, map a typed number or a typed title (case- and punctuation-insensitive) to that option's id before dispatching. That covers the switch, greeting, category, item, cart and confirm prompts. At minimum, the switch step should accept '1' as yes and '2' as no. Add text-only end-to-end tests: hi, then the brand name, then the category, item, 'Confirm order' and 'Place order' all typed, ending in an order. Note in prodNotes that WhatsApp ordering cannot place orders over the current text gateway until this is fixed."
+      },
+      {
+        "id": "WA-RV-3",
+        "severity": "medium",
+        "title": "The menu can list a brand that has nothing orderable, and picking it leads nowhere",
+        "file": "/home/user/servd/backend/src/adapters/whatsapp/conversation.ts",
+        "scenario": "orderingBrands only asks for some menu item that is available, not deleted and priced above zero. sendToMenu only offers categories that are not deleted, are active and are showing at this time of day, and items can only be reached through a category. So a brand whose available dishes all sit in a switched-off section, in a section limited to other hours (breakfast-only items in the evening), or in no category at all gets listed as 'Open now'. If it is the only open brand, the customer is sent there automatically. Reproduced: brand 'Charlie' with its only item in a category with isActive=false was listed. Tapping it gave 'You are ordering from *Charlie*.' and then 'The menu is unavailable right now...'. Of the builder's claim 'has at least one priced, available dish', only the item half holds; nothing checks that the dish can be reached.",
+        "fix": "Also require that the item sits in an active, non-deleted category: menus: { some: { isAvailable: true, deletedAt: null, priceCents: { gt: 0 }, category: { isActive: true, deletedAt: null } } }. Then drop brands where no such category passes sectionVisibleAt(now), for example with one categories query for the remaining brands, the way sendToMenu filters. Add a test with a brand whose only item is in an inactive section, and one whose only section is out of hours."
+      }
+    ],
+    "fix": {
+      "summary": "I checked all three findings against the code and they were all real. All three are fixed, and none was rejected.\n\nWA-RV-1 (high), fixed. A brand that was switched off or deleted could still take an order from a session already on it. Fix in /home/user/servd/backend/src/adapters/whatsapp/conversation.ts:\n- One shared brand rule, `LIVE_BRAND`: active, not deleted, shown on the storefront, and in a company. The brand menu, the closed-brands messages and the new checks all use it.\n- `handleWaMessage` now checks the session's brand on every message, after the old-session migration. If the brand no longer passes, the customer is told \"<Brand> is not taking orders right now. Your cart from it has been emptied.\", the brand and cart are dropped, the step goes back to `brand`, and the brand menu is sent. If the message was a greeting or a brand pick, it carries on as normal. This also covers Redis sessions from before the brand menu and the \"storefront switch turned off mid-session\" case.\n- `placeOrder` refuses with 409 `BRAND_CLOSED` before the opening-hours check, so a direct call can't slip through either. The re-delivered \"Place order\" retry for an order already taken is unchanged.\n\nWA-RV-2 (high), fixed. Customers who type their replies got stuck. Every prompt now goes through `offerButtons` / `offerList`, which save the options it showed in `session.lastOptions` (new field in /home/user/servd/backend/src/lib/wa-session.ts, migrated on read). A new exported `matchOption` turns a typed reply back into the tap it stands for. It accepts:\n- a number (\"1\", \"1.\", \"2)\")\n- a title, ignoring case and punctuation\n- a copied line, such as \"2. Keep my cart\" or \"• Rice bowl — PKR 500\"\n- the unique start of a title, 4 or more letters (for example \"confirm\")\n\nA full typed title beats a greeting, so typing \"Hello Bowls\" picks that category. A partial title never overrides a greeting or keyword. This covers the brand menu, the switch question (1 = switch, 2 = keep), the returning-member greeting (1 or \"reorder last\"), and the category, item, cart and confirm steps. Prompt wording now says \"reply with its name or number\" instead of \"Tap\".\n\nWA-RV-3 (medium), fixed. `orderingBrands` now requires a dish in an active, non-deleted section, then runs one sections query for the remaining brands and keeps only those with a section showing now (`sectionVisibleAt`). Related tightening:\n- `sendToMenu` only offers sections that have something to order.\n- Tapping a section from an older list re-checks that it is still switched on and showing now.\n- Tapping an item re-checks that its section is still switched on.\n\nThe README in backend/src/adapters/whatsapp/ is updated to match.",
+      "filesChanged": [
+        "/home/user/servd/backend/src/adapters/whatsapp/conversation.ts",
+        "/home/user/servd/backend/src/adapters/whatsapp/README.md",
+        "/home/user/servd/backend/src/lib/wa-session.ts",
+        "/home/user/servd/backend/tests/whatsappBrandMenu.test.ts"
+      ],
+      "tests": "`npx tsc --noEmit -p .` in backend is clean. Ran `npx vitest run tests/whatsappBrandMenu.test.ts tests/auditLedgerFollowups.test.ts` against servd_test_wa / redis db 18: 29 passed out of 29 (20 in the brand-menu file, up from 10, and 9 in the ledger follow-ups file).\n\nNew tests:\n- WA-RV-1:\n  - Brand deactivated and deleted after Confirm: tapping Place order creates no order, the customer gets the \"not taking orders / cart emptied\" message, and the session has no brand and is on the `brand` step.\n  - Storefront switch turned off: `placeOrder` refuses with BRAND_CLOSED and no order is made; the next typed message drops the brand.\n  - Old pre-brand-menu session on a since-deleted brand: no order.\n- WA-RV-2:\n  - A whole order typed: \"hi\", \"Bravo Grill\", \"Mains\", \"1\", \"Confirm order\", \"Place order\", ending in an order at the right brand.\n  - Numbers and copied lines at every prompt (\"2.\", \"• Mains\", \"• … — PKR 1000\", \"1\" = Add more, \"2\" = Confirm, \"2. Cancel\").\n  - The switch question takes \"2\" (keep) and \"1\" (switch).\n  - The member greeting takes \"1\" and \"Reorder last\".\n  - Unit tests for `matchOption`.\n  - Typing \"hello bowls\" picks the category; a bare \"hello\" still restarts.\n- WA-RV-3:\n  - Charlie (only dish in a switched-off section) and Echo (only section out of hours) are not listed.\n  - With Charlie's section switched back on it is listed, and its empty \"Specials\" section is not offered.",
+      "needsOtherFiles": "Optional, in /home/user/servd/backend/src/lib/whatsapp.ts (not mine): number the list rows in the text version of `sendInteractiveList` (\"1. Mains\" instead of \"• Mains\"). Lists show bullets today but the bot already accepts numbers, so customers would see which number to type. Nothing else is needed: the webhook route already passes typed text through as `text.body`.",
+      "prodNotes": "- **WhatsApp ordering on the live gateway:** before this fix, nobody could finish a WhatsApp order over the text-only production gateway. Typed replies at the category, cart and confirm steps never moved on, and the new switch question repeated forever. With these changes uncommitted, that is still the state of `main`. Ship this change before announcing WhatsApp ordering.\n- **Sessions:** sessions saved in Redis before this change have no `lastOptions`. Typed answers start working after their next prompt, and a \"hi\" resets them.\n- **Load:** every inbound WhatsApp message now makes one extra small query to check the session's brand.",
+      "ownerQuestions": "1. When a brand closes by its opening hours mid-session (rather than being switched off), the session stays on that brand: the customer can keep browsing, and Place order answers \"<Brand> is closed right now. Opens at …\". This matches storefront checkout. Should the bot instead send them to the brand menu straight away?\n2. Typed replies also match on the start of a title (4 or more letters, only when exactly one option matches), so \"conf\" works for \"Confirm order\". Is that loose enough, or too loose?"
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:wa",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a74453cc01c4ea0ea",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791807196015,
+      "queuedAt": 1791807195985,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "WhatsApp ordering now starts with a brand menu, so one shar…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP (CLAUDE.md is the rulebook: company separation, customer-facing money/loyalty/promos stay inside the issuing company, GST tender split — never concept.taxRate, any new path completing an order goes through completeOrder, brand names via formatBrandName, Simmer voice rules: no exclamation marks/emoji in Simmer-branded copy). OWNER DECISIO…",
+      "promptFramed": true,
+      "lastProgressAt": 1791807504760,
+      "tokens": 137629,
+      "toolCalls": 25,
+      "durationMs": 308744,
+      "resultPreview": "{\"summary\":\"WhatsApp ordering now starts with a brand menu, so one shared GS Foods number can take orders for every brand. I finished the earlier half-done edits to conversation.ts and wa-session.ts rather than starting over, and added the new test file. Type check passes, and all 43 tests in the four WhatsApp-related files pass.\\n\\nWhat changed:\\n\\n1. **Brand menu.** A new session, a greeting, or…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:wa",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a7b41728959e1819d",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791807504788,
+      "queuedAt": 1791807504761,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP (CLAUDE.md is the rulebook: company separation, customer-facing money/loyalty/promos stay inside the issuing company, GST tender split — never concept.taxRate, any new path completing an order goes through completeOrder, brand names via formatBrandName, Simmer voice rules: no exclamation marks/emoji in Simmer-branded copy). OWNER DECISIO…",
+      "promptFramed": true,
+      "lastProgressAt": 1791807836646,
+      "tokens": 156625,
+      "toolCalls": 26,
+      "durationMs": 331858,
+      "resultPreview": "{\"findings\":[{\"id\":\"WA-RV-1\",\"severity\":\"high\",\"title\":\"A brand that has been switched off or deleted still takes WhatsApp orders from a session already on it\",\"file\":\"/home/user/servd/backend/src/adapters/whatsapp/conversation.ts\",\"scenario\":\"The 'can this brand take orders' rule only runs when the brand is picked (orderingBrands in pickBrand, chooseBrand and the reorder path). Later steps (brows…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "fix:wa",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a4add00915c4d26f4",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791807836652,
+      "queuedAt": 1791807836649,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all three findings against the code and they were…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP (CLAUDE.md is the rulebook: company separation, customer-facing money/loyalty/promos stay inside the issuing company, GST tender split — never concept.taxRate, any new path completing an order goes through completeOrder, brand names via formatBrandName, Simmer voice rules: no exclamation marks/emoji in Simmer-branded copy). OWNER DECISIO…",
+      "promptFramed": true,
+      "lastProgressAt": 1791808279639,
+      "tokens": 141260,
+      "toolCalls": 22,
+      "durationMs": 442987,
+      "resultPreview": "{\"summary\":\"I checked all three findings against the code and they were all real. All three are fixed, and none was rejected.\\n\\nWA-RV-1 (high), fixed. A brand that was switched off or deleted could still take an order from a session already on it. Fix in /home/user/servd/backend/src/adapters/whatsapp/conversation.ts:\\n- One shared brand rule, `LIVE_BRAND`: active, not deleted, shown on the storef…"
+    }
+  ],
+  "totalTokens": 435514,
+  "totalToolCalls": 73
+}

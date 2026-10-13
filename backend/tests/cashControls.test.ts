@@ -111,7 +111,12 @@ describe('petty cash: one movement writer, guarded doors', () => {
   let boxB: string
 
   it('a new box writes its opening float as a top-up movement and an audit row', async () => {
-    const r = await call(finA, 'POST', '/trustops/petty-cash/boxes', { name: 'Office box', custodianId: cashA.id, floatCents: 50_000, topUpLimitCents: 20_000 })
+    // An opening float above the box's own limit is an over-limit top-up:
+    // refused without a manager PIN, recorded as approved with one.
+    const noPin = await call(finA, 'POST', '/trustops/petty-cash/boxes', { name: 'Office box', custodianId: cashA.id, floatCents: 50_000, topUpLimitCents: 20_000 })
+    expect(noPin.statusCode).toBe(403)
+    expect(noPin.json().error.code).toBe('TOPUP_OVER_LIMIT')
+    const r = await call(finA, 'POST', '/trustops/petty-cash/boxes', { name: 'Office box', custodianId: cashA.id, floatCents: 50_000, topUpLimitCents: 20_000, managerOverridePin: PIN_A })
     expect(r.statusCode, r.body).toBe(201)
     box = r.json().id
     expect(r.json()).toMatchObject({ tenantId: A.tenantId, floatCents: 50_000, topUpLimitCents: 20_000 })

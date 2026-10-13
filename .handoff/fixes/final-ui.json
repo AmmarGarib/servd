@@ -1,0 +1,137 @@
+{
+  "summary": "Admin and tablet screens for the new pre-order and course-pacing behaviour (expo upcoming list, Courses page), then adversarially review and fix",
+  "agentCount": 3,
+  "logs": [],
+  "result": {
+    "built": {
+      "summary": "I updated the courses page, the admin expo page and the tablet KDS/expo screen for the new pre-order and course-pacing rules. The admin typecheck is clean. The tablet typecheck shows no errors in the file I changed, but two errors appear in tablet/src/lib/socket.ts because the borrowed rider/node_modules has no socket.io-client. I did not commit, push or run any build.\n\n**Courses page** (/home/user/servd/frontend/admin/src/app/orders/[id]/courses/page.tsx)\n- The page now also fetches GET /orders/:id (same query key as the order page, polled every 5 s) to read the order's status.\n- While the order is 'received', every Fire button is hidden and the page says \"Confirm and fire it from expo first\", with a link to /expo. Buttons are also hidden for cancelled, rejected and refunded orders.\n- The fire mutation now has onError, which shows the server's message (FIRE_FROM_EXPO, FIRE_ALL_NOT_ALLOWED, ORDER_ENDED, and so on) in a box that can be dismissed.\n- The `paced` lines returned by a fire are kept per course and shown as \"Fries fires at 14:59\" in Pakistan time. A line drops off the list once the pacing worker fires it.\n- A course is not shown as fully fired while it still has unfired pending lines. It reads \"paced — N dishes still to fire\" and those rows say \"waiting (paced)\". GET /orders/:id/courses does not return scheduledFireAt, so fire times are known only from this page's own fire response. After a reload, waiting lines show \"waiting (paced)\" with no time. Adding scheduledFireAt to that route's item select would fix this, but it is a backend file outside my scope.\n- \"Fire all now\" sends `{ course, fireAll: true }`. It shows only for managers and the expediter, taking the role from useAuthStore and using the same list as the server's FIRE_ALL_ROLES (MANAGERS plus 'expediter'). It appears when the course still has waiting lines and is either partly fired or the first course.\n\n**Admin expo page** (/home/user/servd/frontend/admin/src/app/expo/page.tsx)\n- The queue type now includes the optional `upcoming` list (scheduledFor, kitchenAt).\n- A full-width \"Upcoming pre-orders\" band sits above the columns, sorted by kitchenAt, and the header has a \"Pre-orders\" count.\n- Each card reads \"Pre-order for 19:30 — reaches the kitchen at 18:30\", or \"Tue 14 Oct, 19:30\" when it is not today. It also shows the fulfilment type, a paid chip, the customer and brand, and the items. There is no Fire button.\n- The existing paced-line clock (`fireClock`) now uses Pakistan time instead of the browser's local time.\n\n**Tablet KDS / expo screen** (/home/user/servd/tablet/app/(staff)/kds/index.tsx)\n- There is no separate tablet expo screen: this file is the expediter view and reads /expo/queue. The per-station screen kds/[stationId].tsx reads the station queue and was not changed.\n- An \"UPCOMING PRE-ORDERS\" band shows the same wording, sorted by kitchenAt, with no FIRE button. The header count adds \"· N pre-orders\".\n- Times use a fixed UTC+5 offset instead of Intl time zones, because I was not sure Hermes supports them. The paced \"fires at\" times on this screen are now in Pakistan time too.",
+      "filesChanged": [
+        "/home/user/servd/frontend/admin/src/app/orders/[id]/courses/page.tsx",
+        "/home/user/servd/frontend/admin/src/app/expo/page.tsx",
+        "/home/user/servd/tablet/app/(staff)/kds/index.tsx"
+      ],
+      "tests": "Admin: `cd /home/user/servd/frontend/admin && npx tsc --noEmit -p .` finished with exit 0 and no errors. Tablet: I typechecked only the changed file (kds/index.tsx) with a scratch tsconfig at /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/tabletkds/tsconfig.json, which resolves from /home/user/servd/rider/node_modules. It reported no errors in kds/index.tsx. The only two errors are in /home/user/servd/tablet/src/lib/socket.ts (TS2307 cannot find 'socket.io-client', and a resulting implicit-any): that package is not in rider/node_modules, and I did not change that file. No build, dev server, Expo CLI or production calls.",
+      "needsOtherFiles": "Optional: add `scheduledFireAt: true` to the item select in GET /orders/:id/courses (backend/src/modules/orders/routes.ts). The courses page could then show each paced line's fire time after a reload too; today it shows the time only from the fire response it got itself."
+    },
+    "review": [
+      {
+        "id": "CR-1",
+        "severity": "medium",
+        "title": "Courses page lets any staff fire an acknowledged pre-order days early, and sends a 'received' pre-order to expo where it can't be fired",
+        "file": "/home/user/servd/frontend/admin/src/app/orders/[id]/courses/page.tsx",
+        "scenario": "Acknowledging an order from the order page (received → confirmed) keeps a pre-order held. backend/src/modules/orders/service.ts:1351 says so, and GET /expo/queue lists confirmed rows as `upcoming`. Example: a pre-order for Tuesday 19:30 is acknowledged on Saturday. On /orders/<id>/courses, status is 'confirmed', so notFired is false. canFireHere is true, and showFire is true for course 1. Any role, including a line cook, sees 'Fire course →'. POST /fire-course (ALL_STAFF) calls releasePreOrder: the stock is taken and course 1 starts cooking on Saturday. The page never reads scheduledFor, so nothing says this is a pre-order. The reverse case is also wrong. For a held pre-order still in 'received', the banner says 'Confirm and fire it from expo first' and links to /expo. On expo that order sits in the Upcoming band, which has no Fire button, so the staff member is sent to a screen where they can't do what the banner asks.",
+        "fix": "Add scheduledFor to the order-detail query type. When scheduledFor - 60 min is later than now (the order is still held), hide 'Fire course' and 'Fire all now'. In their place show 'Pre-order for <pkWhen(scheduledFor)>, reaches the kitchen at <pkWhen(kitchenAt)>'. Use the same wording and Asia/Karachi helpers as expo. If an early fire is ever wanted, allow it for FIRE_ALL_ROLES only, behind a confirm step. For a held 'received' pre-order, change the notFired banner: say it moves to expo's Awaiting Fire at kitchenAt instead of telling staff to fire it from expo now. A matching backend guard on fire-course (no early release for non-managers) is advisable but sits outside this review's files."
+      },
+      {
+        "id": "CR-2",
+        "severity": "medium",
+        "title": "Tablet expo: a paced line labelled 'fires at HH:MM' is still tappable and is bumped before it is cooked",
+        "file": "/home/user/servd/tablet/app/(staff)/kds/index.tsx",
+        "scenario": "Course 1 is fired from expo. The burger fires now and the fries are paced: pending, with scheduledFireAt at 14:59. The order is in the FIRED lane. itemLabel shows 'Fries · fires at 14:59', and itemStatus('pending') maps it to 'new'. Each item row in OrderTicket still calls onItemAdvance, which sends PATCH /order-items/:id/status { status: 'bumped' }. ITEM_TRANSITIONS allows pending → bumped (backend/src/lib/orderStateMachine.ts:45). One tap by the expediter (a natural thing to do on a fired ticket) marks the fries done though they were never cooked. The pacing worker only picks up 'pending' lines, so the fries never fire. If every other line is bumped, the order goes to 'ready' and is handed off without them. The ticket's READY button (PATCH status 'ready') is also offered while paced lines are still waiting.",
+        "fix": "In card()/toTicket, give OrderTicket no item tap (or a no-op) for a line where status === 'pending' && scheduledFireAt is set. Alternatively, have onItemAdvance refuse those ids, using an id set built from q.data. In the FIRED lane, show the READY action only when no line is pending, or change it to say how many dishes are still paced."
+      },
+      {
+        "id": "CR-3",
+        "severity": "low",
+        "title": "Admin expo 'Fire all now' (and Fire) fail silently",
+        "file": "/home/user/servd/frontend/admin/src/app/expo/page.tsx",
+        "scenario": "The fireAll mutation (and the existing fire mutation) has no onError. Example: an expediter taps 'Fire all now' on the paced-notice toast or an In-progress card after the order has moved on. If someone marked it 'ready', the server answers 409 INVALID_TRANSITION, because alreadyFired only accepts confirmed/preparing. If every line was voided, it answers NOTHING_TO_FIRE. The button re-enables and nothing is shown, so the expediter believes the paced dishes went to the line. The courses page in this same change does show server errors.",
+        "fix": "Add onError to fireAll and fire that puts the ApiError message in a dismissible dark toast. Use kds-* classes, like the existing heldNotice and unroutedToast."
+      }
+    ],
+    "fix": {
+      "summary": "I checked all three findings against the backend code. All three are real, and all three are fixed in the allowed files only. I rejected none. Nothing was committed, pushed, built or run against production.\n\n**CR-1, courses page (confirmed).** On the backend, `GET /orders/:id` (`getOrder`) returns the full order row, including `scheduledFor` and `createdAt`. `transitionOrder` keeps an order held when it goes to `confirmed`, and `fireCourse` calls `releasePreOrder` for any course. Line-by-line:\n- `frontend/admin/src/app/orders/[id]/courses/page.tsx` now reads `scheduledFor` and `createdAt`.\n- The page treats an order as held when all of these are true: it was held when created (`scheduledFor` is more than `createdAt` + 60 min, the same rule as the server's `heldAtCreation`), `kitchenAt` (`scheduledFor` − 60 min) is still in the future, the status is `received` or `confirmed`, and none of its lines has been fired yet (any fire releases it).\n- While held, 'Fire course' and 'Fire all now' are hidden. A card says \"Pre-order for <pkWhen> — reaches the kitchen at <pkWhen>\", with the same wording and Asia/Karachi helpers as expo.\n- For a held `received` pre-order, the card says it moves to expo's Awaiting Fire at `kitchenAt` and is fired from there. The old \"Confirm and fire it from expo first\" banner now shows only for orders that are not held.\n- For a held `confirmed` pre-order, the server's FIRE_ALL_ROLES (manager tiers and the expediter) get \"Send to the kitchen early…\". It needs a second tap to confirm (\"Yes, send now\" / \"Keep it held\"), then fires course 1 with normal pacing.\n- Still open on the backend: `fire-course` itself does not stop a non-manager from releasing a pre-order early. That needs a guard in `backend/src/modules/orders/routes.ts` or `service.ts`, outside this scope.\n\n**CR-2, tablet expo (confirmed).** `OrderTicket` (`tablet/src/components/OrderTicket.tsx`, which I was not allowed to edit) calls `onItemAdvance` for every line. The backend allows a line to go from pending to bumped. In `tablet/app/(staff)/kds/index.tsx`:\n- The screen now builds two lookups, by line id and by order id, of paced lines (pending with a `scheduledFireAt`) on fired tickets, from the In-progress and Ready lists in `q.data`.\n- Tapping a paced line no longer bumps it. It shows an alert: \"Not cooked yet — X fires at HH:MM…\".\n- READY on a FIRED ticket is refused while paced lines are still waiting. The alert lists them and their fire times. For FIRE_ALL roles (read from `useSessionStore`) it also offers \"Fire all now\", which calls `POST /expo/orders/:id/fire { fireAll: true }`.\n- The \"fires at\" label now shows only in the FIRED lane. Unfired NEW tickets can carry a schedule set when the order was placed, and expo resets it when it fires the order.\n\n**CR-3, admin expo (confirmed).** The `fire` and `fireAll` mutations in `frontend/admin/src/app/expo/page.tsx` had no `onError`. The server's 409 INVALID_TRANSITION, NOTHING_TO_FIRE and 403 FIRE_ALL_NOT_ALLOWED answers were dropped without a message.\n- I added an `actionError` toast you can dismiss. It is dark (`bg-kds-card` / `border-kds-red` / `kds-subtext`), sits bottom-left so it doesn't cover the paced notice, has `role=\"alert\"`, shows the ApiError message and refreshes the queue.\n- It is wired to `fire` and `fireAll`, and also to `reject` and `handoff`, which had the same silent-failure gap.\n\n**Not fixed (outside the findings and these files):**\n- On the tablet, tapping a line on a NEW (unfired) ticket still bumps a line that was never cooked. That behaviour was already there before this change.\n- The admin expo page already contained emoji icons ('🪧 Expo Station', 🍽/🥡/🛵, 🔥, 🪑). That conflicts with the no-emoji rule, but I left it alone because cleaning it up was outside the findings.",
+      "filesChanged": [
+        "/home/user/servd/frontend/admin/src/app/orders/[id]/courses/page.tsx",
+        "/home/user/servd/frontend/admin/src/app/expo/page.tsx",
+        "/home/user/servd/tablet/app/(staff)/kds/index.tsx"
+      ],
+      "tests": "- **Admin:** `npx tsc --noEmit -p frontend/admin` finished with exit 0 and no errors.\n- **Tablet:** `npx tsc --noEmit -p tablet` cannot run in this checkout. `tablet/node_modules` is missing and `expo/tsconfig.base` cannot be found, so every file in the app fails with about 590 errors about missing modules and JSX settings. Instead I typechecked `tablet/app/(staff)/kds/index.tsx` in strict mode with a temporary tsconfig in the scratchpad. It used the admin's `@types/react`, `@tanstack/react-query` and `zustand`, and stubs for `react-native` (with a typed `Alert.alert`) and the expo modules. That file has zero errors. The three errors left come from my stubs, in files I didn't touch (`OrderTicket`, `Panel`, `socket.ts`). I deleted the scratch config afterwards.\n- No builds, dev servers or expo CLI were run, and nothing was called in production.",
+      "needsOtherFiles": "Backend, `backend/src/modules/orders/routes.ts` (POST /orders/:id/fire-course) or `service.ts` `fireCourse`: refuse to release a held pre-order early (status `confirmed`, `scheduledFor` minus PRE_ORDER_PREP_MS still in the future, nothing fired yet) unless the caller is in FIRE_ALL_ROLES. Today the courses page hides the button, but any staff token can still call the API directly. The same rule could apply to expo's POST /expo/orders/:id/fire, which also releases early. Optional, in `tablet/src/components/OrderTicket.tsx`: let a line be marked not tappable and let the READY label be changed, so the paced-line guard can be shown on the ticket instead of only enforced through an alert."
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:ui",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "aeefe27c3dbe9ea7a",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791793757481,
+      "queuedAt": 1791793757445,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I updated the courses page, the admin expo page and the tab…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. The backend now holds pre-orders until 60 min before scheduledFor and returns them from GET /expo/queue as an `upcoming` list (each row carries scheduledFor and kitchenAt), and POST /orders/:id/fire-course refuses any course while the order is 'received' (409 FIRE_FROM_EXPO), paces course 1 (returns `paced` lines wi…",
+      "promptFramed": true,
+      "lastProgressAt": 1791793906934,
+      "tokens": 116260,
+      "toolCalls": 26,
+      "durationMs": 149452,
+      "resultPreview": "{\"summary\":\"I updated the courses page, the admin expo page and the tablet KDS/expo screen for the new pre-order and course-pacing rules. The admin typecheck is clean. The tablet typecheck shows no errors in the file I changed, but two errors appear in tablet/src/lib/socket.ts because the borrowed rider/node_modules has no socket.io-client. I did not commit, push or run any build.\\n\\n**Courses pag…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:ui",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a851e9cd1d1ca3096",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791793906962,
+      "queuedAt": 1791793906936,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. The backend now holds pre-orders until 60 min before scheduledFor and returns them from GET /expo/queue as an `upcoming` list (each row carries scheduledFor and kitchenAt), and POST /orders/:id/fire-course refuses any course while the order is 'received' (409 FIRE_FROM_EXPO), paces course 1 (returns `paced` lines wi…",
+      "promptFramed": true,
+      "lastProgressAt": 1791794088472,
+      "tokens": 131332,
+      "toolCalls": 32,
+      "durationMs": 181509,
+      "resultPreview": "{\"findings\":[{\"id\":\"CR-1\",\"severity\":\"medium\",\"title\":\"Courses page lets any staff fire an acknowledged pre-order days early, and sends a 'received' pre-order to expo where it can't be fired\",\"file\":\"/home/user/servd/frontend/admin/src/app/orders/[id]/courses/page.tsx\",\"scenario\":\"Acknowledging an order from the order page (received → confirmed) keeps a pre-order held. backend/src/modules/orders/s…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "fix:ui",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "ae1a0794c0c0d52a7",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791794088480,
+      "queuedAt": 1791794088476,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I checked all three findings against the backend code. All …",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; staff onboard today. The backend now holds pre-orders until 60 min before scheduledFor and returns them from GET /expo/queue as an `upcoming` list (each row carries scheduledFor and kitchenAt), and POST /orders/:id/fire-course refuses any course while the order is 'received' (409 FIRE_FROM_EXPO), paces course 1 (returns `paced` lines wi…",
+      "promptFramed": true,
+      "lastProgressAt": 1791794279674,
+      "tokens": 137731,
+      "toolCalls": 38,
+      "durationMs": 191193,
+      "resultPreview": "{\"summary\":\"I checked all three findings against the backend code. All three are real, and all three are fixed in the allowed files only. I rejected none. Nothing was committed, pushed, built or run against production.\\n\\n**CR-1, courses page (confirmed).** On the backend, `GET /orders/:id` (`getOrder`) returns the full order row, including `scheduledFor` and `createdAt`. `transitionOrder` keeps a…"
+    }
+  ],
+  "totalTokens": 385323,
+  "totalToolCalls": 96
+}

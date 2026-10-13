@@ -1,0 +1,481 @@
+{
+  "summary": "Re-run the simulated shifts per area against the current code: confirm each original finding is fixed, adapt to intended behaviour changes, hunt regressions, then adversarially verify every new finding",
+  "agentCount": 6,
+  "logs": [
+    "ui: 3 low findings kept unverified"
+  ],
+  "result": [
+    {
+      "area": "ui",
+      "originals": [
+        {
+          "id": "UI-01",
+          "status": "fixed",
+          "evidence": "Cashier (code login) /pos shows the Flipd/Simmer/Stackd tabs and the menu. GET /concepts returns 200 (till view) and no toast appears. /floorplan shows T1-T4 (shots/cashier-d/_floorplan.jpg). Crawl: cashier 12 pages, 0 flagged."
+        },
+        {
+          "id": "UI-02",
+          "status": "fixed",
+          "evidence": "Ring-up is priced by the server: 'GST (15%, cash) PKR 180, Total PKR 1,380' and card 'GST (8%, card) PKR 60, Total 810'. Cash and card payments both complete without AMOUNT_MISMATCH (DB: total=138000 tax=18000 rate=15; card order 81000/6000/8). concept.taxRate was left at its default."
+        },
+        {
+          "id": "UI-03",
+          "status": "fixed",
+          "evidence": "With no brand tab tapped, the auto-selected Flipd was used: order 066c3c01 was created with conceptId=Flipd and there was no VALIDATION_ERROR."
+        },
+        {
+          "id": "UI-04",
+          "status": "fixed",
+          "evidence": "After full page reloads, 'Print final bill' opens 'FULL & FINAL BILL … TEST — NOT A FISCAL INVOICE FBR Fiscal Invoice: TEST-FBR-8A6630E7E3' (flow-pos-foh_management-d.json), not the UNAUTHORIZED JSON."
+        },
+        {
+          "id": "UI-05",
+          "status": "fixed",
+          "evidence": "The paid, completed till order 066c3c01 is listed in /expo/queue awaitingFire with a PAID badge. Expediter fired it, kitchen bumped #319F7, expo pressed '✓ Customer pickup'. Audit shows order.complete,expo.handoff (shots/expo3-after-handoff.png)."
+        },
+        {
+          "id": "UI-06",
+          "status": "fixed",
+          "evidence": "Marketing crawl: 22 pages, 3 flagged, all from GET /concepts. CRM, campaigns, promos, analytics, loyalty and the activity log load (API /crm/customers 200, /promos 200). Brands is still broken; that is reported as new finding R2-UI-03."
+        },
+        {
+          "id": "UI-07",
+          "status": "fixed",
+          "evidence": "Finance crawl: 40 pages, no 403 on reconciliation, exceptions, gift cards, capex, tip pools, petty cash, bank accounts, opex or procurement payables (/procurement/bills 200, /reconciliation/summary 200). The remaining /concepts toasts are reported as R2-UI-04."
+        },
+        {
+          "id": "UI-08",
+          "status": "fixed",
+          "evidence": "IT crawl: 13 pages, the only failure is GET /health 503 (expected locally, no toast). /webhooks/endpoints 200. The WhatsApp and Email connectors load."
+        },
+        {
+          "id": "UI-09",
+          "status": "fixed",
+          "evidence": "HR: /auth/users 200 and /tip-pools 200. Workforce, positions, staff meals and tip pools load. Only /scheduling fails, reported as R2-UI-03."
+        },
+        {
+          "id": "UI-10",
+          "status": "fixed",
+          "evidence": "boh crawl: 17 pages, inventory and recipes no longer 403. Only /menu-engineering is flagged (GET /concepts), reported in R2-UI-04."
+        },
+        {
+          "id": "UI-11",
+          "status": "fixed",
+          "evidence": "Admin of company B: /tenants/mine=['Harbour Bites Co'], /auth/users returns 3 users with none from company A, Workforce shows no GS Foods staff, POST /tenants/switch to A returns 404. The CEO of A sees no B users (flow-xco.json)."
+        },
+        {
+          "id": "UI-12",
+          "status": "fixed",
+          "evidence": "Out-of-module URLs show the 'You don't have access to this page' panel for every role. API: it and marketing GET /orders, foh_management /projections, it /riders, marketing /dispatch/board, hr /expo/queue and boh_management /crm/customers all return 403 'does not have access to this module'."
+        },
+        {
+          "id": "UI-13",
+          "status": "fixed",
+          "evidence": "The shell brand picker uses ?view=picker. Cashier, kitchen, expediter, foh and IT crawls show zero toasts. Individual pages still calling plain /concepts are reported separately (R2-UI-03/04)."
+        },
+        {
+          "id": "UI-14",
+          "status": "fixed",
+          "evidence": "The kitchen user with no stations sees every station of every brand on /kds (Flipd/Simmer/Stackd Grill+Cold). After assignment only Flipd Grill shows, and bump works."
+        },
+        {
+          "id": "UI-15",
+          "status": "fixed",
+          "evidence": "WhatsApp and Email are not linked for management roles, and typing the URL shows the no-access panel. GET /reports/sales returns 200 for foh_management and boh_management."
+        },
+        {
+          "id": "UI-16",
+          "status": "fixed",
+          "evidence": "With the storefront unreachable the editor now says 'The storefront (servd.pk) didn't answer, so the list of page sections can't load. Pop-ups and the Library still work' and there is no misleading API toast. With the catalogue served: edit, Save draft, submit (pending), CEO 'Approve and publish now', live=1, 1 SiteLayoutVersion. Note: the build still defaults to the production catalogue host."
+        },
+        {
+          "id": "UI-17",
+          "status": "fixed",
+          "evidence": "After the CEO issues 'New password', marketing signs in and lands on /account/password?first=1 'Choose your own password' (shots/invite-reissued-landing.png)."
+        },
+        {
+          "id": "UI-18",
+          "status": "fixed",
+          "evidence": "Payment modal h2 computed colour is rgb(255,255,255) on rgb(36,36,36)."
+        }
+      ],
+      "coverage": [
+        {
+          "journey": "Env: fresh DB servd_sim_ui_r2 (db push + 0_init raw SQL + terminal partial index), seed of 2 companies / 17 roles, API from current tree on :4200 started 15:04:38 UTC, Redis db 6",
+          "result": "pass",
+          "note": "API stopped at the end (PIDs 15863/15874/15891). Admin :3200 left running."
+        },
+        {
+          "journey": "Fiscal connector: CEO sets 'test' driver for company A via PUT /connectors/fiscal, then Test connection",
+          "result": "pass",
+          "note": "Company B left unconfigured; its go-live answers NOT_READY."
+        },
+        {
+          "journey": "Desktop crawl 1440x900 of every sidebar and workspace page for 18 logins (admin 129, management 121, owner 123, fnb_manager 71, foh_management 46, finance 40, boh_management 38, brand_manager 23, hr 23, marketing 22, boh 17, procurement 17, foh 14, it 13, cashier 12, expediter 11, kitchen 9, admin of company B 129)",
+          "result": "partial",
+          "note": "No crashes, no 404s, no horizontal scroll, no no-access panel on any sidebar page. Red 403 toasts remain on 10 pages (R2-UI-02/03/04)."
+        },
+        {
+          "journey": "Out-of-module URL probes (30 per role): no-access panel and API 403",
+          "result": "pass",
+          "note": "/ceo/approvals is open to all roles by design (shows only the caller's items). /tenants is a 404 page."
+        },
+        {
+          "journey": "Phone 390x844: admin (10 pages incl. /ceo/approvals, /workforce, /storefront, /riders, /connectors/pos), cashier (6 incl. /pos, /pos/shift, /floorplan), kitchen (/kds…), expediter (/expo…)",
+          "result": "pass",
+          "note": "No horizontal scroll, no failed calls."
+        },
+        {
+          "journey": "Cashier till: open shift, menu without brand tap, modifiers, server-priced ring-up",
+          "result": "fail",
+          "note": "Crash after ring-up every time (R2-UI-01)."
+        },
+        {
+          "journey": "Till recovery path: Open tickets, pre-bill (PB-n), cash with change, Payment complete, final bill",
+          "result": "pass",
+          "note": "PB-1..4 per company. Final bill 'FULL & FINAL'. Fiscal held before go-live, TEST-FBR-… after."
+        },
+        {
+          "journey": "Card machine (test terminal): charge, manager void/cancel and cash during the active charge, cancel, retry, approve",
+          "result": "pass",
+          "note": "409 TERMINAL_CHARGE_ACTIVE on void, cancel and payment. Approved charge records card •4242 and files TEST fiscal."
+        },
+        {
+          "journey": "Manager-only voids/cancels (UI + API): no PIN, wrong PIN, company-B manager PIN, own cashier PIN, valid manager PIN",
+          "result": "pass",
+          "note": "403 MANAGER_OVERRIDE_REQUIRED / INVALID_MANAGER_PIN. Void reprices (1897.50 to 1035). approverId recorded in audit. Company B manager gets 404 on A's order."
+        },
+        {
+          "journey": "Money taken banner: cashier takes cash for a pickup order, manager cancels, banner, refund from the cashier's drawer",
+          "result": "pass",
+          "note": "Order fixture created via ingestOrder (storefront customer login needs WhatsApp). Ledger Dr 1110 / Cr 1015 172500, balanced, company A, no fiscal doc."
+        },
+        {
+          "journey": "KDS / Expo: kitchen with no stations, assignment in Workforce, bump, expo fire and hand-off of a PAID till order",
+          "result": "pass"
+        },
+        {
+          "journey": "Close shift with counted cash + Z-report + ledger",
+          "result": "partial",
+          "note": "foh_management balanced (variance 0). Cashier short 80 posts 8010 correctly, but the Z-report screen is misleading (R2-UI-05). Orphan tickets from the crash forced 'Close anyway'."
+        },
+        {
+          "journey": "CEO go-live via UI (POS ids, Test connection, GO LIVE, Release all held)",
+          "result": "pass",
+          "note": "Held sale became filed TEST-FBR-CEF718057D."
+        },
+        {
+          "journey": "Finance → Voided pre bills",
+          "result": "pass",
+          "note": "4 pre-bills, statuses Reprinted / Became FnF bill. Company B sees none."
+        },
+        {
+          "journey": "Invite (foh_management /team) → CEO /ceo/approvals inline Approve → new cashier signs in by code",
+          "result": "pass"
+        },
+        {
+          "journey": "CEO 'New password' → user forced to /account/password?first=1",
+          "result": "pass"
+        },
+        {
+          "journey": "LOGIN_NEEDS_COMPANY on approving a company-less pending login (API)",
+          "result": "pass",
+          "note": "422 as designed. Fixture user inserted directly."
+        },
+        {
+          "journey": "Owner limits (CEO workspace visible; PUT role-modules / promote users)",
+          "result": "pass",
+          "note": "All 403."
+        },
+        {
+          "journey": "Company separation (admin B: tenants/mine, users, workforce, orders, approvals, fiscal docs, pre-bills, switch)",
+          "result": "pass"
+        },
+        {
+          "journey": "Storefront editor: storefront unreachable message; then edit servd:home, save, submit, CEO approve and publish",
+          "result": "pass",
+          "note": "Catalogue served from the current catalog.ts via Playwright route."
+        },
+        {
+          "journey": "Riders → Fleet tab (admin, foh_management, fnb_manager)",
+          "result": "pass",
+          "note": "Toggling an agreement not exercised (needs a two-company operator)."
+        },
+        {
+          "journey": "Tablet and mobile apps, /pos/waiter table-service payment, gift card/loyalty at the till, reservations, payroll",
+          "result": "not_run"
+        }
+      ],
+      "envNotes": "The DB, API on :4200 and Redis db 6 were all mine. API from the uncommitted tree, started 15:04:38 UTC and stopped about 15:50 UTC. The admin build on :3200 was not touched. Fixture edits made directly in the DB: (1) one storefront pickup order created with the real ingestOrder (the storefront customer sign-in needs WhatsApp); (2) one company-less pending user inserted for the LOGIN_NEEDS_COMPANY check; (3) marketing A's password hash reset after the reissue test so later logins worked. Everything else went over HTTP as real staff (password or code login; codes read from phone_otps). Watch the code-login limits: a 30 s cooldown and 20 codes per day per phone; cashier used about 16. The only ERROR in the API log is the R2-UI-07 500. The 503s are /health, degraded because WhatsApp/SMTP/R2 are unset (expected). Evidence: /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/ui-r2/ (crawl-*.json/log, flow-*.json, card*.log, shots/, api-clean.log). Scripts: /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/pw/r2/*.mjs and /home/user/servd/backend/.sim/ui-r2/{seed,rawsql,sforder}.ts.",
+      "confirmed": [
+        {
+          "id": "R2-UI-01",
+          "severity": "blocker",
+          "title": "Web till crashes ('Client error … reading filter') after every 'Ring up and send to kitchen'; the order is fired but the cashier loses the screen",
+          "repro": "Cashier (code login) or foh_management: /pos/shift, open the shift with float 5000, then /pos. Tap 'Flipd Club Sandwich', pick Brioche + Extra cheese, Add, then Charge, then 'Ring up and send to kitchen'. Same result at 390x844 and with the Card tender. API equivalent: POST /api/v1/pos/orders {conceptId, idempotencyKey, paymentMethod:'cash', items:[…]} returns 201 with keys id…rawPayload, items and NO 'payments' field.",
+          "expected": "After ring-up the modal moves to step 2 (take payment) for the new order.",
+          "actual": "The whole page is replaced by the error boundary 'Client error TypeError: Cannot read properties of undefined (reading 'filter')' (console: 'Dashboard error boundary caught …'). The order is already created and sent to the kitchen (status received, on Expo 'Awaiting fire'), and the cart has been cleared. Reproduced 5 of 5 times (cashier desktop x2, foh_management desktop, cashier phone, cashier card). Only workaround: reload /pos, then Open tickets, then find the ticket. The orphaned tickets then block shift close ('1 unpaid ticket … Close anyway'). A cashier who re-rings sends a duplicate ticket to the kitchen.",
+          "evidence": "shots/pos-cashier-d-6-Charge_ring_up_server_priced_.png; flow-pos-cashier-d.json console; API probe output 'POST /pos/orders 201 keys: [...,'items'] NO payments field'; orphan tickets f0afa371, d7287017, 8c08f71a in DB; close 409 OPEN_TICKETS (flow-close-foh_management). All under /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/ui-r2/",
+          "suspectedCause": "frontend/admin/src/components/pos/PaymentModal.tsx:103-113 calls setOrder(r) with the ring-up response, then storedQuote(order) runs, which calls paidCentsOf, which reads order.payments.filter (frontend/admin/src/components/pos/tillApi.ts:126-129). backend/src/modules/pos/service.ts:314-317 (and the idempotent replay at :153) return the order with include { items } only, so 'payments' is undefined. TillOrder (tillApi.ts:65) declares payments as required.",
+          "suggestedFix": "Return payments from createPosOrder (include: { items: { include: { modifiers: true } }, payments: { select: { id, method, amountCents, status } } } in both return paths), and make paidCentsOf tolerate a missing array ((order.payments ?? [])). Add a test that ring-up followed by payment works in the admin till.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "blocker",
+            "reason": "The finding is real. None of the intended changes explain it, and the setup was not at fault: cashier, foh_management, cash and card all fail the same way. backend/src/modules/pos/service.ts createPosOrder returns the order with only `include: { items: { include: { modifiers: true } } }`. That is true for both the fresh path (around line 314) and the idempotent-replay path (around line 153), so the 201 body has no `payments` key. In frontend/admin/src/components/pos/PaymentModal.tsx, ring-up's onSuccess calls clearCart() and then setOrder(r). The next render runs `const stored = order ? storedQuote(order) : null` (line 113). That calls paidCentsOf, which reads `order.payments.filter` (tillApi.ts:126-129), and it throws TypeError. TillOrder declares `payments` as required, but api.post only casts the JSON, so the type checker cannot catch the gap. The throw happens during render, and the only error boundary is the root frontend/admin/src/app/error.tsx, so the whole page is replaced, as the finding says. By then the order is already created with status 'received' (fired to the kitchen) and the cart is cleared. This is a regression from the uncommitted till-UI wave: the committed (HEAD) PaymentModal.tsx has no storedQuote/paidCentsOf. The backend's own step-2 calls work (GET /pos/orders/:id/quote returns 200), so the fault is only the missing field crossing the API contract. The suggested fix is right: include `payments` in both createPosOrder return paths, and make paidCentsOf tolerate a missing array. Severity stays blocker: every ring-up through the web till's main Charge flow crashes 100% of the time. Each one leaves an unpaid fired ticket that blocks shift close, and a cashier who rings again sends a duplicate ticket to the kitchen. The only workaround is reload, then Open tickets.",
+            "evidence": "The verifier is /home/user/servd/backend/.sim/ui-r2/verify/zzverify_ui_0.test.ts. I ran it as a temporary copy at tests/zzverify_ui_0.test.ts, then deleted the copy. It used DB servd_test_rv_ui_0 and a private redis-server on port 6426, db 26 (since shut down). All 6 tests passed. Results:\n(1) POST /pos/orders, run as cashier/cash, cashier/card and foh_management/cash, with Nihari plus an 'Extra cheese' modifier, paymentMethod and idempotencyKey set. Each returned 201 with keys \"arrivedAt,…,id,…,items,…,walletAmountCents\" and no 'payments' key. The DB rows have status 'received', totalCents 184000 (cash) or 172800 (card), and shiftId set.\n(2) The test fed each 201 body to the REAL admin storedQuote() from frontend/admin/src/components/pos/tillApi.ts, with only lib/api mocked. Every time it threw \"TypeError: Cannot read properties of undefined (reading 'filter')\". The same object with `payments: []` gave dueCents equal to totalCents.\n(3) An idempotent replay with the same key returned the same order id, also without 'payments', and storedQuote threw the same error.\n(4) GET /pos/orders/:id/quote returned 200 {dueCents:184000, paidCents:0}. Company B's cashier got 404 on A's order.\n(5) POST /pos/shifts/:id/close returned 409 OPEN_TICKETS (\"3 unpaid ticket(s) worth PKR 5408…\").\nCode: service.ts createPosOrder (around lines 150-153 and 314-317) includes only `items`. PaymentModal.tsx:103-113 does setOrder(r), then storedQuote(order). tillApi.ts:65 declares payments as required, and :126-129 calls order.payments.filter. `git show HEAD:frontend/admin/src/components/pos/PaymentModal.tsx` has no storedQuote, so this is a working-tree regression. The only error boundary is frontend/admin/src/app/error.tsx."
+          }
+        },
+        {
+          "id": "R2-UI-02",
+          "severity": "high",
+          "title": "Procurement role cannot receive deliveries: Receiving page (the one receiving path) is managers-only",
+          "repro": "Sign in as procurement (procurement.a.audit@gsfoods.pk). Sidebar: Procurement, then Receiving (/procurement/receiving). API: GET /api/v1/crosschecks/receiving, /receiving/open-pos and /receiving/suppliers, and POST /crosschecks/receiving, all with the procurement token.",
+          "expected": "The buyer who holds the 'procurement' module can see open POs and log a GRN (CLAUDE.md: procurement = 'supplier chat, POs, inventory receipt'; moduleCatalog calls this 'one receiving path').",
+          "actual": "Page loads empty with three red toasts \"Role 'procurement' is not allowed for this resource\". GET returns 403 for procurement and 200 for management. POST returns 403. /permissions/me for procurement = ['procurement','inventory','reports'].",
+          "evidence": "crawl-procurement-d.log (/procurement/receiving: 403 /crosschecks/receiving/open-pos, /suppliers, /receiving); procapi output: '/crosschecks/receiving procurement 403 management 200', 'POST receiving as procurement 403'",
+          "suspectedCause": "backend/src/modules/crosschecks/routes.ts:43,54,65,77 use requireAuth(...MANAGERS), while backend/src/lib/moduleAccess.ts:146 gives procurement the procurement module that links /procurement/receiving (frontend/admin/src/lib/moduleCatalog.ts:105).",
+          "suggestedFix": "Allow the procurement role (or the procurement module holders via requireModule) on the receiving GET/POST routes, scoped to the active company. Add a two-company test.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "low",
+            "reason": "The finding's main claim and its suggested fix are wrong. The buyer being refused POST /crosschecks/receiving is intended under owner decision 27 (2026-09-27): \"only manager tiers may receive (MANAGERS)\", and whoever raised a PO cannot receive it (CEO exempt). This is written down in four places:\n- `backend/src/modules/procurement/receiving.ts` (header)\n- `backend/src/modules/crosschecks/routes.ts:22-28` (\"Manager tiers only (owner decision 27) and deliberately not behind the procurement module\")\n- `frontend/admin/src/app/procurement/receiving/page.tsx` (header comment)\n- `backend/tests/receiving.test.ts:216`, which asserts that non-managers get 403\n\nThe PO receive route, POST /procurement/purchase-orders/:id/receive, is MANAGERS-only too. This is separation of duties: the buyer raises the PO and someone else takes the goods in. So \"allow procurement on the receiving POST\" must not be done.\n\nA smaller defect is real and survives:\n- The admin shows the buyer a page that cannot work for them. The procurement module lists \"Receiving\" (`/procurement/receiving`, `moduleCatalog.ts:105`). `canOpenPath` lets the procurement role open it. The Procurement page shows a \"Receive\" action on sent/partial POs, with no role check (`procurement/page.tsx:408-409`), and that action leads to the same page.\n- Even the READ endpoints the page calls (GET /crosschecks/receiving, /receiving/open-pos, /receiving/suppliers) return 403. So the page loads empty with three red toasts.\n- This breaks the wave-3 contract in CLAUDE.md: \"A role whose modules include M can use M's pages (every read 200 …)\" / \"the sidebar and the server agree\".\n- The role copy is also stale against decision 27: `appRoles.ts:60` says \"Supplier chat, POs, inventory receipt\" and `workforce/page.tsx:112` says \"inventory receiving\".\n\nWhy low:\n- No data leak and no money effect. The server correctly enforces the owner's rule.\n- The buyer is simply shown a dead link and button.\n\nThe right fix is one of these, not opening receiving to the buyer:\n- hide the Receiving sub-link and the \"Receive\" action from non-manager roles and fix the role blurbs, or\n- open only the GETs to PROCUREMENT_TEAM (read-only dock view, company-scoped), keeping POST at MANAGERS.",
+            "evidence": "Reproduced with `/home/user/servd/backend/.sim/ui-r2/verify/zzverify_ui_1.test.ts`. It ran temporarily from `tests/` against DB servd_test_rv_ui_1 and Redis db 13; db 27 does not exist because this server has 16 dbs. The test file was moved out of `tests/` afterwards and the DB dropped. Setup: company A with procurement, management and boh_management users, and a supplier. The buyer raised a PO under the threshold; it was approved and marked sent.\n\nResults:\n- `effectiveModulesForUser(procurement)` = [procurement, inventory, reports].\n- buyer GET /crosschecks/receiving, /receiving/open-pos, /receiving/suppliers: all 403 \"Role 'procurement' is not allowed for this resource\".\n- management and boh_management: 200 on the same three.\n- buyer GET /inventory: 200. buyer GET /procurement/purchase-orders: 200.\n- buyer POST /crosschecks/receiving: 403 with a PO, 403 without one.\n- buyer POST /procurement/purchase-orders/:id/receive: 403.\n- boh_management (not the raiser) POST /crosschecks/receiving: 201.\n\nCode:\n- `crosschecks/routes.ts:43,54,65,77` use `requireAuth(...MANAGERS)`, with the comment \"Manager tiers only (owner decision 27) and deliberately not behind the procurement module\".\n- `receiving.ts` header: \"Owner decision 27 (2026-09-27): … only manager tiers may receive (MANAGERS); whoever raised the PO cannot receive it\".\n- `procurement/routes.ts:22`: \"MANAGERS: receiving (receiveGoods' own rule)\".\n- `tests/receiving.test.ts:216-218` asserts a non-manager gets 403.\n\nUI inconsistency:\n- `moduleCatalog.ts:105` puts Receiving under the procurement module.\n- `canOpenPath` (`moduleCatalog.ts:365`) admits any holder of the module.\n- `procurement/page.tsx:408-409` pushes a \"Receive\" action for sent/partial POs regardless of role, routing to `/procurement/receiving?poId=`.\n- `appRoles.ts:60` describes procurement as \"Supplier chat, POs, inventory receipt\".\n- The finding's \"CLAUDE.md\" quote really comes from `appRoles.ts`; CLAUDE.md does not say it."
+          }
+        },
+        {
+          "id": "R2-UI-03",
+          "severity": "high",
+          "title": "HR Rota and Marketing Brand Editor are unusable: both read manager-only GET /concepts and get an empty brand list",
+          "repro": "(a) Sign in as hr, then HR, then Time, then Rota (/scheduling). (b) Sign in as marketing or brand_manager, then Marketing, then Brand & site, then Brands (/marketing/brands).",
+          "expected": "HR picks a brand and sees and edits its rota. Marketing edits brand copy and description (CLAUDE.md: Concept.description is edited 'in admin → Marketing → Brands').",
+          "actual": "(a) Red toast \"Role 'hr' is not allowed for this resource\". The 'Select brand…' dropdown is empty, so the page stays on 'Select a brand to see its rota'. (b) Red toast. The Brand Editor list is empty except '+ Add brand', showing 'Select a brand to edit'. GET /concepts?includeInactive=1 returns 403. PATCH /concepts/:id is MANAGERS-only too, so marketing cannot edit a brand at all.",
+          "evidence": "shots/hr-d/_scheduling.jpg; shots/marketing-d/_marketing_brands.jpg; crawl-hr-d.log, crawl-marketing-d.log, crawl-brand_manager-d.log (403 GET /concepts, /concepts?includeInactive=1)",
+          "suspectedCause": "frontend/admin/src/app/scheduling/page.tsx:48 and frontend/admin/src/app/marketing/brands/page.tsx:120 call plain api.get('/concepts'). backend/src/modules/concepts/routes.ts:78-90 (conceptView) only allows managers ('full') and CASHIERS ('till') and throws ForbiddenError for every other role. PATCH /:id at routes.ts:367 is MANAGERS-only.",
+          "suggestedFix": "Use GET /concepts?view=picker for brand pickers (rota), and give the 'brands' module holders a brand-editor view plus a module-gated PATCH of the marketing fields. Or move these pages to an endpoint gated by their module.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "high",
+            "reason": "The finding holds. It is not one of the intended changes, and it is not a test-setup mistake. hr holds the 'scheduling' module and marketing/brand_manager hold 'brands', both by default (backend/src/lib/moduleAccess.ts DEFAULT_MODULE_ACCESS, and the HR 'time' and Marketing 'brand' sections in lib/workspaces.ts). The admin page guard canOpenPath lets each of these roles open /scheduling and /marketing/brands.\n\nBoth pages build their brand list from plain GET /concepts. In backend/src/modules/concepts/routes.ts, conceptView() (lines ~78-90) gives MANAGERS the 'full' view and CASHIERS the 'till' view, and throws ForbiddenError(\"Role 'X' is not allowed for this resource\") for every other role. The global QueryCache onError in frontend/admin/src/components/ui/Providers.tsx turns that 403 into a red toast, because neither query sets meta.background.\n\nThe rest of the backend would serve these users:\n- GET /scheduling uses ALL_STAFF, and the scheduling writes use ROTA_PLANNERS, which includes hr. The brand dropdown is the only thing blocking the rota.\n- PATCH /concepts/:id is requireAuth(...MANAGERS). That is a role gate, not a module gate, so not even a CEO moduleAllow grant lets marketing or brand_manager edit a brand. Nothing else in the backend writes Concept.description.\n\nThis breaks two documented rules in CLAUDE.md:\n- Concept.description is to be edited 'in admin → Marketing → Brands'.\n- Wave 3: 'a role whose modules include M can use M's pages (every read 200, the workspace's normal writes work)'.\n\nThe routes.ts comment by STOREFRONT_CONCEPT_SELECT shows the authors knew the Brand Editor needs the full row, but no view was ever given to the holders of the 'brands' module.\n\nSeverity: (b) has no workaround for marketing or brand_manager; only a manager or the CEO can edit brand copy. (a) has a hidden partial workaround. The Rota page seeds conceptId from the shell brand filter (useBrandFilter, which BrandPicker fills from ?view=picker). So an HR user who first picks a brand in the sidebar and then opens Rota gets a working rota. The in-page dropdown stays empty and the toast still shows. High is kept because a whole workspace page is dead for its owning roles before onboarding. No money, tax or tenant-isolation impact; company separation stays intact (hrB gets 404 on company A's rota).",
+            "evidence": "Reproduced with /home/user/servd/backend/.sim/ui-r2/verify/zzverify_ui_2.test.ts (config vitest.ui2.config.ts in the same folder). It ran against the new DB servd_test_rv_ui_2 and uses the real auth middleware, the concepts and scheduling routes, and the admin canOpenPath. 13/13 assertions confirmed the finding.\n\nRedis db 28 is out of range on this server (16 dbs). The Redis error was logged but changed nothing, because these routes do not use Redis. No tracked file was changed and nothing was placed in tests/.\n\nResults:\n- hr GET /concepts -> 403 {\"code\":\"FORBIDDEN\",\"message\":\"Role 'hr' is not allowed for this resource\"}\n- hr GET /scheduling?conceptId=<A>&weekStart=2026-10-05 -> 200. The rota works once a brand id is known. hrB on company A's brand -> 404.\n- hr GET /concepts?view=picker -> 200, own company only (the suggested fix path works).\n- marketing and brand_manager GET /concepts?includeInactive=1 -> 403. GET /concepts/:id -> 403.\n- marketing and brand_manager PATCH /concepts/:id {description} -> 403, and the description is unchanged in the DB.\n- marketing and brand_manager GET /concepts?view=storefront -> 200, but the narrow row has no description field, so it cannot fill the Brand Editor.\n- Controls: a manager reads the full list (200) and PATCHes (200); a cashier gets the till list (200).\n- effectiveModulesForUser: hr has scheduling, and marketing/brand_manager have brands. canOpenPath('/scheduling','hr',…) and canOpenPath('/marketing/brands',role,…) are both true.\n\nFront-end callers:\n- frontend/admin/src/app/scheduling/page.tsx:48: api.get('/concepts'), queryKey ['concepts'], no meta.background.\n- frontend/admin/src/app/marketing/brands/page.tsx:120: api.get('/concepts?includeInactive=1').\n- BrandPicker uses its own key ['concepts','brand-picker'], so it does not mask the problem through the cache."
+          }
+        },
+        {
+          "id": "R2-UI-04",
+          "severity": "medium",
+          "title": "Seven more in-sidebar pages still show a red 403 toast and an empty brand/user filter on load",
+          "repro": "Open each as the role named: finance: /finance/projections, /accounting/food-cost, /accounting/receivables, /accounting/fixed-assets. marketing and brand_manager: /complaints, /reviews. boh: /menu-engineering. procurement: /procurement/monitor.",
+          "expected": "No error toast on load. Brand filters list the company's brands.",
+          "actual": "Red toast \"Role '<role>' is not allowed for this resource\" from GET /concepts (403, sent twice because of the retry), or from GET /auth/users on /procurement/monitor. The main lists load (e.g. /complaints?limit=100 and /reviews?limit=100 return 200), but the brand filter is empty ('All Concepts' only).",
+          "evidence": "crawl-finance-d.log, crawl-marketing-d.log, crawl-brand_manager-d.log, crawl-boh-d.log, crawl-procurement-d.log; shots/finance-d/_accounting_food_cost.jpg",
+          "suspectedCause": "api.get('/concepts') in frontend/admin/src/app/finance/projections/page.tsx:107, accounting/food-cost/page.tsx:48, accounting/receivables/page.tsx:51, accounting/fixed-assets/page.tsx:40, complaints/page.tsx:137, reviews/page.tsx:60, plus the menu-engineering page and procurement/monitor (GET /auth/users). Backend conceptView refuses non-manager, non-till roles (backend/src/modules/concepts/routes.ts:87-89).",
+          "suggestedFix": "Switch these filters to /concepts?view=picker (any staff, own companies' active brands), or mark them meta.background. For /procurement/monitor, use a module-scoped user list.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "medium",
+            "reason": "The finding is real. Each page named is in the role's sidebar by default and passes the admin page guard. The page's main reads return 200. But the page also makes a plain GET /concepts call, which only managers and till roles may make (the procurement monitor makes GET /auth/users instead, which only managers and HR may make). For these roles that call returns 403 \"Role 'X' is not allowed for this resource\". The admin's global error handler (Providers.tsx) turns any 403 into a red toast unless the query is marked meta.background, and none of these queries are. The default retry: 1 setting means the request goes out twice.\n\nThis is not one of the intended changes. CLAUDE.md wave 3 says \"a role whose modules include M can use M's pages (every read 200…)\". The fix already used elsewhere, GET /concepts?view=picker, works for every one of these roles and returns only the caller's own company's brands. It is already in use on /orders, /accounting/menu-engineering, /accounting/recipes, /promos, /discounts and /analytics; these 8 pages were missed. The finding says \"seven\" but lists 8 pages. The test setup is not the cause either: the test uses the real role defaults, the real requireAuth and module gate, and the real canOpenPath.\n\nSeverity stays medium. Most of the impact is a toast and an empty filter, but a few functions really break:\n- /finance/projections: the page creates the first scenario only when the brand list is non-empty. A finance user in a company with no scenario yet is stuck on \"Creating default scenario…\" for good. Where a scenario exists, finance cannot add a brand that is missing from it.\n- /accounting/receivables and /accounting/fixed-assets: the optional Brand dropdown is empty, so finance cannot tie an invoice or asset to a brand.\n- /procurement/monitor: the staff filter and the supplier editor's assigned-staff dropdown are empty.\n- /menu-engineering (boh): no brand names and no brand filter.\n- /complaints and /reviews: the filter only shows \"All concepts\".\n\nTwo side notes that are not part of this finding:\n- The staff \"new complaint\" form posts to a route that needs a customer login (POST /complaints).\n- The manual-review form gets 400 \"orderId required\" for every role.\nBoth forms were already broken before this issue.",
+            "evidence": "Test: /home/user/servd/backend/.sim/ui-r2/verify/zzverify_ui_3.test.ts. Run against servd_test_rv_ui_3, with Redis db 29 on a private redis-server on port 6403, because the shared Redis has only 16 dbs. 18/18 passed. The temporary copy tests/zzverify_ui_3.test.ts has been deleted.\n\nWhat the test showed, with two companies A and B, A having two brands:\n- finance: /projections, /recipes/food-cost, /accounting/receivables and /accounting/fixed-assets all return 200. GET /concepts returns 403 {\"code\":\"FORBIDDEN\",\"message\":\"Role 'finance' is not allowed for this resource\"}.\n- marketing and brand_manager: /complaints?limit=100 and /reviews?limit=100 return 200; GET /concepts returns 403.\n- boh: /recipes returns 200; GET /concepts returns 403.\n- procurement: /procurement/suppliers, /procurement/purchase-orders?limit=200 and /tenants/mine return 200; GET /auth/users returns 403 \"Role 'procurement' is not allowed…\".\n- Page guard: canOpenPath() is true for every role and page pair, using the modules from /permissions/me (projections, accounting, complaints, reviews, recipes, procurement).\n- Fix path: GET /concepts?view=picker returns 200 for all 5 roles with exactly A's two brands and never B's.\n- Control: management and fnb_manager get 200 from plain /concepts.\n- Projections: finance's GET /projections returns []. POST /projections with the picker ids returns 200, so the picker ids are enough for the auto-create.\n\nWhere it happens in the code:\n- backend/src/modules/concepts/routes.ts:87-89. conceptView() throws ForbiddenError for roles outside MANAGERS and CASHIERS (MANAGERS and CASHIERS are defined in auth/middleware.ts:233-234).\n- auth/routes.ts:1563. GET /users is restricted to requireAuth(...MANAGERS,'hr').\n- frontend/admin/src/components/ui/Providers.tsx. queryCache.onError shows a toast for every 403 unless meta.background is set; the default is retry: 1.\n- Plain calls with no meta: finance/projections/page.tsx:107, accounting/food-cost/page.tsx:48, accounting/receivables/page.tsx:51, accounting/fixed-assets/page.tsx:40, complaints/page.tsx:137, reviews/page.tsx:60, menu-engineering/page.tsx:56, procurement/monitor/page.tsx:84.\n- Role defaults in lib/moduleAccess.ts:142-174 give each role the module behind its page.\n- finance/projections/page.tsx:128-136 auto-creates the first scenario only when concepts.length > 0. With no scenario, page.tsx:163 keeps showing \"Creating default scenario…\"."
+          }
+        },
+        {
+          "id": "R2-UI-05",
+          "severity": "medium",
+          "title": "Admin Z-report overstates sales with money taken on a cancelled ticket and hides refunds; variance shown without sign",
+          "repro": "The cashier's shift takes cash for a storefront pickup order (POST /pos/payments, 1,725) and rings and sells one till order (1,380 cash). A manager cancels the pickup order on /orders/:id and refunds the 1,725 through the 'Money taken' banner. The cashier closes on /pos/shift counting 6,300.",
+          "expected": "The Z-report screen shows sales of 1,380 for 1 order, a line for refunds or money handed back (1,725), and the variance as 'short PKR 80', so the drawer reconciles on screen.",
+          "actual": "Screen: 'Cash Sales PKR 3,105 … Total Sales PKR 3,105 · Orders 1 · Expected Cash PKR 6,380 · Actual 6,300 · Variance PKR 80'. There is no refund line and no sign on the variance. The API returns voids=172500, refundsCents=172500, cancelledPaid.cashCents=172500, netRevenue=138000 and cashVariance=-8000, but the page does not render them. The ledger is correct: shift.close 1015 Dr 138000 + Dr 172500 / 1110 Cr 172500 / 2030 Cr 18000 / 4004 Cr 120000 / 8010 Dr 8000, balanced; the refund entry is Dr 1110 / Cr 1015 172500.",
+          "evidence": "flow-close-cashier.json; z.mjs output for shift 89c373e4 (cashSales 310500, voids 172500, netRevenue 138000, cashVariance -8000); shots/close-cashier.png",
+          "suspectedCause": "frontend/admin/src/app/pos/shift/page.tsx:168-187 (ZReportView rows use cashSales/totalSales and Math.abs(cashVariance). They omit refundsCents/cashRefundsCents/cancelledPaid/netRevenue). Backend getZReport (backend/src/modules/pos/service.ts:1224-1243) counts cancelled-ticket receipts in cashSales/totalSales.",
+          "suggestedFix": "Show 'Money taken on cancelled tickets' and 'Cash refunds' lines, net sales (netRevenue/netCents), and the variance as 'short'/'over'. Consider excluding cancelledPaid from cashSales in getZReport.",
+          "verdict": {
+            "verdict": "real",
+            "severity": "low",
+            "reason": "The finding holds for the admin /pos/shift Z-report screen. It is not one of the intended changes and not a test-setup mistake. In the F7 fix, ZReportView only shows the cancelled-ticket money through a \"Refund due\" banner, and that banner appears only while refundDueCents > 0. Once a manager hands the money back, the screen has nothing that explains it. ZReportView has no rows for refunds (refundsCents / cashRefundsCents), net sales (netRevenue / netCents), opening float or cancelledPaid. It also shows the variance as fmtPkrWhole(Math.abs(cashVariance)), red whenever it is not zero, so you cannot tell short from over. A variance inside tolerance (isBalanced=true) is red too.\n\nI rate it lower than reported because it is display-only on one screen that disappears after close. The API, the ledger, /reconciliation and the emailed shift summary are all correct: the last two show opening float, cash refunds and refunds, and a signed variance with tolerance. The same missing refund line also appears for any cash refund paid from the drawer during the shift, not only for cancelled tickets.\n\nPart of the suggested fix is risky. totalSales and cashSales are drawer takings throughout: /reconciliation labels them \"Total sales (cash + card)\" and its cash breakdown adds up to expected cash. Removing cancelledPaid from cashSales in getZReport would break that breakdown. The fix belongs in the UI: show a refunds line, net sales, the opening float and a signed short/over variance, or relabel \"Total Sales\" as takings.",
+            "evidence": "Reproduced with /home/user/servd/backend/.sim/ui-r2/verify/zzverify_ui_4.test.ts and config vitest.ui4.config.ts, against DB servd_test_rv_ui_4. Redis db 30 is out of range on this server, but the run did not need it. The test calls the real posRoutes and orderRoutes through Fastify inject and builds the storefront order with ingestOrder.\n\nSteps:\n- Cashier opens a drawer with 5,000.\n- A storefront pickup of 2 x Wrap (1,725) is paid in cash through POST /pos/payments.\n- A till order of 1,380 is rung and paid in cash.\n- The cashier tries to cancel the pickup and gets 403 MANAGER_OVERRIDE_REQUIRED (intended).\n- The manager cancels it. The Z-report now shows refundDue 172500, so the banner would appear.\n- The manager refunds 172500 in cash from the cashier's drawer.\n- The cashier closes, counting 630000.\n\nAPI response: cashSales 310500, totalSales 310500, totalOrders 1, voids/refundsCents/cashRefundsCents 172500, netRevenue/netCents 138000, cancelledPaid {count 1, cash 172500}, refundDueCents 0, expected 638000, actual 630000, cashVariance -8000, isBalanced true, openingFloat 500000.\n\nThe screen rows are copied from page.tsx ZReportView, and the test checks that copy against the source. They render as: Cash Sales PKR 3,105 / Total Sales PKR 3,105 / Tax PKR 180 / Orders 1 / Expected Cash PKR 6,380 / Actual Cash PKR 6,300 / Variance PKR 80. No refund-due banner and no open-tickets banner appear. The ZReportView source never mentions refundsCents, cashRefundsCents, netRevenue, netCents, openingFloat or cancelledPaid.cashCents.\n\nDrawer payment rows: cash paid 172500 (pickup), cash paid 138000 (till), cash refunded -172500 (pickup).\n\nLedger (balanced):\n- Refund JE: 1110 Dr 172500 / 1015 Cr 172500.\n- Shift close: 1015 Dr 138000, 1015 Dr 172500, 1110 Cr 172500, 8010 Dr 8000, 1015 Cr 8000, 4002 Cr 120000, 2030 Cr 18000.\n\nCorrect consumers of the same data: frontend/admin/src/app/reconciliation/page.tsx (lines ~155-215) and backend/src/workers/scheduledReports.ts buildShiftSummaryReport. The faulty screen is frontend/admin/src/app/pos/shift/page.tsx, lines 169-193. Company B's cashier cannot read the Z-report (non-200)."
+          }
+        }
+      ],
+      "rejected": [],
+      "lows": [
+        {
+          "id": "R2-UI-06",
+          "severity": "low",
+          "title": "Order page offers 'Cancel (no refund)' on a completed sale and then shows a raw state-machine error",
+          "repro": "foh_management opens /orders/066c3c01-aaa8-4a70-a0a8-a1a26ba319f7 (paid, completed till sale). Refund, then 'Cancel (no refund)', reason, then 'Cancel order'.",
+          "expected": "The option is hidden or disabled for a completed sale, with copy saying to refund instead.",
+          "actual": "POST /orders/:id/cancel returns 409 INVALID_TRANSITION, and the dialog shows 'Cannot move order 066c3c01-aaa8-4a70-a0a8-a1a26ba319f7 from completed → cancelled'.",
+          "evidence": "flow-money-foh_management.json (first run): cancelApi 409 body",
+          "suspectedCause": "frontend/admin/src/app/orders/[id]/page.tsx:399 and :438-447 always render both modes. approvalErrorMessage passes the raw message through.",
+          "suggestedFix": "Hide 'Cancel' when order.status==='completed', or map INVALID_TRANSITION to plain copy."
+        },
+        {
+          "id": "R2-UI-07",
+          "severity": "low",
+          "title": "A mistyped huge cash tender returns 500 Internal server error",
+          "repro": "POST /api/v1/pos/payments {orderId, shiftId, payments:[{method:'cash', amountCents:138000, tenderedCents:66301188000}]} (also reachable by typing a long number in the till's 'Tendered amount').",
+          "expected": "400 validation error ('tendered amount too large').",
+          "actual": "500 INTERNAL_ERROR. Log: 'Invalid tx.payment.create() … Unable to fit integer value 66301188000 into an INT4' at backend/src/modules/pos/service.ts:952.",
+          "evidence": "ui-r2-api.log line ~69493 (only ERROR in the whole run)",
+          "suspectedCause": "backend/src/modules/pos/routes.ts:85-86 paymentSchema: tenderedCents z.number().int().min(0) has no max (likewise amountCents).",
+          "suggestedFix": "Add .max(2_147_483_647) (or a sane business cap) to tenderedCents/amountCents/tipCents."
+        },
+        {
+          "id": "R2-UI-08",
+          "severity": "low",
+          "title": "One order carries four different references across till, KDS, expo and bills",
+          "repro": "Order 066c3c01-aaa8-4a70-a0a8-a1a26ba319f7: look at the till's Open tickets/Payment title, the KDS ticket, the Expo card, the pre-bill/final bill, and /orders/:id.",
+          "expected": "One short reference everywhere, so a cashier can match a guest's bill to a ticket.",
+          "actual": "Till: 'Order 066c3c01' (first 8). Bills: 'Order/Invoice #: 6BA319F7' (last 8). KDS: '#319F7' (last 5). Expo: '#A319F7' (last 6). Order page header: first 8 ('#7EAAF97E' style).",
+          "evidence": "flow-pos-cashier-d.json (tickets 'Order 066c3c01', pre-bill 'Order: 6BA319F7'); kdsflow-6 text '#319F7'; expo screenshot kdsflow-2 '#A319F7'",
+          "suspectedCause": "frontend/admin/src/components/pos/PaymentModal.tsx:446 and OpenTickets.tsx:80 (id.slice(0,8)); backend/src/modules/pos/receipt.ts:236 (id.slice(-8)); frontend/admin/src/app/kds/page.tsx:366,473 and kds/[station]/page.tsx:294 (slice(-5)); expo page (6 chars).",
+          "suggestedFix": "Use one orderRef helper (e.g. last 8 uppercase, as the receipt and Voided pre-bills use) on every surface."
+        }
+      ]
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Simulate"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "sim:ui",
+      "phaseIndex": 1,
+      "phaseTitle": "Simulate",
+      "agentId": "aaadf23e16e803b81",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791730959486,
+      "queuedAt": 1791730959465,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "The DB, API on :4200 and Redis db 6 were all mine. API from…",
+      "promptPreview": "You are RE-RUNNING a simulated shift for servd (repo /home/user/servd; CLAUDE.md is the rulebook), a multi-company restaurant ERP whose real staff onboard on Monday. Last night an audit simulated shifts per area and found bugs; since then ~300 files were changed to fix them (UNCOMMITTED working tree — that IS the code under test). Your job: (1) prove each ORIGINAL finding of your area is now fixed…",
+      "promptFramed": true,
+      "lastProgressAt": 1791733798412,
+      "tokens": 395099,
+      "toolCalls": 228,
+      "durationMs": 2838926,
+      "resultPreview": "{\"originals\":[{\"id\":\"UI-01\",\"status\":\"fixed\",\"evidence\":\"Cashier (code login) /pos shows the Flipd/Simmer/Stackd tabs and the menu. GET /concepts returns 200 (till view) and no toast appears. /floorplan shows T1-T4 (shots/cashier-d/_floorplan.jpg). Crawl: cashier 12 pages, 0 flagged.\"},{\"id\":\"UI-02\",\"status\":\"fixed\",\"evidence\":\"Ring-up is priced by the server: 'GST (15%, cash) PKR 180, Total PKR 1…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "verify:ui:R2-UI-01",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "abbe9831a129ae940",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791733798452,
+      "queuedAt": 1791733798423,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791733950966,
+      "tokens": 114092,
+      "toolCalls": 28,
+      "durationMs": 152513,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"blocker\",\"reason\":\"The finding is real. None of the intended changes explain it, and the setup was not at fault: cashier, foh_management, cash and card all fail the same way. backend/src/modules/pos/service.ts createPosOrder returns the order with only `include: { items: { include: { modifiers: true } } }`. That is true for both the fresh path (around line 314) and th…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "verify:ui:R2-UI-02",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a43c530d7e16ee8bf",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791733798452,
+      "queuedAt": 1791733798424,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791733927615,
+      "tokens": 108949,
+      "toolCalls": 28,
+      "durationMs": 128347,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"low\",\"reason\":\"The finding's main claim and its suggested fix are wrong. The buyer being refused POST /crosschecks/receiving is intended under owner decision 27 (2026-09-27): \\\"only manager tiers may receive (MANAGERS)\\\", and whoever raised a PO cannot receive it (CEO exempt). This is written down in four places:\\n- `backend/src/modules/procurement/receiving.ts` (head…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "verify:ui:R2-UI-03",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a4d7f04da00ae0831",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791733927619,
+      "queuedAt": 1791733798424,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791734055172,
+      "tokens": 114157,
+      "toolCalls": 29,
+      "durationMs": 127553,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"high\",\"reason\":\"The finding holds. It is not one of the intended changes, and it is not a test-setup mistake. hr holds the 'scheduling' module and marketing/brand_manager hold 'brands', both by default (backend/src/lib/moduleAccess.ts DEFAULT_MODULE_ACCESS, and the HR 'time' and Marketing 'brand' sections in lib/workspaces.ts). The admin page guard canOpenPath lets ea…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "verify:ui:R2-UI-04",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ace4f4631e3a67dda",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791733950969,
+      "queuedAt": 1791733798424,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791734158345,
+      "tokens": 144857,
+      "toolCalls": 49,
+      "durationMs": 207376,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"medium\",\"reason\":\"The finding is real. Each page named is in the role's sidebar by default and passes the admin page guard. The page's main reads return 200. But the page also makes a plain GET /concepts call, which only managers and till roles may make (the procurement monitor makes GET /auth/users instead, which only managers and HR may make). For these roles that c…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "verify:ui:R2-UI-05",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a9b3c700a4ed4a703",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791734055175,
+      "queuedAt": 1791733798424,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "real",
+      "promptPreview": "You are an independent VERIFIER for a servd re-run finding (repo /home/user/servd; CLAUDE.md is the rulebook; read-only on tracked files; never call production; no next build/dev).\nINTENDED behaviour changes since the first audit (do NOT report these as bugs; adapt your scripts to them, and DO report if they are implemented wrongly):\n- Manager-only voids: every item void and every whole-order canc…",
+      "promptFramed": true,
+      "lastProgressAt": 1791734237540,
+      "tokens": 133255,
+      "toolCalls": 33,
+      "durationMs": 182365,
+      "resultPreview": "{\"verdict\":\"real\",\"severity\":\"low\",\"reason\":\"The finding holds for the admin /pos/shift Z-report screen. It is not one of the intended changes and not a test-setup mistake. In the F7 fix, ZReportView only shows the cancelled-ticket money through a \\\"Refund due\\\" banner, and that banner appears only while refundDueCents > 0. Once a manager hands the money back, the screen has nothing that explains …"
+    }
+  ],
+  "totalTokens": 1010409,
+  "totalToolCalls": 395
+}

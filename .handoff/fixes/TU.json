@@ -1,0 +1,349 @@
+{
+  "summary": "Fix every confirmed finding from the shift re-runs (till/PIN, books, fiscal payload, wallet per company, online ops, people/HR, kitchen), then adversarially review and fix",
+  "agentCount": 6,
+  "logs": [],
+  "result": [
+    {
+      "stream": "T",
+      "built": {
+        "summary": "Stream T is done: all five findings are fixed. Manager-PIN guessing is now limited in one place. verifyManagerPin (backend/src/modules/auth/managerPin.ts) counts every PIN that is sent, before comparing it, using the new backend/src/lib/managerPinLimit.ts. The limit is 5 attempts per 15 minutes per actor and 5 per order, after which the answer is 429 MANAGER_PIN_LOCKED with details.retryAfterSec. The counter lives on redisFast, with a 750 ms timeout. Every attempt is also counted in process memory and the higher count wins, so neither a Redis outage nor a slow Redis call can double the budget. Each wrong PIN writes an audit row 'manager_pin.failed' with the actor, order and company. The attempt that fills a bucket raises one high-severity flag for the company. A correct PIN resets the actor's count. If the caller passes no actor (trustops petty cash), the actor comes from the request's signed-in user (rlsContext). Every caller now goes through managerPin.ts: discount and price override gates, the line void and order cancel (via requireManagerApproval), refunds and cancelled-ticket refunds (via ensureCapOrManagerOverride), comps, staff meals, till pay-outs and trustops petty cash. PIN length rules are unchanged (4–8 digits, owner decision).\n\nDiscounts: a PIN that was sent but is wrong, or belongs to another company, now gets 403 INVALID_MANAGER_PIN. With no PIN at all the answer is still DISCOUNT_OVER_CAP. The discount and price-override alerts are now raised after the order exists and carry its id. Only the discount kind changed; price overrides keep 'high_value_void' until a proper kind is added.\n\nWaste: a line voided after the kitchen fired it is now booked as waste in the void's own transaction (new backend/src/modules/inventory/voidWaste.ts). It only books what the order's depletion actually took for that line. It writes one WasteLog per ingredient (reason 'void_after_fire', moving-average cost, approver recorded). It posts ONE balanced entry, Dr 5040 / Cr 1210, in the ORDER's company, keyed 'pos.void_waste:<orderItemId>' so it cannot post twice. The wasted quantity is also taken off the depletion row's `taken`, so cancelling the order later does not put cooked food back on the shelf. If the period is closed or the ledger refuses the entry, the void still goes through, the waste log stays, and a 'posting_failed' flag goes to the company.\n\nRing-up: createPosOrder now returns payments { id, method, amountCents, status } and items with their modifiers, on both the new-order and the idempotent-replay paths.\n\nHuge amounts: tender amounts too big for the database column now get 422 AMOUNT_TOO_LARGE instead of a 500. The guard (assertAmountsFit, limit 2,147,483,647 paisa) is in processPayment (amountCents, tenderedCents, tipCents and their sum), settlePayment, compOrder, refundOrder and recordCashMovement.",
+        "items": [
+          {
+            "id": "FOH-R2-01",
+            "status": "fixed",
+            "note": "Implemented in managerPin.ts and the new lib/managerPinLimit.ts. Attempts are claimed before bcrypt runs, using an atomic Redis Lua INCR+EXPIRE plus an in-memory floor. A parallel burst of 20 guesses gets at most 5 comparisons; the test also covers Redis being disconnected. The flag uses the existing kind 'self_approval' because lib/exceptions.ts has no 'manager_pin_failed' kind; metadata.realKind='manager_pin_failed'. A PIN-less request is not an attempt. A locked request makes no comparison, so it learns nothing. A cashier who is locked out can still have a manager sign in and do the override. PIN length rules are unchanged (owner decision)."
+          },
+          {
+            "id": "FOH-R2-03",
+            "status": "fixed",
+            "note": "Over-cap discount and price override: a wrong or other-company PIN that was sent now gets 403 INVALID_MANAGER_PIN; no PIN still gets DISCOUNT_OVER_CAP / PRICE_OVERRIDE_BLOCKED. The discount flag now uses kind 'comp_above_threshold' (the closest existing kind; metadata.realKind='discount_above_cap'). Both the discount and price-override flags are raised after the order is created, with entityType 'Order' and entityId set to the order id, and only when this request actually created the order. Price overrides still use 'high_value_void' until a kind exists."
+          },
+          {
+            "id": "BOH-R2-03",
+            "status": "fixed",
+            "note": "New inventory/voidWaste.ts is called from voidOrderItem inside the void's transaction when the line had already been fired. Per ingredient it writes a WasteLog (void_after_fire, unitCost × qty, approver and recorder set). It posts one entry, Dr 5040 / Cr 1210, in the order's company via postJournalEntry({tx}), keyed pos.void_waste:<orderItemId> and checked against period locks. A PERIOD_LOCKED or other AppError from the ledger is caught (it fails before any write, so the transaction stays usable), and a 'posting_failed' flag is raised after commit. The quantity is moved from the depletion row's `taken` into `voidWasted`, so a later cancel does not restore it. COGS already skips voided lines, so nothing is counted twice. The void response gains stockWasted (quantities only, no cost) and the audit metadata records the waste."
+          },
+          {
+            "id": "R2-UI-01",
+            "status": "fixed",
+            "note": "Backend half only: RING_UP_INCLUDE = items with modifiers plus payments { id, method, amountCents, status } on both return paths. Tested: a fresh ring-up and its replay both return payments: []. The frontend half (making paidCentsOf tolerate a missing payments array) is listed under needsOtherFiles."
+          },
+          {
+            "id": "R2-UI-07",
+            "status": "fixed",
+            "note": "assertAmountsFit returns 422 AMOUNT_TOO_LARGE for any amount above 2,147,483,647, the most a money column (INT4) holds, checked in the payment service functions. Tested through POST /pos/payments with a huge tenderedCents, amountCents and tipCents; no payment row is written."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/auth/managerPin.ts",
+          "/home/user/servd/backend/src/lib/managerPinLimit.ts",
+          "/home/user/servd/backend/src/modules/pos/service.ts",
+          "/home/user/servd/backend/src/modules/inventory/voidWaste.ts",
+          "/home/user/servd/backend/tests/resimTill.test.ts",
+          "/home/user/servd/backend/tests/auditTillShift.test.ts"
+        ],
+        "tests": "New: backend/tests/resimTill.test.ts, 16 tests, all two-company:\n- FOH-R2-01: 5 wrong PINs then 429 even with the right PIN; audit rows; one company flag with nothing in company B; a manager signed in can still act.\n- FOH-R2-01: a correct PIN resets the count; several cashiers sharing one order hit the per-order lock; a parallel burst of 20 gets at most 5 comparisons.\n- FOH-R2-01: discount, cancel and void PINs share one budget; a call with no actor (as in trustops) is limited through rlsContext; a missing PIN is not counted; company B's PIN counts as wrong; with Redis disconnected the in-memory fallback still locks.\n- FOH-R2-03: the error codes, and the discount flag's kind, order id and company.\n- BOH-R2-03: WasteLog and a balanced 5040/1210 entry in company A only; a later cancel does not restore the wasted stock; an unfired line gets its stock back and books no waste; company B's void posts to B; a closed period lets the void through and raises posting_failed.\n- R2-UI-01: payments: [] on a fresh ring-up and on the replay.\n- R2-UI-07: 422 AMOUNT_TOO_LARGE.\n\nUpdated auditTillShift.test.ts: the 'cooked line' case now expects stockWasted, and expects a later cancel to give back only the uncooked portion.\n\nRun: 31 files / 445 tests passed against DB servd_test_rf_t and Redis 127.0.0.1:6390/2. That covers resimTill, auditTillShift, managerVoids, auditTillMoney, auditTillReview, auditTillUi, auditTillGiftCard, auditSplit, cashDrawer, fiscalTill, preBills, receipt, sepTrustops, the terminal* suites, posWebhook, auditOrdersRefund, orders, wave3Gates, wave3Finance, accessControl, auditAuthPeople, auditMoneyFollowups, auditProcurement, apAging, booksReconcile, i3HandBackUi and integrationConnectors.\n\nnpx tsc --noEmit -p . in backend: clean.",
+        "needsOtherFiles": "1) backend/src/lib/exceptions.ts: add to ExceptionKind `| 'manager_pin_failed' | 'discount_above_cap' | 'price_override'`. Then in managerPin.ts recordPinFailure switch kind 'self_approval' to 'manager_pin_failed', and in pos/service.ts createPosOrder switch the discount flag 'comp_above_threshold' to 'discount_above_cap' and the price-override flag 'high_value_void' to 'price_override'. metadata.realKind already carries the intended kind.\n2) backend/src/modules/orders/routes.ts: both requireManagerApproval calls (POST /orders/:id/cancel at ~line 289, and refused-at-door at ~line 408) should add `orderId: order.id` so cancels also use the per-order bucket. Today they are limited per actor only.\n3) frontend/admin/src/components/pos/tillApi.ts paidCentsOf: use `(order.payments ?? [])` (the frontend half of R2-UI-01).\n4) frontend/admin: VoidLineDialog.tsx, app/refunds/refundEngine.ts and the till's discount / pay-out PIN prompts should handle code 'MANAGER_PIN_LOCKED' (429, error.details.retryAfterSec). Show 'Too many wrong PINs — a manager must sign in, or wait N minutes' rather than a generic error. The discount prompt should now expect INVALID_MANAGER_PIN after a wrong PIN, not DISCOUNT_OVER_CAP.\n5) backend/src/modules/trustops/routes.ts ~line 342: for consistency with FOH-R2-03, answer 403 INVALID_MANAGER_PIN when body.managerOverridePin was sent but did not verify (it currently answers TOPUP_OVER_LIMIT). Optionally pass `{ actorId: req.staffUser!.id, action: 'petty_cash_topup' }` as the 4th argument to verifyManagerPin. It is already limited without this, through rlsContext.\n6) Optional, /health: report managerPinLimit degraded via isManagerPinLimitDegraded() from lib/managerPinLimit.ts, next to loginRateLimit.\n7) Optional, backend/src/modules/pos/routes.ts paymentSchema: add .max(2_147_483_647) to amountCents, tenderedCents and tipCents so validation fails at the edge too. The service already returns 422.",
+        "prodNotes": "- No schema change and no migration. WasteLog rows are reused; reason 'void_after_fire' marks the voided line in notes.\n- New Redis keys: ratelimit:manager-pin-actor:user:<id> and ratelimit:manager-pin-order:<orderId>, with a 15-minute TTL, on the redisFast connection.\n- New journal reference namespace 'pos.void_waste:<orderItemId>'.\n- No backfill: lines voided after firing before this deploy stay unbooked. A one-off finance adjustment can use the order_item_void audit rows with stockSkipped='cooked'.\n- Deploy the backend with or before the admin change that handles MANAGER_PIN_LOCKED. Until then the till shows a generic error on a 429, which is harmless.\n- The ring-up response now includes `payments`. The backend half of the till crash is fixed on deploy; the frontend guard is still recommended.\n- Test DB servd_test_rf_t was left in place.",
+        "ownerQuestions": "1) Manager-PIN lockout: is 5 wrong PINs per 15 minutes per cashier, and per order, right for a busy floor? During a lockout the cashier's PIN approvals stop, and a manager must sign in at the till for 15 minutes. 2) The finding also suggested requiring 6+ digit manager PINs; this is your earlier decision, so I left it alone. Do you want to revisit it, now that guesses are limited and flagged?"
+      },
+      "review": [
+        {
+          "id": "T-RV-01",
+          "severity": "high",
+          "title": "A correct PIN clears the sender's whole attempt count, so anyone who knows one valid approver PIN can guess other PINs (the CEO's included) without limit and without any flag",
+          "file": "/home/user/servd/backend/src/lib/managerPinLimit.ts",
+          "scenario": "Reproduced on DB servd_test_rf_t_rv with Redis 6390/12, using a scratch test that was then deleted. pinAttemptSucceeded() (managerPinLimit.ts:194-197) calls clearOne() on the actor bucket. Over-cap discounts (pos/service.ts:207) send no orderId, so the actor bucket is the only limit there.\n(a) A foh_management user rings up a Nihari with a 60% discount. That is over managerDiscountCap, so the PIN must belong to an admin. They send 4 guesses, then their OWN PIN. Their own PIN matches, which resets the bucket, and the request still ends in 403 DISCOUNT_OVER_MANAGER_CAP, so nothing is created. Over 4 cycles: 16 x INVALID_MANAGER_PIN, zero MANAGER_PIN_LOCKED, zero exception flags. Repeat until the admin's PIN matches (about 2,000 cycles for a 4-digit PIN; minutes at till speed).\n(b) A cashier who knows one manager's PIN (shoulder-surfed or shared) does the same with a 20% discount: 4 guesses, then the known PIN (the order is created and the count resets). 12 wrong guesses, never locked, never flagged. That cashier can then find another manager's PIN and put approvals in that manager's name.\nThe same reset works on voids and refunds by using a fresh ring-up each time, because the order bucket is per order.\nSo FOH-R2-01's claim of 5 per 15 minutes per actor does not hold for any sender who holds one valid PIN, which is exactly the insider the finding is about. The PIN-change route (auth/routes.ts ~1229) avoids this on purpose ('release, not clear, so a burst that contains one right answer cannot wipe the others' strikes'). This limiter does the opposite.",
+          "fix": "In pinAttemptSucceeded, release only the successful attempt's own slot on the actor bucket (releaseOne(MANAGER_PIN_ACTOR_LIMIT, keys.actor)), as is already done for the order bucket. Do not clear the bucket. Wrong guesses then still count for the whole 15-minute window, and an honest cashier who mistypes twice and then succeeds keeps 3 spare attempts. Add a regression test with the cycle 4 wrong, then the own or known PIN, then wrong: the 6th wrong attempt must get 429 MANAGER_PIN_LOCKED and raise the flag. Run it once as a manager on a discount over managerDiscountCap and once as a cashier on a discount over cashierDiscountPctCap."
+        },
+        {
+          "id": "T-RV-02",
+          "severity": "low",
+          "title": "A locked order uses up the actor slots of honest staff who send the CORRECT PIN, and can lock them out on every order",
+          "file": "/home/user/servd/backend/src/lib/managerPinLimit.ts",
+          "scenario": "claimPinAttempt (lines 181-191) claims the actor bucket first and then the order bucket. When the order bucket is full it throws 429 and does not give the actor's slot back ('The actor's slot is not given back: the attempt was made'). But no comparison was made, so nothing was attempted. Example: cashier 1 sends 5 wrong PINs on table 7's order, which locks that order. Cashier 2 then has the manager type the right PIN on table 7 to void a line. Each try gets 429, and each 429 costs cashier 2 an actor slot. After 5 tries cashier 2 is locked out of PIN approvals on every order for 15 minutes, without ever having sent a wrong PIN. No flag names cashier 2, and the audit trail shows no failures for them.",
+          "fix": "In claimPinAttempt, when the order bucket rejects, call releaseOne(MANAGER_PIN_ACTOR_LIMIT, keys.actor) before throwing. That request made no comparison, so the sender should not be charged. An alternative is to check (peek) the order bucket before claiming the actor slot. Add a two-cashier test: cashier 1 locks order X; cashier 2 makes 5 tries with the correct PIN on X and gets 429; cashier 2 can still void on order Y with the correct PIN."
+        }
+      ],
+      "fix": {
+        "summary": "I fixed both reviewer findings in backend/src/lib/managerPinLimit.ts. The new tests fail on the old code and pass on the fixed code. The touched suites pass and tsc is clean.\n\nT-RV-01 (fixed): a correct PIN used to wipe the sender's whole count. Now `pinAttemptSucceeded` gives back only the slot that attempt took, on the sender and on the order (`releaseOne`, no longer `clearOne`). This is the same \"release, not clear\" rule the PIN-change route already uses. Someone who knows one valid PIN can no longer reset their wrong guesses every 4 tries. An honest cashier who mistypes twice and then gets it right keeps 3 spare attempts.\n\nT-RV-02 (fixed): when the order's limit is full, `claimPinAttempt` now gives the sender's slot back before returning 429. No PIN was compared, so the sender is not charged. An honest cashier retrying the right PIN on someone else's locked ticket no longer locks themselves out of every order.\n\nI also updated the comments in managerPin.ts and the limiter's header so they no longer say a correct PIN clears the count.\n\nOne behaviour to know: the exception flag is raised on the 5th wrong PIN in the window, and the 6th attempt gets 429. The reviewer's wording put the flag on the 6th. The tests follow the code.",
+        "items": [
+          {
+            "id": "T-RV-01",
+            "status": "fixed",
+            "note": "In managerPinLimit.ts, pinAttemptSucceeded now gives back only that attempt's own slot (sender and order) and never clears either count. Tests: as a foh_management user on a 60% discount (over managerDiscountCap): 4 wrong, then their own PIN (403 DISCOUNT_OVER_MANAGER_CAP), then the 5th wrong is INVALID_MANAGER_PIN and raises the flag, and the 6th is 429 MANAGER_PIN_LOCKED. Same cycle as a cashier on a 20% discount (over cashierDiscountPctCap) using a known manager PIN, which creates the order: 5th wrong flags, 6th is 429, nothing in company B. Same cycle on voids with a fresh ring-up each time. The old test 'a correct PIN clears the cashier's count' encoded the defect; it is replaced by 'two mistypes then the right PIN leaves 3 spare'."
+          },
+          {
+            "id": "T-RV-02",
+            "status": "fixed",
+            "note": "In claimPinAttempt, the sender's slot is given back (releaseOne on the sender's count) when the order's limit is full, before the 429. Two-cashier test: cashier 1 locks order X with 5 wrong PINs. Cashier 2 tries the correct PIN 6 times on X and gets 429 each time, and X stays unvoided. Cashier 2 then voids on Y with the correct PIN (200), has no failure audits and no flag, and still gets 403 (not 429) on 4 wrong PINs on a fresh order."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/lib/managerPinLimit.ts",
+          "/home/user/servd/backend/src/modules/auth/managerPin.ts",
+          "/home/user/servd/backend/tests/resimTill.test.ts"
+        ],
+        "tests": "On servd_test_rf_t with Redis 6390/2, tests/resimTill.test.ts passes 20/20. The 4 new tests and the rewritten one all fail when the old clearOne / no-release behaviour is temporarily put back; the fix was restored afterwards. The other suites that use manager PINs all pass, 234/234 across 10 files: auditTillMoney, managerVoids, fiscalTill, auditMoneyFollowups, auditAuthPeople, accessControl, sepTrustops, booksReconcile, resimOnline, resimTill. The 'injected claim failure' Prisma errors in that output are expected output from one of those suites. `npx tsc --noEmit -p .` in backend reports no errors.",
+        "needsOtherFiles": "",
+        "prodNotes": "The limiter now only gives back slots and never clears them on success. Wrong manager PINs therefore count for the whole 15-minute window, whatever correct PINs happen in between. Staff who mistype often across several overrides inside 15 minutes can hit the lock sooner than under the old (exploitable) behaviour. When that happens, a manager signs in and does the override themselves."
+      }
+    },
+    {
+      "stream": "U",
+      "built": {
+        "summary": "Stream U is done: R2-UI-01, R2-UI-03, R2-UI-05 and R2-UI-06 are fixed. R2-UI-04 is fixed on the 7 pages I own; /menu-engineering is not my file and is listed under needsOtherFiles.\n\nAn earlier stopped attempt had already added the read views to concepts/routes.ts (?view=picker, ?view=brand, the marketing allow-list and schema). I reviewed that work and finished it: the marketing-tier PATCH and auditing were still missing. None of the other owned files had been touched by that attempt.\n\n- **Till crash (R2-UI-01):** `paidCentsOf` now reads `(order.payments ?? [])`, and `TillOrder.payments` is optional so the type checker catches any new reader. `ringUp()` now passes the answer through `normaliseRungOrder`, which fills in empty `payments` and `items` lists. The till therefore reaches the payment step whether or not the API returns `payments`. PaymentModal did not need a change.\n- **Brand lists and Brand Editor (R2-UI-03):**\n  - Rota now uses `/concepts?view=picker` with the shell BrandPicker's cache key.\n  - Brand Editor: `GET /concepts?view=brand` gives management the full rows. A holder of the 'brands' module (marketing, brand_manager, or a per-login allow) gets an editor row with no tax, STRN/NTN, invoice, POS id, forecast or layout fields. Module access is checked the same way the central gate does.\n  - `PATCH /concepts/:id` for that tier accepts only `BRAND_MARKETING_FIELDS`: description, heroTagline, logoUrl, wordmarkUrl, mascotUrl, primaryColor and the brand brief fields. Any other key refuses the whole request with 403 `FIELD_NOT_ALLOWED`.\n  - Writes are limited to the active company (foreign brand 404) and audited as `concept.marketing_update` with before/after values.\n  - Management keeps the full PATCH. It now uses `scopeTenantWhere(req,'create')` instead of the raw `tenantFilter`, which matched every company-less brand for a staffer with no company. It is now audited too, as `concept.update`.\n  - Brand Editor page for the marketing tier: copy, artwork, colour and brief are editable. Name, status, contact, the storefront switches and delete are disabled or hidden. The Tax tab is hidden, the delivery-zone read (management-only) is skipped, and Add brand is hidden.\n- **403 toasts (R2-UI-04):** projections, food-cost, receivables, fixed-assets, complaints and reviews now use `?view=picker` (they only need id and name). On /procurement/monitor, `/auth/users` is only called for management and HR, as a background query. Other roles get a list built from the suppliers' assigned staff plus themselves.\n- **Z-report (R2-UI-05):** the rows now come from `zReportLines` in tillApi.ts, which reads getZReport's existing fields. It shows takings, \"of which on cancelled tickets (n)\", refunds and cash refunds from the drawer, net sales, opening float, expected and counted cash, and the variance as Short/Over/Balanced. A variance within the company tolerance shows amber; outside it, red. getZReport itself is unchanged.\n- **Cancel on a completed order (R2-UI-06):** the dialog offers only Refund on a completed order. `INVALID_TRANSITION` now shows \"This order has already been sold, so it cannot be cancelled. Refund it instead.\"",
+        "items": [
+          {
+            "id": "R2-UI-01",
+            "status": "fixed",
+            "note": "tillApi.ts: paidCentsOf reads (order.payments ?? []); TillOrder.payments is optional; ringUp() normalises the answer (normaliseRungOrder fills empty payments/items, offline placeholder untouched). Test: the real POST /pos/orders 201 body, with and without payments, goes through ringUp → storedQuote with no throw and dueCents equal to the order total. The backend change that returns payments from createPosOrder belongs to another stream; this fix works either way."
+          },
+          {
+            "id": "R2-UI-03",
+            "status": "fixed",
+            "note": "Rota uses ?view=picker. Brand Editor: GET ?view=brand (and /:id?view=brand) plus a marketing-only PATCH limited to an explicit allow-list (description, heroTagline, logo/wordmark/mascot URLs, primaryColor, brand brief). Tax, STRN/NTN, POS ids, tenant, slug, isActive, name, contact, storefront switches, forecast and layout give 403 FIELD_NOT_ALLOWED with nothing saved. Gated on the 'brands' module (moduleDeny closes it); active company only (foreign brand 404); audited. Two-company tests cover reads, writes, 404s, 403s per field, moduleDeny, and HR/cashier refused."
+          },
+          {
+            "id": "R2-UI-04",
+            "status": "fixed",
+            "note": "Owned pages switched to ?view=picker: finance/projections, accounting/food-cost, accounting/receivables, accounting/fixed-assets, complaints, reviews. procurement/monitor: /auth/users only for management+HR, as a background query; other roles get assigned staff plus themselves. NOT done: frontend/admin/src/app/menu-engineering/page.tsx is not in my file set (see needsOtherFiles)."
+          },
+          {
+            "id": "R2-UI-05",
+            "status": "fixed",
+            "note": "pos/shift ZReportView now renders zReportLines (tillApi.ts): takings, money on cancelled tickets, refunds and cash refunds, net sales (netCents, falling back to takings minus refunds), opening float, expected/counted cash, and variance as 'Short PKR x' / 'Over PKR x' / 'Balanced' (amber inside tolerance, red outside). Tested with the finding's numbers (net 1,380, Short PKR 80). getZReport not edited."
+          },
+          {
+            "id": "R2-UI-06",
+            "status": "fixed",
+            "note": "orders/[id] RefundModal offers only Refund when status is completed. cancelErrorMessage maps INVALID_TRANSITION to plain words and otherwise falls back to approvalErrorMessage. Checked with tsc only; there is no runtime UI test for this."
+          },
+          {
+            "id": "R2-UI-02",
+            "status": "not_needed",
+            "note": "Not assigned to this stream. The verifier found the requested change (letting procurement receive) goes against owner decision 27."
+          },
+          {
+            "id": "R2-UI-07",
+            "status": "not_needed",
+            "note": "Not assigned to this stream (backend pos/routes.ts)."
+          },
+          {
+            "id": "R2-UI-08",
+            "status": "not_needed",
+            "note": "Not assigned to this stream."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/concepts/routes.ts",
+          "/home/user/servd/backend/tests/resimUi.test.ts",
+          "/home/user/servd/frontend/admin/src/components/pos/tillApi.ts",
+          "/home/user/servd/frontend/admin/src/app/marketing/brands/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/scheduling/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/finance/projections/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/accounting/food-cost/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/accounting/receivables/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/accounting/fixed-assets/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/complaints/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/reviews/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/procurement/monitor/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/pos/shift/page.tsx",
+          "/home/user/servd/frontend/admin/src/app/orders/[id]/page.tsx"
+        ],
+        "tests": "New: backend/tests/resimUi.test.ts has 30 tests, all passing on DB servd_test_rf_u with Redis on 6390/9. They cover:\n- R2-UI-01: the real admin tillApi run against the real POST /pos/orders answer, with only lib/api mocked.\n- R2-UI-03: two companies for the picker and brand-editor reads, the marketing PATCH allow-list (16 refused fields, each with the DB unchanged), cross-company 404s, moduleDeny/HR/cashier refused, the audit rows, and management's full PATCH limited to the active company.\n- R2-UI-05: the Z-report lines using the finding's numbers.\n\nExisting suites:\n- auditTillUi, brandReconcile, storefrontQuickfix, wave3Gates and i3HandBackUi all pass.\n- wave3Marketing: 20 of 21 pass. The one failure is W3A-RV-02: GET /crm/customers/:id gives fohA a total spend of 0 instead of 77700. This stream did not touch that code (CRM, probably another stream's in-progress customer/wallet work).\n\nTypecheck: npx tsc --noEmit -p . is clean in backend and in frontend/admin.",
+        "needsOtherFiles": "frontend/admin/src/app/menu-engineering/page.tsx, lines 54-57 (R2-UI-04, the boh role). Replace\n`useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })`\nwith\n`useQuery<Concept[]>({ queryKey: ['concepts', 'brand-picker'], queryFn: () => api.get<Concept[]>('/concepts?view=picker'), staleTime: 60_000 })`.\nThe page only uses id and name.\n\nOptional follow-up for the backend owner of procurement/routes.ts: a module-scoped `GET /procurement/staff` (procurement module, company-scoped users of the supplier's company) would give the buyer the full assignable-staff list. Today the monitor page falls back to the assigned staff plus the buyer.",
+        "prodNotes": "- **Deploy the API and the admin together.** The Brand Editor now calls `GET /concepts?view=brand`.\n  - Against an older API, management still gets the full rows (the view parameter is ignored), but marketing and brand_manager stay at 403, as today.\n  - The ?view=picker switches only need an API that already has the picker view (wave 3).\n- **No schema change and no migration.**\n- **PATCH /concepts/:id now writes AuditLog rows:** `concept.update` for management and `concept.marketing_update` for the marketing tier.\n- **Management PATCH scoping changed.** It now uses the active-company scope helper. A staffer with no active company now gets 404 instead of matching company-less brands.\n- **Test DB:** servd_test_rf_u was left in place for re-runs.",
+        "ownerQuestions": "Should marketing and brand_manager also be allowed to edit the brand's guest contact details (phone, WhatsApp, email, area label)? For now they are management-only, because the WhatsApp number is where customers' messages go. The brief mentioned social links, but the Concept model has no social-link fields; those are set on each brand's footer page in the Storefront module, which marketing already edits."
+      },
+      "review": [
+        {
+          "id": "RV-U-01",
+          "severity": "high",
+          "title": "PATCH /concepts/:id now uses scope 'create' (active company only): multi-company CEO, management and marketing get 404 saving a brand that the Brand Editor lists in All-companies view",
+          "file": "/home/user/servd/backend/src/modules/concepts/routes.ts",
+          "scenario": "Reproduced on servd_test_rf_u_rv with a temporary test (since removed). Users admin, management and marketing each have User.tenantId = A and a TenantMember row for B. Each calls GET /concepts?view=brand&includeInactive=1 with x-servd-portfolio: 1, and the result includes B's brand. Each then calls PATCH /concepts/<B brand> {description:'x'}. Results: admin 404 'Concept not found in your active company', management 404 (same message), marketing 404 'Concept ... not found'. At HEAD the management PATCH filtered on req.staffUser.tenantFilter, which the auth middleware widens to every member company on any non-GET request, so this save returned 200. That makes it a regression for the CEO and head-office managers. The admin client also sends no x-servd-active-tenant header on PATCH: frontend/admin/src/lib/api.ts isPortfolioGuarded guards POST only, and its comment says 'PATCH ... the backend derives the tenant from the row itself — every brand-edit save would pop the modal'. So no client-side company pick fixes this. CLAUDE.md: 'write = editing an existing row → every company the operator belongs to; create = binding a new row'. Editing a brand is 'write'. The marketing tier has the same mismatch: it lists brands with scope 'read' (portfolio-expanded) and saves with 'create'. The builder's prodNotes present the change as 'a staffer with no active company now gets 404', which hides this effect on multi-company operators.",
+          "fix": "In both PATCH branches (marketing allow-list and management full schema) look up the owned row with `scopeTenantWhere(req, 'write')` instead of `'create'`. An empty scope still denies, because memberTenantIds is empty for a staffer with no company, giving `{ tenantId: { in: [] } }`. Foreign rows still 404. Keep stamping the audit with owned.tenantId. Add a two-company test: a user with tenantId A and a membership in B can PATCH B's brand, and a user who is not a member of B gets 404."
+        },
+        {
+          "id": "RV-U-02",
+          "severity": "low",
+          "title": "The marketing tier can save a root-relative logoUrl that management's full PATCH schema rejects, so management's next save of that brand fails with 400",
+          "file": "/home/user/servd/backend/src/modules/concepts/routes.ts",
+          "scenario": "Reproduced (temporary test, since removed). The marketing user sends PATCH /concepts/<A brand> {logoUrl:'/marketing/logo.png'} and gets 200. This value is exactly what the R2 presigner returns when R2_PUBLIC_URL is unset, and the Brand Editor's upload button stores it. Management then saves the brand form (the full PATCH always resends logoUrl) and gets 400 VALIDATION_ERROR. updateConceptSchema has `logoUrl: z.string().url()`, while brandMarketingSchema uses brandArtworkUrlSchema, which accepts root-relative paths. Management cannot save any change to that brand (tax, contact, status) until someone clears the logo.",
+          "fix": "Use one rule for logoUrl in both schemas. Either change updateConceptSchema.logoUrl to the same `brandArtworkUrl` rule already used for wordmarkUrl and mascotUrl (http(s) or root-relative, '' clears), or make the marketing schema's logoUrl `z.string().url()`. The first matches what the uploader actually returns."
+        }
+      ],
+      "fix": {
+        "summary": "I confirmed both reviewer findings and fixed them in backend/src/modules/concepts/routes.ts. Regression tests are in backend/tests/resimUi.test.ts. I rejected neither finding.\n\nRV-U-01: both PATCH /concepts/:id branches (the marketing allow-list and management's full schema) now look up the row with scopeTenantWhere(req, 'write'), not 'create'. Editing an existing brand is a write, so it covers every company the operator belongs to (User.tenantId plus TenantMember rows). That matches CLAUDE.md and how the code behaved at HEAD. Brands of companies the operator doesn't belong to still return 404. A staffer with no company still matches nothing, because memberTenantIds is empty and the filter becomes { tenantId: { in: [] } }. The audit is still stamped with the brand's own company (owned.tenantId). The 404 message now says 'Concept not found in your companies', and the comments that said \"active company only\" are updated.\n\nRV-U-02: createConceptSchema.logoUrl now uses the same brandArtworkUrl rule as wordmarkUrl and mascotUrl, and updateConceptSchema derives from it. That rule accepts http(s) URLs or root-relative paths, '' clears the field, and javascript: and data: URLs are still refused. Both the marketing tier and management's full PATCH now follow the same logoUrl rule. In the full PATCH, a request without logoUrl leaves the stored logo unchanged, because .partial() skips the transform.",
+        "items": [
+          {
+            "id": "RV-U-01",
+            "status": "fixed",
+            "note": "Both PATCH branches now use scopeTenantWhere(req,'write'). New two-company test: admin, management and marketing users with tenantId A plus a TenantMember row for B list B's brand in portfolio view and PATCH it (200). The row stays in B and the audit is stamped B. Users who are only in company A get 404 and nothing is written. Users with no company (management and marketing) get 404."
+          },
+          {
+            "id": "RV-U-02",
+            "status": "fixed",
+            "note": "The full schema's logoUrl now uses the shared brandArtworkUrl rule. Test: marketing saves '/marketing/logo.png'; management's full save that resends it returns 200. javascript: and data: return 400; '' clears the logo; leaving logoUrl out keeps it."
+          }
+        ],
+        "filesChanged": [
+          "/home/user/servd/backend/src/modules/concepts/routes.ts",
+          "/home/user/servd/backend/tests/resimUi.test.ts"
+        ],
+        "tests": "These ran against servd_test_rf_u with Redis 6390/9: tests/resimUi.test.ts (33, including 3 new), storefrontQuickfix (16), auditTillUi (8), brandReconcile (18) and wave3Gates. That is 94/94 passing across 5 files. Backend `npx tsc --noEmit -p .` is clean. No frontend files changed.",
+        "prodNotes": "This corrects my earlier prodNotes, which said only \"a staffer with no company now gets 404\". Brand edits (PATCH /concepts/:id) now land in any company the operator belongs to, as at HEAD for management. A multi-company CEO, management or marketing user can save a brand the Brand Editor shows in All-companies view. Brands of companies they don't belong to are still 404, and a staffer with no company is still denied. The audit carries the brand's own company. Brand logo URLs may now be root-relative paths (what the uploader returns when R2_PUBLIC_URL is unset), on create as well as update."
+      }
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:T",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a8cfc4adf5978b338",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791788803370,
+      "queuedAt": 1791788803123,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stream T is done: all five findings are fixed. Manager-PIN …",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789804156,
+      "tokens": 216624,
+      "toolCalls": 53,
+      "durationMs": 1000785,
+      "resultPreview": "{\"summary\":\"Stream T is done: all five findings are fixed. Manager-PIN guessing is now limited in one place. verifyManagerPin (backend/src/modules/auth/managerPin.ts) counts every PIN that is sent, before comparing it, using the new backend/src/lib/managerPinLimit.ts. The limit is 5 attempts per 15 minutes per actor and 5 per order, after which the answer is 429 MANAGER_PIN_LOCKED with details.ret…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:U",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "af3b01b51bf462cea",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791788803370,
+      "queuedAt": 1791788803123,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stream U is done: R2-UI-01, R2-UI-03, R2-UI-05 and R2-UI-06…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789432150,
+      "tokens": 213890,
+      "toolCalls": 65,
+      "durationMs": 627819,
+      "resultPreview": "{\"summary\":\"Stream U is done: R2-UI-01, R2-UI-03, R2-UI-05 and R2-UI-06 are fixed. R2-UI-04 is fixed on the 7 pages I own; /menu-engineering is not my file and is listed under needsOtherFiles.\\n\\nAn earlier stopped attempt had already added the read views to concepts/routes.ts (?view=picker, ?view=brand, the marketing allow-list and schema). I reviewed that work and finished it: the marketing-tier…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:U",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a8448118630217aa2",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789432203,
+      "queuedAt": 1791789432159,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789736991,
+      "tokens": 167303,
+      "toolCalls": 52,
+      "durationMs": 304786,
+      "resultPreview": "{\"findings\":[{\"id\":\"RV-U-01\",\"severity\":\"high\",\"title\":\"PATCH /concepts/:id now uses scope 'create' (active company only): multi-company CEO, management and marketing get 404 saving a brand that the Brand Editor lists in All-companies view\",\"file\":\"/home/user/servd/backend/src/modules/concepts/routes.ts\",\"scenario\":\"Reproduced on servd_test_rf_u_rv with a temporary test (since removed). Users admi…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "fix:U",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a6625bfce2b67aed4",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789736999,
+      "queuedAt": 1791789736994,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I confirmed both reviewer findings and fixed them in backen…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791789904841,
+      "tokens": 96585,
+      "toolCalls": 17,
+      "durationMs": 167840,
+      "resultPreview": "{\"summary\":\"I confirmed both reviewer findings and fixed them in backend/src/modules/concepts/routes.ts. Regression tests are in backend/tests/resimUi.test.ts. I rejected neither finding.\\n\\nRV-U-01: both PATCH /concepts/:id branches (the marketing allow-list and management's full schema) now look up the row with scopeTenantWhere(req, 'write'), not 'create'. Editing an existing brand is a write, s…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "review:T",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "aa6162fa894f56979",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791789804164,
+      "queuedAt": 1791789804160,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790186030,
+      "tokens": 170253,
+      "toolCalls": 47,
+      "durationMs": 381865,
+      "resultPreview": "{\"findings\":[{\"id\":\"T-RV-01\",\"severity\":\"high\",\"title\":\"A correct PIN clears the sender's whole attempt count, so anyone who knows one valid approver PIN can guess other PINs (the CEO's included) without limit and without any flag\",\"file\":\"/home/user/servd/backend/src/lib/managerPinLimit.ts\",\"scenario\":\"Reproduced on DB servd_test_rf_t_rv with Redis 6390/12, using a scratch test that was then dele…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "fix:T",
+      "phaseIndex": 3,
+      "phaseTitle": "Fix",
+      "agentId": "a3c6fbebb7dab5a2f",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791790186038,
+      "queuedAt": 1791790186033,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "I fixed both reviewer findings in backend/src/lib/managerPi…",
+      "promptPreview": "servd (repo /home/user/servd) — multi-company restaurant ERP; real staff onboard Monday. Simulated shifts were just re-run against the current (uncommitted) tree; every finding below was confirmed by an independent verifier. The FULL finding text (repro, expected/actual, evidence, suspected cause file:line, suggested fix, verifier notes) is in /home/user/servd/.handoff/resim/books.json, /home/user…",
+      "promptFramed": true,
+      "lastProgressAt": 1791790460021,
+      "tokens": 101449,
+      "toolCalls": 15,
+      "durationMs": 273983,
+      "resultPreview": "{\"summary\":\"I fixed both reviewer findings in backend/src/lib/managerPinLimit.ts. The new tests fail on the old code and pass on the fixed code. The touched suites pass and tsc is clean.\\n\\nT-RV-01 (fixed): a correct PIN used to wipe the sender's whole count. Now `pinAttemptSucceeded` gives back only the slot that attempt took, on the sender and on the order (`releaseOne`, no longer `clearOne`). T…"
+    }
+  ],
+  "totalTokens": 966104,
+  "totalToolCalls": 249
+}

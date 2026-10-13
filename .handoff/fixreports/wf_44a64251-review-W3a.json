@@ -1,0 +1,60 @@
+{
+ "findings": [
+  {
+   "id": "W3a-R1",
+   "severity": "medium",
+   "title": "Card machine left on the TEST driver and switched on at the till has no warning, so card sales are recorded as paid with no money taken",
+   "file": "/home/user/servd/frontend/admin/src/app/connectors/pos/page.tsx",
+   "scenario": "IT sets the Card machine tab to driver 'test' (default scenario 'approve' in backend/src/connectors/drivers/test.ts), ticks 'Shown at the till' and saves. Every card sale at the till then gets 'Charge on card machine': the test driver approves, and the server records a real card_terminal Payment through processPayment, although no card was ever charged. The page has banners only for the fiscal side (the not-required, held/off and fiscal-TEST banners, all gated on data.fiscal). On the terminal side the only signal is a small TEST chip in the Card machine card's actions (TerminalSetup.tsx:84) and on the hub card. Nothing at page level warns that the till is taking 'payments' on a simulator, and switching it on needs no confirmation. The builder's summary says 'a live TEST driver ... get[s] a banner', but that covers fiscal only.",
+   "fix": "In pos/page.tsx (and on the hub PosCard), add a Banner when data.terminal.enabled && data.terminal.driver === 'test': 'TEST card machine is ON at the till \u2014 card sales are recorded as paid but no card is charged. Switch it off or pick the processor's driver before trading.' In TerminalSetup.tsx, ask for confirm() when saving enabled=true with driver 'test'."
+  },
+  {
+   "id": "W3a-R2",
+   "severity": "medium",
+   "title": "Re-saving an onboarding brand brief silently resets that brand's cash/card GST to 15/8 when its province was empty",
+   "file": "/home/user/servd/frontend/admin/src/app/onboarding/page.tsx",
+   "scenario": "BrandBriefForm sets province from `(existingBrand?.province as ProvinceCode) ?? 'SD'` (line 628), so a brand with a null province opens in edit mode showing 'SD'. The payload sends `provinceTenderRates(province)` whenever `(existingBrand?.province ?? null) !== province`, which is null !== 'SD', which is true. Example: the CEO set a brand's GST to 16 % cash / 5 % card in Marketing \u2192 Brands \u2192 Tax registration and left the province blank. Opening that brand's brief in onboarding and pressing save, without touching the province, PATCHes taxRateCash=15 and taxRateCard=8. Every later order of that brand is charged a different GST with no notice. This W3a change is new: before it, edit sent only the legacy taxRate, which nothing reads.",
+   "fix": "Send the tender rates only on create, or only when the user actually changed the province field: track a `provinceTouched` flag set in the select's onChange, and compare against the real stored value without the 'SD' fallback. When the brand already has non-default rates, show the rates that will be applied and ask the user to confirm before overwriting them."
+  },
+  {
+   "id": "W3a-R3",
+   "severity": "low",
+   "title": "Three numeric settings cannot be typed, because the input is clamped on every keystroke",
+   "file": "/home/user/servd/frontend/admin/src/components/connectors/FiscalSetup.tsx",
+   "scenario": "FiscalSetup.tsx:224 runs `Math.min(5000, Math.max(500, Number(v) || 3000))` in onChange. To set 2000 ms, the user selects the field and types '2': it becomes 500 at once, and the next '0' gives '5000', which clamps to 5000. Any value whose first digit puts it below the minimum is impossible to type. TerminalSetup.tsx:145 (chargeTimeoutSec, min 45) and :149 (pollMs, min 1000) have the same bug: typing '60' seconds ends at 300, and typing '2000' ms ends at 5000. Operators save values they did not intend; for example, a 300 s charge timeout keeps the till waiting five minutes on a dead machine.",
+   "fix": "Keep the raw string in local state, and clamp or validate on blur or on Save (or show the range error inline), instead of clamping inside onChange."
+  },
+  {
+   "id": "W3a-R4",
+   "severity": "low",
+   "title": "When the \u00a717.7 switch is 'not required', go-live, switch-off and release are all hidden, which strands held documents and a live connector",
+   "file": "/home/user/servd/frontend/admin/src/components/connectors/FiscalSetup.tsx",
+   "scenario": "FiscalSetup renders ConnectionCard, TestCard, GoLiveCard and ReleaseHeldCard only when data.fiscalReportingRequired is true (lines 38-45). Scenario: a company is live, or has 40 held sales, and the CEO switches reporting to 'Not required'. The fiscal connector stays enabled=true and the held documents stay held, but the page now offers no Switch off and no Release. The Status tab still counts them, and nothing explains what will happen to them. The switch dialog does not warn that existing held, pending or failed documents are left as they are. The only way out is to turn reporting back on, act, and turn it off again, which writes two extra audit rows with made-up reasons.",
+   "fix": "Keep the GoLive card's Switch off, and the Release card, visible when !fiscalReportingRequired && (fiscal.enabled || counts.held > 0), or show a banner explaining what happens to them. In the switch-off-reporting dialog, show the current held, pending and failed counts and what will happen to them."
+  },
+  {
+   "id": "W3a-R5",
+   "severity": "low",
+   "title": "The page says 'active company only', but Submissions, Card charges and the attention list span every company in portfolio view",
+   "file": "/home/user/servd/frontend/admin/src/components/connectors/FiscalSubmissions.tsx",
+   "scenario": "GET /connectors/fiscal/documents and GET /connectors/terminal/charges use scopeTenantWhere(req,'read'), and api.ts sends x-servd-portfolio on every GET in 'All companies' view. So the Submissions table, the Card charges table and the Status tab's 'needs a person' list mix company A's and company B's rows, with no company column. Meanwhile the header says 'this page shows the active company only', the counters and Retry all failed act on the active company, and the Brand filter lists only the active company's brands. A CEO can Retry, Record manual filing or Resolve another company's document believing it belongs to the company named in the header, because write scope covers every company they belong to.",
+   "fix": "Show a Company column, plus a note that the lists follow the all-companies view, whenever portfolio view is on. Or, better, ask W1 to bind these two list routes to activeTenantId the way GET /connectors does, so the whole page is one company."
+  },
+  {
+   "id": "W3a-R6",
+   "severity": "low",
+   "title": "Resolve is offered on card charges the server always refuses, and backlog counters open filters that do not match their numbers",
+   "file": "/home/user/servd/frontend/admin/src/components/connectors/PosStatus.tsx",
+   "scenario": "CardAttention shows Resolve for every 'needs_attention' or 'unknown' charge (line 145), including refunds and needs_attention charges that carry an approvalRef. Those are void-failed charges, which are the usual kind. resolveTerminalCharge (terminal/service.ts:883-887) only accepts needs_attention when !paymentId && kind==='charge' && !approvalRef, and never accepts refunds. A manager handling a void-failed charge clicks Resolve \u2192 'The card WAS charged', gets 409 NOT_RESOLVABLE, and may then re-key on the machine instead of using Reverse. Separately, the 'Pending' counter includes 'submitting' (fiscalCounts sums both) but opens the 'pending' filter only. 'Filed today' opens every 'filed' document of all time and leaves out manual_filed, so the list never matches the number clicked.",
+   "fix": "Show Resolve only when (status==='unknown' || (status==='needs_attention' && !approvalRef && !payment)) && kind==='charge'. For refund rows show 'check the machine' text instead. Make the counter links match their counts, or label them as approximate."
+  },
+  {
+   "id": "W3a-R7",
+   "severity": "low",
+   "title": "The brand POS ID inputs accept 0 and out-of-range numbers, which return an unhelpful 422 or a 500",
+   "file": "/home/user/servd/frontend/admin/src/components/connectors/PosIdsTable.tsx",
+   "scenario": "digits() keeps '0' and any length, and the mutation sends Number(r.fbr). Entering '0' sends fbrPosId 0. The backend's z.number().int().positive() rejects it with a generic 'Validation failed' that names no brand. Entering a 10+ digit id, such as an FBR POSID pasted with extra digits, passes zod's int() check, then overflows the Postgres Int column on Concept.update and comes back as a 500. Either way the whole batch fails, including the valid rows.",
+   "fix": "Validate on the client: 1 \u2264 n \u2264 2147483647. Flag the offending row inline and disable Save until it is fixed. Ask W1 to add .max(2147483647) to the route schema."
+  }
+ ]
+}

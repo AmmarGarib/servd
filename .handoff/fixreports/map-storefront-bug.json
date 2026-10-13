@@ -1,0 +1,86 @@
+{
+ "summary": "I reproduced the module locally: API on :4200 with a new DB `servd_test_sfmap`, the existing admin build on :3200 and the storefront build prod2 on :3006. All three servers are stopped now. I clicked through every step with Playwright: hub tabs, opening pages, drag, editing fields, image upload and pick, save, preview, submit, CEO approve, and creating, approving and showing a pop-up. Results: /tmp/claude-0/-home-user-servd/33ef43a5-b49c-56f9-95d2-440e3a7d20b8/scratchpad/audit/sfmap/results.json. Screenshots are 00-61*.png in the same folder. Scripts: scratchpad/pw/sfmap.mjs, sfmap2.mjs, sfmap3.mjs. Seed: backend/.sim/sfmap/seed.ts (untracked). Logins are `<role>.a.sfmap@gsfoods.pk` / Audit-Pass-2026; staff logins must be @gsfoods.pk.\n\nWhen everything around it is set up (storefront reachable, storage configured, CEO login), the whole flow works. Edit, save draft, preview, submit, approve from the Approvals tab and go live all worked. The Stackd page change showed on /brand/stackd. An offer pop-up showed on /home after 1 second, once per visitor.\n\nIt \"doesn't work\" for these reasons, all confirmed in the run:\n\n1. **The editor needs servd.pk to be up.** Every page and pop-up editor first downloads its list of sections from https://servd.pk. The address is fixed into the admin build: `frontend/admin/src/lib/content.ts:11`, fetched at `lib/sections.ts:59`. The editor only draws once that download finishes (`components/storefront/Builder.tsx:94`). If it fails, you get a blank screen saying \"Could not load the storefront's sections\u2026\" (`Builder.tsx:306`) plus a wrong toast, \"Backend unreachable \u2014 is the API running?\" (`components/ui/Providers.tsx:9`), even though the API is fine. Pop-ups use no sections but are blocked the same way. Production is down right now, so this alone makes the module look completely dead. Screenshots 01, 02.\n2. **Approve or Submit on a page nobody has edited fails with \"SiteLayout 'servd:press' not found\".** Cause: `Builder.tsx:172` treats any value of `draftStatus` as \"has a draft\". For a page with no saved row, the API returns the text `'none'` (`backend/src/modules/siteLayouts/routes.ts:329`), which counts as true. So the editor skips the save and calls submit/approve on a row that doesn't exist, and the API returns 404. \"Discard draft\" is also wrongly clickable next to a \"No draft\" badge. Screenshots 11, 12.\n3. **Every delete button in the admin fails with HTTP 400, not just in Storefront.** `frontend/admin/src/lib/api.ts:193` sends `Content-Type: application/json` on DELETE requests with no body. Fastify 5 rejects that (error FST_ERR_CTP_EMPTY_JSON_BODY); I confirmed it with curl. In Storefront this breaks Discard draft, Delete page/pop-up, Library delete, and the cleanup after a failed upload, which leaves a broken tile in the Library (screenshot 61). There are 46 `api.delete` calls across the admin.\n4. **Marketing can't see any brand pages.** The Pages tab, the Library brand picker and the pop-up brand targeting all call GET /concepts. That route is limited to the cashier/manager roles (`backend/src/modules/concepts/routes.ts:236`), and marketing isn't one of them. So the Stackd, Simmer and Flipd page lists are empty for the marketing team, with a red \"Role 'marketing' is not allowed\" toast. Callers: `ListPanels.tsx:57`, `LibraryPanel.tsx:126`, `Builder.tsx:70`. Screenshot 60. (fnb_manager gets 403 on /site-layouts, so the F&B manager role has no Storefront access at all.)\n5. **Image upload needs Cloudflare R2.** Uploads go straight to R2 (`backend/src/lib/storage.ts:9-19`). With no R2 settings, or if the bucket doesn't allow uploads from admin.servd.pk, every upload fails with \"upload to storage failed\". /health doesn't check storage, so nothing warns about it. I couldn't check production.\n\nDesign gaps behind the owner's request:\n- **The \"canvas\" is a list of named cards, not the page.** It shows labels and short summaries (screenshots 20, 52). There is no picture of the page, no editing text on the page itself, and no resize handles or alignment guides.\n- **Drag-and-drop does work, but only onto 12px gaps between cards** (`Canvas.tsx:139`). Dropping onto a card does nothing.\n- **\"Nothing live yet\" shows on pages whose built-in design is live.**\n- **Scroll animations are entrance-only.** Five presets play once when an element scrolls into view (`frontend/storefront/src/components/blocks/Animate.tsx`, which uses IntersectionObserver). There are no effects tied to scroll position (parallax, pin, scrub) and no preview of them in the editor. The only scroll-tied effects are hand-built inside particular sections, such as servd.scrollHero.\n\nNot reproduced locally: production's RLS policies (`site_layouts` and `media_assets` have FOR ALL policies keyed on app_has_any_tenant; production runs with RLS_ENFORCE=1) and Cloudflare in front of servd.pk. Without the owner's screenshot I can't tell which of 1\u20135 he hit, but 1 is certain while production is down.",
+ "existing": [
+  {
+   "what": "Storefront hub (Pages / Pop-ups / Library / Approvals tabs)",
+   "where": "frontend/admin/src/app/storefront/page.tsx, components/storefront/ListPanels.tsx, LibraryPanel.tsx, ApprovalsPanel.tsx",
+   "notes": "Works for the CEO. For marketing the brand page lists are empty because GET /concepts returns 403."
+  },
+  {
+   "what": "Page and pop-up builder: palette, canvas, inspector, page settings, pop-up rules, versions, approve and reject dialogs",
+   "where": "frontend/admin/src/components/storefront/Builder.tsx, Canvas.tsx, BlockInspector.tsx, SectionFields.tsx, fields.tsx, panels.tsx, VersionsDrawer.tsx, tree.ts",
+   "notes": "The canvas is a list of cards, not a visual page. Uses native HTML5 drag-and-drop with 12px drop gaps. hasDraft bug at Builder.tsx:172. Nothing renders until the section list loads from servd.pk."
+  },
+  {
+   "what": "Section catalogue: the one source of each bespoke section's editable fields and each page's default design",
+   "where": "frontend/storefront/src/sections/** (catalog.ts, renderers.ts, ManagedPage.tsx), served at frontend/storefront/src/app/api/storefront-sections/route.ts, read by frontend/admin/src/lib/sections.ts",
+   "notes": "55 specs and 23 page defaults. Cross-origin, allowed through the ADMIN_ORIGINS env. The admin fetches it at runtime from a URL fixed in the build (NEXT_PUBLIC_STOREFRONT_URL, default https://servd.pk)."
+  },
+  {
+   "what": "Generic block types (hero, text, button, banner, image, gallery, video, columns, spacer, forms, live-data blocks) with entrance animations and delay/duration",
+   "where": "frontend/admin/src/lib/blocks.ts, frontend/storefront/src/lib/blocks.ts, mobile/src/content/types.ts",
+   "notes": "The block format is shared by web and the mobile app, which draws it natively. Any new element type or layout model has to change all three, per CLAUDE.md."
+  },
+  {
+   "what": "Storefront renderer and entrance animations",
+   "where": "frontend/storefront/src/components/blocks/PageRenderer.tsx, Animate.tsx (IntersectionObserver), components/kinetic/motionHooks.ts",
+   "notes": "Fade-up, fade-in, slide-left, slide-right and zoom-in, played once on entry. No scroll-scrubbed timeline. framer-motion is no longer a dependency."
+  },
+  {
+   "what": "Drafts, approval, scheduled publish, versions and rollback, A/B, preview tokens",
+   "where": "backend/src/modules/siteLayouts/routes.ts, service.ts, schemas.ts; SiteLayout/SiteLayoutVersion/SiteLayoutStat in backend/prisma/schema.prisma:2777",
+   "notes": "Approve, reject, rollback and delete are hard-wired to role admin (CEO = requireAuth(...ADMIN_ONLY)). This collides with the owner's wish to reassign approvals to head-office HODs."
+  },
+  {
+   "what": "Pop-up runtime",
+   "where": "frontend/storefront/src/components/popups/PopupHost.tsx, PopupBlocks.tsx; GET /site-layouts/popups/live",
+   "notes": "Verified working: page and brand rules, audience, frequency (once per visitor, so it correctly did not show again on /brand/stackd), modal, bar and corner styles."
+  },
+  {
+   "what": "Media library and uploads",
+   "where": "backend/src/modules/media/routes.ts, backend/src/lib/storage.ts (Cloudflare R2 presigned PUT), LibraryPanel.tsx (manage and pick modes)",
+   "notes": "Works when R2 is configured. Its failure cleanup and the delete button are broken by the admin DELETE content-type bug."
+  },
+  {
+   "what": "Admin API client",
+   "where": "frontend/admin/src/lib/api.ts:186-199",
+   "notes": "Always sends Content-Type: application/json, so every body-less DELETE gets 400 FST_ERR_CTP_EMPTY_JSON_BODY. Affects all 46 api.delete calls."
+  }
+ ],
+ "gaps": "The bugs that make it not work today:\n- (a) The editor depends on the live storefront host. There is no copy of the section list bundled with the admin or served by the API, and pop-ups are blocked by it for no reason.\n- (b) hasDraft treats the text 'none' as true, so untouched pages hit 404 on submit and approve.\n- (c) Every DELETE in the admin returns 400.\n- (d) Marketing can't list brands (GET /concepts is limited to managers and cashiers).\n- (e) Uploads need R2 plus bucket permission for admin.servd.pk, and nothing in /health shows whether that is set up.\n- (f) Misleading error text (\"Backend unreachable \u2014 is the API running?\" for any fetch failure, including the storefront host).\n\nGaps against the owner's \"graphic design for dummies\" request:\n- No picture of the page while editing. Elements are cards with labels, so nothing shows how it looks until you press Preview, which opens a new tab.\n- No free placement, alignment or snap guides, and no resize handles. Size is only a few presets per element (height sm/md/lg, maxWidth, aspect).\n- No separate phone and desktop layouts while editing.\n- No editing text directly on the page. You can't drop a file straight onto an element; files go through the Library picker.\n- Drop targets are 12px strips.\n- No undo/redo.\n- No layers panel.\n\nScroll animations: only five entrance presets. Nothing tied to scroll position (parallax, pin and scrub, sticky sequences, progress-based keyframes) and no way to preview scroll in the editor. Scroll-tied effects exist only inside hand-coded sections (servd.scrollHero), which marketing can fill in but not author.\n\nPop-ups:\n- The editor shows the pop-up as a card list, not inside its modal, bar or corner frame.\n- Marketing can't target brands.\n- The rules can't be tested without publishing.\n\nProcess gaps:\n- Approval is CEO-only and hard-coded (routes.ts CEO = ADMIN_ONLY). The F&B manager role has no Storefront module.\n- \"Nothing live yet\" is shown for pages whose built-in design is live.\n\nAny new layout model (free-form or scroll keyframes) also has to be drawn by the mobile app (mobile/src/content), or deliberately left out there.",
+ "options": [
+  {
+   "option": "A. Make the current module work: fix bugs (a)-(f) only",
+   "pros": "Fixes the real breakages in days, using the existing pieces. (1) Bundle a copy of the section list into the admin build, or serve it from the API, so the editor opens even when servd.pk is down; pop-ups skip it entirely. (2) Treat only 'draft', 'pending' or 'scheduled' as a draft (Builder.tsx:172). (3) Send Content-Type only when there is a body (api.ts:193), which fixes all 46 admin deletes. (4) Give marketing a brand list (open GET /concepts to the marketing team, or use the existing scoped list). (5) Report storage (R2) status in /health and show a clear message when it isn't set up. (6) Accurate error text. Each fix comes with a test that covers two companies.",
+   "cons": "Still a list of cards, not a design tool. Doesn't meet the owner's 'graphic design for dummies' or scroll-animation ask.",
+   "size": "S"
+  },
+  {
+   "option": "B. Visual editor on the existing block/section model: the real page in an iframe, click to select, drag on the page, resize/spacing/alignment handles, phone/desktop toggle, undo, pop-up shown in its real frame, scroll-effect presets with a scroll scrubber",
+   "pros": "One drawing engine for preview and live: the storefront draws the draft (a postMessage bridge on top of the existing /preview route), so what marketing sees is what ships. Keeps drafts, CEO approval, versions, A/B, brand rules and the shared format with the mobile app. Adds per-element size, spacing and alignment with phone/desktop values and drop indicators on the page. Scroll effects become a small fixed set (parallax, fade or scale on scroll, pin, reveal sequence) stored in the block format and played with CSS scroll-driven animations or a small library. Marketing picks a preset and drags a scrubber to preview it. Not a duplicate: it replaces the card canvas inside the same module.",
+   "cons": "A sizeable piece of work in both admin and storefront. Scroll presets have to be built into the web renderer and either built in the mobile app or deliberately ignored there. Still snaps to sections and columns, so you can't place things at exact spots on a blank page.",
+   "size": "L"
+  },
+  {
+   "option": "C. Embed an open-source page builder wholesale (e.g. GrapesJS) as the storefront editor",
+   "pros": "Comes with drag, resize, style manager, asset manager and layers. Looks like the 'Adobe-style' tool the owner described.",
+   "cons": "It produces raw HTML/CSS, not our block format. That would make a second storefront content system: it breaks the mobile app's native drawing, the section catalogue contract, safe links and colours (sections/safe.ts), brand-rule enforcement (Simmer SKILL rules) and the approval and version history. Under the standing rule this is a duplicate that must be flagged, and it would mean retiring the current module. Scroll animations still need building on top.",
+   "size": "XL"
+  },
+  {
+   "option": "D. Add a 'free-form design' element type inside B: an artboard where layers (text, image, video, shape, button) are placed freely, with snap/alignment guides, resize handles, file drop and per-layer scroll keyframes",
+   "pros": "Gives the Canva/Photoshop feel exactly where it is wanted (heroes, campaign banners, scroll stories) while the rest of the page stays responsive and tidy. Keyframes tied to scroll position cover the 'super important' scroll animations, with a timeline scrubber in the editor. Open-source pieces exist for handles and guides (e.g. Moveable, MIT).",
+   "cons": "Free-form positions need separate phone and desktop layouts, or designs break on phones. The mobile app needs a native drawer for it, or a fallback (a flattened image). More room for designs that break the brand rules. Builds on B, not instead of it.",
+   "size": "L"
+  }
+ ],
+ "recommendation": "Do A now. It is small, and it is why the module \"doesn't work\". Two of its fixes reach beyond Storefront: the admin-wide DELETE bug (api.ts:193) and the marketing brand-list 403. The bundled section list should also stop the editor being blank while production is down.\n\nThen build B as the \"state of the art\" editor, with D's free-form artboard as one element type inside it. Make scroll animations a first-class part of B/D: a few presets, plus keyframes tied to scroll position on artboard layers, previewed with a scrubber. Store them in the shared block format (frontend/storefront/src/lib/blocks.ts, frontend/admin/src/lib/blocks.ts, mobile/src/content/types.ts, kept in step), and decide explicitly what the mobile app does with them.\n\nDon't adopt C. Embedding an HTML page builder would duplicate the content system (standing rule: flag duplicates) and break the mobile app, brand rules and approval history.\n\nKeep the approval flow, but move the hard-coded CEO-only approve, reject and rollback gate (siteLayouts/routes.ts, `CEO = requireAuth(...ADMIN_ONLY)`) onto whatever reassignable-approvals design comes out of the head-office work, so marketing's approver can be a head-office HOD.",
+ "questionsForOwner": [
+  "Which open-source tool did you mean (name or link)? Do you want the editor to look and feel like it, or actually build ours on top of it? Building on top of it would mean replacing the current storefront module.",
+  "Should marketing be able to place things anywhere on a page (like Canva), or only inside sections that stay tidy on phones? Our suggestion is tidy sections, plus a 'free design box' for heroes and banners.",
+  "Do the scroll animations and free-form designs also have to appear in the customer mobile app, or can the app show a simpler version?",
+  "Who approves website changes once head office exists: still only you, or the Marketing HOD (or someone else you choose)?",
+  "Should the F&B manager role have access to the Storefront module, or only Marketing?",
+  "Is Cloudflare R2 (image and video storage) set up on the live server? If not, are we OK to set it up? Uploads can't work without it."
+ ]
+}

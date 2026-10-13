@@ -1,0 +1,28 @@
+{
+ "findings": [
+  {
+   "id": "LEFT-R1",
+   "severity": "medium",
+   "title": "A cancelled group can be re-locked and then submitted, which sends a kitchen ticket. The new UI also treats 'locked' as submittable.",
+   "file": "/home/user/servd/backend/src/modules/groupOrders/routes.ts",
+   "scenario": "Reproduced in a scratch test (/home/user/servd/backend/.sim/review-LEFT/cancelLock.test.ts, DB servd_test_left_review, Redis db 30). A member cancels the group: POST /group-orders/CANCL1/cancel returns 200 and the status becomes 'cancelled'. The same member, or any member, then calls POST /group-orders/CANCL1/lock. That returns 200 and sets the status back to 'locked', because the lock route (lines 204-223) never checks go.status. POST /group-orders/CANCL1/submit then returns 200 {orderId, total:103500}, and an Order with external_id group-CANCL1 is created and fired to the kitchen. The submit route's GROUP_CANCELLED guard (line 245) only checks status === 'cancelled', and lock has just overwritten that status. This defeats the explicit 'a cancelled group must not still fire a ticket' fix. The builder's page change makes it worse: the submit button is now enabled for status 'locked', so after any re-lock a cancelled group appears submittable in the UI.",
+   "fix": "In POST /:code/lock, refuse anything that is not open, before the update: `if (go.status !== 'open') throw new AppError('GROUP_LOCKED', `Group is ${go.status}`, 422)`. Even better, make the update conditional: `updateMany({ where: { id: go.id, status: 'open' }, data: { status: 'locked' } })`, then 422 when count === 0. Add a regression test for cancel, then lock, then submit: the lock should be 422 and no order should exist."
+  },
+  {
+   "id": "LEFT-R2",
+   "severity": "low",
+   "title": "A refused submit after the lock strands the cart: the notice says to remove items, but removal is impossible on a locked group.",
+   "file": "/home/user/servd/frontend/storefront/src/app/group-order/[code]/page.tsx",
+   "scenario": "The builder says a refused submit 'never strands a locked cart'. That only holds when the client's menu pre-check catches the problem. The pre-check is skipped when loadMenu returns null (menu fetch failed or non-2xx), and it misses a section window that ends between the pre-check and the submit. Example: lunch runs 12:00-16:00 with the end minute inclusive. The pre-check fetches the menu at 16:00:50, the lock succeeds, and the submit reaches the server at 16:01:00, which returns 400 ITEM_UNAVAILABLE. It also misses an item whose price was set to 0: it stays on the menu, and ingestOrder then returns 409 ITEM_NOT_PRICED. In each case the group is left 'locked'. DELETE /:code/items/:itemId requires status 'open' (routes.ts line 187), the page hides the remove button unless go.status === 'open' (line 249), and no unlock route exists. On a retry, the pre-check's 'gone' notice tells members to remove the item, which they cannot do. The group can only be cancelled and rebuilt from scratch (or submitted after the lunch window reopens the next day).",
+   "fix": "Either (a) lock and submit together on the server: have submit accept an 'open' group and claim it from open/locked to submitted in one step, and drop the separate client /lock call; or (b) when /submit returns ITEM_UNAVAILABLE / ITEM_NOT_PRICED / BRAND_CLOSED after the client locked the group, have the client reopen it (needs a member-only POST /:code/unlock that moves locked to open when orderId is null). Also, when loadMenu returns null, stop before locking instead of skipping the checks."
+  },
+  {
+   "id": "LEFT-R3",
+   "severity": "low",
+   "title": "The group-order Total preview is computed on the client and leaves out the service charge and item tax classes that the server charges.",
+   "file": "/home/user/servd/frontend/storefront/src/app/group-order/[code]/page.tsx",
+   "scenario": "The builder rewrote the tax line to say it matches the server rate (taxRateCash). However, submit prices the order with priceOrder(lines, 'cash', 'group', concept), and lib/pricing.ts maps the 'group' channel to 'pos' for the service charge (SERVICE_CHARGE_CHANNEL, line 56). Take a company whose service charge applies to pos, for example 10% dine-in. For a PKR 2,700 basket the page shows Subtotal 2,700 + Tax 405 = Total 3,105. The order and its pending split payment are created at 3,105 + service charge, so the customer sees a lower 'Total' than the bill staff collect. Zero-rated or reduced-rate items (item tax classes) also make the client's tax figure wrong. This was a client-side approximation before the change too; the change keeps it and presents it as the server rate.",
+   "fix": "Show the server's figures. Add a read-only quote to GET /group-orders/:code (or a new GET /:code/quote) that runs priceOrder(lines, 'cash', 'group', concept) and returns { taxCents, serviceChargeCents, totalCents }. Render those values, and stop computing tax in the page. At minimum, add a service charge line or label the figure as an estimate before service charge."
+  }
+ ]
+}
