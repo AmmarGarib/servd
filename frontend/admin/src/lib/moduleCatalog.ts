@@ -103,6 +103,9 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   procurement:    [
     { label: 'Procurement', href: '/procurement', icon: '🏭', hint: 'Purchase orders, bills, payments' },
     { label: 'Receiving', href: '/procurement/receiving', sub: true },
+    // Also an Accounting page: the API gate on /procurement/grni admits
+    // procurement and accounting (finance asks for a write-off, the CEO approves).
+    { label: 'Received, not billed', href: '/procurement/grni', sub: true },
     { label: 'Supplier chat', href: '/procurement/chat', sub: true },
     { label: 'Monitor', href: '/procurement/monitor', sub: true },
   ],
@@ -132,6 +135,9 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   tables:         [{ label: 'Floor plan', href: '/floorplan', icon: '🪑' }],
   dispatch:       [{ label: 'Dispatch', href: '/dispatch', icon: '🛵' }],
   riders:         [{ label: 'Riders', href: '/riders' }],
+  // A delivery completes only with the customer's code; when that fails the
+  // RGM, chef or F&B manager acts here (owner, 2026-10-13).
+  emergency_overrides: [{ label: 'Emergency overrides', href: '/emergency-overrides', hint: 'Send the hand-over code to the rider; log food a rider brought back' }],
 
   // ── Finance
   finance_pl:     [
@@ -148,20 +154,25 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Period close', href: '/accounting/period-close', sub: true },
     { label: 'Chart of accounts', href: '/configuration/chart-of-accounts', sub: true },
     { label: 'Allocations', href: '/allocations', sub: true },
-    { label: 'Food cost', href: '/accounting/food-cost', sub: true },
+    // Food cost moved to Reports → Food cost variance (module food_cost);
+    // /accounting/food-cost forwards there (next.config.js).
     { label: 'Sales quadrants', href: '/accounting/menu-engineering', sub: true },
     { label: 'AP aging', href: '/accounting/ap-aging', sub: true },
+    { label: 'Received, not billed', href: '/procurement/grni', sub: true },
     { label: 'Receivables', href: '/accounting/receivables', sub: true },
+    { label: 'On-account clients', href: '/accounting/receivables/clients', sub: true, hint: 'Corporate clients who pay monthly — credit limits, QR cards, statements' },
     { label: 'Sales tax return', href: '/accounting/sales-tax-return', sub: true },
-    { label: 'Fixed assets', href: '/accounting/fixed-assets', sub: true },
+    { label: 'Statutory payments', href: '/accounting/statutory', sub: true },
+    { label: 'Inter-company', href: '/accounting/intercompany', sub: true },
+    { label: 'Fixed assets', href: '/accounting/fixed-assets', sub: true, hint: 'Register, automatic monthly depreciation, smallwares pools, disposals, PPE note' },
     { label: 'Petty cash', href: '/finance/petty-cash', sub: true },
-    { label: 'Cash vouchers', href: '/finance/cash-vouchers', sub: true, hint: 'HOD signs, director approves, the signed photo puts it in petty cash' },
+    { label: 'Cash requests', href: '/finance/cash-vouchers', sub: true, hint: 'Anyone asks for cash; HOD and director sign; the cashier pays; receipts book it' },
     { label: 'Deposit drops', href: '/finance/deposit-drops', sub: true },
     { label: 'Bank accounts', href: '/configuration/bank-accounts', sub: true },
   ],
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
   gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: '🎁' }],
-  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️', hint: 'Shift closes, bank statements and Raast QR receipts (provisional until the statement matches)' }],
+  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️', hint: 'Shift closes, bank statements, card payouts, Raast QR receipts (provisional until the statement matches) and cash on delivery owed by riders' }],
   voided_prebills: [{ label: 'Voided pre bills', href: '/finance/voided-pre-bills', hint: 'Every pre-bill printed — flagged when it never became a full & final bill or the final bill came out lower' }],
   exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: '🚨' }],
   capital:        [
@@ -174,6 +185,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Reports', href: '/reports', icon: '📈' },
     { label: 'Demand forecast', href: '/analytics/forecast', sub: true },
   ],
+  // Its own module, so the CEO can grant it without the rest of Reports. The
+  // page needs food_cost; the API also answers accounting holders' reads (the
+  // Accounting hub's gauge — GATED_PREFIXES readAnyOf).
+  food_cost:      [{ label: 'Food cost variance', href: '/reports/food-cost', hint: 'Actual vs recipe per ingredient and brand, at the price paid (FIFO)' }],
   // 'payroll' is the Finance workspace's view of pay: tip pools and the
   // payroll register (GET /hr/payroll/runs — finance reads it, HR prepares it).
   payroll:        [
@@ -254,10 +269,18 @@ export const PERSONAL_PAGES: ModulePage[] = [
   // links; the API lists only what this login can act on.
   { label: 'Approvals', href: '/ceo/approvals', hint: 'Everything waiting on you' },
   { label: 'My HR', href: '/hr/me', hint: 'Leave, payslips, requests' },
+  // Cash requests (owner, 2026-10-13): anyone who needs cash raises one here
+  // and uploads the receipts afterwards; the box's custodian (the cashier)
+  // pays from the same page without the accounting module. Outside the cash
+  // keepers, the API lists only requests the caller raised or holds, may sign
+  // as HOD, or must pay from a box they hold; signing, approving and paying
+  // are checked server-side.
+  { label: 'Cash requests', href: '/finance/cash-vouchers', hint: 'Ask for cash and upload your receipts' },
 ]
 
 /**
- * What is missing or unreliable, per module — current as of 2026-10-04.
+ * What is missing or unreliable, per module — current as of 2026-10-04; the
+ * stock, food-cost and finance notes as of 2026-10-13 (wave B).
  * Short and factual; omit a module rather than guess.
  */
 export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
@@ -267,16 +290,17 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   reservations: 'Table state is set by the reservation flow only — POS orders never mark a table occupied. Guest tags have endpoints but no admin screen.',
   dashboard: 'The four workspace dashboards (Operations, Finance, Marketing, HR) are blank until the owner picks their numbers.',
   ops: 'The prep list forecasts for the first brand only; it has no brand picker.',
-  inventory: 'Stock is set only by a count, a waste log or a delivery; sales deplete through the one recipe explosion and give stock back on cancel. Counts and prep batches are company-scoped. No stock ledger yet (only sales leave a movement trail), no expiry or lot dates, cost is moving-average, and stock transfers move no quantity.',
+  inventory: 'Stock is held as FIFO lots, costed at the price paid: lib/stockLedger.ts is the only writer and every change leaves a stock movement. Sales deplete through the one recipe explosion; unfired voids and cancels go back to their lots, fired ones are booked as waste. Counts and prep batches are company-scoped. One stock pool per company: lots carry their outlet, but per-outlet pools are the next build, so a transfer moves no quantity (a short receipt is booked as transit loss). Lots have no expiry dates.',
   par_sheet: 'A different "par" from InventoryItem.parLevel (which drives low-stock alerts): this sheet lists the sub-recipes the company\'s brands use.',
-  recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion; till sales book COGS per brand at shift close. One price per item across channels; no combos.',
-  procurement: 'One PO system, one receiving path (stock and moving-average cost in one transaction) and one AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
+  recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion, at the FIFO price of the lots being cooked; modifiers carry their own recipes; till sales book COGS per brand at shift close. Every dish has a Packaging section: it counts on takeaway and delivery, on every order of a brand whose service vessel is packaging (Stackd), and on a dine-in line only when staff tap "Box given". The Q factor is the only plate allowance — menu pricing, never booked. One price per item across channels; no combos.',
+  procurement: 'One PO system and one receiving path: each receipt line opens a FIFO lot, held on 2015 until its bill clears it ("Received, not billed" lists what is open; a write-off needs the CEO). A bill\'s stock lines link to their receipt; equipment goes through CapEx, never a bill. One AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
   food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company. No inspection export, no overdue reminders, not yet per outlet in the UI.',
-  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it. Petty-cash spends that pay no supplier bill still post nothing.',
-  accounting: 'One ledger feed, one period-lock path (reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Receivables have no credit notes, statements or on-account tender. Depreciation is charged by pressing "Charge month". The Sales quadrants page reads data.items from a bare array, so it shows nothing.',
+  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it.',
+  accounting: 'One ledger feed and one period-close checklist (only the CEO closes over a blocking item, with a reason; reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Bad debts are written off directly, each approved by the CEO; there is no doubtful-debt provision.',
   finance_pl: 'From the ledger. Shared cost reaches a brand only through allocation runs; the rest is one head-office line (decision 22).',
-  capital: 'A paid CapEx instalment posts as a supplier advance; a delivered item is capitalised onto the fixed-asset register. Old capital-ledger rows are read-only history.',
-  reports: 'The demand forecast predicts items, not covers, so it cannot drive a rota.',
+  capital: 'A CapEx line names its supplier; a paid instalment is an advance on 1340, with income tax withheld at the supplier\'s filer rate and input tax by authority. Capitalising a delivered item onto the fixed-asset register needs the CEO\'s approval; Quick buy (bank only) buys, pays and asks for capitalisation in one step. Old capital-ledger rows are read-only history.',
+  reports: 'Food cost variance is its own module (food_cost), linked from Reports. The demand forecast predicts items, not covers, so it cannot drive a rota.',
+  food_cost: 'Actual vs recipe at the FIFO price of the lots cooked, split food / drinks / packaging, with material cost by order type and brand. Per-outlet actual waits for per-outlet stock (the next build); periods before the FIFO cut-over have no lot data.',
   crm: 'Segments are per company, computed nightly; bans, loyalty settings and tiers are per company.',
   campaigns: 'Email and WhatsApp only. No scheduled sends — a campaign is a draft until sent — and opens and clicks are not linked to orders.',
   storefront: 'Nothing publishes without the CEO (decision 41).',
@@ -321,11 +345,8 @@ export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
   // only the caller (or the employee whose code + PIN is entered), so every
   // login opens it; the Workforce sidebar link stays with staff_directory.
   '/time-clock',
-  // Cash vouchers: the cashier who holds a box (Jamil sb) pays against the
-  // printed voucher and uploads the signed photo without the accounting
-  // module. The API scopes the list to the boxes they hold; preparing,
-  // signing and cancelling stay with cash keepers server-side.
-  '/finance/cash-vouchers',
+  // Cash requests (/finance/cash-vouchers) are a personal page now, so the
+  // line below opens them to every login.
   ...PERSONAL_PAGES.map((p) => p.href),
 ]
 

@@ -51,6 +51,9 @@ const nextConfig = {
       // The WhatsApp gateway page moved into Dev → API (spec §10, D13). The
       // path itself is retired for good, so this one is permanent.
       { source: '/configuration/whatsapp', destination: '/connectors/whatsapp', permanent: true },
+      // Food cost is one variance report under Reports (owner, 2026-10-13: no
+      // duplicates). The old Accounting page is gone for good; links forward.
+      { source: '/accounting/food-cost', destination: '/reports/food-cost', permanent: true },
     ]
   },
   async rewrites() {

@@ -85,13 +85,14 @@ export type ModuleId =
   | 'dashboard' | 'ops' | 'orders' | 'refunds' | 'curbside' | 'kds_all' | 'kds_dashboard' | 'expo_station' | 'chain'
   // Service
   | 'pos' | 'reservations' | 'reservations_admin' | 'scheduling' | 'tables' | 'dispatch' | 'riders'
+  | 'emergency_overrides'
   // Kitchen
   | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet' | 'food_safety'
   // Marketing
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'storefront' | 'analytics'
   // Finance
   | 'finance_pl' | 'payroll' | 'accounting' | 'gift_cards' | 'reconciliation' | 'exceptions' | 'capital' | 'projections' | 'procurement' | 'reports'
-  | 'voided_prebills'
+  | 'voided_prebills' | 'food_cost'
   // Workforce — `staff_directory` is the unified hub; `staff_hr` is the HR
   // back office (enforced by the API on the HR admin routes). The seven
   // per-category ids that used to sit here tagged nothing and were retired.
@@ -138,6 +139,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'tables',             label: 'Floor Plan',          section: 'Service' },
   { id: 'dispatch',           label: 'Dispatch',            section: 'Service' },
   { id: 'riders',             label: 'Riders',              section: 'Service' },
+  { id: 'emergency_overrides', label: 'Emergency overrides', section: 'Service' },
 
   { id: 'menu',               label: 'Menu',                section: 'Kitchen' },
   { id: 'components',         label: 'Components',          section: 'Kitchen' },
@@ -169,6 +171,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'projections',        label: 'Projections',         section: 'Finance' },
   { id: 'procurement',        label: 'Procurement',         section: 'Finance' },
   { id: 'reports',            label: 'Reports',             section: 'Finance' },
+  { id: 'food_cost',          label: 'Food cost variance',  section: 'Finance' },
   { id: 'voided_prebills',    label: 'Voided pre bills',    section: 'Finance' },
 
   { id: 'staff_directory',    label: 'Staff Directory',     section: 'Workforce' },

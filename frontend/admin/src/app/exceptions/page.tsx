@@ -83,6 +83,40 @@ const KIND_LABEL: Record<string, string> = {
   raast_debit_alert:        'Money left a Raast account',
   tip_pool_outlier:       'Tip pool share above 40%',
   capex_over_budget:       'CapEx project over budget',
+  // Wave B (2026-10-13). Fixed assets and CapEx.
+  depreciation_failed:       'Monthly depreciation failed',
+  capex_uncapitalised:       'Delivered CapEx not on the asset register',
+  capex_advance_overdue:     'CapEx advance past its delivery date',
+  capex_orphan_advance:      'CapEx advance with no payment or project',
+  capex_prepaid_unscheduled: 'CapEx prepayment with no release schedule',
+  fixed_asset_gl_mismatch:   'Asset register differs from the ledger',
+  bill_equipment_override:   'Supplier bill line passed as not equipment',
+  equipment_override:        'Spend passed as not equipment',
+  // Stock and food cost.
+  stock_shortfall:           'Sold more stock than the books held',
+  stock_unrecorded:          'Count found stock the books had at zero',
+  recipe_foreign_stock:      "Recipe uses another company's stock",
+  stock_restore_failed:      'Stock not put back after a cancel or void',
+  // Period close and inter-company.
+  period_close_override:     'Period closed over a blocking check',
+  intercompany_mismatch:     'Inter-company balances do not agree',
+  // Cash requests.
+  cash_advance_overdue:      'Cash request receipts overdue',
+  cash_request_needs_review: 'Cash request needs review',
+  // Delivery.
+  delivery_code_rerouted:    'Hand-over code sent to the rider',
+  food_returned:             'Food brought back by a rider',
+  delivery_door_problem:     'Rider reported a problem at the door',
+  cod_cash_overdue:          'Cash on delivery not handed in',
+  delivery_on_road_overdue:  'Delivery out on the road too long',
+  // On-account clients and till clearing.
+  on_account_card_revoked_used: 'Revoked on-account card used',
+  on_account_overdue:        'On-account client overdue',
+  on_account_unbilled:       'On-account charges not billed',
+  till_clearing_unexpected:  'Unexpected posting to till clearing',
+  // Card payouts and gift cards.
+  card_payout_unmatched:     'Card payout not matched',
+  gift_card_breakage_held:   'Expired gift card held off the books',
 }
 
 /** The kind a flag is really about: metadata.realKind when set, else its kind. */
