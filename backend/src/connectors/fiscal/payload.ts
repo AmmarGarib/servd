@@ -11,11 +11,25 @@
 // (orderPosting computeSaleAccounting: revenue + GST + service + tip):
 //   bill = Order.totalCents (what was still owed after the wallet and gift
 //          cards) + Order.walletAmountCents + gift-card redemptions
-//        = (sale value − discount) + tax + service charge + tip + delivery fee.
+//        = (sale value − discount) + tax + service charge + tip.
 // Wallet, gift card and the COD cash still pending at completion are TENDERS
-// of that bill, never subtracted from it. The delivery fee (untaxed, priced by
-// lib/pricing priceOrder into the total; it has no Order column) is
-// totals.deliveryChargeCents — what is left of the bill once the food, tax,
+// of that bill, never subtracted from it.
+//
+// The delivery fee (owner 2026-10-13, H9) is a TAXED SUPPLY. An order priced
+// with it stores Order.deliveryFeeCents (the fee before GST) and
+// Order.deliveryFeeTaxCents (its GST at the order's standard tender rate,
+// inside Order.taxCents), and the fee becomes a document LINE of its own:
+//   { lineId 'delivery:<orderId>', itemCode 'DELIVERY-CHARGE',
+//     description 'Delivery charge', quantity 1, unit = gross = the fee,
+//     discount = its share of the discount, taxable = fee − that share,
+//     taxRatePct = the order's standard rate, taxCents = deliveryFeeTaxCents }
+// so the food lines carry Order.taxCents − deliveryFeeTaxCents, saleValueCents
+// and discountCents include the fee line, and totals.deliveryChargeCents is 0.
+// The FBR reference mapping gives that line ItemCode 'DELIVERY' (PCT
+// 9963.1100 until the vendor / CA says otherwise).
+// A LEGACY delivery order (priced before the fee had columns — fee 0 stored,
+// the fee untaxed inside the total) keeps the old rule: its fee is
+// totals.deliveryChargeCents, what is left of the bill once the food, tax,
 // service and tip are accounted for, and only on a delivery order. Any other
 // remainder means the stored figures do not add up: totalsCheck() says so and
 // the outbox never files that document (fiscal_failed, totals_mismatch).
@@ -23,13 +37,23 @@
 // F-RV-1 — a discount larger than the food. A loyalty redemption may cover
 // the GST and the delivery fee too (storefront checkout caps it at the priced
 // total, the till at what is still owed), and a 100 % discount leaves the
-// customer paying only the GST. The food lines then carry the discount up to
-// their gross (taxable 0), the stored tax is spread over them by gross × rate
-// (GST is levied on the pre-discount value — lib/pricing priceOrder), and the
-// part of the discount above the food is totals.billDiscountCents, taken off
-// the bill after the tax:
+// customer paying only the GST. The discount covers the FOOD lines first (up
+// to their gross, taxable 0), then the delivery-charge line (up to the fee),
+// and only what is left above both is totals.billDiscountCents, taken off the
+// bill after the tax:
 //   Σ taxable + tax + service + tip + delivery − billDiscount = the bill.
-// It is present only when non-zero, so every other payload is unchanged.
+// The stored tax is spread over the food lines by taxable × rate, or by
+// gross × rate once they are fully discounted (GST is levied on the
+// pre-discount value — lib/pricing priceOrder). billDiscountCents is present
+// only when non-zero, so every other payload is unchanged.
+//
+// Buyer and tender of an on-account bill (owner 2026-10-13, H14): an order
+// charged to a named corporate client (CustomerAccountCharge) names the client
+// as the buyer (legal name, NTN, STRN, CNIC, address), and 'on_account' is the
+// CASH class (lib/pricing tenderOf, the CA's default): payment mode 'cash',
+// SRB modeOfPay 'Cash' when every tender is cash or on account, FBR
+// PaymentMode 2 when any is (vendor to confirm), and a whole-order return of an
+// all-on-account sale goes back 'on_account'.
 //
 // Ported from servd's old direct filers (adapters/fbr, adapters/srb — removed
 // in the cutover), so nothing they got right is lost:
@@ -56,7 +80,8 @@ import { isoPkt, sha256Hex, stableStringify } from '../util.js'
 
 type Tx = Prisma.TransactionClient
 
-const CASH = new Set(['cash'])
+// Cash class: cash, and an on-account client's bill (owner/CA default — lib/pricing tenderOf).
+const CASH = new Set(['cash', 'on_account'])
 // The digital tax group (lib/pricing CARD_TENDERS → Concept.taxRateCard):
 // card (Card – Keenu), Raast QR (an instant bank transfer to the seller's
 // account, 2026-10-12), the retired Keenu QR (old sales) and the servd wallet
@@ -70,9 +95,10 @@ const NOT_MONEY = new Set(['comp', 'gift_card'])
 /**
  * The payload totals as servd sends them (contract v1). `deliveryChargeCents`
  * was added in ONL-R2-02 — optional for backward compatibility (a payload
- * built before it, and the setup dry run, have none = 0). `billDiscountCents`
- * (F-RV-1) is the discount above the food value, taken off after the tax;
- * present only when it is non-zero.
+ * built before it, and the setup dry run, have none = 0); since H9 it is the
+ * LEGACY untaxed fee only, 0 when the fee is a DELIVERY-CHARGE line.
+ * `billDiscountCents` (F-RV-1) is the discount above the food and the
+ * delivery charge, taken off after the tax; present only when it is non-zero.
  */
 export type FiscalTotals = FiscalPayload['totals'] & { deliveryChargeCents?: number; billDiscountCents?: number }
 
@@ -119,6 +145,10 @@ export function payloadHash(p: FiscalPayload): string {
   return sha256Hex(stableStringify(p))
 }
 
+/** The fee line's itemCode (H9) and its line id prefix — `delivery:<orderId>`. */
+export const DELIVERY_CHARGE_ITEM_CODE = 'DELIVERY-CHARGE' as const
+export const deliveryLineId = (orderId: string) => `delivery:${orderId}`
+
 /** Human order ref: the last 8 characters of the order id, upper-cased. */
 export function orderRefOf(orderId: string): string {
   return orderId.replace(/-/g, '').slice(-8).toUpperCase()
@@ -154,7 +184,8 @@ export function resolveRegistrations(
 /**
  * cash / card / mixed from the tenders (comps and gift cards are not money
  * tendered now and do not decide the mode). 'card' is the digital group:
- * card, Raast QR, the retired Keenu QR and the servd wallet.
+ * card, Raast QR, the retired Keenu QR and the servd wallet; 'cash' is cash
+ * and an on-account client's bill.
  */
 export function paymentModeOf(methods: string[]): 'cash' | 'card' | 'mixed' {
   const money = methods.filter((m) => !NOT_MONEY.has(m))
@@ -168,7 +199,7 @@ const ORDER_INCLUDE = {
   concept: {
     select: {
       id: true, name: true, invoiceLegalName: true, ntn: true, strn: true, province: true, invoiceAddress: true,
-      fbrPosId: true, srbPosId: true, taxRateCash: true, taxRateCard: true,
+      fbrPosId: true, srbPosId: true, taxRateCash: true, taxRateCard: true, tenantId: true,
     },
   },
   items: {
@@ -248,21 +279,29 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
       rate: lineTaxRatePct(it.menuItem, standardRate),
     }
   })
-  const saleValueCents = base.reduce((s, l) => s + l.gross, 0)
+  const foodValueCents = base.reduce((s, l) => s + l.gross, 0)
+  // H9: a delivery fee stored on the order is a taxed line of its own, with
+  // its stored GST (never more than the order's tax). Fee 0 = no line (a
+  // pickup, the till, or a legacy delivery whose fee is the remainder below).
+  const feeCents = Math.max(0, order.deliveryFeeCents)
+  const feeTaxCents = feeCents > 0 ? Math.max(0, Math.min(order.deliveryFeeTaxCents, order.taxCents)) : 0
+  const foodTaxCents = order.taxCents - feeTaxCents
   const storedDiscount = Math.max(0, order.discountCents + order.promoDiscountCents)
-  const discountCents = Math.min(storedDiscount, Math.max(0, saleValueCents))
-  // F-RV-1: what the discount takes beyond the food (loyalty over the GST /
-  // delivery fee, a 100 % discount) comes off the bill after the tax.
-  const billDiscountCents = storedDiscount - discountCents
-  const lineDiscount = allocateTaxCents(base.map((l) => l.gross), discountCents)
+  // The discount covers the food first, then the delivery-charge line; F-RV-1:
+  // what it takes beyond both (loyalty over the GST, a 100 % discount) comes
+  // off the bill after the tax.
+  const foodDiscountCents = Math.min(storedDiscount, Math.max(0, foodValueCents))
+  const feeDiscountCents = Math.min(storedDiscount - foodDiscountCents, feeCents)
+  const billDiscountCents = storedDiscount - foodDiscountCents - feeDiscountCents
+  const lineDiscount = allocateTaxCents(base.map((l) => l.gross), foodDiscountCents)
   const lineTaxable = base.map((l, i) => l.gross - lineDiscount[i]!)
-  // The stored GST over the lines by taxable × rate; once the food is fully
-  // discounted (no taxable value left) by gross × rate — the tax was levied
-  // on the pre-discount value.
+  // The food's GST over the food lines by taxable × rate; once the food is
+  // fully discounted (no taxable value left) by gross × rate — the tax was
+  // levied on the pre-discount value.
   const taxWeights = base.map((l, i) => lineTaxable[i]! * l.rate)
   const lineTax = allocateTaxCents(
     taxWeights.some((w) => w > 0) ? taxWeights : base.map((l) => l.gross * l.rate),
-    order.taxCents,
+    foodTaxCents,
   )
   const lines: FiscalLine[] = base.map((l, i) => ({
     lineId: l.id,
@@ -276,6 +315,22 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
     taxRatePct: l.rate,
     taxCents: lineTax[i]!,
   }))
+  if (feeCents > 0) {
+    lines.push({
+      lineId: deliveryLineId(order.id),
+      itemCode: DELIVERY_CHARGE_ITEM_CODE,
+      description: 'Delivery charge',
+      quantity: 1,
+      unitPriceCents: feeCents,
+      grossCents: feeCents,
+      discountCents: feeDiscountCents,
+      taxableCents: feeCents - feeDiscountCents,
+      taxRatePct: standardRate,
+      taxCents: feeTaxCents,
+    })
+  }
+  const saleValueCents = foodValueCents + feeCents
+  const discountCents = foodDiscountCents + feeDiscountCents
 
   // The bill (ONL-R2-02): what was still owed (Order.totalCents, lowered by
   // the wallet at checkout and by every gift-card redemption) plus the wallet
@@ -286,11 +341,12 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
   const valued = withTenderTips(order, order.payments)
   const tipCents = valued.tipCents
   const billCents = valued.totalCents + walletCents + giftCardCents
-  const taxableTotal = lineTaxable.reduce((s, x) => s + x, 0)
-  // The delivery fee is what is left of the bill on a delivery order; on any
+  const taxableTotal = lines.reduce((s, l) => s + l.taxableCents, 0)
+  // A fee stored on the order is a line (above), so nothing is left over. A
+  // LEGACY delivery order's untaxed fee is what is left of the bill; on any
   // other order the remainder must be zero (totalsCheck flags it).
   const remainder = billCents - (taxableTotal + order.taxCents + order.serviceChargeCents + tipCents - billDiscountCents)
-  const deliveryChargeCents = order.fulfilmentType === 'delivery' && remainder > 0 ? remainder : 0
+  const deliveryChargeCents = feeCents === 0 && order.fulfilmentType === 'delivery' && remainder > 0 ? remainder : 0
 
   // Tenders: the paid rows (cash, card, raast — Raast QR — and the retired
   // keenu_qr on old sales, each by its stored amount), then what is still
@@ -317,10 +373,26 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
     ...(concept.province && { province: concept.province }),
     ...(concept.invoiceAddress && { address: concept.invoiceAddress }),
   }
-  const c = order.customer
-  const buyer: FiscalParty | null = c && (c.ntn || c.cnic)
-    ? { ...(c.name && { legalName: c.name }), ...(c.ntn && { ntn: c.ntn }), ...(c.cnic && { cnic: c.cnic }) }
+  // The buyer: an on-account client the order was charged to (its own
+  // company's charge only — H14), else a customer with an NTN / CNIC.
+  const client = concept.tenantId
+    ? (await tx.customerAccountCharge.findFirst({
+        where: { orderId: order.id, tenantId: concept.tenantId },
+        select: { account: { select: { legalName: true, ntn: true, strn: true, cnic: true, address: true } } },
+      }))?.account ?? null
     : null
+  const c = order.customer
+  const buyer: FiscalParty | null = client
+    ? {
+        legalName: client.legalName,
+        ...(client.ntn && { ntn: client.ntn }),
+        ...(client.strn && { strn: client.strn }),
+        ...(client.cnic && { cnic: client.cnic }),
+        ...(client.address && { address: client.address }),
+      }
+    : c && (c.ntn || c.cnic)
+      ? { ...(c.name && { legalName: c.name }), ...(c.ntn && { ntn: c.ntn }), ...(c.cnic && { cnic: c.cnic }) }
+      : null
 
   const invoice = await tx.taxInvoice.findFirst({ where: { orderId, type: 'invoice' }, select: { invoiceNumber: true }, orderBy: { issuedAt: 'asc' } })
   const registrations = resolveRegistrations(settings.outlets, concept, order.locationId)
@@ -379,12 +451,14 @@ export interface RefundOriginal {
 /**
  * The tender a return defaults to when the refund engine names none (a
  * whole-order void): Raast QR when the sale's money was all Raast — the
- * money goes back by bank transfer — else card for a card-mode sale, else
- * cash (the rule before Raast, unchanged).
+ * money goes back by bank transfer — 'on_account' when it was all charged to
+ * an on-account client (it goes back on the client's account), else card for
+ * a card-mode sale, else cash (the rule before Raast, unchanged).
  */
 function defaultRefundMethod(sale: FiscalPayload): string {
   const money = sale.payment.tenders.map((t) => t.method).filter((m) => !NOT_MONEY.has(m))
   if (money.length > 0 && money.every((m) => m === 'raast')) return 'raast'
+  if (money.length > 0 && money.every((m) => m === 'on_account')) return 'on_account'
   return sale.payment.mode === 'card' ? 'card' : 'cash'
 }
 
@@ -574,9 +648,10 @@ export function toSrbInvoiceFields(p: FiscalPayload) {
     taxAmount,
     discountAmount,
     netAmount: round2(saleValue + taxAmount - discountAmount),
-    // SRB has two modes: Cash only when every tender is cash; card, Raast QR,
-    // the wallet and any mix are 'Card'.
-    modeOfPay: tenders.length > 0 && tenders.every((m) => m === 'cash') ? 'Cash' : 'Card',
+    // SRB has two modes: Cash only when every tender is cash or on account
+    // (an on-account bill is the cash class, H14); card, Raast QR, the wallet
+    // and any other mix are 'Card'.
+    modeOfPay: tenders.length > 0 && tenders.every((m) => m === 'cash' || m === 'on_account') ? 'Cash' : 'Card',
     consumerName: na(p.buyer?.legalName),
     consumerNTN: na(p.buyer?.ntn ?? p.buyer?.cnic),
     cpcCode: 'N/A',
@@ -606,14 +681,16 @@ export function toFbrInvoiceFields(p: FiscalPayload) {
     TotalTaxCharged: toPkr(p.totals.taxCents),
     Discount: toPkr(p.totals.discountCents + (totalsOf(p).billDiscountCents ?? 0)),
     FurtherTax: 0,
-    // 1 card, 2 cash, 3 wallet/QR. Any cash → 2; else a QR bank transfer
-    // (Raast QR, or the retired Keenu QR on old sales) → 3; else 1. Raast as 3
-    // is servd's default reading of PRAL's modes — to be confirmed with the
-    // fiscal POS vendor (docs/pos-connector-api.md §5).
-    PaymentMode: methods.includes('cash') ? 2 : methods.some((m) => RAAST_OR_QR.has(m)) ? 3 : 1,
+    // 1 card, 2 cash, 3 wallet/QR. Any cash or on-account (the cash class,
+    // H14) → 2; else a QR bank transfer (Raast QR, or the retired Keenu QR on
+    // old sales) → 3; else 1. Raast as 3 and on-account as 2 are servd's
+    // default reading of PRAL's modes — to be confirmed with the fiscal POS
+    // vendor (docs/pos-connector-api.md §5).
+    PaymentMode: methods.includes('cash') || methods.includes('on_account') ? 2 : methods.some((m) => RAAST_OR_QR.has(m)) ? 3 : 1,
     InvoiceType: p.kind === 'refund' ? 3 : 1, // 3 = credit note
     Items: p.lines.map((l) => ({
-      ItemCode: 'POS-ITEM',
+      // The delivery charge (H9) is its own item; every menu line is POS-ITEM.
+      ItemCode: l.itemCode === DELIVERY_CHARGE_ITEM_CODE ? 'DELIVERY' : 'POS-ITEM',
       ItemName: l.description.slice(0, 100),
       Quantity: l.quantity,
       PCTCode: '9963.1100', // HS code for restaurant food service

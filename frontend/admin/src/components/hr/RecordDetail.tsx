@@ -84,12 +84,18 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   const step = format.workflow[record.currentStep]
   const pending = record.status === 'submitted' && !!step
   const loanPayout = pending && record.section === 'loan' && record.currentStep >= format.workflow.length - 1
-  const editable = admin && (format.workflow.length === 0 || ((record.status === 'draft' || record.status === 'submitted') && record.approvals.length === 0))
+  // A staff advance moved from an unsettled cash request (backend
+  // hr/advanceLoan.ts): the cash request owns it — no edit, no cancel here.
+  const fromCashRequest = record.section === 'loan' && record.data['paidFrom'] === 'cash_request'
+  const editable = admin && !fromCashRequest && (format.workflow.length === 0 || ((record.status === 'draft' || record.status === 'submitted') && record.approvals.length === 0))
   // What POST /cancel allows: HR cancels anything not yet in effect; anyone
   // else only their own request, before an approver has acted on it.
-  const cancellable = isHrAdmin
+  const cancellable = !fromCashRequest && (isHrAdmin
     ? !['approved', 'cancelled', 'rejected'].includes(record.status) || (record.status === 'approved' && !record.appliedAt)
-    : record.createdById === userId && ['draft', 'submitted'].includes(record.status) && record.approvals.length === 0
+    : record.createdById === userId && ['draft', 'submitted'].includes(record.status) && record.approvals.length === 0)
+  // Decisions recorded outside the format's steps (a cash request's advance is
+  // approved by the CEO when it is moved) — shown under the steps.
+  const otherApprovals = record.approvals.filter((a) => !format.workflow.some((w) => w.key === a.step))
 
   const save = useMutation({ mutationFn: () => api.patch(base, { data: draft }), onSuccess: () => { setEditing(false); done() }, onError: fail })
   const submit = useMutation({ mutationFn: () => api.post(`${base}/submit`, {}), onSuccess: done, onError: fail })
@@ -120,12 +126,13 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       setDraft((d) => ({
         ...d, salaryPayable: r['salaryPayable'], otPayable: r['otPayable'], leaveEncashment: r['leaveEncashment'], loanRecovery: r['loanRecovery'],
         incomeTax: r['incomeTax'], eobiEmployee: r['eobiEmployee'], eobiEmployer: r['eobiEmployer'], sessiEmployer: r['sessiEmployer'],
+        gratuity: r['gratuity'] ?? 0,
         deductions: d['deductions'] ?? 0, otherAdjustments: d['otherAdjustments'] ?? 0,
       }))
       setEditing(true)
       const through = r['paidThrough'] ? `; payroll pays through ${String(r['paidThrough'])}${r['paidThroughStatus'] && r['paidThroughStatus'] !== 'locked' ? ` (still ${String(r['paidThroughStatus'])} — lock it before approving this)` : ''}` : ''
       const warnings = Array.isArray(r['warnings']) && r['warnings'].length ? ` ${(r['warnings'] as string[]).join(' ')}` : ''
-      setMsg(`Calculated from ${String(r['leaveBalanceDays'])} day(s) of paid leave earned this leave year${through}. Review, then save.${warnings}`)
+      setMsg(`Calculated from ${String(r['leaveBalanceDays'])} day(s) of paid leave earned this leave year${through}.${gratuityText(r)} Review, then save.${warnings}`)
     },
     onError: fail,
   })
@@ -198,6 +205,26 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
               )
             })}
           </ol>
+          {otherApprovals.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {otherApprovals.map((a, i) => (
+                <li key={`${a.step}-${i}`} className="text-xs text-white/60">
+                  {human(a.decision)} by {a.byName}, {day(a.at)}{a.override ? ' (CEO override)' : ''}{a.note ? ` · “${a.note}”` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {fromCashRequest && (
+        <div className="rounded-xl p-3 text-xs" style={{ background: 'rgb(var(--erp-primary-dim-rgb))' }}>
+          <p className="font-bold text-primary-ink">
+            Moved from an unsettled cash request{typeof record.data['cashVoucherNumber'] === 'string' ? ` (${record.data['cashVoucherNumber'] as string})` : ''}
+          </p>
+          <p className="mt-1 text-white/70">
+            The money was paid from petty cash when the request was paid; this advance takes it over (Staff loans 1350, from Cash advances 1355) and payroll recovers it like any advance. To undo it, reverse it from the cash request — it cannot be edited or cancelled here.
+          </p>
         </div>
       )}
 
@@ -330,6 +357,18 @@ function LeaveRotaEffects({ data }: { data: Record<string, unknown> }) {
       <p className="text-[10px] text-white/35">Cover these on the rota. Cancelling the leave does not put the hours back.</p>
     </div>
   )
+}
+
+/** "Calculate"'s gratuity line, in words: the service it counted, or why none is due. */
+function gratuityText(r: Record<string, unknown>): string {
+  const g = r['gratuityDetail'] as {
+    eligible: boolean; reason: string | null; years: number; months: number; days: number
+    countedYears: number; lastGrossCents: number; daysPerYear?: number
+  } | undefined
+  if (!g) return ''
+  if (!g.eligible) return ` No gratuity: ${g.reason ?? 'not due'}.`
+  const service = `${g.years} year${g.years === 1 ? '' : 's'} ${g.months} month${g.months === 1 ? '' : 's'} ${g.days} day${g.days === 1 ? '' : 's'}`
+  return ` Gratuity ${rs(r['gratuity'] as number)}: ${service} of service counts as ${g.countedYears} year${g.countedYears === 1 ? '' : 's'}, at ${g.daysPerYear ?? 30} days of the last gross salary (${rs(g.lastGrossCents)}) a year.`
 }
 
 function TableView({ f, rows, lk }: { f: HrFormat['fields'][number]; rows: Record<string, unknown>[]; lk: Parameters<typeof displayValue>[2] }) {

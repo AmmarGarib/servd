@@ -2,23 +2,27 @@
 // payroll runs, the dashboard. The arithmetic lives in logic.ts; this file
 // fetches the numbers and puts the results back.
 
-import type { Prisma, HrEmployee, HrRecord } from '@prisma/client'
+import type { Prisma, PrismaClient, HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { accountStateOf } from '../auth/accountStatus.js'
 import {
-  HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS,
+  HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS, withSystemFields,
   type HrField, type HrSection, type WorkflowStep,
 } from './forms.js'
 import {
   mergeSettings, type HrSettings, type PayrollInputs, EMPTY_INPUTS,
   computePayslip, overtimeCents, otMultiplierFor, hourlyRateCents, periodStart, periodEnd, periodOf, pktToday,
   leaveYear, leaveBalance, leaveQuantity, leaveDaysWithin, leaveYearsBetween, carriedForwardDays, attendanceInputs,
-  loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, settledFromPeriod, type SalaryChange,
+  loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, settledFromPeriod, settlementParts,
+  type SalaryChange,
 } from './logic.js'
 
 type Tx = Prisma.TransactionClient
-const db = (tx?: Tx) => tx ?? prisma
+/** A transaction, or the service client — what a reader may be handed (a
+ *  close check runs inside the period close's own transaction). */
+export type Db = Tx | PrismaClient
+const db = (tx?: Db) => tx ?? prisma
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
@@ -64,9 +68,16 @@ export async function getFormat(tenantId: string, section: string, version?: num
     orderBy: { version: 'desc' },
   })
   if (!row) return defaultFormat(sec)
+  return savedFormat(sec, row)
+}
+
+/** A company's saved format as logic reads it: with any default SYSTEM field
+ *  added since it was saved (forms.ts withSystemFields — a full & final's
+ *  gratuity), so a value logic writes is never dropped on save. */
+function savedFormat(sec: HrSection, row: { version: number; title: string; fields: Prisma.JsonValue; workflow: Prisma.JsonValue; stages: Prisma.JsonValue }): ActiveFormat {
   return {
-    section, version: row.version, title: row.title,
-    fields: row.fields as unknown as HrField[],
+    section: sec.key, version: row.version, title: row.title,
+    fields: withSystemFields(sec, row.fields as unknown as HrField[]),
     workflow: row.workflow as unknown as WorkflowStep[],
     stages: row.stages as unknown as string[],
     isDefault: false,
@@ -78,9 +89,7 @@ export async function getAllFormats(tenantId: string): Promise<Record<string, Ac
   const out: Record<string, ActiveFormat> = {}
   for (const sec of HR_SECTIONS) {
     const row = rows.find((r) => r.section === sec.key)
-    out[sec.key] = row
-      ? { section: sec.key, version: row.version, title: row.title, fields: row.fields as unknown as HrField[], workflow: row.workflow as unknown as WorkflowStep[], stages: row.stages as unknown as string[], isDefault: false }
-      : defaultFormat(sec)
+    out[sec.key] = row ? savedFormat(sec, row) : defaultFormat(sec)
   }
   return out
 }
@@ -121,6 +130,87 @@ export async function employeeLabelsAcross(emps: Array<Pick<HrEmployee, 'tenantI
     }
     return null
   }
+}
+
+// ─── Reporting line ─────────────────────────────────────────────────────────
+//
+// The team is the HR reporting line (HrEmployee.managerId, decision 47) — the
+// ONE hierarchy. HR approvals, /hr/team and the cash-request HOD signature all
+// read it through these helpers; don't build another.
+
+/**
+ * The login of an employee's DIRECT reporting manager in their company — who
+ * signs an HOD step (logic.ts canActOnStep('hod')). Null when the employee has
+ * no manager or the manager has no login: then HR acts for the HOD, so a
+ * request never gets stuck.
+ */
+export async function managerUserIdOfEmployee(tenantId: string, employeeId: string, q: Db = prisma): Promise<string | null> {
+  const emp = await q.hrEmployee.findFirst({ where: { id: employeeId, tenantId }, select: { managerId: true } })
+  if (!emp?.managerId) return null
+  const mgr = await q.hrEmployee.findFirst({ where: { id: emp.managerId, tenantId }, select: { userId: true } })
+  return mgr?.userId ?? null
+}
+
+/**
+ * The same rule for a LOGIN: the direct reporting manager's login of the
+ * employee record `userId` is linked to in `tenantId` (one record per login
+ * per company, decision 31). Null when the login is not an employee of that
+ * company, or has no manager with a login — the caller's fallback applies
+ * (HR for an HR request; the cash keepers for a cash request). Another
+ * company's reporting line is never read.
+ */
+export async function directManagerUserIdOf(tenantId: string, userId: string, q: Db = prisma): Promise<string | null> {
+  const emp = await q.hrEmployee.findFirst({ where: { tenantId, userId }, select: { id: true } })
+  return emp ? managerUserIdOfEmployee(tenantId, emp.id, q) : null
+}
+
+export interface TeamMember {
+  id: string; fullName: string; employeeCode: string; status: string; phone: string | null
+  employmentType: string; probationEnd: Date | null; managerId: string | null; userId: string | null
+  /** 1 = a direct report, 2 = their reports, … */
+  depth: number
+}
+
+/**
+ * Everyone under `managerEmployeeId` in `tenantId` — the WHOLE reporting tree,
+ * indirect reports too (decision 47) — who is current (active or on leave).
+ * Cycle-safe (a manager loop in the data stops at the first repeat) and capped
+ * at depth 10. Names and status only, never pay.
+ */
+export async function teamUnder(tenantId: string, managerEmployeeId: string, q: Db = prisma): Promise<TeamMember[]> {
+  const MAX_DEPTH = 10
+  const seen = new Set<string>([managerEmployeeId])
+  const team: TeamMember[] = []
+  let frontier = [managerEmployeeId]
+  for (let depth = 1; depth <= MAX_DEPTH && frontier.length; depth++) {
+    const rows = await q.hrEmployee.findMany({
+      where: { tenantId, managerId: { in: frontier }, status: { in: ['active', 'on_leave'] } },
+      select: { id: true, fullName: true, employeeCode: true, status: true, phone: true, employmentType: true, probationEnd: true, managerId: true, userId: true },
+      orderBy: { fullName: 'asc' },
+    })
+    const next: string[] = []
+    for (const r of rows) {
+      if (seen.has(r.id)) continue
+      seen.add(r.id)
+      next.push(r.id)
+      team.push({ ...r, depth })
+    }
+    frontier = next
+  }
+  return team
+}
+
+/**
+ * The logins of everyone under `managerUserId` in `tenantId` (teamUnder from
+ * the manager's own employee record there). Empty when that login is not an
+ * employee of the company. The cash requests' "waiting for my signature" list
+ * reads it.
+ */
+export async function teamUserIdsUnder(tenantId: string, managerUserId: string, q: Db = prisma): Promise<string[]> {
+  const me = await q.hrEmployee.findFirst({ where: { tenantId, userId: managerUserId }, select: { id: true } })
+  if (!me) return []
+  const team = await teamUnder(tenantId, me.id, q)
+  return Array.from(new Set(team.map((t) => t.userId).filter((u): u is string => !!u && u !== managerUserId)))
 }
 
 // ─── Approval effects ───────────────────────────────────────────────────────
@@ -546,8 +636,8 @@ export async function prefillInputs(tenantId: string, emp: HrEmployee, period: s
  * the settlement pays from that month on, so no payroll for it or a later
  * month may pay them again (finance gaps: "F&F can pay a month twice").
  */
-export async function settledEmployeeIds(tenantId: string, period: string, employeeIds?: string[]): Promise<Set<string>> {
-  const recs = await prisma.hrRecord.findMany({
+export async function settledEmployeeIds(tenantId: string, period: string, employeeIds?: string[], q: Db = prisma): Promise<Set<string>> {
+  const recs = await q.hrRecord.findMany({
     where: { tenantId, section: 'final_settlement', status: 'approved', employeeId: employeeIds ? { in: employeeIds } : { not: null } },
     select: { employeeId: true, endDate: true, data: true },
   })
@@ -561,11 +651,11 @@ export async function settledEmployeeIds(tenantId: string, period: string, emplo
 
 /** Who is paid for `period`: anyone employed for at least one day of it —
  *  except a leaver whose approved full & final settles that month. */
-export async function payableEmployees(tenantId: string, period: string) {
+export async function payableEmployees(tenantId: string, period: string, q: Db = prisma) {
   const from = periodStart(period)
   const to = periodEnd(period)
-  const settled = await settledEmployeeIds(tenantId, period)
-  return prisma.hrEmployee.findMany({
+  const settled = await settledEmployeeIds(tenantId, period, undefined, q)
+  return q.hrEmployee.findMany({
     where: {
       tenantId,
       OR: [{ joiningDate: null }, { joiningDate: { lte: to } }],
@@ -846,8 +936,12 @@ export async function letterContext(tenantId: string, emp: HrEmployee | null, re
     ])
     const names = new Map<string, string>([...units, ...locs, ...depts].map((x) => [x.id, x.name]))
     for (const e of emps) names.set(e.id, e.fullName)
+    // A full & final's figures read as the books do (settlementParts): one it
+    // never had — gratuity on a settlement made before it existed — is Rs 0,
+    // not a blank in the statement.
+    const parts = rec.section === 'final_settlement' ? settlementParts(data) as unknown as Record<string, number> : null
     for (const fl of fmt?.fields ?? []) {
-      const v = data[fl.key]
+      const v = parts && fl.key in parts && (data[fl.key] === undefined || data[fl.key] === null) ? parts[fl.key] : data[fl.key]
       if (fl.type === 'money') recordCtx[fl.key] = pkr(v)
       else if (fl.type === 'date' || fl.type === 'datetime') recordCtx[fl.key] = dt(v)
       else if (typeof v === 'string' && names.has(v)) recordCtx[fl.key] = names.get(v)

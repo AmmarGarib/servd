@@ -325,8 +325,13 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const salary = calc['salaryPayable'] as number
     const sessi = calc['sessiEmployer'] as number
     expect(amt(e!.lines, '6030', 'debit')).toBe(salary + RS(2000) + sessi) // Kitchen wages + employer EOBI / SESSI
-    expect(amt(e!.lines, '2090', 'credit')).toBe(RS(400) + RS(2000) + sessi)
-    expect(amt(e!.lines, '2040', 'credit')).toBe(RS(1000))
+    // Statutory payables (H7): EOBI employee + employer to 2043, SESSI to
+    // 2044, salary tax to 2042 — nothing to the old 2090 / 2040 stand-ins.
+    expect(amt(e!.lines, '2043', 'credit')).toBe(RS(400) + RS(2000))
+    expect(amt(e!.lines, '2044', 'credit')).toBe(sessi)
+    expect(amt(e!.lines, '2042', 'credit')).toBe(RS(1000))
+    expect(amt(e!.lines, '2090', 'credit') + amt(e!.lines, '2040', 'credit')).toBe(0)
+    expect(amt(e!.lines, '6036', 'debit')).toBe(0) // under a year of service: no gratuity
     expect(amt(e!.lines, '1350', 'credit')).toBe(RS(5000))
     expect(amt(e!.lines, '2020', 'credit')).toBe(net)
     expect(net).toBe(salary - RS(5000) - RS(1000) - RS(400))

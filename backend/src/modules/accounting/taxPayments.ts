@@ -1,22 +1,35 @@
 // Tax paid to the authorities, and the one-off reclass of provincial output
 // tax out of 2030 — the settlement side of the sales tax return (finance gap
-// 6). The return itself (salesTaxReturn.ts) reads what is posted here.
+// 6). The return itself (salesTaxReturn.ts) reads what is posted here, and so
+// does the statutory payments page (statutory.ts).
 //
 //   • recordTaxPayment — a payment of one authority's tax for a period, in the
-//     company's books: Dr the authority's output account (paid + input set
-//     off) / Cr its input account (input set off) / Cr the bank or cash it was
-//     paid from (paid). 'wht' pays income tax withheld (Dr 2040 / Cr bank),
-//     'stwh' sales tax withheld as a withholding agent (Dr 2041 / Cr bank) —
-//     neither takes an input set-off. Reference 'salestax.payment:<id>', dated
-//     the day it was paid; a closed period refuses it (422 PERIOD_LOCKED) and
-//     nothing is saved. One payment per (company, authority, period start).
+//     company's books:
+//       sales tax (fbr, pra, srb, kpra, bra — the table in taxAuthorities.ts):
+//         Dr the authority's output account (paid + input set off + withheld
+//            set off)
+//         Cr its input account 132x (input set off — that authority's only, H8)
+//         Cr 1335 Sales Tax Withheld by Customers (withheld set off, H13 —
+//            what clients withheld from us for THAT authority, capped)
+//         Cr the bank or cash it was paid from (paid)
+//       withholding as an agent: 'wht' income tax withheld from suppliers
+//         (Dr 2040 / Cr bank), 'stwh' sales tax withheld as a withholding
+//         agent (Dr 2041 / Cr bank);
+//       statutory payroll challans (H7): 'salary_tax' (Dr 2042), 'eobi'
+//         (Dr 2043), 'sessi' (Dr 2044) / Cr bank — one per scheme and month.
+//     Withholding and statutory payments take no input and no withheld set
+//     off. Reference 'salestax.payment:<id>', dated the day it was paid; a
+//     closed period refuses it (422 PERIOD_LOCKED) and nothing is saved. One
+//     payment per (company, authority, period start).
 //   • linkTaxPayment — a payment already posted by hand (a manual journal or a
 //     bank-reconciliation adjustment) is LINKED as that period's payment, never
 //     posted again; the return then leaves that entry out of the period's
-//     output, as it does a payment posted here.
+//     output, as it does a payment posted here. A Cr 1335 line in it is read
+//     as customer-withheld tax set off, never as money paid.
 //   • voidTaxPayment — a payment recorded in error: a posted one is reversed
 //     ('salestax.payment.reversal:<id>', today) and its record removed; a
-//     linked one is unlinked (its entry stays as it was posted).
+//     linked one is unlinked (its entry stays as it was posted). Removing the
+//     record frees any input / withheld tax it set off.
 //   • postTaxReclass — a provincial brand's output tax still in 2030 for a
 //     month moves to its authority's account: Dr 2030 / Cr 203x (the other way
 //     for a net refund), both lines tagged with the brand so refunds follow it
@@ -33,17 +46,44 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
-import { assertMoneyFits, toCents } from '../../lib/money.js'
+import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
+import { assertMoneyFits, sumCents, toCents } from '../../lib/money.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay, pktToday } from './dates.js'
-import { outputTaxCodeFor } from './orderPosting.js'
+import { AUTHORITIES, isAuthorityKey, outputTaxCodeFor, type AuthorityKey } from './taxAuthorities.js'
 import {
-  AUTHORITIES, WITHHOLDING, TAX_PAYMENT_SOURCE, TAX_RECLASS_SOURCE,
-  debitBalanceAt, misroutedOutputTax, type AuthorityKey, type WithholdingKey,
+  WITHHOLDING, TAX_PAYMENT_SOURCE, TAX_RECLASS_SOURCE,
+  debitBalanceAt, misroutedOutputTax, type WithholdingKey,
 } from './salesTaxReturn.js'
 
-export const TAX_PAYMENT_AUTHORITIES = ['fbr', 'pra', 'srb', 'kpra', 'bra', 'wht', 'stwh'] as const
-export type TaxPaymentAuthority = AuthorityKey | WithholdingKey
+/** Any client: `prisma`, `serviceClient` or a transaction (all are assignable to it). */
+type Db = Prisma.TransactionClient
+
+/** Who records tax payments, links entries, posts reclasses and edits withholding rates: finance and the CEO. */
+export const TAX_PAYER_ROLES = ['admin', 'finance'] as const
+
+// ─── Statutory payroll payables (H7) ────────────────────────────────────────
+
+export type StatutoryKey = 'salary_tax' | 'eobi' | 'sessi'
+export const STATUTORY_KEYS = ['salary_tax', 'eobi', 'sessi'] as const satisfies readonly StatutoryKey[]
+
+/**
+ * The monthly challans payroll accrues for (hr/ledger.ts credits these at the
+ * payroll lock and on an approved full & final). Paid from the same register
+ * as sales tax — one payment per scheme per month.
+ */
+export const STATUTORY: ReadonlyArray<{ key: StatutoryKey; label: string; name: string; account: string }> = [
+  { key: 'salary_tax', label: 'Salary tax', name: 'Income tax deducted from salaries (s.149, paid to FBR)', account: ACCT.SALARY_TAX_PAYABLE },
+  { key: 'eobi', label: 'EOBI', name: 'EOBI contributions — employee and employer (PR-02 challan)', account: ACCT.EOBI_PAYABLE },
+  { key: 'sessi', label: 'SESSI / PESSI', name: 'Provincial employees\' social security — employer contribution', account: ACCT.SOCIAL_SECURITY_PAYABLE },
+]
+
+export function isStatutoryKey(x: unknown): x is StatutoryKey {
+  return typeof x === 'string' && (STATUTORY_KEYS as readonly string[]).includes(x)
+}
+
+export const TAX_PAYMENT_AUTHORITIES = ['fbr', 'pra', 'srb', 'kpra', 'bra', 'wht', 'stwh', 'salary_tax', 'eobi', 'sessi'] as const
+export type TaxPaymentAuthority = AuthorityKey | WithholdingKey | StatutoryKey
 
 /** How a tax payment left the company. */
 export const TAX_PAYMENT_METHODS = ['bank_transfer', 'cheque', 'online', 'cash'] as const
@@ -53,19 +93,26 @@ export type TaxPaymentMethod = (typeof TAX_PAYMENT_METHODS)[number]
 const LINKABLE_PREFIXES = ['manual:', 'reconciliation.adjustment:']
 
 /**
- * What a payment to `authority` settles: the liability it debits, the input account it may set off.
- *
- * TODO(pending owner decision G3): payroll statutory remittances (EOBI /
- * SESSI, 2090) are not paid from here yet. TODO(pending owner decision G7):
- * provincial input (1321–1324) is never posted until input tax is booked by
- * authority, so a provincial set-off finds nothing to set off — the check in
- * recordTaxPayment refuses it rather than crediting an empty account.
+ * What a payment to `authority` settles: the liability it debits, the input
+ * account it may set off (sales tax only — that authority's own 132x, H8),
+ * and whether customer-withheld tax (1335, H13) may be set off against it.
  */
-export function settlementAccounts(authority: TaxPaymentAuthority): { liability: string; input: string | null; label: string } {
-  const a = AUTHORITIES.find((x) => x.key === authority)
-  if (a) return { liability: a.output, input: a.input, label: a.authority }
+export function settlementAccounts(authority: TaxPaymentAuthority): {
+  liability: string
+  input: string | null
+  label: string
+  kind: 'sales_tax' | 'withholding' | 'statutory'
+  /** Sales tax a client withheld for this authority (1335) may be set off. */
+  withheldSetOff: boolean
+} {
+  if (isAuthorityKey(authority)) {
+    const a = AUTHORITIES[authority]
+    return { liability: a.outputCode, input: a.inputCode, label: a.label, kind: 'sales_tax', withheldSetOff: true }
+  }
   const w = WITHHOLDING.find((x) => x.key === authority)
-  if (w) return { liability: w.account, input: null, label: w.authority }
+  if (w) return { liability: w.account, input: null, label: w.authority, kind: 'withholding', withheldSetOff: false }
+  const st = STATUTORY.find((x) => x.key === authority)
+  if (st) return { liability: st.account, input: null, label: st.label, kind: 'statutory', withheldSetOff: false }
   throw new AppError('BAD_AUTHORITY', `Unknown tax authority "${authority}"`, 422)
 }
 
@@ -121,6 +168,11 @@ export interface RecordTaxPaymentInput {
   paidCents: number
   /** Input tax set off against the output in the same return (sales tax only). */
   inputSetOffCents: number
+  /**
+   * Sales tax our clients withheld for this authority (1335, H13) set off
+   * against its output (sales tax only). Optional: 0 when not given.
+   */
+  customerWithheldSetOffCents?: number
   paidAt: string
   method: TaxPaymentMethod
   bankAccountId: string | null
@@ -132,16 +184,63 @@ export interface RecordTaxPaymentInput {
 /** Every entry ever dated: the balance including everything after paidAt. */
 const END_OF_TIME = new Date('9999-12-31T00:00:00Z')
 
+/** ReceivablePayment.method of sales tax a CLIENT withheld from us (never 'stwh' — that is our own withholding as an agent, 2041). */
+export const CUSTOMER_WITHHELD_METHOD = 'st_withheld'
+
+/**
+ * Sales tax our clients withheld for `authority` (live 'st_withheld'
+ * receivable payments received on or before `asOf`) less what payments
+ * already set off against that authority — whatever period they were for (a
+ * set-off recorded for a later period has already used it). Never negative.
+ * The cap of a withheld set-off, and what the return shows as available.
+ */
+export async function customerWithheldAvailable(db: Db, tenantId: string, authority: AuthorityKey, asOf: Date): Promise<number> {
+  const [withheld, used] = await Promise.all([
+    db.receivablePayment.aggregate({
+      where: { tenantId, method: CUSTOMER_WITHHELD_METHOD, taxAuthority: authority, reversedAt: null, receivedAt: { lte: asOf } },
+      _sum: { amountCents: true },
+    }),
+    db.salesTaxPayment.aggregate({
+      where: { tenantId, authority },
+      _sum: { customerWithheldSetOffCents: true },
+    }),
+  ])
+  return Math.max(0, sumCents(withheld._sum.amountCents) - sumCents(used._sum.customerWithheldSetOffCents))
+}
+
+/** One writer of an authority's withheld set-off per company at a time. */
+async function lockWithheld(tx: Prisma.TransactionClient, tenantId: string, authority: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext(${`tax-stwh:${authority}`}::text))`
+}
+
+function withheldTooLarge(cents: number, available: number, label: string, at: Date): AppError {
+  return new AppError(
+    'WITHHELD_SET_OFF_TOO_LARGE',
+    `Withheld tax set off (PKR ${(cents / 100).toFixed(2)}) is more than our clients withheld for ${label} and is still unused (PKR ${(available / 100).toFixed(2)} on ${fmtPktDate(at)}, counting set-offs already recorded)`,
+    422,
+  )
+}
+
 export async function recordTaxPayment(input: RecordTaxPaymentInput) {
   const acc = settlementAccounts(input.authority)
   const { periodFrom, periodTo } = periodOf(input.periodFrom, input.periodTo)
   const paidAt = paidAtOf(input.paidAt)
+  const withheldCents = input.customerWithheldSetOffCents ?? 0
   if (acc.input === null && input.inputSetOffCents > 0) {
     throw new AppError('NO_INPUT_SET_OFF', `${acc.label} is paid in full — there is no input tax to set off against it`, 422)
   }
-  if (input.paidCents < 0 || input.inputSetOffCents < 0) throw new AppError('BAD_AMOUNT', 'Amounts cannot be negative', 422)
-  if (input.paidCents + input.inputSetOffCents <= 0) throw new AppError('NOTHING_PAID', 'Enter the amount paid (or the input tax set off)', 422)
-  const outputSetOffCents = input.paidCents + input.inputSetOffCents
+  if (!acc.withheldSetOff && withheldCents > 0) {
+    throw new AppError(
+      'NO_WITHHELD_SET_OFF',
+      `${acc.label} is paid in full — sales tax our clients withheld (1335) is set off only against the output of the sales tax authority it was withheld for`,
+      422,
+    )
+  }
+  if (input.paidCents < 0 || input.inputSetOffCents < 0 || withheldCents < 0) throw new AppError('BAD_AMOUNT', 'Amounts cannot be negative', 422)
+  if (input.paidCents + input.inputSetOffCents + withheldCents <= 0) {
+    throw new AppError('NOTHING_PAID', 'Enter the amount paid (or the tax set off)', 422)
+  }
+  const outputSetOffCents = input.paidCents + input.inputSetOffCents + withheldCents
   assertMoneyFits(outputSetOffCents, 'This payment')
 
   const existing = await prisma.salesTaxPayment.findFirst({
@@ -152,6 +251,14 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
 
   try {
     return await prisma.$transaction(async (tx) => {
+      // The accounts this payment moves must be the template's, live, in THIS
+      // company's chart: an operator's own account on 2042–2044 / 1335 / 132x
+      // is a clear 422 (and nothing is saved), never a posting onto it.
+      await assertTemplateAccounts(tx, input.tenantId, [
+        acc.liability,
+        ...(acc.input && input.inputSetOffCents > 0 ? [acc.input] : []),
+        ...(withheldCents > 0 ? [ACCT.ST_WITHHELD_BY_CUSTOMERS] : []),
+      ])
       // Where the money came from: the named bank of THIS company (422 when
       // it is another company's, deleted or unlinked), its only bank, cash.
       const money = input.paidCents > 0
@@ -176,6 +283,20 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
           )
         }
       }
+      // Customer-withheld set off (H13): never more than 1335 holds (on the
+      // day and counting everything after it), and never more than clients
+      // withheld for THIS authority less what earlier payments already set
+      // off — so SRB withholding never pays PRA. One writer per company and
+      // authority.
+      if (withheldCents > 0) {
+        await lockWithheld(tx, input.tenantId, input.authority)
+        const available = Math.min(
+          await debitBalanceAt(tx, input.tenantId, ACCT.ST_WITHHELD_BY_CUSTOMERS, paidAt),
+          await debitBalanceAt(tx, input.tenantId, ACCT.ST_WITHHELD_BY_CUSTOMERS, END_OF_TIME),
+          await customerWithheldAvailable(tx, input.tenantId, input.authority as AuthorityKey, paidAt),
+        )
+        if (withheldCents > available) throw withheldTooLarge(withheldCents, Math.max(0, available), acc.label, paidAt)
+      }
       const row = await tx.salesTaxPayment.create({
         data: {
           tenantId: input.tenantId,
@@ -183,6 +304,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
           periodFrom, periodTo,
           outputSetOffCents,
           inputSetOffCents: input.inputSetOffCents,
+          customerWithheldSetOffCents: withheldCents,
           paidCents: input.paidCents,
           paidAt,
           bankAccountId: money?.bankAccountId ?? null,
@@ -194,6 +316,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
       const memo = `${acc.label} ${fmtPktDate(periodFrom)} – ${fmtPktDate(periodTo)}${input.cprNumber ? ` · CPR ${input.cprNumber}` : ''}`
       const lines: JournalLineInput[] = [{ accountCode: acc.liability, type: 'debit', amountCents: outputSetOffCents, memo }]
       if (acc.input && input.inputSetOffCents > 0) lines.push({ accountCode: acc.input, type: 'credit', amountCents: input.inputSetOffCents, memo: `Input set off — ${memo}` })
+      if (withheldCents > 0) lines.push({ accountCode: ACCT.ST_WITHHELD_BY_CUSTOMERS, type: 'credit', amountCents: withheldCents, memo: `Withheld by customers (${acc.label}) set off — ${memo}` })
       if (money && input.paidCents > 0) lines.push({ accountCode: money.code, type: 'credit', amountCents: input.paidCents, memo })
       const posted = await postJournalEntry({
         tenantId: input.tenantId,
@@ -227,18 +350,25 @@ async function settlementOf(tenantId: string, entryId: string, authority: TaxPay
     .reduce((t, l) => t + (l.type === side ? toCents(l.amountCents) : -toCents(l.amountCents)), 0)
   const outputSetOffCents = net(acc.liability, 'debit')
   const inputSetOffCents = acc.input ? Math.max(0, net(acc.input, 'credit')) : 0
-  // Cash and bank: cash on hand, the drawer, the 102x bank codes and any code a
-  // bank account of the company is linked to.
+  // A Cr 1335 against a sales tax authority's output is client-withheld tax
+  // set off (H13) — never money paid.
+  const customerWithheldSetOffCents = acc.withheldSetOff ? Math.max(0, net(ACCT.ST_WITHHELD_BY_CUSTOMERS, 'credit')) : 0
+  // Cash and bank: cash on hand, petty cash, the drawer, the 102x bank codes
+  // and any code a bank account of the company is linked to.
   const banks = await prisma.bankAccount.findMany({
     where: { tenantId, deletedAt: null, accountCode: { not: null } },
     select: { id: true, accountCode: true },
   })
   const bankCodes = new Set(banks.map((b) => b.accountCode!))
-  const isMoney = (code: string) => code === ACCT.CASH_ON_HAND || code === ACCT.CASH_DRAWER || /^102\d$/.test(code) || bankCodes.has(code)
+  const isMoney = (code: string) =>
+    code === ACCT.CASH_ON_HAND || code === ACCT.PETTY_CASH || code === ACCT.CASH_DRAWER || /^102\d$/.test(code) || bankCodes.has(code)
   const moneyCodes = [...new Set(entry.lines.filter((l) => l.type === 'credit' && isMoney(l.account.code)).map((l) => l.account.code))]
   const moneyOutCents = moneyCodes.reduce((t, c) => t + net(c, 'credit'), 0)
   const matching = banks.filter((b) => moneyCodes.includes(b.accountCode!))
-  return { entry, acc, outputSetOffCents, inputSetOffCents, moneyOutCents, bankAccountId: matching.length === 1 ? matching[0]!.id : null }
+  return {
+    entry, acc, outputSetOffCents, inputSetOffCents, customerWithheldSetOffCents, moneyOutCents,
+    bankAccountId: matching.length === 1 ? matching[0]!.id : null,
+  }
 }
 
 export interface LinkTaxPaymentInput {
@@ -273,9 +403,9 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
   if (s.outputSetOffCents <= 0) {
     throw new AppError('NOT_A_TAX_PAYMENT', `This entry does not debit ${s.acc.liability} (${s.acc.label}) — it is not a payment of that tax`, 422)
   }
-  const paidCents = s.outputSetOffCents - s.inputSetOffCents
+  const paidCents = s.outputSetOffCents - s.inputSetOffCents - s.customerWithheldSetOffCents
   if (paidCents < 0) {
-    throw new AppError('NOT_A_TAX_PAYMENT', `This entry sets off more input than the ${s.acc.label} tax it settles`, 422)
+    throw new AppError('NOT_A_TAX_PAYMENT', `This entry sets off more input / withheld tax than the ${s.acc.label} tax it settles`, 422)
   }
   if (s.moneyOutCents < paidCents) {
     throw new AppError('NOT_A_TAX_PAYMENT', `This entry does not pay PKR ${(paidCents / 100).toFixed(2)} out of a bank or cash account — it is not a payment`, 422)
@@ -292,6 +422,13 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
         select: { id: true },
       })
       if (existing) throw alreadyPaid(s.acc.label, periodFrom)
+      // The entry's 1335 set-off is already posted; recording it here uses up
+      // that authority's withheld tax, so it is held to the same cap.
+      if (s.customerWithheldSetOffCents > 0) {
+        await lockWithheld(tx, input.tenantId, input.authority)
+        const available = await customerWithheldAvailable(tx, input.tenantId, input.authority as AuthorityKey, s.entry.entryDate)
+        if (s.customerWithheldSetOffCents > available) throw withheldTooLarge(s.customerWithheldSetOffCents, available, s.acc.label, s.entry.entryDate)
+      }
       return tx.salesTaxPayment.create({
         data: {
           tenantId: input.tenantId,
@@ -299,6 +436,7 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
           periodFrom, periodTo,
           outputSetOffCents: s.outputSetOffCents,
           inputSetOffCents: s.inputSetOffCents,
+          customerWithheldSetOffCents: s.customerWithheldSetOffCents,
           paidCents,
           paidAt: s.entry.entryDate,
           bankAccountId: s.bankAccountId,

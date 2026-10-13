@@ -20,7 +20,14 @@ interface HrSettings {
   leaveYearStartMonth: number
   encashLeaveOnExit: boolean
   employeeCodePrefix: string
+  gratuity: Gratuity
 }
+
+/** Gratuity at exit (backend hr/logic.ts GratuitySettings, accountant default H6). */
+interface Gratuity { enabled: boolean; eligibleTypes: string[]; minServiceMonths: number; partYearOverMonths: number; daysPerYear: number }
+const DEFAULT_GRATUITY: Gratuity = { enabled: true, eligibleTypes: ['permanent'], minServiceMonths: 12, partYearOverMonths: 6, daysPerYear: 30 }
+/** The employment types the Employee Master offers by default; a type HR added shows once it is ticked. */
+const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary', 'intern']
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -28,10 +35,11 @@ export default function HrSettingsPage() {
   const qc = useQueryClient()
   const { data, error } = useQuery({ queryKey: ['hr-settings'], queryFn: () => api.get<HrSettings>('/hr/settings') })
   const [s, setS] = useState<HrSettings | null>(null)
-  useEffect(() => { if (data) setS(data) }, [data])
+  // A server that predates gratuity sends none: start from the defaults.
+  useEffect(() => { if (data) setS({ ...data, gratuity: { ...DEFAULT_GRATUITY, ...(data.gratuity ?? {}) } }) }, [data])
   const save = useMutation({
     mutationFn: (body: HrSettings) => api.put<HrSettings>('/hr/settings', body),
-    onSuccess: (next) => { setS(next); void qc.invalidateQueries({ queryKey: ['hr-settings'] }) },
+    onSuccess: (next) => { setS({ ...next, gratuity: { ...DEFAULT_GRATUITY, ...(next.gratuity ?? {}) } }); void qc.invalidateQueries({ queryKey: ['hr-settings'] }) },
   })
 
   return (
@@ -39,7 +47,7 @@ export default function HrSettingsPage() {
       actions={s && <button className={btn} disabled={save.isPending} onClick={() => save.mutate(s)}>{save.isPending ? 'Saving…' : 'Save settings'}</button>}>
       {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       {save.error && <p className="text-sm text-red-700 mb-4">{(save.error as Error).message}</p>}
-      {save.isSuccess && <p className="text-sm text-emerald-700 mb-4">Saved. The next payroll calculation uses these.</p>}
+      {save.isSuccess && <p className="text-sm text-success mb-4">Saved. The next payroll calculation uses these.</p>}
       {s && (
         <div className="grid lg:grid-cols-2 gap-4">
           <Panel title="Pay & overtime">
@@ -88,6 +96,30 @@ export default function HrSettingsPage() {
               </select>
             </label>
             <Check label="Pay out unused leave in final settlement" v={s.encashLeaveOnExit} onSet={(v) => setS({ ...s, encashLeaveOnExit: v })} />
+          </Panel>
+
+          <Panel title="Gratuity at exit">
+            <Check label="Pay gratuity in the full & final settlement" v={s.gratuity.enabled} onSet={(v) => setS({ ...s, gratuity: { ...s.gratuity, enabled: v } })} />
+            <p className="text-[10px] text-white/35 -mt-1">
+              Gratuity = last gross salary ÷ 30 × days per year × counted years. It is booked to Gratuity (6036) when the full &amp; final is approved.
+            </p>
+            {s.gratuity.enabled && <>
+              <div>
+                <span className="block text-[11px] font-bold text-white/55 mb-1">Paid to</span>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {Array.from(new Set([...EMPLOYMENT_TYPES, ...s.gratuity.eligibleTypes])).map((t) => (
+                    <Check key={t} label={t.charAt(0).toUpperCase() + t.slice(1)} v={s.gratuity.eligibleTypes.includes(t)}
+                      onSet={(on) => setS({ ...s, gratuity: { ...s.gratuity, eligibleTypes: on ? [...s.gratuity.eligibleTypes, t] : s.gratuity.eligibleTypes.filter((x) => x !== t) } })} />
+                  ))}
+                </div>
+              </div>
+              <Num label="Minimum service (months)" help="No gratuity before this many full months. 12 = one full year." v={s.gratuity.minServiceMonths}
+                onSet={(v) => setS({ ...s, gratuity: { ...s.gratuity, minServiceMonths: v } })} />
+              <Num label="A part year counts as a full year when it is more than (months)" help="6 = 1 year 6 months counts as 1 year; 1 year 6 months and 1 day counts as 2." v={s.gratuity.partYearOverMonths}
+                onSet={(v) => setS({ ...s, gratuity: { ...s.gratuity, partYearOverMonths: v } })} />
+              <Num label="Days of last gross per year" help="30 = one month's gross for each counted year." v={s.gratuity.daysPerYear}
+                onSet={(v) => setS({ ...s, gratuity: { ...s.gratuity, daysPerYear: v } })} />
+            </>}
           </Panel>
 
           <Panel title="Employee IDs">

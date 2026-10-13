@@ -11,6 +11,7 @@
 export interface LetterDefault { key: string; title: string; body: string }
 
 const SIGN = `<p>Regards,</p><p><strong>Human Resources</strong><br/>{{company.name}}</p>`
+const GRATUITY_ROW = `<tr><td>Gratuity</td><td>{{record.gratuity}}</td></tr>`
 const HEAD = `<p>{{today}}</p><p><strong>{{employee.fullName}}</strong><br/>{{employee.designation}}, {{employee.department}}<br/>Employee ID: {{employee.employeeCode}}</p>`
 
 export const DEFAULT_LETTERS: LetterDefault[] = [
@@ -27,8 +28,26 @@ export const DEFAULT_LETTERS: LetterDefault[] = [
   { key: 'resignation_acceptance', title: 'Resignation acceptance', body: `${HEAD}<p>Dear {{employee.fullName}},</p><p>We accept your resignation. Your last working day will be {{record.lastWorkingDay}}.</p>${SIGN}` },
   { key: 'experience_letter', title: 'Experience letter', body: `<p>{{today}}</p><p><strong>To whom it may concern</strong></p><p>This is to certify that {{employee.fullName}} (CNIC {{employee.cnic}}) worked with {{company.name}} as {{employee.designation}} from {{employee.joiningDate}} to {{employee.lastWorkingDay}}.</p>${SIGN}` },
   { key: 'relieving_letter', title: 'Relieving letter', body: `${HEAD}<p>Dear {{employee.fullName}},</p><p>You are relieved of your duties with effect from {{employee.lastWorkingDay}}, all clearances having been completed.</p>${SIGN}` },
-  { key: 'final_settlement_statement', title: 'Full & final statement', body: `${HEAD}<p>Full and final settlement:</p><table><tr><td>Salary payable</td><td>{{record.salaryPayable}}</td></tr><tr><td>OT payable</td><td>{{record.otPayable}}</td></tr><tr><td>Leave encashment</td><td>{{record.leaveEncashment}}</td></tr><tr><td>Deductions</td><td>{{record.deductions}}</td></tr><tr><td>Loan recovery</td><td>{{record.loanRecovery}}</td></tr><tr><td>Income tax</td><td>{{record.incomeTax}}</td></tr><tr><td>EOBI (employee share)</td><td>{{record.eobiEmployee}}</td></tr><tr><td>Other adjustments</td><td>{{record.otherAdjustments}}</td></tr><tr><td><strong>Net</strong></td><td><strong>{{record.netAmount}}</strong></td></tr></table>${SIGN}` },
+  { key: 'final_settlement_statement', title: 'Full & final statement', body: `${HEAD}<p>Full and final settlement:</p><table><tr><td>Salary payable</td><td>{{record.salaryPayable}}</td></tr><tr><td>OT payable</td><td>{{record.otPayable}}</td></tr><tr><td>Leave encashment</td><td>{{record.leaveEncashment}}</td></tr>${GRATUITY_ROW}<tr><td>Deductions</td><td>{{record.deductions}}</td></tr><tr><td>Loan recovery</td><td>{{record.loanRecovery}}</td></tr><tr><td>Income tax</td><td>{{record.incomeTax}}</td></tr><tr><td>EOBI (employee share)</td><td>{{record.eobiEmployee}}</td></tr><tr><td>Other adjustments</td><td>{{record.otherAdjustments}}</td></tr><tr><td><strong>Net</strong></td><td><strong>{{record.netAmount}}</strong></td></tr></table>${SIGN}` },
 ]
+
+/**
+ * A company's own letter with the money rows its statement must show and an
+ * older saved version lacks — today the F&F statement's Gratuity row (H6):
+ * the net it prints includes gratuity, so a statement without the row would
+ * not add up. Put in after the leave-encashment row, else before the net row;
+ * a template with neither (HR's own layout) is left as it is. The stored
+ * template is not changed.
+ */
+export function withLetterSystemRows(key: string, body: string): string {
+  if (key !== 'final_settlement_statement' || /\{\{\s*record\.gratuity\s*\}\}/.test(body)) return body
+  const row = (field: string) => new RegExp(`<tr\\b[^>]*>(?:(?!</tr>)[\\s\\S])*\\{\\{\\s*record\\.${field}\\s*\\}\\}(?:(?!</tr>)[\\s\\S])*</tr>`, 'i')
+  const after = row('leaveEncashment').exec(body)
+  if (after) return body.slice(0, after.index + after[0].length) + GRATUITY_ROW + body.slice(after.index + after[0].length)
+  const before = row('netAmount').exec(body)
+  if (before) return body.slice(0, before.index) + GRATUITY_ROW + body.slice(before.index)
+  return body
+}
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')

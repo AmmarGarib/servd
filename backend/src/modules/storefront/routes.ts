@@ -203,7 +203,8 @@ const quoteQuerySchema = z.object({
   loyaltyPointsToRedeem: z.coerce.number().int().min(0).default(0),
   useWallet: z.enum(['true', 'false', '1', '0']).optional(),
   tipCents: z.coerce.number().int().min(0).max(1_000_000).default(0),
-  // A percentage tip (the page's chips) — of food + GST. Ignored when tipCents is set.
+  // A percentage tip (the page's chips) — of food + the food's GST, never the
+  // delivery fee or its GST. Ignored when tipCents is set.
   tipPct: z.coerce.number().min(0).max(100).optional(),
   giftCardCode: z.string().max(40).optional(),
   // A pre-order's time — opening hours and time-limited sections are checked
@@ -565,11 +566,16 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   // checkout page shows exactly this and computes nothing itself: the same
   // basket resolver, THE pricing function (GST by tender — cash on delivery
   // 15%, paid online 8%, decision 9 — item tax classes, the zone's delivery
-  // fee, service charge), THE promo evaluation (percentage on food only,
-  // decision 10) and THE loyalty redeem quote as checkout, in checkout's order:
-  // priced total − promo − points − wallet, + tip, − gift card. Nothing is
-  // claimed or reserved. A customer bearer is optional; without one, points and
-  // wallet are not applied and the per-customer promo limit is not checked.
+  // fee with its GST on top at the tender rate (H9), service charge), THE
+  // promo evaluation (percentage on food only, decision 10) and THE loyalty
+  // redeem quote as checkout, in checkout's order: priced total − promo −
+  // points − wallet, + tip, − gift card. Nothing is claimed or reserved. A
+  // customer bearer is optional; without one, points and wallet are not
+  // applied and the per-customer promo limit is not checked.
+  //
+  // taxCents = itemTaxCents (GST on the food) + deliveryFeeTaxCents (GST on
+  // the delivery fee); pricedTotalCents includes both. A tip given as a % is a
+  // share of the food and its GST only — never the fee or the fee's GST.
   fastify.get('/quote', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
     const q = quoteQuerySchema.parse(req.query)
     let items: z.infer<typeof createDirectOrderSchema>['items']
@@ -652,7 +658,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
 
     const tipCents = q.tipCents > 0
       ? q.tipCents
-      : Math.round(((price.itemTotalCents + price.taxCents) * (q.tipPct ?? 0)) / 100)
+      : Math.round(((price.itemTotalCents + price.itemTaxCents) * (q.tipPct ?? 0)) / 100)
     due = Math.max(0, due) + tipCents
     if (walletIsMethod && walletBalance > 0) {
       walletCents = Math.min(walletBalance, due)
@@ -679,8 +685,10 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       tender: price.tender,
       taxRatePct: price.taxRatePct,
       itemTotalCents: price.itemTotalCents,
+      itemTaxCents: price.itemTaxCents,
       taxCents: price.taxCents,
       deliveryFeeCents: price.deliveryFeeCents,
+      deliveryFeeTaxCents: price.deliveryFeeTaxCents,
       serviceChargeCents: price.serviceChargeCents,
       pricedTotalCents: price.totalCents,
       promo,
@@ -781,7 +789,10 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     // the card rate always while the checkout page showed 15% for cash. Item
     // tax classes apply; service charge sits on food + GST, never on the
     // delivery fee. The delivery fee is the zone's (coordinates required,
-    // decision 19 coverage, zone minimum).
+    // decision 19 coverage, zone minimum), with GST on top at the tender's
+    // standard rate (H9): price.taxCents = food GST + delivery GST, and the
+    // order stores the fee and its GST (Order.deliveryFeeCents /
+    // deliveryFeeTaxCents) through ingestOrder's `price`.
     const deliveryFeeCents = body.type === 'delivery'
       ? (await deliveryFeeFor(concept, itemTotal, body.deliveryLat, body.deliveryLng)).feeCents
       : 0
@@ -1172,13 +1183,16 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
 
     // The order as it now stands — tip, gift card, wallet and points all
     // applied (ONL-03: this returned the in-memory row from before the tip,
-    // so the confirmation showed the pre-tip total).
+    // so the confirmation showed the pre-tip total). The delivery fee and its
+    // GST are the order's own stored columns (H9).
     const placed = await prisma.order.findUniqueOrThrow({
       where: { id: order.id },
       include: { items: { include: { modifiers: true } }, concept: true },
     })
     return reply.status(201).send({
       ...placed,
+      deliveryFeeCents: placed.deliveryFeeCents,
+      deliveryFeeTaxCents: placed.deliveryFeeTaxCents,
       promoDiscountCents, walletAmountCents, loyaltyPointsRedeemed, loyaltyDiscountCents,
       giftCardAppliedCents, giftCardError,
     })
@@ -1296,10 +1310,18 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       // the door (docs/rider-app.md), so their own order page shows it — on a
       // delivery order only. Pickup and dine-in orders have no rider; a code
       // minted on one (ingestOrder issues one whenever delivery notes are
-      // present) is nothing the customer needs.
+      // present) is nothing the customer needs. Once an emergency override
+      // sent the code to the RIDER (Order.handoverReroutedAt), the page stops
+      // showing it and says so (handoverRerouted) — the rider holds it now.
+      // The reroute's staff-side details (which rider, attempts) stay out.
+      // deliveryFeeCents / deliveryFeeTaxCents are the order's own columns
+      // (H9), in the spread.
+      const { handoverRerouteRiderId: _rr, handoverRerouteAttempts: _ra, ...visible } = order
+      const handoverRerouted = order.handoverReroutedAt != null
       return {
-        ...order,
-        deliveryOtp: order.fulfilmentType === 'delivery' ? order.deliveryOtp : null,
+        ...visible,
+        deliveryOtp: order.fulfilmentType === 'delivery' && !handoverRerouted ? order.deliveryOtp : null,
+        handoverRerouted,
         rider: riderInfo,
         alreadyReviewed: review != null,
       }
@@ -1358,7 +1380,10 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         marketingOptIn: true, birthdayMmDd: true,
         firstOrderAt: true, lastOrderAt: true,
         totalSpentCents: true,
-        isBlacklisted: true, createdAt: true,
+        // No global isBlacklisted flag: a block is per company (CustomerBan,
+        // owner decision 15) — the account page reads GET
+        // /storefront/account/blocks for the customer's own blocks.
+        createdAt: true,
         // Referral fields surfaced so the storefront /account can render the
         // share box ("Invite friends, get 200 pts each").
         referralCode: true, referredAt: true, referralRewardCreditedAt: true,

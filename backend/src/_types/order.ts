@@ -10,6 +10,13 @@ export type OrderSource =
 export interface OrderModifierDTO {
   name: string
   priceDeltaCents: number
+  /**
+   * The menu Modifier this add-on is, so its own recipe (RecipeKind
+   * 'modifier') depletes stock and costs the line. ingestOrder keeps it only
+   * when it belongs to a live modifier group of the line's menu item, else
+   * stores null. Optional; absent means a free-text modifier.
+   */
+  modifierId?: string | null
 }
 
 export interface OrderItemDTO {
@@ -65,6 +72,19 @@ export interface OrderDTO {
   tip_cents?: number
   /** How the order leaves the kitchen. Inferred from table_id when absent. */
   fulfilment_type?: 'dine_in' | 'takeout' | 'delivery'
+  /**
+   * The delivery zone's fee BEFORE GST, in cents — charged on top of the food
+   * (owner, 2026-10-13). Persisted to Order.deliveryFeeCents. ingestOrder
+   * takes it from the channel's price (lib/pricing.ts priceOrder); absent
+   * means no fee.
+   */
+  deliveryFeeCents?: number
+  /**
+   * The GST on the delivery fee, in cents, at the order's tender rate. It is
+   * INSIDE tax_cents (food GST + this), never added again. Persisted to
+   * Order.deliveryFeeTaxCents; absent means none.
+   */
+  deliveryFeeTaxCents?: number
 }
 
 export type OrderStatus =

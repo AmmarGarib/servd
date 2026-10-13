@@ -67,7 +67,7 @@ export interface FiscalPayload {
     taxRatePct: number             // Order.taxRatePct (15 cash / 8 card); fallback gstRatePct(concept, tender)
     serviceChargeCents: number
     tipCents: number
-    deliveryChargeCents?: number   // delivery fee, untaxed (ONL-R2-02); optional, absent = 0
+    deliveryChargeCents?: number   // legacy untaxed fee; 0 when the fee is a line (H9: a 'DELIVERY-CHARGE' line with its GST); optional, absent = 0
     billDiscountCents?: number     // discount above the food value, taken off after tax (F-RV-1); only when > 0, absent = 0
     totalCents: number             // the BILL: Order.totalCents + walletAmountCents + gift-card redemptions
                                    //   = lines + tax + service + tip + delivery − bill discount (not Order.totalCents alone)

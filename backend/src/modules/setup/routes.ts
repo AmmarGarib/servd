@@ -881,9 +881,16 @@ export async function setupRoutes(fastify: FastifyInstance) {
       selfieRequiredAtClockIn:        z.boolean().optional(),
       invoiceSequenceReset:           z.enum(['yearly', 'monthly', 'never']).optional(),
       invoiceCreditNotePrefix:        z.string().max(10).nullable().optional(),
+      // Withholding: the switch stays here. The rates — and the legacy single
+      // withholdingTaxPct, kept equal to the 153(1)(a) filer rate — have ONE
+      // writer, PUT /accounting/withholding/rates; a body that still sends
+      // withholdingTaxPct has it dropped by this schema, never saved.
       withholdingTaxEnabled:          z.boolean().optional(),
-      withholdingTaxPct:              z.number().min(0).max(1).optional(),
       withholdingTaxRecoverable:      z.boolean().optional(),
+      // Cash requests (H3): receipts are due within this many days of the
+      // money being paid out; the daily cash-request worker converts what is
+      // still open after it (staff advance / director's current account).
+      cashAdvanceSettleDays:          z.number().int().min(1).max(365).optional(),
       // The company-level brand-asset columns (secondaryColors, fonts,
       // brandVoiceNotes, social handles) are no longer written: nothing read
       // them. Brand voice is Concept.brandVoice, the WhatsApp number is

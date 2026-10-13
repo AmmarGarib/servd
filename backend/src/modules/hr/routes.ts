@@ -19,21 +19,22 @@ import { csv } from '../accounting/csv.js'
 import { audit } from '../../lib/audit.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
-  HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, ORG_UNIT_KINDS, DOCUMENT_TYPES,
+  HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, withSystemFields, ORG_UNIT_KINDS, DOCUMENT_TYPES,
   EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
 } from './forms.js'
 import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, settlementLoansOf,
-  calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees,
+  calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder,
   salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE, ALL_RUN_STATUSES,
 } from './service.js'
 import {
-  mergeSettings, canActOnStep, finalSettlement, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
+  mergeSettings, canActOnStep, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
   nextPeriod, settlementParts, settlementNet,
   type ApprovalEntry, type HrSettings,
 } from './logic.js'
-import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml } from './letters.js'
+import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml, withLetterSystemRows } from './letters.js'
+import { CASH_REQUEST_PAID_FROM } from './advanceLoan.js'
 import { REPORTS, buildReport, resolver, type ReportQuery } from './reports.js'
 import {
   postPayrollAccrual, postPayrollPayment, postLoanDisbursement, postFinalSettlementAccrual, postFinalSettlementPayment,
@@ -163,6 +164,15 @@ function recordSection(key: string) {
   if (!sec || sec.kind !== 'record') throw new AppError('UNKNOWN_SECTION', `No HR record section "${key}"`, 404)
   return sec
 }
+
+/** 409 SECTION_MOVED for a section whose work is done elsewhere now. */
+function sectionMoved(sec: HrSection): AppError {
+  return new AppError('SECTION_MOVED', sec.movedTo?.message ?? `${sec.title} is no longer recorded in HR`, 409, { path: sec.movedTo?.path ?? null })
+}
+
+/** An HR staff advance moved from an unsettled cash request (advanceLoan.ts). */
+const fromCashRequest = (rec: Pick<HrRecord, 'section' | 'data'>) =>
+  rec.section === 'loan' && ((rec.data ?? {}) as Record<string, unknown>)['paidFrom'] === CASH_REQUEST_PAID_FROM
 
 const EMP_DATE_COLS = ['cnicExpiry', 'dateOfBirth', 'joiningDate', 'probationEnd', 'confirmationDate', 'contractEnd', 'lastWorkingDay']
 const EMP_INT_COLS = ['noticePeriodDays', 'basicSalaryCents', 'grossSalaryCents', 'monthlyTaxCents']
@@ -389,9 +399,13 @@ function recordLabel(rec: HrRecord & { employee?: { fullName: string } | null },
 async function approvalSubject(rec: HrRecord) {
   const done = { createdById: rec.createdById, priorApproverIds: (rec.approvals as unknown as ApprovalEntry[]).map((a) => a.byUserId) }
   if (!rec.employeeId) return { employeeUserId: null, managerUserId: null, ...done }
-  const emp = await prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { userId: true, managerId: true } })
-  const mgr = emp?.managerId ? await prisma.hrEmployee.findFirst({ where: { id: emp.managerId, tenantId: rec.tenantId }, select: { userId: true } }) : null
-  return { employeeUserId: emp?.userId ?? null, managerUserId: mgr?.userId ?? null, ...done }
+  // The direct reporting manager's login — service.ts managerUserIdOfEmployee,
+  // the ONE HOD rule (the cash requests read it through directManagerUserIdOf).
+  const [emp, managerUserId] = await Promise.all([
+    prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { userId: true } }),
+    managerUserIdOfEmployee(rec.tenantId, rec.employeeId),
+  ])
+  return { employeeUserId: emp?.userId ?? null, managerUserId, ...done }
 }
 
 /** Everything that happens when a record reaches 'approved' — whether the last
@@ -605,6 +619,10 @@ export { csv }
 
 async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string }) {
   const sec = recordSection(section)
+  // A section whose work moved (eobi_challan → Accounting → Statutory
+  // payments): its old rows stay readable, no new ones — here once, for
+  // /records/:section and /me/records/:section alike.
+  if (sec.movedTo) throw sectionMoved(sec)
   const fmt = await getFormat(tenantId, section)
   const selfService = !!opts.forEmployeeId
   if (selfService) {
@@ -661,7 +679,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const formats = await getAllFormats(activeTenant(req))
     return HR_SECTIONS.map((s) => ({
       key: s.key, specNo: s.specNo, title: s.title, group: s.group, kind: s.kind, config: !!s.config,
-      effect: s.effect ?? null, requires: s.requires ?? [],
+      effect: s.effect ?? null, requires: s.requires ?? [], movedTo: s.movedTo ?? null,
       format: s.kind === 'record' || s.key === 'employees' ? formats[s.key] : null,
     }))
   })
@@ -745,7 +763,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const target = version > 0 ? await prisma.hrFormDefinition.findFirst({ where: { tenantId, section: sec.key, version } }) : null
     if (version > 0 && !target) throw new NotFoundError('Format version', String(version))
     if (target) {
-      const problems = formatProblems(sec, target.fields as unknown as HrField[], target.workflow as unknown as WorkflowStep[])
+      // Checked as it would be used: with any system field added since it
+      // was saved (getFormat puts those back too).
+      const problems = formatProblems(sec, withSystemFields(sec, target.fields as unknown as HrField[]), target.workflow as unknown as WorkflowStep[])
       if (problems.length) throw new AppError('BAD_FORMAT', `Version ${version} cannot be used any more: ${problems.join(' · ')}`, 400)
     }
     await prisma.$transaction([
@@ -780,9 +800,18 @@ export async function hrRoutes(fastify: FastifyInstance) {
       leaveYearStartMonth: z.number().int().min(1).max(12),
       encashLeaveOnExit: z.boolean(),
       employeeCodePrefix: z.string().max(12),
+      // Gratuity at exit (H6). Optional so a screen that does not send it
+      // keeps what the company has.
+      gratuity: z.object({
+        enabled: z.boolean(),
+        eligibleTypes: z.array(z.string().trim().min(1).max(40)).max(20),
+        minServiceMonths: z.number().int().min(0).max(60),
+        partYearOverMonths: z.number().int().min(0).max(11),
+        daysPerYear: z.number().int().min(1).max(60),
+      }).optional(),
     }).parse(req.body)
     const before = await getSettings(tenantId)
-    const next = mergeSettings(body as Partial<HrSettings>)
+    const next = mergeSettings({ ...body, gratuity: body.gratuity ?? before.gratuity } as Partial<HrSettings>)
     await saveSettings(tenantId, next)
     await audit({ category: 'identity', action: 'hr.settings.update', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, before, after: next })
     return next
@@ -1275,6 +1304,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const body = z.object({ data: z.record(z.unknown()) }).parse(req.body)
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
+    // A moved section's old rows are kept as they were, read-only.
+    const recSec = sectionByKey(rec.section)
+    if (recSec?.movedTo) throw sectionMoved(recSec)
+    // An advance moved from a cash request is the cash request's, not a form's.
+    if (fromCashRequest(rec)) throw new AppError('LOAN_FROM_CASH_REQUEST', 'This staff advance was moved from an unsettled cash request — change it from the cash request', 409)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
     const approvals = rec.approvals as unknown as ApprovalEntry[]
     // Once an approver has acted, the content they approved is frozen. A
@@ -1445,6 +1479,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }
     if (rec.status === 'cancelled') throw new AppError('ALREADY_CANCELLED', 'This record is already cancelled', 409)
     if (rec.appliedAt) throw new AppError('APPLIED', 'This has already taken effect and cannot be cancelled — raise a new request to reverse it', 409)
+    // A staff advance moved from an unsettled cash request: cancelling here
+    // would put the advance back on 1355 while the request reads 'converted'.
+    // It is reversed from the cash request (advanceLoan.ts).
+    if (fromCashRequest(rec)) {
+      throw new AppError('LOAN_FROM_CASH_REQUEST', 'This staff advance was moved from an unsettled cash request — reverse it from the cash request, not here', 409)
+    }
     if (rec.section === 'loan' && rec.status === 'approved') {
       // Once an installment sits on any payslip — draft, approved or locked —
       // cancelling would leave that payroll deducting for a loan that no
@@ -1606,6 +1646,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
       for (let p = periodOf(salaryFrom); p <= periodOf(lwd); p = nextPeriod(p)) salaryByPeriod[p] = await salaryForPeriod(emp, p)
     }
     const leaveDays = Math.round(balances.filter((b) => b.paid).reduce((a, b) => a + accruedLeaveDays(b, b.yearFrom, emp.joiningDate, lwd), 0) * 100) / 100
+    // Gratuity (H6) on the last gross — the gross in force at the last working
+    // day, worked out above (never a second salaryForPeriod).
+    const g = gratuityFor(emp, lwd, grossSalaryCents, s.gratuity)
+    assertInt4Fits(g.amountCents, 'The gratuity')
     const r = finalSettlement({ ...emp, grossSalaryCents }, lwd, {
       salaryFrom,
       otPayableCents: ot.reduce((a, o) => a + (o.amountCents ?? 0), 0),
@@ -1613,6 +1657,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       loanOutstandingCents: loans.reduce((a, l) => a + l.outstandingCents, 0),
       deductionsCents: 0, otherAdjustmentsCents: 0,
       salaryByPeriod,
+      gratuityCents: g.amountCents,
     }, s)
     // Stamped only while the settlement can still be edited: once an
     // approver has acted, its figures are the ones they approved.
@@ -1629,6 +1674,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }
     return {
       ...r, leaveBalanceDays: leaveDays,
+      gratuityDetail: {
+        eligible: g.eligible, reason: g.reason, joiningDate: emp.joiningDate ? emp.joiningDate.toISOString() : null,
+        employmentType: emp.employmentType,
+        years: g.years, months: g.months, days: g.days, countedYears: g.countedYears, lastGrossCents: grossSalaryCents,
+        daysPerYear: s.gratuity.daysPerYear,
+      },
       salaryFrom: salaryFrom ? salaryFrom.toISOString() : null,
       paidThrough: lastRun?.period ?? null, paidThroughStatus: lastRun?.status ?? null,
       finalMonthAlreadyPaid: !!lastRun && lastRun.period >= periodOf(lwd),
@@ -1851,7 +1902,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const stored = await prisma.hrLetterTemplate.findMany({ where: { tenantId: activeTenant(req) } })
     return DEFAULT_LETTERS.map((d) => {
       const s = stored.find((x) => x.key === d.key)
-      const body = s ? sanitizeLetterHtml(s.body) : d.body
+      // A company's own version gets the rows its statement must show (the
+      // F&F Gratuity row) — the stored template is not changed.
+      const body = s ? withLetterSystemRows(d.key, sanitizeLetterHtml(s.body)) : d.body
       return { key: d.key, title: s?.title ?? d.title, body, isDefault: !s, version: s?.version ?? 0, placeholders: placeholdersIn(body) }
     })
   })
@@ -1898,7 +1951,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       emp ?? (rec?.employeeId ? prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId } }) : null),
     ])
     const ctx = await letterContext(tenantId, employee, rec)
-    const out = renderLetter(tpl?.body ?? def.body, ctx)
+    const out = renderLetter(tpl ? withLetterSystemRows(body.key, tpl.body) : def.body, ctx)
     await audit({ category: 'identity', action: 'hr.letter.render', entity: 'HrLetterTemplate', entityId: body.key, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { employeeId: employee?.id ?? null, recordId: rec?.id ?? null } })
     return { title: tpl?.title ?? def.title, ...out }
   })
@@ -1977,29 +2030,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const pendingApprovals = (await approvalsWaitingOn(req)).length
     if (!me) return { me: null, team: [], pendingApprovals }
 
-    const MAX_DEPTH = 10
-    const seen = new Set<string>([me.id])
-    const team: Array<{
-      id: string; fullName: string; employeeCode: string; status: string; phone: string | null
-      employmentType: string; probationEnd: Date | null; managerId: string | null; userId: string | null
-      depth: number; todayStatus: 'present' | 'late' | 'absent' | 'on_leave' | 'off' | null
-    }> = []
-    let frontier = [me.id]
-    for (let depth = 1; depth <= MAX_DEPTH && frontier.length; depth++) {
-      const rows = await prisma.hrEmployee.findMany({
-        where: { tenantId: me.tenantId, managerId: { in: frontier }, status: { in: ['active', 'on_leave'] } },
-        select: { id: true, fullName: true, employeeCode: true, status: true, phone: true, employmentType: true, probationEnd: true, managerId: true, userId: true },
-        orderBy: { fullName: 'asc' },
-      })
-      const next: string[] = []
-      for (const r of rows) {
-        if (seen.has(r.id)) continue
-        seen.add(r.id)
-        next.push(r.id)
-        team.push({ ...r, depth, todayStatus: null })
-      }
-      frontier = next
-    }
+    // The reporting tree (service.ts teamUnder — the one walk; the cash
+    // requests read it through teamUserIdsUnder).
+    const team: Array<Awaited<ReturnType<typeof teamUnder>>[number] & { todayStatus: 'present' | 'late' | 'absent' | 'on_leave' | 'off' | null }> =
+      (await teamUnder(me.tenantId, me.id)).map((t) => ({ ...t, todayStatus: null }))
 
     if (team.length) {
       const today = pktToday()

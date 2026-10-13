@@ -220,6 +220,9 @@ describe('new default modules reach saved Module Access rows once (W2-R3)', () =
     expect(rolesGrantedByDefault('api_pos').sort()).toEqual(['it', 'management'])
     expect(rolesGrantedByDefault('api_whatsapp')).toEqual(['it'])
     expect(rolesGrantedByDefault('voided_prebills').sort()).toEqual(['finance', 'management', 'owner'])
+    // Finance wave B: the food-cost report and Emergency overrides.
+    expect(rolesGrantedByDefault('food_cost').sort()).toEqual(['boh_management', 'finance', 'fnb_manager', 'management', 'manager', 'owner'])
+    expect(rolesGrantedByDefault('emergency_overrides').sort()).toEqual(['boh_management', 'fnb_manager', 'foh_management', 'management'])
     for (const m of MODULE_GRANTS) expect(rolesGrantedByDefault(m).length, m).toBeGreaterThan(0)
   })
 
@@ -239,7 +242,9 @@ describe('new default modules reach saved Module Access rows once (W2-R3)', () =
       invalidateModuleAccessCache()
       const first = await applyModuleGrants()
       expect([...first.applied].sort()).toEqual([...MODULE_GRANTS].sort())
-      expect([...first.roles].sort()).toEqual(['it'])   // finance already held it
+      // finance already held voided_prebills but gains food_cost; foh_management
+      // gains emergency_overrides (wave B); it gains the two connectors.
+      expect([...first.roles].sort()).toEqual(['finance', 'foh_management', 'it'])
       invalidateModuleAccessCache()
       expect((await effectiveModulesForUser({ role: 'it' as UserRole })).has('api_pos')).toBe(true)
       expect((await call('it', 'GET', '/connectors')).statusCode).toBe(200)
@@ -250,8 +255,10 @@ describe('new default modules reach saved Module Access rows once (W2-R3)', () =
       expect((await rowOf('it'))!.sort()).toEqual(['api_pos', 'api_whatsapp', 'audit_log', 'integrations'])
       // Already held: not duplicated.
       expect((await rowOf('finance'))!.filter((m) => m === 'voided_prebills')).toHaveLength(1)
-      // Not a grantee: unchanged. No row: still no row (defaults apply).
-      expect(await rowOf('foh_management')).toEqual(['dashboard', 'pos'])
+      expect((await rowOf('finance'))!.sort()).toEqual(['accounting', 'finance_pl', 'food_cost', 'voided_prebills'])
+      // A grantee of only the wave-B module: just that one appended. No row:
+      // still no row (defaults apply).
+      expect(await rowOf('foh_management')).toEqual(['dashboard', 'pos', 'emergency_overrides'])
       expect(await rowOf('management')).toBeNull()
       const marked = await prisma.setting.findUniqueOrThrow({ where: { key: MODULE_GRANTS_MARKER_KEY } })
       expect(JSON.parse(marked.value).sort()).toEqual([...MODULE_GRANTS].sort())

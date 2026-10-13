@@ -36,6 +36,35 @@ export interface HrSettings {
   /** Paid leave balance is paid out in full & final. */
   encashLeaveOnExit: boolean
   employeeCodePrefix: string
+  /** Gratuity paid at exit (accountant default H6) — see gratuityFor. */
+  gratuity: GratuitySettings
+}
+
+/**
+ * Gratuity at exit (accountant default H6, 2026-10-13; Hasnain may change it —
+ * this block is the one switch point): 30 days of the last gross salary for
+ * every counted year of service, a part year of MORE than 6 months counting
+ * as a year, for permanent staff with at least one full year. Booked with the
+ * full & final when it is approved (Dr 6036 Gratuity, inside the Cr 2020 net).
+ */
+export interface GratuitySettings {
+  enabled: boolean
+  /** Employment types that earn it (HrEmployee.employmentType). */
+  eligibleTypes: string[]
+  /** Full months of service before any gratuity is due. */
+  minServiceMonths: number
+  /** A remainder of MORE than this many months counts as a whole year. */
+  partYearOverMonths: number
+  /** Days of last gross per counted year (last gross ÷ 30 × this). */
+  daysPerYear: number
+}
+
+export const DEFAULT_GRATUITY: GratuitySettings = {
+  enabled: true,
+  eligibleTypes: ['permanent'],
+  minServiceMonths: 12,
+  partYearOverMonths: 6,
+  daysPerYear: 30,
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
@@ -50,15 +79,19 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   leaveYearStartMonth: 1,
   encashLeaveOnExit: true,
   employeeCodePrefix: 'EMP-',
+  gratuity: DEFAULT_GRATUITY,
 }
 
 export function mergeSettings(stored: Partial<HrSettings> | null | undefined): HrSettings {
   const s = stored ?? {}
+  const g = { ...DEFAULT_GRATUITY, ...(s.gratuity ?? {}) }
   return {
     ...DEFAULT_HR_SETTINGS,
     ...s,
     eobi: { ...DEFAULT_HR_SETTINGS.eobi, ...(s.eobi ?? {}) },
     sessi: { ...DEFAULT_HR_SETTINGS.sessi, ...(s.sessi ?? {}) },
+    // A stored list replaces the default one; a missing or broken one keeps it.
+    gratuity: { ...g, eligibleTypes: Array.isArray(g.eligibleTypes) ? [...g.eligibleTypes] : [...DEFAULT_GRATUITY.eligibleTypes] },
   }
 }
 
@@ -512,6 +545,8 @@ export interface SettlementInputs {
    *  (service salaryForPeriod). A month not listed is paid at the employee's
    *  gross — the same rule a payslip follows for its own month. */
   salaryByPeriod?: Record<string, number>
+  /** Gratuity at exit (gratuityFor's amountCents); 0 when not due. */
+  gratuityCents?: number
 }
 
 /** One month of salary a full & final pays, worked out as that month's
@@ -567,10 +602,82 @@ export function finalSettlement(
     // income tax figure on the settlement before approving it.
     incomeTax: total('taxCents'), eobiEmployee: total('eobiEmployeeCents'),
     eobiEmployer: total('eobiEmployerCents'), sessiEmployer: total('sessiEmployerCents'),
+    // Gratuity (H6): one more earning, worked out by gratuityFor on the last
+    // gross; hr/ledger.ts books it to 6036 inside the Cr 2020 net.
+    gratuity: Math.max(0, Math.round(inp.gratuityCents ?? 0)),
   }
-  // No gratuity: whether and how it is paid is pending owner decision G2 — it
-  // becomes one more earning here and in hr/ledger.ts postFinalSettlementAccrual.
   return { ...parts, netAmount: settlementNet(parts), months, warnings: Array.from(warnings) }
+}
+
+export interface GratuityResult {
+  eligible: boolean
+  /** Why nothing is due, when nothing is. */
+  reason: string | null
+  /** Service from the joining date to the last working day, inclusive. */
+  years: number
+  months: number
+  days: number
+  /** Whole years paid for: years, plus one when the remainder is over the part-year months. */
+  countedYears: number
+  amountCents: number
+}
+
+const daysInMonthUTC = (y: number, m0: number) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate()
+
+/**
+ * Service as calendar years, months and days from `from` to `to`, both days
+ * counted: joined 1 Jan 2024 and left 30 Jun 2025 is exactly 1 year 6 months.
+ */
+export function serviceLength(from: Date, to: Date): { years: number; months: number; days: number } {
+  const end = new Date(dayUTC(to) + 86_400_000) // the day after the last day worked
+  const start = new Date(dayUTC(from))
+  if (end <= start) return { years: 0, months: 0, days: 0 }
+  let years = end.getUTCFullYear() - start.getUTCFullYear()
+  let months = end.getUTCMonth() - start.getUTCMonth()
+  let days = end.getUTCDate() - start.getUTCDate()
+  if (days < 0) {
+    months -= 1
+    // Borrow the month before the end month.
+    const pm = end.getUTCMonth() === 0 ? 11 : end.getUTCMonth() - 1
+    const py = end.getUTCMonth() === 0 ? end.getUTCFullYear() - 1 : end.getUTCFullYear()
+    days += daysInMonthUTC(py, pm)
+  }
+  if (months < 0) { years -= 1; months += 12 }
+  return { years, months, days }
+}
+
+/**
+ * Gratuity at exit (H6): round(last gross ÷ 30 × daysPerYear) × counted years.
+ * Counted years = completed years + 1 when the remainder is MORE than
+ * `partYearOverMonths` months (day-precise: 1y 6m is 1, 1y 6m 1d is 2). Due
+ * only to an eligible employment type with at least `minServiceMonths` full
+ * months of service. `lastGrossCents` is the gross in force at the last
+ * working day (service salaryForPeriod — the latest approved revision).
+ */
+export function gratuityFor(
+  emp: { employmentType: string; joiningDate: Date | null },
+  lastWorkingDay: Date,
+  lastGrossCents: number,
+  s: GratuitySettings,
+): GratuityResult {
+  const service = emp.joiningDate ? serviceLength(emp.joiningDate, lastWorkingDay) : { years: 0, months: 0, days: 0 }
+  const none = (reason: string): GratuityResult => ({ eligible: false, reason, ...service, countedYears: 0, amountCents: 0 })
+  if (!s.enabled) return none('Gratuity is switched off in HR settings')
+  if (!s.eligibleTypes.includes(emp.employmentType)) {
+    return none(`Gratuity is for ${s.eligibleTypes.join(' / ') || 'no'} staff — this employee is ${emp.employmentType}`)
+  }
+  if (!emp.joiningDate) return none('No joining date on the employee record')
+  if (lastWorkingDay < emp.joiningDate) return none('The last working day is before the joining date')
+  const fullMonths = service.years * 12 + service.months
+  if (fullMonths < s.minServiceMonths) {
+    const need = s.minServiceMonths % 12 === 0 ? `${s.minServiceMonths / 12} year${s.minServiceMonths === 12 ? '' : 's'}` : `${s.minServiceMonths} months`
+    return none(`Less than ${need} of service (${service.years} y ${service.months} m ${service.days} d)`)
+  }
+  const over = service.months > s.partYearOverMonths || (service.months === s.partYearOverMonths && service.days > 0)
+  const countedYears = service.years + (over ? 1 : 0)
+  if (countedYears <= 0 || !(lastGrossCents > 0)) return none(lastGrossCents > 0 ? 'No counted year of service' : 'No gross salary on the employee record')
+  const perYear = Math.round((lastGrossCents / 30) * s.daysPerYear)
+  return { eligible: true, reason: null, ...service, countedYears, amountCents: perYear * countedYears }
 }
 
 /** The figures of a full & final, as its record holds them (data keys). The
@@ -586,10 +693,12 @@ export interface SettlementParts {
   eobiEmployee: number
   eobiEmployer: number
   sessiEmployer: number
+  /** Gratuity at exit (H6) — paid to the leaver, booked to 6036. */
+  gratuity: number
 }
 
 /** A record's figures; a missing or non-numeric one is zero (a format saved
- *  before the statutory lines existed has none). */
+ *  before the statutory lines — or gratuity — existed has none). */
 export function settlementParts(data: unknown): SettlementParts {
   const d = (data ?? {}) as Record<string, unknown>
   const n = (k: keyof SettlementParts) => (typeof d[k] === 'number' && Number.isFinite(d[k]) ? Math.round(d[k] as number) : 0)
@@ -597,6 +706,7 @@ export function settlementParts(data: unknown): SettlementParts {
     salaryPayable: n('salaryPayable'), otPayable: n('otPayable'), leaveEncashment: n('leaveEncashment'),
     deductions: n('deductions'), loanRecovery: n('loanRecovery'), otherAdjustments: n('otherAdjustments'),
     incomeTax: n('incomeTax'), eobiEmployee: n('eobiEmployee'), eobiEmployer: n('eobiEmployer'), sessiEmployer: n('sessiEmployer'),
+    gratuity: n('gratuity'),
   }
 }
 
@@ -619,7 +729,7 @@ export function settledFromPeriod(rec: { endDate: Date | null; data: unknown }):
 /** What the leaver is paid: the ONE formula — the record's net on save, the
  *  Wages Payable credit when it is booked. */
 export function settlementNet(p: SettlementParts): number {
-  return p.salaryPayable + p.otPayable + p.leaveEncashment + p.otherAdjustments
+  return p.salaryPayable + p.otPayable + p.leaveEncashment + p.gratuity + p.otherAdjustments
     - p.deductions - p.loanRecovery - p.incomeTax - p.eobiEmployee
 }
 

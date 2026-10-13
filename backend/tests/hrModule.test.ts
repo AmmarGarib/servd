@@ -692,7 +692,8 @@ describe('HR through the API', () => {
 
   it('builds every §30 report, as a preview and as CSV, for HR only', async () => {
     const list = (await call('hr', 'GET', '/reports')).json() as Array<{ key: string }>
-    expect(list).toHaveLength(25)
+    // 25 reports of §30 + 'statutory', which points to Accounting → Statutory payments.
+    expect(list).toHaveLength(26)
     for (const r of list) {
       const q = '?from=2026-01-01&to=2026-12-31&period=2026-09&days=365'
       const preview = await call('hr', 'GET', `/reports/${r.key}${q}`)
@@ -708,6 +709,9 @@ describe('HR through the API', () => {
     expect(joiners.rows.length).toBeGreaterThan(0)
     expect((await call('cook', 'GET', '/reports/salary')).statusCode).toBe(403)
     expect((await call('hr', 'GET', '/reports/nope')).statusCode).toBe(404)
+    // Statutory accrued vs paid is ONE computation, in Accounting: HR links to it.
+    const statutory = (await call('hr', 'GET', '/reports/statutory')).json()
+    expect(statutory.link).toEqual({ path: '/accounting/statutory', label: 'Accounting → Statutory payments' })
   })
 
   it('lets an employee withdraw only a request nobody has acted on yet', async () => {

@@ -433,3 +433,16 @@ RESUME ORDER:
   Container had restarted: pg/redis restarted; old test DBs dropped (disk 5.8G free). W1 DBs servd_test_wb_w1_* created.
   WAVE 0 running as workflow wf_7a226b05-ac4 (script .handoff/wf/waveb-w0-wf_7a226b05-ac4.js): schema+migrations, chart+journal,
   admin shared -> then libs + tests base. NEXT: my tsc + suites check, commit "wave B w0", then W1 (briefs/w1-*.md, 9 agents).
+- ~22:30 UTC WAVE 0 COMMITTED on main e04bed7 (schema + 2 migrations, chart/journal, libs, admin shared, test base; tsc clean
+  backend+admin; 9 key suites 181/181). Notes for later builders: $SP/waveB/w0-notes.md (pass in args.note). Pushing to main does NOT
+  deploy (GitHub build fails at Docker Hub login, trigger-deploy skipped).
+- W1 first launch died on the session limit (wrote nothing). ~22:50 UTC W1 RELAUNCHED: 3 workflows of .handoff/wf/waveb-build.js
+  args {ids, note}: wf_15d8e85d-090 [w1-stock,w1-hr,w1-bans] · wf_944789d5-ac2 [w1-taxcore,w1-ic,w1-dlv-core] ·
+  wf_44be91d7-aa9 [w1-fa-engine,w1-taxsales,w1-recon]. NEXT: gate (tsc + each agent's suites + patch notes) -> commit "wave B w1"
+  -> W2 (same script, ids w2-*) -> gate -> W3 -> W4 -> WZ (build-waves.md "Wave Z").
+- Owner build map artifact: https://claude.ai/artifact/2wdApZ2q14vbGu69dyYUZB (source $SP/finance-build.html; republish same path
+  to update stage status).
+- Hasham branch videos: $SP/vid (vid.sh + cap.cjs deterministic capture via puppeteer-capture, patched Date.UTC). Pass 1 done
+  (lg uxp d cur good); pass 2 re-recording a b c. Outputs $SP/vid/out/<k>-<page>.mp4/.jpg. NEXT: artifact page with all videos.
+  Preview links preview-{a,b,c,d,current}.garibsons.app return 530 (origin = an office PC, not the prod box).
+- Prod DB per repo = Neon cloud (deploy/docker-compose.yml); told owner; Baqar to confirm via deploy\.env.production DATABASE_URL.

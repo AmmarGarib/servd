@@ -42,8 +42,11 @@ import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 //     the HR workspace HR owns, a seat's title is an HR designation and its
 //     department comes from HR → Org setup. Finance reads the budget; it does
 //     not set headcount or salaries.
-//   Inter-company contributions (./contributions.ts) move money between two
-//     companies' books — reads follow POSITION_READERS, writes stay MANAGERS.
+//   Inter-company contributions (./contributions.ts) are a PLANNING figure
+//     (what one company bears for another, netted into the budget); they post
+//     nothing. Money that moves between two companies' books is an
+//     inter-company transfer (Accounting → Inter-company, modules/intercompany).
+//     Reads follow POSITION_READERS, writes stay MANAGERS (member of both).
 export const POSITION_READERS = Array.from(new Set([...MANAGERS, 'hr', 'finance'])) as UserRole[]
 export const POSITION_EDITORS = HR_TEAM
 // /positions is not a central module-gated prefix, so the roles newly let in

@@ -23,12 +23,28 @@
 // one invoice. (The per-brand invoice_counters table this replaced shared one
 // counter between a brand's invoices and credit notes, restarted a new year
 // at 2, and let two brands with one prefix collide.)
+//
+// Money (wave B, H9 + critic): a delivery order's fee is a taxable supply — it
+// is in taxableValueCents and has its own 'Delivery charge' line, its GST is
+// inside the stored Order.taxCents — and the invoice total equals the BILL:
+//   totalCents = max(0, subtotal + deliveryFee + tax + serviceCharge + tip − discount)
+// (a discount or loyalty that covered more than the food comes off the fee and
+// the tax too, exactly as the bill and the fiscal payload's totals have it).
+// A credit note mirrors its original line for line.
+//
+// Buyer (H14, on-account clients): when the caller names no buyer and the
+// order was charged to an on-account client (CustomerAccountCharge), the
+// invoice names the client — legal name, STRN, NTN, address — so the tax
+// invoice at supply is the client's (the monthly statement is not one).
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 
 const COUNTER_PAD = 5  // STX-2026-00001, plenty of room for years of activity
+
+/** The description of a delivery order's fee line (H9) — a credit note's line mirrors it. */
+export const DELIVERY_CHARGE_LINE = 'Delivery charge' as const
 
 type Tx = Prisma.TransactionClient
 type Series = { tenantId: string; prefix: string; year: number; type: 'invoice' | 'credit_note' }
@@ -155,26 +171,47 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
 
     const invoiceNumber = await nextNumber(tx, series)
 
+    // The buyer: the caller's, else an on-account client the order was charged
+    // to (its own company's charge only), else the customer's name.
+    let buyer = input.buyer
+    if (!buyer) {
+      const charge = await tx.customerAccountCharge.findFirst({
+        where: { orderId: order.id, tenantId: concept.tenantId },
+        select: { account: { select: { legalName: true, strn: true, ntn: true, address: true } } },
+      })
+      if (charge) {
+        const a = charge.account
+        buyer = {
+          name: a.legalName,
+          ...(a.strn && { strn: a.strn }),
+          ...(a.ntn && { ntn: a.ntn }),
+          ...(a.address && { address: a.address }),
+        }
+      }
+    }
+
     // Money snapshot — the order's STORED figures, never a recomputation:
     // the GST is Order.taxCents, charged at Order.taxRatePct by
     // lib/pricing.ts priceOrder (tender rate, decision 9). We don't split
     // federal vs provincial here because that mapping is operator policy;
     // until the operator sets explicit per-province fields, all of it lands
-    // in fbrTaxCents. The taxable value is the PRE-discount item value — GST
-    // is charged on it before any discount (SRB POS rule), so taxable × rate
-    // matches the tax on the invoice.
+    // in fbrTaxCents. The taxable value is the PRE-discount item value plus
+    // the delivery charge (taxed at the order's rate, H9) — GST is charged on
+    // it before any discount (SRB POS rule), so taxable × rate matches the
+    // tax on the invoice. The total is the bill (see the header).
     const subtotal       = order.items
       .filter((i) => i.status !== 'voided')
       .reduce((s, i) => {
         const modSum = i.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
         return s + (i.unitPriceCents + modSum) * i.quantity
       }, 0)
+    const deliveryFee    = Math.max(0, order.deliveryFeeCents)
     const discount       = order.discountCents + order.promoDiscountCents
-    const taxable        = subtotal
+    const taxable        = subtotal + deliveryFee
     const fbrTax         = order.taxCents
     const serviceCharge  = order.serviceChargeCents
     const tip            = order.tipCents
-    const total          = Math.max(0, subtotal - discount) + fbrTax + serviceCharge + tip
+    const total          = Math.max(0, subtotal + deliveryFee + fbrTax + serviceCharge + tip - discount)
 
     return tx.taxInvoice.create({
       data: {
@@ -187,10 +224,10 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
         sellerStrn: concept.strn,
         sellerNtn: concept.ntn,
         sellerAddress: concept.invoiceAddress,
-        buyerName: input.buyer?.name ?? order.customerName,
-        buyerStrn: input.buyer?.strn,
-        buyerNtn: input.buyer?.ntn,
-        buyerAddress: input.buyer?.address,
+        buyerName: buyer?.name ?? order.customerName,
+        buyerStrn: buyer?.strn,
+        buyerNtn: buyer?.ntn,
+        buyerAddress: buyer?.address,
         subtotalCents: subtotal,
         discountCents: discount,
         taxableValueCents: taxable,
@@ -199,19 +236,25 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
         serviceChargeCents: serviceCharge,
         tipCents: tip,
         totalCents: total,
+        deliveryFeeCents: deliveryFee,
         lines: {
-          create: order.items.filter((i) => i.status !== 'voided').map((i) => {
-            const modSum = i.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
-            const unitPrice = i.unitPriceCents + modSum
-            return {
-              description: i.modifiers.length > 0
-                ? `${i.name} (${i.modifiers.map((m) => m.name).join(', ')})`
-                : i.name,
-              quantity: i.quantity,
-              unitPriceCents: unitPrice,
-              lineTotalCents: unitPrice * i.quantity,
-            }
-          }),
+          create: [
+            ...order.items.filter((i) => i.status !== 'voided').map((i) => {
+              const modSum = i.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
+              const unitPrice = i.unitPriceCents + modSum
+              return {
+                description: i.modifiers.length > 0
+                  ? `${i.name} (${i.modifiers.map((m) => m.name).join(', ')})`
+                  : i.name,
+                quantity: i.quantity,
+                unitPriceCents: unitPrice,
+                lineTotalCents: unitPrice * i.quantity,
+              }
+            }),
+            ...(deliveryFee > 0
+              ? [{ description: DELIVERY_CHARGE_LINE, quantity: 1, unitPriceCents: deliveryFee, lineTotalCents: deliveryFee }]
+              : []),
+          ],
         },
       },
       include: { lines: true },
@@ -267,6 +310,7 @@ export async function issueCreditNoteForOrder(orderId: string, reason: string) {
         serviceChargeCents: -original.serviceChargeCents,
         tipCents:           -original.tipCents,
         totalCents:         -original.totalCents,
+        deliveryFeeCents:   -original.deliveryFeeCents,
         lines: {
           create: original.lines.map((l) => ({
             description: `Credit note: ${l.description} — ${reason}`,
@@ -290,6 +334,7 @@ export function renderInvoiceHtml(invoice: {
   buyerName?: string | null; buyerStrn?: string | null; buyerNtn?: string | null; buyerAddress?: string | null
   subtotalCents: number; discountCents: number; taxableValueCents: number
   fbrTaxCents: number; provincialTaxCents: number; serviceChargeCents: number; tipCents: number; totalCents: number
+  deliveryFeeCents?: number
   lines: Array<{ description: string; quantity: number; unitPriceCents: number; lineTotalCents: number }>
 }): string {
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2 })}`
@@ -356,6 +401,7 @@ export function renderInvoiceHtml(invoice: {
 
 <table class="totals">
   <tr><td>Subtotal</td>          <td class="right">${fmt(invoice.subtotalCents)}</td></tr>
+  ${invoice.deliveryFeeCents ? `<tr><td>Delivery charge</td>   <td class="right">${fmt(invoice.deliveryFeeCents)}</td></tr>` : ''}
   ${invoice.discountCents !== 0 ?      `<tr><td>Discount</td>          <td class="right">${fmt(-invoice.discountCents)}</td></tr>` : ''}
   <tr><td>Taxable value</td>     <td class="right">${fmt(invoice.taxableValueCents)}</td></tr>
   ${invoice.fbrTaxCents !== 0 ?        `<tr><td>FBR sales tax</td>     <td class="right">${fmt(invoice.fbrTaxCents)}</td></tr>` : ''}

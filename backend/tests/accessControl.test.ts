@@ -117,10 +117,13 @@ afterAll(async () => {
 describe('module defaults after the CEO section (D2) and the approvals inbox (D3)', () => {
   // Moving module ids between workspaces is a regrouping, not an access
   // change: every role the move does not involve keeps exactly its defaults.
+  // Finance wave B (2026-10-14) added two modules on purpose: 'food_cost' (the
+  // food-cost variance report — fnb_manager, boh_management, finance) and
+  // 'emergency_overrides' (the RGM, the chef, the F&B manager).
   const UNCHANGED: Record<string, string[]> = {
-    fnb_manager: ['fnb_dashboard', 'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'complaints', 'reviews', 'staff_directory', 'finance_pl', 'accounting', 'reports'],
-    foh_management: ['dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'crm', 'complaints', 'reviews', 'campaigns', 'staff_directory', 'reports', 'integrations'],
-    boh_management: ['dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'staff_directory', 'scheduling', 'reports'],
+    fnb_manager: ['fnb_dashboard', 'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'emergency_overrides', 'complaints', 'reviews', 'staff_directory', 'finance_pl', 'accounting', 'reports', 'food_cost'],
+    foh_management: ['dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'emergency_overrides', 'crm', 'complaints', 'reviews', 'campaigns', 'staff_directory', 'reports', 'integrations'],
+    boh_management: ['dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station', 'emergency_overrides', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'staff_directory', 'scheduling', 'reports', 'food_cost'],
     foh: ['pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside'],
     boh: ['kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet', 'food_safety'],
     kitchen: ['kds_dashboard', 'par_sheet', 'food_safety'],
@@ -129,7 +132,7 @@ describe('module defaults after the CEO section (D2) and the approvals inbox (D3
     procurement: ['procurement', 'inventory', 'reports'],
     marketing: ['marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront'],
     brand_manager: ['brand_dashboard', 'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront'],
-    finance: ['dashboard', 'orders', 'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'reports', 'voided_prebills'],
+    finance: ['dashboard', 'orders', 'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'reports', 'voided_prebills', 'food_cost'],
     hr: ['staff_directory', 'staff_hr', 'payroll', 'scheduling'],
     it: ['api_whatsapp', 'api_pos', 'integrations', 'audit_log', 'notifications', 'help'],
   }
@@ -145,6 +148,65 @@ describe('module defaults after the CEO section (D2) and the approvals inbox (D3
     expect(DEFAULT_MODULE_ACCESS.admin).toEqual(all)
     for (const r of ['owner', 'management', 'manager'] as const) expect(DEFAULT_MODULE_ACCESS[r], r).toContain('approvals')
     for (const m of ['role_management', 'role_modules', 'accounting_audit']) expect(DEFAULT_MODULE_ACCESS.owner).not.toContain(m)
+  })
+
+  it('wave B: food_cost and emergency_overrides go only where the owner said', () => {
+    // Food cost: the managers' "every module" lists hold it; floor and buying roles do not.
+    for (const r of ['owner', 'management', 'manager', 'fnb_manager', 'boh_management', 'finance'] as const) {
+      expect(DEFAULT_MODULE_ACCESS[r], r).toContain('food_cost')
+    }
+    for (const r of ['foh_management', 'procurement', 'boh', 'kitchen', 'cashier'] as const) {
+      expect(DEFAULT_MODULE_ACCESS[r], r).not.toContain('food_cost')
+    }
+    // Emergency overrides: on-shift managers and management — never the co-owner or the legacy manager.
+    for (const r of ['management', 'fnb_manager', 'foh_management', 'boh_management'] as const) {
+      expect(DEFAULT_MODULE_ACCESS[r], r).toContain('emergency_overrides')
+    }
+    for (const r of ['owner', 'manager', 'finance', 'foh', 'boh', 'cashier'] as const) {
+      expect(DEFAULT_MODULE_ACCESS[r], r).not.toContain('emergency_overrides')
+    }
+  })
+
+  it('wave B gates: first match wins, reads may be wider than writes', async () => {
+    const ok = (url: string, user: Record<string, unknown>, method = 'GET') =>
+      expect(enforceModuleAccess(url, user as never, method), `${method} ${url} ${JSON.stringify(user)}`).resolves.toBeUndefined()
+    const no = (url: string, user: Record<string, unknown>, method = 'GET') =>
+      expect(enforceModuleAccess(url, user as never, method), `${method} ${url} ${JSON.stringify(user)}`).rejects.toThrow(/module/)
+
+    // /reports/food-cost is its own module — 'reports' alone (the RGM) does not open it.
+    await no('/api/v1/reports/food-cost', { role: 'foh_management' })
+    await ok('/api/v1/reports/sales', { role: 'foh_management' })
+    await ok('/api/v1/reports/food-cost?from=2026-10-01', { role: 'finance' })
+    // The accounting module reads it (the hub's gauge) but writes need food_cost.
+    await ok('/api/v1/reports/food-cost/summary', { role: 'fnb_manager', moduleDeny: ['food_cost'] })
+    await no('/api/v1/reports/food-cost/schedule', { role: 'fnb_manager', moduleDeny: ['food_cost'] }, 'POST')
+
+    // GRNI: finance works it (requests a write-off) without the procurement module.
+    await ok('/api/v1/procurement/grni', { role: 'finance' })
+    await ok('/api/v1/procurement/grni/l1/write-off', { role: 'finance' }, 'POST')
+    await no('/api/v1/procurement/grni', { role: 'foh_management' })
+    // Supplier picker: 'capital' reads it; adding a supplier stays procurement.
+    await ok('/api/v1/procurement/suppliers?view=picker', { role: 'finance', moduleDeny: ['accounting'] })
+    await no('/api/v1/procurement/suppliers', { role: 'finance' }, 'POST')
+
+    // Emergency overrides.
+    for (const role of ['foh_management', 'boh_management', 'fnb_manager', 'management']) {
+      await ok('/api/v1/emergency-overrides/orders/o1/reroute-code', { role }, 'POST')
+    }
+    for (const role of ['owner', 'manager', 'cashier', 'foh', 'finance']) {
+      await no('/api/v1/emergency-overrides/orders/o1/reroute-code', { role }, 'POST')
+    }
+
+    // A ban appeal is lifted from Complaints; the rest of /crm/bans stays CRM.
+    await ok('/api/v1/crm/bans/b1/lift', { role: 'marketing', moduleDeny: ['crm'] }, 'POST')
+    await ok('/api/v1/crm/bans/b1/release-contact', { role: 'marketing', moduleDeny: ['crm'] }, 'POST')
+    await no('/api/v1/crm/bans', { role: 'marketing', moduleDeny: ['crm'] })
+    await no('/api/v1/crm/bans/b1/lift/extra', { role: 'marketing', moduleDeny: ['crm'] }, 'POST')
+    await no('/api/v1/crm/bans/b1/lift', { role: 'boh_management' }, 'POST')
+    // /complaints is the complaints module's.
+    await ok('/api/v1/complaints?status=open', { role: 'marketing' })
+    await no('/api/v1/complaints', { role: 'procurement' })
+    await no('/api/v1/complaints/c1', { role: 'boh_management' }, 'PATCH')
   })
 
   it('the inbox is not module-gated — it grants nothing, each module\'s own routes do', async () => {

@@ -2,25 +2,35 @@
 // the postings the old /payroll used to make.
 //
 //   lock     Dr wages (by department) + employer EOBI/SESSI
-//            Cr wages payable (net), tax withheld, statutory payable,
-//               staff loans (installments recovered)
+//            Cr wages payable 2020 (net), salary tax 2042, EOBI 2043
+//               (employee + employer), SESSI/PESSI 2044, staff loans 1350
+//               (installments recovered)
 //   paid     Dr wages payable / Cr the safe (cash slips) and the bank picked
 //            (bank and cheque slips), on the day it was paid
 //   loan     Dr staff loans / Cr the bank or the safe it was paid from — when
-//            a loan gets final approval
+//            a loan gets final approval; Cr 1355 Cash advances for a staff
+//            advance moved from an unsettled cash request (H3)
 //   F&F      approval: the same accrual as a payslip, for the leaver's last
-//            salary, OT, leave encashment and adjustments, less the loan it
-//            recovers; paid: Dr wages payable / Cr the bank or the safe
+//            salary, OT, leave encashment, gratuity (Dr 6036) and adjustments,
+//            less the loan it recovers; paid: Dr wages payable / Cr the bank
+//            or the safe
 //
 // The accrual balances by construction: net = earnings − every deduction, and
 // the wage debit is earnings less the deductions that reduce pay (absence,
 // unpaid leave, lates, other), so the withheld items (EOBI employee, tax, loan)
 // land on the credit side and nothing else.
+//
+// Statutory payables (accountant default H7, 2026-10-13): 2042 salary tax
+// (s.149), 2043 EOBI, 2044 SESSI / PESSI — paid over through Accounting →
+// Statutory payments (accounting/taxPayments.ts). Entries posted before this
+// release credited 2090 / 2040; they are never edited, and a cancel of such an
+// F&F reverses exactly those lines (reverseJournalEntry flips the original).
 
 import type { HrRecord, Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { toCents } from '../../lib/money.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { loansFor, ALL_RUN_STATUSES } from './service.js'
@@ -28,13 +38,20 @@ import { allocateLoanCents, settlementParts, settlementNet, pktToday } from './l
 
 type Tx = Prisma.TransactionClient
 
-export const STAFF_LOANS = '1350'
+export const STAFF_LOANS = ACCT.STAFF_LOANS
 // Where withheld and employer statutory money waits until it is paid over —
-// for payroll AND full & final, from these two constants only. Separate
-// payables (2042 salary tax s.149, 2043 EOBI, 2044 SESSI/PESSI) and their
-// remittance postings are pending owner decision G3: change it here.
-const STATUTORY_PAYABLE = '2090' // Accrued Expenses — EOBI and SESSI until paid over
-const TAX_PAYABLE = ACCT.WHT_PAYABLE
+// for payroll AND full & final, from these constants only (H7).
+const SALARY_TAX_PAYABLE = ACCT.SALARY_TAX_PAYABLE      // 2042 income tax withheld (s.149)
+const EOBI_PAYABLE = ACCT.EOBI_PAYABLE                  // 2043 EOBI employee + employer
+const SOCIAL_SECURITY_PAYABLE = ACCT.SOCIAL_SECURITY_PAYABLE // 2044 SESSI / PESSI employer
+
+/** Every code an entry posts to must be the template's own account in the
+ *  company's chart (an operator who took 2043 for something else → 422
+ *  ACCOUNT_CODE_TAKEN, and the caller's transaction — the lock, the approval —
+ *  rolls back). */
+async function assertLineAccounts(tx: Tx, tenantId: string, lines: JournalLineInput[]) {
+  await assertTemplateAccounts(tx, tenantId, lines.map((l) => l.accountCode))
+}
 
 export const FNF_ACCRUAL = 'hr.final_settlement.accrual'
 export const FNF_PAYMENT = 'hr.final_settlement.payment'
@@ -79,9 +96,12 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
     const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null)
     const earned = sum((l) => l.kind === 'earning') - sum((l) => l.kind === 'deduction' && PAY_REDUCING.has(l.code))
     const employer = sum((l) => l.kind === 'employer')
+    const eobiEmployer = sum((l) => l.kind === 'employer' && l.code === 'eobi_employer')
     add(wages, earned + employer)
-    add(STATUTORY_PAYABLE, -(sum((l) => l.code === 'eobi_employee') + employer))
-    add(TAX_PAYABLE, -sum((l) => l.code === 'tax'))
+    add(EOBI_PAYABLE, -(sum((l) => l.code === 'eobi_employee') + eobiEmployer))
+    // Every other employer contribution a payslip carries is SESSI / PESSI.
+    add(SOCIAL_SECURITY_PAYABLE, -(employer - eobiEmployer))
+    add(SALARY_TAX_PAYABLE, -sum((l) => l.code === 'tax'))
     add(STAFF_LOANS, -sum((l) => l.code === 'loan'))
     add(ACCT.WAGES_PAYABLE, -s.netCents)
   }
@@ -94,6 +114,7 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
   const [y, m] = run.period.split('-').map(Number) as [number, number]
   const lines = toLines(signed, `Payroll ${run.period}`)
   if (lines.length < 2) return null // nothing to post (an empty month)
+  await assertLineAccounts(tx, run.tenantId, lines)
   return postJournalEntry({
     tenantId: run.tenantId,
     sourceType: 'hr.payroll.accrual',
@@ -219,9 +240,16 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
  * bank account, else the way the employee is paid — cash staff from the safe,
  * bank and cheque staff from the bank (the company's only bank, or 422 when it
  * has several and none was named).
+ *
+ * A staff advance moved from an unsettled cash request (paidFrom
+ * 'cash_request', written only by advanceLoan.ts createLoanFromCashAdvanceTx —
+ * the loan form's choices are bank | cash) paid nothing out today: the money
+ * left the petty-cash box when the request was paid, and has waited on 1355
+ * Cash advances since. The loan takes it over: Cr 1355.
  */
-async function loanPayingAccount(tx: Tx, rec: HrRecord) {
+async function loanPayingAccount(tx: Tx, rec: HrRecord): Promise<{ method: 'bank' | 'cash' | 'cash_request'; code: string; bankAccountId: string | null }> {
   const d = (rec.data ?? {}) as Record<string, unknown>
+  if (d['paidFrom'] === 'cash_request') return { method: 'cash_request', code: ACCT.CASH_ADVANCES, bankAccountId: null }
   const named = typeof d['bankAccount'] === 'string' && d['bankAccount'] ? d['bankAccount'] : null
   let method: 'bank' | 'cash'
   if (d['paidFrom'] === 'bank' || d['paidFrom'] === 'cash') method = d['paidFrom']
@@ -244,16 +272,22 @@ export async function postLoanDisbursement(tx: Tx, rec: HrRecord, postedBy: stri
   const amount = rec.amountCents ?? 0
   if (amount <= 0) return null
   const pay = await loanPayingAccount(tx, rec)
+  const fromCashRequest = pay.method === 'cash_request'
+  const lines: JournalLineInput[] = [
+    { accountCode: STAFF_LOANS, type: 'debit', amountCents: amount, memo: fromCashRequest ? 'Staff advance' : 'Staff loan' },
+    {
+      accountCode: pay.code, type: 'credit', amountCents: amount,
+      memo: fromCashRequest ? 'Moved from an unsettled cash request' : pay.method === 'cash' ? 'Paid to employee in cash' : 'Paid to employee by bank',
+    },
+  ]
+  if (fromCashRequest) await assertLineAccounts(tx, rec.tenantId, lines)
   const res = await postJournalEntry({
     tenantId: rec.tenantId,
     sourceType: 'hr.loan.disbursement',
     sourceId: rec.id,
-    description: 'Staff loan / advance paid out',
+    description: fromCashRequest ? 'Unsettled cash request moved to a staff advance' : 'Staff loan / advance paid out',
     postedBy,
-    lines: [
-      { accountCode: STAFF_LOANS, type: 'debit', amountCents: amount, memo: 'Staff loan' },
-      { accountCode: pay.code, type: 'credit', amountCents: amount, memo: pay.method === 'cash' ? 'Paid to employee in cash' : 'Paid to employee by bank' },
-    ],
+    lines,
   }, { tx })
   const cur = await tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id }, select: { data: true } })
   await tx.hrRecord.update({
@@ -280,20 +314,18 @@ export async function lockSettlement(tx: Tx, id: string): Promise<void> {
  *   Dr wages (the leaver's department)  salary + OT + leave encashment
  *                                       + other adjustments − deductions
  *                                       + employer EOBI / SESSI
- *   Cr Statutory payable                EOBI employee + employer EOBI / SESSI
- *   Cr Tax payable                      income tax withheld
+ *   Dr Gratuity 6036                    gratuity at exit (H6)
+ *   Cr EOBI payable 2043                EOBI employee + employer
+ *   Cr SESSI / PESSI payable 2044       employer SESSI
+ *   Cr Salary tax payable 2042          income tax withheld
  *   Cr Staff loans 1350                 the loan recovered — never more than
  *                                       the employee still owes
- *   Cr Wages payable 2020               the net paid to the leaver
+ *   Cr Wages payable 2020               the net paid to the leaver (gratuity
+ *                                       included)
  *
  * The same accounts and netting as a payslip's accrual. The loan split is
  * written to the record (data._loans) so the loan register (loansFor) and
  * 1350 agree. Idempotent: an entry already posted is returned as it is.
- *
- * Gratuity is not booked: whether and how it is paid is pending owner
- * decision G2. When decided, it is one more earning line here (Dr its
- * expense account, inside the Cr 2020 net) and in finalSettlement() — the
- * net formula (settlementNet) and the balance check take it unchanged.
  */
 export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy: string, opts: { entryDate?: Date } = {}) {
   await lockSettlement(tx, rec.id)
@@ -301,21 +333,26 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
   if (existing) return { entryId: existing.id, posted: false }
   if (!rec.employeeId) throw new AppError('NO_EMPLOYEE', 'This settlement names no employee', 422)
   // One booked settlement per leaver (the backfill can meet an old duplicate):
-  // serialised per employee, refused when another one is already on the books.
+  // serialised per employee, refused when another one is on the books and not
+  // reversed. A cancelled one's reversal is posted under
+  // '<FNF_ACCRUAL>.reversal:<id>' (journal references are always
+  // sourceType:sourceId), so a replacement after a cancel books normally.
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`hr.fnf.emp:${rec.tenantId}:${rec.employeeId}`}::text))`
   const siblings = await tx.hrRecord.findMany({
     where: { tenantId: rec.tenantId, employeeId: rec.employeeId, section: 'final_settlement', id: { not: rec.id } },
     select: { id: true },
   })
   if (siblings.length) {
-    const booked = await tx.journalEntry.findFirst({
-      where: { tenantId: rec.tenantId, reference: { in: siblings.map((x) => `${FNF_ACCRUAL}:${x.id}`) } },
+    const refs = await tx.journalEntry.findMany({
+      where: {
+        tenantId: rec.tenantId,
+        reference: { in: siblings.flatMap((x) => [`${FNF_ACCRUAL}:${x.id}`, `${FNF_ACCRUAL}.reversal:${x.id}`]) },
+      },
       select: { reference: true },
     })
-    const reversed = booked
-      ? await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: `reverses:${booked.reference}` }, select: { id: true } })
-      : null
-    if (booked && !reversed) {
+    const have = new Set(refs.map((r) => r.reference))
+    const stillBooked = siblings.some((x) => have.has(`${FNF_ACCRUAL}:${x.id}`) && !have.has(`${FNF_ACCRUAL}.reversal:${x.id}`))
+    if (stillBooked) {
       throw new AppError('FNF_ALREADY_APPROVED', 'Another full & final settlement of this employee is already on the books — cancel that one first if it is wrong', 409)
     }
   }
@@ -330,7 +367,7 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
   if (net < 0) {
     throw new AppError('FNF_NEGATIVE', `${emp.fullName} would owe Rs ${(-net / 100).toFixed(2)} — lower the loan recovery (what is not recovered stays on Staff loans) or the deductions`, 422)
   }
-  const negative = (['salaryPayable', 'otPayable', 'leaveEncashment', 'deductions', 'loanRecovery', 'incomeTax', 'eobiEmployee', 'eobiEmployer', 'sessiEmployer'] as const).filter((k) => p[k] < 0)
+  const negative = (['salaryPayable', 'otPayable', 'leaveEncashment', 'gratuity', 'deductions', 'loanRecovery', 'incomeTax', 'eobiEmployee', 'eobiEmployer', 'sessiEmployer'] as const).filter((k) => p[k] < 0)
   if (negative.length) throw new AppError('NEGATIVE_AMOUNT', `${negative.join(', ')} cannot be negative`, 422)
 
   // The loan recovered, split oldest first and never past what each loan
@@ -352,14 +389,17 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
   const signed = new Map<string, number>()
   const add = (code: string, v: number) => signed.set(code, (signed.get(code) ?? 0) + v)
   add(wageAccountFor(dept?.name), p.salaryPayable + p.otPayable + p.leaveEncashment + p.otherAdjustments - p.deductions + p.eobiEmployer + p.sessiEmployer)
-  add(STATUTORY_PAYABLE, -(p.eobiEmployee + p.eobiEmployer + p.sessiEmployer))
-  add(TAX_PAYABLE, -p.incomeTax)
+  add(ACCT.GRATUITY, p.gratuity)
+  add(EOBI_PAYABLE, -(p.eobiEmployee + p.eobiEmployer))
+  add(SOCIAL_SECURITY_PAYABLE, -p.sessiEmployer)
+  add(SALARY_TAX_PAYABLE, -p.incomeTax)
   add(STAFF_LOANS, -p.loanRecovery)
   add(ACCT.WAGES_PAYABLE, -net)
   const drift = Array.from(signed.values()).reduce((a, v) => a + v, 0)
   if (drift !== 0) throw new AppError('FNF_UNBALANCED', `The settlement does not balance by ${drift} paisa — recalculate it`, 409)
 
   const lines = toLines(signed, `Full & final ${emp.employeeCode}`)
+  if (lines.length >= 2) await assertLineAccounts(tx, rec.tenantId, lines)
   const res = lines.length < 2 ? null : await postJournalEntry({
     tenantId: rec.tenantId,
     sourceType: FNF_ACCRUAL,

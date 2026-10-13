@@ -83,7 +83,7 @@ async function present(rows: VoucherRow[]) {
   const conceptIds = new Set<string>()
   const tenantIds = new Set<string>()
   for (const v of rows) {
-    for (const id of [v.preparedById, v.hodSignedById, v.directorSignedById, v.rejectedById, v.cancelledById, v.disbursedById, v.payeeUserId, v.box.custodianId]) {
+    for (const id of [v.preparedById, v.hodSignedById, v.directorSignedById, v.rejectedById, v.cancelledById, v.disbursedById, v.payeeUserId, v.box?.custodianId ?? null]) {
       if (id) userIds.add(id)
     }
     if (v.conceptId) conceptIds.add(v.conceptId)
@@ -106,9 +106,9 @@ async function present(rows: VoucherRow[]) {
       ...voucher,
       companyName: tenantName.get(v.tenantId) ?? null,
       conceptName: v.conceptId ? (conceptName.get(v.conceptId) ?? null) : null,
-      boxName: box.name,
-      custodianId: box.custodianId,
-      custodianName: nameOf(box.custodianId),
+      boxName: box?.name ?? null,
+      custodianId: box?.custodianId ?? null,
+      custodianName: box ? nameOf(box.custodianId) : null,
       payeeUserName: nameOf(v.payeeUserId),
       preparedByName: nameOf(v.preparedById),
       hodSignedByName: nameOf(v.hodSignedById),
@@ -191,7 +191,7 @@ async function loadVoucher(req: FastifyRequest, id: string): Promise<VoucherRow>
 
 /** Finance / the manager tiers (CASH_GUARD), or the cashier: the box's custodian. */
 async function assertCashOrCustodian(req: FastifyRequest, v: VoucherRow): Promise<void> {
-  if (v.box.custodianId === req.staffUser!.id) return
+  if (v.box && v.box.custodianId === req.staffUser!.id) return
   if (await passesCashGuard(req)) return
   throw new ForbiddenError('Only finance, a manager or the cash box\'s custodian can open this voucher')
 }
@@ -418,13 +418,15 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     await assertCashOrCustodian(req, v)
     if (v.status === 'disbursed') throw new AppError('ALREADY_DISBURSED', `Voucher ${v.number} has already been paid`, 409)
     if (v.status !== 'approved') throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'only a voucher the director has signed can be paid')
-    if (v.box.tenantId !== v.tenantId || v.box.deletedAt || !v.box.isActive) {
+    const box = v.box
+    if (!box || !v.boxId || box.tenantId !== v.tenantId || box.deletedAt || !box.isActive) {
       throw new AppError('BOX_UNAVAILABLE', `The cash box on voucher ${v.number} is closed — cancel the voucher and raise a new one`, 409)
     }
+    const boxId = v.boxId
     const photo = decodeVoucherPhoto(body.photo, body.mime)
 
     const me = req.staffUser!.id
-    const custodian = await prisma.user.findUnique({ where: { id: v.box.custodianId }, select: { name: true } })
+    const custodian = await prisma.user.findUnique({ where: { id: box.custodianId }, select: { name: true } })
     const cashierName = custodian?.name ?? null
     const reasonFull = `Cash voucher ${v.number}: ${v.purpose}`
     const reason = reasonFull.length > 200 ? `${reasonFull.slice(0, 199)}…` : reasonFull
@@ -454,7 +456,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       })
       // The one spend path (pettyCash.ts). No ledger posting — see the header.
       const spent = await recordPettyCashSpendTx(tx, {
-        box: { id: v.boxId },
+        box: { id: boxId },
         amountCents: v.amountCents,
         category: v.category,
         reason,
