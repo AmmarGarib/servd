@@ -125,7 +125,7 @@ async function accruedWagesPayable(tx: Tx, tenantId: string, reference: string):
  *  company's only bank. `all` is the old one-source call ({from}) kept for
  *  existing clients: the whole run from the bank or the safe. */
 export type PayrollPayFrom =
-  | { mode: 'split'; bankAccountId?: string | null; cashCode?: '1010' | '1015' }
+  | { mode: 'split'; bankAccountId?: string | null; cashCode?: '1010' }
   | { mode: 'all'; method: 'bank' | 'cash'; bankAccountId?: string | null }
 
 const isCashPaid = (method: unknown) => method === 'cash'
@@ -222,13 +222,18 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
  */
 async function loanPayingAccount(tx: Tx, rec: HrRecord) {
   const d = (rec.data ?? {}) as Record<string, unknown>
+  const named = typeof d['bankAccount'] === 'string' && d['bankAccount'] ? d['bankAccount'] : null
   let method: 'bank' | 'cash'
   if (d['paidFrom'] === 'bank' || d['paidFrom'] === 'cash') method = d['paidFrom']
+  else if (named) method = 'bank'   // a bank picked (e.g. by the approver) says where it came from
   else {
     const emp = rec.employeeId ? await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { paymentMethod: true } }) : null
     method = emp?.paymentMethod === 'cash' ? 'cash' : 'bank'
   }
-  const bankAccountId = method === 'bank' && typeof d['bankAccount'] === 'string' && d['bankAccount'] ? d['bankAccount'] : null
+  if (method === 'cash' && named) {
+    throw new AppError('BANK_ACCOUNT_ON_CASH', 'This loan says it is paid in cash but names a bank account — pick one', 422)
+  }
+  const bankAccountId = method === 'bank' ? named : null
   const pay = await moneyAccountCode(tx, rec.tenantId, { method, bankAccountId })
   return { method, ...pay }
 }
@@ -295,6 +300,25 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
   const existing = await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: `${FNF_ACCRUAL}:${rec.id}` }, select: { id: true } })
   if (existing) return { entryId: existing.id, posted: false }
   if (!rec.employeeId) throw new AppError('NO_EMPLOYEE', 'This settlement names no employee', 422)
+  // One booked settlement per leaver (the backfill can meet an old duplicate):
+  // serialised per employee, refused when another one is already on the books.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`hr.fnf.emp:${rec.tenantId}:${rec.employeeId}`}::text))`
+  const siblings = await tx.hrRecord.findMany({
+    where: { tenantId: rec.tenantId, employeeId: rec.employeeId, section: 'final_settlement', id: { not: rec.id } },
+    select: { id: true },
+  })
+  if (siblings.length) {
+    const booked = await tx.journalEntry.findFirst({
+      where: { tenantId: rec.tenantId, reference: { in: siblings.map((x) => `${FNF_ACCRUAL}:${x.id}`) } },
+      select: { reference: true },
+    })
+    const reversed = booked
+      ? await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: `reverses:${booked.reference}` }, select: { id: true } })
+      : null
+    if (booked && !reversed) {
+      throw new AppError('FNF_ALREADY_APPROVED', 'Another full & final settlement of this employee is already on the books — cancel that one first if it is wrong', 409)
+    }
+  }
   const emp = await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { fullName: true, employeeCode: true, departmentId: true } })
   if (!emp) throw new AppError('NO_EMPLOYEE', 'This settlement\'s employee is not in its company', 422)
 

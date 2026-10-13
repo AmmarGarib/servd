@@ -24,7 +24,8 @@ const RULES: Array<{ match: RegExp; unless?: RegExp; code: string; label: string
   { match: /\b(rent|lease|premises)\b/i,                         code: '6010', label: 'Rent' },
   // A generator replaces the grid: its fuel is a power cost, not travel
   // (the travel rule below would catch "Generator fuel" on 'fuel').
-  { match: /\b(generator|genset)\b/i,                            code: '6020', label: 'Electricity' },
+  // A generator's repair or service is maintenance (6050), not power.
+  { match: /\b(generator|genset)\b/i, unless: /\b(repair|repairs|maintenance|maint|service|servicing)\b/i, code: '6020', label: 'Electricity' },
   { match: /\b(electric|electricity|power|k-?electric|lesco|ke bill)\b/i, code: '6020', label: 'Electricity' },
   { match: /\b(gas|sui|lpg)\b/i,                                 code: '6021', label: 'Gas' },
   { match: /\b(internet|telecom|phone|mobile|broadband|wifi)\b/i, code: '6022', label: 'Internet & Telecom' },

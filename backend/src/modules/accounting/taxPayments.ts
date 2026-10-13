@@ -129,6 +129,9 @@ export interface RecordTaxPaymentInput {
   userId: string
 }
 
+/** Every entry ever dated: the balance including everything after paidAt. */
+const END_OF_TIME = new Date('9999-12-31T00:00:00Z')
+
 export async function recordTaxPayment(input: RecordTaxPaymentInput) {
   const acc = settlementAccounts(input.authority)
   const { periodFrom, periodTo } = periodOf(input.periodFrom, input.periodTo)
@@ -154,13 +157,21 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
       const money = input.paidCents > 0
         ? await moneyAccountCode(tx, input.tenantId, { method: input.method, bankAccountId: input.bankAccountId })
         : null
-      // Input set off can never be more than the books hold as recoverable.
+      // Input set off can never be more than the books hold as recoverable —
+      // on the payment's date AND counting everything dated after it (a set
+      // off recorded later for a later period already used that input). One
+      // writer per company and input account, so two payments recorded at
+      // the same moment cannot both pass the check.
       if (acc.input && input.inputSetOffCents > 0) {
-        const available = await debitBalanceAt(tx, input.tenantId, acc.input, paidAt)
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.tenantId}::text), hashtext(${`tax-input:${acc.input}`}::text))`
+        const available = Math.min(
+          await debitBalanceAt(tx, input.tenantId, acc.input, paidAt),
+          await debitBalanceAt(tx, input.tenantId, acc.input, END_OF_TIME),
+        )
         if (input.inputSetOffCents > available) {
           throw new AppError(
             'INPUT_SET_OFF_TOO_LARGE',
-            `Input tax set off (PKR ${(input.inputSetOffCents / 100).toFixed(2)}) is more than ${acc.input} holds on ${fmtPktDate(paidAt)} (PKR ${(available / 100).toFixed(2)})`,
+            `Input tax set off (PKR ${(input.inputSetOffCents / 100).toFixed(2)}) is more than ${acc.input} still holds (PKR ${(available / 100).toFixed(2)} on ${fmtPktDate(paidAt)}, counting set-offs already recorded for later periods)`,
             422,
           )
         }

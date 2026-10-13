@@ -21,6 +21,7 @@ interface Row { shiftId: string; closedAt: string | null; outcome: string; detai
 // listed as 'unflagged': Post flags them for review, the next run posts them.
 type OrderKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund'
   | 'deposit.drop' | 'inventory.waste' | 'inventory.count' | 'pos.void_waste' | 'order.cancel_unwind' | 'pos.card_failed'
+  | 'reservation.deposit_capture'
 interface OrderRow { kind: OrderKind; id: string; orderId: string | null; tenantId: string; date: string | null; outcome: string; detail: string }
 interface Result {
   dryRun: boolean
@@ -52,6 +53,7 @@ const KIND_LABEL: Record<OrderKind, string> = {
   'pos.void_waste': 'Waste from a voided item',
   'order.cancel_unwind': 'Cancelled order',
   'pos.card_failed': 'Failed card payment',
+  'reservation.deposit_capture': 'No-show deposit kept',
 }
 
 // Outcomes of the order / loyalty / refund rows, in plain words. Anything not
@@ -77,6 +79,7 @@ const ORDER_LABEL: Record<string, string> = {
 const KINDS: OrderKind[] = [
   'order.complete', 'loyalty.earn', 'loyalty.redeem', 'order.refund',
   'deposit.drop', 'inventory.waste', 'inventory.count', 'pos.void_waste', 'order.cancel_unwind', 'pos.card_failed',
+  'reservation.deposit_capture',
 ]
 const SUMMARY_OUTCOMES: Array<{ key: string; label: string }> = [
   { key: 'would_post', label: 'to post' },

@@ -32,7 +32,7 @@
 // nobody put in the safe. Hence only the back office (managers + finance)
 // sells cards, and only managers give promotional ones (routes.ts).
 
-import type { Prisma, GiftCard, GiftCardStatus } from '@prisma/client'
+import type { Prisma, GiftCard, GiftCardKind, GiftCardStatus } from '@prisma/client'
 import { randomBytes } from 'crypto'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -418,7 +418,7 @@ export interface GiftCardBooksCheck {
   /** differenceCents once the unbooked issues are counted in. Anything here needs a person. */
   unexplainedCents: number
   /** Voided cards holding value (a refund of an order the card paid, or a void before 2026-10-13): owed, unspendable — settle them. */
-  voidedHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; balanceCents: number; voidedAt: Date | null }> }
+  voidedHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; kind: GiftCardKind; balanceCents: number; voidedAt: Date | null }> }
 }
 
 /** The 2080 check for one company. Codes are returned in full — the route masks them. */
@@ -427,7 +427,7 @@ export async function giftCardBooksCheck(tenantId: string, companyName: string):
     ledgerBalancesByCode(tenantId, [GIFT_CARD_LIABILITY_CODE]),
     prisma.giftCard.findMany({
       where: { tenantId },
-      select: { id: true, code: true, status: true, balanceCents: true, issuedAmountCents: true, createdAt: true, voidedAt: true },
+      select: { id: true, code: true, kind: true, status: true, balanceCents: true, issuedAmountCents: true, createdAt: true, voidedAt: true },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.journalEntry.findMany({
@@ -488,7 +488,7 @@ export async function giftCardBooksCheck(tenantId: string, companyName: string):
       voidedHoldingValue.count += 1
       voidedHoldingValue.cents += c.balanceCents
       if (voidedHoldingValue.items.length < LIST_CAP) {
-        voidedHoldingValue.items.push({ id: c.id, code: c.code, balanceCents: c.balanceCents, voidedAt: c.voidedAt })
+        voidedHoldingValue.items.push({ id: c.id, code: c.code, kind: c.kind, balanceCents: c.balanceCents, voidedAt: c.voidedAt })
       }
     }
   }

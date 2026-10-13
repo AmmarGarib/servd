@@ -82,7 +82,9 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       }
       // A cursor from another company (or a made-up one) is simply not found:
       // the page starts after a row the operator can see, or the request is 404.
-      if (q.cursor && !(await prisma.giftCard.findFirst({ where: { id: q.cursor, ...where }, select: { id: true } }))) {
+      // Checked against the company scope only — the cursor card may have
+      // left the status filter (spent, expired, voided) since the last page.
+      if (q.cursor && !(await prisma.giftCard.findFirst({ where: { id: q.cursor, ...(await scopeTenantWhere(req, 'read')) }, select: { id: true } }))) {
         throw new NotFoundError('GiftCard', q.cursor)
       }
       const [rows, total] = await Promise.all([
@@ -246,7 +248,11 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         userId: req.staffUser?.id ?? null, tenantId: r.card.tenantId, userEmail: req.staffUser?.email ?? null,
         after: { paymentMethod: body.paymentMethod, debitCode: r.debitCode, amount: r.card.issuedAmountCents, entryId: r.entryId },
       })
-      return { card: r.card, entryId: r.entryId, debitCode: r.debitCode }
+      // Finance books the sale but never sees the bearer code or contacts.
+      const card = seesFullCard(req) ? r.card : {
+        ...r.card, code: maskGiftCardCode(r.card.code), buyerEmail: null, recipientEmail: null, buyerCustomerId: null, message: null,
+      }
+      return { card, entryId: r.entryId, debitCode: r.debitCode }
     },
   )
 
