@@ -8,8 +8,9 @@
 // RAAST_NOT_SET_UP). Never another company's account. "Usable" = same
 // tenantId, isActive, not deleted, accountCode set, that code is an active
 // account in the company's chart (the ledger debits it), and it is a BANK
-// code — never cash, the drawer, the card/gateway clearing account or
-// receivables (NON_BANK_MONEY_CODES): a Raast transfer lands in a bank.
+// code — never cash, the drawer, the card/gateway clearing account,
+// receivables or till clearing (NON_BANK_MONEY_CODES): a Raast transfer lands
+// in a bank.
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
@@ -17,11 +18,14 @@ type Db = PrismaClient | Prisma.TransactionClient
 
 /**
  * Money codes that are NOT a bank balance: 1010 cash on hand, 1015 the POS
- * drawer, 1030 card / gateway receivable, 1110 customer receivable. A Raast
- * receiving account mapped to one of them would book Raast money off the
- * bank (1030 is exactly what Raast replaces), so it is never usable.
+ * drawer, 1030 card / gateway receivable, 1110 customer receivable, 1115 till
+ * clearing (finance wave B — bills not settled on their drawer, refunds due,
+ * Raast "customer owes" write-offs). A Raast receiving account mapped to one
+ * of them would book Raast money off the bank (1030 is exactly what Raast
+ * replaces), so it is never usable. The card-payout settings (reconciliation/
+ * cardPayouts.ts) refuse a payout bank on these codes too.
  */
-export const NON_BANK_MONEY_CODES: readonly string[] = ['1010', '1015', '1030', '1110']
+export const NON_BANK_MONEY_CODES: readonly string[] = ['1010', '1015', '1030', '1110', '1115']
 
 export function isRaastBankCode(code: string | null | undefined): code is string {
   return !!code && !NON_BANK_MONEY_CODES.includes(code)

@@ -52,11 +52,13 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { flagException } from '../../lib/exceptions.js'
+import { invalidateSetupCache } from '../../lib/setup-config.js'
 import { ACCT, reverseJournalEntry } from '../accounting/journal.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import type { CloseCheck, CloseCheckContext, CloseProblem } from '../accounting/closeCheckTypes.js'
 import { NON_BANK_MONEY_CODES } from '../../connectors/raast/accounts.js'
 import { postCardPayoutSplitTx } from './service.js'
+import { raastLinesToLeaveTx } from './raast.js'
 
 type Tx = Prisma.TransactionClient
 type Db = Tx | typeof defaultPrisma
@@ -185,13 +187,10 @@ export const isPayoutBank = (s: CardSettlementSettings, bankAccountId: string | 
 export async function saveCardSettlementSettings(db: typeof defaultPrisma, tenantId: string, patch: Partial<CardSettlementSettings>, actorId: string): Promise<{ before: CardSettlementSettings; after: CardSettlementSettings }> {
   const before = await cardSettlementSettings(db, tenantId)
   const after: CardSettlementSettings = { ...before, ...patch }
-  if (after.payoutBankAccountId && after.payoutBankAccountId !== before.payoutBankAccountId) {
-    await assertPayoutBank(db, tenantId, after.payoutBankAccountId)
-  }
   if (after.enabled && !after.payoutBankAccountId) {
     throw new AppError('PAYOUT_BANK_REQUIRED', 'Pick the bank account Keenu pays into before switching card payout matching on', 422)
   }
-  if (after.enabled && after.payoutBankAccountId) await assertPayoutBank(db, tenantId, after.payoutBankAccountId)
+  if (after.payoutBankAccountId) await assertPayoutBank(db, tenantId, after.payoutBankAccountId)
   if (after.maxFeeBps < after.mdrBps) {
     throw new AppError('MAX_FEE_BELOW_MDR', 'The largest fee allowed is below the MDR itself — raise it or lower the MDR', 422)
   }
@@ -214,6 +213,7 @@ export async function saveCardSettlementSettings(db: typeof defaultPrisma, tenan
   const row = await opsConfigRow(db, tenantId)
   if (row) await db.operationsConfig.update({ where: { id: row.id }, data: { cardSettlement: json, updatedById: actorId } })
   else await db.operationsConfig.create({ data: { scope: 'global', scopeId: null, tenantId, cardSettlement: json, updatedById: actorId } })
+  invalidateSetupCache()
   return { before, after }
 }
 
@@ -346,7 +346,7 @@ export interface CardRun {
   unit: string
   startN: number
   endN: number
-  /** Days of the run with card money (the ones a settlement claims). */
+  /** Every day of the run, consecutive (a settlement claims the ones with card money). */
   days: string[]
   grossCents: number
 }
@@ -400,9 +400,8 @@ export function candidateRuns(gross: DayGross, claimed: Map<number, string[]>, l
         const days: string[] = []
         for (let n = start; n <= end; n++) {
           if (isTaken(claimed, unit, n)) { taken = true; break }
-          const c = byDay.get(n) ?? 0
-          if (c !== 0) days.push(dayStr(n))
-          total += c
+          days.push(dayStr(n))
+          total += byDay.get(n) ?? 0
         }
         if (taken) break // a longer run would include the taken day too
         if (total > 0) out.push({ unit, startN: start, endN: end, days, grossCents: total })
@@ -692,7 +691,6 @@ export async function rematchCardPayouts(input: { tenantId: string; db?: typeof 
   })
   const lines = rows.map((l) => ({ ...l, amountCents: toCents(l.amountCents) }))
   if (lines.length === 0) return { matched: 0, candidates: 0, refused: [] }
-  const { raastLinesToLeaveTx } = await import('./raast.js')
   const skip = await raastLinesToLeaveTx(db, { tenantId: input.tenantId, bankAccountId: s.payoutBankAccountId, lines })
   const { fits, candidateLineIds } = await findCardPayoutFits(db, { tenantId: input.tenantId, settings: s, lines: lines.filter((l) => !skip.has(l.id)) })
   const res = await postCardFits(input.tenantId, fits, db)
