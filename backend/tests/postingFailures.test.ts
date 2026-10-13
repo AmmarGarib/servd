@@ -341,7 +341,7 @@ describe('bank deposit — re-posted on its own day, or into the open month with
 // ─── Void-after-fire waste ───────────────────────────────────────────────────
 
 describe('waste from a line voided after firing', () => {
-  it('the older flag shape (metadata.source, no sourceType) is re-posted through postVoidWaste — same key — and closed', async () => {
+  it('the older flag shape (metadata.source, no sourceType) is re-raised for review first, then re-posted through postVoidWaste — same key', async () => {
     const { o, line, log } = await voidedLine(tenantA, conceptA, 30_000, new Date(Date.now() - DAY))
     await prisma.exceptionFlag.create({
       data: {
@@ -358,8 +358,17 @@ describe('waste from a line voided after firing', () => {
     expect(await openFlags(line.id)).toHaveLength(1)
 
     expect(rowOf(await backfill('adminB', false), 'pos.void_waste', line.id)).toBeUndefined()
+    // It told finance to book it by hand, so it is never posted straight away:
+    // the first run re-raises it as a review flag (closed if it was booked by
+    // hand), and only the next run posts it.
     const dry = rowOf(await backfill('adminA', true), 'pos.void_waste', line.id)
-    expect(dry).toMatchObject({ outcome: 'would_post', orderId: o.id, tenantId: tenantA, date: log.recordedAt.toISOString() })
+    expect(dry).toMatchObject({ outcome: 'unflagged', orderId: o.id, tenantId: tenantA })
+    expect(rowOf(await backfill('adminA', false), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'flagged' })
+    expect(await countRefs(`pos.void_waste:${line.id}`)).toBe(0)
+    const reraised = await openFlags(line.id)
+    expect(reraised).toHaveLength(1)
+    expect((reraised[0]!.metadata as Record<string, unknown>)['sourceType']).toBe('pos.void_waste')
+    expect(rowOf(await backfill('adminA', true), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'would_post', date: log.recordedAt.toISOString() })
     expect(rowOf(await backfill('adminA', false), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `pos.void_waste:${line.id}`)
     expect(sum(je!.lines, '5040', 'debit')).toBe(30_000)
