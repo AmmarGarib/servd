@@ -8,6 +8,9 @@ import {
   unmatchStatementLine,
 } from './service.js'
 import { raastReconciliationRoutes, raastPaidCents } from './raastRoutes.js'
+import cardPayoutRoutes from './cardPayoutRoutes.js'
+import codRoutes from './codRoutes.js'
+import pettyCashBackfillRoutes from './pettyCashBackfillRoutes.js'
 import { drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
 import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE, resolveTenantScope } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
@@ -217,6 +220,13 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
 
   // ─── Raast QR (spec §7.2) — /reconciliation/raast/* ─────────────────────
   await fastify.register(raastReconciliationRoutes, { prefix: '/raast' })
+
+  // ─── Finance wave B child plugins (one file each, one owner each) ───────
+  // Card payouts at payout (H12), COD owed by riders (H5), and the petty-cash
+  // history backfill (H2). All under the /reconciliation module gate.
+  await fastify.register(cardPayoutRoutes, { prefix: '/card-payouts' })
+  await fastify.register(codRoutes, { prefix: '/cod' })
+  await fastify.register(pettyCashBackfillRoutes, { prefix: '/backfill-petty-cash' })
 
   // ─── POS shift cash reconciliation ──────────────────────────────────────
   //

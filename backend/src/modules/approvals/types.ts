@@ -17,6 +17,16 @@ export const APPROVAL_TYPES = [
   'tip_pool',
   'stock_transfer',
   'cash_voucher',
+  // Finance wave B (2026-10-14). Each type's provider lands with its module
+  // (approvals/providers.ts); until then the type is accepted as a filter and
+  // lists nothing.
+  'fixed_asset_request',   // disposal / scrap / write-down / capitalisation — finance asks, the CEO approves
+  'intercompany_transfer', // a due-to / due-from transfer between two group companies
+  'on_account_client',     // a new on-account client or a credit-limit change
+  'bad_debt',              // a receivable write-off — the CEO approves every one
+  'raast_void',            // a Raast receipt "void, never booked" — CEO only
+  'grni_writeoff',         // writing off goods received but never billed
+  'cash_request_hod',      // a cash request waiting for its HOD's signature
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 

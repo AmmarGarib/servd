@@ -48,6 +48,12 @@ export interface PostJournalEntryInput {
   postedBy?: string          // user ID, or 'system'
   reference?: string         // free-text cross-ref (concept slug, external txn id, …)
   lines: JournalLineInput[]
+  // Lets a posting from outside the register (manual journal, bank-line
+  // adjust) touch a 'fixed_asset'-controlled account. The reason must be at
+  // least 10 characters; the CALLER audits it and raises
+  // fixed_asset_gl_mismatch. Never opens an 'intercompany' / 'head_office'
+  // account.
+  controlledOverride?: { reason: string }
 }
 
 export interface PostJournalEntryResult {
@@ -119,18 +125,114 @@ export const ACCT = {
   REFUNDS:             '7040',
 
   CASH_VARIANCE:       '8010',
+
+  // ── Finance wave B (2026-10-14) — lib/chartOfAccounts.ts has the template ──
+  PETTY_CASH:               '1011',
+  TILL_CLEARING:            '1115',
+  ST_WITHHELD_BY_CUSTOMERS: '1335',
+  PRA_TAX_INPUT:            '1321',
+  SRB_TAX_INPUT:            '1322',
+  KPRA_TAX_INPUT:           '1323',
+  BRA_TAX_INPUT:            '1324',
+  PREPAID:                  '1310',
+  SUPPLIER_ADVANCES:        '1340',
+  STAFF_LOANS:              '1350',
+  RIDER_COD_RECEIVABLE:     '1351',
+  CASH_ADVANCES:            '1355',
+  DIRECTOR_CURRENT:         '1356',
+  SECURITY_DEPOSITS:        '1360',
+  // Fixed-asset class cost codes and accumulated depreciation per class
+  // (register-controlled; fixedAssets/classes.ts ASSET_CLASS_DEFAULTS maps
+  // class → codes). 1590 is the legacy pre-class accumulated account.
+  LAND:                     '1500',
+  BUILDINGS:                '1505',
+  KITCHEN_EQUIPMENT:        '1510',
+  POWER_EQUIPMENT:          '1515',
+  FURNITURE_FIXTURES:       '1520',
+  OFFICE_EQUIPMENT:         '1525',
+  IT_EQUIPMENT:             '1530',
+  VEHICLES:                 '1540',
+  LEASEHOLD_IMPROVEMENTS:   '1550',
+  SMALLWARES:               '1560',
+  ACC_DEP_LEGACY:           '1590',
+  ACC_DEP_KITCHEN:          '1591',
+  ACC_DEP_FURNITURE:        '1592',
+  ACC_DEP_IT:               '1593',
+  ACC_DEP_VEHICLES:         '1594',
+  ACC_DEP_LEASEHOLD:        '1595',
+  ACC_DEP_BUILDINGS:        '1596',
+  ACC_DEP_POWER:            '1597',
+  ACC_DEP_OFFICE:           '1598',
+  ACC_DEP_SMALLWARES:       '1599',
+  CAPITAL_PAYABLES:         '2012',
+  GRNI:                     '2015',
+  SALARY_TAX_PAYABLE:       '2042',
+  EOBI_PAYABLE:             '2043',
+  SOCIAL_SECURITY_PAYABLE:  '2044',
+  DUE_TO_GARIBSONS:         '2210',
+  OWNERS_CAPITAL:           '3010',
+  RETAINED_EARNINGS:        '3020',
+  DELIVERY_FEE_REVENUE:     '4110',
+  GIFT_CARD_BREAKAGE:       '4200',
+  COST_ADJUSTMENT:          '5060',
+  RENT:                     '6010',
+  GRATUITY:                 '6036',
+  MARKETING_PROMO:          '6060',
+  PROFESSIONAL_FEES:        '6110',
+  DEPRECIATION:             '6150',
+  IMPAIRMENT:               '6155',
+  BAD_DEBTS:                '6160',
+  OFFICE_STATIONERY:        '6170',
+  POSTAGE_COURIER:          '6175',
+  STAFF_WELFARE:            '6180',
+  GROUP_RECHARGES:          '6990',
+  ASSET_DISPOSAL:           '8030',
 } as const
+
+/**
+ * Where till money that never settled on its own drawer waits: 1115 Till
+ * Clearing. 1110 is listed too — legacy REFUND DUE / unsettled till lines
+ * were booked there before 1115 existed, and readers must still find them.
+ * Typed string[] so it drops straight into a Prisma `{ in: … }`.
+ */
+export const TILL_CLEARING_CODES: string[] = [ACCT.TILL_CLEARING, ACCT.CUSTOMER_AR]
+
+/**
+ * Memo prefix of an on-account client's 1110 lines (Dr 1110 at the sale /
+ * close). The till-clearing cut-over skips lines carrying it: they are
+ * invoiced client balances, not till clearing.
+ */
+export const ON_ACCOUNT_MEMO = 'ON ACCOUNT'
+
+/**
+ * The sourceType prefix that alone may post to an account with
+ * Account.controlledBy 'intercompany' / 'head_office' (reversals included:
+ * 'ic.transfer.reversal'). See assertControlledAccounts below.
+ */
+export const CONTROLLED_PREFIX = { intercompany: 'ic.', head_office: 'ho.' } as const
+
+// The register's own postings and CapEx's (capitalisation, advances) pass
+// the 'fixed_asset' control; any other source needs input.controlledOverride.
+const REGISTER_SOURCE_PREFIXES = ['fixed_asset.', 'capex.'] as const
+// An override must say why, so the review of fixed_asset_gl_mismatch has it.
+const CONTROLLED_OVERRIDE_MIN_REASON = 10
+
+interface ResolvedAccount {
+  id: string
+  name: string
+  controlledBy: string | null
+}
 
 // Codes resolve inside ONE company's chart. The same code means different
 // rows in different companies (GS Foods' 4001 is not GSX Viva's 4001), so a
 // posting can never land on another company's account.
-async function resolveAccountIds(tx: Tx, tenantId: string, codes: string[]): Promise<Map<string, string>> {
+async function resolveAccountIds(tx: Tx, tenantId: string, codes: string[]): Promise<Map<string, ResolvedAccount>> {
   const unique = Array.from(new Set(codes))
   const accounts = await tx.account.findMany({
     where: { tenantId, code: { in: unique }, isActive: true },
-    select: { id: true, code: true },
+    select: { id: true, code: true, name: true, controlledBy: true },
   })
-  const found = new Map(accounts.map((a) => [a.code, a.id]))
+  const found = new Map(accounts.map((a) => [a.code, { id: a.id, name: a.name, controlledBy: a.controlledBy }]))
   const missing = unique.filter((c) => !found.has(c))
   if (missing.length > 0) {
     throw new AppError(
@@ -140,6 +242,48 @@ async function resolveAccountIds(tx: Tx, tenantId: string, codes: string[]): Pro
     )
   }
   return found
+}
+
+// ─── Controlled accounts (Account.controlledBy — ONE mechanism) ─────────────
+//
+// Some accounts belong to one module and must only move through it, or the
+// ledger and that module's own records disagree:
+//   • 'intercompany' — "Due from / to <company>" of one company pair: only
+//     sourceType 'ic.*' (inter-company transfers and their reversals);
+//   • 'head_office'  — D1 head-office links (reserved): only 'ho.*';
+//   • 'fixed_asset'  — the register's accounts (1500–1599 + 2012): the
+//     register's 'fixed_asset.*' and CapEx's 'capex.*' postings pass; any
+//     other source — manual journals, journal requests, allocations, bank-line
+//     adjusts — needs input.controlledOverride { reason ≥ 10 chars }, and the
+//     caller audits it and raises fixed_asset_gl_mismatch.
+// Checked on every line of every posting, so no route has its own guard.
+function assertControlledAccounts(input: PostJournalEntryInput, accounts: Map<string, ResolvedAccount>): void {
+  for (const [code, acc] of accounts) {
+    const by = acc.controlledBy
+    if (!by) continue
+    if (by === 'intercompany' || by === 'head_office') {
+      if (input.sourceType.startsWith(CONTROLLED_PREFIX[by])) continue
+      throw new AppError(
+        'INTERCOMPANY_ACCOUNT_CONTROLLED',
+        by === 'intercompany'
+          ? `Account ${code} '${acc.name}' is an inter-company account — only inter-company transfers post to it (Accounting → Inter-company).`
+          : `Account ${code} '${acc.name}' is a head-office account — only head-office postings use it.`,
+        422,
+      )
+    }
+    if (by === 'fixed_asset') {
+      if (REGISTER_SOURCE_PREFIXES.some((p) => input.sourceType.startsWith(p))) continue
+      if ((input.controlledOverride?.reason?.trim().length ?? 0) >= CONTROLLED_OVERRIDE_MIN_REASON) continue
+      throw new AppError(
+        'REGISTER_CONTROLLED_ACCOUNT',
+        `Account ${code} '${acc.name}' is kept by the fixed-asset register — record this through Fixed assets or CapEx. `
+          + `To post here anyway, give a reason (at least ${CONTROLLED_OVERRIDE_MIN_REASON} characters); the difference from the register is flagged for review.`,
+        422,
+      )
+    }
+    // A value the CHECK constraint does not know: refuse rather than guess.
+    throw new AppError('ACCOUNT_CONTROLLED', `Account ${code} '${acc.name}' is controlled by '${by}' — only that module posts to it.`, 422)
+  }
 }
 
 export async function postJournalEntry(
@@ -231,6 +375,7 @@ export async function postJournalEntry(
     }
 
     const accountMap = await resolveAccountIds(tx, input.tenantId, lines.map((l) => l.accountCode))
+    assertControlledAccounts(input, accountMap)
 
     const created = await tx.journalEntry.create({
       data: {
@@ -241,7 +386,7 @@ export async function postJournalEntry(
         postedBy: input.postedBy ?? 'system',
         lines: {
           create: lines.map((l) => ({
-            accountId: accountMap.get(l.accountCode)!,
+            accountId: accountMap.get(l.accountCode)!.id,
             type: l.type,
             amountCents: l.amountCents,
             memo: l.memo ?? null,
@@ -261,12 +406,15 @@ export async function postJournalEntry(
 
 // Reverse a previously posted entry by emitting the same lines with type
 // flipped. The reversal is itself idempotent under (sourceType, sourceId+suffix).
+// It passes the controlled-account rule like any posting: 'ic.*' / 'fixed_asset.*'
+// / 'capex.*' reversals keep their prefix; reversing a manual entry that
+// touched a register account needs `controlledOverride` (same rule as posting it).
 export async function reverseJournalEntry(
   tenantId: string,
   originalSourceType: string,
   originalSourceId: string,
   reason: string,
-  options: { tx?: Tx; suffix?: string; postedBy?: string; entryDate?: Date } = {},
+  options: { tx?: Tx; suffix?: string; postedBy?: string; entryDate?: Date; controlledOverride?: { reason: string } } = {},
 ): Promise<PostJournalEntryResult> {
   const tx = options.tx ?? defaultPrisma
   const reference = `${originalSourceType}:${originalSourceId}`
@@ -300,6 +448,7 @@ export async function reverseJournalEntry(
         memo: l.memo ?? `Reversal: ${reason}`,
         conceptId: l.conceptId, // keep brand attribution on the reversal
       })),
+      ...(options.controlledOverride ? { controlledOverride: options.controlledOverride } : {}),
     },
     { tx: options.tx },
   )
@@ -434,5 +583,35 @@ export function withLateNote(description: string, lines: JournalLineInput[], not
   return {
     description: `${description} — ${note}`,
     lines: lines.map((l) => ({ ...l, memo: `${l.memo ?? ''} [${note}]`.trim().slice(0, 250) })),
+  }
+}
+
+/**
+ * Where a system / approval posting whose natural date is `natural` lands in
+ * `tenantId`'s books (owner decision 6, the backfill's placeAndPost rule):
+ *   • its own date while that month is open — no note;
+ *   • otherwise today, with `memoNote` naming the original date for
+ *     withLateNote — a closed month is never reopened for it;
+ *   • `lockedThroughToday` when the books are closed even through today:
+ *     nothing can post (the caller flags it for the backfill). Defensive
+ *     only — the period close refuses a lock on or after today.
+ * Reads the lock through `tx`, so a caller inside its own transaction sees it.
+ */
+export async function lateDatingFor(
+  tx: Tx,
+  tenantId: string,
+  natural: Date,
+): Promise<{ entryDate: Date; memoNote?: string } | { lockedThroughToday: true }> {
+  const lock = await tx.periodLock.findFirst({
+    where: { tenantId },
+    orderBy: { lockedThrough: 'desc' },
+    select: { lockedThrough: true },
+  })
+  if (!lock || natural > lock.lockedThrough) return { entryDate: natural }
+  const now = new Date()
+  if (now <= lock.lockedThrough) return { lockedThroughToday: true }
+  return {
+    entryDate: now,
+    memoNote: `dated ${fmtPktDate(natural)}, posted late into the open month (books closed through ${fmtPktDate(lock.lockedThrough)})`,
   }
 }

@@ -43,55 +43,23 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId, type ScopeMode } from '../../lib/tenantScope.js'
 import { zInt4Cents } from '../../lib/money.js'
 import { CASH_GUARD, passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
+import { decodeEvidenceFile, sendEvidence, EVIDENCE_MAX_BYTES } from '../../lib/evidenceFile.js'
 
 // ─── Photo rules ─────────────────────────────────────────────────────────────
 
 /** The decoded photo may be at most 3 MB (the admin compresses it first). */
-export const CASH_VOUCHER_PHOTO_MAX_BYTES = 3 * 1024 * 1024
+export const CASH_VOUCHER_PHOTO_MAX_BYTES = EVIDENCE_MAX_BYTES
 /** base64 of 3 MB is 4 MB; a little room for a data-URL prefix and line breaks. */
 const DISBURSE_BODY_LIMIT = 6 * 1024 * 1024
-const PHOTO_MIN_BYTES = 32
-const PHOTO_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' } as const
-type PhotoMime = keyof typeof PHOTO_EXT
-const isPhotoMime = (m: string): m is PhotoMime => Object.prototype.hasOwnProperty.call(PHOTO_EXT, m)
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-
-const badPhoto = (message: string) => new AppError('BAD_PHOTO', message, 400)
-
-/** True when the bytes really are the declared image type (magic numbers). */
-function magicMatches(mime: PhotoMime, buf: Buffer): boolean {
-  switch (mime) {
-    case 'image/jpeg': return buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff
-    case 'image/png': return buf.length >= 8 && buf.subarray(0, 8).equals(PNG_SIGNATURE)
-    case 'image/webp': return buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP'
-  }
-}
 
 /**
- * The uploaded photo: base64 (a `data:<mime>;base64,` prefix is accepted and
- * must agree with `mime`), JPEG / PNG / WebP whose bytes match the type,
- * at most CASH_VOUCHER_PHOTO_MAX_BYTES decoded. Anything else is 400 BAD_PHOTO.
+ * The uploaded photo, checked by the one evidence decoder (lib/evidenceFile.ts):
+ * JPEG / PNG / WebP whose bytes match the type, at most
+ * CASH_VOUCHER_PHOTO_MAX_BYTES decoded. Anything else is 400 BAD_PHOTO.
  */
-export function decodeVoucherPhoto(photo: string, mime: string): { mime: PhotoMime; data: Buffer } {
-  const declared = mime.trim().toLowerCase()
-  if (!isPhotoMime(declared)) throw badPhoto('The photo must be a JPEG, PNG or WebP image')
-  let b64 = photo
-  const dataUrl = /^data:([^;,]+);base64,/i.exec(b64)
-  if (dataUrl) {
-    if (dataUrl[1]!.trim().toLowerCase() !== declared) throw badPhoto('The photo is not the image type it says it is')
-    b64 = b64.slice(dataUrl[0].length)
-  }
-  b64 = b64.replace(/\s+/g, '')
-  if (!b64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64) || b64.length % 4 === 1) throw badPhoto('The photo could not be read — send it as base64')
-  // Refuse an oversized photo before decoding it.
-  if (Math.floor((b64.length * 3) / 4) - 2 > CASH_VOUCHER_PHOTO_MAX_BYTES) {
-    throw badPhoto('The photo is larger than 3 MB — take it again at a lower resolution')
-  }
-  const data = Buffer.from(b64, 'base64')
-  if (data.length > CASH_VOUCHER_PHOTO_MAX_BYTES) throw badPhoto('The photo is larger than 3 MB — take it again at a lower resolution')
-  if (data.length < PHOTO_MIN_BYTES) throw badPhoto('The photo is empty or cut off')
-  if (!magicMatches(declared, data)) throw badPhoto('The photo is not the image type it says it is')
-  return { mime: declared, data }
+export function decodeVoucherPhoto(photo: string, mime: string): { mime: string; data: Buffer } {
+  const f = decodeEvidenceFile(photo, mime, { maxBytes: CASH_VOUCHER_PHOTO_MAX_BYTES })
+  return { mime: f.mime, data: f.bytes }
 }
 
 // ─── Shapes ──────────────────────────────────────────────────────────────────
@@ -115,7 +83,7 @@ async function present(rows: VoucherRow[]) {
   const conceptIds = new Set<string>()
   const tenantIds = new Set<string>()
   for (const v of rows) {
-    for (const id of [v.preparedById, v.hodSignedById, v.directorSignedById, v.rejectedById, v.cancelledById, v.disbursedById, v.payeeUserId, v.box.custodianId]) {
+    for (const id of [v.preparedById, v.hodSignedById, v.directorSignedById, v.rejectedById, v.cancelledById, v.disbursedById, v.payeeUserId, v.box?.custodianId ?? null]) {
       if (id) userIds.add(id)
     }
     if (v.conceptId) conceptIds.add(v.conceptId)
@@ -138,9 +106,9 @@ async function present(rows: VoucherRow[]) {
       ...voucher,
       companyName: tenantName.get(v.tenantId) ?? null,
       conceptName: v.conceptId ? (conceptName.get(v.conceptId) ?? null) : null,
-      boxName: box.name,
-      custodianId: box.custodianId,
-      custodianName: nameOf(box.custodianId),
+      boxName: box?.name ?? null,
+      custodianId: box?.custodianId ?? null,
+      custodianName: box ? nameOf(box.custodianId) : null,
       payeeUserName: nameOf(v.payeeUserId),
       preparedByName: nameOf(v.preparedById),
       hodSignedByName: nameOf(v.hodSignedById),
@@ -223,7 +191,7 @@ async function loadVoucher(req: FastifyRequest, id: string): Promise<VoucherRow>
 
 /** Finance / the manager tiers (CASH_GUARD), or the cashier: the box's custodian. */
 async function assertCashOrCustodian(req: FastifyRequest, v: VoucherRow): Promise<void> {
-  if (v.box.custodianId === req.staffUser!.id) return
+  if (v.box && v.box.custodianId === req.staffUser!.id) return
   if (await passesCashGuard(req)) return
   throw new ForbiddenError('Only finance, a manager or the cash box\'s custodian can open this voucher')
 }
@@ -306,13 +274,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       select: { mime: true, data: true },
     })
     if (!photo) throw new NotFoundError('Signed voucher photo')
-    const ext = isPhotoMime(photo.mime) ? PHOTO_EXT[photo.mime] : 'bin'
-    return reply
-      .header('Content-Type', isPhotoMime(photo.mime) ? photo.mime : 'application/octet-stream')
-      .header('Content-Disposition', `inline; filename="${v.number}.${ext}"`)
-      .header('Cache-Control', 'private, no-store')
-      .header('X-Content-Type-Options', 'nosniff')
-      .send(Buffer.from(photo.data))
+    return sendEvidence(reply, photo, v.number)
   })
 
   // POST / — prepare a voucher in the ACTIVE company. Touches no cash.
@@ -456,13 +418,15 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     await assertCashOrCustodian(req, v)
     if (v.status === 'disbursed') throw new AppError('ALREADY_DISBURSED', `Voucher ${v.number} has already been paid`, 409)
     if (v.status !== 'approved') throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'only a voucher the director has signed can be paid')
-    if (v.box.tenantId !== v.tenantId || v.box.deletedAt || !v.box.isActive) {
+    const box = v.box
+    if (!box || !v.boxId || box.tenantId !== v.tenantId || box.deletedAt || !box.isActive) {
       throw new AppError('BOX_UNAVAILABLE', `The cash box on voucher ${v.number} is closed — cancel the voucher and raise a new one`, 409)
     }
+    const boxId = v.boxId
     const photo = decodeVoucherPhoto(body.photo, body.mime)
 
     const me = req.staffUser!.id
-    const custodian = await prisma.user.findUnique({ where: { id: v.box.custodianId }, select: { name: true } })
+    const custodian = await prisma.user.findUnique({ where: { id: box.custodianId }, select: { name: true } })
     const cashierName = custodian?.name ?? null
     const reasonFull = `Cash voucher ${v.number}: ${v.purpose}`
     const reason = reasonFull.length > 200 ? `${reasonFull.slice(0, 199)}…` : reasonFull
@@ -492,7 +456,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       })
       // The one spend path (pettyCash.ts). No ledger posting — see the header.
       const spent = await recordPettyCashSpendTx(tx, {
-        box: { id: v.boxId },
+        box: { id: boxId },
         amountCents: v.amountCents,
         category: v.category,
         reason,

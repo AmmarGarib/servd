@@ -2,6 +2,13 @@ export type OrderSource = 'servd' | 'pos' | 'cart' | 'manual';
 export interface OrderModifierDTO {
     name: string;
     priceDeltaCents: number;
+    /**
+     * The menu Modifier this add-on is, so its own recipe (RecipeKind
+     * 'modifier') depletes stock and costs the line. ingestOrder keeps it only
+     * when it belongs to a live modifier group of the line's menu item, else
+     * stores null. Optional; absent means a free-text modifier.
+     */
+    modifierId?: string | null;
 }
 export interface OrderItemDTO {
     externalItemId: string;
@@ -37,8 +44,32 @@ export interface OrderDTO {
     scheduled_for?: string | null;
     is_pre_order?: boolean;
     promo_code_id?: string | null;
+    /** GST charged on this order, in cents. Persisted to Order.taxCents. */
+    tax_cents?: number;
     promo_discount_cents?: number;
     wallet_amount_cents?: number;
+    /**
+     * The part of the bill that is a tip, in cents — written to Order.tipCents
+     * in the same insert as the total. It is already inside
+     * payment.amountCents (never added on top); ingestOrder refuses a tip
+     * larger than that. Optional; absent means no tip.
+     */
+    tip_cents?: number;
+    /** How the order leaves the kitchen. Inferred from table_id when absent. */
+    fulfilment_type?: 'dine_in' | 'takeout' | 'delivery';
+    /**
+     * The delivery zone's fee BEFORE GST, in cents — charged on top of the food
+     * (owner, 2026-10-13). Persisted to Order.deliveryFeeCents. ingestOrder
+     * takes it from the channel's price (lib/pricing.ts priceOrder); absent
+     * means no fee.
+     */
+    deliveryFeeCents?: number;
+    /**
+     * The GST on the delivery fee, in cents, at the order's tender rate. It is
+     * INSIDE tax_cents (food GST + this), never added again. Persisted to
+     * Order.deliveryFeeTaxCents; absent means none.
+     */
+    deliveryFeeTaxCents?: number;
 }
 export type OrderStatus = 'received' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'refunded' | 'rejected';
 export type ItemStatus = 'pending' | 'preparing' | 'ready' | 'bumped' | 'held' | 'recalled' | 'voided';

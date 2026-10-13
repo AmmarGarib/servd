@@ -322,9 +322,12 @@ export const UNFLAGGED_SWEEP_FROM = '2026-09-18'
 const DEPOSIT_POSTING_FROM = '2026-09-25'
 const COUNT_POSTING_FROM = '2026-10-10'
 
-type RepostResult = { posted: boolean; entryId: string | null; reason?: string }
+// Exported (wave B) for the other backfills that place a refused or missing
+// posting the same way — the petty-cash history backfill reuses placeAndPost
+// and withBackfillSlot rather than a second copy of owner decision 6.
+export type RepostResult = { posted: boolean; entryId: string | null; reason?: string }
 
-interface RefusedDoc {
+export interface RefusedDoc {
   /** The document's company — the books it posts to. Null → it cannot post. */
   tenantId:    string | null
   /** Its own date; null → the poster dates it today (the unwind, the card failure). */
@@ -338,9 +341,9 @@ interface RefusedDoc {
   post:        (opts: RepostOptions) => Promise<RepostResult>
 }
 
-interface FlagRow { id: string; tenantId: string | null; entityType: string | null; entityId: string | null; metadata: Prisma.JsonValue; createdAt: Date }
+export interface FlagRow { id: string; tenantId: string | null; entityType: string | null; entityId: string | null; metadata: Prisma.JsonValue; createdAt: Date }
 
-interface Reposter {
+export interface Reposter {
   /** The flag's entityType (its entityId is the sourceId). */
   entityType:    string
   /** The sweep's flag title. */
@@ -669,7 +672,7 @@ async function backfillRefusedPostings(opts: {
  * its own date while that month is open, else today with a note naming the
  * original date; nothing when the books are closed even through today.
  */
-async function placeAndPost(
+export async function placeAndPost(
   doc: RefusedDoc,
   tenantId: string,
   r: Reposter,
