@@ -254,6 +254,39 @@ describe('chargeThrough — the one depreciation path', () => {
   })
 })
 
+describe('acquisition and tags', () => {
+  it('Dr class cost + input tax / Cr 1340 advanced + 2012 owed; late when the month is closed; sequential tags', async () => {
+    const co = await mkCo('acquire')
+    const lock = endOfMonthPkt(m(-2))
+    await prisma.periodLock.create({ data: { tenantId: co.tenantId, lockedThrough: lock, lockedBy: 'test' } })
+    const made = await prisma.$transaction(async (tx) => {
+      const t1 = await nextAssetTag(tx, co.tenantId)
+      const asset = await tx.fixedAsset.create({
+        data: {
+          tenantId: co.tenantId, name: 'Generator 20kVA', category: 'power_equipment', assetTag: t1, acquiredAt: mid(m(-3)), inServiceAt: mid(m(-3)),
+          costCents: 850_000, originalCostCents: 850_000, usefulLifeMonths: 84, conceptId: co.conceptId, acquisitionCreditCode: '1340',
+        },
+      })
+      await expect(postAcquisition(tx, asset, { advancedCents: 1, owedCents: 1, inputTaxCents: 0, inputTaxCode: null, natural: mid(m(-3)) }))
+        .rejects.toMatchObject({ code: 'ASSET_FUNDING_SPLIT', statusCode: 422 })
+      await expect(postAcquisition(tx, asset, { advancedCents: 1_000_000, owedCents: 0, inputTaxCents: 150_000, inputTaxCode: '1590', natural: mid(m(-3)) }))
+        .rejects.toMatchObject({ code: 'INPUT_TAX_CODE' })
+      const r = await postAcquisition(tx, asset, { advancedCents: 600_000, owedCents: 400_000, inputTaxCents: 150_000, inputTaxCode: '1322', natural: mid(m(-3)) })
+      return { asset, entryId: r.entryId, t1, t2: await nextAssetTag(tx, co.tenantId) }
+    })
+    expect(made.t1).toBe('FA-00001')
+    expect(made.t2).toBe('FA-00002')
+    const je = await prisma.journalEntry.findUniqueOrThrow({ where: { id: made.entryId }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(je.reference).toBe(`fixed_asset.acquire:${made.asset.id}`)
+    expect(je.entryDate.getTime()).toBeGreaterThan(lock.getTime()) // the in-service month is closed → today, with the note
+    expect(je.description).toMatch(/posted late/)
+    expect(je.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([
+      ['1322', 'debit', 150_000], ['1340', 'credit', 600_000], ['1515', 'debit', 850_000], ['2012', 'credit', 400_000],
+    ])
+    expect(await trialBalance(co.tenantId)).toBe(0)
+  })
+})
+
 describe('the period-close check', () => {
   it('blocks while a covered month is uncharged; chargeForClose clears it; pending capitalisations warn', async () => {
     const co = await mkCo('close')
