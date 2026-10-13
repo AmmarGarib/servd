@@ -159,6 +159,32 @@ describe('settings', () => {
     expect(again.json().settings).toMatchObject({ startDay: d(0), toleranceBps: 50 })
     expect((await call(s.finance, 'PUT', '/reconciliation/card-payouts/settings', { startDay: d(3) })).json().error.code).toBe('START_DAY_IN_FUTURE')
   })
+
+  it('switching matching off and on again starts afresh today (days of the off spell were cleared by hand)', async () => {
+    const s = await scene()
+    expect((await cardSettlementSettings(prisma, s.co.tenantId)).startDay).toBe(d(-40))
+    expect((await call(s.finance, 'PUT', '/reconciliation/card-payouts/settings', { enabled: false })).statusCode).toBe(200)
+    const on = await call(s.finance, 'PUT', '/reconciliation/card-payouts/settings', { enabled: true })
+    expect(on.json().settings).toMatchObject({ enabled: true, startDay: d(0) })
+  })
+})
+
+describe('BOOKS-11: a split onto a fixed-asset register account', () => {
+  it('needs registerOverride (≥ 10 characters); with it the entry posts, is audited and flagged fixed_asset_gl_mismatch', async () => {
+    const s = await scene(false)
+    const imp = await importCsv(s.finance, s.bank.id, [{ day: d(0), description: 'OVEN SUPPLIER', amount: '-2500.00' }])
+    const line = await lineOf(imp.json().importId)
+    await expect(adjustStatementLine({ lineId: line.id, memo: 'oven', postedById: s.admin.id, contraAccountCode: '1510' }))
+      .rejects.toMatchObject({ code: 'REGISTER_CONTROLLED_ACCOUNT' })
+    await expect(adjustStatementLine({ lineId: line.id, memo: 'oven', postedById: s.admin.id, contraAccountCode: '1510', registerOverride: { reason: 'short' } }))
+      .rejects.toMatchObject({ code: 'REGISTER_CONTROLLED_ACCOUNT' })
+    expect((await prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })).matchStatus).toBe('unmatched')
+    await adjustStatementLine({ lineId: line.id, memo: 'oven', postedById: s.admin.id, contraAccountCode: '1510', registerOverride: { reason: 'Oven deposit paid before the CapEx project existed' } })
+    const je = await entry(s.co.tenantId, `reconciliation.adjustment:${line.id}`)
+    expect(je!.rows.map((r) => [r.code, r.type, r.amount]).sort()).toEqual([['1021', 'credit', 250_000], ['1510', 'debit', 250_000]].sort())
+    expect(await prisma.auditLog.count({ where: { action: 'reconciliation.adjustment.register_override', entityId: line.id, tenantId: s.co.tenantId } })).toBe(1)
+    expect(await prisma.exceptionFlag.count({ where: { tenantId: s.co.tenantId, kind: 'fixed_asset_gl_mismatch', entityId: line.id } })).toBe(1)
+  })
 })
 
 describe('the import pass', () => {

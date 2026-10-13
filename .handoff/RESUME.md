@@ -465,3 +465,9 @@ RESUME ORDER:
 - ~23:35 UTC OWNER APPROVED: "downgrade stage 4" -> W4 builders run on SONNET via args.models (waveb-build.js supports
   args.model / args.models[id]); EXCEPTION w4-integration (approvals providers, REPOSTERS, merges = money) stays OPUS.
   W1-W3 stay Opus.
+- ~23:50 UTC W1 ALL BUILT (stock, hr, taxcore, ic, fa-engine, taxsales, recon; bans + dlv-core parked, no code). Replan DONE
+  (wf_ec8a9510-6e2): W2 = 8 (sale, ap, ledger, fa-capex, taxbooks, oa-recv[bad debt+H13 only], cash-ledger, close), W3 = 7, W4 = 6.
+  W1 GATE running: workflow wf_956fe1a9-b20 (.handoff/wf/waveb-gate.js, args wave/journals/db servd_test_wb_gate/redis 25/reviewFocus).
+  W1 journals: wf_15d8e85d-090 (stock, hr), wf_944789d5-ac2 (taxcore, ic, dlv-core cancel), wf_44be91d7-aa9 (fa-engine, taxsales, recon).
+  NEXT: read gate result -> fix blockers -> commit "wave B w1" on main -> launch W2 (all 8 at once: 4 workflows x 2 ids, Opus) with
+  args.note = W1 gate notesForNextStage + patch notes per target builder.
