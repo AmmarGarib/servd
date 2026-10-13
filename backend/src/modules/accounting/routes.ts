@@ -13,7 +13,7 @@ import {
   recordTaxPayment, linkTaxPayment, linkCandidates, voidTaxPayment, postTaxReclass,
 } from './taxPayments.js'
 import type { UserRole } from '@prisma/client'
-import { resolveTenantScope, scopeTenantWhere, activeTenantId, assertConceptOwned } from '../../lib/tenantScope.js'
+import { resolveTenantScope, scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
@@ -289,6 +289,16 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     const inactive = Array.from(new Set(original.lines.filter((l) => !l.account.isActive).map((l) => l.account.code)))
     if (inactive.length > 0) {
       throw new AppError('ACCOUNT_INACTIVE', `Account(s) ${inactive.join(', ')} are deactivated — reactivate them in Configuration → Chart of accounts first`, 422)
+    }
+    // A manual entry linked to the sales-tax return as a tax payment is that
+    // payment: reversing it underneath the link would leave the return
+    // counting a payment that no longer exists (and its reversal as output).
+    const linkedPayment = await prisma.salesTaxPayment.findFirst({
+      where: { tenantId, journalEntryId: original.id, linked: true },
+      select: { id: true },
+    })
+    if (linkedPayment) {
+      throw new AppError('TAX_PAYMENT_LINKED', 'This entry is linked to the sales-tax return as a tax payment — unlink it there first, then reverse it.', 409)
     }
     const sourceId = original.reference.slice(MANUAL_PREFIX.length)
     const reversalRef = `${MANUAL_REVERSAL_PREFIX}${sourceId}`
@@ -864,11 +874,14 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     }).parse(req.body ?? {})
-    const owned = await assertConceptOwned(req, body.conceptId, 'write')
-    const concept = await prisma.concept.findUniqueOrThrow({
-      where: { id: owned.id },
+    // A brand of the operator's companies — deleted ones included: a brand
+    // removed mid-month still has that month's tax to move (it is listed in
+    // the return's "To reclassify"). Another company's brand is 404.
+    const concept = await prisma.concept.findFirst({
+      where: { id: body.conceptId, ...(await scopeTenantWhere(req, 'write')) },
       select: { id: true, tenantId: true, slug: true, name: true, province: true, srbPosId: true },
     })
+    if (!concept) throw new NotFoundError('Concept', body.conceptId)
     if (!concept.tenantId) throw new AppError('BRAND_HAS_NO_COMPANY', 'This brand has no company — its books are not known', 422)
     const result = await postTaxReclass({ concept: { ...concept, tenantId: concept.tenantId }, from: body.from, to: body.to, userId: req.staffUser!.id })
     if (result.posted) {

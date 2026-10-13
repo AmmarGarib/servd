@@ -273,6 +273,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       custodianId:   z.string().uuid(),
       floatCents:    zInt4Cents('The opening float').default(0),
       topUpLimitCents: zInt4Cents('The top-up limit').default(2000000),
+      managerOverridePin: z.string().min(4).max(8).optional(),
     }).parse(req.body)
     // A new box binds to the ACTIVE company: its brand must be one of that
     // company's brands and its custodian one of that company's people.
@@ -281,6 +282,22 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
     if (!(await isMemberOf(body.custodianId, tenantId))) {
       throw new AppError('CUSTODIAN_NOT_IN_COMPANY', 'The custodian must be a member of your active company', 422)
+    }
+    // An opening float above the box's own top-up limit is a top-up over the
+    // limit — it needs a manager of this company, like any other (else a
+    // big new box + a transfer would load a capped box with no approval).
+    let approvedById: string | null = null
+    if (body.floatCents > body.topUpLimitCents) {
+      const approver = await verifyManagerPin(body.managerOverridePin, tenantId, undefined, {
+        actorId: req.staffUser!.id, action: 'petty_cash_topup',
+      })
+      if (!approver && body.managerOverridePin?.trim()) {
+        throw new AppError('INVALID_MANAGER_PIN', 'That PIN does not belong to an active manager of this company', 403)
+      }
+      if (!approver) {
+        throw new AppError('TOPUP_OVER_LIMIT', `An opening float above the box's top-up limit of PKR ${(body.topUpLimitCents / 100).toFixed(0)} needs a manager PIN.`, 403)
+      }
+      approvedById = approver.id
     }
     const { created, openingMovementId } = await prisma.$transaction(async (tx) => {
       const box = await tx.pettyCashBox.create({
@@ -292,7 +309,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       let openingMovementId: string | null = null
       if (body.floatCents > 0) {
         const opening = await recordPettyCashTopupTx(tx, {
-          box, amountCents: body.floatCents, reason: 'Opening float', createdById: req.staffUser!.id,
+          box, amountCents: body.floatCents, reason: 'Opening float', createdById: req.staffUser!.id, approvedById,
         })
         openingMovementId = opening.movement.id
       }

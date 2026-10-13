@@ -34,6 +34,8 @@ interface CaptureArgs {
   staffUser?: { id?: string | null; email?: string | null } | null
   /** When the booking became a no-show (the entry's date). Defaults to now — markNoShow calls this right after its claim. */
   noShowAt?: Date
+  /** A re-post from Backfill unposted into a later month names the original date (owner decision 6). */
+  memoNote?: string
 }
 
 export async function captureReservationDeposit(args: CaptureArgs): Promise<DepositCaptureResult> {
@@ -47,7 +49,7 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
   const tenantId = r.concept.tenantId
   const noShowAt = args.noShowAt ?? new Date()
 
-  const { postJournalEntry, flagPostingFailed, ACCT } = await import('../accounting/journal.js')
+  const { postJournalEntry, flagPostingFailed, withLateNote, ACCT } = await import('../accounting/journal.js')
   let amountCents: number
   try {
     const claimed = await prisma.$transaction(async (tx) => {
@@ -59,19 +61,20 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
         data: { depositCents: 0, status: 'no_show', cancelReason: args.reason ?? 'No-show — deposit captured' },
       })
       if (won.count === 0) return 0
+      const noted = withLateNote(`No-show fee · ${formatBrandName(r.concept.name)} · ${r.guestName}`, [
+        // The hold sits with the card gateway until it settles to the bank.
+        { accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: held.depositCents, conceptId: r.conceptId, memo: r.depositRef ? `Deposit hold ${r.depositRef}` : 'Deposit hold' },
+        // TODO(G9): taxable or not — see the header. Unchanged until decided.
+        { accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'credit', amountCents: held.depositCents, conceptId: r.conceptId, memo: 'No-show forfeit' },
+      ], args.memoNote)
       await postJournalEntry({
         tenantId,
         sourceType: 'reservation.deposit_capture',
         sourceId: r.id,
-        description: `No-show fee · ${formatBrandName(r.concept.name)} · ${r.guestName}`,
+        description: noted.description,
         entryDate: noShowAt,
         postedBy: args.postedBy,
-        lines: [
-          // The hold sits with the card gateway until it settles to the bank.
-          { accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: held.depositCents, conceptId: r.conceptId, memo: r.depositRef ? `Deposit hold ${r.depositRef}` : 'Deposit hold' },
-          // TODO(G9): taxable or not — see the header. Unchanged until decided.
-          { accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'credit', amountCents: held.depositCents, conceptId: r.conceptId, memo: 'No-show forfeit' },
-        ],
+        lines: noted.lines,
       }, { tx })
       return held.depositCents
     })

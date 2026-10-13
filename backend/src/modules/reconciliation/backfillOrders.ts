@@ -314,8 +314,13 @@ export async function backfillUnpostedOrders(opts: {
 // flag closed there (booked by hand) is never posted; one left open posts on
 // the next run.
 
-/** The earliest day the deposit and waste postings are in this code's history (2026-09-18). */
+/** The earliest day the waste posting is in this code's history (2026-09-18). */
 export const UNFLAGGED_SWEEP_FROM = '2026-09-18'
+/** Deposit drops were first posted on 2026-09-25 (6a2d423) and stock counts on
+ *  2026-10-10 (3f4a720): anything older was never meant to have an entry (it
+ *  reached the books by hand, if at all), so the sweep never offers it. */
+const DEPOSIT_POSTING_FROM = '2026-09-25'
+const COUNT_POSTING_FROM = '2026-10-10'
 
 type RepostResult = { posted: boolean; entryId: string | null; reason?: string }
 
@@ -521,7 +526,7 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
         what: `No-show deposit ${pkr(r.depositCents)} (${r.guestName})`,
         nothingOwed: r.depositCents <= 0 ? 'No deposit is held any more (released or already captured) — nothing to post.' : undefined,
         post: async (o) => {
-          const res = await captureReservationDeposit({ reservationId, postedBy: o.postedBy ?? 'system', noShowAt: o.entryDate ?? at ?? new Date() })
+          const res = await captureReservationDeposit({ reservationId, postedBy: o.postedBy ?? 'system', noShowAt: o.entryDate ?? at ?? new Date(), memoNote: o.memoNote })
           return res.captured ? { posted: true, entryId: null } : { posted: false, entryId: null, reason: res.reason }
         },
       }
@@ -557,25 +562,27 @@ async function backfillRefusedPostings(opts: {
   })
 
   // One posting per (kind, document); the oldest flag carries it.
-  const owed = new Map<string, { kind: RefusedPostingKind; sourceId: string; flag: FlagRow }>()
+  const owed = new Map<string, { kind: RefusedPostingKind; sourceId: string; flag: FlagRow; legacy: boolean }>()
   for (const f of flags) {
     const m = metaOf(f.metadata)
     let kind: RefusedPostingKind | null = isRefusedKind(m['sourceType']) ? m['sourceType'] : null
     let sourceId = typeof m['sourceId'] === 'string' ? m['sourceId'] : null
+    let legacy = false
     if (!kind && typeof m['source'] === 'string' && m['source'].startsWith(legacyVoidPrefix)) {
       kind = VOID_WASTE_SOURCE
       sourceId = m['source'].slice(legacyVoidPrefix.length) || f.entityId
+      legacy = true
     }
     // The flag must name the document its poster loads.
     if (!kind || !sourceId || f.entityType !== REPOSTERS[kind].entityType || f.entityId !== sourceId) continue
     const key = `${kind}:${sourceId}`
-    if (!owed.has(key)) owed.set(key, { kind, sourceId, flag: f })
+    if (!owed.has(key)) owed.set(key, { kind, sourceId, flag: f, legacy })
   }
 
   const close = async (kind: RefusedPostingKind, sourceId: string, resolution: string) =>
     resolvePostingFailed(REPOSTERS[kind].entityType, sourceId, kind, resolution, { tenantIds })
 
-  for (const { kind, sourceId, flag } of owed.values()) {
+  for (const { kind, sourceId, flag, legacy } of owed.values()) {
     const r = REPOSTERS[kind]
     let doc: RefusedDoc | null
     try {
@@ -603,6 +610,29 @@ async function backfillRefusedPostings(opts: {
     }
     if (!doc!.tenantId) {
       rows.push({ ...base, date: doc!.date?.toISOString() ?? null, outcome: 'no_company', detail: `${doc!.what} — it belongs to no company, so there are no books to post it to.` })
+      continue
+    }
+    // A void-waste flag raised before automatic re-posting told finance to
+    // book Dr 5040 / Cr 1210 by hand — it may already have been. Never post
+    // it straight away: re-raise it as a review flag (like the sweep), so a
+    // person closes it if it was booked by hand; the next run posts it.
+    if (legacy) {
+      const date = doc!.date?.toISOString() ?? null
+      const detail = `${doc!.what} — raised before automatic re-posting; its flag asked for a hand entry. Post re-raises it for review: close it if it was booked by hand, otherwise the next run posts it.`
+      if (opts.dryRun) { rows.push({ ...base, date, outcome: 'unflagged', detail }); continue }
+      const m = metaOf(flag.metadata)
+      await close(kind, sourceId, 'Re-raised for review as an automatic re-post (Reconciliation → Backfill unposted).')
+      await flagPostingFailed({
+        tenantId: doc!.tenantId,
+        sourceType: kind, sourceId,
+        entityType: r.entityType, entityId: sourceId,
+        reason: 'Raised before automatic re-posting, when it asked for a hand entry (Dr 5040 / Cr 1210). If that was booked by hand, close this flag; otherwise the next backfill run posts it.',
+        title: r.title,
+        actorId: opts.postedBy ?? null,
+        amountCents: doc!.amountCents,
+        metadata: { orderId: m['orderId'] ?? doc!.orderId, wasteLogIds: m['wasteLogIds'] ?? [] },
+      })
+      rows.push({ ...base, date, outcome: 'flagged', detail })
       continue
     }
     const row = await placeAndPost(doc!, doc!.tenantId, r, opts)
@@ -683,10 +713,13 @@ async function placeAndPost(
  * open one is step 4's; a closed one was decided by a person).
  */
 async function unflaggedMisses(tenantIds: string[], from: Date): Promise<Array<{ kind: 'deposit.drop' | 'inventory.waste' | 'inventory.count'; id: string }>> {
+  const latest = (a: Date, b: Date) => (a > b ? a : b)
+  const dropsFrom = latest(from, parsePktStartOfDay(DEPOSIT_POSTING_FROM))
+  const countsFrom = latest(from, parsePktStartOfDay(COUNT_POSTING_FROM))
   const [drops, waste, counts] = await Promise.all([
     prisma.$queryRaw<Array<{ id: string }>>`
       SELECT d.id FROM deposit_drops d
-       WHERE d."tenantId" = ANY(${tenantIds}::text[]) AND d."amountCents" > 0 AND d."droppedAt" >= ${from}
+       WHERE d."tenantId" = ANY(${tenantIds}::text[]) AND d."amountCents" > 0 AND d."droppedAt" >= ${dropsFrom}
          AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j."tenantId" = d."tenantId" AND j.reference = 'deposit.drop:' || d.id)
          AND NOT EXISTS (SELECT 1 FROM exception_flags f WHERE f.kind = 'posting_failed' AND f."entityType" = 'DepositDrop' AND f."entityId" = d.id)
        ORDER BY d."droppedAt" ASC`,
@@ -699,7 +732,7 @@ async function unflaggedMisses(tenantIds: string[], from: Date): Promise<Array<{
        ORDER BY w."recordedAt" ASC`,
     prisma.$queryRaw<Array<{ id: string }>>`
       SELECT c.id FROM physical_counts c
-       WHERE c."tenantId" = ANY(${tenantIds}::text[]) AND c."countedAt" >= ${from}
+       WHERE c."tenantId" = ANY(${tenantIds}::text[]) AND c."countedAt" >= ${countsFrom}
          AND EXISTS (SELECT 1 FROM physical_count_lines l WHERE l."countId" = c.id AND l."physicalQty" <> l."systemQty")
          AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j."tenantId" = c."tenantId" AND j.reference = 'inventory.count:' || c.id)
          AND NOT EXISTS (SELECT 1 FROM exception_flags f WHERE f.kind = 'posting_failed' AND f."entityType" = 'PhysicalCount' AND f."entityId" = c.id)

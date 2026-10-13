@@ -430,6 +430,19 @@ interface SettlementCalc { salaryFrom: string | null; lastWorkingDay: string; pa
 
 const ymdOf = (d: Date | string | null | undefined) => (d ? (typeof d === 'string' ? d : d.toISOString()).slice(0, 10) : null)
 
+/** 409 when another settlement of this employee is already approved (per-employee lock held for the tx). */
+export async function assertOnlySettlement(tx: Tx, rec: { id: string; tenantId: string; employeeId: string | null }) {
+  if (!rec.employeeId) return
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`hr.fnf.emp:${rec.tenantId}:${rec.employeeId}`}::text))`
+  const other = await tx.hrRecord.findFirst({
+    where: { tenantId: rec.tenantId, employeeId: rec.employeeId, section: 'final_settlement', status: 'approved', id: { not: rec.id } },
+    select: { id: true },
+  })
+  if (other) {
+    throw new AppError('FNF_ALREADY_APPROVED', 'This employee already has an approved full & final settlement — cancel that one first if it is wrong', 409)
+  }
+}
+
 /**
  * A full & final reaching approval (finance gaps #2 and "F&F can pay a month
  * twice"). The settlement pays salary from the day after the last payroll the
@@ -442,6 +455,10 @@ const ymdOf = (d: Date | string | null | undefined) => (d ? (typeof d === 'strin
  */
 async function approveSettlement(tx: Tx, rec: HrRecord, postedBy: string) {
   if (!rec.employeeId || !rec.endDate) throw new AppError('INCOMPLETE', 'Set the employee and the last working day first', 422)
+  // ONE settlement per leaver: a second one would book (and pay) the same
+  // salary and recover the same loan twice. Serialised per employee so two
+  // approvals at the same moment cannot both pass.
+  await assertOnlySettlement(tx, rec)
   const open = await tx.hrPayslip.findFirst({
     where: { tenantId: rec.tenantId, employeeId: rec.employeeId, run: { status: { in: ['draft', 'approved'] } } },
     select: { run: { select: { period: true, status: true } } },
@@ -1774,7 +1791,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // Wages paid out (finance gaps #9): clears wages payable — cash slips from
-  // the safe (cashCode 1010, or 1015 the POS drawer), bank and cheque slips
+  // the safe (1010 — never a till drawer: drawer cash is dropped to the safe
+  // first, or the drawer's close would count the wages as a shortage and
+  // expense them twice), bank and cheque slips
   // from the bank named (a live, linked bank of the run's own company — 422
   // otherwise), else the company's only bank; dated paidOn (default today,
   // never in the future; a closed day is 422). The old {from: bank|cash}
@@ -1783,7 +1802,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const body = z.object({
       from: z.enum(['bank', 'cash']).optional(),
       bankAccountId: z.string().min(1).max(64).nullable().optional(),
-      cashCode: z.enum(['1010', '1015']).optional(),
+      cashCode: z.literal('1010').optional(),
       paidOn: z.string().optional(),
     }).parse(req.body ?? {})
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })

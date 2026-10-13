@@ -268,11 +268,20 @@ const hrRequests: ApprovalProvider = {
       employee: { id: string; fullName: string; employeeCode: string } | null
       step: { key: string; label: string; role: string }
       waitingOnPartner?: boolean
+      data?: Record<string, unknown> | null
+      currentStep?: number
+      format?: { workflow?: unknown[] } | null
     }
     const rows = await ctx.read<Row[]>('/hr/approvals')
     if (rows === null) return null
     return rows.map((r): ApprovalItem => {
       const base = `/hr/records/${encodeURIComponent(r.section)}/${r.id}/decide`
+      // A loan's last approval pays it out: where from (bank account or
+      // cash) is picked on the request itself, which the inbox cannot do.
+      const lastStep = r.format?.workflow ? r.currentStep === r.format.workflow.length - 1 : false
+      const d = r.data ?? {}
+      const loanNeedsSource = r.section === 'loan' && lastStep
+        && !(d['paidFrom'] === 'cash' || (typeof d['bankAccount'] === 'string' && d['bankAccount']))
       return {
         type: 'hr_request',
         id: r.id,
@@ -286,11 +295,12 @@ const hrRequests: ApprovalProvider = {
           ['Quantity', r.quantity != null ? String(r.quantity) : null],
         ]),
         waitingSince: iso(r.createdAt),
-        link: null,
+        link: loanNeedsSource ? `/hr/s/loan` : null,
         record: r,
         actions: [
           { kind: 'approve', label: 'Approve', method: 'POST', path: base, body: { decision: 'approved' },
             ...(r.waitingOnPartner && { disabledReason: 'Waiting for the colleague to accept the swap' }),
+            ...(loanNeedsSource && { disabledReason: 'Open the request to pick the bank account (or cash) the loan is paid from' }),
             ...(r.section === 'overtime' && { confirm: 'Approve the hours as claimed? To change the hours, open the request.' }) },
           { kind: 'reject', label: 'Reject', method: 'POST', path: base, body: { decision: 'rejected' },
             input: { field: 'note', label: 'Note (optional)', required: false } },

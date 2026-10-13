@@ -225,7 +225,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     if (updated.expenseAccountCode !== owned.expenseAccountCode) {
       await audit({
         category: 'accounting', action: 'opex.category.account', entity: 'OpexCategory', entityId: owned.id,
-        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: owned.tenantId ?? req.staffUser!.tenantId,
         before: { name: owned.name, expenseAccountCode: owned.expenseAccountCode },
         after: { name: updated.name, expenseAccountCode: updated.expenseAccountCode },
         metadata: { companyId: owned.tenantId },
@@ -376,7 +376,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     if (ledger.status === 'posted') {
       await audit({
         category: 'accounting', action: 'opex.payment.paid', entity: 'OpexPayment', entityId: p.id,
-        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: p.line.category.tenantId ?? req.staffUser!.tenantId,
         after: { lineId: p.lineId, actualCents: p.actualCents, paidAt: p.paidAt, paymentRef: p.paymentRef },
         metadata: { entryId: ledger.entryId, companyId: p.line.category.tenantId, expenseAccountCode, payFrom, bankAccountId },
       })
@@ -450,7 +450,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     })
     await audit({
       category: 'accounting', action: 'opex.payment.correct', entity: 'OpexPayment', entityId: owned.id,
-      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: owned.line.category.tenantId ?? req.staffUser!.tenantId,
       before: { actualCents: owned.actualCents, paidAt: owned.paidAt, paymentRef: owned.paymentRef, receiptUrl: owned.receiptUrl, periodStart: owned.periodStart, periodEnd: owned.periodEnd },
       after: { actualCents: result.actualCents, paidAt: result.paidAt, paymentRef: result.paymentRef, receiptUrl: result.receiptUrl, periodStart: result.periodStart, periodEnd: result.periodEnd },
       metadata: { ledger: result.ledger, expenseAccountCode, payFrom, bankAccountId, companyId: owned.line.category.tenantId },
@@ -515,11 +515,16 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const counts: Partial<Record<Outcome, number>> = {}
     for (const r of rows) counts[r.outcome] = (counts[r.outcome] ?? 0) + 1
     if (!body.dryRun && (counts.posted ?? 0) > 0) {
-      await audit({
-        category: 'accounting', action: 'opex.payments.post_unposted', entity: 'OpexPayment',
-        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
-        metadata: { counts, posted: rows.filter((r) => r.outcome === 'posted').map((r) => r.paymentId) },
-      })
+      // One audit row per company whose payments were posted, in that company.
+      const byCompany = new Map<string | null, string[]>()
+      for (const r of rows) if (r.outcome === 'posted') byCompany.set(r.tenantId ?? null, [...(byCompany.get(r.tenantId ?? null) ?? []), r.paymentId])
+      for (const [companyId, posted] of byCompany) {
+        await audit({
+          category: 'accounting', action: 'opex.payments.post_unposted', entity: 'OpexPayment',
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: companyId ?? req.staffUser!.tenantId,
+          metadata: { counts, posted },
+        })
+      }
     }
     return { dryRun: body.dryRun, counts, rows }
   })

@@ -148,7 +148,7 @@ export default function PayrollRunPage() {
 function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: string; tenantId: string; period: string; slips: Slip[]; onClose: () => void }) {
   const qc = useQueryClient()
   const [bankAccountId, setBankAccountId] = useState('')
-  const [cashCode, setCashCode] = useState<'1010' | '1015'>('1010')
+  const cashCode = '1010' as const
   const [paidOn, setPaidOn] = useState(localDate())
   const [err, setErr] = useState('')
   const cash = slips.filter(isCashSlip)
@@ -170,13 +170,9 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
           <BankAccountSelect id={`pay-bank-${runId}`} label="Bank and cheque staff paid from" tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId} className={inp} />
         )}
         {cash.length > 0 && (
-          <label className="block">
-            <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Cash staff paid from</span>
-            <select className={inp} value={cashCode} onChange={(e) => setCashCode(e.target.value as '1010' | '1015')}>
-              <option value="1010">Cash on hand — the safe (1010)</option>
-              <option value="1015">Cash in the POS drawer (1015)</option>
-            </select>
-          </label>
+          <p className="text-xs text-white/55">
+            Cash staff are paid from the safe (1010). Take wages out of a till drawer as a drop to the safe first — paying straight from a drawer would show as a shortage at its close.
+          </p>
         )}
         <label className="block">
           <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Paid on</span>

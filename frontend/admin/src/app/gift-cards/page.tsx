@@ -43,7 +43,7 @@ interface BooksCheck {
   awaitingSale: { count: number; cents: number }
   spentWithoutOrder: { count: number; cents: number }
   issueNotBooked: { count: number; cents: number; items: Array<{ id: string; code: string; issuedAmountCents: number; createdAt: string; status: Status }> }
-  voidedHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; balanceCents: number; voidedAt: string | null }> }
+  voidedHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; kind?: 'sold' | 'promotional'; balanceCents: number; voidedAt: string | null }> }
 }
 
 const STATUS_BADGE: Record<Status, string> = {
@@ -350,7 +350,7 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
               <span className="font-mono">{i.code}</span>
               <span>{fmtPkr(i.balanceCents)}</span>
               {canSettle && (
-                <button onClick={() => onSettle({ id: i.id, tenantId: c.tenantId, code: i.code, kind: 'sold', balanceCents: i.balanceCents, settling: true })} className="s-btn-ghost text-xs">
+                <button onClick={() => onSettle({ id: i.id, tenantId: c.tenantId, code: i.code, kind: i.kind ?? 'sold', balanceCents: i.balanceCents, settling: true })} className="s-btn-ghost text-xs">
                   Settle
                 </button>
               )}
