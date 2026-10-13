@@ -213,8 +213,8 @@ describe('eligibility — each refusal (409), for the ask and the void alike', (
     await refused(await receipt({ status: 'matched' }), 'RAAST_NOT_PROVISIONAL')
   })
 
-  it('the sale is booked (a close held it as a refund due on 1115 — or legacy 1110) → RAAST_SALE_BOOKED', async () => {
-    for (const code of ['1115', '1110']) {
+  it('the sale is booked (a close held it as a refund due on 1110 till clearing — or 1115, TILL_CLEARING_CODES) → RAAST_SALE_BOOKED', async () => {
+    for (const code of ['1110', '1115']) {
       const shift = await closedShift()
       const r = await receipt({ shiftId: shift })
       await postJournalEntry({

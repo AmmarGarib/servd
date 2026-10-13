@@ -10,7 +10,7 @@
 //   POST  /receipts/:id/unmatch      undo a match (APPROVERS)
 //   PATCH /receipts/:id/reference    fix a typed reference (APPROVERS — M4)
 //   POST  /receipts/:id/unreceived   write off as never received (APPROVERS;
-//                                    contra 1115 till clearing by default)
+//                                    contra 1110 customer owes by default)
 //   POST  /receipts/:id/resolve      clear a needs-attention receipt whose
 //                                    bill is closed (APPROVERS — RV-FIN-1)
 //   POST  /receipts/:id/void-request ask the CEO to void a receipt whose sale
@@ -376,9 +376,9 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/receipts/:id/unreceived', { preHandler: requireAuth(...APPROVERS) }, async (req) => {
     const body = z.object({
       reason: reasonSchema,
-      // 1115 Till Clearing — the customer still owes it (never 1110, which is
-      // invoiced client balances only) / 8010 a loss / 1350 staff owes.
-      contraAccountCode: z.enum(WRITE_OFF_CONTRAS).default('1115'),
+      // 1110 the customer still owes it (till clearing lives on 1110 while the
+      // 1115 split is PARKED with on-account clients) / 8010 a loss / 1350 staff owes.
+      contraAccountCode: z.enum(WRITE_OFF_CONTRAS).default('1110'),
     }).parse(req.body)
     const r = await receiptForWrite(req, req.params.id)
     const res = await writeOffUnreceived({ receiptId: r.id, actorId: req.staffUser!.id, reason: body.reason, contraAccountCode: body.contraAccountCode })

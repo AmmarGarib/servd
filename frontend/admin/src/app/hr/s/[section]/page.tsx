@@ -8,11 +8,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
-import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord, type HrSectionInfo } from '../../../../lib/hr'
-
-/** GET /hr/sections: a section whose work moved elsewhere (eobi_challan →
- *  Accounting → Statutory payments) says where; its rows stay readable. */
-type SectionInfo = HrSectionInfo & { movedTo?: { path: string; label: string; message: string } | null }
+import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
@@ -28,7 +24,9 @@ export default function HrSectionPage() {
   const [backfillMsg, setBackfillMsg] = useState('')
   const { isPayrollApprover } = useHrAccess()
   const { data: sections } = useHrSections()
-  const info = sections?.find((s) => s.key === section) as SectionInfo | undefined
+  // GET /hr/sections: a section whose work moved elsewhere (eobi_challan →
+  // Accounting → Statutory payments) says where; its rows stay readable.
+  const info = sections?.find((s) => s.key === section)
   const moved = info?.movedTo ?? null
   const { data: lookups } = useHrLookups()
   const { data: org } = useHrOrg()

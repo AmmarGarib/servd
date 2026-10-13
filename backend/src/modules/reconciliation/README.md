@@ -149,18 +149,19 @@ A Raast payment completes the sale at the till and writes a `RaastReceipt`
   a dismissed / debit reference → 409 `RAAST_REF_DISMISSED`, the bank SMS's
   amount when SMS matching is on); `Payment.gatewayRef` in the same
   transaction; the statement match is re-run for it. Audited before / after.
-- `POST /receipts/:id/unreceived {reason, contraAccountCode: 1115|8010|1350}`
-  (APPROVERS; default 1115 till clearing — "the customer owes it"; 1110 is
-  invoiced client balances only, wave B) — provisional only, and only once the
+- `POST /receipts/:id/unreceived {reason, contraAccountCode: 1110|8010|1350}`
+  (APPROVERS; default 1110 — "the customer owes it": till clearing lives on
+  1110 while the 1115 split is PARKED with on-account clients, owner
+  2026-10-13) — provisional only, and only once the
   entry that debited the bank for THIS receipt is posted (RV-MONEY-1; else 409
   `RAAST_SALE_NOT_BOOKED`): a till order's drawer close
   (`shift.close:<shiftId>`); any other live order's `order.complete:<orderId>`
   (a drawer close books non-till cash only); a cancelled non-till ticket only
-  through a close that held it as a refund due (Cr 1115 — or legacy 1110 —
-  `REFUND DUE …` naming the order). Posts `raast.unreceived:<receiptId>` Dr
-  contra / Cr the receipt's bank code (memos prefixed `RAAST RECEIPTS`), dated
-  today, in the receipt's company. Write-offs booked on 1110 before 1115
-  existed stay as booked; their reversals mirror their own lines.
+  through a close that held it as a refund due (Cr till clearing —
+  `TILL_CLEARING_CODES`, 1110 today — `REFUND DUE …` naming the order). Posts
+  `raast.unreceived:<receiptId>` Dr contra / Cr the receipt's bank code (memos
+  prefixed `RAAST RECEIPTS`), dated today, in the receipt's company. A
+  reversal always mirrors its own entry's lines.
 - **Void, never booked** (RV-MONEY-1; owner: the CEO only). For a provisional
   receipt on a cancelled / rejected bill that NO entry ever put in the bank.
   `POST /receipts/:id/void-request {reason ≥ 10}` (admin, owner, management,

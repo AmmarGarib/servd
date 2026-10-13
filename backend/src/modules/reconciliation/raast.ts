@@ -38,12 +38,13 @@
 // the same lock, so a receipt's state is never overwritten by a race.
 //
 // Ledger. A write-off ('not received') posts 'raast.unreceived:<receiptId>'
-// in the receipt's company: Dr contra (1115 till clearing — the customer still
-// owes it / 8010 loss / 1350 staff owes) / Cr the receiving bank's code — both
-// memos start with RAAST_RECEIPTS_MEMO, so the generic matcher never pairs
-// them. (Write-offs booked before 1115 existed debited 1110; they stay as
-// booked and their reversals mirror their own lines.) A receipt written off
-// and later found on a statement reverses that entry first
+// in the receipt's company: Dr contra (1110 customer owes — till clearing
+// lives on 1110 today / 8010 loss / 1350 staff owes) / Cr the receiving bank's
+// code — both memos start with RAAST_RECEIPTS_MEMO, so the generic matcher
+// never pairs them. (The 1110 → 1115 till-clearing split is PARKED with
+// on-account clients, owner 2026-10-13; reversals always mirror their own
+// entry's lines.) A receipt written off and later found on a statement
+// reverses that entry first
 // ('raast.unreceived.reversal:<…>'). A second write-off after a reversal gets
 // its own sourceId (`<receiptId>:2`, …) — a posting is idempotent per
 // reference. A void posts NOTHING: nothing ever debited the bank for it.
@@ -76,11 +77,12 @@ export const MATCHABLE_STATUSES: RaastReceiptStatus[] = ['provisional', 'unrecei
 /** Receipts finance still has to clear before a period closes (S6). */
 export const OPEN_FINANCE_STATUSES: RaastReceiptStatus[] = ['provisional', 'needs_attention']
 /**
- * The contra accounts a write-off may use: 1115 Till Clearing (the customer
- * still owes it — never 1110, which holds invoiced client balances only),
- * 8010 a loss, 1350 recovered from staff. The first is the default.
+ * The contra accounts a write-off may use: 1110 (the customer still owes it —
+ * till clearing lives on 1110 while the 1115 split is PARKED with on-account
+ * clients, owner 2026-10-13), 8010 a loss, 1350 recovered from staff. The
+ * first is the default.
  */
-export const WRITE_OFF_CONTRAS = ['1115', '8010', '1350'] as const
+export const WRITE_OFF_CONTRAS = ['1110', '8010', '1350'] as const
 export type WriteOffContra = (typeof WRITE_OFF_CONTRAS)[number]
 /** Who may ask the CEO to void a receipt (the void itself is the CEO's — role admin). */
 export const RAAST_VOID_REQUESTERS: readonly string[] = ['admin', 'owner', 'management', 'finance']
@@ -477,8 +479,9 @@ export async function unmatchReceipt(input: { receiptId: string; actorId: string
  *   - any other order, live: only its completion debits the bank
  *     ('order.complete:<orderId>') — a drawer close books non-till CASH only;
  *   - any other order, cancelled / rejected: only a drawer close that held
- *     its money as a refund due (Cr 1115 — or, before 1115 existed, 1110 —
- *     'REFUND DUE …' naming the order; TILL_CLEARING_CODES).
+ *     its money as a refund due (Cr till clearing — 1110 today;
+ *     TILL_CLEARING_CODES also holds 1115 for the parked split —
+ *     'REFUND DUE …' naming the order).
  */
 export async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
   const o = await db.order.findUnique({ where: { id: r.orderId }, select: { source: true, status: true } })

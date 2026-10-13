@@ -15,7 +15,7 @@
 //   Unmatch      undo a match (CEO / co-owners).
 //   Fix reference  the cashier mistyped it (CEO / co-owners — M4; provisional,
 //                not once a bank SMS confirmed it; before/after audited).
-//   Not received the money never arrived: written off against 1115 till
+//   Not received the money never arrived: written off against 1110 till
 //                clearing (the customer owes it) / 8010 (a loss) / 1350 (staff
 //                owes it) — CEO / co-owners; only once the sale is booked.
 //   Void — never booked  (RV-MONEY-1, the CEO only) a provisional payment on
@@ -190,10 +190,10 @@ const ALERT_STATUS_LABEL: Record<string, string> = {
   dismissed: 'Not a sale',
 }
 
-/** The write-off contras (raast.ts WRITE_OFF_CONTRAS) — 1115 first, the default. */
-type Contra = '1115' | '8010' | '1350'
+/** The write-off contras (raast.ts WRITE_OFF_CONTRAS) — 1110 first, the default. */
+type Contra = '1110' | '8010' | '1350'
 const CONTRA_LABEL: Record<Contra, string> = {
-  '1115': 'Customer owes (1115 till clearing)',
+  '1110': 'Customer owes (1110 till clearing)',
   '8010': 'Loss (8010)',
   '1350': 'Staff owes (1350)',
 }
@@ -612,7 +612,7 @@ function ReferencePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRo
 
 function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; onDone: (t: string) => void; onCancel: () => void }) {
   const [reason, setReason] = useState('')
-  const [contra, setContra] = useState<Contra>('1115')
+  const [contra, setContra] = useState<Contra>('1110')
   const writeOff = useMutation({
     mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/unreceived`, { reason: reason.trim(), contraAccountCode: contra }, { tenantId: receipt.tenantId }),
     onSuccess: () => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) written off as not received: Dr ${contra} / Cr ${receipt.ledgerCode}. If the money turns up on a later statement, matching it reverses this.`),

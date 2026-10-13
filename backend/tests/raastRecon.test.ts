@@ -10,7 +10,8 @@
 //     404 on A's receipts / lines; a line of another account is 422
 //   - manual match / unmatch / reference fix (APPROVERS, M4) / not received
 //     (+ the write-off reversed when the statement later shows it; the
-//     'customer owes' contra is 1115 till clearing — 1110 is refused)
+//     'customer owes' contra is 1110 — the 1115 till-clearing split is PARKED
+//     with on-account clients, so 1115 is refused as a contra)
 //   - POST /bank/lines/:id/unmatch (S3), /rematch, /alerts, /summary
 //   - the daily raast_unmatched flag (one per bank account, resolved at 0)
 //   - period close: 409 RAAST_UNMATCHED unless the CEO closes anyway (S6)
@@ -424,8 +425,8 @@ describe('the Raast tab — manual actions', () => {
 
     expect((await call(financeA, 'POST', url, { reason: 'bank says no such transfer' })).statusCode).toBe(403)
     expect((await call(adminA, 'POST', url, { reason: 'x', contraAccountCode: '4100' })).statusCode).toBe(400)
-    // 1110 holds invoiced client balances only (wave B): a write-off's "customer owes" is 1115.
-    expect((await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1110' })).statusCode).toBe(400)
+    // Till clearing stays on 1110 while the 1115 split is PARKED (owner 2026-10-13): 1115 is not a write-off contra.
+    expect((await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1115' })).statusCode).toBe(400)
     const w = await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1350' })
     expect(w.statusCode, w.body).toBe(200)
     expect(w.json().status).toBe('unreceived')
@@ -603,30 +604,30 @@ describe('review fixes', () => {
       lines: [{ accountCode: '1015', type: 'debit', amountCents: 5_000 }, { accountCode: '4100', type: 'credit', amountCents: 5_000 }],
     })
     const url = `/reconciliation/raast/receipts/${r.id}/unreceived`
-    const refused = await call(adminD, 'POST', url, { reason: 'never arrived', contraAccountCode: '1115' })
+    const refused = await call(adminD, 'POST', url, { reason: 'never arrived', contraAccountCode: '1110' })
     expect(refused.statusCode, refused.body).toBe(409)
     expect(refused.json().error.code).toBe('RAAST_SALE_NOT_BOOKED')
     expect(await bankNet(D.tenantId, bankD.ledgerCode)).toBe(0)
 
     // The order completes: its own entry debits the bank. Now the write-off nets it to zero.
     await bookSale(D, { orderId: r.orderId, amountCents: r.amountCents, ledgerCode: r.ledgerCode })
-    const ok = await call(adminD, 'POST', url, { reason: 'never arrived', contraAccountCode: '1115' })
+    const ok = await call(adminD, 'POST', url, { reason: 'never arrived', contraAccountCode: '1110' })
     expect(ok.statusCode, ok.body).toBe(200)
     expect(await bankNet(D.tenantId, bankD.ledgerCode)).toBe(0)
     const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `raast.unreceived:${r.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
-    expect(je.lines.map((l) => [l.account.code, l.type, toCents(l.amountCents)]).sort()).toEqual([['1115', 'debit', 108_000], [bankD.ledgerCode, 'credit', 108_000]].sort())
+    expect(je.lines.map((l) => [l.account.code, l.type, toCents(l.amountCents)]).sort()).toEqual([['1110', 'debit', 108_000], [bankD.ledgerCode, 'credit', 108_000]].sort())
   })
 
-  it('the default "customer owes" contra is 1115 till clearing', async () => {
+  it('the default "customer owes" contra is 1110 (till clearing — the 1115 split is parked)', async () => {
     const r = await receiptOf(D, bankD, adminD, { amountCents: 21_500 })
     await bookSale(D, { orderId: r.orderId, amountCents: r.amountCents, ledgerCode: r.ledgerCode })
     const ok = await call(adminD, 'POST', `/reconciliation/raast/receipts/${r.id}/unreceived`, { reason: 'customer reversed it' })
     expect(ok.statusCode, ok.body).toBe(200)
     const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `raast.unreceived:${r.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
-    expect(je.lines.find((l) => l.type === 'debit')!.account.code).toBe('1115')
+    expect(je.lines.find((l) => l.type === 'debit')!.account.code).toBe('1110')
   })
 
-  it('RV-MONEY-1: a cancelled non-till ticket — only a close that held it as a refund due lets it be written off (a legacy 1110 hold still counts)', async () => {
+  it('RV-MONEY-1: a cancelled non-till ticket — only a close that held it as a refund due (1110 till clearing) lets it be written off', async () => {
     const shift = await prisma.shift.create({ data: { userId: adminD.id, tenantId: D.tenantId, status: 'closed', openingFloatCents: 0, closedAt: new Date(), closingFloatCents: 0 } })
     const held = await receiptOf(D, bankD, adminD, { amountCents: 33_300, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
     const bare = await receiptOf(D, bankD, adminD, { amountCents: 44_400, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
@@ -644,7 +645,7 @@ describe('review fixes', () => {
     expect(heldRes.statusCode, heldRes.body).toBe(200)
   })
 
-  it('RV-MONEY-1: a refund due held on 1115 till clearing (wave B) counts as booked too', async () => {
+  it('RV-MONEY-1: a refund due held on 1115 (TILL_CLEARING_CODES — the parked split\'s code) counts as booked too', async () => {
     const shift = await prisma.shift.create({ data: { userId: adminD.id, tenantId: D.tenantId, status: 'closed', openingFloatCents: 0, closedAt: new Date(), closingFloatCents: 0 } })
     const held = await receiptOf(D, bankD, adminD, { amountCents: 36_600, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
     await postJournalEntry({

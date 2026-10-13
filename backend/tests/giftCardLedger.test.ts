@@ -7,10 +7,13 @@
 //            (managers + finance) sells; only managers give promotional cards.
 //   void     row-locked, balance claimed: refund Dr 2080 / Cr cash|card|bank;
 //            payment_not_received Dr 2080 / Cr the account the issue debited;
-//            forfeit only on promotional cards (Cr 6060) — a sold card's is
-//            pending owner decision G10.
-//   expiry   the sweep records 'expired' + expiredAt, per company, no entry
-//            (G10); the redeem's doomed status write is gone.
+//            forfeit of a promotional card Cr 6060; a SOLD card's forfeit is
+//            the CEO's only (403 FORFEIT_NEEDS_CEO otherwise) and is booked
+//            as breakage, Cr 4200 (H11).
+//   expiry   the sweep records 'expired' + expiredAt, per company, and books
+//            the unused value as breakage once ('giftcard.expire:<cardId>',
+//            Dr 2080 / Cr 4200 sold, Cr 6060 promotional — H11); the redeem's
+//            doomed status write is gone.
 //   refund   a refund of an order a card paid never reopens a voided or
 //            expired card; the value waits on it and a manager settles it.
 //   2080     GET /gift-cards/reconcile: ledger vs cards, per company; the list
@@ -234,11 +237,11 @@ describe('void: the balance leaves 2080 the way the disposition says', () => {
     expect(amt(je, bankCode, 'credit')).toBe(50_000)
   })
 
-  it('a sold card cannot be forfeited (pending G10); a promotional card can only be forfeited — back to 6060', async () => {
+  it('a sold card is forfeited by the CEO only (H11); a promotional card can only be forfeited — back to 6060', async () => {
     const sold = await issued('mgrA', { paymentMethod: 'cash' })
     const f = await call('mgrA', 'POST', `/gift-cards/${sold.id}/void`, { reason: 'keep it', disposition: 'forfeit' })
-    expect(f.statusCode).toBe(422)
-    expect(f.json().error.code).toBe('FORFEIT_PENDING_DECISION')
+    expect(f.statusCode).toBe(403)
+    expect(f.json().error.code).toBe('FORFEIT_NEEDS_CEO')
 
     const promo = await issued('mgrA', { kind: 'promotional', reason: 'Launch giveaway' })
     expect((await call('mgrA', 'POST', `/gift-cards/${promo.id}/void`, { reason: 'Pay it out', disposition: 'refund', refundMethod: 'cash' })).json().error.code).toBe('PROMO_CARD_FORFEIT_ONLY')
@@ -263,7 +266,7 @@ describe('void: the balance leaves 2080 the way the disposition says', () => {
   })
 })
 
-describe('expiry is recorded by the sweep, per company, with no entry (G10)', () => {
+describe('expiry is recorded by the sweep, per company, and books the breakage once (H11)', () => {
   it('the redeem refuses an expired card without a doomed write; the sweep marks it expired once', async () => {
     const a = await issued('mgrA', { paymentMethod: 'cash' })
     const keep = await issued('mgrA', { paymentMethod: 'cash', expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() })
@@ -279,11 +282,12 @@ describe('expiry is recorded by the sweep, per company, with no entry (G10)', ()
     expect(await runGiftCardExpiryOnce()).toBeGreaterThanOrEqual(2)
     const after = await prisma.giftCard.findMany({ where: { id: { in: [a.id, b.id, keep.id] } } })
     const by = new Map(after.map((c) => [c.id, c]))
-    expect(by.get(a.id)).toMatchObject({ status: 'expired', balanceCents: 50_000 })
+    expect(by.get(a.id)).toMatchObject({ status: 'expired', balanceCents: 0, breakageCents: 50_000 })
     expect(by.get(a.id)!.expiredAt).toBeInstanceOf(Date)
     expect(by.get(b.id)!.status).toBe('expired')
     expect(by.get(keep.id)!.status).toBe('active')
-    expect(await prisma.journalEntry.count({ where: { reference: { startsWith: 'giftcard.expire' } } })).toBe(0)
+    // One breakage entry per expired card (the sweep is global, so count only this test's cards).
+    expect(await prisma.journalEntry.count({ where: { reference: { in: [`giftcard.expire:${a.id}`, `giftcard.expire:${b.id}`, `giftcard.expire:${keep.id}`] } } })).toBe(2)
     expect(await runGiftCardExpiryOnce()).toBe(0)
   })
 })
@@ -326,7 +330,7 @@ describe('a refund never reopens a voided or expired card', () => {
     await prisma.giftCard.update({ where: { id: c.id }, data: { expiresAt: new Date(Date.now() - 1_000) } })
     await runGiftCardExpiryOnce()
     await refundOrder(o)
-    expect(await prisma.giftCard.findUniqueOrThrow({ where: { id: c.id } })).toMatchObject({ status: 'expired', balanceCents: 50_000 })
+    expect(await prisma.giftCard.findUniqueOrThrow({ where: { id: c.id } })).toMatchObject({ status: 'expired', balanceCents: 10_000, breakageCents: 40_000 })
   })
 })
 

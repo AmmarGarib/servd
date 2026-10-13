@@ -59,6 +59,8 @@ export interface HrSectionInfo {
   effect: string | null
   requires: string[]
   format: HrFormat | null
+  /** Set when the section's work moved elsewhere (eobi_challan → Accounting → Statutory payments). */
+  movedTo?: { path: string; label: string; message: string } | null
 }
 
 export interface Approval { step: string; role: string; decision: 'approved' | 'rejected'; byName: string; at: string; note?: string; override?: boolean }
