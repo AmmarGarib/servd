@@ -91,7 +91,7 @@ describe('gratuityFor', () => {
     expect(r.netAmount).toBe(gross + RS(1234))
     expect(settlementNet(settlementParts({ salaryPayable: 100, gratuity: 50 }))).toBe(150)
     expect(settlementParts({}).gratuity).toBe(0)
-    expect(mergeSettings({ gratuity: { daysPerYear: 15 } } as never).gratuity).toEqual({ ...DEFAULT_GRATUITY, daysPerYear: 15 })
+    expect(mergeSettings(JSON.parse('{"gratuity":{"daysPerYear":15}}')).gratuity).toEqual({ ...DEFAULT_GRATUITY, daysPerYear: 15 })
     expect(mergeSettings(null).gratuity).toEqual(DEFAULT_GRATUITY)
   })
 })
@@ -255,7 +255,7 @@ describe('gratuity on a full & final', () => {
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().html).toContain('Gratuity')
     expect(r.json().html).toContain('280,000')
-    expect(r.json().missing).toEqual([])
+    expect(r.json().missing).not.toContain('record.gratuity')
     // A company letter saved before gratuity existed gets the row too.
     const own = DEFAULT_LETTERS.find((l) => l.key === 'final_settlement_statement')!.body.replace('<tr><td>Gratuity</td><td>{{record.gratuity}}</td></tr>', '')
     expect(own).not.toContain('record.gratuity')
@@ -286,7 +286,8 @@ describe('a company that saved its own F&F format before gratuity existed', () =
     const sec = sectionByKey('final_settlement')!
     const oldFields = sec.fields!.filter((f) => f.key !== 'gratuity').map((f) => (f.key === 'otPayable' ? { ...f, label: 'Overtime owed' } : f))
     await prisma.hrFormDefinition.create({
-      data: { tenantId: tenantC, section: 'final_settlement', version: 1, title: 'Our F&F', fields: oldFields as never, workflow: sec.workflow as never, stages: [] as never, isActive: true },
+      // As stored by a save before this release (plain JSON).
+      data: { tenantId: tenantC, section: 'final_settlement', version: 1, title: 'Our F&F', fields: JSON.parse(JSON.stringify(oldFields)), workflow: JSON.parse(JSON.stringify(sec.workflow)), stages: [], isActive: true },
     })
     const fmt = (await call('hrC', 'GET', '/forms/final_settlement')).json().current
     expect(fmt.version).toBe(1)

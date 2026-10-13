@@ -110,6 +110,12 @@ export interface ScheduleAsset {
   disposedAt?: Date | null
   /** Leasehold: the life is capped at the lease-end month. */
   leaseEndsAt?: Date | null
+  /**
+   * First month THIS row may be charged (a pool layer split off by a unit
+   * transfer: its source charged the months before; the life window still
+   * runs from the original in-service month). Null = the in-service month.
+   */
+  chargeFrom?: Date | null
 }
 
 /** Live (un-reversed) charges by period, in paisa. */
@@ -166,8 +172,11 @@ export function planCharges(
 ): PlannedCharge[] {
   const win = lifeWindow(asset)
   if (!win) return []
-  const start = periodIndex(win.start)
   const end = periodIndex(win.end)
+  const start = asset.chargeFrom
+    ? Math.max(periodIndex(win.start), periodIndex(periodOfPkt(asset.chargeFrom)))
+    : periodIndex(win.start)
+  if (start > end) return []
   let stop = Math.min(periodIndex(throughPeriod), end)
   if (asset.disposedAt) stop = Math.min(stop, periodIndex(periodOfPkt(asset.disposedAt)) - 1)
   if (stop < start) return []

@@ -560,6 +560,10 @@ afterAll(async () => {
   await prisma.auditLog.deleteMany({ where: { tenantId } }).catch(() => {})
   await prisma.tenantMember.deleteMany({ where: { tenantId } }).catch(() => {})
   await prisma.user.deleteMany({ where: { tenantId } })
+  // Deleting the company leaves its accounts company-less, and a register-
+  // controlled account must name its company (accounts_controlled_company_chk,
+  // finance wave B) — release them first.
+  await prisma.account.updateMany({ where: { tenantId }, data: { controlledBy: null } })
   await prisma.tenant.deleteMany({ where: { id: tenantId } })
   await app.close()
 })

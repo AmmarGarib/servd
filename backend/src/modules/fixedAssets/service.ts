@@ -99,6 +99,10 @@ export function scheduleAssetOf(asset: FixedAsset, cls: FixedAssetClass | null |
     carriedAccumulatedCents: toCents(asset.carriedAccumulatedCents),
     disposedAt: asset.status === 'disposed' ? asset.disposedAt : null,
     leaseEndsAt: asset.leaseEndsAt,
+    // A layer split off by a pool-unit transfer is charged from the month it
+    // was created (its source charged every month before — that is its
+    // carried accumulated); its life still ends when the source's does.
+    chargeFrom: asset.splitFromAssetId ? asset.createdAt : null,
   }
 }
 

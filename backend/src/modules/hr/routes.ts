@@ -26,7 +26,7 @@ import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder,
-  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE, ALL_RUN_STATUSES,
+  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
 } from './service.js'
 import {
   mergeSettings, canActOnStep, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -2032,7 +2032,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
     // The reporting tree (service.ts teamUnder — the one walk; the cash
     // requests read it through teamUserIdsUnder).
-    const team: Array<Awaited<ReturnType<typeof teamUnder>>[number] & { todayStatus: 'present' | 'late' | 'absent' | 'on_leave' | 'off' | null }> =
+    const team: Array<TeamMember & { todayStatus: 'present' | 'late' | 'absent' | 'on_leave' | 'off' | null }> =
       (await teamUnder(me.tenantId, me.id)).map((t) => ({ ...t, todayStatus: null }))
 
     if (team.length) {
