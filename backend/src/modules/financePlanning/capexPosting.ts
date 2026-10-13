@@ -25,6 +25,7 @@ import { ACCT } from '../accounting/journal.js'
 import { syncSourcePosting, liveRevision, liveRevisionsFor, type SyncOutcome } from '../accounting/sourcePosting.js'
 import { ASSET_CATEGORIES, postAcquisition, type AssetCategory } from '../fixedAssets/service.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -66,9 +67,22 @@ export async function findCapitalisedAsset(tenantId: string, lineId: string, db:
   })
 }
 
+/**
+ * Post (or re-post, or reverse) one instalment.
+ *
+ * The credit — where the money came from — is lib/bankAccounts.ts
+ * moneyAccountCode with the PROJECT's company: cash → 1010; bank → the
+ * instalment's own bank account (CapexPayment.bankAccountId, a live linked
+ * bank of the project's company), else the company's only bank, else 1020,
+ * and 422 BANK_ACCOUNT_REQUIRED when it has two or more and none is named.
+ * The live-credit rule: when THIS call names neither `payFrom` nor
+ * `bankAccountId`, an instalment already on the books keeps the account it was
+ * credited to (cash-ness is not stored on the row), so correcting an amount
+ * or a date never moves it to another bank.
+ */
 export async function syncCapexPaymentPosting(
   paymentId: string,
-  opts: { tx?: Tx; postedBy?: string; treatment?: CapexTreatment; payFrom?: 'bank' | 'cash' } = {},
+  opts: { tx?: Tx; postedBy?: string; treatment?: CapexTreatment; payFrom?: 'bank' | 'cash'; bankAccountId?: string | null } = {},
 ): Promise<{ status: 'posted' | 'not_paid'; treatment: CapexTreatment | null; outcome: SyncOutcome; entryId: string | null }> {
   const db = (opts.tx ?? prisma) as typeof prisma
   const p = await db.capexPayment.findUnique({
@@ -99,9 +113,12 @@ export async function syncCapexPaymentPosting(
     if (liveDebit === ACCT.AP_SUPPLIERS) debitCode = ACCT.AP_SUPPLIERS
     else if (!live && await findCapitalisedAsset(tenantId, p.lineId, db)) debitCode = ACCT.AP_SUPPLIERS
   }
-  const creditCode = opts.payFrom === 'cash' ? ACCT.CASH_ON_HAND
-    : opts.payFrom === 'bank' ? ACCT.BANK
-    : liveCredit ?? ACCT.BANK
+  const namesMoney = opts.payFrom !== undefined || opts.bankAccountId !== undefined
+  const creditCode = !namesMoney && liveCredit
+    ? liveCredit
+    : (await moneyAccountCode(db, tenantId, opts.payFrom === 'cash'
+        ? { method: 'cash', bankAccountId: null }
+        : { method: 'bank', bankAccountId: p.bankAccountId })).code
   const memo = `${project.name}: ${p.line.item} — ${p.label}${p.paymentRef ? ` ref ${p.paymentRef}` : ''}`.slice(0, 250)
   const conceptId = treatment === 'expense' ? project.conceptId : null
   const r = await syncSourcePosting({

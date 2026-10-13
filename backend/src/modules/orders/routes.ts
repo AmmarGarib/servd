@@ -322,29 +322,52 @@ export async function orderRoutes(fastify: FastifyInstance) {
   )
 
   // ─── Naughty list triggers ──────────────────────────────────────────────
-  // POST /orders/:id/cod-unpaid — staff/cashier marks a cash-on-delivery
-  // order as never paid (driver came back with food OR cash never collected).
-  // Records a strike + appends a note.
+  // POST /orders/:id/cod-unpaid — a manager reports that a delivered
+  // cash-on-delivery order's cash never reached the till. Only a real COD:
+  // an online (non-till) order, completed, with its cash row still pending
+  // (not paid into a drawer). Records ONE strike per order (a second report
+  // of the same order is a no-op, so it cannot stack into a ban) and audits
+  // in the ORDER's company. It used to take any order from any staff role,
+  // and two calls on a PKR 5,000+ order banned the customer.
+  //
+  // The BOOKS are untouched: what happens to the sale when the cash never
+  // arrives (customer owes / rider owes / write-off / not delivered) is
+  // pending owner decision G1 — the payment stays pending, the sale stays
+  // booked, and the order stays on /pos/cod-due until the cash is taken in.
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/cod-unpaid',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req, reply) => {
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
       // Company-scoped — assertConceptAccess bypasses for management roles.
       const order = await prisma.order.findFirst({
         where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
-        select: { id: true, conceptId: true, customerId: true, totalCents: true },
+        select: {
+          id: true, conceptId: true, customerId: true, totalCents: true, status: true, source: true,
+          concept: { select: { tenantId: true } },
+          payments: { where: { method: 'cash', amountCents: { gt: 0 } }, select: { id: true, status: true, amountCents: true } },
+        },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
       await assertConceptAccess(req.staffUser!, order.conceptId)
+      if (order.source === 'pos' || order.payments.length === 0) {
+        throw new AppError('NOT_CASH_ON_DELIVERY', 'This order was not paid cash on delivery', 422)
+      }
+      if (order.status !== 'completed') {
+        throw new AppError('ORDER_NOT_COMPLETED', `This order is ${order.status} — only a delivered (completed) order can be reported unpaid`, 409)
+      }
+      const unpaid = order.payments.filter((p) => p.status === 'pending')
+      if (unpaid.length === 0) {
+        throw new AppError('COD_ALREADY_PAID', 'No cash is still owed on this order — it has been paid in or handed back', 409)
+      }
       if (!order.customerId) {
-        return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Cash-unpaid strike requires a linked customer.' } })
+        throw new AppError('NO_CUSTOMER', 'Cash-unpaid strike requires a linked customer.', 422)
       }
 
       const { recordStrike } = await import('../../lib/strikes.js')
       // High-value orders sting more — sev=2 means 2 incidents → ban.
       const severity = order.totalCents >= 500_000 /* PKR 5,000+ */ ? 2 : 1
-      await recordStrike({
+      const strike = await recordStrike({
         customerId: order.customerId,
         kind: 'cod_unpaid',
         sourceType: 'order',
@@ -354,12 +377,13 @@ export async function orderRoutes(fastify: FastifyInstance) {
         recordedById: req.staffUser?.id,
       })
 
+      const unpaidCents = unpaid.reduce((s, p) => s + p.amountCents, 0)
       await audit({ category: 'identity',
         action: 'order.cod_unpaid', entity: 'Order', entityId: order.id,
-        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
-        metadata: { reason: body.reason, severity, totalCents: order.totalCents },
+        userId: req.staffUser?.id ?? null, tenantId: order.concept.tenantId, userEmail: req.staffUser?.email ?? null,
+        metadata: { reason: body.reason, severity, totalCents: order.totalCents, unpaidCents, duplicate: strike.duplicate },
       })
-      return { ok: true, severity }
+      return { ok: true, severity, duplicate: strike.duplicate, unpaidCents }
     },
   )
 

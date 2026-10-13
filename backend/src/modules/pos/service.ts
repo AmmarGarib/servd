@@ -2186,18 +2186,24 @@ export async function voidOrderItem(input: VoidInput) {
   }, { maxWait: 10_000, timeout: 15_000 })
   const { voided, bill, stock, refund, waste } = result
   if (waste?.postingError) {
-    await flagException({
+    // The waste is logged; only its Dr 5040 / Cr 1210 was refused. Flagged
+    // with the waste log ids so Reconciliation → Backfill unposted re-posts
+    // the SAME entry (postVoidWaste, key pos.void_waste:<line>) — never a
+    // hand-made journal, which would not carry the key and be booked twice.
+    const { flagPostingFailed } = await import('../accounting/journal.js')
+    const { VOID_WASTE_SOURCE } = await import('../inventory/voidWaste.js')
+    await flagPostingFailed({
       tenantId,
-      conceptId: item.order.conceptId,
-      kind: 'posting_failed',
-      severity: 'high',
-      title: `Waste from a voided line not posted (${waste.postingError.code})`,
-      description: `${item.quantity} × ${item.name} was voided after the kitchen fired it. Its stock is logged as waste (PKR ${(waste.costCents / 100).toFixed(0)}) but the ledger refused the entry: ${waste.postingError.message} Book Dr 5040 / Cr 1210 in the open period.`,
+      sourceType: VOID_WASTE_SOURCE,
+      sourceId: item.id,
       entityType: 'OrderItem',
       entityId: item.id,
+      reason: `${waste.postingError.code}: ${waste.postingError.message}`,
+      title: `Waste from a voided line not posted (${waste.postingError.code})`,
+      conceptId: item.order.conceptId,
       actorId: input.actorId,
       amountCents: waste.costCents,
-      metadata: { orderId: input.orderId, wasteLogIds: waste.wasteLogIds, source: `pos.void_waste:${item.id}`, code: waste.postingError.code },
+      metadata: { orderId: input.orderId, wasteLogIds: waste.wasteLogIds, line: `${item.quantity} × ${item.name}`, code: waste.postingError.code },
     })
   }
 
@@ -3622,9 +3628,10 @@ export async function recordCashMovement(input: CashMovementInput) {
   if (input.supplierBillId) {
     const found = await prisma.supplierBill.findFirst({
       where: { id: input.supplierBillId, supplier: { tenantId } },
-      select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, supplier: { select: { name: true } } },
+      select: { id: true, supplierId: true, billNumber: true, status: true, kind: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true, supplier: { select: { name: true } } },
     })
     if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not one of this drawer\'s company\'s', 422)
+    if (found.kind !== 'bill') throw new AppError('NOT_A_BILL', 'That is a credit note, not a bill', 422)
     if (found.status === 'void' || found.status === 'paid') throw new AppError('BILL_NOT_OPEN', `Bill ${found.billNumber} is ${found.status}`, 422)
     const { billDueCents } = await import('../procurement/service.js')
     const due = billDueCents(found)

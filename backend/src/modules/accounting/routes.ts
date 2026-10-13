@@ -7,8 +7,13 @@ import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate, pktToday } from './dates.js'
 import { trialBalance, balanceSheet, profitAndLoss, pnlByConcept, cashFlow } from './reports.js'
-import { salesTaxReturn } from './salesTaxReturn.js'
-import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { salesTaxReturn, taxPaymentsFor } from './salesTaxReturn.js'
+import {
+  TAX_PAYMENT_AUTHORITIES, TAX_PAYMENT_METHODS, monthPeriod,
+  recordTaxPayment, linkTaxPayment, linkCandidates, voidTaxPayment, postTaxReclass,
+} from './taxPayments.js'
+import type { UserRole } from '@prisma/client'
+import { resolveTenantScope, scopeTenantWhere, activeTenantId, assertConceptOwned } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
@@ -37,6 +42,11 @@ const journalEntrySchema = z.object({
 // reverseJournalEntry) carries `manual.reversal:<uuid>`.
 const MANUAL_PREFIX = 'manual:'
 const MANUAL_REVERSAL_PREFIX = 'manual.reversal:'
+
+// Who records tax paid to the authorities, links entries and posts the
+// 2030 reclass: finance and the CEO (finance gap 6). Inside the /accounting
+// module gate like every route here.
+const TAX_PAYERS = ['admin', 'finance'] as UserRole[]
 
 const reverseSchema = z.object({
   reason: z.string().trim().min(5).max(500),
@@ -681,6 +691,29 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             value: fmtPkr(Math.abs(r.amountCents)),
           })
         }
+        for (const r of report.reclassesPosted) {
+          flat.push({ section: 'Reclassified', code: r.reference, name: `${r.conceptName} ${r.month}: ${r.fromAccount} → ${r.toAccount} on ${r.entryDate}`, value: fmtPkr(r.amountCents) })
+        }
+        // Settlement: what was paid for the period and what the books still owe.
+        for (const a of report.byAuthority) {
+          const sec = `Paid — ${a.authority}`
+          flat.push({ section: sec, code: a.output.code, name: 'Paid for this period', value: fmtPkr(a.paidForPeriodCents) })
+          if (a.inputSetOffForPeriodCents !== 0) flat.push({ section: sec, code: a.input.code, name: 'Input set off in those payments', value: fmtPkr(a.inputSetOffForPeriodCents) })
+          flat.push({ section: sec, code: a.output.code, name: 'Ledger balance at period end', value: fmtPkr(a.ledgerBalanceAtEndCents) })
+        }
+        for (const w of report.withholding) {
+          const sec = `Withholding — ${w.authority}`
+          flat.push({ section: sec, code: w.account.code, name: `Withheld in the period (${w.account.name})`, value: fmtPkr(w.account.totalCents) })
+          flat.push({ section: sec, code: w.account.code, name: 'Paid for this period', value: fmtPkr(w.paidForPeriodCents) })
+          flat.push({ section: sec, code: w.account.code, name: 'Ledger balance at period end', value: fmtPkr(w.ledgerBalanceAtEndCents) })
+        }
+        for (const p of report.payments) {
+          flat.push({
+            section: 'Payments', code: p.authority.toUpperCase(),
+            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}`,
+            value: fmtPkr(p.paidCents),
+          })
+        }
         flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (sum of each authority\'s own net)', value: fmtPkr(report.netPayableCents) })
         flat.push({ section: 'Result',     code: '',                          name: 'EXCESS INPUT CARRIED FORWARD (per authority)',   value: fmtPkr(report.carryForwardCents) })
         for (const n of report.notes) flat.push({ section: 'Notes', code: '', name: n, value: '' })
@@ -689,6 +722,168 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       return report
     },
   )
+
+  // ─── Tax paid to the authorities (finance gap 6) ─────────────────────────
+  //
+  // The settlement side of the return (taxPayments.ts). A payment is recorded
+  // in the ACTIVE company's books — the company whose return it is — from one
+  // of THAT company's bank accounts; an existing manual / reconciliation
+  // entry of that company can be linked instead of posting again. Foreign
+  // rows are 404. Recording, linking, voiding and reclassing are finance's
+  // and the CEO's (TAX_PAYERS); every money write is on the books' trail.
+
+  const period = z.union([
+    z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).transform((b) => monthPeriod(b.period)),
+    z.object({ periodFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), periodTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
+      .transform((b) => ({ from: b.periodFrom, to: b.periodTo })),
+  ])
+  const authority = z.enum(TAX_PAYMENT_AUTHORITIES)
+  const optText = (max: number) => z.string().trim().max(max).optional().nullable().transform((v) => v || null)
+
+  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string } }>(
+    '/sales-tax-return/payments',
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
+    async (req) => {
+      const tenantId = activeTenantId(req, 'tax payments are per company')
+      const { from, to } = req.query.dateFrom || req.query.dateTo
+        ? resolveDateRange(req.query.dateFrom, req.query.dateTo)
+        : { from: new Date(0), to: new Date(8.64e15) }
+      return { payments: await taxPaymentsFor(tenantId, from, to) }
+    },
+  )
+
+  fastify.get<{ Querystring: { authority?: string } }>(
+    '/sales-tax-return/payments/candidates',
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
+    async (req) => {
+      const tenantId = activeTenantId(req, 'tax payments are per company')
+      return { entries: await linkCandidates(tenantId, authority.parse(req.query.authority)) }
+    },
+  )
+
+  fastify.post('/sales-tax-return/payments', { preHandler: requireAuth(...TAX_PAYERS) }, async (req, reply) => {
+    const raw = (req.body ?? {}) as Record<string, unknown>
+    const body = z.object({
+      authority,
+      paidCents: zMoneyCents('The amount paid'),
+      inputSetOffCents: zMoneyCents('The input tax set off').default(0),
+      paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      method: z.enum(TAX_PAYMENT_METHODS).default('bank_transfer'),
+      bankAccountId: z.string().trim().min(1).max(64).optional().nullable(),
+      cprNumber: optText(80),
+      notes: optText(500),
+    }).parse(raw)
+    const p = period.parse(raw)
+    // A create: the ACTIVE company's books, never another membership.
+    const tenantId = activeTenantId(req, 'a tax payment is in one company\'s books')
+    const row = await recordTaxPayment({
+      tenantId,
+      authority: body.authority,
+      periodFrom: p.from, periodTo: p.to,
+      paidCents: body.paidCents,
+      inputSetOffCents: body.inputSetOffCents,
+      paidAt: body.paidAt,
+      method: body.method,
+      bankAccountId: body.bankAccountId ?? null,
+      cprNumber: body.cprNumber,
+      notes: body.notes,
+      userId: req.staffUser!.id,
+    })
+    await audit({ category: 'accounting',
+      action: 'salestax.payment',
+      entity: 'SalesTaxPayment',
+      entityId: row.id,
+      userId: req.staffUser!.id, tenantId,
+      userEmail: req.staffUser!.email,
+      after: row,
+      metadata: { ip: req.ip, method: body.method },
+    })
+    return reply.status(201).send(row)
+  })
+
+  fastify.post('/sales-tax-return/payments/link', { preHandler: requireAuth(...TAX_PAYERS) }, async (req, reply) => {
+    const raw = (req.body ?? {}) as Record<string, unknown>
+    const body = z.object({
+      journalEntryId: z.string().uuid(),
+      authority,
+      cprNumber: optText(80),
+      notes: optText(500),
+    }).parse(raw)
+    const p = period.parse(raw)
+    // The entry must be in the ACTIVE company's books — another company's is 404.
+    const tenantId = activeTenantId(req, 'a tax payment is in one company\'s books')
+    const row = await linkTaxPayment({
+      tenantId,
+      journalEntryId: body.journalEntryId,
+      authority: body.authority,
+      periodFrom: p.from, periodTo: p.to,
+      cprNumber: body.cprNumber,
+      notes: body.notes,
+      userId: req.staffUser!.id,
+    })
+    await audit({ category: 'accounting',
+      action: 'salestax.payment_link',
+      entity: 'SalesTaxPayment',
+      entityId: row.id,
+      userId: req.staffUser!.id, tenantId,
+      userEmail: req.staffUser!.email,
+      after: row,
+      metadata: { ip: req.ip, journalEntryId: body.journalEntryId },
+    })
+    return reply.status(201).send(row)
+  })
+
+  fastify.post<{ Params: { id: string } }>('/sales-tax-return/payments/:id/void', { preHandler: requireAuth(...TAX_PAYERS) }, async (req) => {
+    const body = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body ?? {})
+    // Editing an existing row: any company the operator belongs to; others 404.
+    const row = await voidTaxPayment({
+      scope: await scopeTenantWhere(req, 'write'),
+      id: req.params.id,
+      reason: body.reason,
+      userId: req.staffUser!.id,
+    })
+    await audit({ category: 'accounting',
+      action: row.linked ? 'salestax.payment_unlink' : 'salestax.payment_void',
+      entity: 'SalesTaxPayment',
+      entityId: row.id,
+      userId: req.staffUser!.id, tenantId: row.tenantId,
+      userEmail: req.staffUser!.email,
+      before: row,
+      metadata: { ip: req.ip, reason: body.reason },
+    })
+    return { ok: true, id: row.id, reversed: !row.linked }
+  })
+
+  // The one-off move of a provincial brand's output tax out of 2030 (the
+  // return's "To reclassify" rows). Posts in the brand's company, dated in
+  // the sales' month; a closed month is 422 PERIOD_LOCKED (reopen it under
+  // decision 21 first). A repeat finds nothing left to move and is a no-op.
+  fastify.post('/sales-tax-return/reclass', { preHandler: requireAuth(...TAX_PAYERS) }, async (req, reply) => {
+    const body = z.object({
+      conceptId: z.string().uuid(),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    }).parse(req.body ?? {})
+    const owned = await assertConceptOwned(req, body.conceptId, 'write')
+    const concept = await prisma.concept.findUniqueOrThrow({
+      where: { id: owned.id },
+      select: { id: true, tenantId: true, slug: true, name: true, province: true, srbPosId: true },
+    })
+    if (!concept.tenantId) throw new AppError('BRAND_HAS_NO_COMPANY', 'This brand has no company — its books are not known', 422)
+    const result = await postTaxReclass({ concept: { ...concept, tenantId: concept.tenantId }, from: body.from, to: body.to, userId: req.staffUser!.id })
+    if (result.posted) {
+      await audit({ category: 'accounting',
+        action: 'salestax.reclass',
+        entity: 'JournalEntry',
+        entityId: result.entryId,
+        userId: req.staffUser!.id, tenantId: concept.tenantId,
+        userEmail: req.staffUser!.email,
+        after: result,
+        metadata: { ip: req.ip, conceptId: concept.id, month: result.month },
+      })
+    }
+    return reply.status(result.posted ? 201 : 200).send(result)
+  })
 
   // ─── Period close ────────────────────────────────────────────────────────
   //

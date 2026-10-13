@@ -10,16 +10,19 @@
 //      believed a PO had gone out that the supplier never got.
 //  - Receiving (receiving.ts: GRN + moving-average cost + price history + variance log)
 //  - Supplier bills (AP), 3-way matching (PO ↔ receipt ↔ bill)
-//  - Multi-bill payment allocation
+//  - Multi-bill payment allocation, unapplying and voiding a payment
 //  - Aging report
 //  - Reorder suggestions
 //  - PO email dispatch + audit trail
+// Supplier credit notes / returns live in ./creditNotes.ts (the same AP
+// subledger: SupplierBill rows of kind 'credit_note').
 
 import { isBelowPar } from '../../lib/recipeCost.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendEmail } from '../../lib/notify.js'
-import { withholdingForBill, postSupplierBill, postSupplierBillVoid, postSupplierPayment } from '../accounting/supplierPosting.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { withholdingForBill, postSupplierBill, postSupplierBillVoid, postSupplierPayment, postSupplierPaymentVoid } from '../accounting/supplierPosting.js'
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
@@ -530,20 +533,35 @@ async function assertBillReferences(
 }
 
 export async function voidBill(billId: string, userId: string, reason: string) {
-  const bill = await prisma.supplierBill.findUnique({
-    where:   { id: billId },
-    include: { applications: true },
-  })
-  if (!bill) throw new NotFoundError('SupplierBill', billId)
-  if (bill.status === 'void') throw new AppError('INVALID_STATE', 'Bill is already void', 400)
-  if (bill.applications.length > 0) {
-    throw new AppError('HAS_PAYMENTS', 'Cannot void a bill with applied payments — unapply payments first', 400)
-  }
-
   // The void and the ledger reversal (plus undoing the bill's item-cost
   // re-average) commit together; a reversal the ledger refuses (e.g. today is
-  // in a closed period) refuses the void.
+  // in a closed period) refuses the void. The checks run under the bill's row
+  // lock, so a payment or credit note applied at the same moment either lands
+  // first (and is seen here) or waits and then finds the bill void.
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${billId} FOR UPDATE`
+    const bill = await tx.supplierBill.findUnique({
+      where:   { id: billId },
+      include: { applications: { select: { id: true } }, creditsReceived: { select: { id: true } } },
+    })
+    if (!bill) throw new NotFoundError('SupplierBill', billId)
+    if (bill.kind !== 'bill') {
+      throw new AppError('NOT_A_BILL', 'That is a credit note — void it from the credit notes list', 422)
+    }
+    if (bill.status === 'void') throw new AppError('INVALID_STATE', 'Bill is already void', 400)
+    if (bill.applications.length > 0) {
+      throw new AppError('HAS_PAYMENTS', 'Cannot void a bill with applied payments — unapply payments first', 400)
+    }
+    if (bill.creditsReceived.length > 0) {
+      throw new AppError('HAS_CREDITS', 'Cannot void a bill with credit notes applied to it — unapply them first', 400)
+    }
+    // A live credit note against this bill books part of it backwards; voiding
+    // the bill as well would take the same goods and tax off the books twice.
+    const liveCredits = await tx.supplierBill.count({ where: { originalBillId: billId, kind: 'credit_note', status: { not: 'void' } } })
+    if (liveCredits > 0) {
+      throw new AppError('HAS_CREDIT_NOTES', 'This bill has credit notes against it — void them first, then void the bill', 400)
+    }
+
     const updated = await tx.supplierBill.update({
       where: { id: billId },
       data:  { status: 'void', voidedAt: new Date(), voidReason: reason, notes: bill.notes ? `${bill.notes}\n[voided by ${userId}]` : `[voided by ${userId}]` },
@@ -608,33 +626,71 @@ export async function matchBill(billId: string) {
 // ─── What a bill still owes ──────────────────────────────────────────────────
 //
 // ONE rule, net of withholding: the supplier is owed totalCents − whtCents
-// (that is what AP 2010 was credited with), less what has been applied. The
-// payment paths, the bill status, the AP aging, the supplier statement and a
-// petty-cash spend against a bill all use it. They used to use the gross
-// total, so a bill paid net of withholding stayed 'partially_paid' for ever
-// and showed as owing the WHT the ledger had already moved to FBR.
+// (that is what AP 2010 was credited with), less what has been paid and the
+// supplier credit notes applied to it (creditedCents). The payment paths, the
+// bill status, the AP aging, the supplier statement and a petty-cash or till
+// spend against a bill all use it. They used to use the gross total, so a bill
+// paid net of withholding stayed 'partially_paid' for ever and showed as
+// owing the WHT the ledger had already moved to FBR.
+//
+// Callers outside procurement that pre-check a bill (trustops petty cash, the
+// till pay-out) must select creditedCents too; the authoritative check is
+// createPaymentTx's, on the full locked row.
 
-type BillAmounts = { totalCents: DbMoney; whtCents: DbMoney; paidCents: DbMoney }
+type BillAmounts = { totalCents: DbMoney; whtCents: DbMoney; paidCents: DbMoney; creditedCents?: DbMoney | null }
 
-/** What the supplier is still owed on this bill. */
+/** What the supplier is still owed on this bill: total − WHT − paid − credited. */
 export function billDueCents(b: BillAmounts): number {
-  return toCents(b.totalCents) - toCents(b.whtCents) - toCents(b.paidCents)
+  return toCents(b.totalCents) - toCents(b.whtCents) - toCents(b.paidCents) - (b.creditedCents == null ? 0 : toCents(b.creditedCents))
 }
 
-/** The status a bill's payments put it in (void and draft are left alone). */
-function paidStatus(b: BillAmounts & { status: string }): string {
+/**
+ * The status a bill's payments and credit notes put it in, from scratch —
+ * 'paid' when nothing is still due, 'partially_paid' when something has been
+ * settled, else 'open' (so unapplying a payment re-opens the bill). Void and
+ * draft are left alone. Bills only; a credit note has its own statuses.
+ */
+export function settledStatus(b: BillAmounts & { status: string }): string {
   if (b.status === 'void' || b.status === 'draft') return b.status
-  const paid = toCents(b.paidCents)
-  if (paid > 0 && billDueCents(b) <= 0) return 'paid'
-  return paid > 0 ? 'partially_paid' : b.status
+  const settled = toCents(b.paidCents) + (b.creditedCents == null ? 0 : toCents(b.creditedCents))
+  if (settled > 0 && billDueCents(b) <= 0) return 'paid'
+  return settled > 0 ? 'partially_paid' : 'open'
+}
+
+/** Lock bills (id order, so two payers never deadlock) and re-read them. */
+export async function lockBills(tx: Prisma.TransactionClient, billIds: string[]) {
+  const ids = Array.from(new Set(billIds)).sort()
+  if (ids.length === 0) return []
+  await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ANY(${ids}::text[]) ORDER BY id FOR UPDATE`
+  return tx.supplierBill.findMany({ where: { id: { in: ids } } })
+}
+
+/** A bill a payment or credit can be applied to: a live bill of `supplierId`. */
+export function assertPayableBill(
+  b: { billNumber: string; kind: string; supplierId: string; status: string },
+  supplierId: string,
+): void {
+  if (b.kind !== 'bill')            throw new AppError('NOT_A_BILL', `${b.billNumber} is a credit note, not a bill`, 422)
+  if (b.supplierId !== supplierId)  throw new AppError('SUPPLIER_MISMATCH', `Bill ${b.billNumber} belongs to a different supplier`, 400)
+  if (b.status === 'void')          throw new AppError('BILL_VOID', `Bill ${b.billNumber} is void`, 400)
 }
 
 // ─── Supplier Payments ───────────────────────────────────────────────────────
 
+export type SupplierPaymentMethod = 'cash' | 'bank_transfer' | 'cheque' | 'wallet'
+
 export interface CreatePaymentInput {
   supplierId:  string
   paymentDate: string
-  method:      'cash' | 'bank_transfer' | 'cheque' | 'wallet'
+  method:      SupplierPaymentMethod
+  /**
+   * The company bank account the money left (Configuration → Bank accounts).
+   * Bank transfer / cheque: optional when the supplier's company has one bank
+   * (it is used), required when it has two or more (422 BANK_ACCOUNT_REQUIRED).
+   * Wallet (JazzCash / Easypaisa): always required — the wallet is its own
+   * account row with its own chart code, never the operating bank. Cash: none.
+   */
+  bankAccountId?: string | null
   reference?:  string | null
   amountCents: number
   notes?:      string | null
@@ -665,18 +721,39 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
   if (totalAllocated > input.amountCents) {
     throw new AppError('OVER_ALLOCATED', 'Allocations exceed payment amount', 400)
   }
+  if (new Set(allocations.map((a) => a.billId)).size !== allocations.length) {
+    throw new AppError('DUPLICATE_BILL', 'Each bill can appear only once in a payment', 400)
+  }
 
-  // Validate all bills belong to the same supplier and aren't void/paid
+  // Which account the money left — the SUPPLIER's company's (finance gaps #9).
+  // A bank of another company, a deleted / unlinked one, or a missing pick
+  // when the company has two banks is 422 here, before anything is written.
+  const supplier = await tx.supplier.findUnique({ where: { id: input.supplierId }, select: { id: true, tenantId: true } })
+  if (!supplier) throw new NotFoundError('Supplier', input.supplierId)
+  if (input.method === 'wallet' && !input.bankAccountId) {
+    throw new AppError(
+      'BANK_ACCOUNT_REQUIRED',
+      'Pick the JazzCash / Easypaisa account the money left (add it under Configuration → Bank accounts if it is not there)',
+      422,
+    )
+  }
+  let bankAccountId: string | null = null
+  if (supplier.tenantId) {
+    bankAccountId = (await moneyAccountCode(tx, supplier.tenantId, { method: input.method, bankAccountId: input.bankAccountId ?? null })).bankAccountId
+  } else if (input.bankAccountId) {
+    // A supplier with no company never reaches any ledger; no bank can be checked against it.
+    throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before paying it from a bank account', 422)
+  }
+
+  // Validate all bills belong to the same supplier and aren't void/paid —
+  // under their row locks, so two payments can't both take the last of a bill.
   if (allocations.length > 0) {
-    const bills = await tx.supplierBill.findMany({
-      where: { id: { in: allocations.map((a) => a.billId) } },
-    })
+    const bills = await lockBills(tx, allocations.map((a) => a.billId))
     for (const a of allocations) {
       const b = bills.find((x) => x.id === a.billId)
-      if (!b)                              throw new NotFoundError('SupplierBill', a.billId)
-      if (b.supplierId !== input.supplierId) throw new AppError('SUPPLIER_MISMATCH', `Bill ${b.billNumber} belongs to a different supplier`, 400)
-      if (b.status === 'void')             throw new AppError('BILL_VOID',  `Bill ${b.billNumber} is void`,        400)
-      if (b.status === 'paid')             throw new AppError('BILL_PAID',  `Bill ${b.billNumber} is fully paid`, 400)
+      if (!b) throw new NotFoundError('SupplierBill', a.billId)
+      assertPayableBill(b, input.supplierId)
+      if (b.status === 'paid') throw new AppError('BILL_PAID', `Bill ${b.billNumber} is fully paid`, 400)
 
       const remaining = billDueCents(b)
       if (a.amountAppliedCents > remaining) {
@@ -690,6 +767,7 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
       supplierId:  input.supplierId,
       paymentDate: new Date(input.paymentDate),
       method:      input.method,
+      bankAccountId,
       reference:   input.reference ?? null,
       amountCents: input.amountCents,
       appliedCents: totalAllocated,
@@ -706,7 +784,7 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
       where: { id: a.billId },
       data:  { paidCents: { increment: a.amountAppliedCents } },
     })
-    const newStatus = paidStatus(bill)
+    const newStatus = settledStatus(bill)
     if (newStatus !== bill.status) {
       await tx.supplierBill.update({ where: { id: bill.id }, data: { status: newStatus } })
     }
@@ -723,36 +801,50 @@ export async function allocatePayment(
 ) {
   applications.forEach((a) => assertMoneyFits(a.amountAppliedCents, 'An amount applied to a bill'))
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM supplier_payments WHERE id = ${paymentId} FOR UPDATE`
     const payment = await tx.supplierPayment.findUnique({
       where:   { id: paymentId },
       include: { applications: true },
     })
     if (!payment) throw new NotFoundError('SupplierPayment', paymentId)
+    if (payment.voidedAt) throw new AppError('PAYMENT_VOID', 'This payment is void', 422)
 
     const alreadyApplied = payment.applications.reduce((s, a) => s + toCents(a.amountAppliedCents), 0)
     const adding         = applications.reduce((s, a) => s + a.amountAppliedCents, 0)
     if (alreadyApplied + adding > toCents(payment.amountCents)) {
       throw new AppError('OVER_ALLOCATED', 'New allocations exceed remaining payment amount', 400)
     }
+    if (new Set(applications.map((a) => a.billId)).size !== applications.length) {
+      throw new AppError('DUPLICATE_BILL', 'Each bill can appear only once in an allocation', 400)
+    }
 
+    const bills = await lockBills(tx, applications.map((a) => a.billId))
     for (const a of applications) {
-      const bill = await tx.supplierBill.findUnique({ where: { id: a.billId } })
+      const bill = bills.find((x) => x.id === a.billId)
       if (!bill) throw new NotFoundError('SupplierBill', a.billId)
-      if (bill.supplierId !== payment.supplierId) throw new AppError('SUPPLIER_MISMATCH', 'Bill belongs to different supplier', 400)
-      if (bill.status === 'void') throw new AppError('BILL_VOID', `Bill ${bill.billNumber} is void`, 400)
+      assertPayableBill(bill, payment.supplierId)
       const remaining = billDueCents(bill)
       if (a.amountAppliedCents > remaining) {
         throw new AppError('OVER_APPLIED', `Bill ${bill.billNumber} only has ${remaining} due`, 400)
       }
 
-      await tx.supplierPaymentApplication.create({
-        data: { paymentId, billId: a.billId, amountAppliedCents: a.amountAppliedCents },
-      })
+      // A second allocation to the same bill adds to the first.
+      const prior = payment.applications.find((x) => x.billId === a.billId)
+      if (prior) {
+        await tx.supplierPaymentApplication.update({
+          where: { id: prior.id },
+          data:  { amountAppliedCents: { increment: a.amountAppliedCents } },
+        })
+      } else {
+        await tx.supplierPaymentApplication.create({
+          data: { paymentId, billId: a.billId, amountAppliedCents: a.amountAppliedCents },
+        })
+      }
       const updated = await tx.supplierBill.update({
         where: { id: a.billId },
         data:  { paidCents: { increment: a.amountAppliedCents } },
       })
-      const newStatus = paidStatus(updated)
+      const newStatus = settledStatus(updated)
       if (newStatus !== updated.status) {
         await tx.supplierBill.update({ where: { id: updated.id }, data: { status: newStatus } })
       }
@@ -767,6 +859,86 @@ export async function allocatePayment(
   })
 }
 
+/**
+ * Take a payment off one bill (finance gaps 14a / extra finding): the money
+ * goes back to the payment's unapplied balance, the bill re-opens. No ledger
+ * change — Dr 2010 already happened when the payment posted; this only moves
+ * which bill it settles. Under the payment's then the bill's row lock.
+ */
+export async function unapplyPayment(paymentId: string, billId: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM supplier_payments WHERE id = ${paymentId} FOR UPDATE`
+    await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${billId} FOR UPDATE`
+    const application = await tx.supplierPaymentApplication.findUnique({
+      where: { paymentId_billId: { paymentId, billId } },
+    })
+    if (!application) throw new AppError('NOT_APPLIED', 'This payment is not applied to that bill', 422)
+    const amount = toCents(application.amountAppliedCents)
+    await tx.supplierPaymentApplication.delete({ where: { id: application.id } })
+    const bill = await tx.supplierBill.update({
+      where: { id: billId },
+      data:  { paidCents: { decrement: amount } },
+    })
+    const status = settledStatus(bill)
+    if (status !== bill.status) await tx.supplierBill.update({ where: { id: billId }, data: { status } })
+    const payment = await tx.supplierPayment.update({
+      where: { id: paymentId },
+      data:  { appliedCents: { decrement: amount } },
+    })
+    return { payment, bill: { id: bill.id, billNumber: bill.billNumber, status, paidCents: toCents(bill.paidCents) }, amountCents: amount }
+  })
+}
+
+/**
+ * True when the payment was cash out of a petty-cash box or a till drawer
+ * (trustops / pos pay a bill through createPaymentTx). That cash has left the
+ * box: voiding the payment here would put it back into 1010 with nothing in
+ * the box — it is unapplied (or the supplier's refund recorded), never voided.
+ */
+async function paidFromCashBox(tx: Prisma.TransactionClient, payment: { id: string; method: string; reference: string | null }): Promise<boolean> {
+  if (payment.method !== 'cash') return false
+  if (await tx.pettyCashMovement.count({ where: { supplierPaymentId: payment.id } }) > 0) return true
+  const tillPayout = await tx.auditLog.count({
+    where: { action: 'drawer.payout', metadata: { path: ['supplierPaymentId'], equals: payment.id } },
+  })
+  return tillPayout > 0 || (payment.reference ?? '').startsWith('till pay-out')
+}
+
+/**
+ * Void a supplier payment (bounced cheque, recorded twice, wrong supplier):
+ * only while it is applied to no bill (422 PAYMENT_APPLIED — unapply it
+ * first). Its entry is reversed in the same transaction (dated today;
+ * 'supplier.payment.void'), so a closed period refuses the void. Idempotent:
+ * voiding a void payment returns it unchanged.
+ */
+export async function voidPayment(paymentId: string, userId: string, reason: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM supplier_payments WHERE id = ${paymentId} FOR UPDATE`
+    const payment = await tx.supplierPayment.findUnique({
+      where:   { id: paymentId },
+      include: { applications: { select: { id: true } } },
+    })
+    if (!payment) throw new NotFoundError('SupplierPayment', paymentId)
+    if (payment.voidedAt) return { payment, alreadyVoid: true as const, reversal: null }
+    if (payment.applications.length > 0 || toCents(payment.appliedCents) !== 0) {
+      throw new AppError('PAYMENT_APPLIED', 'This payment is applied to bills — unapply it from each bill first', 422)
+    }
+    if (await paidFromCashBox(tx, payment)) {
+      throw new AppError(
+        'PAYMENT_FROM_CASH_BOX',
+        'This cash was paid out of petty cash or a till — it has left the box, so the payment can\'t be voided. Unapply it from the bill instead, and record any refund from the supplier.',
+        422,
+      )
+    }
+    const updated = await tx.supplierPayment.update({
+      where: { id: paymentId },
+      data:  { voidedAt: new Date(), voidReason: reason },
+    })
+    const reversal = await postSupplierPaymentVoid(paymentId, reason, { tx, postedBy: userId })
+    return { payment: updated, alreadyVoid: false as const, reversal }
+  })
+}
+
 // ─── AP aging ────────────────────────────────────────────────────────────────
 //
 // THE accounts-payable aging: the Accounting AP aging page, the Procurement
@@ -776,10 +948,13 @@ export async function allocatePayment(
 // fourth "outstanding" on the statement; none of them tied to the ledger.
 //
 // Per supplier, it ties to ledger AP 2010:
-//   buckets   each open bill's billDueCents (net of withholding), aged by
-//             days past its DUE date (current / 1-30 / 31-60 / 61-90 / 90+)
-//   credits   payments not yet applied to a bill, plus any bill paid beyond
-//             what it owed — both already debited to AP in full
+//   buckets   each open bill's billDueCents (net of withholding, payments and
+//             credit notes applied), aged by days past its DUE date
+//             (current / 1-30 / 31-60 / 61-90 / 90+)
+//   credits   payments not yet applied to a bill, the part of each supplier
+//             credit note not yet applied to a bill (creditNotesCents), plus
+//             any bill paid beyond what it owed — all already debited to AP
+//             in full. Void payments and void credit notes are out.
 //   opening   the supplier's opening balance AS POSTED to the ledger
 //             (openingBalance.ts posts Supplier.openingBalanceCents once, as a
 //             delta, Dr 3020 / Cr 2010) — its own column and inside `total`
@@ -806,6 +981,8 @@ export interface AgingRow {
   '61_90': number
   '90_plus': number
   creditsCents: number
+  /** Of creditsCents: supplier credit notes not yet applied to a bill. */
+  creditNotesCents: number
   total: number
   openingCents: number
   openingUnpostedCents: number
@@ -828,7 +1005,15 @@ function agingBucket(daysPastDue: number): AgingBucketKey {
   return '90_plus'
 }
 
-const emptyTotals = (): AgingTotals => ({ bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, creditsCents: 0, total: 0, openingCents: 0, openingUnpostedCents: 0 })
+const emptyTotals = (): AgingTotals => ({ bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, creditsCents: 0, creditNotesCents: 0, total: 0, openingCents: 0, openingUnpostedCents: 0 })
+
+/**
+ * What is left of a supplier credit note to apply to bills: what it debited
+ * to AP (total − its WHT share) less what has been applied (its creditedCents).
+ */
+export function creditNoteAvailableCents(cn: { totalCents: DbMoney; whtCents: DbMoney; creditedCents: DbMoney }): number {
+  return toCents(cn.totalCents) - toCents(cn.whtCents) - toCents(cn.creditedCents)
+}
 
 async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): Promise<AgingRow[]> {
   const suppliers = await prisma.supplier.findMany({
@@ -837,9 +1022,9 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
       id: true, name: true, tenantId: true, openingBalanceCents: true,
       bills: {
         where: { status: { notIn: ['void', 'draft'] } },
-        select: { dueDate: true, totalCents: true, whtCents: true, paidCents: true, status: true },
+        select: { kind: true, dueDate: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true, status: true },
       },
-      payments: { select: { amountCents: true, appliedCents: true } },
+      payments: { where: { voidedAt: null }, select: { amountCents: true, appliedCents: true } },
     },
   })
 
@@ -853,10 +1038,15 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
     const row: AgingRow = {
       supplierId: s.id, supplierName: s.name, tenantId: s.tenantId,
       bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0,
-      creditsCents: 0, total: 0, openingCents,
+      creditsCents: 0, creditNotesCents: 0, total: 0, openingCents,
       openingUnpostedCents: s.tenantId ? opening - openingCents : 0,
     }
     for (const b of s.bills) {
+      if (b.kind === 'credit_note') {
+        const left = creditNoteAvailableCents(b)
+        if (left > 0) { row.creditsCents += left; row.creditNotesCents += left }
+        continue
+      }
       const due = billDueCents(b)
       if (due < 0) { row.creditsCents += -due; continue }   // paid beyond what it owed
       if (due === 0) continue
@@ -875,7 +1065,7 @@ function totalsOf(rows: AgingRow[]): AgingTotals {
   for (const r of rows) {
     t.bills += r.bills
     t.current += r.current; t['1_30'] += r['1_30']; t['31_60'] += r['31_60']; t['61_90'] += r['61_90']; t['90_plus'] += r['90_plus']
-    t.creditsCents += r.creditsCents; t.total += r.total; t.openingCents += r.openingCents
+    t.creditsCents += r.creditsCents; t.creditNotesCents += r.creditNotesCents; t.total += r.total; t.openingCents += r.openingCents
     t.openingUnpostedCents += r.openingUnpostedCents
   }
   return t

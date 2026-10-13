@@ -181,9 +181,9 @@ describe('gift cards (owner decision 14)', () => {
   it('another company does not see it', async () => {
     const r = await call('GET', '/gift-cards', auth(userB))
     expect(r.statusCode).toBe(200)
-    expect(r.json().map((c: { id: string }) => c.id)).not.toContain(cardId)
+    expect(r.json().items.map((c: { id: string }) => c.id)).not.toContain(cardId)
     const mine = await call('GET', '/gift-cards', auth(userA))
-    expect(mine.json().map((c: { id: string }) => c.id)).toContain(cardId)
+    expect(mine.json().items.map((c: { id: string }) => c.id)).toContain(cardId)
   })
 
   it("B cannot redeem A's card at B's till (404, balance untouched)", async () => {
@@ -213,7 +213,7 @@ describe('gift cards (owner decision 14)', () => {
   })
 
   it("B cannot void A's card", async () => {
-    const r = await call('POST', `/gift-cards/${cardId}/void`, auth(userB), { reason: 'fraud test' })
+    const r = await call('POST', `/gift-cards/${cardId}/void`, auth(userB), { reason: 'fraud test', disposition: 'refund', refundMethod: 'cash' })
     expect(r.statusCode).toBe(404)
     expect((await prisma.giftCard.findUniqueOrThrow({ where: { id: cardId } })).status).toBe('active')
   })

@@ -13,7 +13,9 @@
 //   - the order's bill and its pending payment come down by what the card
 //     paid, in the same transaction as the balance decrement, so the guest is
 //     never charged twice and the card is never drained for nothing;
-//   - expiry is enforced (and recorded), redeemed_full is set at zero.
+//   - expiry is enforced from the instant expiresAt passes (the daily sweep,
+//     workers/giftCardExpiry.ts, records the 'expired' status — a write here
+//     would be rolled back by the throw); redeemed_full is set at zero.
 //
 // The ledger side (ONL-05): the redemption row IS the card-paid share. The
 // sale that the order becomes — its 'order.complete' entry, or the shift close
@@ -22,7 +24,9 @@
 // (accounting/orderPosting.ts computeSaleAccounting / giftCardAppliedOf). A
 // refund that re-credits the card books the mirror ('order.refund_giftcard':
 // Dr revenue / tax shares, Cr 2080); a cancel re-credits it with no entry,
-// because a cancelled order never booked a sale.
+// because a cancelled order never booked a sale. Neither reopens a voided or
+// expired card: the value waits on it for a manager to settle (./books.ts).
+// Issue, void, expiry and the 2080 check: ./books.ts.
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -110,8 +114,9 @@ export async function redeemGiftCardTx(tx: Tx, input: RedeemGiftCardInput): Prom
   const card = await tx.giftCard.findFirst({ where: { code, tenantId } })
   if (!card) throw new NotFoundError('GiftCard', code)
   if (card.status !== 'active') throw new AppError('GIFTCARD_INACTIVE', `Card is ${card.status}`, 422)
+  // Every caller runs this inside a transaction, so a status write before the
+  // throw was always rolled back; the expiry sweep records it instead.
   if (card.expiresAt && card.expiresAt < new Date()) {
-    await tx.giftCard.update({ where: { id: card.id }, data: { status: 'expired' } })
     throw new AppError('GIFTCARD_EXPIRED', 'Gift card has expired', 422)
   }
 

@@ -39,13 +39,13 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-6 pt-5 border-b border-white/[0.05]">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">HR</p>
             <h1 className="text-2xl font-black text-white/90">{title}</h1>
             {subtitle && <p className="text-sm text-white/40 mt-1 max-w-3xl">{subtitle}</p>}
           </div>
-          {actions && <div className="flex gap-2 shrink-0">{actions}</div>}
+          {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
         </div>
         <nav className="flex gap-1 overflow-x-auto mt-4 -mb-px">
           {NAV.filter((n) => isHrAdmin || n.staff).map((n) => {

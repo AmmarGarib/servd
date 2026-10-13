@@ -42,6 +42,7 @@ import {
   assertMemberOfCompany, assertCapexProjectOfCompany,
 } from './companyRefs.js'
 import { type DbMoney, assertMoneyFits, sumCents, toCents, zMoneyCents } from '../../lib/money.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 
 const STATUS_ENUM = ['not_quoted', 'quoted', 'ordered', 'partial_paid', 'delivered', 'installed', 'commissioned', 'snag', 'done'] as const
 
@@ -534,6 +535,20 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     // How it is booked — defaults from what the line is (capexTreatmentOf).
     treatment:   z.enum(['capital', 'prepaid', 'expense']).optional(),
     payFrom:     z.enum(['bank', 'cash']).optional(),
+    // The company bank account it is paid from — the PROJECT's company's
+    // (lib/bankAccounts.ts moneyAccountCode; 422 otherwise). Stored on the
+    // instalment; null = the company's only bank.
+    bankAccountId: z.string().min(1).nullable().optional(),
+  }
+
+  // A bank account named on an instalment must be a live, linked bank of the
+  // PROJECT's company — checked on every save, paid or not, so a scheduled
+  // instalment can never carry another company's bank. Cash names none.
+  async function assertInstalmentBank(projectTenantId: string | null, payFrom: 'bank' | 'cash' | undefined, bankAccountId: string | null | undefined): Promise<void> {
+    if (!bankAccountId) return
+    if (payFrom === 'cash') throw new AppError('BANK_ACCOUNT_ON_CASH', 'A cash payment does not use a bank account', 422)
+    if (!projectTenantId) throw new AppError('PROJECT_HAS_NO_COMPANY', 'This capex project is not bound to a company', 422)
+    await moneyAccountCode(prisma, projectTenantId, { method: 'bank', bankAccountId })
   }
 
   fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/payments',
@@ -550,19 +565,22 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           id: req.params.lineId,
           project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
+        include: { project: { select: { tenantId: true } } },
       })
       if (!ownedLine) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
-      const { treatment, payFrom, ...data } = body
+      const { treatment, payFrom, bankAccountId, ...data } = body
+      await assertInstalmentBank(ownedLine.project.tenantId, payFrom, bankAccountId)
       const result = await prisma.$transaction(async (tx) => {
         const p = await tx.capexPayment.create({
           data: {
             ...data,
             lineId: req.params.lineId,
+            bankAccountId: payFrom === 'cash' ? null : (bankAccountId ?? null),
             dueDate: data.dueDate ? new Date(data.dueDate) : null,
             paidAt:  data.paidAt  ? new Date(data.paidAt)  : null,
           },
         })
-        const ledger = await syncCapexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id, treatment, payFrom })
+        const ledger = await syncCapexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id, treatment, payFrom, bankAccountId })
         return { ...p, ledger }
       })
       // Bump line.paidCents from sum of paid payments
@@ -580,18 +598,22 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           id: req.params.paymentId,
           line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         },
+        include: { line: { select: { project: { select: { tenantId: true } } } } },
       })
       if (!ownedPayment) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
-      const { treatment, payFrom, ...data } = body
+      const { treatment, payFrom, bankAccountId, ...data } = body
+      await assertInstalmentBank(ownedPayment.line.project.tenantId, payFrom, bankAccountId)
       const updated = await prisma.$transaction(async (tx) => {
         const updated = await tx.capexPayment.update({
           where: { id: ownedPayment.id },
           data: {
             ...data,
+            // Paid in cash: no bank account. Otherwise only when named.
+            ...(payFrom === 'cash' ? { bankAccountId: null } : bankAccountId !== undefined ? { bankAccountId } : {}),
             paidAt: data.paidAt !== undefined ? (data.paidAt ? new Date(data.paidAt) : null) : undefined,
           },
         })
-        const ledger = await syncCapexPaymentPosting(updated.id, { tx, postedBy: req.staffUser!.id, treatment, payFrom })
+        const ledger = await syncCapexPaymentPosting(updated.id, { tx, postedBy: req.staffUser!.id, treatment, payFrom, bankAccountId })
         return { ...updated, ledger }
       })
       await recalcLinePaid(updated.lineId)

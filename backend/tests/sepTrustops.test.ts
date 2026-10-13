@@ -150,7 +150,18 @@ describe('petty cash boxes belong to one company', () => {
     expect(spend.statusCode).toBe(404)
     const box = await prisma.pettyCashBox.findUnique({ where: { id: boxA } })
     expect(box!.floatCents).toBe(100_000)
-    expect(await prisma.pettyCashMovement.count({ where: { boxId: boxA } })).toBe(0)
+    // Only the opening float (written as the box's first top-up) — nothing of B's.
+    const moves = await prisma.pettyCashMovement.findMany({ where: { boxId: boxA } })
+    expect(moves.map((m) => [m.type, m.amountCents, m.reason])).toEqual([['topup', 100_000, 'Opening float']])
+  })
+
+  it('B cannot edit A\'s box or move cash out of it', async () => {
+    expect((await call('mgrB', 'PATCH', `/trustops/petty-cash/boxes/${boxA}`, { name: 'Mine now' })).statusCode).toBe(404)
+    const boxB = (await call('mgrB', 'POST', '/trustops/petty-cash/boxes', { name: 'B box', custodianId: users['mgrB']!.id, floatCents: 1_000 })).json().id
+    expect((await call('mgrB', 'POST', '/trustops/petty-cash/transfers', { fromBoxId: boxA, toBoxId: boxB, amountCents: 1_000, reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', '/trustops/petty-cash/transfers', { fromBoxId: boxB, toBoxId: boxA, amountCents: 1_000, reason: 'x' })).statusCode).toBe(404)
+    const box = await prisma.pettyCashBox.findUnique({ where: { id: boxA } })
+    expect(box).toMatchObject({ name: 'FOH box', floatCents: 100_000 })
   })
 
   it('B\'s manager PIN cannot lift A\'s top-up limit; A\'s can', async () => {

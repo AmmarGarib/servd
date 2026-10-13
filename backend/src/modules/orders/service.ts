@@ -1598,11 +1598,26 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
     // a SALE is undone now, once — a ticket refunded in full before the
     // cancel, or a till bill whose home drawer booked the sale but took no
     // money, has no hand-back that would post it. Idempotent; nothing to
-    // undo → no entry. Never blocks the cancel.
-    const { postCancelledTicketUnwind } = await import('../pos/service.js')
-    await postCancelledTicketUnwind(id, input.actor?.id ?? 'system').catch((err) =>
-      console.error(`[journal] cancel unwind failed for ${status} order ${id}:`, (err as Error).message),
-    )
+    // undo → no entry. Never blocks the cancel; a refusal is flagged
+    // posting_failed in the order's company and re-posted by Reconciliation →
+    // Backfill unposted (the unwind is idempotent on the order).
+    const { postCancelledTicketUnwind, CANCEL_UNWIND_SOURCE } = await import('../pos/service.js')
+    try {
+      await postCancelledTicketUnwind(id, input.actor?.id ?? 'system')
+    } catch (err) {
+      const { flagPostingFailed } = await import('../accounting/journal.js')
+      const o = await orderBooksOf(id).catch(() => null)
+      await flagPostingFailed({
+        tenantId: o?.concept.tenantId ?? null,
+        sourceType: CANCEL_UNWIND_SOURCE, sourceId: id,
+        entityType: 'Order', entityId: id,
+        reason: (err as Error).message,
+        title: `A ${status} order's earlier sale booking was not undone in the ledger`,
+        conceptId: o?.conceptId ?? null,
+        actorId: input.actor?.id ?? null,
+        amountCents: o?.totalCents ?? null,
+      })
+    }
   }
 
   // Audit only what actually happened: a repeat cancel is a no-op, not a

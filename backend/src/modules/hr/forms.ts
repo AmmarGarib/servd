@@ -79,6 +79,13 @@ export interface HrSection {
   effect?: string
 }
 
+/**
+ * A text field whose `ref` is this holds a bank account id (Configuration →
+ * Bank accounts) of the record's own company — checked like any other
+ * reference (routes checkReferences), shown as the company's bank picker.
+ */
+export const BANK_ACCOUNT_REF = 'bank_account'
+
 // ── small builders ──
 const t = (key: string, label: string, extra: Partial<HrField> = {}): HrField => ({ key, label, type: 'text', ...extra })
 const f = (key: string, label: string, type: FieldType, extra: Partial<HrField> = {}): HrField => ({ key, label, type, ...extra })
@@ -540,7 +547,7 @@ export const HR_SECTIONS: HrSection[] = [
 
   { key: 'loan', specNo: 23, title: 'Loans & advances', group: 'Pay', kind: 'record',
     workflow: [HR, MGMT], requires: ['employeeId', 'amountCents', 'quantity', 'effectiveDate'],
-    effect: 'Once approved, one installment is deducted in each payroll from the first deduction month until repaid.',
+    effect: 'Once approved it is paid out and booked (from the bank or the safe), and one installment is deducted in each payroll from the first deduction month until repaid.',
     fields: [
       emp(),
       sel('type', 'Type', ['advance', 'loan'], { required: true, bind: 'category' }),
@@ -549,6 +556,11 @@ export const HR_SECTIONS: HrSection[] = [
       f('installments', 'Number of installments', 'number', { required: true, bind: 'quantity', integer: true, min: 1 }),
       f('firstDeduction', 'First deduction month', 'date', { required: true, bind: 'effectiveDate' }),
       f('reason', 'Reason', 'textarea'),
+      // Where the money comes from when it is paid out on approval (hr/ledger.ts
+      // postLoanDisbursement reads these keys). Blank = the way the employee
+      // is paid. HR's, never the employee's (hidden from self-service).
+      sel('paidFrom', 'Paid from', ['bank', 'cash'], { group: 'Payment', help: 'Blank = the way the employee is paid (cash staff from the safe, the rest by bank)' }),
+      t('bankAccount', 'Bank account', { group: 'Payment', ref: BANK_ACCOUNT_REF, help: 'Blank = the company\'s bank. Management can pick it when approving.' }),
     ] },
 
   { key: 'resignation', specNo: 24, title: 'Resignations', group: 'Separation', kind: 'record',
@@ -589,7 +601,7 @@ export const HR_SECTIONS: HrSection[] = [
 
   { key: 'final_settlement', specNo: 25, title: 'Full & final settlement', group: 'Separation', kind: 'record',
     workflow: [HR, MGMT], requires: ['employeeId', 'endDate'],
-    effect: 'Use "Calculate" to fill the figures from salary, OT, leave balance and open loans; adjust, then approve.',
+    effect: 'Use "Calculate" to fill the figures from salary, OT, leave balance, open loans, income tax and EOBI / SESSI; adjust, then approve. Approval books it; "Mark paid" records the payment.',
     fields: [
       emp(),
       f('lastWorkingDay', 'Last working day', 'date', { required: true, bind: 'endDate' }),
@@ -598,6 +610,12 @@ export const HR_SECTIONS: HrSection[] = [
       f('leaveEncashment', 'Leave encashment', 'money', { system: true }),
       f('deductions', 'Deductions', 'money', { system: true }),
       f('loanRecovery', 'Advance / loan recovery', 'money', { system: true }),
+      // The statutory lines a payslip carries for the same days (logic.ts
+      // finalSettlement → computePayslip).
+      f('incomeTax', 'Income tax', 'money', { system: true, help: 'The monthly tax on the salary paid. Add any tax on leave encashment by hand.' }),
+      f('eobiEmployee', 'EOBI (employee share)', 'money', { system: true }),
+      f('eobiEmployer', 'EOBI (employer share)', 'money', { system: true, help: 'Company cost — not taken off the net' }),
+      f('sessiEmployer', 'SESSI / PESSI (employer)', 'money', { system: true, help: 'Company cost — not taken off the net' }),
       f('otherAdjustments', 'Other adjustments (+/−)', 'money', { system: true }),
       f('netAmount', 'Net F&F', 'money', { bind: 'amountCents', readOnly: true, system: true }),
       sel('clearanceStatus', 'Clearance status', ['pending', 'cleared']),

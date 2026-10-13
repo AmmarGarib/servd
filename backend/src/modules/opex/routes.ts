@@ -14,12 +14,27 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope } from '../../lib/tenantScope.js'
 import { assertConceptOfCompany, assertCapexProjectOfCompany, assertBankAccountOfCompany } from '../financePlanning/companyRefs.js'
 import { syncOpexPaymentPosting, OPEX_SOURCE } from './posting.js'
+import { assertCategoryAccount, suggestedCategoryAccount } from './categoryAccounts.js'
 import { liveRevisionsFor } from '../accounting/sourcePosting.js'
-import { isPayrollCategory } from '../accounting/expenseCategories.js'
+import { isPayrollCategory, expenseCodeForCategoryName } from '../accounting/expenseCategories.js'
 import { profitAndLoss } from '../accounting/reports.js'
 import { monthlyLabourCents } from '../projections/labour.js'
 import { moduleGateForNewRoles } from './moduleGate.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
+import { audit } from '../../lib/audit.js'
+
+/** A date the API is given: 'YYYY-MM-DD' or a full ISO timestamp. */
+const zDateString = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'Not a date')
+
+/** A paid date can be today or earlier — never a day still to come (Karachi day, one day of slack). */
+function assertNotFuturePaid(paidAt: Date | null | undefined): void {
+  if (paidAt && paidAt.getTime() > Date.now() + 86_400_000) {
+    throw new AppError('PAID_IN_FUTURE', 'A payment cannot be marked paid on a date that has not come yet', 422)
+  }
+}
+
+/** The 6xxx code a category is booked to: `^6\d{3}$`, null clears it. */
+const zExpenseCode = z.string().regex(/^6\d{3}$/, 'An operating-expense account is a 6xxx code').nullable().optional()
 
 const cadenceEnum = z.enum(['monthly', 'quarterly', 'annual', 'per_use'])
 
@@ -46,6 +61,13 @@ async function assertLineRefsOfCompany(
   if (refs.conceptId)     await assertConceptOfCompany(tenantId, refs.conceptId)
   if (refs.projectId)     await assertCapexProjectOfCompany(tenantId, refs.projectId)
   if (refs.bankAccountId) await assertBankAccountOfCompany(tenantId, refs.bankAccountId)
+}
+
+/** A cash-paid line or payment does not name a bank account (lib/bankAccounts.ts BANK_ACCOUNT_ON_CASH). */
+function assertMethodAndBank(method: string | null | undefined, bankAccountId: string | null | undefined): void {
+  if (method === 'cash' && bankAccountId) {
+    throw new AppError('BANK_ACCOUNT_ON_CASH', 'A cash payment does not use a bank account', 422)
+  }
 }
 
 const lineSchema = z.object({
@@ -102,6 +124,10 @@ export async function opexRoutes(fastify: FastifyInstance) {
         const payroll = isPayrollCategory(c.name)
         return {
           ...c,
+          // The name map's guess for a category with no account yet — what the
+          // picker offers first. Never posted from until it is saved.
+          suggestedExpenseAccountCode: payroll || c.expenseAccountCode ? null : expenseCodeForCategoryName(c.name),
+          isPayroll: payroll,
           lines: c.lines.map((l) => ({
             ...l,
             payments: l.payments.map((p) => {
@@ -109,7 +135,14 @@ export async function opexRoutes(fastify: FastifyInstance) {
               const ledgerStatus = payroll || l.source === 'payroll' ? 'payroll'
                 : !p.paidAt ? 'not_paid'
                 : entry ? 'posted' : 'unposted'
-              return { ...p, ledger: { status: ledgerStatus, entryId: entry?.entryId ?? null, amountCents: entry?.amountCents ?? null, accountCode: entry?.debitCode ?? null } }
+              return {
+                ...p,
+                ledger: {
+                  status: ledgerStatus, entryId: entry?.entryId ?? null, amountCents: entry?.amountCents ?? null,
+                  // Booked to (expense) and paid from (cash / bank chart code).
+                  accountCode: entry?.debitCode ?? null, creditCode: entry?.creditCode ?? null,
+                },
+              }
             }),
           })),
           monthlyExpectedCents: monthlyExpected,
@@ -120,6 +153,11 @@ export async function opexRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // A category's expense account (finance gaps 17d): the 6xxx account in its
+  // company's chart its payments post to. Named on create or edit (checked
+  // against THAT company's chart — 422 otherwise); left out on create, the
+  // name map pre-fills it when the chart has the code. The payroll category
+  // never has one (HR payroll books wages): naming one is 422.
   fastify.post('/categories', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object({
       name:               z.string().min(1).max(80),
@@ -128,6 +166,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       budgetMonthlyCents: zMoneyCents('The monthly budget').default(0),
       notes:              z.string().nullable().optional(),
       sortOrder:          z.number().int().optional(),
+      expenseAccountCode: zExpenseCode,
     }).parse(req.body)
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
@@ -139,7 +178,22 @@ export async function opexRoutes(fastify: FastifyInstance) {
     // post its payments to the books.
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
-    const cat = await prisma.opexCategory.create({ data: { ...body, tenantId } })
+    let expenseAccountCode: string | null
+    if (body.expenseAccountCode) {
+      await assertCategoryAccount(tenantId, body.name, body.expenseAccountCode)
+      expenseAccountCode = body.expenseAccountCode
+    } else {
+      // Explicit null = "not decided yet"; left out = the name map's suggestion.
+      expenseAccountCode = body.expenseAccountCode === null ? null : await suggestedCategoryAccount(prisma, tenantId, body.name)
+    }
+    const cat = await prisma.opexCategory.create({ data: { ...body, expenseAccountCode, tenantId } })
+    if (cat.expenseAccountCode) {
+      await audit({
+        category: 'accounting', action: 'opex.category.account', entity: 'OpexCategory', entityId: cat.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+        after: { name: cat.name, expenseAccountCode: cat.expenseAccountCode }, metadata: { suggested: !body.expenseAccountCode },
+      })
+    }
     return reply.status(201).send(cat)
   })
 
@@ -151,12 +205,33 @@ export async function opexRoutes(fastify: FastifyInstance) {
       notes:              z.string().nullable().optional(),
       sortOrder:          z.number().int().optional(),
       isActive:           z.boolean().optional(),
+      expenseAccountCode: zExpenseCode,
     }).parse(req.body)
     const owned = await prisma.opexCategory.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
-    return prisma.opexCategory.update({ where: { id: req.params.id }, data: body })
+    const name = body.name ?? owned.name
+    const data: typeof body = { ...body }
+    if (body.expenseAccountCode) {
+      // Checked against the CATEGORY's company's chart, never the operator's.
+      if (!owned.tenantId) throw new AppError('CATEGORY_HAS_NO_COMPANY', 'This category is not bound to a company — recreate it under the company', 422)
+      await assertCategoryAccount(owned.tenantId, name, body.expenseAccountCode)
+    } else if (isPayrollCategory(name) && owned.expenseAccountCode) {
+      // Renamed into the payroll category: HR payroll books it from now on.
+      data.expenseAccountCode = null
+    }
+    const updated = await prisma.opexCategory.update({ where: { id: req.params.id }, data })
+    if (updated.expenseAccountCode !== owned.expenseAccountCode) {
+      await audit({
+        category: 'accounting', action: 'opex.category.account', entity: 'OpexCategory', entityId: owned.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+        before: { name: owned.name, expenseAccountCode: owned.expenseAccountCode },
+        after: { name: updated.name, expenseAccountCode: updated.expenseAccountCode },
+        metadata: { companyId: owned.tenantId },
+      })
+    }
+    return updated
   })
 
   fastify.delete<{ Params: { id: string } }>('/categories/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
@@ -182,6 +257,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       select: { tenantId: true },
     })
     if (!cat) throw new AppError('CATEGORY_NOT_IN_COMPANY', 'That category does not belong to the active company', 422)
+    assertMethodAndBank(body.paymentMethod, body.bankAccountId)
     await assertLineRefsOfCompany(cat.tenantId, body)
     const line = await prisma.opexLine.create({
       data: {
@@ -211,11 +287,15 @@ export async function opexRoutes(fastify: FastifyInstance) {
         : null
       if (!cat) throw new AppError('CATEGORY_NOT_IN_COMPANY', 'That category does not belong to this company', 422)
     }
+    assertMethodAndBank(body.paymentMethod !== undefined ? body.paymentMethod : owned.paymentMethod, body.bankAccountId)
     await assertLineRefsOfCompany(tenantId, body)
+    // Switched to cash: the line no longer pays from a bank account.
+    const clearBank = body.paymentMethod === 'cash' && body.bankAccountId === undefined && owned.bankAccountId != null
     return prisma.opexLine.update({
       where: { id: req.params.id },
       data: {
         ...body,
+        ...(clearBank && { bankAccountId: null }),
         nextDueDate: body.nextDueDate !== undefined ? (body.nextDueDate ? new Date(body.nextDueDate) : null) : undefined,
       },
     })
@@ -239,22 +319,30 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // SAME transaction as the save, so a payment the ledger refuses (closed
   // month, unmapped category, bank account with no chart code) is not saved
   // as paid either. See opex/posting.ts.
+  // The paid date, reference and receipt are the operator's (a bill paid on
+  // 28 Sep but keyed on 2 Oct books on 28 Sep). `expenseAccountCode`,
+  // `payFrom` and `bankAccountId` are instructions for THIS posting, not
+  // columns of the payment: the expense code is remembered on an unmapped
+  // category (opex/posting.ts); the bank lives on the line, and a payment paid
+  // from somewhere else keeps that in its own journal entry (its live credit).
   const paymentBody = {
     actualCents:   zMoneyCents('The amount paid').nullable().optional(),
-    paidAt:        z.string().nullable().optional(),
+    paidAt:        zDateString.nullable().optional(),
     paymentRef:    z.string().max(120).nullable().optional(),
-    receiptUrl:    z.string().url().nullable().optional(),
+    receiptUrl:    z.string().url().max(2048).nullable().optional(),
     notes:         z.string().nullable().optional(),
-    // The 6xxx account the payment is booked to, when the category name
-    // does not say (accounting/expenseCategories.ts).
+    // The 6xxx account the payment is booked to (accounting/expenseCategories.ts).
     expenseAccountCode: z.string().regex(/^6\d{3}$/).nullable().optional(),
+    // Where this payment's money came from, when not the line's own account.
+    payFrom:       z.enum(['bank', 'cash']).optional(),
+    bankAccountId: z.string().min(1).nullable().optional(),
   }
 
   fastify.post('/payments', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object({
       lineId:        z.string().min(1),
-      periodStart:   z.string(),
-      periodEnd:     z.string(),
+      periodStart:   zDateString,
+      periodEnd:     zDateString,
       expectedCents: zMoneyCents('The expected amount'),
       ...paymentBody,
     }).parse(req.body)
@@ -265,8 +353,10 @@ export async function opexRoutes(fastify: FastifyInstance) {
       },
     })
     if (!ownedLine) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Line does not belong to your active company' } })
-    const { expenseAccountCode, ...data } = body
+    const { expenseAccountCode, payFrom, bankAccountId, ...data } = body
+    if (payFrom === 'cash') assertMethodAndBank('cash', bankAccountId)
     const paidAt = data.paidAt ? new Date(data.paidAt) : null
+    assertNotFuturePaid(paidAt)
     // Paid with no actual → it was paid as expected.
     const actualCents = data.actualCents ?? (paidAt ? data.expectedCents : null)
     const { p, ledger } = await prisma.$transaction(async (tx) => {
@@ -280,9 +370,17 @@ export async function opexRoutes(fastify: FastifyInstance) {
         },
         include: { line: { include: { category: true } } },
       })
-      const ledger = await syncOpexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id, expenseAccountCode })
+      const ledger = await syncOpexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id, expenseAccountCode, payFrom, bankAccountId })
       return { p, ledger }
     })
+    if (ledger.status === 'posted') {
+      await audit({
+        category: 'accounting', action: 'opex.payment.paid', entity: 'OpexPayment', entityId: p.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+        after: { lineId: p.lineId, actualCents: p.actualCents, paidAt: p.paidAt, paymentRef: p.paymentRef },
+        metadata: { entryId: ledger.entryId, companyId: p.line.category.tenantId, expenseAccountCode, payFrom, bankAccountId },
+      })
+    }
 
     // Variance flag: actual significantly higher than expected (vendor invoice
     // jumped). > 15% over expected fires `price_drift`. Catches inflated
@@ -308,58 +406,122 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ ...p, ledger })
   })
 
+  // Correct a payment: amount, paid date, reference, receipt, period, the
+  // expense account or where the money came from — or un-mark it paid. The
+  // ledger follows in the same transaction (opex/posting.ts): before it is on
+  // the books this simply saves (and posts once it is paid); after, a change
+  // to the amount, the date or an account reverses the live entry and reposts
+  // (opex.payment:<id>@n), a note / reference / receipt alone changes nothing
+  // on the books, and un-marking it reverses it. A date in a closed month is
+  // 422 PERIOD_LOCKED with nothing saved.
   fastify.patch<{ Params: { id: string } }>('/payments/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
-    const body = z.object(paymentBody).parse(req.body)
+    const body = z.object({
+      ...paymentBody,
+      periodStart: zDateString.optional(),
+      periodEnd:   zDateString.optional(),
+    }).parse(req.body)
     const owned = await prisma.opexPayment.findFirst({
       where: {
         id: req.params.id,
         line: { category: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
       },
+      include: { line: { select: { category: { select: { tenantId: true } } } } },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
-    const { expenseAccountCode, ...data } = body
+    const { expenseAccountCode, payFrom, bankAccountId, periodStart, periodEnd, ...data } = body
+    if (payFrom === 'cash') assertMethodAndBank('cash', bankAccountId)
     const paidAt = data.paidAt !== undefined ? (data.paidAt ? new Date(data.paidAt) : null) : undefined
+    assertNotFuturePaid(paidAt)
     const nowPaid = paidAt !== undefined ? paidAt : owned.paidAt
     const actualCents = data.actualCents !== undefined
       ? data.actualCents
       : (nowPaid && owned.actualCents == null ? owned.expectedCents : undefined)
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.opexPayment.update({
         where: { id: owned.id },
-        data: { ...data, paidAt, actualCents },
+        data: {
+          ...data, paidAt, actualCents,
+          ...(periodStart !== undefined && { periodStart: new Date(periodStart) }),
+          ...(periodEnd !== undefined && { periodEnd: new Date(periodEnd) }),
+        },
       })
-      const ledger = await syncOpexPaymentPosting(owned.id, { tx, postedBy: req.staffUser!.id, expenseAccountCode })
+      const ledger = await syncOpexPaymentPosting(owned.id, { tx, postedBy: req.staffUser!.id, expenseAccountCode, payFrom, bankAccountId })
       return { ...updated, ledger }
     })
+    await audit({
+      category: 'accounting', action: 'opex.payment.correct', entity: 'OpexPayment', entityId: owned.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+      before: { actualCents: owned.actualCents, paidAt: owned.paidAt, paymentRef: owned.paymentRef, receiptUrl: owned.receiptUrl, periodStart: owned.periodStart, periodEnd: owned.periodEnd },
+      after: { actualCents: result.actualCents, paidAt: result.paidAt, paymentRef: result.paymentRef, receiptUrl: result.receiptUrl, periodStart: result.periodStart, periodEnd: result.periodEnd },
+      metadata: { ledger: result.ledger, expenseAccountCode, payFrom, bankAccountId, companyId: owned.line.category.tenantId },
+    })
+    return result
   })
 
   // POST /opex/payments/post-unposted — put paid OpEx payments that predate
   // the posting rule on the books (admin; dry run by default). Payroll is
-  // skipped (HR payroll books wages); a payment in a closed month or with an
-  // unmapped category is listed with the reason, never forced.
+  // skipped (HR payroll books wages). Each payment is tried in its own
+  // transaction; the dry run tries it too and rolls back, so the preview says
+  // exactly what posting would do. Nothing is ever forced: a payment that
+  // can't post is listed with WHY —
+  //   needs_account  the category has no expense account (set it on the category)
+  //   needs_bank     the company has several banks and the line names none, or
+  //                  the line's bank is not a live, linked bank of the company
+  //   period_locked  its paid date is in a closed month
+  //   failed         anything else (code + reason in the row)
   fastify.post('/payments/post-unposted', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
     const body = z.object({ dryRun: z.boolean().default(true) }).parse(req.body ?? {})
     const tenantIds = (await resolveTenantScope(req)).tenantIds
     const paid = await prisma.opexPayment.findMany({
       where: { paidAt: { not: null }, line: { category: { tenantId: { in: tenantIds }, deletedAt: null } } },
-      select: { id: true, paidAt: true, actualCents: true, line: { select: { name: true, source: true, category: { select: { name: true } } } } },
+      select: {
+        id: true, paidAt: true, actualCents: true,
+        line: { select: { id: true, name: true, source: true, category: { select: { id: true, name: true, tenantId: true } } } },
+      },
       orderBy: { paidAt: 'asc' },
     })
     const live = await liveRevisionsFor(tenantIds, OPEX_SOURCE, paid.map((p) => p.id))
-    const rows: Array<{ paymentId: string; line: string; paidAt: Date | null; outcome: string }> = []
+    type Outcome = 'payroll' | 'already_posted' | 'would_post' | 'posted' | 'needs_account' | 'needs_bank' | 'period_locked' | 'failed'
+    const rows: Array<{
+      paymentId: string; line: string; lineId: string; categoryId: string; category: string; tenantId: string | null
+      paidAt: Date | null; amountCents: number | null; outcome: Outcome; code?: string; reason?: string
+    }> = []
+    class DryRun extends Error {}
     for (const p of paid) {
-      const label = `${p.line.category.name} — ${p.line.name}`
-      if (isPayrollCategory(p.line.category.name) || p.line.source === 'payroll') { rows.push({ paymentId: p.id, line: label, paidAt: p.paidAt, outcome: 'payroll' }); continue }
-      if (live.has(p.id)) { rows.push({ paymentId: p.id, line: label, paidAt: p.paidAt, outcome: 'already_posted' }); continue }
-      if (body.dryRun) { rows.push({ paymentId: p.id, line: label, paidAt: p.paidAt, outcome: 'would_post' }); continue }
+      const base = {
+        paymentId: p.id, line: `${p.line.category.name} — ${p.line.name}`, lineId: p.line.id,
+        categoryId: p.line.category.id, category: p.line.category.name, tenantId: p.line.category.tenantId,
+        paidAt: p.paidAt, amountCents: p.actualCents == null ? null : toCents(p.actualCents),
+      }
+      if (isPayrollCategory(p.line.category.name) || p.line.source === 'payroll') { rows.push({ ...base, outcome: 'payroll' }); continue }
+      if (live.has(p.id)) { rows.push({ ...base, outcome: 'already_posted' }); continue }
       try {
-        const r = await prisma.$transaction((tx) => syncOpexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id }))
-        rows.push({ paymentId: p.id, line: label, paidAt: p.paidAt, outcome: r.outcome ?? r.status })
+        await prisma.$transaction(async (tx) => {
+          await syncOpexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id })
+          if (body.dryRun) throw new DryRun()
+        })
+        rows.push({ ...base, outcome: 'posted' })
       } catch (err) {
-        rows.push({ paymentId: p.id, line: label, paidAt: p.paidAt, outcome: `error: ${(err as Error).message}` })
+        if (err instanceof DryRun) { rows.push({ ...base, outcome: 'would_post' }); continue }
+        const code = err instanceof AppError ? err.code : 'INTERNAL'
+        const outcome: Outcome =
+          ['CATEGORY_NOT_MAPPED', 'ACCOUNT_NOT_FOUND', 'NOT_AN_EXPENSE_CODE'].includes(code) ? 'needs_account'
+          : ['BANK_ACCOUNT_REQUIRED', 'BANK_ACCOUNT_NOT_IN_COMPANY', 'BANK_ACCOUNT_NOT_LINKED', 'BANK_ACCOUNT_ON_CASH'].includes(code) ? 'needs_bank'
+          : code === 'PERIOD_LOCKED' ? 'period_locked'
+          : 'failed'
+        rows.push({ ...base, outcome, code, reason: (err as Error).message })
       }
     }
-    return { dryRun: body.dryRun, rows }
+    const counts: Partial<Record<Outcome, number>> = {}
+    for (const r of rows) counts[r.outcome] = (counts[r.outcome] ?? 0) + 1
+    if (!body.dryRun && (counts.posted ?? 0) > 0) {
+      await audit({
+        category: 'accounting', action: 'opex.payments.post_unposted', entity: 'OpexPayment',
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId,
+        metadata: { counts, posted: rows.filter((r) => r.outcome === 'posted').map((r) => r.paymentId) },
+      })
+    }
+    return { dryRun: body.dryRun, counts, rows }
   })
 
   // GET /opex/actuals — what was actually spent, FROM THE LEDGER (decision

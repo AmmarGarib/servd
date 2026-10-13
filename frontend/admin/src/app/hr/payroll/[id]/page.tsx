@@ -7,8 +7,9 @@ import { useParams, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, human, STATUS_COLOR } from '../../../../lib/hr'
+import { card, btn, btnGhost, inp, rs, human, day, localDate, STATUS_COLOR } from '../../../../lib/hr'
 import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrShell'
+import { BankAccountSelect } from '../../../../components/finance/BankAccountSelect'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 interface Slip {
@@ -17,7 +18,19 @@ interface Slip {
   inputs: Record<string, number | boolean | string[] | unknown>
   lines: Line[]; grossCents: number; earningsCents: number; deductionsCents: number; eobiEmployeeCents: number; eobiEmployerCents: number; netCents: number
 }
-interface Detail { run: { id: string; period: string; status: string; paidAt: string | null; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[]> }; payslips: Slip[] }
+/** How a run was paid (backend hr/ledger.ts postPayrollPayment → totals.payment). */
+interface RunPayment {
+  paidOn: string
+  bank: { code: string | null; bankAccountId: string | null; cents: number; staff: number }
+  cash: { code: string; cents: number; staff: number }
+}
+interface Detail { run: { id: string; tenantId: string; period: string; status: string; paidAt: string | null; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[] | RunPayment> }; payslips: Slip[] }
+
+/** Cash staff are paid from the safe; bank and cheque staff from the bank —
+ *  by the method snapshotted when the month was calculated. */
+const isCashSlip = (s: Slip) => (typeof s.inputs['paymentMethod'] === 'string' ? s.inputs['paymentMethod'] : s.employee.paymentMethod) === 'cash'
+const splitLine = (bankCents: number, bankStaff: number, cashCents: number, cashStaff: number) =>
+  `Bank ${rs(bankCents)} / ${bankStaff} staff · Cash ${rs(cashCents)} / ${cashStaff} staff`
 
 const INPUTS: Array<[string, string, boolean]> = [
   ['absentDays', 'Absent days', false], ['unpaidLeaveDays', 'Unpaid leave days', false], ['lateCount', 'Lates', false],
@@ -30,13 +43,13 @@ export default function PayrollRunPage() {
   const router = useRouter()
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Slip | null>(null)
+  const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
   const { userId, role, isPayrollApprover } = useHrAccess()
   const { data } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
-    mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete' | 'paid-bank' | 'paid-cash') =>
+    mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete') =>
       what === 'delete' ? api.delete(`/hr/payroll/runs/${id}`)
-      : what.startsWith('paid-') ? api.post(`/hr/payroll/runs/${id}/paid`, { from: what.slice(5) })
       : api.post(`/hr/payroll/runs/${id}/${what}`, {}),
     onSuccess: (_r, what) => { setErr(''); if (what === 'delete') router.push('/hr/payroll'); else void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),
@@ -44,6 +57,7 @@ export default function PayrollRunPage() {
   const run = data?.run
   const t = (run?.totals ?? {}) as Record<string, number>
   const warnings = (run?.totals?.['warnings'] as string[] | undefined) ?? []
+  const payment = run?.totals?.['payment'] as RunPayment | undefined
   const dl = (kind: string) => { setErr(''); api.download(`/hr/payroll/runs/${id}/export.csv?kind=${kind}`, `payroll-${run?.period}-${kind}.csv`).catch((e: Error) => setErr(e.message)) }
   // The API's rules: only admin, owner or management approve, reopen and lock,
   // and nobody approves a payroll they created, recalculated or edited — the
@@ -79,11 +93,14 @@ export default function PayrollRunPage() {
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
               <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Lock payroll? It cannot be changed afterwards, and it is posted to the books.')) act.mutate('lock') }}>Lock</button>
             </>}
-            {run.status === 'locked' && !run.paidAt && isPayrollApprover && <>
-              <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Mark wages paid by bank transfer?')) act.mutate('paid-bank') }}>Mark paid (bank)</button>
-              <button className={btnGhost} disabled={act.isPending} onClick={() => { if (confirm('Mark wages paid in cash?')) act.mutate('paid-cash') }}>Paid in cash</button>
-            </>}
-            {run.paidAt && <span className="text-xs text-emerald-700">Paid {new Date(run.paidAt).toLocaleDateString('en-GB')}</span>}
+            {run.status === 'locked' && !run.paidAt && isPayrollApprover && (
+              <button className={btn} onClick={() => { setErr(''); setPaying(true) }}>Mark paid</button>
+            )}
+            {run.paidAt && (
+              <span className="text-xs text-success font-bold self-center">
+                Paid {day(payment?.paidOn ?? run.paidAt)}{payment ? ` — ${splitLine(payment.bank.cents, payment.bank.staff, payment.cash.cents, payment.cash.staff)}` : ''}
+              </span>
+            )}
             <span className="ml-auto flex flex-wrap gap-2">
               <button className={btnGhost} onClick={() => dl('register')}>Payroll register</button>
               <button className={btnGhost} onClick={() => dl('bank')}>Bank transfer sheet</button>
@@ -120,7 +137,59 @@ export default function PayrollRunPage() {
         </div>
       )}
       {editing && run && <SlipModal slip={editing} period={run.period} draft={run.status === 'draft'} onClose={() => setEditing(null)} />}
+      {paying && run && data && <PayRunModal runId={run.id} tenantId={run.tenantId} period={run.period} slips={data.payslips} onClose={() => setPaying(false)} />}
     </HrShell>
+  )
+}
+
+/** One "Mark paid": cash staff from the safe (or the POS drawer), bank and
+ *  cheque staff from the bank picked, on the day it was paid. The server
+ *  pays exactly what the lock accrued (backend hr/ledger.ts). */
+function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: string; tenantId: string; period: string; slips: Slip[]; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [bankAccountId, setBankAccountId] = useState('')
+  const [cashCode, setCashCode] = useState<'1010' | '1015'>('1010')
+  const [paidOn, setPaidOn] = useState(localDate())
+  const [err, setErr] = useState('')
+  const cash = slips.filter(isCashSlip)
+  const bank = slips.filter((s) => !isCashSlip(s))
+  const sum = (xs: Slip[]) => xs.reduce((a, s) => a + Math.max(0, s.netCents), 0)
+  const pay = useMutation({
+    mutationFn: () => api.post(`/hr/payroll/runs/${runId}/paid`, {
+      ...(bank.length > 0 && bankAccountId && { bankAccountId }),
+      cashCode, paidOn,
+    }),
+    onSuccess: () => { void qc.invalidateQueries(); onClose() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  return (
+    <Modal title={`Pay wages — ${period}`} onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm font-bold text-white/85">{splitLine(sum(bank), bank.length, sum(cash), cash.length)}</p>
+        {bank.length > 0 && (
+          <BankAccountSelect id={`pay-bank-${runId}`} label="Bank and cheque staff paid from" tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId} className={inp} />
+        )}
+        {cash.length > 0 && (
+          <label className="block">
+            <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Cash staff paid from</span>
+            <select className={inp} value={cashCode} onChange={(e) => setCashCode(e.target.value as '1010' | '1015')}>
+              <option value="1010">Cash on hand — the safe (1010)</option>
+              <option value="1015">Cash in the POS drawer (1015)</option>
+            </select>
+          </label>
+        )}
+        <label className="block">
+          <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Paid on</span>
+          <input type="date" className={inp} value={paidOn} max={localDate()} onChange={(e) => setPaidOn(e.target.value)} />
+        </label>
+        <p className="text-[11px] text-white/40">Clears Wages Payable for this month, dated the day the money left. A closed month is refused.</p>
+        {err && <p className="text-xs text-red-700">{err}</p>}
+        <div className="flex flex-wrap gap-2">
+          <button className={btn} disabled={pay.isPending || !paidOn} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
+          <button className={btnGhost} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

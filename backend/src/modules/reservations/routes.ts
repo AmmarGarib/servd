@@ -1740,23 +1740,33 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // Release a held deposit (the guest arrived, or the hold is let go). Only a
+  // deposit still held: a no-show capture zeroes depositCents, so a forfeited
+  // deposit can never be "released" afterwards (409 NO_DEPOSIT_HELD). The
+  // claim is conditional, so a release racing the capture is one or the
+  // other. Audited in the RESERVATION's company, not the operator's.
   fastify.post<{ Params: { id: string } }>(
     '/:id/deposit-release',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } })
+      const r = await prisma.reservation.findFirst({
+        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+        include: { concept: { select: { tenantId: true } } },
+      })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
+      const released = await prisma.reservation.updateMany({
+        where: { id: r.id, depositCents: { gt: 0 } },
+        data: { depositCents: 0, depositRef: null },
+      })
+      if (released.count === 0) throw new AppError('NO_DEPOSIT_HELD', 'This reservation has no deposit held', 409)
       await audit({ category: 'identity',
         action: 'reservation.deposit_release', entity: 'Reservation', entityId: r.id,
-        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: r.concept.tenantId, userEmail: req.staffUser?.email ?? null,
         before: { depositCents: r.depositCents, depositRef: r.depositRef },
         after:  { depositCents: 0 },
       })
-      return prisma.reservation.update({
-        where: { id: r.id },
-        data: { depositCents: 0, depositRef: null },
-      })
+      return prisma.reservation.findUniqueOrThrow({ where: { id: r.id } })
     },
   )
 

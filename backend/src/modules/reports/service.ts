@@ -509,15 +509,20 @@ export async function stationTimes(q: SalesQuery): Promise<StationTimes> {
 // ─── Sales by tender (Raast QR, spec §7.6) ───────────────────────────────────
 //
 // How the period's sold orders (the same soldOrderWhere as every sales
-// figure) were paid: the paid receipts by method — Cash (incl. cash on
-// delivery still pending on a non-till order), Card – Keenu, Raast QR and the
-// retired Keenu QR's old rows — plus wallet credit (Order.walletAmountCents)
-// and gift cards (redemptions). Comps are not money: reported apart, never in
-// a share. sharePct is each tender's share of the money tenders (everything
-// but comp). Raast is split by its reconciliation state: provisional (no bank
-// statement has shown it yet), matched, written off as not received. Refunds
-// by tender are the money handed back in the period (refund rows, processedAt),
-// on sold orders — as salesTotals counts refunds.
+// figure) were paid: the paid receipts by method — Cash (paid into a drawer),
+// Card – Keenu, Raast QR and the retired Keenu QR's old rows — plus wallet
+// credit (Order.walletAmountCents) and gift cards (redemptions). Cash on
+// delivery whose cash has NOT reached a drawer (still 'pending' on a sold
+// non-till order) is its own row, never "Cash": 'cod_with_rider' while the
+// rider still holds it, 'cod_not_collected' once a manager has reported it
+// never paid (POST /orders/:id/cod-unpaid). The rows still add up to the
+// sales; where that unpaid cash lands in the books is pending owner decision
+// G1. Comps are not money: reported apart, never in a share. sharePct is each
+// tender's share of the money tenders (everything but comp). Raast is split
+// by its reconciliation state: provisional (no bank statement has shown it
+// yet), matched, written off as not received. Refunds by tender are the money
+// handed back in the period (refund rows, processedAt), on sold orders — as
+// salesTotals counts refunds.
 
 export interface TenderRow {
   tender: string
@@ -538,10 +543,17 @@ export interface SalesByTender {
   totalCents: number
   comp: { amountCents: number; orders: number }
   raast: { provisionalCents: number; provisionalCount: number; matchedCents: number; matchedCount: number; unreceivedCents: number; unreceivedCount: number }
+  /** Cash on delivery by where the cash is: paid into a drawer, still with the rider, reported never paid. */
+  cod: { paidInCents: number; paidInCount: number; withRiderCents: number; withRiderCount: number; notCollectedCents: number; notCollectedCount: number }
   refunds: Array<{ tender: string; label: string; amountCents: number; count: number }>
 }
 
-const TENDER_ORDER = ['cash', 'card', 'raast', 'keenu_qr', 'wallet', 'gift_card'] as const
+const TENDER_ORDER = ['cash', 'cod_with_rider', 'cod_not_collected', 'card', 'raast', 'keenu_qr', 'wallet', 'gift_card'] as const
+/** The two COD rows are not payment methods — their labels live here. */
+const COD_LABELS: Record<string, string> = {
+  cod_with_rider: 'Cash on delivery – with rider',
+  cod_not_collected: 'Cash on delivery – not collected',
+}
 
 export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
   const where = soldOrderWhere(q)
@@ -552,12 +564,20 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
       method: { not: 'split' },
       OR: [
         { status: 'paid' },
-        // Cash on delivery collected by the rider: still 'pending' on a sold non-till order.
+        // Cash on delivery not yet paid into a drawer: still 'pending' on a
+        // sold non-till order — its own rows below, never Cash.
         { status: 'pending', method: 'cash', order: { source: { not: 'pos' } } },
       ],
     },
-    select: { method: true, amountCents: true, orderId: true, raastReceipt: { select: { status: true } } },
+    select: { method: true, status: true, amountCents: true, orderId: true, raastReceipt: { select: { status: true } }, order: { select: { source: true } } },
   })
+  // COD a manager reported never paid: a cod_unpaid strike on the order.
+  const pendingCodOrders = [...new Set(rows.filter((p) => p.status === 'pending').map((p) => p.orderId))]
+  const reportedUnpaid = new Set(pendingCodOrders.length === 0 ? [] : (await prisma.customerStrike.findMany({
+    where: { kind: 'cod_unpaid', sourceType: 'order', sourceId: { in: pendingCodOrders } },
+    select: { sourceId: true },
+  })).map((s) => s.sourceId))
+  const cod = { paidInCents: 0, paidInCount: 0, withRiderCents: 0, withRiderCount: 0, notCollectedCents: 0, notCollectedCount: 0 }
   const by = new Map<string, { amountCents: number; payments: number; orders: Set<string> }>()
   const add = (tender: string, cents: number, orderId: string, receipts = 1) => {
     const s = by.get(tender) ?? { amountCents: 0, payments: 0, orders: new Set<string>() }
@@ -568,6 +588,18 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
   }
   const raast = { provisionalCents: 0, provisionalCount: 0, matchedCents: 0, matchedCount: 0, unreceivedCents: 0, unreceivedCount: 0 }
   for (const p of rows) {
+    if (p.method === 'cash' && p.status === 'pending') {
+      // Cash on delivery not in a drawer — never counted as Cash received.
+      if (reportedUnpaid.has(p.orderId)) {
+        add('cod_not_collected', p.amountCents, p.orderId)
+        cod.notCollectedCents += p.amountCents; cod.notCollectedCount++
+      } else {
+        add('cod_with_rider', p.amountCents, p.orderId)
+        cod.withRiderCents += p.amountCents; cod.withRiderCount++
+      }
+      continue
+    }
+    if (p.method === 'cash' && p.order.source !== 'pos') { cod.paidInCents += p.amountCents; cod.paidInCount++ }
     add(p.method, p.amountCents, p.orderId)
     if (p.method === 'raast') {
       const st = p.raastReceipt?.status
@@ -589,7 +621,7 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
   const tenders: TenderRow[] = keys.map((k) => {
     const t = by.get(k)!
     return {
-      tender: k, label: tenderLabel(k), amountCents: t.amountCents, payments: t.payments, orders: t.orders.size,
+      tender: k, label: COD_LABELS[k] ?? tenderLabel(k), amountCents: t.amountCents, payments: t.payments, orders: t.orders.size,
       sharePct: totalCents > 0 ? Math.round((t.amountCents / totalCents) * 1000) / 10 : 0,
     }
   })
@@ -617,6 +649,7 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
     from: q.from, to: q.to, tenders, totalCents,
     comp: { amountCents: comp?.amountCents ?? 0, orders: comp?.orders.size ?? 0 },
     raast,
+    cod,
     refunds: [...refundBy].map(([tender, s]) => ({ tender, label: tenderLabel(tender), ...s })).sort((a, b) => b.amountCents - a.amountCents),
   }
 }

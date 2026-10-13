@@ -25,6 +25,7 @@ import { startCoursePacingWorker } from './workers/coursePacing.js'
 import { startPreOrderReleaseWorker } from './workers/preOrderRelease.js'
 import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
+import { startGiftCardExpiryWorker } from './workers/giftCardExpiry.js'
 import { startReservationReminderWorker } from './workers/reservationReminders.js'
 import { startDeliveryWatch } from './workers/deliveryWatch.js'
 import { startReviewPromptWorker } from './workers/reviewPrompt.js'
@@ -829,6 +830,16 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
+  // OpEx categories that predate OpexCategory.expenseAccountCode get the account
+  // their name maps to, where that company's chart has it (finance gaps 17d).
+  // Idempotent: only categories with no account; never overwrites a pick.
+  try {
+    const { backfillOpexCategoryAccounts } = await import('./modules/opex/categoryAccounts.js')
+    const r = await backfillOpexCategoryAccounts()
+    if (r.mapped) fastify.log.info(`[opex] ${r.mapped} categor${r.mapped === 1 ? 'y' : 'ies'} given an expense account from the name map; ${r.unmapped} still ask on their first payment`)
+  } catch (err) {
+    fastify.log.warn(`[opex] category expense-account backfill skipped: ${(err as Error).message}`)
+  }
   // New default modules reach saved Module Access rows once (MODULE_GRANTS),
   // so GET /permissions/role-modules shows them from the first request. The
   // lazy run in roleOverrides() covers it if this fails.
@@ -863,6 +874,9 @@ async function build() {
     startCartReleaseWorker()
     startLoyaltyTriggerWorker()
     startLoyaltyExpirationWorker()
+    // Gift cards past their expiry are marked expired daily at 00:10 PKT (no
+    // entry yet — breakage income is pending owner decision G10).
+    startGiftCardExpiryWorker()
     startReservationReminderWorker()
     // The daily sales email is a per-company scheduled report now; a box that
     // still sets DIGEST_EMAIL gets that address carried over once.

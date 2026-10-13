@@ -132,7 +132,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
 /** Codes the posting engine cannot run without — checked by /health. */
 export const REQUIRED_ACCOUNT_CODES = [
   '1010', '1015', '1020', '1030', '1210', '1320',
-  '2010', '2020', '2030', '2050', '2060', '2095',
+  '2010', '2020', '2030', '2050', '2060', '2080', '2095',
   '4001', '4090', '4100',
   // 5050: stock counts post their variance here (crosschecks/countPosting.ts).
   '5010', '5040', '5050',

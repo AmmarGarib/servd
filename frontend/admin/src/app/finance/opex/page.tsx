@@ -7,11 +7,13 @@
 // data instead of manual entry. License renewals + subscriptions tracked
 // the same way (just with cadence='annual' or 'quarterly').
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
+import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
+import { useAuthStore } from '../../../store/auth'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
 
@@ -23,10 +25,11 @@ interface Payment {
   actualCents: number | null
   paidAt: string | null
   paymentRef: string | null
+  receiptUrl: string | null
   notes: string | null
   // The ledger is the actual (owner decision 23): a paid payment posts
-  // Dr expense / Cr the line's bank account when it is recorded.
-  ledger?: { status: 'posted' | 'unposted' | 'payroll' | 'not_paid'; entryId: string | null; accountCode: string | null }
+  // Dr the category's expense account / Cr where the money came from.
+  ledger?: { status: 'posted' | 'unposted' | 'payroll' | 'not_paid'; entryId: string | null; accountCode: string | null; creditCode?: string | null }
 }
 interface Line {
   id: string
@@ -38,6 +41,7 @@ interface Line {
   cadence: Cadence
   nextDueDate: string | null
   paymentMethod: string | null
+  bankAccountId: string | null
   source: 'manual' | 'payroll' | 'license' | 'subscription'
   isActive: boolean
   notes: string | null
@@ -45,9 +49,16 @@ interface Line {
 }
 interface Category {
   id: string
+  tenantId: string | null
   name: string
   emoji: string | null
   conceptId: string | null
+  // The 6xxx account its payments post to (its company's chart); null = not
+  // set yet, in which case the name's suggestion (never saved by itself).
+  expenseAccountCode: string | null
+  suggestedExpenseAccountCode: string | null
+  // HR payroll books wages — never an account here.
+  isPayroll: boolean
   budgetMonthlyCents: number
   monthlyExpectedCents: number
   overBudgetPct: number
@@ -126,6 +137,65 @@ const PRESET_CATEGORIES: { name: string; emoji: string }[] = [
 ]
 
 const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+
+// ─── Accounts: the category's expense account, where the money came from ──
+
+interface ChartAccount { id: string; code: string; name: string; type: string; isActive: boolean; tenantId: string | null }
+
+/** One company's active operating-expense (6xxx) accounts — what a category can be booked to. */
+function useExpenseAccounts(tenantId: string | null | undefined) {
+  const q = useQuery<ChartAccount[]>({
+    queryKey: ['chart-of-accounts'],
+    queryFn: () => api.get('/setup/chart-of-accounts'),
+    staleTime: 60_000,
+    retry: false,
+  })
+  const accounts = (q.data ?? []).filter((a) => a.tenantId === tenantId && a.type === 'expense' && a.isActive && /^6\d{3}$/.test(a.code))
+  return { accounts, isLoading: q.isLoading, isError: q.isError }
+}
+
+function ExpenseAccountSelect({ tenantId, value, onChange, id, emptyLabel = '— not set —' }: {
+  tenantId: string | null | undefined; value: string; onChange: (code: string) => void; id: string; emptyLabel?: string
+}) {
+  const { accounts, isLoading, isError } = useExpenseAccounts(tenantId)
+  return (
+    <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={fieldCls} disabled={isLoading || isError}>
+      <option value="">{isError ? 'Chart of accounts unavailable' : emptyLabel}</option>
+      {value && !accounts.some((a) => a.code === value) && <option value={value}>{value}</option>}
+      {accounts.map((a) => <option key={a.id} value={a.code}>{a.code} · {a.name}</option>)}
+    </select>
+  )
+}
+
+/** "6010 · Rent" for a code of the company's chart. */
+function useAccountLabel(tenantId: string | null | undefined) {
+  const { accounts } = useExpenseAccounts(tenantId)
+  return (code: string | null | undefined) => {
+    if (!code) return ''
+    const a = accounts.find((x) => x.code === code)
+    return a ? `${a.code} · ${a.name}` : code
+  }
+}
+
+/** Where a posted payment's money came from, in words: cash, or the bank's name. */
+function usePaidFromLabel(tenantId: string | null | undefined) {
+  const { data: banks = [] } = useBankAccounts()
+  return (creditCode: string | null | undefined) => {
+    if (!creditCode) return ''
+    if (creditCode === '1010') return 'cash'
+    const b = banks.find((x) => x.accountCode === creditCode && (!tenantId || x.tenantId === tenantId))
+    return b ? b.name : `account ${creditCode}`
+  }
+}
+
+/** Today's date in Karachi, as a date input holds it (YYYY-MM-DD). */
+const todayKarachi = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
+
+/** A date input's day as the instant to send: now for today, else midday in Karachi. */
+function paidAtFor(day: string): string {
+  return day === todayKarachi() ? new Date().toISOString() : `${day}T12:00:00+05:00`
+}
+const dayOf = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' }) : '')
 
 export default function OpexTrackerPage() {
   const qc = useQueryClient()
@@ -264,12 +334,23 @@ export default function OpexTrackerPage() {
             />
           ))}
         </div>
+
+        <PostOldPayments
+          onEditCategory={(id) => setEditingCategory(categories.find((c) => c.id === id) ?? null)}
+          onPosted={() => qc.invalidateQueries({ queryKey: ['opex-categories'] })}
+        />
       </div>
 
-      {creatingCategory && <CategoryModal onClose={() => setCreatingCategory(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setCreatingCategory(false) }} />}
-      {editingCategory && <CategoryModal category={editingCategory} onClose={() => setEditingCategory(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setEditingCategory(null) }} />}
+      {creatingCategory && <CategoryModal activeTenantId={activeTenant?.id ?? null} onClose={() => setCreatingCategory(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setCreatingCategory(false) }} />}
+      {editingCategory && <CategoryModal category={editingCategory} activeTenantId={activeTenant?.id ?? null} onClose={() => setEditingCategory(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setEditingCategory(null) }} />}
       {addingLineFor && <LineModal category={addingLineFor} onClose={() => setAddingLineFor(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setAddingLineFor(null) }} />}
-      {editingLine && <LineModal category={editingLine.category} line={editingLine.line} onClose={() => setEditingLine(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setEditingLine(null) }} />}
+      {editingLine && (() => {
+        // The fresh copy after a refetch, so a payment just recorded or
+        // corrected shows in the open line's history.
+        const cat = categories.find((c) => c.id === editingLine.category.id) ?? editingLine.category
+        const line = cat.lines.find((l) => l.id === editingLine.line.id) ?? editingLine.line
+        return <LineModal category={cat} line={line} onClose={() => setEditingLine(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['opex-categories'] }); setEditingLine(null) }} />
+      })()}
     </div>
   )
 }
@@ -338,6 +419,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
     ? ((category.monthlyExpectedCents - category.budgetMonthlyCents) / category.budgetMonthlyCents) * 100
     : 0
   const isPayroll = category.name.toLowerCase() === 'payroll'
+  const accountLabel = useAccountLabel(category.tenantId)
 
   return (
     <section className="rounded-2xl overflow-hidden"
@@ -356,6 +438,13 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                 </span>
               )}
             </p>
+            {!category.isPayroll && (
+              category.expenseAccountCode
+                ? <p className="text-[11px] text-white/45">Booked to {accountLabel(category.expenseAccountCode)}</p>
+                : category.suggestedExpenseAccountCode
+                  ? <p className="text-[11px] text-white/45">No account set — payments use the suggested {accountLabel(category.suggestedExpenseAccountCode)}</p>
+                  : <p className="text-[11px]" style={{ color: 'var(--erp-warning)' }}>No expense account yet — set it under Edit category</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -507,16 +596,29 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
 
 // ─── Modals ───────────────────────────────────────────────────────────────
 
-function CategoryModal({ category, onClose, onSaved }: { category?: Category; onClose: () => void; onSaved: () => void }) {
+function CategoryModal({ category, activeTenantId, onClose, onSaved }: { category?: Category; activeTenantId: string | null; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(category?.name ?? '')
   const [emoji, setEmoji] = useState(category?.emoji ?? '')
   const [budgetMonthlyCents, setBudget] = useState(category?.budgetMonthlyCents ?? 0)
   const [notes, setNotes] = useState(category?.notes ?? '')
+  const [expenseAccountCode, setExpenseAccountCode] = useState(category?.expenseAccountCode ?? '')
+  // A category's account lives in ITS company's chart; a new one is created
+  // in the active company.
+  const tenantId = category ? category.tenantId : activeTenantId
+  const accountLabel = useAccountLabel(tenantId)
+  const suggested = category?.suggestedExpenseAccountCode ?? null
 
   const save = useMutation({
     mutationFn: () => {
-      const payload = { name, emoji: emoji || null, budgetMonthlyCents, notes: notes || null }
-      return category ? api.patch(`/opex/categories/${category.id}`, payload) : api.post('/opex/categories', payload)
+      const payload: Record<string, unknown> = { name, emoji: emoji || null, budgetMonthlyCents, notes: notes || null }
+      if (category) {
+        // Only when changed — clearing it is allowed (the next payment asks).
+        if (!category.isPayroll && expenseAccountCode !== (category.expenseAccountCode ?? '')) payload.expenseAccountCode = expenseAccountCode || null
+        return api.patch(`/opex/categories/${category.id}`, payload)
+      }
+      // Left blank on a new category: servd suggests one from the name.
+      if (expenseAccountCode) payload.expenseAccountCode = expenseAccountCode
+      return api.post('/opex/categories', payload)
     },
     onSuccess: () => onSaved(),
   })
@@ -534,6 +636,24 @@ function CategoryModal({ category, onClose, onSaved }: { category?: Category; on
       <MoneyInput value={budgetMonthlyCents} onChange={setBudget} className={fieldCls} />
       <Hint>{PKR(budgetMonthlyCents)}/mo · variance flags fire when actuals exceed this</Hint>
     </Field>
+    {category?.isPayroll ? (
+      <Hint>Payroll is booked by HR payroll, so this category has no expense account here.</Hint>
+    ) : (
+      <div>
+        <label htmlFor="opex-cat-account" className="text-xs text-white/55">Expense account</label>
+        <div className="mt-1">
+          <ExpenseAccountSelect id="opex-cat-account" tenantId={tenantId} value={expenseAccountCode} onChange={setExpenseAccountCode}
+            emptyLabel={category ? '— not set —' : '— suggest from the name —'} />
+        </div>
+        {category && !expenseAccountCode && suggested && (
+          <p className="text-[11px] text-white/45 mt-1">
+            Suggested from the name: {accountLabel(suggested)}.{' '}
+            <button type="button" onClick={() => setExpenseAccountCode(suggested)} className="text-primary-ink hover:underline">Use it</button>
+          </p>
+        )}
+        <Hint>Every payment in this category is booked to this account. Changing it affects new payments only.</Hint>
+      </div>
+    )}
     <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
     {save.error && <ErrorBanner error={save.error} />}
     <ModalFooter onCancel={onClose}>
@@ -557,7 +677,9 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
   const [cadence, setCadence] = useState<Cadence>(line?.cadence ?? 'monthly')
   const [nextDueDate, setNextDueDate] = useState(line?.nextDueDate?.slice(0, 10) ?? '')
   const [paymentMethod, setPaymentMethod] = useState(line?.paymentMethod ?? '')
+  const [bankAccountId, setBankAccountId] = useState(line?.bankAccountId ?? '')
   const [notes, setNotes] = useState(line?.notes ?? '')
+  const paidInCash = paymentMethod === 'cash'
 
   const save = useMutation({
     mutationFn: () => {
@@ -567,6 +689,8 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         amountCents, cadence,
         nextDueDate: nextDueDate ? `${nextDueDate}T00:00:00Z` : null,
         paymentMethod: paymentMethod || null,
+        // The bank its payments leave from (the category's company's). Cash names none.
+        bankAccountId: paidInCash ? null : (bankAccountId || null),
         notes: notes || null,
       }
       return line ? api.patch(`/opex/lines/${line.id}`, payload) : api.post('/opex/lines', payload)
@@ -613,10 +737,17 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         </select>
       </Field>
     </div>
+    {!paidInCash && (
+      <div>
+        <BankAccountSelect tenantId={category.tenantId} value={bankAccountId} onChange={setBankAccountId}
+          id={`opex-line-bank-${line?.id ?? 'new'}`} label="Paid from (bank account)" className={fieldCls} />
+        <Hint>Card and auto-debit payments come out of a bank account too — pick the one they draw on.</Hint>
+      </div>
+    )}
     <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
 
     {/* Payment history — only when editing */}
-    {line && <PaymentHistory line={line} onChange={() => qc.invalidateQueries({ queryKey: ['opex-categories'] })} />}
+    {line && <PaymentHistory line={line} category={category} onChange={() => qc.invalidateQueries({ queryKey: ['opex-categories'] })} />}
 
     {save.error && <ErrorBanner error={save.error} />}
 
@@ -632,82 +763,65 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
   </ModalShell>
 }
 
-function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }) {
+function PaymentHistory({ line, category, onChange }: { line: Line; category: Category; onChange: () => void }) {
   const [adding, setAdding] = useState(false)
-  const today = new Date().toISOString().slice(0, 10)
-  const monthEnd = new Date(); monthEnd.setMonth(monthEnd.getMonth() + 1); monthEnd.setDate(0)
-  const [periodStart, setPeriodStart] = useState(today)
-  const [periodEnd, setPeriodEnd] = useState(monthEnd.toISOString().slice(0, 10))
-  const [actualCents, setActual] = useState(line.amountCents)
-  const [expenseAccountCode, setExpenseAccountCode] = useState('')
-
-  // Recording a payment as paid posts it to the books in the same step; if
-  // the ledger refuses (closed month, category with no expense account, bank
-  // account with no chart code) nothing is saved and the reason shows here.
-  const add = useMutation({
-    mutationFn: () => api.post('/opex/payments', {
-      lineId: line.id,
-      periodStart: `${periodStart}T00:00:00Z`,
-      periodEnd:   `${periodEnd}T23:59:59Z`,
-      expectedCents: line.amountCents,
-      actualCents,
-      paidAt: new Date().toISOString(),
-      ...(expenseAccountCode.trim() && { expenseAccountCode: expenseAccountCode.trim() }),
-    }),
-    onSuccess: () => { setAdding(false); setExpenseAccountCode(''); onChange() },
-  })
-  const addError = add.error as { code?: string; message?: string } | null
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const accountLabel = useAccountLabel(category.tenantId)
+  const paidFromLabel = usePaidFromLabel(category.tenantId)
 
   return <Section heading={`Payment history · ${line.payments.length}`}>
     <div className="space-y-1.5">
       {line.payments.slice(0, 6).map((p) => {
         const variance = p.actualCents != null ? p.actualCents - p.expectedCents : 0
         const variancePct = p.expectedCents > 0 ? (variance / p.expectedCents) * 100 : 0
+        const posted = p.ledger?.status === 'posted'
+        const details = [
+          p.paidAt && `paid ${new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'Asia/Karachi' })}`,
+          posted && p.ledger?.creditCode && `from ${paidFromLabel(p.ledger.creditCode)}`,
+          posted && p.ledger?.accountCode && `booked to ${accountLabel(p.ledger.accountCode)}`,
+          p.paymentRef && `ref ${p.paymentRef}`,
+        ].filter(Boolean) as string[]
         return (
-          <div key={p.id} className="rounded-lg p-3 grid grid-cols-[auto_1fr_auto_auto] gap-2 items-center"
+          <div key={p.id} className="rounded-lg p-3"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-            <span className="text-xs text-white/55">{new Date(p.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</span>
-            <div>
-              <p className="text-sm font-mono text-white/85">{p.actualCents != null ? PKR(p.actualCents) : <em className="text-white/45">unpaid</em>}</p>
-              {p.actualCents != null && Math.abs(variancePct) >= 5 && (
-                <p className="text-[11px]" style={{ color: variance > 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
-                  {variance > 0 ? '+' : ''}{variancePct.toFixed(0)}% vs expected
-                </p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-xs text-white/55">{new Date(p.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-mono text-white/85">{p.actualCents != null ? PKR(p.actualCents) : <em className="text-white/45">unpaid</em>}</p>
+                {p.actualCents != null && Math.abs(variancePct) >= 5 && (
+                  <p className="text-[11px]" style={{ color: variance > 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
+                    {variance > 0 ? '+' : ''}{variancePct.toFixed(0)}% vs expected
+                  </p>
+                )}
+              </div>
+              {p.paidAt && (
+                posted
+                  ? <span className="text-[10px] font-black text-success">PAID · ON THE BOOKS</span>
+                  : p.ledger?.status === 'payroll'
+                    ? <span className="text-[10px] font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
+                    : <span className="text-[10px] font-black text-s-amber" title="Paid before payments posted to the books — an admin can post it from 'Post old payments' at the foot of this page">PAID · NOT POSTED</span>
               )}
+              <button onClick={() => setEditingId(editingId === p.id ? null : p.id)}
+                className="text-[11px] text-primary-ink hover:underline">
+                {editingId === p.id ? 'Close' : p.paidAt ? 'Correct' : 'Mark paid'}
+              </button>
             </div>
-            {p.paidAt && (
-              p.ledger?.status === 'posted'
-                ? <span className="text-[10px] font-black text-success" title={p.ledger.accountCode ? `Booked to ${p.ledger.accountCode}` : undefined}>PAID · ON THE BOOKS</span>
-                : p.ledger?.status === 'payroll'
-                  ? <span className="text-[10px] font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
-                  : <span className="text-[10px] font-black text-s-amber" title="Paid before payments posted to the books — an admin can post it">PAID · NOT POSTED</span>
+            {(details.length > 0 || p.receiptUrl) && (
+              <p className="text-[11px] text-white/45 mt-1 break-words">
+                {details.join(' · ')}
+                {p.receiptUrl && <>{details.length > 0 && ' · '}<a href={p.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-primary-ink hover:underline">Receipt ↗</a></>}
+              </p>
             )}
-            {p.paymentRef && <span className="text-[10px] font-mono text-white/45">{p.paymentRef}</span>}
+            {editingId === p.id && (
+              <PaymentForm line={line} category={category} payment={p}
+                onCancel={() => setEditingId(null)} onDone={() => { setEditingId(null); onChange() }} />
+            )}
           </div>
         )
       })}
     </div>
     {adding ? (
-      <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-        <div className="grid grid-cols-3 gap-2">
-          <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
-          <input type="date" value={periodEnd}   onChange={(e) => setPeriodEnd(e.target.value)}   className={fieldCls} />
-          <MoneyInput value={actualCents} onChange={setActual} className={fieldCls} placeholder="Actual paid (PKR)" />
-        </div>
-        {addError?.code === 'CATEGORY_NOT_MAPPED' && (
-          <div className="mt-2">
-            <label htmlFor={`exp-${line.id}`} className="text-[11px] text-white/55">Expense account (6xxx) this is booked to</label>
-            <input id={`exp-${line.id}`} value={expenseAccountCode} onChange={(e) => setExpenseAccountCode(e.target.value)}
-              placeholder="e.g. 6040" className={fieldCls} inputMode="numeric" />
-          </div>
-        )}
-        {addError && <p role="alert" className="text-[11px] text-s-red mt-2">{addError.message}</p>}
-        <div className="flex justify-end gap-2 mt-2">
-          <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => add.mutate()} disabled={add.isPending}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">+ Record</button>
-        </div>
-      </div>
+      <PaymentForm line={line} category={category} onCancel={() => setAdding(false)} onDone={() => { setAdding(false); onChange() }} />
     ) : (
       <button onClick={() => setAdding(true)}
         className="w-full rounded-lg border-2 border-dashed border-white/10 px-3 py-2 text-xs text-white/55 hover:text-white hover:border-white/30 mt-2">
@@ -715,6 +829,255 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
       </button>
     )}
   </Section>
+}
+
+// Record a payment (new) or correct one (existing). Marking it paid posts it
+// to the books in the same step; a correction to the amount, the paid date or
+// an account reverses and reposts it; a reference, receipt or note alone
+// changes nothing on the books. If the ledger refuses (closed month, no
+// expense account, no bank picked when the company has several) nothing is
+// saved and the reason shows here.
+function PaymentForm({ line, category, payment, onCancel, onDone }: {
+  line: Line; category: Category; payment?: Payment; onCancel: () => void; onDone: () => void
+}) {
+  const { data: banks = [] } = useBankAccounts()
+  const today = todayKarachi()
+  const monthEnd = new Date(); monthEnd.setMonth(monthEnd.getMonth() + 1); monthEnd.setDate(0)
+  const postedFrom = payment?.ledger?.status === 'posted' ? payment.ledger.creditCode ?? null : null
+  const bankOfCode = (code: string | null) =>
+    code ? (banks.find((b) => b.accountCode === code && b.tenantId === category.tenantId)?.id ?? '') : ''
+  // What the form opened with — a correction sends only what differs from it.
+  const [initial] = useState(() => ({
+    // Periods are stored as UTC calendar days (T00:00:00Z … T23:59:59Z).
+    periodStart: payment ? payment.periodStart.slice(0, 10) : today,
+    periodEnd:   payment ? payment.periodEnd.slice(0, 10) : monthEnd.toISOString().slice(0, 10),
+    actualCents: payment ? (payment.actualCents ?? payment.expectedCents) : line.amountCents,
+    paidOn:      payment?.paidAt ? dayOf(payment.paidAt) : today,
+    paymentRef:  payment?.paymentRef ?? '',
+    receiptUrl:  payment?.receiptUrl ?? '',
+    // Where it was paid from: what its entry says once posted, else the line's.
+    cash:        postedFrom ? postedFrom === '1010' : (line.paymentMethod === 'cash' && !line.bankAccountId),
+    bankAccountId: postedFrom ? bankOfCode(postedFrom) : (line.bankAccountId ?? ''),
+  }))
+  const [periodStart, setPeriodStart] = useState(initial.periodStart)
+  const [periodEnd, setPeriodEnd] = useState(initial.periodEnd)
+  const [actualCents, setActual] = useState(initial.actualCents)
+  const [paidOn, setPaidOn] = useState(initial.paidOn)
+  const [paymentRef, setPaymentRef] = useState(initial.paymentRef)
+  const [receiptUrl, setReceiptUrl] = useState(initial.receiptUrl)
+  const [cash, setCash] = useState(initial.cash)
+  const [bankAccountId, setBankAccountId] = useState(initial.bankAccountId)
+  // Only a deliberate change of cash / bank is sent on a correction — an
+  // untouched one keeps the bank the entry was paid from.
+  const [moneyTouched, setMoneyTouched] = useState(false)
+  useEffect(() => {
+    // The bank list may arrive after the form opened: show the posted bank.
+    if (!moneyTouched && !bankAccountId && postedFrom && postedFrom !== '1010') {
+      const id = bankOfCode(postedFrom)
+      if (id) setBankAccountId(id)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [banks])
+  // The expense account: asked when the category has none (pre-filled with the
+  // name's suggestion; remembered for the category), else only on request.
+  const needsAccount = !category.isPayroll && !category.expenseAccountCode
+  const [expenseAccountCode, setExpenseAccountCode] = useState(needsAccount && !payment?.paidAt ? (category.suggestedExpenseAccountCode ?? '') : '')
+  const [overrideAccount, setOverrideAccount] = useState(false)
+  const accountLabel = useAccountLabel(category.tenantId)
+
+  const save = useMutation({
+    mutationFn: () => {
+      if (!payment) {
+        return api.post('/opex/payments', {
+          lineId: line.id,
+          periodStart: `${periodStart}T00:00:00Z`,
+          periodEnd:   `${periodEnd}T23:59:59Z`,
+          expectedCents: line.amountCents,
+          actualCents,
+          paidAt: paidAtFor(paidOn),
+          paymentRef: paymentRef.trim() || null,
+          receiptUrl: receiptUrl.trim() || null,
+          ...(cash ? { payFrom: 'cash' } : { payFrom: 'bank', ...(bankAccountId && { bankAccountId }) }),
+          ...(expenseAccountCode && { expenseAccountCode }),
+        })
+      }
+      // A correction sends only what changed, so an untouched date or bank
+      // never moves the entry.
+      const body: Record<string, unknown> = {}
+      if (periodStart !== initial.periodStart) body.periodStart = `${periodStart}T00:00:00Z`
+      if (periodEnd !== initial.periodEnd) body.periodEnd = `${periodEnd}T23:59:59Z`
+      if (actualCents !== initial.actualCents || !payment.paidAt) body.actualCents = actualCents
+      if (!payment.paidAt || paidOn !== initial.paidOn) body.paidAt = paidAtFor(paidOn)
+      if (paymentRef !== initial.paymentRef) body.paymentRef = paymentRef.trim() || null
+      if (receiptUrl !== initial.receiptUrl) body.receiptUrl = receiptUrl.trim() || null
+      if (moneyTouched) {
+        Object.assign(body, cash ? { payFrom: 'cash' } : { payFrom: 'bank', ...(bankAccountId && { bankAccountId }) })
+      }
+      if (expenseAccountCode) body.expenseAccountCode = expenseAccountCode
+      return api.patch(`/opex/payments/${payment.id}`, body)
+    },
+    onSuccess: onDone,
+  })
+  const unpay = useMutation({
+    mutationFn: () => api.patch(`/opex/payments/${payment!.id}`, { paidAt: null }),
+    onSuccess: onDone,
+  })
+  const err = (save.error ?? unpay.error) as { code?: string; message?: string } | null
+  const showAccount = needsAccount || overrideAccount || err?.code === 'CATEGORY_NOT_MAPPED' || err?.code === 'ACCOUNT_NOT_FOUND'
+  const idp = payment?.id ?? `new-${line.id}`
+
+  return (
+    <div className="rounded-xl p-3 mt-2 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div>
+          <label htmlFor={`ps-${idp}`} className="text-[11px] text-white/55">Period from</label>
+          <input id={`ps-${idp}`} type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
+        </div>
+        <div>
+          <label htmlFor={`pe-${idp}`} className="text-[11px] text-white/55">Period to</label>
+          <input id={`pe-${idp}`} type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={fieldCls} />
+        </div>
+        <div>
+          <span className="block text-[11px] text-white/55">Amount paid (PKR)</span>
+          <MoneyInput value={actualCents} onChange={setActual} className={fieldCls} ariaLabel="Amount paid (PKR)" />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div>
+          <label htmlFor={`pd-${idp}`} className="text-[11px] text-white/55">Paid on</label>
+          <input id={`pd-${idp}`} type="date" value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} />
+        </div>
+        <div>
+          <label htmlFor={`ref-${idp}`} className="text-[11px] text-white/55">Reference (cheque / transfer no.)</label>
+          <input id={`ref-${idp}`} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} maxLength={120} className={fieldCls} />
+        </div>
+        <div>
+          <label htmlFor={`rc-${idp}`} className="text-[11px] text-white/55">Receipt link</label>
+          <input id={`rc-${idp}`} type="url" value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+        <label className="flex items-center gap-2 text-xs text-white/70">
+          <input type="checkbox" checked={cash} onChange={(e) => { setCash(e.target.checked); setMoneyTouched(true) }} />
+          Paid in cash
+        </label>
+        {!cash && (
+          <BankAccountSelect tenantId={category.tenantId} value={bankAccountId} onChange={(v) => { setBankAccountId(v); setMoneyTouched(true) }}
+            id={`bank-${idp}`} label="Paid from" className={fieldCls} />
+        )}
+      </div>
+      {showAccount ? (
+        <div>
+          <label htmlFor={`exp-${idp}`} className="text-[11px] text-white/55">
+            {needsAccount ? 'Expense account — remembered for this category' : 'Book this payment to'}
+          </label>
+          <ExpenseAccountSelect id={`exp-${idp}`} tenantId={category.tenantId} value={expenseAccountCode} onChange={setExpenseAccountCode}
+            emptyLabel={needsAccount ? '— pick the expense account —' : '— the category\'s account —'} />
+        </div>
+      ) : !category.isPayroll && (
+        <p className="text-[11px] text-white/45">
+          Booked to {accountLabel(category.expenseAccountCode)}.{' '}
+          <button type="button" onClick={() => setOverrideAccount(true)} className="text-primary-ink hover:underline">Book this one elsewhere</button>
+        </p>
+      )}
+      {err && <p role="alert" className="text-[11px] text-s-red">{err.message}</p>}
+      <div className="flex flex-wrap justify-end gap-2">
+        {payment?.paidAt && (
+          <button onClick={() => { if (confirm('Mark this payment unpaid? Its entry is reversed.')) unpay.mutate() }} disabled={unpay.isPending}
+            className="text-xs text-s-red/80 hover:text-s-red mr-auto">Mark unpaid</button>
+        )}
+        <button onClick={onCancel} className="text-xs text-white/55 hover:text-white">Cancel</button>
+        <button onClick={() => save.mutate()} disabled={save.isPending || actualCents <= 0 || !paidOn}
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+          {save.isPending ? 'Saving…' : payment ? (payment.paidAt ? 'Save correction' : 'Mark paid') : '+ Record'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Post old payments (admin) ──────────────────────────────────────────────
+// Paid OpEx payments that never reached the books (recorded before payments
+// posted). POST /opex/payments/post-unposted: Preview tries each one and rolls
+// back, so it says exactly what posting would do; Post does it. Nothing is
+// forced — a payment that can't post says why, and how to fix it.
+
+interface BackfillRow {
+  paymentId: string; line: string; lineId: string; categoryId: string; category: string
+  paidAt: string | null; amountCents: number | null
+  outcome: 'payroll' | 'already_posted' | 'would_post' | 'posted' | 'needs_account' | 'needs_bank' | 'period_locked' | 'failed'
+  code?: string; reason?: string
+}
+interface BackfillResult { dryRun: boolean; counts: Partial<Record<BackfillRow['outcome'], number>>; rows: BackfillRow[] }
+
+const BACKFILL_LABEL: Record<BackfillRow['outcome'], string> = {
+  would_post: 'Will post on its paid date',
+  posted: 'Posted',
+  needs_account: 'Needs an expense account — set it on the category',
+  needs_bank: 'Needs a bank — pick it on the line',
+  period_locked: 'Its month is closed — not posted; for the accountant',
+  failed: 'Not posted',
+  already_posted: 'Already on the books',
+  payroll: 'Payroll — booked by HR payroll',
+}
+
+function PostOldPayments({ onEditCategory, onPosted }: { onEditCategory: (categoryId: string) => void; onPosted: () => void }) {
+  const isAdmin = useAuthStore((s) => s.isRole('admin'))
+  const [result, setResult] = useState<BackfillResult | null>(null)
+  const run = useMutation({
+    mutationFn: (dryRun: boolean) => api.post<BackfillResult>('/opex/payments/post-unposted', { dryRun }),
+    onSuccess: (r) => { setResult(r); if (!r.dryRun) onPosted() },
+  })
+  if (!isAdmin) return null
+  const rows = (result?.rows ?? []).filter((r) => r.outcome !== 'already_posted' && r.outcome !== 'payroll')
+  const postable = result?.dryRun ? (result.counts.would_post ?? 0) : 0
+
+  return (
+    <section className="rounded-2xl p-5 space-y-3"
+      style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-xl">
+          <h2 className="text-sm font-black text-white/85">Post old payments</h2>
+          <p className="text-xs text-white/50 mt-1">
+            Payments marked paid before OpEx posted to the books. Preview first: it says which will post and which need an
+            expense account, a bank, or sit in a closed month. Closed months are never reopened.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => run.mutate(true)} disabled={run.isPending}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:text-white">Preview</button>
+          <button onClick={() => run.mutate(false)} disabled={run.isPending || postable === 0}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+            Post{postable > 0 ? ` ${postable}` : ''}
+          </button>
+        </div>
+      </div>
+      {run.error && <p role="alert" className="text-xs text-s-red">{(run.error as Error).message}</p>}
+      {result && (
+        rows.length === 0
+          ? <p className="text-xs text-white/50">Every paid OpEx payment is on the books.</p>
+          : (
+            <div className="space-y-1.5">
+              {rows.map((r) => (
+                <div key={r.paymentId} className="rounded-lg px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+                  style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
+                  <span className="font-bold text-white/80 min-w-0 flex-1 break-words">{r.line}</span>
+                  <span className="text-white/50">{r.paidAt ? new Date(r.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'Asia/Karachi' }) : '—'}</span>
+                  <span className="font-mono text-white/70">{r.amountCents != null ? PKR(r.amountCents) : '—'}</span>
+                  <span style={{ color: r.outcome === 'posted' || r.outcome === 'would_post' ? 'var(--erp-success)' : r.outcome === 'failed' || r.outcome === 'period_locked' ? 'var(--erp-danger)' : 'var(--erp-warning)' }}
+                    title={r.reason}>
+                    {BACKFILL_LABEL[r.outcome]}{r.outcome === 'failed' && r.reason ? ` — ${r.reason}` : ''}
+                  </span>
+                  {r.outcome === 'needs_account' && (
+                    <button onClick={() => onEditCategory(r.categoryId)} className="text-primary-ink hover:underline">Set account</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+      )}
+    </section>
+  )
 }
 
 // ─── Shared ───────────────────────────────────────────────────────────────

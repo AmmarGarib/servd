@@ -345,15 +345,30 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     // The value of what the count found short / over goes to the ledger in the
     // count's company (countPosting.ts), so the inventory account follows the
     // stock. Idempotent on the count id. A posting failure must not undo a
-    // count the kitchen has already made — it is logged with the count id
-    // (postStockCount(id) can be re-run) and reported in the response.
+    // count the kitchen has already made — it is flagged posting_failed in
+    // the count's company (Reconciliation → Backfill unposted re-posts it) and
+    // reported in the response. No variance is not a failure.
     let ledger: { posted: boolean; entryId: string | null; reason?: string }
+    let refused: string | null = null
     try {
       const { postStockCount } = await import('./countPosting.js')
       ledger = await postStockCount(count.id)
+      if (!ledger.posted && ledger.reason && ledger.reason !== 'no_variance') refused = ledger.reason
     } catch (err) {
-      req.log.error({ err: (err as Error).message, physicalCountId: count.id }, 'postStockCount failed')
+      refused = (err as Error).message
       ledger = { posted: false, entryId: null, reason: (err as { code?: string }).code ?? 'posting_failed' }
+    }
+    if (refused) {
+      req.log.error({ err: refused, physicalCountId: count.id }, 'postStockCount failed')
+      const { flagPostingFailed } = await import('../accounting/journal.js')
+      await flagPostingFailed({
+        tenantId,
+        sourceType: 'inventory.count', sourceId: count.id,
+        entityType: 'PhysicalCount', entityId: count.id,
+        reason: refused,
+        title: 'Stock count adjustment did not reach the ledger',
+        actorId: req.staffUser!.id,
+      })
     }
 
     // Flag significant variances once the count is committed.

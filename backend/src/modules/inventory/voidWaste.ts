@@ -22,12 +22,15 @@
 //     company, keyed on the order item (`pos.void_waste:<orderItemId>`, so it
 //     can never post twice). A closed period refuses the posting: the void
 //     still goes through, the waste log stands, and the caller raises a
-//     'posting_failed' flag so finance books it in the open period.
+//     'posting_failed' flag (with the waste log ids) that Reconciliation →
+//     Backfill unposted re-posts through postVoidWaste below — the same
+//     entry and key, so it can never be booked twice.
 
 import type { Prisma } from '@prisma/client'
+import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { consumptionForSoldLines } from '../../lib/recipeCost.js'
-import { postJournalEntry, ACCT, type JournalLineInput } from '../accounting/journal.js'
+import { postJournalEntry, withLateNote, ACCT, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -108,7 +111,6 @@ export async function wasteVoidedFiredLineTx(tx: Tx, input: {
   })
   const note = `Voided after firing: ${input.line.quantity} × ${input.line.name} (order ${input.orderId}, line ${input.line.id}). Reason: ${input.reason}`
   const wasteLogIds: string[] = []
-  const debits: JournalLineInput[] = []
   let costCents = 0
   for (const it of [...items].sort((a, b) => a.id.localeCompare(b.id))) {
     const qty = wasted[it.id]!
@@ -127,28 +129,14 @@ export async function wasteVoidedFiredLineTx(tx: Tx, input: {
       select: { id: true },
     })
     wasteLogIds.push(log.id)
-    if (cost && cost > 0) {
-      costCents += cost
-      debits.push({ accountCode: ACCT.WASTE, type: 'debit', amountCents: cost, memo: `Void after fire: ${it.name}`, conceptId: input.conceptId })
-    }
+    if (cost && cost > 0) costCents += cost
   }
 
   let entryId: string | null = null
   let postingError: VoidWasteResult['postingError'] = null
   if (costCents > 0 && input.tenantId) {
     try {
-      const r = await postJournalEntry({
-        tenantId: input.tenantId,
-        sourceType: VOID_WASTE_SOURCE,
-        sourceId: input.line.id,
-        description: `Waste — ${input.line.quantity} × ${input.line.name} voided after firing`,
-        entryDate: new Date(),
-        postedBy: input.actorId,
-        lines: [
-          ...debits,
-          { accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: costCents, memo: 'Inventory derecognised (void after fire)', conceptId: input.conceptId },
-        ],
-      }, { tx })
+      const r = await postVoidWaste(input.tenantId, input.line.id, wasteLogIds, input.conceptId, { tx, postedBy: input.actorId })
       entryId = r.entryId
     } catch (err) {
       // postJournalEntry refuses (closed period, a missing account) before it
@@ -162,4 +150,61 @@ export async function wasteVoidedFiredLineTx(tx: Tx, input: {
   }
 
   return { wasted, costCents, wasteLogIds, entryId, skipped: null, postingError }
+}
+
+/**
+ * The ONE void-waste entry: Dr 5040 Waste per waste log (its
+ * estimatedCostCents) / Cr 1210 Inventory — Food, in `tenantId` (the order's
+ * company), keyed 'pos.void_waste:<orderItemId>' — so the live void and a
+ * re-post by Reconciliation → Backfill unposted can never both book it.
+ *
+ * Only this line's void-after-fire logs count (reason void_after_fire, the
+ * line id in the note) and never another company's item. Dated now (the void)
+ * unless `entryDate` is given; `memoNote` names the original date when it is
+ * re-posted into the open month (owner decision 6). Throws what
+ * postJournalEntry throws (PERIOD_LOCKED, ACCOUNT_NOT_FOUND, …).
+ */
+export async function postVoidWaste(
+  tenantId: string,
+  orderItemId: string,
+  wasteLogIds: string[],
+  conceptId: string | null,
+  opts: RepostOptions & { tx?: Tx } = {},
+): Promise<{ posted: boolean; entryId: string | null; reason?: string; costCents: number }> {
+  const db = opts.tx ?? prisma
+  const line = await db.orderItem.findUnique({ where: { id: orderItemId }, select: { name: true, quantity: true } })
+  if (!line) return { posted: false, entryId: null, reason: 'order_item_not_found', costCents: 0 }
+  const logs = wasteLogIds.length === 0 ? [] : await db.wasteLog.findMany({
+    where: { id: { in: wasteLogIds }, reason: VOID_WASTE_REASON, notes: { contains: orderItemId } },
+    select: { id: true, estimatedCostCents: true, inventoryItem: { select: { name: true, tenantId: true } } },
+    orderBy: { id: 'asc' },
+  })
+  const debits: JournalLineInput[] = []
+  let costCents = 0
+  for (const log of logs) {
+    const cost = log.estimatedCostCents ?? 0
+    // Never value another company's stock into this company's books.
+    if (cost <= 0 || (log.inventoryItem.tenantId && log.inventoryItem.tenantId !== tenantId)) continue
+    costCents += cost
+    debits.push({ accountCode: ACCT.WASTE, type: 'debit', amountCents: cost, memo: `Void after fire: ${log.inventoryItem.name}`, conceptId })
+  }
+  if (costCents <= 0) return { posted: false, entryId: null, reason: 'zero_cost', costCents: 0 }
+  const late = withLateNote(
+    `Waste — ${line.quantity} × ${line.name} voided after firing`,
+    [
+      ...debits,
+      { accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: costCents, memo: 'Inventory derecognised (void after fire)', conceptId },
+    ],
+    opts.memoNote,
+  )
+  const r = await postJournalEntry({
+    tenantId,
+    sourceType: VOID_WASTE_SOURCE,
+    sourceId: orderItemId,
+    description: late.description,
+    entryDate: opts.entryDate ?? new Date(),
+    postedBy: opts.postedBy ?? 'system',
+    lines: late.lines,
+  }, { tx: opts.tx })
+  return { posted: r.posted, entryId: r.entryId, costCents }
 }

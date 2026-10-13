@@ -150,6 +150,10 @@ const EXPECTED_BIGINT_FIELDS = [
   'FixedAsset.costCents', 'FixedAsset.salvageCents', 'FixedAsset.disposalProceedsCents',
   'FixedAssetDepreciation.amountCents',
   'ReceivableInvoice.amountCents', 'ReceivableInvoice.taxCents', 'ReceivableInvoice.paidCents',
+  // Finance gaps wave A (2026-10-13): credit notes, customer WHT, supplier credit notes, tax payments.
+  'ReceivableInvoice.creditedCents', 'ReceivableInvoice.whtCents',
+  'SupplierBill.creditedCents', 'SupplierCreditApplication.amountCents',
+  'SalesTaxPayment.outputSetOffCents', 'SalesTaxPayment.inputSetOffCents', 'SalesTaxPayment.paidCents',
   'ReceivablePayment.amountCents',
 ].sort()
 
@@ -178,7 +182,7 @@ describe('(1) the money boundary', () => {
   it('DMMF canary: the BIGINT fields are exactly the 43 money fields', () => {
     const got = Prisma.dmmf.datamodel.models.flatMap((m) => m.fields.filter((f) => f.type === 'BigInt').map((f) => `${m.name}.${f.name}`)).sort()
     expect(got).toEqual(EXPECTED_BIGINT_FIELDS)
-    expect(got).toHaveLength(43)
+    expect(got).toHaveLength(50)
   })
 
   describe('a PKR 25m entry reads back as an exact JS number through every shape, on both clients', () => {

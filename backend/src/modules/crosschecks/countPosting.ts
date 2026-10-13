@@ -16,14 +16,18 @@
 // balances by construction; it is still asserted before posting.
 
 import { prisma } from '../../lib/prisma.js'
-import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { ACCT, postJournalEntry, withLateNote, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
 
 export const COUNT_SOURCE_TYPE = 'inventory.count'
 
-export async function postStockCount(countId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string; amountCents?: number }> {
+/** The count's adjustment lines, valued at each item's moving-average cost now. */
+export async function stockCountAdjustment(countId: string): Promise<
+  | { ok: false; reason: 'count_not_found' | 'count_has_no_company' }
+  | { ok: true; tenantId: string; countedAt: Date; countedById: string; lines: JournalLineInput[]; shortCents: number; overCents: number }
+> {
   const count = await prisma.physicalCount.findUnique({ where: { id: countId }, include: { lines: true } })
-  if (!count) return { posted: false, entryId: null, reason: 'count_not_found' }
-  if (!count.tenantId) return { posted: false, entryId: null, reason: 'count_has_no_company' }
+  if (!count) return { ok: false, reason: 'count_not_found' }
+  if (!count.tenantId) return { ok: false, reason: 'count_has_no_company' }
 
   const items = await prisma.inventoryItem.findMany({
     where: { id: { in: count.lines.map((l) => l.inventoryItemId) } },
@@ -52,22 +56,35 @@ export async function postStockCount(countId: string): Promise<{ posted: boolean
       lines.push({ accountCode: ACCT.INVENTORY_VARIANCE, type: 'credit', amountCents: value, memo: `Count over — ${memo}` })
     }
   }
+  return { ok: true, tenantId: count.tenantId, countedAt: count.countedAt, countedById: count.countedById, lines, shortCents, overCents }
+}
+
+/**
+ * `opts` is for re-posting a refused count (reconciliation/backfillOrders.ts):
+ * dated in the open period with a note naming the count's date when its own
+ * month is closed (owner decision 6). Same key either way.
+ */
+export async function postStockCount(countId: string, opts: RepostOptions = {}): Promise<{ posted: boolean; entryId: string | null; reason?: string; amountCents?: number }> {
+  const adj = await stockCountAdjustment(countId)
+  if (!adj.ok) return { posted: false, entryId: null, reason: adj.reason }
+  const { lines, shortCents, overCents } = adj
   if (lines.length === 0) return { posted: false, entryId: null, reason: 'no_variance' }
 
   const debits  = lines.filter((x) => x.type === 'debit').reduce((s, x) => s + x.amountCents, 0)
   const credits = lines.filter((x) => x.type === 'credit').reduce((s, x) => s + x.amountCents, 0)
   if (debits !== credits) {
-    throw new Error(`stock count ${count.id}: unbalanced adjustment (debits ${debits} ≠ credits ${credits})`)
+    throw new Error(`stock count ${countId}: unbalanced adjustment (debits ${debits} ≠ credits ${credits})`)
   }
 
+  const late = withLateNote(`Stock count adjustment — short PKR ${(shortCents / 100).toFixed(2)}, over PKR ${(overCents / 100).toFixed(2)}`, lines, opts.memoNote)
   const result = await postJournalEntry({
-    tenantId: count.tenantId,
+    tenantId: adj.tenantId,
     sourceType: COUNT_SOURCE_TYPE,
-    sourceId: count.id,
-    description: `Stock count adjustment — short PKR ${(shortCents / 100).toFixed(2)}, over PKR ${(overCents / 100).toFixed(2)}`,
-    entryDate: count.countedAt,
-    postedBy: count.countedById,
-    lines,
+    sourceId: countId,
+    description: late.description,
+    entryDate: opts.entryDate ?? adj.countedAt,
+    postedBy: opts.postedBy ?? adj.countedById,
+    lines: late.lines,
   })
   return { posted: result.posted, entryId: result.entryId, amountCents: shortCents - overCents }
 }

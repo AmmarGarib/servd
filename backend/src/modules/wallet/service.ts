@@ -11,9 +11,11 @@
 // This file is the ONE place a wallet balance moves:
 //   - topUpWallet:     credit the TOP-UP's company and post it there in the
 //                      same transaction — Dr 6060 Marketing & Promo (a
-//                      manager's goodwill credit) or Dr the tender's account
-//                      (1010 cash / 1030 card / 1020 bank, a paid top-up) /
-//                      Cr 2050. Never a top-up without its entry.
+//                      manager's goodwill credit) or Dr the account the money
+//                      went into (a paid top-up: 1010 cash / 1030 card / the
+//                      company's bank account it was received into —
+//                      lib/bankAccounts.ts moneyAccountCode) / Cr 2050. Never
+//                      a top-up without its entry.
 //   - holdWalletForCheckout / attachHoldToOrder / releaseWalletHold: a wallet
 //                      that IS the payment method is taken before the order
 //                      is written (storefront ONLINE-R5), from the wallet of
@@ -34,19 +36,22 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry } from '../accounting/journal.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 
 type Tx = Prisma.TransactionClient
 
 /** Marketing & Promo — where a manager's goodwill wallet credit is expensed. */
 export const WALLET_GOODWILL_EXPENSE = '6060'
 
-/** The debit side of a PAID top-up, by how the customer paid it. */
-export const TOPUP_TENDER_ACCOUNT = {
-  cash: ACCT.CASH_ON_HAND,     // 1010 — cash taken at the counter
-  card: ACCT.CARD_RECEIVABLE,  // 1030 — card / gateway, awaiting settlement
-  bank: ACCT.BANK,             // 1020 — bank transfer into the operating account
-} as const
-export type TopUpTender = keyof typeof TOPUP_TENDER_ACCOUNT
+/**
+ * How the customer paid for a PAID top-up. The debit side is the account the
+ * money went into (moneyAccountCode): cash → 1010, card → 1030 (awaiting
+ * settlement), bank → the wallet company's bank account it was received into
+ * (the named one; else the company's only bank; 1020 with none; 422
+ * BANK_ACCOUNT_REQUIRED when it has two or more and none is named).
+ */
+export const TOPUP_TENDERS = ['cash', 'card', 'bank'] as const
+export type TopUpTender = typeof TOPUP_TENDERS[number]
 
 /** The balance of the customer's wallet at one company (0 when none). */
 export async function walletBalanceAt(tenantId: string | null | undefined, customerId: string, db: Tx | typeof prisma = prisma): Promise<number> {
@@ -117,6 +122,8 @@ interface MoveInput {
   type: 'topup' | 'spend' | 'refund' | 'bonus'
   description: string
   orderId?: string | null
+  /** A paid top-up received into a company bank account (same company). */
+  bankAccountId?: string | null
 }
 
 /** Credit inside `tx` (wallet row locked). Returns the WalletTransaction and the balance after. */
@@ -139,6 +146,7 @@ export async function creditWalletTx(tx: Tx, input: MoveInput): Promise<{ transa
       balanceAfter: updated.balanceCents,
       description: input.description,
       orderId: input.orderId ?? null,
+      bankAccountId: input.bankAccountId ?? null,
     },
     select: { id: true },
   })
@@ -179,30 +187,40 @@ export interface TopUpInput {
   /** goodwill = a manager's credit (Dr 6060); paid = the customer paid for it (Dr the tender). */
   kind: 'goodwill' | 'paid'
   tender?: TopUpTender
+  /** tender 'bank': the bank account of `tenantId` it was received into. */
+  bankAccountId?: string | null
   description: string
   postedBy: string
 }
 
 /**
  * Credit the customer's wallet AT `tenantId` and book it in that company in
- * the SAME transaction: Dr 6060 (goodwill) or the tender's account (paid) /
- * Cr 2050. A posting that cannot be made (period locked, chart missing a
- * code) rolls the credit back — a wallet never holds value its company's
- * books do not owe.
+ * the SAME transaction: Dr 6060 (goodwill) or the account the money went
+ * into (paid — moneyAccountCode, a bank of THAT company only) / Cr 2050. A
+ * posting that cannot be made (period locked, chart missing a code, a bank of
+ * another company) rolls the credit back — a wallet never holds value its
+ * company's books do not owe.
  */
 export async function topUpWallet(input: TopUpInput): Promise<{ transactionId: string; balanceAfter: number; entryId: string | null }> {
   if (input.kind === 'paid' && !input.tender) {
     throw new AppError('TENDER_REQUIRED', 'Say how the customer paid for the top-up (cash, card or bank)', 422)
   }
-  const debitAccount = input.kind === 'goodwill' ? WALLET_GOODWILL_EXPENSE : TOPUP_TENDER_ACCOUNT[input.tender!]
+  if (input.kind === 'goodwill' && input.bankAccountId) {
+    throw new AppError('BANK_ACCOUNT_ON_GOODWILL', 'A goodwill credit is our own cost — no money came in, so it has no bank account', 422)
+  }
   return prisma.$transaction(async (tx) => {
+    const money = input.kind === 'goodwill'
+      ? { code: WALLET_GOODWILL_EXPENSE, bankAccountId: null }
+      : await moneyAccountCode(tx, input.tenantId, { method: input.tender!, bankAccountId: input.bankAccountId })
     const moved = await creditWalletTx(tx, {
       tenantId: input.tenantId,
       customerId: input.customerId,
       amountCents: input.amountCents,
       type: 'topup',
       description: input.description,
+      bankAccountId: money.bankAccountId,
     })
+    const debitAccount = money.code
     const memo = `Wallet top-up (${input.kind === 'goodwill' ? 'goodwill' : `paid — ${input.tender}`}) #${moved.transactionId.slice(0, 8)}`
     const je = await postJournalEntry({
       tenantId: input.tenantId,

@@ -9,8 +9,10 @@ import {
   displayValue, human, day, rs, btn, btnGhost, inp, STATUS_COLOR, ROLE_LABEL, withLeaveDays, leaveFields,
   type HrFormat, type HrRecord, type Lookups, type OrgData,
 } from '../../lib/hr'
-import { FormRenderer } from './FormRenderer'
+import { FormRenderer, BANK_ACCOUNT_REF } from './FormRenderer'
 import { useHrAccess } from './HrShell'
+import { RecordMoney, BankAccountName } from './RecordMoney'
+import { BankAccountSelect } from '../finance/BankAccountSelect'
 
 // Letters that make sense from a record — spec §26.
 export const LETTERS_FOR: Record<string, string[]> = {
@@ -70,6 +72,10 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
     : '')
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  // A loan's last approver may say where it is paid out from (HR raising it
+  // may not see the company's banks). Blank = what the loan says.
+  const [payFrom, setPayFrom] = useState<string>(typeof record.data['paidFrom'] === 'string' ? record.data['paidFrom'] as string : '')
+  const [payBank, setPayBank] = useState<string>(typeof record.data['bankAccount'] === 'string' ? record.data['bankAccount'] as string : '')
   const lk = { employees: lookups?.employees, records: lookups?.records, org }
   const base = `/hr/records/${record.section}/${record.id}`
   const done = () => { setErr(''); void qc.invalidateQueries(); onChanged() }
@@ -77,6 +83,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
 
   const step = format.workflow[record.currentStep]
   const pending = record.status === 'submitted' && !!step
+  const loanPayout = pending && record.section === 'loan' && record.currentStep >= format.workflow.length - 1
   const editable = admin && (format.workflow.length === 0 || ((record.status === 'draft' || record.status === 'submitted') && record.approvals.length === 0))
   // What POST /cancel allows: HR cancels anything not yet in effect; anyone
   // else only their own request, before an approver has acted on it.
@@ -90,6 +97,8 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
     mutationFn: (decision: 'approved' | 'rejected') => api.post(`${base}/decide`, {
       decision, ...(note.trim() && { note: note.trim() }),
       ...(record.section === 'overtime' && hours !== '' && { approvedHours: Number(hours) }),
+      ...(decision === 'approved' && loanPayout && payFrom && { paidFrom: payFrom }),
+      ...(decision === 'approved' && loanPayout && payFrom !== 'cash' && payBank && { bankAccountId: payBank }),
     }),
     onSuccess: () => { setNote(''); done() }, onError: fail,
   })
@@ -103,12 +112,20 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
     mutationFn: async () => {
       const lwd = (draft['lastWorkingDay'] as string) || record.endDate
       if (!record.employeeId || !lwd) throw new Error('Set the employee and last working day first')
-      return api.post<Record<string, number | boolean | string | null>>('/hr/final-settlement/calculate', { employeeId: record.employeeId, lastWorkingDay: lwd })
+      // recordId: the server notes what it was worked out from, so approval
+      // can tell if payroll moved since.
+      return api.post<Record<string, unknown>>('/hr/final-settlement/calculate', { employeeId: record.employeeId, lastWorkingDay: lwd, recordId: record.id })
     },
     onSuccess: (r) => {
-      setDraft((d) => ({ ...d, salaryPayable: r['salaryPayable'], otPayable: r['otPayable'], leaveEncashment: r['leaveEncashment'], loanRecovery: r['loanRecovery'], deductions: d['deductions'] ?? 0, otherAdjustments: d['otherAdjustments'] ?? 0 }))
+      setDraft((d) => ({
+        ...d, salaryPayable: r['salaryPayable'], otPayable: r['otPayable'], leaveEncashment: r['leaveEncashment'], loanRecovery: r['loanRecovery'],
+        incomeTax: r['incomeTax'], eobiEmployee: r['eobiEmployee'], eobiEmployer: r['eobiEmployer'], sessiEmployer: r['sessiEmployer'],
+        deductions: d['deductions'] ?? 0, otherAdjustments: d['otherAdjustments'] ?? 0,
+      }))
       setEditing(true)
-      setMsg(`Calculated from ${r['leaveBalanceDays']} day(s) of paid leave earned this leave year${r['paidThrough'] ? `; salary already paid by payroll through ${r['paidThrough']}` : ''}. Review, then save.`)
+      const through = r['paidThrough'] ? `; payroll pays through ${String(r['paidThrough'])}${r['paidThroughStatus'] && r['paidThroughStatus'] !== 'locked' ? ` (still ${String(r['paidThroughStatus'])} — lock it before approving this)` : ''}` : ''
+      const warnings = Array.isArray(r['warnings']) && r['warnings'].length ? ` ${(r['warnings'] as string[]).join(' ')}` : ''
+      setMsg(`Calculated from ${String(r['leaveBalanceDays'])} day(s) of paid leave earned this leave year${through}. Review, then save.${warnings}`)
     },
     onError: fail,
   })
@@ -138,7 +155,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       {editing ? (
         <div>
           <FormRenderer fields={leaveFields(record.section, format.fields, draft)} value={draft}
-            onChange={(x) => setDraft(withLeaveDays(record.section, format.fields, draft, x))} ctx={{ lookups, org }} />
+            onChange={(x) => setDraft(withLeaveDays(record.section, format.fields, draft, x))} ctx={{ lookups, org, tenantId: record.tenantId }} />
           <div className="flex gap-2 mt-4">
             <button className={btn} disabled={save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save'}</button>
             <button className={btnGhost} onClick={() => { setEditing(false); setDraft(record.data) }}>Cancel</button>
@@ -152,7 +169,9 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
               <dd className="text-sm text-white/85 whitespace-pre-wrap">
                 {f.type === 'table' && Array.isArray(record.data[f.key]) && (record.data[f.key] as unknown[]).length
                   ? <TableView f={f} rows={record.data[f.key] as Record<string, unknown>[]} lk={lk} />
-                  : displayValue(f, record.data[f.key], lk)}
+                  : f.ref === BANK_ACCOUNT_REF
+                    ? (typeof record.data[f.key] === 'string' && record.data[f.key] ? <BankAccountName id={record.data[f.key] as string} /> : '—')
+                    : displayValue(f, record.data[f.key], lk)}
               </dd>
             </div>
           ))}
@@ -186,6 +205,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
         <p className="text-sm text-white/70">OT amount: <strong className="text-white/90">{rs(record.amountCents)}</strong> — goes into the {day(record.startDate).split(' ').slice(1).join(' ')} payroll.</p>
       )}
       {record.section === 'leave' && record.status === 'approved' && <LeaveRotaEffects data={record.data} />}
+      <RecordMoney record={record} onChanged={onChanged} />
       {record.appliedAt && <p className="text-xs text-primary-ink">Applied to the employee record on {day(record.appliedAt)}.</p>}
       {record.status === 'approved' && !record.appliedAt && ['promotion', 'transfer', 'salary_revision', 'probation_review'].includes(record.section) && record.effectiveDate && (
         <p className="text-xs text-amber-700">Takes effect on {day(record.effectiveDate)}.</p>
@@ -198,6 +218,22 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
             <label className="block text-xs text-white/60">Approved hours
               <input type="number" step="0.25" min={0} className={`${inp} mt-1`} value={hours} onChange={(e) => setHours(e.target.value)} />
             </label>
+          )}
+          {loanPayout && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Paid out from</span>
+                <select className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value)}>
+                  <option value="">The way the employee is paid</option>
+                  <option value="bank">Bank</option>
+                  <option value="cash">Cash (the safe)</option>
+                </select>
+              </label>
+              {payFrom !== 'cash' && (
+                <BankAccountSelect id={`loan-bank-${record.id}`} tenantId={record.tenantId} value={payBank} onChange={setPayBank} className={inp} />
+              )}
+              <p className="sm:col-span-2 text-[10px] text-white/40">Approving pays the loan out and books it from here.</p>
+            </div>
           )}
           <input className={inp} placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
           <div className="flex gap-2">

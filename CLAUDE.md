@@ -813,6 +813,36 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   always relative + conditional (`floatCents >= amount`), never "set to what
   we read".
 
+### Finance gaps, wave A (2026-10-13; owner: "no known gaps in finance")
+
+- **Which money account:** `moneyAccountCode(db, tenantId, {method, bankAccountId})`
+  in `lib/bankAccounts.ts` is THE answer for every non-till payment (supplier
+  payments, receivable receipts/refunds, wallet top-ups, CapEx, OpEx, gift
+  cards, tax payments, payroll, F&F, loans, deposit drops): cash→1010,
+  card→1030, bank-type→the named live LINKED bank of the SOURCE document's
+  company; none named → the company's only bank, 1020 if none, 422
+  `BANK_ACCOUNT_REQUIRED` if two or more; a wallet always names its account.
+  `bankLedgerCode` is strict (422, never a silent 1020). Admin picker:
+  `components/finance/BankAccountSelect.tsx`.
+- **Credit notes live in their document's own table:** supplier credit notes
+  are `SupplierBill` kind `credit_note` (+ `SupplierCreditApplication`);
+  receivable credit notes are `ReceivableInvoice` kind `credit_note`. Still
+  due = total − wht − paid − credited (`billDueCents`), everywhere.
+- **Tax paid to an authority** is a `SalesTaxPayment` ('salestax.payment:<id>'),
+  or a LINK to an entry already posted by hand — never both. The return's
+  output excludes payments, so paying never lowers the tax shown.
+- **A refused posting is never only logged:** `flagPostingFailed` with the
+  document's sourceType, and a re-poster in `reconciliation/backfillOrders.ts`
+  REPOSTERS. A new posting that can be refused adds both.
+- **Pending owner/CA decisions** (decisions page
+  https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): petty cash in the
+  ledger (C1/C2/C5), COD never paid (G1), gratuity (G2), statutory payables
+  (G3), inter-company (G4), year-end (G5), GRNI (G6), input tax by authority
+  (G7), delivery-fee / no-show tax (G8/G9), gift-card breakage (G10), card
+  MDR (G11), bad debt (G12), customer sales-tax withholding (G13), on-account
+  tender (G14), fixed assets v2 (F*), food cost variance (K*). Their seams are
+  marked `TODO(<id>)` in code — build only on the owner's answer.
+
 ## Claude Code operating policy — model routing & parallel agents
 
 Per the product owner (2026-09-27): optimize for **speed AND efficiency

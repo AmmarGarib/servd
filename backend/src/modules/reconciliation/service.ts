@@ -234,8 +234,10 @@ export async function importBankStatement(input: {
     // Without this, re-importing the same statement (or overlapping windows)
     // produces two BankStatementLine rows pointing at the same JournalLine —
     // breaking the audit trail and double-counting reconciliations.
+    // Company-scoped: only this company's statement lines can have matched
+    // this company's journal lines (the read used to span every company).
     const alreadyMatched = await tx.bankStatementLine.findMany({
-      where: { matchStatus: 'matched', matchedJournalLineId: { not: null } },
+      where: { matchStatus: 'matched', matchedJournalLineId: { not: null }, import: { tenantId: input.tenantId } },
       select: { matchedJournalLineId: true },
     })
     const consumed = new Set<string>(

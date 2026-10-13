@@ -14,7 +14,7 @@ import {
   mergeSettings, type HrSettings, type PayrollInputs, EMPTY_INPUTS,
   computePayslip, overtimeCents, otMultiplierFor, hourlyRateCents, periodStart, periodEnd, periodOf, pktToday,
   leaveYear, leaveBalance, leaveQuantity, leaveDaysWithin, leaveYearsBetween, carriedForwardDays, attendanceInputs,
-  loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, type SalaryChange,
+  loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, settledFromPeriod, type SalaryChange,
 } from './logic.js'
 
 type Tx = Prisma.TransactionClient
@@ -392,29 +392,53 @@ const loanLinesOf = (inputs: unknown): LoanLine[] => ((inputs as Record<string, 
 /** Every payroll run status — a payslip on any of them has claimed its installment. */
 export const ALL_RUN_STATUSES = ['draft', 'approved', 'locked']
 
+/** The loan recoveries an approved full & final booked (data._loans), written
+ *  when its accrual posts — the same split a payslip keeps in inputs.loans. */
+export const settlementLoansOf = (data: unknown): LoanLine[] => {
+  const v = ((data ?? {}) as Record<string, unknown>)['_loans']
+  return Array.isArray(v) ? (v as LoanLine[]).filter((l) => l && typeof l.loanId === 'string' && typeof l.cents === 'number') : []
+}
+
 /**
  * Loans with what has been recovered from them. By default `recoveredCents`
  * counts LOCKED payroll only — money actually taken. Payroll counts every run
  * but the one being calculated (`exceptRunId`), so an installment sitting on
  * last month's still-unlocked run is not taken a second time; full & final
- * counts the approved and locked runs it follows on from.
+ * counts every run it follows on from.
+ *
+ * An approved full & final's recovery always counts (its accrual credits
+ * Staff Loans 1350), so the loan register and 1350 agree once a leaver is
+ * settled. `exceptSettlementId` leaves one settlement out — the one being
+ * booked, which is checked against what the others left.
  */
-export async function loansFor(tenantId: string, employeeId?: string, opts: { runStatuses?: string[]; exceptRunId?: string } = {}) {
+export async function loansFor(tenantId: string, employeeId?: string, opts: { runStatuses?: string[]; exceptRunId?: string; exceptSettlementId?: string } = {}) {
   const loans = await prisma.hrRecord.findMany({
     where: { tenantId, section: 'loan', status: 'approved', ...(employeeId && { employeeId }) },
     orderBy: { createdAt: 'asc' },
   })
   if (loans.length === 0) return []
-  const slips = await prisma.hrPayslip.findMany({
-    where: {
-      tenantId, run: { status: { in: opts.runStatuses ?? ['locked'] } }, ...(employeeId && { employeeId }),
-      ...(opts.exceptRunId && { runId: { not: opts.exceptRunId } }),
-    },
-    select: { inputs: true },
-  })
+  const [slips, settlements] = await Promise.all([
+    prisma.hrPayslip.findMany({
+      where: {
+        tenantId, run: { status: { in: opts.runStatuses ?? ['locked'] } }, ...(employeeId && { employeeId }),
+        ...(opts.exceptRunId && { runId: { not: opts.exceptRunId } }),
+      },
+      select: { inputs: true },
+    }),
+    prisma.hrRecord.findMany({
+      where: {
+        tenantId, section: 'final_settlement', status: 'approved', ...(employeeId && { employeeId }),
+        ...(opts.exceptSettlementId && { id: { not: opts.exceptSettlementId } }),
+      },
+      select: { data: true },
+    }),
+  ])
   const recovered = new Map<string, number>()
   for (const sl of slips) {
     for (const l of loanLinesOf(sl.inputs)) recovered.set(l.loanId, (recovered.get(l.loanId) ?? 0) + l.cents)
+  }
+  for (const st of settlements) {
+    for (const l of settlementLoansOf(st.data)) recovered.set(l.loanId, (recovered.get(l.loanId) ?? 0) + l.cents)
   }
   return loans.map((l) => {
     const rec = recovered.get(l.id) ?? 0
@@ -517,23 +541,37 @@ export async function prefillInputs(tenantId: string, emp: HrEmployee, period: s
   return inputs
 }
 
+/**
+ * Leavers whose approved full & final settles `period` (settledFromPeriod):
+ * the settlement pays from that month on, so no payroll for it or a later
+ * month may pay them again (finance gaps: "F&F can pay a month twice").
+ */
+export async function settledEmployeeIds(tenantId: string, period: string, employeeIds?: string[]): Promise<Set<string>> {
+  const recs = await prisma.hrRecord.findMany({
+    where: { tenantId, section: 'final_settlement', status: 'approved', employeeId: employeeIds ? { in: employeeIds } : { not: null } },
+    select: { employeeId: true, endDate: true, data: true },
+  })
+  const out = new Set<string>()
+  for (const r of recs) {
+    const from = settledFromPeriod(r)
+    if (r.employeeId && from && from <= period) out.add(r.employeeId)
+  }
+  return out
+}
+
 /** Who is paid for `period`: anyone employed for at least one day of it —
- *  except a leaver whose full & final is approved with a last working day on
- *  or before the month's end: the settlement paid that month's days. */
+ *  except a leaver whose approved full & final settles that month. */
 export async function payableEmployees(tenantId: string, period: string) {
   const from = periodStart(period)
   const to = periodEnd(period)
-  const settled = await prisma.hrRecord.findMany({
-    where: { tenantId, section: 'final_settlement', status: 'approved', employeeId: { not: null }, endDate: { lte: to } },
-    select: { employeeId: true },
-  })
+  const settled = await settledEmployeeIds(tenantId, period)
   return prisma.hrEmployee.findMany({
     where: {
       tenantId,
       OR: [{ joiningDate: null }, { joiningDate: { lte: to } }],
       AND: [{ OR: [{ lastWorkingDay: null }, { lastWorkingDay: { gte: from } }] }],
       NOT: { status: 'separated' },
-      ...(settled.length > 0 && { id: { notIn: settled.map((x) => x.employeeId!) } }),
+      ...(settled.size > 0 && { id: { notIn: Array.from(settled) } }),
     },
     orderBy: { employeeCode: 'asc' },
   })
@@ -603,7 +641,11 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
     const r = computePayslip({ ...emp, grossSalaryCents: salaryCents }, run.period, inputs, s)
     slips.push({
       runId, tenantId, employeeId: emp.id,
-      inputs: { ...inputs, salaryCents, warnings: [...r.warnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
+      // How this person is paid, as it stood when the month was worked out:
+      // paying the run credits cash slips to the safe and bank / cheque slips
+      // to the bank picked (finance gaps #9) — a later change on the master
+      // must not move a month already calculated.
+      inputs: { ...inputs, salaryCents, paymentMethod: emp.paymentMethod ?? 'bank', warnings: [...r.warnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
       ...payslipData(r),
     })
   }
@@ -649,9 +691,7 @@ export async function runBlocker(runId: string): Promise<string | null> {
   const noEobi = slips.filter((sl) => (((sl.inputs as Record<string, unknown>)['warnings'] as string[] | undefined) ?? []).includes(EOBI_NOT_CALCULATED)).length
   if (noEobi > 0) return `EOBI is not calculated on ${noEobi} payslip(s) — set the EOBI wage base in HR settings and recalculate`
   // Calculated before their full & final was approved: the settlement pays it.
-  const settled = await prisma.hrRecord.count({
-    where: { tenantId: run.tenantId, section: 'final_settlement', status: 'approved', employeeId: { in: slips.map((sl) => sl.employeeId) }, endDate: { lte: periodEnd(run.period) } },
-  })
+  const settled = (await settledEmployeeIds(run.tenantId, run.period, slips.map((sl) => sl.employeeId))).size
   if (settled > 0) return `${settled} employee(s) on this payroll have been paid in a full & final settlement since it was calculated — recalculate it`
   return null
 }

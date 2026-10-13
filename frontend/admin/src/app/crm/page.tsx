@@ -8,6 +8,8 @@ import { fmtPkrWhole } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
+import { useActiveCompany } from '../../lib/connectorsApi'
+import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -52,7 +54,11 @@ export default function CRMPage() {
   // goodwill = the company's own credit (booked as Marketing & Promo);
   // cash / card / bank = the customer paid for it at that tender (ONL-R2-01).
   const [walletKind, setWalletKind] = useState<'goodwill' | 'cash' | 'card' | 'bank'>('goodwill')
+  // A bank-transfer top-up names the active company's bank it landed in (the
+  // server books it there — lib/bankAccounts.ts moneyAccountCode).
+  const [walletBank, setWalletBank] = useState('')
   const [walletError, setWalletError] = useState<string | null>(null)
+  const activeCompany = useActiveCompany()
 
   // Deep link: /crm?customer=<id> opens that customer's detail pane. There is
   // no /crm/:id page — orders, complaints and the old /customers list link
@@ -98,13 +104,17 @@ export default function CRMPage() {
     mutationFn: ({ id, amount }: { id: string; amount: number }) =>
       api.post('/wallet/topup', walletKind === 'goodwill'
         ? { customerId: id, amountCents: amount, kind: 'goodwill', description: 'Goodwill credit by staff' }
-        : { customerId: id, amountCents: amount, kind: 'paid', tender: walletKind, description: `Paid top-up (${walletKind})` }),
+        : {
+            customerId: id, amountCents: amount, kind: 'paid', tender: walletKind, description: `Paid top-up (${walletKind})`,
+            ...(walletKind === 'bank' && walletBank ? { bankAccountId: walletBank } : {}),
+          }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['customer-detail', selectedId] })
       void qc.invalidateQueries({ queryKey: ['customers'] })
       setWalletModal(null)
       setWalletAmount('')
       setWalletKind('goodwill')
+      setWalletBank('')
       setWalletError(null)
     },
     onError: (e: Error) => setWalletError(e.message),
@@ -195,6 +205,9 @@ export default function CRMPage() {
                 Credited to the customer&apos;s wallet at the company you are working in, and spendable only at its brands.
               </p>
             </div>
+            {walletKind === 'bank' && (
+              <BankAccountSelect tenantId={activeCompany?.id} value={walletBank} onChange={setWalletBank} id="wallet-bank" label="Received into" className={inp} />
+            )}
             {walletError && <p className="text-xs text-s-red">{walletError}</p>}
             <div className="flex gap-3">
               <button
@@ -203,7 +216,7 @@ export default function CRMPage() {
                 className="flex-1 rounded-xl bg-primary text-primary-on text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50">
                 {topupWallet.isPending ? 'Crediting…' : 'Credit wallet'}
               </button>
-              <button onClick={() => { setWalletModal(null); setWalletAmount(''); setWalletKind('goodwill'); setWalletError(null) }}
+              <button onClick={() => { setWalletModal(null); setWalletAmount(''); setWalletKind('goodwill'); setWalletBank(''); setWalletError(null) }}
                 className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>

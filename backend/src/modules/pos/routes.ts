@@ -305,7 +305,13 @@ export async function posRoutes(fastify: FastifyInstance) {
   )
 
   // GET /pos/cod-due — delivered cash-on-delivery orders whose cash has not
-  // been paid into a drawer yet, for the rider pay-in screen.
+  // been paid into a drawer yet, for the rider pay-in screen. Each row names
+  // the rider holding the cash and how long it has been out
+  // (hoursSinceDelivered, from the drop-off — else completion), and is marked
+  // `overdue` past COD_PAY_IN_HOURS (TODO: a per-company setting with the
+  // overdue flag/alert, finance gaps item 1). What the books do with cash that
+  // never comes in is pending owner decision G1 — nothing posts from here.
+  const COD_PAY_IN_HOURS = 12
   fastify.get('/cod-due', { preHandler: requireAuth(...CASHIERS) }, async (req) => {
     const rows = await prisma.payment.findMany({
       where: {
@@ -317,12 +323,31 @@ export async function posRoutes(fastify: FastifyInstance) {
       },
       select: {
         id: true, amountCents: true, createdAt: true,
-        order: { select: { id: true, completedAt: true, customerName: true, concept: { select: { name: true } } } },
+        order: {
+          select: {
+            id: true, completedAt: true, deliveredAt: true, customerName: true,
+            concept: { select: { name: true } },
+            rider: { select: { id: true, name: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
       take: 200,
     })
-    return { payments: rows }
+    const now = Date.now()
+    return {
+      overdueAfterHours: COD_PAY_IN_HOURS,
+      payments: rows.map((p) => {
+        const since = p.order.deliveredAt ?? p.order.completedAt ?? p.createdAt
+        const hoursSinceDelivered = Math.max(0, Math.floor(((now - since.getTime()) / 3_600_000) * 10) / 10)
+        return {
+          ...p,
+          rider: p.order.rider ?? null,
+          hoursSinceDelivered,
+          overdue: hoursSinceDelivered >= COD_PAY_IN_HOURS,
+        }
+      }),
+    }
   })
 
   // GET /pos/shifts/current — the caller's open drawer, or null.

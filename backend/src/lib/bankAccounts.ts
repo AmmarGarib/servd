@@ -78,15 +78,94 @@ export async function linkBankLedgerAccount(
 
 /**
  * The ledger code a bank account's money sits in, for postings: its linked
- * code when the account belongs to `tenantId`, else the operating bank.
+ * code when the account belongs to `tenantId`; the operating bank when no
+ * account is named. A named account of another company, a deleted one or an
+ * unlinked one is REFUSED (422) — never silently booked to 1020.
  */
-export async function bankLedgerCode(tenantId: string, bankAccountId: string | null | undefined): Promise<string> {
+export async function bankLedgerCode(
+  tenantId: string,
+  bankAccountId: string | null | undefined,
+  db: Db = prisma,
+): Promise<string> {
   if (!bankAccountId) return OPERATING_BANK_CODE
-  const bank = await prisma.bankAccount.findFirst({
-    where: { id: bankAccountId, tenantId },
-    select: { accountCode: true },
+  return (await liveBank(db, tenantId, bankAccountId)).accountCode
+}
+
+type Db = Pick<typeof prisma, 'bankAccount'> | Prisma.TransactionClient
+
+/** A live, linked bank account of `tenantId`, or 422. */
+async function liveBank(db: Db, tenantId: string, bankAccountId: string): Promise<{ id: string; accountCode: string; name: string }> {
+  const bank = await db.bankAccount.findFirst({
+    where: { id: bankAccountId, tenantId, deletedAt: null },
+    select: { id: true, accountCode: true, name: true, isActive: true },
   })
-  return bank?.accountCode ?? OPERATING_BANK_CODE
+  if (!bank || !bank.isActive) {
+    throw new AppError('BANK_ACCOUNT_NOT_IN_COMPANY', 'That bank account is not an active account of this company', 422)
+  }
+  if (!bank.accountCode) {
+    throw new AppError('BANK_ACCOUNT_NOT_LINKED', `Link "${bank.name}" to a chart code first (Configuration → Bank accounts)`, 422)
+  }
+  return { id: bank.id, accountCode: bank.accountCode, name: bank.name }
+}
+
+/** How money moved, as the payment screens name it. */
+export type MoneyMethod =
+  | 'cash'
+  | 'card'
+  | 'bank' | 'bank_transfer' | 'cheque' | 'wallet' | 'online'
+
+const CASH_ON_HAND_CODE = '1010'
+const CARD_RECEIVABLE_CODE = '1030'
+const BANK_METHODS = new Set<string>(['bank', 'bank_transfer', 'cheque', 'wallet', 'online'])
+
+/**
+ * THE one answer to "which account did this money go into / come out of" for
+ * every payment that is not a till sale: supplier payments, receivable
+ * receipts, wallet top-ups, CapEx instalments, gift-card sales, tax payments,
+ * payroll and loans, OpEx (finance gaps #9, 2026-10-13).
+ *
+ *   cash → 1010 Cash on Hand · card → 1030 Card / Gateway Receivable
+ *   bank-type (bank, bank_transfer, cheque, wallet, online) → the named bank
+ *     account's chart code. It must be a live, active, LINKED account of
+ *     `tenantId` (422 BANK_ACCOUNT_NOT_IN_COMPANY / BANK_ACCOUNT_NOT_LINKED).
+ *     No account named: the company's only live linked bank; 1020 when it has
+ *     none; 422 BANK_ACCOUNT_REQUIRED when it has two or more (never a guess).
+ *     A 'wallet' payment must always name its wallet account.
+ *
+ * `tenantId` is the SOURCE DOCUMENT's company (the supplier's, the invoice's,
+ * the card's), never the operator's.
+ */
+export async function moneyAccountCode(
+  db: Db,
+  tenantId: string,
+  input: { method: string | null | undefined; bankAccountId?: string | null },
+): Promise<{ code: string; bankAccountId: string | null }> {
+  const method = (input.method ?? '').trim()
+  if (method === 'cash') {
+    if (input.bankAccountId) throw new AppError('BANK_ACCOUNT_ON_CASH', 'A cash payment does not use a bank account', 422)
+    return { code: CASH_ON_HAND_CODE, bankAccountId: null }
+  }
+  if (method === 'card') return { code: CARD_RECEIVABLE_CODE, bankAccountId: null }
+  if (!BANK_METHODS.has(method)) {
+    throw new AppError('BAD_PAYMENT_METHOD', `Unknown payment method "${method}"`, 422)
+  }
+  if (input.bankAccountId) {
+    const bank = await liveBank(db, tenantId, input.bankAccountId)
+    return { code: bank.accountCode, bankAccountId: bank.id }
+  }
+  // A mobile wallet (JazzCash / Easypaisa) is its own account row — never
+  // assumed to be the company's bank.
+  if (method === 'wallet') {
+    throw new AppError('BANK_ACCOUNT_REQUIRED', 'Say which wallet account (Configuration → Bank accounts) the money went through', 422)
+  }
+  const banks = await db.bankAccount.findMany({
+    where: { tenantId, deletedAt: null, isActive: true, accountCode: { not: null } },
+    select: { id: true, accountCode: true },
+    take: 2,
+  })
+  if (banks.length === 0) return { code: OPERATING_BANK_CODE, bankAccountId: null }
+  if (banks.length === 1) return { code: banks[0]!.accountCode!, bankAccountId: banks[0]!.id }
+  throw new AppError('BANK_ACCOUNT_REQUIRED', 'This company has more than one bank account — say which one the money went through', 422)
 }
 
 /**

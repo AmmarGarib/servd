@@ -1,8 +1,9 @@
 // Raast QR — sales by tender (spec §7.6; stream D).
 //
-//   - GET /reports/by-tender: paid receipts by method (Cash incl. pending COD
-//     on a non-till order, Card – Keenu, Raast QR, the retired Keenu QR's old
-//     rows), wallet, gift cards; sharePct of the money tenders; comps apart;
+//   - GET /reports/by-tender: paid receipts by method (Cash paid into a
+//     drawer, Card – Keenu, Raast QR, the retired Keenu QR's old rows), cash
+//     on delivery not yet in a drawer as its own row, wallet, gift cards;
+//     sharePct of the money tenders; comps apart;
 //     Raast split provisional / matched / not received; refunds by tender
 //   - volume only for report readers who don't see revenue
 //   - company scope: B never sees A's sales; a foreign brand is 404
@@ -117,7 +118,10 @@ describe('GET /reports/by-tender', () => {
     const body = res.json()
     const by = new Map<string, Row>(body.tenders.map((t: Row) => [t.tender, t]))
 
-    expect(by.get('cash')).toMatchObject({ amountCents: 100_000 + 10_000 + 90_000, payments: 3, orders: 3, label: 'Cash' })
+    // Cash = cash in a drawer; the pending COD is its own row (finance gaps item 1).
+    expect(by.get('cash')).toMatchObject({ amountCents: 100_000 + 10_000, payments: 2, orders: 2, label: 'Cash' })
+    expect(by.get('cod_with_rider')).toMatchObject({ amountCents: 90_000, payments: 1, orders: 1, label: 'Cash on delivery – with rider' })
+    expect(body.cod).toEqual({ paidInCents: 0, paidInCount: 0, withRiderCents: 90_000, withRiderCount: 1, notCollectedCents: 0, notCollectedCount: 0 })
     expect(by.get('card')).toMatchObject({ amountCents: 200_000 + 80_000, orders: 2, label: 'Card – Keenu' })
     expect(by.get('raast')).toMatchObject({ amountCents: 300_000 + 150_000 + 50_000 + 20_000, payments: 4, orders: 4, label: 'Raast QR' })
     expect(by.get('keenu_qr')).toMatchObject({ amountCents: 40_000, label: 'Keenu QR (retired)' })
@@ -125,11 +129,11 @@ describe('GET /reports/by-tender', () => {
     expect(by.has('comp')).toBe(false)
     expect(body.comp).toEqual({ amountCents: 70_000, orders: 1 })
 
-    const total = 200_000 + 280_000 + 520_000 + 40_000 + 60_000
+    const total = 110_000 + 90_000 + 280_000 + 520_000 + 40_000 + 60_000
     expect(body.totalCents).toBe(total)
     expect(by.get('raast')!.sharePct).toBe(Math.round((520_000 / total) * 1000) / 10)
-    // Order: Cash, Card – Keenu, Raast QR, then the retired Keenu QR, wallet.
-    expect(body.tenders.map((t: Row) => t.tender)).toEqual(['cash', 'card', 'raast', 'keenu_qr', 'wallet'])
+    // Order: Cash, COD not in a drawer, Card – Keenu, Raast QR, then the retired Keenu QR, wallet.
+    expect(body.tenders.map((t: Row) => t.tender)).toEqual(['cash', 'cod_with_rider', 'card', 'raast', 'keenu_qr', 'wallet'])
 
     expect(body.raast).toEqual({
       provisionalCents: 320_000, provisionalCount: 2,

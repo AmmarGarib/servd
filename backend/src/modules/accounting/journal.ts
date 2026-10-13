@@ -314,6 +314,14 @@ export async function reverseJournalEntry(
 // raises ONE open high 'posting_failed' exception per (entity, posting) in the
 // source document's company; POST /reconciliation/backfill-unposted re-posts
 // it and resolves the flag.
+//
+// Bank deposits, waste (manual and void-after-fire), stock counts, a
+// cancelled ticket's unwind and a till card failed after its close are
+// flagged the same way and re-posted by the backfill's "other refused
+// postings" step (reconciliation/backfillOrders.ts) — on their own date while
+// that month is open, else into the current open month with a note naming the
+// original date (owner decision 6). Never booked by hand: a manual journal
+// does not carry the posting's key, so the backfill would book it again.
 
 export interface PostingFailure {
   /** The source document's company. Null → the flag falls back to the brand's company. */
@@ -328,6 +336,30 @@ export interface PostingFailure {
   title:       string
   conceptId?:  string | null
   amountCents?: number | null
+  /** Who triggered the posting, when a person did. */
+  actorId?:    string | null
+  /**
+   * Extra context the re-poster needs (e.g. a void's wasteLogIds), merged
+   * into the flag's metadata. reason / sourceType / sourceId always win.
+   */
+  metadata?:   Record<string, unknown>
+}
+
+/**
+ * The open posting_failed flags of one posting. Older void-waste flags were
+ * raised without metadata.sourceType and carry `source: '<sourceType>:<id>'`
+ * instead — they match too, so a new flag is never raised beside one and
+ * resolving the posting closes it.
+ */
+function openPostingFlagWhere(entityType: string, entityId: string, sourceType: string): Prisma.ExceptionFlagWhereInput {
+  return {
+    kind: 'posting_failed', entityType, entityId,
+    status: { in: ['open', 'acknowledged'] },
+    OR: [
+      { metadata: { path: ['sourceType'], equals: sourceType } },
+      { metadata: { path: ['source'], string_starts_with: `${sourceType}:` } },
+    ],
+  }
 }
 
 /** Raise (once) a high posting_failed exception. Never throws. */
@@ -335,40 +367,72 @@ export async function flagPostingFailed(f: PostingFailure): Promise<void> {
   try {
     console.error(`[journal] ${f.sourceType}:${f.sourceId} did not post: ${f.reason}`)
     const open = await defaultPrisma.exceptionFlag.findFirst({
-      where: {
-        kind: 'posting_failed', entityType: f.entityType, entityId: f.entityId,
-        status: { in: ['open', 'acknowledged'] },
-        metadata: { path: ['sourceType'], equals: f.sourceType },
-      },
+      where: openPostingFlagWhere(f.entityType, f.entityId, f.sourceType),
       select: { id: true },
     })
     if (open) return
     const { flagException } = await import('../../lib/exceptions.js')
     await flagException({
-      tenantId: f.tenantId,
+      // Omitted (not null) when unknown, so lib/exceptions.ts falls back to
+      // the brand's company as the PostingFailure contract says.
+      ...(f.tenantId ? { tenantId: f.tenantId } : {}),
       kind: 'posting_failed',
       severity: 'high',
       title: f.title,
-      description: `${f.entityType} ${f.entityId.slice(0, 8)}: its ${f.sourceType} journal entry was refused (${f.reason.slice(0, 300)}). Fix the cause (e.g. reopen the period), then re-post it from Reconciliation → Backfill unposted.`,
+      description: `${f.entityType} ${f.entityId.slice(0, 8)}: its ${f.sourceType} journal entry was refused (${f.reason.slice(0, 300)}). `
+        + 'Fix the cause (for example a missing or inactive account in the chart), then post it from Reconciliation → Backfill unposted — '
+        + 'Preview shows the day it will post on. Do not book it by hand: a manual journal does not carry its key, so it would be booked twice.',
       entityType: f.entityType,
       entityId: f.entityId,
       conceptId: f.conceptId ?? null,
+      actorId: f.actorId ?? null,
       amountCents: f.amountCents ?? null, // lib/exceptions.ts clamps
-      metadata: { reason: f.reason, sourceType: f.sourceType, sourceId: f.sourceId },
+      metadata: { ...(f.metadata ?? {}), reason: f.reason, sourceType: f.sourceType, sourceId: f.sourceId },
     })
   } catch (err) {
     console.error(`[journal] could not flag the refused ${f.sourceType}:${f.sourceId}:`, (err as Error).message)
   }
 }
 
-/** Close the open posting_failed flags of an entity once its posting is on the books. */
-export async function resolvePostingFailed(entityType: string, entityId: string, sourceType: string, resolution: string): Promise<void> {
+/**
+ * Close the open posting_failed flags of an entity once its posting is on the
+ * books. `tenantIds` limits it to those companies' flags (a backfill closes
+ * only flags in the caller's scope).
+ */
+export async function resolvePostingFailed(
+  entityType: string, entityId: string, sourceType: string, resolution: string,
+  opts: { tenantIds?: string[] } = {},
+): Promise<void> {
   await defaultPrisma.exceptionFlag.updateMany({
     where: {
-      kind: 'posting_failed', entityType, entityId,
-      status: { in: ['open', 'acknowledged'] },
-      metadata: { path: ['sourceType'], equals: sourceType },
+      ...openPostingFlagWhere(entityType, entityId, sourceType),
+      ...(opts.tenantIds ? { tenantId: { in: opts.tenantIds } } : {}),
     },
     data: { status: 'resolved', resolvedAt: new Date(), resolution },
   }).catch((err) => console.error(`[journal] could not resolve posting_failed for ${entityType} ${entityId}:`, (err as Error).message))
+}
+
+/**
+ * How a refused posting is re-made by the backfill: `entryDate` dates it in
+ * the open period when its document's own month is closed, `memoNote` names
+ * the original date (see withLateNote), `postedBy` is the operator. Omitted,
+ * the poster dates it as the live path does.
+ */
+export interface RepostOptions {
+  entryDate?: Date
+  memoNote?: string
+  postedBy?: string
+}
+
+/**
+ * A posting re-made after its document's month was closed: the entry is
+ * dated in the open period and every line names the original date (owner
+ * decision 6). `note` is that text; lines and description carry it.
+ */
+export function withLateNote(description: string, lines: JournalLineInput[], note: string | undefined): { description: string; lines: JournalLineInput[] } {
+  if (!note) return { description, lines }
+  return {
+    description: `${description} — ${note}`,
+    lines: lines.map((l) => ({ ...l, memo: `${l.memo ?? ''} [${note}]`.trim().slice(0, 250) })),
+  }
 }

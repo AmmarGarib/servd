@@ -85,8 +85,19 @@ export async function applyKeenuCallback(cb: KeenuCallback, log: { error: (o: ob
     await prisma.payment.updateMany({ where: { id: { in: open.map((r) => r.id) } }, data: { status: 'failed' } })
     const { postPosCardFailure } = await import('../accounting/shiftPosting.js')
     for (const p of open.filter((r) => r.shiftId)) {
-      await postPosCardFailure(p.id).catch((err: Error) =>
-        log.error({ paymentId: p.id, err: err.message }, 'Keenu failure could not be posted to the ledger'))
+      let reason: string | null = null
+      try {
+        const r = await postPosCardFailure(p.id)
+        // Only a drawer with no company is a refusal; every other reason
+        // means there is nothing to move (still open, not a till card, …).
+        if (!r.posted && r.reason === 'shift_has_no_company') reason = r.reason
+      } catch (err) {
+        reason = (err as Error).message
+      }
+      if (reason) {
+        log.error({ paymentId: p.id, err: reason }, 'Keenu failure could not be posted to the ledger')
+        await flagCardFailure(p.id, reason)
+      }
     }
     return { result: 'failed', paymentIds: open.map((r) => r.id) }
   }
@@ -105,4 +116,33 @@ export async function applyKeenuCallback(cb: KeenuCallback, log: { error: (o: ob
   }
 
   return { result: 'ignored', status: cb.status }
+}
+
+/**
+ * A till card failed after its drawer was booked, and the move to the
+ * customer's receivable (Dr 1110 / Cr 1030) was refused: flagged
+ * posting_failed in the drawer's company (else the brand's), re-posted by
+ * Reconciliation → Backfill unposted. Never throws.
+ */
+async function flagCardFailure(paymentId: string, reason: string): Promise<void> {
+  const { flagPostingFailed } = await import('../accounting/journal.js')
+  const { shiftTenantId, SHIFT_COMPANY_INCLUDE } = await import('../../lib/tenantScope.js')
+  const p = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      amountCents: true,
+      order: { select: { id: true, conceptId: true, concept: { select: { tenantId: true } } } },
+      shift: { select: { tenantId: true, locationId: true, ...SHIFT_COMPANY_INCLUDE } },
+    },
+  }).catch(() => null)
+  await flagPostingFailed({
+    tenantId: (p?.shift ? shiftTenantId(p.shift) : null) ?? p?.order.concept.tenantId ?? null,
+    sourceType: 'pos.card_failed', sourceId: paymentId,
+    entityType: 'Payment', entityId: paymentId,
+    reason,
+    title: 'A till card the gateway failed after the drawer closed was not moved to the customer\'s account',
+    conceptId: p?.order.conceptId ?? null,
+    amountCents: p?.amountCents ?? null,
+    metadata: { orderId: p?.order.id ?? null },
+  })
 }

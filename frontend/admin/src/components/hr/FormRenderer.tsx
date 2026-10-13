@@ -8,13 +8,20 @@
 
 import { useState } from 'react'
 import { human, inp, type HrField, type Lookups, type OrgData } from '../../lib/hr'
+import { BankAccountSelect } from '../finance/BankAccountSelect'
 
 type Values = Record<string, unknown>
+
+/** A text field whose ref is this holds a bank account id of the record's
+ *  company (backend hr/forms.ts BANK_ACCOUNT_REF) — shown as the one picker. */
+export const BANK_ACCOUNT_REF = 'bank_account'
 
 export interface RenderCtx {
   lookups?: Lookups
   org?: OrgData
   disabled?: boolean
+  /** The record's company — whose banks a bank-account field offers. */
+  tenantId?: string | null
 }
 
 export function FormRenderer({ fields, value, onChange, ctx }: {
@@ -40,7 +47,8 @@ export function FormRenderer({ fields, value, onChange, ctx }: {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {g.fields.map((f) => (
               <div key={f.key} className={f.type === 'textarea' || f.type === 'table' || f.type === 'employees' || f.type === 'multiselect' ? 'sm:col-span-2' : ''}>
-                <FieldLabel f={f} />
+                {/* The bank picker carries its own label. */}
+                {f.ref !== BANK_ACCOUNT_REF && <FieldLabel f={f} />}
                 <FieldInput f={f} v={value[f.key]} onSet={(v) => set(f.key, v)} ctx={ctx} />
                 {f.help && <p className="text-[10px] text-white/35 mt-1">{f.help}</p>}
               </div>
@@ -74,6 +82,9 @@ function FieldInput({ f, v, onSet, ctx }: { f: HrField; v: unknown; onSet: (v: u
     return <div className="rounded-lg px-3 py-2 text-sm bg-white/[0.02] border border-white/5 text-white/60 min-h-[38px]">
       {v == null || v === '' ? <span className="text-white/25">Calculated</span> : f.type === 'money' ? `Rs ${(Number(v) / 100).toLocaleString('en-PK')}` : String(v)}
     </div>
+  }
+  if (f.ref === BANK_ACCOUNT_REF) {
+    return <BankAccountSelect id={`hr-${f.key}`} label={f.label} tenantId={ctx.tenantId} value={String(v ?? '')} onChange={(id) => onSet(id || null)} className={inp} />
   }
   switch (f.type) {
     case 'textarea':

@@ -39,8 +39,9 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
+import { ACCT, postJournalEntry, reverseJournalEntry, withLateNote, type JournalLineInput, type RepostOptions } from './journal.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { fmtPktDate } from './dates.js'
 import { type DbMoney, INT4_MAX_CENTS, amountTooLarge, toCents } from '../../lib/money.js'
 
@@ -105,13 +106,15 @@ async function billVarianceLines(tx: Tx, bill: {
  */
 async function revalueItem(tx: Tx, input: {
   inventoryItemId: string
-  poLineId:        string
+  /** The PO line behind the change (bills); null for a supplier credit note. */
+  poLineId:        string | null
   targetCents:     number
   supplierId:      string
-  source:          'bill_match' | 'bill_void'
+  source:          'bill_match' | 'bill_void' | 'supplier_return' | 'supplier_credit' | 'supplier_credit_void'
   /** What triggered it, for the 422 below: a bill being recorded, goods being
-   *  received (a carried variance), or a bill being voided. */
-  when?:           'bill' | 'receipt' | 'void'
+   *  received (a carried variance), a bill being voided, or a supplier credit
+   *  note (or its void). */
+  when?:           'bill' | 'receipt' | 'void' | 'credit_note'
 }): Promise<{ moved: number; onHand: number }> {
   await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${input.inventoryItemId} FOR UPDATE`
   const item = await tx.inventoryItem.findUnique({
@@ -136,7 +139,7 @@ async function revalueItem(tx: Tx, input: {
         422,
       )
     }
-    throw amountTooLarge(`${item.name}'s unit cost after this ${when === 'receipt' ? 'receipt' : 'bill'}`, newCost, INT4_MAX_CENTS)
+    throw amountTooLarge(`${item.name}'s unit cost after this ${when === 'receipt' ? 'receipt' : when === 'credit_note' ? 'credit note' : 'bill'}`, newCost, INT4_MAX_CENTS)
   }
   await tx.inventoryItem.update({ where: { id: item.id }, data: { unitCostCents: newCost } })
   await tx.itemPriceHistory.create({
@@ -268,7 +271,7 @@ async function receivedSince(tx: Tx, inventoryItemId: string, after: Date, exclu
  */
 async function matchedByOtherBills(tx: Tx, poLineId: string, billId: string): Promise<number> {
   const others = await tx.supplierBillLine.findMany({
-    where:  { poLineId, billId: { not: billId }, bill: { status: { not: 'void' } } },
+    where:  { poLineId, billId: { not: billId }, bill: { kind: 'bill', status: { not: 'void' } } },
     select: { billId: true, quantity: true },
   })
   if (others.length === 0) return 0
@@ -316,7 +319,7 @@ export async function applyCarriedBillVarianceTx(tx: Tx, input: {
   // seen as void, and a void that waits sees this receipt's applied slice.
   await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = (SELECT "purchaseOrderId" FROM purchase_order_lines WHERE id = ${input.poLineId}) FOR UPDATE`
   const billLines = await tx.supplierBillLine.findMany({
-    where:   { poLineId: input.poLineId, bill: { status: { not: 'void' } } },
+    where:   { poLineId: input.poLineId, bill: { kind: 'bill', status: { not: 'void' } } },
     select:  { billId: true, bill: { select: { createdAt: true, billNumber: true, supplier: { select: { tenantId: true } } } } },
     orderBy: { bill: { createdAt: 'asc' } },
   })
@@ -446,7 +449,7 @@ export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[
       ? `books are closed through ${fmtPktDate(lock.lockedThrough)} — the catch-up posts dated today; reopen the period to apply it`
       : null
     const live = await prisma.supplierBill.findMany({
-      where:  { status: { not: 'void' }, supplier: { tenantId } },
+      where:  { kind: 'bill', status: { not: 'void' }, supplier: { tenantId } },
       select: { id: true },
     })
     const { recorded } = await prisma.$transaction((tx) => varianceRecordsOf(tx, live.map((b) => b.id)))
@@ -463,7 +466,7 @@ export async function applyMissedCarriedBillVariances(opts: { tenantIds: string[
         })
         if (!pl) return null
         const billRows = await tx.supplierBillLine.findMany({
-          where: { poLineId, bill: { status: { not: 'void' }, supplier: { tenantId } } }, select: { billId: true, bill: { select: { billNumber: true } } },
+          where: { poLineId, bill: { kind: 'bill', status: { not: 'void' }, supplier: { tenantId } } }, select: { billId: true, bill: { select: { billNumber: true } } },
         })
         const billIds = Array.from(new Set(billRows.map((b) => b.billId)))
         const billNumbers = Array.from(new Set(billRows.map((b) => b.bill.billNumber)))
@@ -576,6 +579,9 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
     })
     if (!bill) return { posted: false, entryId: null, reason: 'bill_not_found' }
     if (bill.status === 'void') return { posted: false, entryId: null, reason: 'bill_voided' }
+    // A credit note is a SupplierBill row too, but it books the other way
+    // (postSupplierCreditNote) — never as a bill.
+    if (bill.kind !== 'bill') return { posted: false, entryId: null, reason: 'not_a_bill' }
 
     // Supplier bills post into the supplier's own company.
     const tenantId = bill.supplier.tenantId
@@ -636,8 +642,15 @@ export async function postSupplierBill(billId: string, opts: { tx?: Tx } = {}): 
       })
     }
 
-    // v1: book all inventory purchases to Food. Beverage/Packaging splits will
-    // come once InventoryItem grows a `category` field — see schema TODO.
+    // All stock is ONE pool: every purchase books to 1210 Inventory – Food and
+    // every stock relief to COGS 5010 — bills, credit notes, sale and shift
+    // COGS, waste, counts and voids alike. InventoryItem.category exists
+    // (protein / produce / dairy / dry_goods / sauce / packaging / other), but
+    // splitting purchases across 1210 / 1220 Beverage / 1230 Packaging (and
+    // 5010 / 5020 / 5030) is pending owner decision K2, and a split must
+    // change every stock posting together, never this one alone. Non-stock
+    // bill lines land in 1210 for the same reason (picking an expense account
+    // per line is part of K2).
     // 1210 moves by exactly what stock valuation moved by: the bill less the
     // variance share that was already costed out.
     const lines: JournalLineInput[] = []
@@ -821,9 +834,17 @@ export async function postSupplierBillVoid(
 }
 
 /**
- * Post a supplier payment (Dr AP 2010 / Cr cash or bank) to its supplier's
- * company — in `opts.tx` when given (procurement createPaymentTx passes its
- * own: a payment dated in a closed month is PERIOD_LOCKED 422, not saved).
+ * Post a supplier payment (Dr AP 2010 / Cr the cash or bank account the money
+ * left) to its supplier's company — in `opts.tx` when given (procurement
+ * createPaymentTx passes its own: a payment dated in a closed month is
+ * PERIOD_LOCKED 422, not saved).
+ *
+ * The credit is lib/bankAccounts.ts moneyAccountCode (finance gaps #9): cash →
+ * 1010; bank transfer / cheque / wallet → the chart code of the bank account
+ * the payment names (SupplierPayment.bankAccountId, which must be a live,
+ * linked account of the SUPPLIER's company), else the company's only bank,
+ * else 1020. It used to be 1020 whatever bank paid, so a payment from a
+ * second bank (1021+) never matched that bank's statement.
  */
 export async function postSupplierPayment(paymentId: string, opts: { tx?: Tx } = {}): Promise<PostResult> {
   return inTx(opts.tx, async (tx) => {
@@ -832,14 +853,14 @@ export async function postSupplierPayment(paymentId: string, opts: { tx?: Tx } =
       include: { supplier: true },
     })
     if (!payment) return { posted: false, entryId: null, reason: 'payment_not_found' }
+    if (payment.voidedAt) return { posted: false, entryId: null, reason: 'payment_voided' }
 
     const paymentTenantId = payment.supplier.tenantId
     if (!paymentTenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
 
-    // method → cash account
-    const cashAccount =
-      payment.method === 'cash'   ? ACCT.CASH_ON_HAND :
-      /* bank_transfer/cheque/wallet */ ACCT.BANK
+    const { code: cashAccount } = await moneyAccountCode(tx, paymentTenantId, {
+      method: payment.method, bankAccountId: payment.bankAccountId,
+    })
 
     const amount = toCents(payment.amountCents)
     const lines: JournalLineInput[] = [
@@ -860,12 +881,347 @@ export async function postSupplierPayment(paymentId: string, opts: { tx?: Tx } =
   })
 }
 
-export async function postWasteLog(wasteLogId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+/**
+ * Reverse a voided supplier payment's entry (dated today), in `opts.tx`:
+ * procurement voidPayment commits the void and this reversal together, so a
+ * reversal the ledger refuses (today is in a closed period) refuses the void.
+ * A payment that never reached the ledger has nothing to reverse. Idempotent:
+ * 'supplier.payment.void:<id>' posts at most once.
+ */
+export async function postSupplierPaymentVoid(
+  paymentId: string,
+  reason: string,
+  opts: { tx?: Tx; postedBy?: string } = {},
+): Promise<PostResult> {
+  return inTx(opts.tx, async (tx) => {
+    const payment = await tx.supplierPayment.findUnique({
+      where:  { id: paymentId },
+      select: { id: true, supplier: { select: { tenantId: true } } },
+    })
+    const tenantId = payment?.supplier.tenantId
+    if (!payment || !tenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
+    const original = await tx.journalEntry.findFirst({ where: { reference: `supplier.payment:${paymentId}`, tenantId }, select: { id: true } })
+    if (!original) return { posted: false, entryId: null, reason: 'payment_not_posted' }
+    const already = await tx.journalEntry.findFirst({ where: { reference: `supplier.payment.void:${paymentId}`, tenantId }, select: { id: true } })
+    if (already) return { posted: false, entryId: already.id, reason: 'already_reversed' }
+    const result = await reverseJournalEntry(tenantId, 'supplier.payment', paymentId, reason, {
+      tx, suffix: 'void', postedBy: opts.postedBy ?? 'system',
+    })
+    return { posted: result.posted, entryId: result.entryId }
+  })
+}
+
+// ─── Supplier credit notes / returns (finance gaps 14a) ─────────────────────
+//
+// A credit note is a SupplierBill of kind 'credit_note' against its original
+// bill (procurement/creditNotes.ts). It books that bill backwards, in the
+// credit note's own month (its billDate), in the supplier's company:
+//
+//   Dr 2010 AP              CN total − WHT share (the supplier owes us back)
+//   Dr 2040 WHT payable     WHT share: the withholding fixed on the bill,
+//                           reduced pro rata (bill WHT × CN subtotal / bill
+//                           subtotal — WHT is a share of the goods value)
+//   Cr 1210 Inventory       the goods credited, as stock valuation moved
+//   Cr / Dr 5060            the part of the credit on stock already used
+//   Cr 132x input tax       the CN's tax, on the input-tax code the original
+//                           bill's entry debited (1320 today)
+//
+// Per line:
+//   • not a stock item, or 'short' (billed goods that never arrived): Cr 1210
+//     the line — the bill booked it to 1210 and no stock stands behind it.
+//   • goods sent back (returnQty): stock drops by returnQty, conditionally —
+//     a return never drives stock negative (422 NEGATIVE_STOCK). The register
+//     loses returnQty × average cost; the rest of the credit (credit − that)
+//     re-averages the stock still on hand (ItemPriceHistory 'supplier_return'),
+//     and what no stock is left to absorb goes to 5060.
+//   • a price credit / rebate / damage allowance on goods kept: the share of
+//     the credited quantity still on hand (stock now less what arrived after
+//     the bill — stock is used oldest first) re-averages the item down
+//     ('supplier_credit'); the share already used goes to 5060 — the cost-
+//     adjustment path a bill's price variance uses.
+// 1210 moves by exactly what the stock register moved by. What each line moved
+// is written down (an 'accounting' audit row 'supplier.credit_note.stock' on
+// the credit note), so a void puts back exactly that.
+
+export type CreditNoteReason = 'return' | 'price' | 'short' | 'damaged' | 'rebate'
+
+const creditNoteRef = (id: string) => `supplier.credit_note:${id}`
+const CN_STOCK_ACTION = 'supplier.credit_note.stock'
+
+type CreditNoteStockLine = {
+  lineId:          string
+  inventoryItemId: string | null
+  returnQty:       number
+  /** Credited to 1210 (signed: + credit, − debit). */
+  inventoryCents:  number
+  /** Credited to 5060 (signed: + credit, − debit). */
+  adjustmentCents: number
+  /** What re-averaging moved the value of the stock on hand by (signed). */
+  movedCents:      number
+  /** True when the 1210 credit is what the stock register moved by (a return,
+   *  or a price credit on stock kept). False for a non-stock or 'short' line:
+   *  its 1210 credit undoes the bill's debit for goods that never reached the
+   *  register, so a void leaves stock alone. */
+  stockBacked:     boolean
+}
+
+/** The input-tax code a bill's own entry debited (1320 today; a 132x once input tax by authority lands — G7). */
+async function inputTaxCodeOfBill(tx: Tx, tenantId: string, billId: string): Promise<string> {
+  const lines = await tx.journalLine.findMany({
+    where:  { type: 'debit', journalEntry: { tenantId, reference: billRef(billId) }, account: { code: { startsWith: '132' } } },
+    select: { amountCents: true, account: { select: { code: true } } },
+  })
+  let best: { code: string; cents: number } | null = null
+  for (const l of lines) {
+    const cents = toCents(l.amountCents)
+    if (!best || cents > best.cents) best = { code: l.account.code, cents }
+  }
+  return best?.code ?? ACCT.GST_INPUT
+}
+
+/**
+ * Post a supplier credit note — return its stock, re-price what remains and
+ * book the entry above — in `opts.tx` (procurement createCreditNote passes its
+ * own: a credit note dated in a closed month is PERIOD_LOCKED 422 and nothing
+ * is saved, stock included). Idempotent on 'supplier.credit_note:<id>': a
+ * credit note already on the books moves no stock again. `reason` decides how
+ * a stock line without a return is treated ('short' = goods never arrived).
+ */
+export async function postSupplierCreditNote(
+  creditNoteId: string,
+  opts: { tx?: Tx; postedBy?: string; reason?: CreditNoteReason } = {},
+): Promise<PostResult> {
+  return inTx(opts.tx, async (tx) => {
+    await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${creditNoteId} FOR UPDATE`
+    const cn = await tx.supplierBill.findUnique({
+      where:   { id: creditNoteId },
+      include: { supplier: { select: { tenantId: true, name: true } }, lines: true },
+    })
+    if (!cn || cn.kind !== 'credit_note' || !cn.originalBillId) return { posted: false, entryId: null, reason: 'not_a_credit_note' }
+    if (cn.status === 'void') return { posted: false, entryId: null, reason: 'credit_note_voided' }
+    const tenantId = cn.supplier.tenantId
+    if (!tenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
+    const existing = await tx.journalEntry.findFirst({ where: { reference: creditNoteRef(cn.id), tenantId }, select: { id: true } })
+    if (existing) return { posted: false, entryId: existing.id, reason: 'already_posted' }
+
+    const original = await tx.supplierBill.findUnique({
+      where:  { id: cn.originalBillId },
+      select: { id: true, billNumber: true, createdAt: true },
+    })
+    if (!original) return { posted: false, entryId: null, reason: 'bill_not_found' }
+    // The credit undoes part of the bill's entry; a bill that never reached
+    // the ledger has nothing to undo (AP would go below what the books owe).
+    const billEntry = await tx.journalEntry.findFirst({ where: { reference: billRef(original.id), tenantId }, select: { id: true } })
+    if (!billEntry) {
+      throw new AppError('BILL_NOT_POSTED', `Bill ${original.billNumber} is not on the books yet — post it first (Procurement → post unposted), then credit it`, 422)
+    }
+
+    const reason: CreditNoteReason = opts.reason ?? 'price'
+    const record: CreditNoteStockLine[] = []
+    let inventoryCredit = 0
+    let adjustmentCredit = 0
+    for (const line of cn.lines) {
+      const lineCents = toCents(line.lineTotalCents)
+      const itemId = line.inventoryItemId
+      const returnQty = line.returnQty != null && line.returnQty > 0 ? line.returnQty : 0
+      let inventoryCents = lineCents
+      let movedCents = 0
+      let stockBacked = false
+      if (itemId && returnQty > 0) {
+        stockBacked = true
+        // Goods sent back: out of stock at the average cost, the rest of the
+        // credit re-averages what is left (5060 for what nothing absorbs).
+        await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${itemId} FOR UPDATE`
+        const item = await tx.inventoryItem.findUnique({ where: { id: itemId }, select: { name: true, unit: true, currentStock: true, unitCostCents: true } })
+        if (!item) throw new AppError('ITEM_NOT_FOUND', 'The stock item on this credit note no longer exists', 422)
+        const taken = await tx.inventoryItem.updateMany({
+          where: { id: itemId, deletedAt: null, currentStock: { gte: returnQty } },
+          data:  { currentStock: { decrement: returnQty } },
+        })
+        if (taken.count === 0) {
+          throw new AppError(
+            'NEGATIVE_STOCK',
+            `Cannot send back ${returnQty} ${item.unit} of ${item.name} — only ${item.currentStock} on hand. Count it first, or credit it without returning stock.`,
+            422,
+          )
+        }
+        const avgCost = item.unitCostCents ?? Math.round(lineCents / returnQty)
+        const removedCents = Math.round(returnQty * avgCost)
+        movedCents = (await revalueItem(tx, {
+          inventoryItemId: itemId, poLineId: null, targetCents: removedCents - lineCents,
+          supplierId: cn.supplierId, source: 'supplier_return', when: 'credit_note',
+        })).moved
+        inventoryCents = removedCents - movedCents
+      } else if (itemId && reason !== 'short') {
+        // A price credit on goods kept: the share still on hand re-averages
+        // the item, the share already used is a cost adjustment.
+        stockBacked = true
+        await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${itemId} FOR UPDATE`
+        const item = await tx.inventoryItem.findUnique({ where: { id: itemId }, select: { currentStock: true } })
+        const onHandNow = Math.max(0, item?.currentStock ?? 0)
+        const since = await receivedSince(tx, itemId, original.createdAt, null)
+        const stillQty = Math.min(line.quantity, Math.max(0, onHandNow - since))
+        const targetCents = line.quantity > 0 ? -Math.round(lineCents * stillQty / line.quantity) : 0
+        movedCents = (await revalueItem(tx, {
+          inventoryItemId: itemId, poLineId: null, targetCents,
+          supplierId: cn.supplierId, source: 'supplier_credit', when: 'credit_note',
+        })).moved
+        inventoryCents = -movedCents
+      }
+      const adjustmentCents = lineCents - inventoryCents
+      inventoryCredit += inventoryCents
+      adjustmentCredit += adjustmentCents
+      record.push({ lineId: line.id, inventoryItemId: itemId, returnQty, inventoryCents, adjustmentCents, movedCents, stockBacked })
+    }
+
+    await tx.auditLog.create({
+      data: {
+        category: 'accounting', tenantId, action: CN_STOCK_ACTION, entity: 'SupplierBill', entityId: cn.id,
+        metadata: { reason, originalBillId: original.id, lines: record },
+      },
+    })
+
+    const totalCents = toCents(cn.totalCents)
+    const whtCents   = toCents(cn.whtCents)
+    const taxCents   = toCents(cn.taxCents)
+    const label = `credit note ${cn.billNumber} (bill ${original.billNumber})`
+    const lines: JournalLineInput[] = [
+      { accountCode: ACCT.AP_SUPPLIERS, type: 'debit', amountCents: totalCents - whtCents, memo: `${cn.supplier.name} ${label}${whtCents > 0 ? ' (net of WHT)' : ''}` },
+    ]
+    if (whtCents > 0) {
+      lines.push({ accountCode: ACCT.WHT_PAYABLE, type: 'debit', amountCents: whtCents, memo: `WHT withheld on bill ${original.billNumber}, reduced by ${label}` })
+    }
+    if (inventoryCredit !== 0) {
+      lines.push({ accountCode: ACCT.INVENTORY_FOOD, type: inventoryCredit > 0 ? 'credit' : 'debit', amountCents: Math.abs(inventoryCredit), memo: `Goods credited on ${label}` })
+    }
+    if (adjustmentCredit !== 0) {
+      lines.push({
+        accountCode: await costAdjustmentCode(tx, tenantId),
+        type: adjustmentCredit > 0 ? 'credit' : 'debit',
+        amountCents: Math.abs(adjustmentCredit),
+        memo: `Price difference on ${label} for stock already used`,
+      })
+    }
+    if (taxCents > 0) {
+      lines.push({ accountCode: await inputTaxCodeOfBill(tx, tenantId, original.id), type: 'credit', amountCents: taxCents, memo: `Input tax reversed on ${label}` })
+    }
+
+    const result = await postJournalEntry({
+      tenantId,
+      sourceType: 'supplier.credit_note',
+      sourceId: cn.id,
+      description: `Supplier credit note ${cn.billNumber} from ${cn.supplier.name} against bill ${original.billNumber}`,
+      entryDate: cn.billDate,
+      postedBy: opts.postedBy ?? 'system',
+      lines,
+    }, { tx })
+    return { posted: result.posted, entryId: result.entryId }
+  })
+}
+
+/**
+ * Void a credit note's books, in `opts.tx` (procurement voidCreditNote passes
+ * its own — a reversal the ledger refuses refuses the void): reverse its entry
+ * (dated today, 'supplier.credit_note.void'), put returned stock back, and
+ * give back to the stock on hand exactly the value each line took out of it
+ * (the 'supplier.credit_note.stock' record). What the stock register cannot
+ * take back (it has been used since) is trued up against 5060 so 1210 keeps
+ * following the register ('supplier.credit_note.void.price'). Idempotent.
+ */
+export async function postSupplierCreditNoteVoid(
+  creditNoteId: string,
+  reason: string,
+  opts: { tx?: Tx; postedBy?: string } = {},
+): Promise<PostResult> {
+  return inTx(opts.tx, async (tx) => {
+    await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${creditNoteId} FOR UPDATE`
+    const cn = await tx.supplierBill.findUnique({
+      where:  { id: creditNoteId },
+      select: { id: true, kind: true, billNumber: true, supplierId: true, supplier: { select: { tenantId: true } } },
+    })
+    const tenantId = cn?.supplier.tenantId
+    if (!cn || cn.kind !== 'credit_note' || !tenantId) return { posted: false, entryId: null, reason: 'not_a_credit_note' }
+    const original = await tx.journalEntry.findFirst({ where: { reference: creditNoteRef(cn.id), tenantId }, select: { id: true } })
+    if (!original) return { posted: false, entryId: null, reason: 'credit_note_not_posted' }
+    const already = await tx.journalEntry.findFirst({ where: { reference: `supplier.credit_note.void:${cn.id}`, tenantId }, select: { id: true } })
+    if (already) return { posted: false, entryId: already.id, reason: 'already_reversed' }
+
+    const result = await reverseJournalEntry(tenantId, 'supplier.credit_note', cn.id, reason, {
+      tx, suffix: 'void', postedBy: opts.postedBy ?? 'system',
+    })
+
+    const row = await tx.auditLog.findFirst({
+      where:  { entity: 'SupplierBill', entityId: cn.id, action: CN_STOCK_ACTION },
+      select: { metadata: true },
+    })
+    const recorded = ((row?.metadata ?? {}) as { lines?: CreditNoteStockLine[] }).lines ?? []
+    // The reversal debits 1210 with what each line credited. For a line whose
+    // credit was a stock-register move, the register rises again by what goes
+    // back on the shelf plus what re-averaging restores; any gap is stock used
+    // since — 5060. A non-stock or 'short' line never touched the register
+    // and is left alone (its 1210 debit is the bill's again).
+    let excess = 0
+    for (const line of recorded) {
+      if (!line.inventoryItemId || !line.stockBacked) continue
+      if (line.returnQty > 0) {
+        await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${line.inventoryItemId} FOR UPDATE`
+        const item = await tx.inventoryItem.findUnique({ where: { id: line.inventoryItemId }, select: { id: true } })
+        if (!item) { excess += line.inventoryCents; continue }
+        const back = await tx.inventoryItem.update({
+          where:  { id: line.inventoryItemId },
+          data:   { currentStock: { increment: line.returnQty } },
+          select: { unitCostCents: true },
+        })
+        const addedCents = Math.round(line.returnQty * (back.unitCostCents ?? 0))
+        const { moved } = await revalueItem(tx, {
+          inventoryItemId: line.inventoryItemId, poLineId: null, targetCents: line.inventoryCents - addedCents,
+          supplierId: cn.supplierId, source: 'supplier_credit_void', when: 'credit_note',
+        })
+        excess += line.inventoryCents - (addedCents + moved)
+      } else if (line.inventoryCents !== 0) {
+        const { moved } = await revalueItem(tx, {
+          inventoryItemId: line.inventoryItemId, poLineId: null, targetCents: line.inventoryCents,
+          supplierId: cn.supplierId, source: 'supplier_credit_void', when: 'credit_note',
+        })
+        excess += line.inventoryCents - moved
+      }
+    }
+    if (excess !== 0) {
+      const code = await costAdjustmentCode(tx, tenantId)
+      const memo = `Stock used since credit note ${cn.billNumber} was recorded`
+      await postJournalEntry({
+        tenantId,
+        sourceType: 'supplier.credit_note.void.price',
+        sourceId: cn.id,
+        description: `Item cost restored after voiding credit note ${cn.billNumber}`,
+        postedBy: opts.postedBy ?? 'system',
+        lines: excess > 0
+          ? [{ accountCode: code,                type: 'debit',  amountCents: excess,  memo },
+             { accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: excess,  memo }]
+          : [{ accountCode: ACCT.INVENTORY_FOOD, type: 'debit',  amountCents: -excess, memo },
+             { accountCode: code,                type: 'credit', amountCents: -excess, memo }],
+      }, { tx })
+    }
+    return { posted: result.posted, entryId: result.entryId }
+  })
+}
+
+/**
+ * Waste → Dr 5040 / Cr 1210 in the item's company, keyed 'inventory.waste:<id>'.
+ * `opts` is for re-posting a refused one (reconciliation/backfillOrders.ts):
+ * dated in the open period with a note naming the waste's date when its own
+ * month is closed (owner decision 6).
+ */
+export async function postWasteLog(wasteLogId: string, opts: RepostOptions = {}): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const log = await prisma.wasteLog.findUnique({
     where: { id: wasteLogId },
     include: { inventoryItem: true },
   })
   if (!log) return { posted: false, entryId: null, reason: 'waste_log_not_found' }
+  // A line voided after firing is booked ONCE for the whole line, under
+  // 'pos.void_waste:<orderItemId>' (inventory/voidWaste.ts VOID_WASTE_REASON)
+  // — never again per waste log here.
+  if (log.reason === 'void_after_fire') return { posted: false, entryId: null, reason: 'booked_by_void' }
 
   const cost = log.estimatedCostCents ?? Math.round((log.inventoryItem.unitCostCents ?? 0) * log.quantity)
   if (cost <= 0) return { posted: false, entryId: null, reason: 'zero_cost' }
@@ -879,14 +1235,15 @@ export async function postWasteLog(wasteLogId: string): Promise<{ posted: boolea
   const wasteTenantId = log.inventoryItem.tenantId
   if (!wasteTenantId) return { posted: false, entryId: null, reason: 'item_has_no_company' }
 
+  const late = withLateNote(`Waste — ${log.inventoryItem.name} (${log.reason})`, lines, opts.memoNote)
   const result = await postJournalEntry({
     tenantId: wasteTenantId,
     sourceType: 'inventory.waste',
     sourceId: log.id,
-    description: `Waste — ${log.inventoryItem.name} (${log.reason})`,
-    entryDate: log.recordedAt,
-    postedBy: log.recordedById ?? 'system',
-    lines,
+    description: late.description,
+    entryDate: opts.entryDate ?? log.recordedAt,
+    postedBy: opts.postedBy ?? log.recordedById ?? 'system',
+    lines: late.lines,
   })
   return { posted: result.posted, entryId: result.entryId }
 }

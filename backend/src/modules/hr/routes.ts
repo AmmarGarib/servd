@@ -17,24 +17,29 @@ import { activeTenantId } from '../../lib/tenantScope.js'
 import { normalisePhone } from '../auth/otp.js'
 import { csv } from '../accounting/csv.js'
 import { audit } from '../../lib/audit.js'
+import { assertInt4Fits } from '../../lib/money.js'
 import {
   HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, ORG_UNIT_KINDS, DOCUMENT_TYPES,
-  EMPLOYEE_COLUMN_TYPES, negativeMoney, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
+  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
 } from './forms.js'
 import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
-  applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor,
+  applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees,
-  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE,
+  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE, ALL_RUN_STATUSES,
 } from './service.js'
 import {
   mergeSettings, canActOnStep, finalSettlement, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
+  nextPeriod, settlementParts, settlementNet,
   type ApprovalEntry, type HrSettings,
 } from './logic.js'
 import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml } from './letters.js'
 import { REPORTS, buildReport, resolver, type ReportQuery } from './reports.js'
-import { postPayrollAccrual, postPayrollPayment, postLoanDisbursement } from './ledger.js'
-import { reverseJournalEntry, ACCT } from '../accounting/journal.js'
+import {
+  postPayrollAccrual, postPayrollPayment, postLoanDisbursement, postFinalSettlementAccrual, postFinalSettlementPayment,
+  lockSettlement, FNF_ACCRUAL, FNF_PAYMENT, type PayrollPayFrom,
+} from './ledger.js'
+import { reverseJournalEntry } from '../accounting/journal.js'
 import { applyAttendanceCorrection, flagMissingPunches } from './attendance.js'
 import { approvedLeaveOn, leaveSpan, isHalfDayLeave, OFF_MARK, ymd as rotaYmd } from './rota.js'
 import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
@@ -66,7 +71,7 @@ const SELF_EDITORS = ['admin', 'owner'] as UserRole[]
 const SERVER_OWNED: Record<string, string[]> = { overtime: ['approvedHours', 'otRate', 'otAmount'] }
 /** Values on a self-service request that drive pay and are HR's to set, not
  *  the employee's. Hidden from the self-service form and dropped on the way in. */
-const ESS_HIDDEN: Record<string, string[]> = { overtime: ['multiplier'] }
+const ESS_HIDDEN: Record<string, string[]> = { overtime: ['multiplier'], loan: ['paidFrom', 'bankAccount'] }
 
 type Tx = Prisma.TransactionClient
 
@@ -199,6 +204,17 @@ function slotColumns(slots: Partial<Record<RecordSlot, unknown>>) {
 
 const omitKeys = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)))
 
+/** A payment date as the money screens send it — YYYY-MM-DD, the day in
+ *  Karachi — default today, never in the future. Stored as that day's UTC
+ *  midnight, the way HR keeps every date, so the period lock reads its day. */
+function paidOnOf(raw: string | undefined): Date {
+  if (!raw) return pktToday()
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(raw.trim()) ? parseHrDate(raw) : null
+  if (!d) throw new AppError('BAD_DATE', 'The payment date must be a date (YYYY-MM-DD)', 400)
+  if (d.getTime() > pktToday().getTime()) throw new AppError('PAID_ON_FUTURE', 'The payment date cannot be in the future', 422)
+  return d
+}
+
 function formErrors(errors: Array<{ field: string; message: string }>) {
   return new AppError('VALIDATION_ERROR', errors.map((e) => e.message).join('; '), 400)
 }
@@ -220,12 +236,13 @@ function formatProblems(sec: HrSection, fields: HrField[], workflow: WorkflowSte
   return [...problems, ...checkFormat({ ...sec, fields: sec.key === 'employees' ? [] : sec.fields }, fields, workflow)]
 }
 
-type RefKind = 'employee' | 'orgunit' | 'department' | 'location' | 'record'
+type RefKind = 'employee' | 'orgunit' | 'department' | 'location' | 'record' | 'bank_account'
 
 /** What an id-holding field points at. Its type says — or, for a format saved
  *  before a field's type had to match its binding, what it is bound to: an id
  *  column is checked whatever kind of field fills it. */
 function refTarget(fl: HrField): { kind: RefKind; ref?: string } | null {
+  if (fl.ref === BANK_ACCOUNT_REF && (fl.type === 'text' || fl.type === 'select')) return { kind: 'bank_account' }
   switch (fl.type) {
     case 'employee': case 'employees': return { kind: 'employee' }
     case 'orgunit': case 'department': case 'location': case 'record': return { kind: fl.type, ref: fl.ref }
@@ -264,6 +281,9 @@ async function checkReferences(tenantId: string, fields: HrField[], data: Record
       case 'department': n = await prisma.department.count({ where: { id: { in: uniq }, OR: [{ tenantId }, { tenantId: null }] } }); break
       case 'location': n = await prisma.location.count({ where: { id: { in: uniq }, tenantId } }); break
       case 'record': n = await prisma.hrRecord.count({ where: { tenantId, id: { in: uniq }, ...(target.ref && { section: target.ref }) } }); break
+      // A live bank of the record's company, linked to its chart (the only
+      // kind lib/bankAccounts moneyAccountCode will post to).
+      case 'bank_account': n = await prisma.bankAccount.count({ where: { tenantId, id: { in: uniq }, deletedAt: null, isActive: true, accountCode: { not: null } } }); break
     }
     if (n !== uniq.length) throw new AppError('BAD_REFERENCE', `${fl.label}: not found in this company`, 422)
   }
@@ -293,10 +313,17 @@ async function prepareRecord(tx: Tx, tenantId: string, section: string, fields: 
     }
   }
   if (section === 'final_settlement') {
-    const n = (k: string) => (typeof data[k] === 'number' ? data[k] as number : 0)
-    const net = n('salaryPayable') + n('otPayable') + n('leaveEncashment') - n('deductions') - n('loanRecovery') + n('otherAdjustments')
+    // The one formula (logic.ts settlementNet) — the same one its accrual books.
+    // Per-person HR money is INT4 (amountCents): too big is 422, not a 500.
+    const parts = settlementParts(data)
+    for (const [k, v] of Object.entries(parts)) assertInt4Fits(v, fields.find((f) => f.key === k)?.label ?? k)
+    const net = settlementNet(parts)
+    assertInt4Fits(net, 'The net settlement')
     data['netAmount'] = net
     cols.amountCents = net
+  }
+  if (section === 'loan' && data['paidFrom'] === 'cash' && typeof data['bankAccount'] === 'string' && data['bankAccount']) {
+    throw new AppError('BANK_ACCOUNT_ON_CASH', 'A loan paid in cash does not use a bank account — clear the bank account or pay it by bank', 422)
   }
   // A loan is recovered one installment a payroll; zero, negative or part
   // installments would never recover it. Checked here whatever the format says.
@@ -370,7 +397,7 @@ async function approvalSubject(rec: HrRecord) {
 /** Everything that happens when a record reaches 'approved' — whether the last
  *  approver got it there or its format has no approval steps at all. Effects
  *  (applyDueEffects) follow once the transaction commits. */
-async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: number | null } = {}) {
+async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: number | null; actorId?: string } = {}) {
   const s = await getSettings(rec.tenantId)
   const emp = rec.employeeId ? await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId } }) : null
   await onFinalApproval(tx, { ...rec, status: 'approved' }, emp, s, extra)
@@ -388,12 +415,64 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
   // …and an approved shift swap on those days, on either side, leaves a
   // shift with nobody on it (RV-P-02): listed on the leave and audited.
   if (rec.section === 'leave' && emp) await flagSwapsOnLeave(tx, rec, emp.id)
+  const approvers = rec.approvals as unknown as ApprovalEntry[]
+  const by = extra.actorId ?? approvers[approvers.length - 1]?.byUserId ?? rec.createdById ?? 'system'
   // A loan is paid out when it is approved: it goes on the books as owed by
   // the employee, and payroll recovers it.
-  if (rec.section === 'loan') {
-    const approvers = rec.approvals as unknown as ApprovalEntry[]
-    await postLoanDisbursement(tx, rec, approvers[approvers.length - 1]?.byUserId ?? rec.createdById ?? 'system')
+  if (rec.section === 'loan') await postLoanDisbursement(tx, rec, by)
+  // A full & final is booked when it is approved, and paid with "Mark paid".
+  if (rec.section === 'final_settlement') await approveSettlement(tx, rec, by)
+}
+
+/** What "Calculate" worked a full & final out from, stamped on the record
+ *  (POST /hr/final-settlement/calculate with its recordId). */
+interface SettlementCalc { salaryFrom: string | null; lastWorkingDay: string; paidThrough: string | null; unpaidMonthSalary: boolean; at: string }
+
+const ymdOf = (d: Date | string | null | undefined) => (d ? (typeof d === 'string' ? d : d.toISOString()).slice(0, 10) : null)
+
+/**
+ * A full & final reaching approval (finance gaps #2 and "F&F can pay a month
+ * twice"). The settlement pays salary from the day after the last payroll the
+ * leaver is on, so every payroll they are on must be final first: a draft or
+ * approved one could still be recalculated or deleted, and the month would be
+ * paid twice or not at all. That day is stored (data._salaryFrom) and payroll
+ * leaves the leaver out of its month and every later one. If payroll moved
+ * since "Calculate" (a run deleted, the last working day changed), the
+ * figures are stale and the approval is refused. Then it is booked.
+ */
+async function approveSettlement(tx: Tx, rec: HrRecord, postedBy: string) {
+  if (!rec.employeeId || !rec.endDate) throw new AppError('INCOMPLETE', 'Set the employee and the last working day first', 422)
+  const open = await tx.hrPayslip.findFirst({
+    where: { tenantId: rec.tenantId, employeeId: rec.employeeId, run: { status: { in: ['draft', 'approved'] } } },
+    select: { run: { select: { period: true, status: true } } },
+    orderBy: { run: { period: 'desc' } },
+  })
+  if (open) {
+    throw new AppError('FNF_PAYROLL_OPEN', `The ${open.run.period} payroll (${open.run.status}) includes this employee — lock it before approving the settlement, or delete it, calculate the settlement again and run that payroll after approval`, 409)
   }
+  const lastRun = await tx.hrPayrollRun.findFirst({
+    where: { tenantId: rec.tenantId, status: 'locked', payslips: { some: { employeeId: rec.employeeId } } },
+    orderBy: { period: 'desc' }, select: { period: true },
+  })
+  const owedFrom = lastRun ? new Date(periodEnd(lastRun.period).getTime() + 1) : periodStart(periodOf(rec.endDate))
+  const d = (rec.data ?? {}) as Record<string, unknown>
+  const calc = d['_calc'] as SettlementCalc | undefined
+  let salaryFrom: Date | null = owedFrom
+  if (calc) {
+    if (ymdOf(calc.lastWorkingDay) !== ymdOf(rec.endDate)) {
+      throw new AppError('FNF_STALE', 'The last working day changed after this settlement was calculated — calculate it again', 409)
+    }
+    if (calc.unpaidMonthSalary === false) salaryFrom = null
+    else if (ymdOf(calc.salaryFrom) !== ymdOf(owedFrom)) {
+      throw new AppError('FNF_STALE', `Payroll changed after this settlement was calculated: salary is now owed from ${ymdOf(owedFrom)}, not ${ymdOf(calc.salaryFrom) ?? 'nothing'} — calculate it again`, 409)
+    }
+  }
+  const cur = await tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id }, select: { data: true } })
+  const stamped = await tx.hrRecord.update({
+    where: { id: rec.id },
+    data: { data: { ...((cur.data ?? {}) as Record<string, unknown>), _salaryFrom: salaryFrom ? salaryFrom.toISOString() : null } as Prisma.InputJsonValue },
+  })
+  await postFinalSettlementAccrual(tx, stamped, postedBy)
 }
 
 interface RemovedShift { id: string; date: string; conceptId: string; startTime: string; endTime: string; role: string | null }
@@ -1155,7 +1234,19 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...inTenants(req) }, include: { employee: { select: { id: true, fullName: true, employeeCode: true } } } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
-    return { record: rec, format: fmt }
+    // What a loan or a settlement put on the books: the journal references
+    // and dates, in its own company's ledger (no amounts beyond the record's).
+    const refs = rec.section === 'loan'
+      ? ['hr.loan.disbursement', 'hr.loan.disbursement.reversal']
+      : rec.section === 'final_settlement' ? [FNF_ACCRUAL, `${FNF_ACCRUAL}.reversal`, FNF_PAYMENT] : []
+    const postings = refs.length
+      ? await prisma.journalEntry.findMany({
+        where: { tenantId: rec.tenantId, reference: { in: refs.map((r) => `${r}:${rec.id}`) } },
+        select: { id: true, reference: true, entryDate: true, description: true },
+        orderBy: { createdAt: 'asc' },
+      })
+      : []
+    return { record: rec, format: fmt, postings }
   })
 
   fastify.post<{ Params: { section: string } }>('/records/:section', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
@@ -1173,6 +1264,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // change after that is a new request, not an edit.
     if (fmt.workflow.length && (rec.status === 'approved' || rec.status === 'rejected' || approvals.length > 0)) {
       throw new AppError('LOCKED', 'This request has already been acted on and can no longer be edited', 409)
+    }
+    // An approved settlement is on the books with the figures it was approved
+    // with (a format with no approval steps approves on save).
+    if (rec.section === 'final_settlement' && rec.status === 'approved') {
+      throw new AppError('LOCKED', 'This settlement is approved and booked — cancel it and raise a new one to change it', 409)
     }
     const stored = rec.data as Record<string, unknown>
     const merged = { ...stored, ...omitKeys(body.data, SERVER_OWNED[rec.section] ?? []) }
@@ -1217,7 +1313,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
         : {}
       const claimed = await tx.hrRecord.updateMany({ where: { id: rec.id, status: 'draft' }, data: { status: approveNow ? 'approved' : 'submitted', ...leaveDays } })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
-      if (approveNow) await finalApproval(tx, rec)
+      if (approveNow) await finalApproval(tx, rec, { actorId: req.staffUser!.id })
     })
     if (approveNow) await applyDueEffects(rec.tenantId)
     const after = await prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
@@ -1231,6 +1327,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
       decision: z.enum(['approved', 'rejected']),
       note: z.string().max(500).optional(),
       approvedHours: z.number().min(0).max(24 * 31).optional(), // overtime only
+      // loan only, at its last step: where the money is paid out from (the
+      // approver can see the company's banks; HR raising it may not).
+      paidFrom: z.enum(['bank', 'cash']).optional(),
+      bankAccountId: z.string().min(1).max(64).nullable().optional(),
     }).parse(req.body)
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
@@ -1264,7 +1364,16 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // the next approver starts from them and the final amount pays them — not
     // the hours originally claimed.
     const hours = rec.section === 'overtime' && body.decision === 'approved' && body.approvedHours != null ? body.approvedHours : null
-    const data = hours != null ? { ...(rec.data as Record<string, unknown>), approvedHours: hours } : rec.data as Record<string, unknown>
+    // A loan's paying account, when the last approver names it.
+    const payout = rec.section === 'loan' && nextStatus === 'approved' && (body.paidFrom !== undefined || body.bankAccountId !== undefined)
+    if (payout && body.paidFrom === 'cash' && body.bankAccountId) throw new AppError('BANK_ACCOUNT_ON_CASH', 'A loan paid in cash does not use a bank account', 422)
+    const data = {
+      ...(rec.data as Record<string, unknown>),
+      ...(hours != null && { approvedHours: hours }),
+      ...(payout && body.paidFrom && { paidFrom: body.paidFrom }),
+      ...(payout && (body.bankAccountId !== undefined || body.paidFrom === 'cash') && { bankAccount: body.paidFrom === 'cash' ? null : body.bankAccountId ?? null }),
+    }
+    const dataChanged = hours != null || payout
     const hoursOnQuantity = hours != null && fmt.fields.find((f) => f.key === 'approvedHours')?.bind === 'quantity'
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -1275,13 +1384,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
           status: nextStatus,
           currentStep: body.decision === 'approved' && !isLast ? rec.currentStep + 1 : rec.currentStep,
           approvals: [...(rec.approvals as unknown as ApprovalEntry[]), entry] as unknown as Prisma.InputJsonValue,
-          ...(hours != null && { data: data as Prisma.InputJsonValue }),
+          ...(dataChanged && { data: data as Prisma.InputJsonValue }),
           ...(hoursOnQuantity && { quantity: hours }),
         },
       })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
       if (nextStatus === 'approved') {
-        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours })
+        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours, actorId: req.staffUser!.id })
       }
       return tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
     })
@@ -1332,19 +1441,45 @@ export async function hrRoutes(fastify: FastifyInstance) {
       if (on) {
         throw new AppError('ON_PAYROLL', `An installment of this loan is on the ${on.run.period} payroll (${on.run.status}) — take it off that payroll before cancelling the loan`, 409)
       }
+      // …and the same for a full & final that recovered it.
+      const settlements = await prisma.hrRecord.findMany({
+        where: { tenantId: rec.tenantId, section: 'final_settlement', status: 'approved', ...(rec.employeeId && { employeeId: rec.employeeId }) },
+        select: { data: true },
+      })
+      if (settlements.some((st) => settlementLoansOf(st.data).some((l) => l.loanId === rec.id && l.cents > 0))) {
+        throw new AppError('ON_SETTLEMENT', 'This loan is recovered in an approved full & final settlement — cancel that settlement before cancelling the loan', 409)
+      }
+    }
+    // A settlement that has been paid stays: the money has left.
+    const settlementBooked = rec.section === 'final_settlement' && rec.status === 'approved'
+    if (settlementBooked && ((rec.data ?? {}) as Record<string, unknown>)['_paidAt']) {
+      throw new AppError('FNF_PAID', 'This settlement has been paid and cannot be cancelled', 409)
     }
     // Claim: an approval or an effect landing between the read and here must
     // not end up on a record that also says cancelled.
     await prisma.$transaction(async (tx) => {
+      if (settlementBooked) {
+        // Serialised with "Mark paid": a payment landing meanwhile wins.
+        await lockSettlement(tx, rec.id)
+        const fresh = await tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id }, select: { data: true } })
+        if (((fresh.data ?? {}) as Record<string, unknown>)['_paidAt']) throw new AppError('FNF_PAID', 'This settlement has been paid and cannot be cancelled', 409)
+      }
       const claimed = await tx.hrRecord.updateMany({
         where: { id: rec.id, status: rec.status, currentStep: rec.currentStep, appliedAt: null },
         data: { status: 'cancelled' },
       })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'This record changed while you were cancelling it — reload', 409)
-      // An approved loan was paid out on the books; cancelling takes it back.
+      // An approved loan was paid out on the books; cancelling takes it back —
+      // the reversal flips its lines, so it credits back the place it was paid from.
       if (rec.section === 'loan' && rec.status === 'approved') {
         const posted = await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: `hr.loan.disbursement:${rec.id}` }, select: { id: true } })
         if (posted) await reverseJournalEntry(rec.tenantId, 'hr.loan.disbursement', rec.id, 'Loan cancelled', { tx, postedBy: req.staffUser!.id })
+      }
+      // An approved settlement was booked; cancelling takes it back (a closed
+      // period today is 422 and nothing is cancelled).
+      if (settlementBooked) {
+        const posted = await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: `${FNF_ACCRUAL}:${rec.id}` }, select: { id: true } })
+        if (posted) await reverseJournalEntry(rec.tenantId, FNF_ACCRUAL, rec.id, 'Full & final settlement cancelled', { tx, postedBy: req.staffUser!.id })
       }
     })
     await audit({
@@ -1408,32 +1543,51 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // Full & final — work the figures out from what HR already holds. It picks
-  // up where payroll left off: salary for the days after the last approved or
-  // locked payroll the employee is on, OT and loans net of what those paid and
-  // recovered, and the paid leave earned this leave year and not taken.
+  // up where payroll left off: salary for the days after the last payroll the
+  // employee is on — whatever its status: a draft that has them will pay that
+  // month, so the settlement must not (finance gaps: "F&F can pay a month
+  // twice") — OT and loans net of what those runs paid and recovered, the
+  // paid leave earned this leave year and not taken, and the income tax,
+  // EOBI and SESSI a payslip takes for the same days. With `recordId` (the
+  // settlement being worked on) what it was worked out from is stamped on it,
+  // so approval can tell when payroll has moved since.
   fastify.post('/final-settlement/calculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const body = z.object({ employeeId: z.string().uuid(), lastWorkingDay: z.string(), unpaidMonthSalary: z.boolean().default(true) }).parse(req.body)
+    const body = z.object({
+      employeeId: z.string().uuid(), lastWorkingDay: z.string(), unpaidMonthSalary: z.boolean().default(true),
+      recordId: z.string().uuid().optional(),
+    }).parse(req.body)
     const found = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } })
     if (!found) throw new NotFoundError('Employee', body.employeeId)
-    const lwd = new Date(body.lastWorkingDay)
-    if (Number.isNaN(lwd.getTime())) throw new AppError('BAD_DATE', 'Last working day is not a date', 400)
+    const lwd = parseHrDate(body.lastWorkingDay)
+    if (!lwd) throw new AppError('BAD_DATE', 'Last working day is not a date', 400)
+    const target = body.recordId
+      ? await prisma.hrRecord.findFirst({ where: { id: body.recordId, section: 'final_settlement', ...writeTenants(req) } })
+      : null
+    if (body.recordId && !target) throw new NotFoundError('Full & final settlement', body.recordId)
+    if (target && (target.tenantId !== found.tenantId || (target.employeeId && target.employeeId !== found.id))) {
+      throw new AppError('COMPANY_MISMATCH', 'That settlement is for another employee', 422)
+    }
     // A revision that has come due but that nothing has applied yet.
     await applyDueEffects(found.tenantId)
     const emp = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: found.id } })
     const s = await getSettings(emp.tenantId)
-    const PAID_RUNS = ['approved', 'locked']
-    const paidRun = await prisma.hrPayrollRun.findFirst({
-      where: { tenantId: emp.tenantId, status: { in: PAID_RUNS }, payslips: { some: { employeeId: emp.id } } },
-      orderBy: { period: 'desc' }, select: { period: true },
+    const lastRun = await prisma.hrPayrollRun.findFirst({
+      where: { tenantId: emp.tenantId, status: { in: ALL_RUN_STATUSES }, payslips: { some: { employeeId: emp.id } } },
+      orderBy: { period: 'desc' }, select: { period: true, status: true },
     })
-    const salaryFrom = !body.unpaidMonthSalary ? null : paidRun ? new Date(periodEnd(paidRun.period).getTime() + 1) : periodStart(periodOf(lwd))
+    const salaryFrom = !body.unpaidMonthSalary ? null : lastRun ? new Date(periodEnd(lastRun.period).getTime() + 1) : periodStart(periodOf(lwd))
     const otFrom = await firstPayrollStart(emp.tenantId, periodStart(periodOf(lwd)))
     const [ot, balances, loans, grossSalaryCents] = await Promise.all([
-      unpaidOvertime(emp.tenantId, emp.id, otFrom, lwd, { runStatuses: PAID_RUNS }),
+      unpaidOvertime(emp.tenantId, emp.id, otFrom, lwd, { runStatuses: ALL_RUN_STATUSES }),
       leaveBalancesFor(emp.tenantId, emp.id, lwd),
-      loansFor(emp.tenantId, emp.id, { runStatuses: PAID_RUNS }),
+      loansFor(emp.tenantId, emp.id, { runStatuses: ALL_RUN_STATUSES, ...(target && { exceptSettlementId: target.id }) }),
       salaryForPeriod(emp, periodOf(lwd)),
     ])
+    // Each month it pays salary for, at that month's own salary.
+    const salaryByPeriod: Record<string, number> = {}
+    if (salaryFrom && salaryFrom <= lwd) {
+      for (let p = periodOf(salaryFrom); p <= periodOf(lwd); p = nextPeriod(p)) salaryByPeriod[p] = await salaryForPeriod(emp, p)
+    }
     const leaveDays = Math.round(balances.filter((b) => b.paid).reduce((a, b) => a + accruedLeaveDays(b, b.yearFrom, emp.joiningDate, lwd), 0) * 100) / 100
     const r = finalSettlement({ ...emp, grossSalaryCents }, lwd, {
       salaryFrom,
@@ -1441,8 +1595,90 @@ export async function hrRoutes(fastify: FastifyInstance) {
       leaveBalanceDays: leaveDays,
       loanOutstandingCents: loans.reduce((a, l) => a + l.outstandingCents, 0),
       deductionsCents: 0, otherAdjustmentsCents: 0,
+      salaryByPeriod,
     }, s)
-    return { ...r, leaveBalanceDays: leaveDays, paidThrough: paidRun?.period ?? null, finalMonthAlreadyPaid: !!paidRun && paidRun.period >= periodOf(lwd) }
+    // Stamped only while the settlement can still be edited: once an
+    // approver has acted, its figures are the ones they approved.
+    const approvals = (target?.approvals ?? []) as unknown as ApprovalEntry[]
+    if (target && (target.status === 'draft' || target.status === 'submitted') && approvals.length === 0) {
+      const calc: SettlementCalc = {
+        salaryFrom: salaryFrom ? salaryFrom.toISOString() : null, lastWorkingDay: lwd.toISOString(),
+        paidThrough: lastRun?.period ?? null, unpaidMonthSalary: body.unpaidMonthSalary, at: new Date().toISOString(),
+      }
+      await prisma.hrRecord.update({
+        where: { id: target.id },
+        data: { data: { ...((target.data ?? {}) as Record<string, unknown>), _calc: calc } as unknown as Prisma.InputJsonValue },
+      })
+    }
+    return {
+      ...r, leaveBalanceDays: leaveDays,
+      salaryFrom: salaryFrom ? salaryFrom.toISOString() : null,
+      paidThrough: lastRun?.period ?? null, paidThroughStatus: lastRun?.status ?? null,
+      finalMonthAlreadyPaid: !!lastRun && lastRun.period >= periodOf(lwd),
+    }
+  })
+
+  // POST /hr/final-settlement/:id/paid {bankAccountId? | cash, paidOn?} — the
+  // leaver has been paid (finance gaps #2): Dr Wages payable / Cr the bank
+  // named (it must be a live, linked bank of the settlement's own company —
+  // 422 otherwise), the company's only bank, or the safe; dated paidOn
+  // (default today, never in the future; a closed day is 422). Booked first if
+  // its approval was not. A second call is 409, never a second entry.
+  fastify.post<{ Params: { id: string } }>('/final-settlement/:id/paid', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
+    const body = z.object({
+      cash: z.boolean().optional(),
+      bankAccountId: z.string().min(1).max(64).nullable().optional(),
+      paidOn: z.string().optional(),
+    }).parse(req.body ?? {})
+    const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: 'final_settlement', ...writeTenants(req) } })
+    if (!rec) throw new NotFoundError('Full & final settlement', req.params.id)
+    const paidOn = paidOnOf(body.paidOn)
+    const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
+    const updated = await postFinalSettlementPayment(rec.id, req.staffUser!.id, {
+      cash: body.cash === true, bankAccountId: body.bankAccountId ?? null, paidOn,
+      dateKey: fmt.fields.find((f) => f.bind === 'effectiveDate')?.key ?? null,
+    })
+    const d = (updated.data ?? {}) as Record<string, unknown>
+    await audit({
+      category: 'identity', action: 'hr.final_settlement.paid', entity: 'HrRecord', entityId: rec.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId,
+      after: { paidOn: d['_paidOn'], paidFrom: d['_paidFrom'], amountCents: d['_paidCents'] },
+    })
+    return updated
+  })
+
+  // POST /hr/final-settlement/post-unposted — book the active company's
+  // settlements approved before approval booked them, dated today. One at a
+  // time: a settlement the ledger refuses is listed with the reason and the
+  // rest still post.
+  fastify.post('/final-settlement/post-unposted', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
+    const tenantId = activeTenant(req)
+    const recs = await prisma.hrRecord.findMany({
+      where: { tenantId, section: 'final_settlement', status: 'approved' },
+      include: { employee: { select: { fullName: true, employeeCode: true } } },
+      orderBy: { createdAt: 'asc' },
+    })
+    const posted = await prisma.journalEntry.findMany({
+      where: { tenantId, reference: { in: recs.map((r) => `${FNF_ACCRUAL}:${r.id}`) } },
+      select: { reference: true },
+    })
+    const done = new Set(posted.map((p) => p.reference))
+    const out = { posted: [] as string[], alreadyPosted: 0, failed: [] as Array<{ id: string; employee: string | null; reason: string }> }
+    for (const r of recs) {
+      if (done.has(`${FNF_ACCRUAL}:${r.id}`)) { out.alreadyPosted++; continue }
+      try {
+        await prisma.$transaction((tx) => postFinalSettlementAccrual(tx, r, req.staffUser!.id, { entryDate: pktToday() }))
+        out.posted.push(r.id)
+      } catch (err) {
+        out.failed.push({ id: r.id, employee: r.employee ? `${r.employee.fullName} (${r.employee.employeeCode})` : null, reason: (err as Error).message })
+      }
+    }
+    await audit({
+      category: 'identity', action: 'hr.final_settlement.backfill', entity: 'HrRecord', entityId: null,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+      after: { posted: out.posted.length, alreadyPosted: out.alreadyPosted, failed: out.failed.length },
+    })
+    return out
   })
 
   // ── Payroll ───────────────────────────────────────────────────────────────
@@ -1537,14 +1773,31 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
-  // Wages paid out: clears wages payable against the bank or the safe.
+  // Wages paid out (finance gaps #9): clears wages payable — cash slips from
+  // the safe (cashCode 1010, or 1015 the POS drawer), bank and cheque slips
+  // from the bank named (a live, linked bank of the run's own company — 422
+  // otherwise), else the company's only bank; dated paidOn (default today,
+  // never in the future; a closed day is 422). The old {from: bank|cash}
+  // still pays the whole run from one place.
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/paid', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
-    const body = z.object({ from: z.enum(['bank', 'cash']).default('bank') }).parse(req.body ?? {})
+    const body = z.object({
+      from: z.enum(['bank', 'cash']).optional(),
+      bankAccountId: z.string().min(1).max(64).nullable().optional(),
+      cashCode: z.enum(['1010', '1015']).optional(),
+      paidOn: z.string().optional(),
+    }).parse(req.body ?? {})
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
-    await postPayrollPayment(run.id, req.staffUser!.id, body.from === 'cash' ? ACCT.CASH_ON_HAND : ACCT.BANK)
-    await audit({ category: 'identity', action: 'hr.payroll.paid', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, from: body.from } })
-    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+    const paidOn = paidOnOf(body.paidOn)
+    const from: PayrollPayFrom = body.from && body.cashCode === undefined && body.bankAccountId === undefined
+      ? { mode: 'all', method: body.from }
+      : { mode: 'split', bankAccountId: body.bankAccountId ?? null, cashCode: body.cashCode }
+    const paid = await postPayrollPayment(run.id, req.staffUser!.id, from, paidOn)
+    await audit({
+      category: 'identity', action: 'hr.payroll.paid', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+      after: { period: run.period, paidOn: paidOn.toISOString(), payment: ((paid.totals ?? {}) as Record<string, unknown>)['payment'] ?? null, ...(body.from && { from: body.from }) },
+    })
+    return paid
   })
 
   fastify.delete<{ Params: { id: string } }>('/payroll/runs/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {

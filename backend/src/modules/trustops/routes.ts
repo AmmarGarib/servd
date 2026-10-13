@@ -13,7 +13,12 @@ import { verifyManagerPin } from '../auth/managerPin.js'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, HR_TEAM } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
-import { CASH_GUARD, recordPettyCashSpendTx, insufficientFloatError } from './pettyCash.js'
+import {
+  CASH_GUARD, passesCashGuard, insufficientFloatError,
+  recordPettyCashSpendTx, recordPettyCashTopupTx, recordPettyCashTransferTx, recordPettyCashCountTx,
+} from './pettyCash.js'
+import { zInt4Cents } from '../../lib/money.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { cashVoucherRoutes } from './cashVouchers.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { audit } from '../../lib/audit.js'
@@ -258,13 +263,16 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     return withNames(boxes, (b) => b.custodianId, 'custodianName')
   })
 
+  // A new box binds to the ACTIVE company. Its opening float is written as a
+  // 'topup' movement (through the one movement writer), so the box's history
+  // always explains its balance, and the creation is audited.
   fastify.post('/petty-cash/boxes', { preHandler: CASH_GUARD }, async (req, reply) => {
     const body = z.object({
-      name:          z.string().min(1).max(80),
+      name:          z.string().trim().min(1).max(80),
       conceptId:     z.string().uuid().nullable().optional(),
       custodianId:   z.string().uuid(),
-      floatCents:    z.number().int().min(0).default(0),
-      topUpLimitCents: z.number().int().min(0).default(2000000),
+      floatCents:    zInt4Cents('The opening float').default(0),
+      topUpLimitCents: zInt4Cents('The top-up limit').default(2000000),
     }).parse(req.body)
     // A new box binds to the ACTIVE company: its brand must be one of that
     // company's brands and its custodian one of that company's people.
@@ -274,18 +282,132 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     if (!(await isMemberOf(body.custodianId, tenantId))) {
       throw new AppError('CUSTODIAN_NOT_IN_COMPANY', 'The custodian must be a member of your active company', 422)
     }
-    const created = await prisma.pettyCashBox.create({ data: { ...body, conceptId: body.conceptId ?? null, tenantId } })
+    const { created, openingMovementId } = await prisma.$transaction(async (tx) => {
+      const box = await tx.pettyCashBox.create({
+        data: {
+          name: body.name, conceptId: body.conceptId ?? null, custodianId: body.custodianId,
+          topUpLimitCents: body.topUpLimitCents, floatCents: 0, tenantId,
+        },
+      })
+      let openingMovementId: string | null = null
+      if (body.floatCents > 0) {
+        const opening = await recordPettyCashTopupTx(tx, {
+          box, amountCents: body.floatCents, reason: 'Opening float', createdById: req.staffUser!.id,
+        })
+        openingMovementId = opening.movement.id
+      }
+      return { created: await tx.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } }), openingMovementId }
+    })
+    await audit({ category: 'identity',
+      action: 'petty_cash.box_create', entity: 'PettyCashBox', entityId: created.id,
+      userId: req.staffUser!.id, tenantId, userEmail: req.staffUser!.email,
+      after: {
+        name: created.name, conceptId: created.conceptId, custodianId: created.custodianId,
+        floatCents: created.floatCents, topUpLimitCents: created.topUpLimitCents,
+      },
+      metadata: { ip: req.ip, openingMovementId },
+    })
     return reply.status(201).send(created)
   })
 
-  // POST /trustops/petty-cash/movements — record a top-up or spend.
-  // Spend above PKR threshold requires receipt photo. Above box's topUpLimit
-  // requires manager PIN. Every movement audit-logged + flagged if suspicious.
+  // PATCH /trustops/petty-cash/boxes/:id — rename, change the custodian (a
+  // member of the box's company), or set the top-up limit. Raising the limit
+  // lets bigger top-ups through without a PIN, so it needs an approver's PIN
+  // of the box's company — whoever records it, like a top-up over the limit.
+  fastify.patch<{ Params: { id: string } }>('/petty-cash/boxes/:id', { preHandler: CASH_GUARD }, async (req) => {
+    const body = z.object({
+      name:            z.string().trim().min(1).max(80).optional(),
+      custodianId:     z.string().uuid().optional(),
+      topUpLimitCents: zInt4Cents('The top-up limit').optional(),
+      managerOverridePin: z.string().min(4).max(8).optional(),
+    }).parse(req.body ?? {})
+    const box = await findBoxInScope(req, req.params.id)
+    const data: { name?: string; custodianId?: string; topUpLimitCents?: number } = {}
+    if (body.name !== undefined && body.name !== box.name) data.name = body.name
+    if (body.custodianId !== undefined && body.custodianId !== box.custodianId) {
+      if (!(await isMemberOf(body.custodianId, box.tenantId))) {
+        throw new AppError('CUSTODIAN_NOT_IN_COMPANY', 'The custodian must be a member of the box\'s company', 422)
+      }
+      data.custodianId = body.custodianId
+    }
+    let approvedById: string | null = null
+    if (body.topUpLimitCents !== undefined && body.topUpLimitCents !== box.topUpLimitCents) {
+      if (body.topUpLimitCents > box.topUpLimitCents) {
+        const approver = await verifyManagerPin(body.managerOverridePin, box.tenantId, undefined, {
+          actorId: req.staffUser!.id, action: 'petty_cash_limit',
+        })
+        if (!approver && body.managerOverridePin?.trim()) {
+          throw new AppError('INVALID_MANAGER_PIN', 'That PIN does not belong to an active manager of this company', 403)
+        }
+        if (!approver) {
+          throw new AppError('LIMIT_RAISE_NEEDS_PIN', 'Raising a box\'s top-up limit needs a manager PIN', 403)
+        }
+        approvedById = approver.id
+      }
+      data.topUpLimitCents = body.topUpLimitCents
+    }
+    if (Object.keys(data).length === 0) return box
+    const updated = await prisma.pettyCashBox.update({ where: { id: box.id }, data })
+    await audit({ category: 'identity',
+      action: 'petty_cash.box_update', entity: 'PettyCashBox', entityId: box.id,
+      userId: req.staffUser!.id, tenantId: box.tenantId, userEmail: req.staffUser!.email,
+      before: Object.fromEntries(Object.keys(data).map((k) => [k, box[k as keyof typeof data]])),
+      after: data,
+      metadata: { ip: req.ip, approvedById },
+    })
+    return updated
+  })
+
+  // POST /trustops/petty-cash/transfers — move cash from one box to another
+  // of the SAME company: two 'transfer' movements with one shared reference,
+  // in one transaction, the source's float claimed conditionally. A box of a
+  // company the operator does not belong to is 404; two boxes of different
+  // companies are 422 BOX_NOT_IN_COMPANY.
+  fastify.post('/petty-cash/transfers', { preHandler: CASH_GUARD }, async (req, reply) => {
+    const body = z.object({
+      fromBoxId:   z.string().min(1),
+      toBoxId:     z.string().min(1),
+      amountCents: zInt4Cents('The transfer amount', { sign: 'positive' }),
+      reason:      z.string().trim().min(1).max(160),
+    }).parse(req.body)
+    if (body.fromBoxId === body.toBoxId) throw new AppError('SAME_BOX', 'Pick two different boxes', 400)
+    const from = await findBoxInScope(req, body.fromBoxId)
+    const to = await findBoxInScope(req, body.toBoxId)
+    if (from.tenantId !== to.tenantId) {
+      throw new AppError('BOX_NOT_IN_COMPANY', 'Both boxes must belong to the same company', 422)
+    }
+    if (from.floatCents < body.amountCents) throw insufficientFloatError(body.amountCents, from.floatCents)
+    const result = await prisma.$transaction((tx) => recordPettyCashTransferTx(tx, {
+      fromBox: from, toBox: to, amountCents: body.amountCents, reason: body.reason, createdById: req.staffUser!.id,
+    }))
+    await audit({ category: 'identity',
+      action: 'petty_cash.transfer', entity: 'PettyCashBox', entityId: from.id,
+      userId: req.staffUser!.id, tenantId: from.tenantId, userEmail: req.staffUser!.email,
+      after: { ref: result.ref, from: from.name, to: to.name, amountCents: body.amountCents, reason: body.reason },
+      metadata: { ip: req.ip, toBoxId: to.id, outMovementId: result.out.id, inMovementId: result.in.id },
+    })
+    return reply.status(201).send({
+      ref: result.ref,
+      out: result.out,
+      in: result.in,
+      fromFloatCents: result.fromFloatCents,
+      toFloatCents: result.toFloatCents,
+    })
+  })
+
+  // POST /trustops/petty-cash/movements — record a top-up or a spend. Nothing
+  // else: a count goes through /boxes/:id/reconcile (CASH_GUARD, variance
+  // flag) and box-to-box through /transfers — this route used to take
+  // 'reconcile'/'transfer' with any signed amount from any staff member.
+  // A spend: any staff of the box's company; a receipt photo above the
+  // company's threshold. A top-up: a cash keeper (CASH_GUARD) or the box's
+  // custodian only, and above the box's limit an approver's PIN. Every
+  // movement audit-logged.
   fastify.post('/petty-cash/movements', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = z.object({
       boxId:        z.string().min(1),
-      type:         z.enum(['topup', 'spend', 'reconcile', 'transfer']),
-      amountCents:  z.number().int(),                                  // signed
+      type:         z.enum(['topup', 'spend']),
+      amountCents:  zInt4Cents('The amount', { sign: 'positive' }),
       category:     z.string().max(40).nullable().optional(),
       reason:       z.string().min(1).max(200),
       receiptUrl:   z.string().url().nullable().optional(),
@@ -302,6 +424,11 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // Everything below (thresholds, approver, bill, ledger) is the BOX's company.
     const box = await findBoxInScope(req, body.boxId)
 
+    // Cash goes INTO a box only by a cash keeper or the person who holds it.
+    if (body.type === 'topup' && box.custodianId !== req.staffUser!.id && !(await passesCashGuard(req))) {
+      throw new AppError('TOPUP_NOT_ALLOWED', 'Only a manager, finance or this box\'s custodian can top it up', 403)
+    }
+
     // The bill must be an open bill of a supplier of the box's company: the
     // cash leaves that company's box, so the payment must post to that
     // company's ledger (postSupplierPayment resolves it from the supplier).
@@ -310,9 +437,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       if (body.type !== 'spend') throw new AppError('BILL_ON_NON_SPEND', 'Only a spend can pay a supplier bill', 400)
       const found = await prisma.supplierBill.findFirst({
         where: { id: body.supplierBillId, supplier: { tenantId: box.tenantId } },
-        select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, supplier: { select: { name: true } } },
+        select: { id: true, supplierId: true, billNumber: true, status: true, kind: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true, supplier: { select: { name: true } } },
       })
       if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not one of this box\'s company\'s', 422)
+      if (found.kind !== 'bill') throw new AppError('NOT_A_BILL', 'That is a credit note, not a bill', 422)
       if (found.status === 'void' || found.status === 'paid') throw new AppError('BILL_NOT_OPEN', `Bill ${found.billNumber} is ${found.status}`, 422)
       // Net of withholding — the one "still due" rule (procurement billDueCents).
       const { billDueCents } = await import('../procurement/service.js')
@@ -327,10 +455,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     const ops = await getOperationsConfig(box.tenantId)
     const photoThreshold = ops?.photoRequiredAboveCents ?? 50000
 
-    const absAmount = Math.abs(body.amountCents)
+    const amount = body.amountCents
 
     // Receipt photo enforcement on spend
-    if (body.type === 'spend' && absAmount >= photoThreshold && !body.receiptUrl) {
+    if (body.type === 'spend' && amount >= photoThreshold && !body.receiptUrl) {
       throw new AppError(
         'PHOTO_REQUIRED',
         `Spend above PKR ${(photoThreshold / 100).toFixed(0)} requires a receipt photo.`,
@@ -340,7 +468,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
 
     // Top-up limit — above limit requires manager PIN
     let approvedById: string | null = null
-    if (body.type === 'topup' && absAmount > box.topUpLimitCents) {
+    if (body.type === 'topup' && amount > box.topUpLimitCents) {
       // Only an approver of the box's own company may lift its limit.
       const approver = await verifyManagerPin(body.managerOverridePin, box.tenantId, undefined, {
         actorId: req.staffUser!.id, action: 'petty_cash_topup',
@@ -354,7 +482,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       if (!approver) {
         throw new AppError(
           'TOPUP_OVER_LIMIT',
-          `Top-up of PKR ${(absAmount / 100).toFixed(0)} exceeds box limit of PKR ${(box.topUpLimitCents / 100).toFixed(0)}. Manager PIN required.`,
+          `Top-up of PKR ${(amount / 100).toFixed(0)} exceeds box limit of PKR ${(box.topUpLimitCents / 100).toFixed(0)}. Manager PIN required.`,
           403,
         )
       }
@@ -362,16 +490,12 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }
 
     // Sign convention: topup positive, spend negative
-    const signedAmount =
-      body.type === 'topup' ? Math.abs(body.amountCents) :
-      body.type === 'spend' ? -Math.abs(body.amountCents) :
-      body.amountCents
+    const signedAmount = body.type === 'topup' ? amount : -amount
 
-    // Fast refusal before anything is written (a bill payment included). For
-    // a spend the authoritative check is recordPettyCashSpendTx's conditional
-    // update inside the transaction.
-    const newFloat = box.floatCents + signedAmount
-    if (newFloat < 0) throw insufficientFloatError(absAmount, box.floatCents)
+    // Fast refusal before anything is written (a bill payment included). The
+    // authoritative check is the conditional float update inside the
+    // transaction (pettyCash.ts).
+    if (box.floatCents + signedAmount < 0) throw insufficientFloatError(amount, box.floatCents)
 
     const { movement, supplierPaymentId, newFloatCents } = await prisma.$transaction(async (tx) => {
       let supplierPaymentId: string | null = null
@@ -382,19 +506,19 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
           paymentDate: new Date().toISOString(),
           method: 'cash',
           reference: `petty cash: ${box.name}`,
-          amountCents: absAmount,
+          amountCents: amount,
           notes: body.reason,
-          applications: [{ billId: bill.id, amountAppliedCents: absAmount }],
+          applications: [{ billId: bill.id, amountAppliedCents: amount }],
           createdBy: req.staffUser!.id,
         })
         supplierPaymentId = payment.id
       }
-      // A spend goes through the ONE spend path (pettyCash.ts) — the same one
-      // a disbursed cash voucher uses.
-      if (body.type === 'spend') {
-        const spent = await recordPettyCashSpendTx(tx, {
+      // Both go through the one movement writer (pettyCash.ts) — a spend
+      // through the same helper a disbursed cash voucher uses.
+      const done = body.type === 'spend'
+        ? await recordPettyCashSpendTx(tx, {
           box,
-          amountCents: absAmount,
+          amountCents: amount,
           category: body.category ?? null,
           reason: body.reason,
           receiptUrl: body.receiptUrl ?? null,
@@ -403,35 +527,17 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
           supplierPaymentId,
           createdById: req.staffUser!.id,
         })
-        return { movement: spent.movement, supplierPaymentId, newFloatCents: spent.newFloatCents }
-      }
-      const m = await tx.pettyCashMovement.create({
-        data: {
-          boxId: box.id,
-          type: body.type,
-          amountCents: signedAmount,
+        : await recordPettyCashTopupTx(tx, {
+          box,
+          amountCents: amount,
           category: body.category ?? null,
           reason: body.reason,
           receiptUrl: body.receiptUrl ?? null,
-          vendorName: body.vendorName ?? bill?.supplierName ?? null,
+          vendorName: body.vendorName ?? null,
           approvedById,
-          supplierPaymentId,
           createdById: req.staffUser!.id,
-        },
-      })
-      // Relative, never "set to what we read": a voucher payment or another
-      // movement racing this one must not be overwritten. Money out of the
-      // box only when the float still covers it.
-      const moved = await tx.pettyCashBox.updateMany({
-        where: { id: box.id, deletedAt: null, ...(signedAmount < 0 && { floatCents: { gte: -signedAmount } }) },
-        data: { floatCents: { increment: signedAmount } },
-      })
-      if (moved.count === 0) {
-        const cur = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: box.id }, select: { floatCents: true } })
-        throw insufficientFloatError(absAmount, cur.floatCents)
-      }
-      const after = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: box.id }, select: { floatCents: true } })
-      return { movement: m, supplierPaymentId, newFloatCents: after.floatCents }
+        })
+      return { movement: done.movement, supplierPaymentId, newFloatCents: done.newFloatCents }
     })
 
     // The supplier payment's entry (Dr 2010 / Cr 1010) was posted inside the
@@ -450,34 +556,33 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ movement, newFloatCents })
   })
 
-  // GET /trustops/petty-cash/boxes/:id/reconcile — show variance vs physical count
+  // POST /trustops/petty-cash/boxes/:id/reconcile — record a physical count:
+  // the variance against the float becomes a 'reconcile' movement (the one
+  // movement writer, pettyCash.ts) and the float becomes the count.
   fastify.post<{ Params: { id: string } }>('/petty-cash/boxes/:id/reconcile',
     { preHandler: CASH_GUARD },
     async (req, reply) => {
-      const body = z.object({ countedCents: z.number().int().min(0), notes: z.string().max(500).optional() }).parse(req.body)
+      const body = z.object({ countedCents: zInt4Cents('The counted cash'), notes: z.string().max(500).optional() }).parse(req.body)
       const scoped = await findBoxInScope(req, req.params.id)
       // The variance is against the float AS LOCKED, so a spend or voucher
       // payment landing during the count is never folded into the variance.
-      const { movement, box, variance } = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM petty_cash_boxes WHERE id = ${scoped.id} FOR UPDATE`
-        const box = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: scoped.id } })
-        const variance = body.countedCents - box.floatCents
-        const movement = await tx.pettyCashMovement.create({
-          data: {
-            boxId: box.id, type: 'reconcile',
-            amountCents: variance, reason: body.notes ?? 'Reconciliation', createdById: req.staffUser!.id,
-          },
-        })
-        await tx.pettyCashBox.update({ where: { id: box.id }, data: { floatCents: body.countedCents } })
-        return { movement, box, variance }
+      const { movement, box, varianceCents: variance } = await prisma.$transaction((tx) => recordPettyCashCountTx(tx, {
+        boxId: scoped.id, countedCents: body.countedCents, notes: body.notes ?? null, createdById: req.staffUser!.id,
+      }))
+      await audit({ category: 'identity',
+        action: 'petty_cash.reconcile', entity: 'PettyCashMovement', entityId: movement.id,
+        userId: req.staffUser!.id, tenantId: scoped.tenantId, userEmail: req.staffUser!.email,
+        before: { floatCents: box.floatCents },
+        after: { box: box.name, countedCents: body.countedCents, varianceCents: variance },
+        metadata: { ip: req.ip },
       })
 
       // Variance flag — beyond the box's company's cash tolerance
       // (Configuration → Receipts, the same limit the till drawers use).
-      const limit = await cashVarianceLimitCents(box.tenantId)
+      const limit = await cashVarianceLimitCents(scoped.tenantId)
       if (Math.abs(variance) > limit) {
         await flagException({
-          tenantId: box.tenantId,
+          tenantId: scoped.tenantId,
           conceptId: box.conceptId,
           kind: 'cash_variance',
           severity: Math.abs(variance) > 50000 ? 'high' : 'medium',
@@ -533,12 +638,21 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // counted close less the float kept in the drawer (accounting/
   // depositPosting.ts); the drop posts Dr <bank's code> / Cr the cash
   // accounts it came from, so the bank statement can match it.
+  //
+  // The bank is resolved by the one resolver (lib/bankAccounts.ts
+  // moneyAccountCode, method 'bank'): a named account must be a live, linked
+  // account of the active company (422); none named = the company's only bank,
+  // 1020 when it has none, 422 BANK_ACCOUNT_REQUIRED when it has two or more.
+  // The posting is AWAITED: the drop is the fact of record and stays saved,
+  // but a posting the ledger refused (a closed period, a missing account)
+  // raises a posting_failed flag in the drop's company for the re-poster —
+  // it used to be fire-and-forget with only a log line.
   fastify.post('/deposit-drops', { preHandler: CASH_GUARD }, async (req, reply) => {
     const body = z.object({
       shiftId:       z.string().uuid().nullable().optional(),
       conceptId:     z.string().uuid().nullable().optional(),
       bankAccountId: z.string().min(1).nullable().optional(),
-      amountCents:   z.number().int().min(0),
+      amountCents:   zInt4Cents('The deposit'),
       bagSerial:     z.string().max(80).nullable().optional(),
       receiptUrl:    z.string().url().nullable().optional(),
       witnessedById: z.string().uuid().nullable().optional(),
@@ -552,13 +666,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before recording a deposit', 422)
     if (body.shiftId) await assertShiftOf(tenantId, body.shiftId, false)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
-    if (body.bankAccountId) {
-      const bank = await prisma.bankAccount.findFirst({
-        where: { id: body.bankAccountId, tenantId, deletedAt: null },
-        select: { id: true },
-      })
-      if (!bank) throw new AppError('BANK_ACCOUNT_NOT_IN_COMPANY', 'That bank account is not one of your active company\'s', 422)
-    }
+    const bank = await moneyAccountCode(prisma, tenantId, { method: 'bank', bankAccountId: body.bankAccountId ?? null })
 
     const { expectedShiftDeposit, postDepositDrop } = await import('../accounting/depositPosting.js')
     const expected = body.shiftId ? (await expectedShiftDeposit(body.shiftId)).expectedCents : 0
@@ -570,7 +678,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         tenantId,
         shiftId: body.shiftId ?? null,
         conceptId: body.conceptId ?? null,
-        bankAccountId: body.bankAccountId ?? null,
+        bankAccountId: bank.bankAccountId,
         bagSerial: body.bagSerial ?? null,
         receiptUrl: body.receiptUrl ?? null,
         witnessedById: body.witnessedById ?? null,
@@ -581,9 +689,32 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       },
     })
 
-    postDepositDrop(drop.id)
-      .then((r) => { if (!r.posted && r.reason) req.log.warn({ dropId: drop.id, reason: r.reason }, 'deposit drop not posted') })
-      .catch((err) => req.log.error({ err: (err as Error).message, dropId: drop.id }, 'postDepositDrop failed'))
+    // Awaited; a refusal is flagged, never swallowed. no_amount (a PKR 0
+    // drop) and deposit_has_no_company are not postings that failed.
+    let posted = false
+    let postingError: string | null = null
+    try {
+      const r = await postDepositDrop(drop.id)
+      posted = r.posted || (!r.reason && !!r.entryId)
+      if (!r.posted && r.reason && r.reason !== 'no_amount' && r.reason !== 'deposit_has_no_company') postingError = r.reason
+    } catch (err) {
+      postingError = (err as Error).message || 'posting failed'
+    }
+    if (postingError) {
+      req.log.error({ dropId: drop.id, reason: postingError }, 'deposit drop not posted')
+      const { flagPostingFailed } = await import('../accounting/journal.js')
+      await flagPostingFailed({
+        tenantId: drop.tenantId,
+        sourceType: 'deposit.drop',
+        sourceId: drop.id,
+        entityType: 'DepositDrop',
+        entityId: drop.id,
+        reason: postingError,
+        title: `Bank deposit of PKR ${(drop.amountCents / 100).toFixed(0)} is not in the books`,
+        conceptId: drop.conceptId,
+        amountCents: drop.amountCents,
+      })
+    }
 
     // Beyond the company's cash tolerance fires a cash-variance flag
     // (a different entity than the till variance).
@@ -620,7 +751,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       })
     }
 
-    return reply.status(201).send(drop)
+    return reply.status(201).send({ ...drop, posted, postingError })
   })
 
   // ════════════════════════════════════════════════════════════════════════

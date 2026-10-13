@@ -324,8 +324,11 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       const result = await backfillUnpostedShifts({ tenantIds: scope.tenantIds, dryRun: body.dryRun, postedBy: req.staffUser!.id })
       // BOOKS-R2-01: order completions, loyalty earns / redemptions and refund
       // restores the ledger refused are re-posted too (backfillOrders.ts) —
-      // into their own day only; a locked one is listed, never moved.
-      const orders = await backfillUnpostedOrders({ tenantIds: scope.tenantIds, dryRun: body.dryRun })
+      // into their own day only; a locked one is listed, never moved. Its
+      // step 4 re-posts refused deposits, waste, counts, void waste, cancel
+      // unwinds and failed till cards — into the current month with a note
+      // when their own month is closed (decision 6), like the shifts above.
+      const orders = await backfillUnpostedOrders({ tenantIds: scope.tenantIds, dryRun: body.dryRun, postedBy: req.staffUser!.id })
       return { result, orders }
     }
     // A real run is single-flight per company (RB-1); a dry run writes
@@ -349,7 +352,8 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         after: { shifts: result.summary, orders: orders.summary },
         metadata: {
           shiftIds: result.rows.filter((r) => r.outcome.startsWith('posted')).map((r) => r.shiftId),
-          posted: orders.rows.filter((r) => r.outcome === 'posted').map((r) => `${r.kind}:${r.id}`),
+          posted: orders.rows.filter((r) => r.outcome === 'posted' || r.outcome === 'posted_into_current_month').map((r) => `${r.kind}:${r.id}`),
+          flagged: orders.rows.filter((r) => r.outcome === 'flagged').map((r) => `${r.kind}:${r.id}`),
         },
       })
     }

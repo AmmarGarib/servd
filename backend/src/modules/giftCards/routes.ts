@@ -1,34 +1,26 @@
 // Gift cards.
 //
-// Issuance: Dr Cash/Card / Cr Gift Card Liability (2080).
-// Redemption: ./service.ts (the one redeem engine — storefront checkout, the
-// till tender and POST /gift-cards/redeem). The liability is not yet debited
-// on redemption; see service.ts.
+// Issue, void, expiry and the 2080 books check: ./books.ts (header there has
+// every entry). Redemption: ./service.ts (the one redeem engine — storefront
+// checkout, the till tender and POST /gift-cards/redeem); the sale entry debits
+// 2080 for the card-paid share (orderPosting computeSaleAccounting, ONL-05)
+// and refunds re-credit it.
 //
 // Codes are 12 chars in groups of 4 (GS-XXXX-XXXX), generated from a 32-char
 // alphabet. Looked up case-insensitively.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
-import { postJournalEntry, ACCT } from '../accounting/journal.js'
-import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, assertConceptOwned, activeTenantId, resolveTenantScope } from '../../lib/tenantScope.js'
 import { redeemGiftCard } from './service.js'
-
-const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'  // no 0/O/1/I confusion
-function generateCode(): string {
-  // Use CSPRNG bytes mapped onto the unambiguous alphabet — Math.random's
-  // state is recoverable from a handful of outputs, so a leaked card code
-  // could expose the PRNG and let an attacker enumerate future cards.
-  let block = ''
-  const bytes = randomBytes(8)
-  for (let i = 0; i < 8; i++) block += ALPHABET[bytes[i]! % ALPHABET.length]
-  return `GS-${block.slice(0, 4)}-${block.slice(4)}`
-}
+import {
+  issueGiftCard, voidGiftCard, bookMissingIssue, giftCardBooksCheck,
+  GIFT_CARD_PAYMENT_METHODS, VOID_DISPOSITIONS,
+} from './books.js'
 
 // ── Company scope (owner decision 14) ───────────────────────────────────────
 // A gift card is sold by ONE company (GiftCard.tenantId, stamped at issue) and
@@ -46,6 +38,18 @@ function generateCode(): string {
 // it writes off a customer's balance.
 const GIFT_CARD_READERS = FINANCE_TEAM
 
+// Who SELLS a card (finance gaps, 2026-10-13): the back office — managers and
+// finance — never the till. Issuing used to be open to every staff role with
+// a self-declared payment method: a cashier "selling" a card for cash put no
+// Payment on any shift (lib/drawer.ts counts only those and cash movements),
+// so the drawer came up over while 1010 was debited for money that never
+// reached the safe. A sold card is a back-office receipt: cash into the safe
+// (1010), card on the back-office machine (1030), or a transfer to a named
+// bank of the company. A PROMOTIONAL card (given away, Dr 6060) is a manager's
+// call only, with a reason.
+const GIFT_CARD_SELLERS = FINANCE_TEAM
+const PROMO_ISSUERS = new Set<string>(MANAGERS)
+
 // A card's code is a bearer credential: whoever holds it can spend the
 // customer's balance through the ALL_STAFF redeem. Finance reconciles the 2080
 // liability and needs neither the code nor the buyer's / recipient's contact
@@ -56,26 +60,77 @@ const FULL_CARD_READERS = new Set<string>(MANAGERS)
 const seesFullCard = (req: FastifyRequest) => FULL_CARD_READERS.has(req.staffUser!.role)
 export const maskGiftCardCode = (code: string) => `••••${code.slice(-4)}`
 
+const STATUSES = ['active', 'redeemed_full', 'expired', 'voided'] as const
+const MAX_PAGE = 500
+
 export async function giftCardRoutes(fastify: FastifyInstance) {
-  // List — the companies in view.
-  fastify.get<{ Querystring: { status?: string } }>(
+  // List — the companies in view, newest first, a page at a time (it used to
+  // stop silently at 100). `nextCursor` is the id to pass as `cursor` for the
+  // next page; `total` counts every card the filter matches.
+  fastify.get(
     '/',
     { preHandler: requireAuth(...GIFT_CARD_READERS) },
     async (req) => {
-      const cards = await prisma.giftCard.findMany({
-        where: {
-          ...(await scopeTenantWhere(req, 'read')),
-          ...(req.query.status && { status: req.query.status as never }),
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-      })
-      if (seesFullCard(req)) return cards
-      return cards.map((c) => ({
+      const q = z.object({
+        status: z.enum(STATUSES).optional(),
+        limit:  z.coerce.number().int().min(1).max(MAX_PAGE).default(100),
+        cursor: z.string().min(1).max(64).optional(),
+      }).parse(req.query)
+      const where = {
+        ...(await scopeTenantWhere(req, 'read')),
+        ...(q.status && { status: q.status }),
+      }
+      // A cursor from another company (or a made-up one) is simply not found:
+      // the page starts after a row the operator can see, or the request is 404.
+      if (q.cursor && !(await prisma.giftCard.findFirst({ where: { id: q.cursor, ...where }, select: { id: true } }))) {
+        throw new NotFoundError('GiftCard', q.cursor)
+      }
+      const [rows, total] = await Promise.all([
+        prisma.giftCard.findMany({
+          where,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: q.limit + 1,
+          ...(q.cursor && { cursor: { id: q.cursor }, skip: 1 }),
+        }),
+        prisma.giftCard.count({ where }),
+      ])
+      const page = rows.slice(0, q.limit)
+      const nextCursor = rows.length > q.limit ? page[page.length - 1]!.id : null
+      const items = seesFullCard(req) ? page : page.map((c) => ({
         ...c,
         code: maskGiftCardCode(c.code),
         buyerEmail: null, recipientEmail: null, buyerCustomerId: null, message: null,
       }))
+      return { items, nextCursor, total }
+    },
+  )
+
+  // The 2080 books check, per company in view: the ledger's Gift Card
+  // Liability against what the cards say is owed (live balances + value spent
+  // on orders whose sale is not booked yet), the difference, cards whose sale
+  // never reached the books, and voided cards still holding value.
+  fastify.get(
+    '/reconcile',
+    { preHandler: requireAuth(...GIFT_CARD_READERS) },
+    async (req) => {
+      const scope = await resolveTenantScope(req)
+      if (scope.tenantIds.length === 0) return { companies: [] }
+      const companies = await prisma.tenant.findMany({
+        where: { id: { in: scope.tenantIds } },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      })
+      const full = seesFullCard(req)
+      const out = []
+      for (const c of companies) {
+        const check = await giftCardBooksCheck(c.id, c.name)
+        if (!full) {
+          check.issueNotBooked.items = check.issueNotBooked.items.map((i) => ({ ...i, code: maskGiftCardCode(i.code) }))
+          check.voidedHoldingValue.items = check.voidedHoldingValue.items.map((i) => ({ ...i, code: maskGiftCardCode(i.code) }))
+        }
+        out.push(check)
+      }
+      return { companies: out }
     },
   )
 
@@ -90,7 +145,11 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     async (req) => {
       const card = await prisma.giftCard.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
-        select: { id: true, code: true, issuedAmountCents: true, balanceCents: true, status: true, createdAt: true, voidedAt: true, voidReason: true },
+        select: {
+          id: true, tenantId: true, code: true, kind: true, issuedAmountCents: true, balanceCents: true, status: true,
+          createdAt: true, expiresAt: true, expiredAt: true, voidedAt: true, voidReason: true, voidDisposition: true,
+          paymentMethod: true, bankAccountId: true,
+        },
       })
       if (!card) throw new NotFoundError('GiftCard', req.params.id)
       const redemptions = await prisma.giftCardRedemption.findMany({
@@ -106,9 +165,12 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Issue
-  fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+  // Issue — a sold card (back office: managers + finance) or a promotional
+  // one (managers, with a reason). The card and its entry are one transaction:
+  // if the books refuse, no card exists and the error comes back.
+  fastify.post('/', { preHandler: requireAuth(...GIFT_CARD_SELLERS) }, async (req, reply) => {
     const body = z.object({
+      kind:              z.enum(['sold', 'promotional']).default('sold'),
       issuedAmountCents: z.number().int().min(10_000).max(10_000_000),  // PKR 100 – PKR 100k
       buyerCustomerId:   z.string().uuid().nullable().optional(),
       buyerEmail:        z.string().email().nullable().optional(),
@@ -117,65 +179,79 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       message:           z.string().max(500).nullable().optional(),
       conceptId:         z.string().uuid().nullable().optional(),
       expiresAt:         z.string().datetime().nullable().optional(),
-      paymentMethod:     z.enum(['cash', 'card', 'bank_transfer']).default('card'),
+      paymentMethod:     z.enum(GIFT_CARD_PAYMENT_METHODS).nullable().optional(),
+      bankAccountId:     z.string().min(1).max(64).nullable().optional(),
+      reason:            z.string().trim().min(3).max(300).nullable().optional(),
     }).parse(req.body)
 
+    if (body.kind === 'promotional' && !PROMO_ISSUERS.has(req.staffUser!.role)) {
+      throw new AppError('FORBIDDEN', 'Only a manager can give a promotional gift card', 403)
+    }
+    if (body.expiresAt && new Date(body.expiresAt) <= new Date()) {
+      throw new AppError('EXPIRY_IN_PAST', 'The expiry date must be in the future', 422)
+    }
+
     // The card belongs to the ACTIVE company; a brand, if named, must be one
-    // of that company's.
+    // of that company's; a bank account must be one of that company's
+    // (books.ts → moneyAccountCode, 422 otherwise).
     const tenantId = activeTenantId(req)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
 
-    // Generate a unique code (loop in the unlikely case of collision)
-    let code = generateCode()
-    for (let i = 0; i < 5; i++) {
-      const exists = await prisma.giftCard.findUnique({ where: { code } })
-      if (!exists) break
-      code = generateCode()
-    }
-
-    const card = await prisma.giftCard.create({
-      data: {
-        tenantId,
-        code,
-        issuedAmountCents: body.issuedAmountCents,
-        balanceCents: body.issuedAmountCents,
-        buyerCustomerId: body.buyerCustomerId ?? null,
-        buyerEmail: body.buyerEmail ?? null,
-        recipientName: body.recipientName ?? null,
-        recipientEmail: body.recipientEmail ?? null,
-        message: body.message ?? null,
-        conceptId: body.conceptId ?? null,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-        issuedById: req.staffUser?.id ?? null,
-      },
-    })
-
-    // Journal: Dr cash/card, Cr Gift Card Liability (2080) in the books of
-    // the company that sold the card (the brand, if any, is of that company).
-    await postJournalEntry({
+    const card = await issueGiftCard({
       tenantId,
-      sourceType: 'giftcard.issue',
-      sourceId: card.id,
-      description: `Gift card issued · ${card.code}`,
-      lines: [
-        { accountCode: body.paymentMethod === 'cash' ? ACCT.CASH_ON_HAND : ACCT.CARD_RECEIVABLE,
-          type: 'debit',  amountCents: body.issuedAmountCents, memo: `Issue ${card.code}` },
-        { accountCode: '2080',
-          type: 'credit', amountCents: body.issuedAmountCents, memo: `Gift card liability ${card.code}` },
-      ],
-      postedBy: req.staffUser?.id ?? 'system',
-    }).catch((err) => req.log.error({ err: (err as Error).message }, 'gift card JE failed'))
+      kind: body.kind,
+      issuedAmountCents: body.issuedAmountCents,
+      paymentMethod: body.paymentMethod ?? null,
+      bankAccountId: body.bankAccountId ?? null,
+      reason: body.reason ?? null,
+      conceptId: body.conceptId ?? null,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      buyerCustomerId: body.buyerCustomerId ?? null,
+      buyerEmail: body.buyerEmail ?? null,
+      recipientName: body.recipientName ?? null,
+      recipientEmail: body.recipientEmail ?? null,
+      message: body.message ?? null,
+      issuedById: req.staffUser?.id ?? null,
+    })
 
     await audit({ category: 'identity',
       action: 'giftcard.issue', entity: 'GiftCard', entityId: card.id,
       userId: req.staffUser?.id ?? null, tenantId, userEmail: req.staffUser?.email ?? null,
-      after: { code: card.code, amount: card.issuedAmountCents },
+      after: { code: card.code, amount: card.issuedAmountCents, kind: card.kind, paymentMethod: card.paymentMethod, bankAccountId: card.bankAccountId },
+      ...(body.kind === 'promotional' && { metadata: { reason: body.reason } }),
     })
 
     return reply.status(201).send(card)
   })
 
-  // Lookup balance by code (no auth — guest checks balance)
+  // Book the sale of a card whose issue entry never posted (cards issued
+  // before 2026-10-13, when it was log-only). The books check lists them.
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/book-issue',
+    { preHandler: requireAuth(...GIFT_CARD_SELLERS) },
+    async (req) => {
+      const body = z.object({
+        paymentMethod: z.enum(GIFT_CARD_PAYMENT_METHODS),
+        bankAccountId: z.string().min(1).max(64).nullable().optional(),
+      }).parse(req.body)
+      const r = await bookMissingIssue({
+        cardId: req.params.id,
+        scope: await scopeTenantWhere(req, 'write'),
+        paymentMethod: body.paymentMethod,
+        bankAccountId: body.bankAccountId ?? null,
+        postedBy: req.staffUser?.id ?? 'system',
+      })
+      await audit({ category: 'identity',
+        action: 'giftcard.book_issue', entity: 'GiftCard', entityId: r.card.id,
+        userId: req.staffUser?.id ?? null, tenantId: r.card.tenantId, userEmail: req.staffUser?.email ?? null,
+        after: { paymentMethod: body.paymentMethod, debitCode: r.debitCode, amount: r.card.issuedAmountCents, entryId: r.entryId },
+      })
+      return { card: r.card, entryId: r.entryId, debitCode: r.debitCode }
+    },
+  )
+
+  // Lookup balance by code (no auth — guest checks balance). A card past its
+  // expiry reads 'expired' at once, before the daily sweep records it.
   fastify.get<{ Params: { code: string } }>(
     '/balance/:code',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
@@ -186,7 +262,8 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         select: { code: true, balanceCents: true, status: true, expiresAt: true, conceptId: true },
       })
       if (!card) throw new NotFoundError('GiftCard', code)
-      return card
+      const pastExpiry = card.status === 'active' && !!card.expiresAt && card.expiresAt < new Date()
+      return pastExpiry ? { ...card, status: 'expired' as const } : card
     },
   )
 
@@ -231,28 +308,37 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Void (manager-only — for fraud / refund of unused cards)
-  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
+  // Void (manager-only — fraud, a refund of an unused card, a payment that
+  // never arrived, or an unused promotional card). The balance leaves 2080 in
+  // the same transaction (books.ts voidGiftCard). A voided card that a refund
+  // later put value back on is settled the same way.
+  fastify.post<{ Params: { id: string } }>(
     '/:id/void',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const body = z.object({ reason: z.string().min(3).max(300) }).parse(req.body)
-      const card = await prisma.giftCard.findFirst({
-        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      })
-      if (!card) throw new NotFoundError('GiftCard', req.params.id)
-      const updated = await prisma.giftCard.update({
-        where: { id: card.id },
-        data: { status: 'voided', voidedAt: new Date(), voidReason: body.reason },
+      const body = z.object({
+        reason:        z.string().trim().min(3).max(300),
+        disposition:   z.enum(VOID_DISPOSITIONS),
+        refundMethod:  z.enum(GIFT_CARD_PAYMENT_METHODS).nullable().optional(),
+        bankAccountId: z.string().min(1).max(64).nullable().optional(),
+      }).parse(req.body)
+      const r = await voidGiftCard({
+        cardId: req.params.id,
+        scope: await scopeTenantWhere(req, 'write'),
+        reason: body.reason,
+        disposition: body.disposition,
+        refundMethod: body.refundMethod ?? null,
+        bankAccountId: body.bankAccountId ?? null,
+        postedBy: req.staffUser?.id ?? 'system',
       })
       await audit({ category: 'identity',
-        action: 'giftcard.void', entity: 'GiftCard', entityId: card.id,
-        userId: req.staffUser?.id ?? null, tenantId: card.tenantId, userEmail: req.staffUser?.email ?? null,
-        before: { status: card.status, balance: card.balanceCents },
-        after:  { status: 'voided' },
-        metadata: { reason: body.reason },
+        action: 'giftcard.void', entity: 'GiftCard', entityId: r.card.id,
+        userId: req.staffUser?.id ?? null, tenantId: r.card.tenantId, userEmail: req.staffUser?.email ?? null,
+        before: { status: r.before.status, balance: r.before.balanceCents },
+        after:  { status: 'voided', disposition: body.disposition, creditCode: r.creditCode, postedCents: r.postedCents },
+        metadata: { reason: body.reason, refundMethod: body.refundMethod ?? null, entryId: r.entryId },
       })
-      return updated
+      return { ...r.card, postedCents: r.postedCents, creditCode: r.creditCode, entryId: r.entryId, unpaidSpentCents: r.unpaidSpentCents }
     },
   )
 }

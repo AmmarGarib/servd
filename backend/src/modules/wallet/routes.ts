@@ -5,7 +5,8 @@ import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { requireCustomerAuth } from '../auth/middleware.js'
 import { findCustomerInScope, customerIdsInScope, tenantIdsOf } from '../crm/customerScope.js'
 import { activeTenantId, scopeTenantWhere } from '../../lib/tenantScope.js'
-import { topUpWallet, walletBalancesOf, balanceInView, type TopUpTender } from './service.js'
+import { audit } from '../../lib/audit.js'
+import { topUpWallet, walletBalancesOf, balanceInView, TOPUP_TENDERS } from './service.js'
 
 // The wallet is per company (ONL-R2-01): a top-up credits the ACTIVE company's
 // wallet of the customer and posts there (modules/wallet/service.ts); reads
@@ -13,10 +14,17 @@ import { topUpWallet, walletBalancesOf, balanceInView, type TopUpTender } from '
 
 const topUpKind = z.object({
   // goodwill = a manager's credit (Dr 6060 Marketing & Promo); paid = the
-  // customer paid for it, at the tender (Dr 1010 cash / 1030 card / 1020 bank).
+  // customer paid for it (Dr 1010 cash / 1030 card / the bank account of the
+  // ACTIVE company it was received into — lib/bankAccounts.ts moneyAccountCode).
   kind: z.enum(['goodwill', 'paid']).default('goodwill'),
-  tender: z.enum(['cash', 'card', 'bank']).optional(),
-}).refine((d) => d.kind !== 'paid' || !!d.tender, { message: 'a paid top-up needs its tender (cash, card or bank)', path: ['tender'] })
+  tender: z.enum(TOPUP_TENDERS).optional(),
+  // tender 'bank': which of the company's bank accounts. Omitted → its only
+  // bank (422 BANK_ACCOUNT_REQUIRED when it has two or more); another
+  // company's or an unlinked one → 422.
+  bankAccountId: z.string().min(1).nullable().optional(),
+})
+  .refine((d) => d.kind !== 'paid' || !!d.tender, { message: 'a paid top-up needs its tender (cash, card or bank)', path: ['tender'] })
+  .refine((d) => !d.bankAccountId || (d.kind === 'paid' && d.tender === 'bank'), { message: 'a bank account goes with a top-up paid by bank transfer only', path: ['bankAccountId'] })
 
 export async function walletRoutes(fastify: FastifyInstance) {
   // GET /wallet/me — customer: the wallet at ONE company (the company of
@@ -48,7 +56,7 @@ export async function walletRoutes(fastify: FastifyInstance) {
 
   // POST /wallet/topup — staff: credit a customer's wallet AT THE ACTIVE
   // COMPANY, booked in that company in the same transaction.
-  fastify.post<{ Body: { customerId: string; amountCents: number; description?: string; kind?: string; tender?: string } }>(
+  fastify.post<{ Body: { customerId: string; amountCents: number; description?: string; kind?: string; tender?: string; bankAccountId?: string | null } }>(
     '/topup',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
@@ -68,16 +76,22 @@ export async function walletRoutes(fastify: FastifyInstance) {
         customerId: body.customerId,
         amountCents: body.amountCents,
         kind: body.kind,
-        tender: body.tender as TopUpTender | undefined,
+        tender: body.tender,
+        bankAccountId: body.bankAccountId,
         description: body.description ?? (body.kind === 'paid' ? 'Paid top-up' : 'Admin top-up'),
         postedBy: req.staffUser!.id,
+      })
+      await audit({
+        category: 'accounting', action: 'wallet.topup', entity: 'WalletTransaction', entityId: r.transactionId,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+        after: { customerId: body.customerId, amountCents: body.amountCents, kind: body.kind, tender: body.tender ?? null, bankAccountId: body.bankAccountId ?? null },
       })
       return reply.status(201).send({ newBalance: r.balanceAfter, tenantId, transactionId: r.transactionId, entryId: r.entryId })
     },
   )
 
   // POST /wallet/bulk-topup — credit several customers at the active company.
-  fastify.post<{ Body: { customerIds: string[]; amountCents: number; description?: string; kind?: string; tender?: string } }>(
+  fastify.post<{ Body: { customerIds: string[]; amountCents: number; description?: string; kind?: string; tender?: string; bankAccountId?: string | null } }>(
     '/bulk-topup',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
@@ -100,7 +114,8 @@ export async function walletRoutes(fastify: FastifyInstance) {
             customerId: id,
             amountCents: body.amountCents,
             kind: body.kind,
-            tender: body.tender as TopUpTender | undefined,
+            tender: body.tender,
+            bankAccountId: body.bankAccountId,
             description: body.description ?? 'Bulk top-up',
             postedBy: req.staffUser!.id,
           })
@@ -110,6 +125,13 @@ export async function walletRoutes(fastify: FastifyInstance) {
           // transaction); say why rather than dropping it silently.
           failed.push({ customerId: id, error: (err as { code?: string; message?: string }).code ?? (err as Error).message })
         }
+      }
+      if (success > 0) {
+        await audit({
+          category: 'accounting', action: 'wallet.bulk_topup', entity: 'WalletTransaction',
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+          after: { credited: success, amountCents: body.amountCents, kind: body.kind, tender: body.tender ?? null, bankAccountId: body.bankAccountId ?? null },
+        })
       }
       return { success, total: body.customerIds.length, failed }
     },

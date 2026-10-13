@@ -235,7 +235,15 @@ describe('one no-show path (markNoShow)', () => {
     })
     expect(je.tenantId).toBe(tenantId)
     const byCode = Object.fromEntries(je.lines.map((l) => [`${l.account.code}:${l.type}`, l.amountCents]))
-    expect(byCode).toEqual({ '1020:debit': 250_000, '4100:credit': 250_000 })
+    // The hold is gateway money (1030), not money already in the bank; the
+    // credit stays 4100 until the tax treatment is decided (G9).
+    expect(byCode).toEqual({ '1030:debit': 250_000, '4100:credit': 250_000 })
+    expect(je.lines.every((l) => l.conceptId === r.conceptId)).toBe(true)
+    // Captured money is no longer "held": a release cannot release it.
+    expect((await prisma.reservation.findUniqueOrThrow({ where: { id: r.id } })).depositCents).toBe(0)
+    const release = await call('mgr', 'POST', `/reservations/${r.id}/deposit-release`)
+    expect(release.statusCode).toBe(409)
+    expect(release.json().error.code).toBe('NO_DEPOSIT_HELD')
 
     const strikes = await prisma.customerStrike.findMany({ where: { customerId: customer.id, sourceId: r.id } })
     expect(strikes).toHaveLength(1)

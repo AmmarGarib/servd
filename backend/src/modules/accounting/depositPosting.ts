@@ -17,7 +17,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { drawerExpectation } from '../../lib/drawer.js'
 import { bankLedgerCode } from '../../lib/bankAccounts.js'
-import { ACCT, postJournalEntry, type JournalLineInput } from './journal.js'
+import { ACCT, postJournalEntry, withLateNote, type JournalLineInput, type RepostOptions } from './journal.js'
 
 /**
  * What a deposit tied to `shiftId` should contain: the shift's drops plus
@@ -36,7 +36,12 @@ export async function expectedShiftDeposit(shiftId: string): Promise<{ dropsCent
   return { dropsCents: drawer.dropsCents, fromDrawerCents, expectedCents: drawer.dropsCents + fromDrawerCents }
 }
 
-export async function postDepositDrop(dropId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+/**
+ * `opts` is for re-posting a refused drop (reconciliation/backfillOrders.ts):
+ * dated in the open period with a note naming the drop's date when its own
+ * month is closed. Same key either way — a drop posts once.
+ */
+export async function postDepositDrop(dropId: string, opts: RepostOptions = {}): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const drop = await prisma.depositDrop.findUnique({ where: { id: dropId } })
   if (!drop) return { posted: false, entryId: null, reason: 'deposit_not_found' }
   if (!drop.tenantId) return { posted: false, entryId: null, reason: 'deposit_has_no_company' }
@@ -60,14 +65,15 @@ export async function postDepositDrop(dropId: string): Promise<{ posted: boolean
   if (fromSafe > 0)   lines.push({ accountCode: ACCT.CASH_ON_HAND, type: 'credit', amountCents: fromSafe,   memo: `Deposit from safe${tag}` })
   if (fromDrawer > 0) lines.push({ accountCode: ACCT.CASH_DRAWER,  type: 'credit', amountCents: fromDrawer, memo: `Deposit of shift takings${tag}` })
 
+  const late = withLateNote(`Bank deposit drop${tag}`, lines, opts.memoNote)
   const result = await postJournalEntry({
     tenantId: drop.tenantId,
     sourceType: 'deposit.drop',
     sourceId: drop.id,
-    description: `Bank deposit drop${tag}`,
-    entryDate: drop.droppedAt,
-    postedBy: drop.droppedById,
-    lines,
+    description: late.description,
+    entryDate: opts.entryDate ?? drop.droppedAt,
+    postedBy: opts.postedBy ?? drop.droppedById,
+    lines: late.lines,
   })
   return { posted: result.posted, entryId: result.entryId }
 }

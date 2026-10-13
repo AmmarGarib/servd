@@ -1,10 +1,11 @@
 'use client'
 // THE AP aging view — the Accounting "AP aging" page and the Procurement
 // "Aging" tab both render this, from GET /procurement/ap-aging (procurement
-// service agingReport). Net of withholding, by days past due date, unapplied
-// payments as credits; "Owed" ties to ledger AP 2010. Opening balances were
-// never posted to the ledger, so they sit in their own column; suppliers with
-// no company are never in a company's books and are listed apart.
+// service agingReport). Net of withholding, payments and supplier credit notes
+// applied, by days past due date; unapplied payments and unapplied credit
+// notes are credits; "Owed" ties to ledger AP 2010. Opening balances sit in
+// their own column; suppliers with no company are never in a company's books
+// and are listed apart.
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
@@ -13,6 +14,8 @@ type Buckets = { current: number; '1_30': number; '31_60': number; '61_90': numb
 export interface ApAgingRow extends Buckets {
   supplierId: string; supplierName: string; tenantId: string | null
   bills: number; creditsCents: number; total: number; openingCents: number; openingUnpostedCents?: number
+  /** Of creditsCents: supplier credit notes not yet applied to a bill. */
+  creditNotesCents?: number
 }
 export type ApAgingTotals = Omit<ApAgingRow, 'supplierId' | 'supplierName' | 'tenantId'>
 export interface ApAgingReport {
@@ -42,7 +45,7 @@ function AgingTable({ rows, total, empty }: { rows: ApAgingRow[]; total: ApAging
             <th className="px-4 py-2 text-left">Supplier</th>
             <th className="px-4 py-2 text-right">Bills</th>
             {BUCKETS.map((b) => <th key={b.k} className="px-4 py-2 text-right">{b.label.replace(' days', '')}</th>)}
-            <th className="px-4 py-2 text-right" title="Payments not yet applied to a bill, and bills paid beyond what they owed">Credits</th>
+            <th className="px-4 py-2 text-right" title="Payments and supplier credit notes not yet applied to a bill, and bills paid beyond what they owed">Credits</th>
             <th className="px-4 py-2 text-right" title="Ties to ledger AP 2010">Owed</th>
             <th className="px-4 py-2 text-right" title="Supplier opening balance, posted to the ledger">Opening</th>
           </tr>
@@ -57,7 +60,11 @@ function AgingTable({ rows, total, empty }: { rows: ApAgingRow[]; total: ApAging
               {cell(s['31_60'], 'text-s-amber')}
               {cell(s['61_90'], 'text-s-red')}
               {cell(s['90_plus'], 'text-s-red')}
-              {cell(-s.creditsCents, 'text-s-muted')}
+              <td className="px-4 py-2 text-right font-mono text-xs text-s-muted"
+                title={(s.creditNotesCents ?? 0) !== 0 ? `${fmtPkr(s.creditNotesCents ?? 0)} of it is credit notes not yet applied` : undefined}>
+                {s.creditsCents !== 0 ? fmtPkr(-s.creditsCents) : ''}
+                {(s.creditNotesCents ?? 0) !== 0 && <span className="block text-[10px]">incl. {fmtPkr(s.creditNotesCents ?? 0)} credit notes</span>}
+              </td>
               <td className="px-4 py-2 text-right font-mono text-sm text-s-text font-semibold">{fmtPkr(s.total)}</td>
               {cell(s.openingCents, 'text-s-muted')}
             </tr>
@@ -114,7 +121,8 @@ export function ApAging() {
         <AgingTable rows={data.bySupplier} total={data.total} empty="No outstanding payables" />
       </div>
       <p className="text-xs text-s-muted">
-        Days past each bill&apos;s due date. Amounts are net of withholding tax — what the supplier is owed, as in the ledger (AP 2010).
+        Days past each bill&apos;s due date. Amounts are net of withholding tax and of supplier credit notes — what the supplier is owed, as in the ledger (AP 2010).
+        {(data.total.creditNotesCents ?? 0) !== 0 && <> Credits include {fmtPkr(data.total.creditNotesCents ?? 0)} of credit notes not yet applied to a bill.</>}
       </p>
 
       {data.unassigned.bySupplier.length > 0 && (

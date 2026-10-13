@@ -18,6 +18,9 @@ interface CodDue {
   id: string
   amountCents: number
   order: { id: string; completedAt: string | null; customerName: string | null; concept: { name: string } }
+  rider?: { id: string; name: string } | null
+  hoursSinceDelivered?: number
+  overdue?: boolean
 }
 
 /** A cashier-readable line for a refused pay-out (PIN missing, wrong or locked out). */
@@ -116,7 +119,7 @@ export function CodPayInPanel({ shiftId }: { shiftId: string }) {
           <li key={p.id} className="flex items-center justify-between gap-3 rounded-lg border border-kds-border px-3 py-2">
             <div className="min-w-0">
               <p className="text-sm text-kds-text truncate">{p.order.concept.name} · #{orderRef(p.order.id)}</p>
-              <p className="text-xs text-kds-subtext truncate">{p.order.customerName ?? 'Customer'}{p.order.completedAt && ` · delivered ${new Date(p.order.completedAt).toLocaleString()}`}</p>
+              <p className="text-xs text-kds-subtext truncate">{p.order.customerName ?? 'Customer'}{p.rider?.name && ` · rider ${p.rider.name}`}{p.order.completedAt && ` · delivered ${new Date(p.order.completedAt).toLocaleString()}`}{p.overdue && ' · overdue'}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className="font-mono text-sm text-kds-text">{fmtPkrWhole(p.amountCents)}</span>

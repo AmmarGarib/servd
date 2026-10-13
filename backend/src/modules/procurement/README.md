@@ -5,5 +5,6 @@ Backend module: **procurement**. HTTP routes + business logic for the Procuremen
 ## Files
 
 - `chat.ts` — TypeScript module
+- `creditNotes.ts` — supplier credit notes / returns (SupplierBill rows of kind `credit_note`): create, apply, unapply, void
 - `routes.ts` — Fastify route registrations for this module
-- `service.ts` — Business-logic functions invoked by route handlers
+- `service.ts` — Business-logic functions invoked by route handlers (POs, bills, payments incl. unapply / void, AP aging, reorder)

@@ -5,39 +5,58 @@
 // spend" rule). A category the mapping does not know is refused rather than
 // guessed, so nothing lands on a catch-all line nobody reviews.
 //
-// Until OpexCategory carries its own `expenseAccountCode` column (schema
-// follow-up), the category NAME is matched here. An explicit code — the
-// column, or one the operator picks on the payment — always wins, as long as
-// it is an operating-expense (6xxx) account in the company's own chart.
+// The name map is a SUGGESTION. An OpEx category carries its own account
+// (OpexCategory.expenseAccountCode, finance gaps 17d): the name map only
+// pre-fills it when the category is created and backfills categories that
+// predate the column (opex/categoryAccounts.ts). An explicit code — the
+// category's column, or one the operator picks on the payment — always wins,
+// as long as it is an operating-expense (6xxx) account in the company's own
+// chart.
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 
-/** Keyword → 6xxx code. First match wins, so the specific ones come first. */
-const RULES: Array<{ match: RegExp; code: string; label: string }> = [
+/**
+ * Keyword → 6xxx code. First match wins, so the specific ones come first.
+ * `unless`: the rule is skipped when the name also matches it.
+ */
+const RULES: Array<{ match: RegExp; unless?: RegExp; code: string; label: string }> = [
   { match: /\b(rent|lease|premises)\b/i,                         code: '6010', label: 'Rent' },
+  // A generator replaces the grid: its fuel is a power cost, not travel
+  // (the travel rule below would catch "Generator fuel" on 'fuel').
+  { match: /\b(generator|genset)\b/i,                            code: '6020', label: 'Electricity' },
   { match: /\b(electric|electricity|power|k-?electric|lesco|ke bill)\b/i, code: '6020', label: 'Electricity' },
   { match: /\b(gas|sui|lpg)\b/i,                                 code: '6021', label: 'Gas' },
   { match: /\b(internet|telecom|phone|mobile|broadband|wifi)\b/i, code: '6022', label: 'Internet & Telecom' },
   { match: /\b(water|tanker)\b/i,                                code: '6023', label: 'Water' },
+  // A bare "Utilities" (no gas / water / electricity word — those matched
+  // above) is the utility bill, which for a kitchen is the power bill. The
+  // till's 'utilities' pay-out uses the SAME code (UTILITIES_CODE below).
   { match: /\butilit(y|ies)\b/i,                                 code: '6020', label: 'Electricity' },
   { match: /\b(clean|cleaning|supplies|janitorial|toiletr)/i,    code: '6040', label: 'Cleaning & Supplies' },
   { match: /\b(repair|maintenance|maint|service contract|amc)\b/i, code: '6050', label: 'Repairs & Maintenance' },
   { match: /\b(marketing|promo|advertis|ads|social media|influencer)/i, code: '6060', label: 'Marketing & Promo' },
-  { match: /\b(software|subscription|saas|license fee|licence fee)\b/i, code: '6070', label: 'Software & Subscriptions' },
+  // Licences before software: a trade / food-authority licence fee is a
+  // licence, not a subscription — unless the name says it is software.
+  { match: /\b(licen[cs]es?|permits?|registration)\b/i, unless: /\b(software|saas|subscriptions?)\b/i, code: '6120', label: 'Licences & Permits' },
+  { match: /\b(software|subscriptions?|saas)\b/i,                code: '6070', label: 'Software & Subscriptions' },
   { match: /\b(bank charge|bank fee)/i,                          code: '6081', label: 'Bank Charges' },
   { match: /\b(insurance)\b/i,                                   code: '6100', label: 'Insurance' },
   { match: /\b(legal|accounting|audit|consult|professional|broker)/i, code: '6110', label: 'Professional Fees' },
-  { match: /\b(licen[cs]e|permit|registration)\b/i,              code: '6120', label: 'Licences & Permits' },
   { match: /\b(property tax)\b/i,                                code: '6130', label: 'Property Taxes' },
   { match: /\b(travel|fuel|transport|entertainment|conveyance)\b/i, code: '6140', label: 'Travel & Entertainment' },
 ]
+
+/** The one code for a bare "utilities" — the name map and the till pay-out agree. */
+const UTILITIES_CODE = '6020'
 
 /** Categories the till offers for a vendor pay-out (decision 5). */
 export const PAYOUT_CATEGORIES = [
   { key: 'cleaning',     label: 'Cleaning & supplies',      code: '6040' },
   { key: 'repairs',      label: 'Repairs & maintenance',    code: '6050' },
-  { key: 'utilities',    label: 'Utilities (water, gas)',   code: '6023' },
+  { key: 'utilities',    label: 'Utilities (electricity)',  code: UTILITIES_CODE },
+  { key: 'water',        label: 'Water (tanker, bottled)',  code: '6023' },
+  { key: 'gas',          label: 'Gas (cylinder, LPG)',      code: '6021' },
   { key: 'marketing',    label: 'Marketing & promo',        code: '6060' },
   { key: 'transport',    label: 'Transport / conveyance',   code: '6140' },
   { key: 'licences',     label: 'Licences & permits',       code: '6120' },
@@ -47,7 +66,9 @@ export type PayoutCategory = (typeof PAYOUT_CATEGORIES)[number]['key']
 /** The 6xxx code a category name maps to, or null when it cannot be told. */
 export function expenseCodeForCategoryName(name: string | null | undefined): string | null {
   if (!name) return null
-  for (const r of RULES) if (r.match.test(name)) return r.code
+  for (const r of RULES) {
+    if (r.match.test(name) && !(r.unless && r.unless.test(name))) return r.code
+  }
   return null
 }
 

@@ -9,7 +9,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
-import { HrShell, Modal, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
+import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
 
@@ -21,6 +21,8 @@ export default function HrSectionPage() {
   const [creating, setCreating] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
   const [csvErr, setCsvErr] = useState('')
+  const [backfillMsg, setBackfillMsg] = useState('')
+  const { isPayrollApprover } = useHrAccess()
   const { data: sections } = useHrSections()
   const info = sections?.find((s) => s.key === section)
   const { data: lookups } = useHrLookups()
@@ -34,6 +36,19 @@ export default function HrSectionPage() {
   // Show the first few meaningful columns of the format in the list.
   const cols = (fmt?.fields ?? []).filter((f) => f.bind !== 'employeeId' && !['table', 'textarea', 'file'].includes(f.type)).slice(0, 4)
   const lk = { employees: lookups?.employees, records: lookups?.records, org }
+  // Settlements approved before approval booked them (finance gaps #2):
+  // book them now, dated today.
+  const backfill = useMutation({
+    mutationFn: () => api.post<{ posted: string[]; alreadyPosted: number; failed: Array<{ employee: string | null; reason: string }> }>('/hr/final-settlement/post-unposted', {}),
+    onSuccess: (r) => {
+      setBackfillMsg([
+        `${r.posted.length} settlement(s) booked, ${r.alreadyPosted} already on the books.`,
+        ...r.failed.map((f) => `${f.employee ?? 'A settlement'}: ${f.reason}`),
+      ].join(' '))
+      void qc.invalidateQueries({ queryKey: ['hr-records', section] })
+    },
+    onError: (e: Error) => setBackfillMsg(e.message),
+  })
 
   return (
     <HrShell
@@ -41,12 +56,18 @@ export default function HrSectionPage() {
       subtitle={[info ? `Spec §${info.specNo}.` : '', info?.effect ?? ''].filter(Boolean).join(' ')}
       actions={<>
         <button className={btnGhost} onClick={() => { setCsvErr(''); api.download(`/hr/records/${section}/export.csv`, `hr-${section}.csv`).catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
+        {section === 'final_settlement' && isPayrollApprover && (
+          <button className={btnGhost} disabled={backfill.isPending} onClick={() => { setBackfillMsg(''); backfill.mutate() }}>
+            {backfill.isPending ? 'Booking…' : 'Post approved settlements'}
+          </button>
+        )}
         <Link href={`/hr/formats/${section}`} className={btnGhost}>Edit format</Link>
         <button className={btn} onClick={() => setCreating(true)}>+ New</button>
       </>}
     >
       {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       {csvErr && <p className="text-sm text-red-700 mb-4">Export failed: {csvErr}</p>}
+      {backfillMsg && <p className="text-sm text-white/70 mb-4">{backfillMsg}</p>}
       <div className="flex flex-wrap gap-2 mb-4">
         {['', 'draft', 'submitted', 'approved', 'rejected', 'cancelled'].map((s) => (
           <button key={s || 'all'} onClick={() => setStatus(s)}
@@ -95,7 +116,7 @@ export default function HrSectionPage() {
       )}
 
       {creating && fmt && (
-        <NewRecord section={section} format={fmt} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void qc.invalidateQueries() }} />
+        <NewRecord section={section} format={fmt} tenantId={data?.formatTenantId ?? null} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void qc.invalidateQueries() }} />
       )}
       {open && data && (
         <Modal title={open.label ?? info?.title ?? 'Record'} wide onClose={() => setOpenId(null)}>
@@ -130,7 +151,7 @@ function OpenRecord({ record, listFormat, listTenantId, onChanged }: { record: H
   )
 }
 
-function NewRecord({ section, format, onClose, onSaved }: { section: string; format: HrFormat; onClose: () => void; onSaved: () => void }) {
+function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: string; format: HrFormat; tenantId: string | null; onClose: () => void; onSaved: () => void }) {
   const { data: lookups } = useHrLookups()
   const { data: org } = useHrOrg()
   const [value, setValue] = useState<Record<string, unknown>>({})
@@ -144,7 +165,7 @@ function NewRecord({ section, format, onClose, onSaved }: { section: string; for
   return (
     <Modal title={`New — ${format.title}`} wide onClose={onClose}>
       <FormRenderer fields={leaveFields(section, format.fields, value)} value={value}
-        onChange={(x) => setValue(withLeaveDays(section, format.fields, value, x))} ctx={{ lookups, org }} />
+        onChange={(x) => setValue(withLeaveDays(section, format.fields, value, x))} ctx={{ lookups, org, tenantId }} />
       {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending} onClick={() => save.mutate(true)}>{hasWorkflow ? 'Submit for approval' : 'Save'}</button>

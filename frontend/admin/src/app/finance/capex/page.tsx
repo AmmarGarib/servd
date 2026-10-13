@@ -12,6 +12,7 @@ import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PositionsView } from '../../workforce/positions/view'
 import { useAuthStore } from '../../../store/auth'
+import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ interface Payment {
   paidAt: string | null
   paidAmountCents: number | null
   paymentRef: string | null
+  // The company bank account it is paid from (the project's company's).
+  bankAccountId: string | null
 }
 interface Line {
   id: string
@@ -80,6 +83,7 @@ interface ScopeDef { key: string; label: string; emoji?: string | null; hint?: s
 
 interface Project {
   id: string
+  tenantId: string | null
   name: string
   conceptId: string | null
   locationId: string | null
@@ -400,11 +404,11 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
         onClose={() => setEditingProject(false)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingProject(false) }} />}
 
-      {addingLineScope && <LineModal projectId={project.id} scope={addingLineScope}
+      {addingLineScope && <LineModal projectId={project.id} tenantId={project.tenantId} scope={addingLineScope}
         onClose={() => setAddingLineScope(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setAddingLineScope(null) }} />}
 
-      {editingLine && <LineModal projectId={project.id} scope={editingLine.scope} line={editingLine}
+      {editingLine && <LineModal projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine}
         onClose={() => setEditingLine(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingLine(null) }} />}
     </div>
@@ -1156,8 +1160,8 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   </ModalShell>
 }
 
-function LineModal({ projectId, scope, line, onClose, onSaved }: {
-  projectId: string; scope: string; line?: Line; onClose: () => void; onSaved: () => void
+function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
+  projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void
 }) {
   const qc = useQueryClient()
   const [item, setItem] = useState(line?.item ?? '')
@@ -1265,7 +1269,7 @@ function LineModal({ projectId, scope, line, onClose, onSaved }: {
     {line && <QuotePanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {/* Payment schedule */}
-    {line && <PaymentPanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
+    {line && <PaymentPanel line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {save.error && <ErrorBanner error={save.error} />}
 
@@ -1359,24 +1363,35 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
   </Section>
 }
 
-function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) {
+// Instalments are paid from one of the PROJECT's company's bank accounts
+// (backend lib/bankAccounts.ts moneyAccountCode): picked when scheduling or
+// when marking paid; with one bank it is used automatically, with several a
+// pick is required (BANK_ACCOUNT_REQUIRED).
+function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: string | null; onChange: () => void }) {
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState<'deposit' | 'midpoint' | 'balance' | 'extra'>('deposit')
   const [amountCents, setAmountCents] = useState(0)
   const [dueDate, setDueDate] = useState('')
+  const [bankAccountId, setBankAccountId] = useState('')
+  const [paying, setPaying] = useState<Payment | null>(null)
+  const [payBankId, setPayBankId] = useState('')
+  const { data: banks = [] } = useBankAccounts()
+  const bankName = (id: string | null) => (id ? banks.find((b) => b.id === id)?.name ?? null : null)
 
   const add = useMutation({
     mutationFn: () => api.post(`/finance/capex/lines/${line.id}/payments`, {
       label, amountCents, ...(dueDate && { dueDate: `${dueDate}T00:00:00Z` }),
+      ...(bankAccountId && { bankAccountId }),
     }),
-    onSuccess: () => { setAdding(false); setAmountCents(0); setDueDate(''); onChange() },
+    onSuccess: () => { setAdding(false); setAmountCents(0); setDueDate(''); setBankAccountId(''); onChange() },
   })
   const markPaid = useMutation({
     mutationFn: (p: Payment) => api.patch(`/finance/capex/payments/${p.id}`, {
       paidAt: new Date().toISOString(),
       paidAmountCents: p.amountCents,
+      ...(payBankId && { bankAccountId: payBankId }),
     }),
-    onSuccess: () => onChange(),
+    onSuccess: () => { setPaying(null); onChange() },
   })
   const remove = useMutation({
     mutationFn: (pid: string) => api.delete(`/finance/capex/payments/${pid}`),
@@ -1386,22 +1401,39 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
   return <Section heading={`Payment schedule · ${line.payments.length}`}>
     <div className="space-y-1.5">
       {line.payments.map((p) => (
-        <div key={p.id} className="rounded-lg p-3 grid grid-cols-[80px_auto_1fr_auto_auto] gap-2 items-center"
+        <div key={p.id} className="rounded-lg p-3"
           style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-          <span className="text-xs font-bold uppercase tracking-wider text-white/65">{p.label}</span>
-          <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
-          <span className="text-xs text-white/45">
-            {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
-            {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
-          </span>
-          {p.paidAt ? (
-            line.ledger?.payments[p.id]?.status === 'posted'
-              ? <span className="text-[10px] font-black text-success" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
-              : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
-          ) : (
-            <button onClick={() => markPaid.mutate(p)} className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
+          <div className="grid grid-cols-[80px_auto_1fr_auto_auto] gap-2 items-center">
+            <span className="text-xs font-bold uppercase tracking-wider text-white/65">{p.label}</span>
+            <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
+            <span className="text-xs text-white/45">
+              {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
+              {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
+              {bankName(p.bankAccountId) && <span className="ml-2">· {p.paidAt ? 'from' : 'to pay from'} {bankName(p.bankAccountId)}</span>}
+            </span>
+            {p.paidAt ? (
+              line.ledger?.payments[p.id]?.status === 'posted'
+                ? <span className="text-[10px] font-black text-success" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
+                : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
+            ) : (
+              <button onClick={() => { setPaying(paying?.id === p.id ? null : p); setPayBankId(p.bankAccountId ?? '') }}
+                className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
+            )}
+            <button onClick={() => remove.mutate(p.id)} className="text-white/30 hover:text-s-red">✕</button>
+          </div>
+          {paying?.id === p.id && (
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <div className="min-w-[200px] flex-1">
+                <BankAccountSelect tenantId={tenantId} value={payBankId} onChange={setPayBankId}
+                  id={`capex-pay-bank-${p.id}`} label="Paid from" className={fieldCls} />
+              </div>
+              <button onClick={() => setPaying(null)} className="text-xs text-white/55 hover:text-white">Cancel</button>
+              <button onClick={() => markPaid.mutate(p)} disabled={markPaid.isPending}
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+                {markPaid.isPending ? 'Saving…' : `Paid ${PKR(p.amountCents)} today`}
+              </button>
+            </div>
           )}
-          <button onClick={() => remove.mutate(p.id)} className="text-white/30 hover:text-s-red">✕</button>
         </div>
       ))}
     </div>
@@ -1412,7 +1444,7 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
     {adding ? (
       <div className="rounded-xl p-3 mt-2"
         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <select value={label} onChange={(e) => setLabel(e.target.value as typeof label)} className={fieldCls}>
             <option value="deposit">Deposit</option>
             <option value="midpoint">Midpoint</option>
@@ -1422,6 +1454,11 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
           <MoneyInput value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
           <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} />
         </div>
+        <div className="mt-2">
+          <BankAccountSelect tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId}
+            id={`capex-sched-bank-${line.id}`} label="To be paid from" className={fieldCls} />
+        </div>
+        {add.error && <ErrorBanner error={add.error} />}
         <div className="flex gap-2 mt-2 justify-end">
           <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => add.mutate()} disabled={add.isPending || amountCents <= 0}

@@ -217,8 +217,21 @@ describe('10 — petty-cash top-up over the box limit', () => {
     boxId: boxA, type: 'topup', amountCents: 20_000, reason: 'float', ...(pin !== undefined && { managerOverridePin: pin }),
   })
 
+  // A top-up is a cash keeper's or the box custodian's: each cashier below
+  // holds the box (finance gaps, 2026-10-13).
+  const holds = (c: Who) => prisma.pettyCashBox.update({ where: { id: boxA }, data: { custodianId: c.id } })
+
+  it('a cashier who does not hold the box cannot top it up at all', async () => {
+    const c = await cashier('pc-other', A)
+    const r = await topup(c, PIN_A)
+    expect(r.statusCode).toBe(403)
+    expect(r.json().error.code).toBe('TOPUP_NOT_ALLOWED')
+    expect((await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: boxA } })).floatCents).toBe(10_000)
+  })
+
   it('no PIN → 403 TOPUP_OVER_LIMIT, no attempt counted', async () => {
     const c = await cashier('pc-none', A)
+    await holds(c)
     const r = await topup(c)
     expect(r.statusCode).toBe(403)
     expect(r.json().error.code).toBe('TOPUP_OVER_LIMIT')
@@ -227,6 +240,7 @@ describe('10 — petty-cash top-up over the box limit', () => {
 
   it('a wrong PIN, or company B\'s manager PIN → 403 INVALID_MANAGER_PIN, audited against the sender', async () => {
     const c = await cashier('pc-bad', A)
+    await holds(c)
     for (const pin of ['940001', PIN_B]) {
       const r = await topup(c, pin)
       expect(r.statusCode).toBe(403)
@@ -243,6 +257,7 @@ describe('10 — petty-cash top-up over the box limit', () => {
 
   it('A\'s manager PIN lifts the limit; B\'s operator cannot touch A\'s box', async () => {
     const c = await cashier('pc-ok', A)
+    await holds(c)
     const r = await topup(c, PIN_A)
     expect(r.statusCode, r.body).toBe(201)
     expect(r.json().newFloatCents).toBe(30_000)

@@ -20,8 +20,11 @@ import type { UserRole } from '@prisma/client'
 //     The buyer role holds the procurement module, so these used to load the
 //     page and then 403 on every PO, bill and reorder call.
 //   MANAGERS: receiving (receiveGoods' own rule), recording / voiding bills,
-//     paying and allocating, a supplier's opening balance or company move —
-//     money moves and the books, kept apart from whoever raised the order.
+//     supplier credit notes (record / apply / unapply / void), paying,
+//     allocating, unapplying and voiding payments, a supplier's opening
+//     balance or company move — money moves and the books, kept apart from
+//     whoever raised the order. Each of these writes an 'accounting' audit
+//     row under the supplier's company.
 //   ADMIN_ONLY: approve / reject, the approval threshold, the backfill.
 //   AP_READERS (PROCUREMENT_TEAM + finance, wave 3 UI-07): READ the payables
 //     — supplier list (every supplier of the company, not just assigned
@@ -35,16 +38,42 @@ import type { UserRole } from '@prisma/client'
 import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, markPoSent,
   createBill, voidBill, matchBill,
-  createPayment, allocatePayment,
+  createPayment, allocatePayment, unapplyPayment, voidPayment,
   agingReport, supplierAging, reorderSuggestions,
   getApprovalThresholdCents, setApprovalThresholdCents,
 } from './service.js'
+import {
+  CREDIT_NOTE_REASONS, createCreditNote, creditableBill, applyCreditNote, unapplyCreditNote, voidCreditNote,
+} from './creditNotes.js'
 import { receiveGoods } from './receiving.js'
 import { syncSupplierOpeningBalance } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
+import { audit } from '../../lib/audit.js'
 import { type DbMoney, toCents, zInt4Cents, zMoneyCents } from '../../lib/money.js'
 
 const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
+
+// Supplier payments and credit notes name the company bank account the money
+// used; lists show it by name. A payment's bank is always its supplier's
+// company's (createPaymentTx checks it), so the lookup needs no other scope.
+async function withBankNames<T extends { bankAccountId: string | null }>(rows: T[]) {
+  const ids = Array.from(new Set(rows.map((r) => r.bankAccountId).filter((x): x is string => !!x)))
+  const banks = ids.length === 0 ? [] : await prisma.bankAccount.findMany({
+    where:  { id: { in: ids } },
+    select: { id: true, name: true, bankName: true, accountCode: true },
+  })
+  return rows.map((r) => ({ ...r, bankAccount: banks.find((b) => b.id === r.bankAccountId) ?? null }))
+}
+
+// The original bill's number on each credit note (originalBillId is a plain column).
+async function withOriginalBill<T extends { originalBillId: string | null }>(rows: T[]) {
+  const ids = Array.from(new Set(rows.map((r) => r.originalBillId).filter((x): x is string => !!x)))
+  const bills = ids.length === 0 ? [] : await prisma.supplierBill.findMany({
+    where:  { id: { in: ids } },
+    select: { id: true, billNumber: true },
+  })
+  return rows.map((r) => ({ ...r, originalBill: bills.find((b) => b.id === r.originalBillId) ?? null }))
+}
 
 // Post a supplier's opening balance to its company's ledger (a delta — see
 // openingBalance.ts). A failure (e.g. the month is locked) is logged; the AP
@@ -110,10 +139,35 @@ const paymentCreateSchema = z.object({
   supplierId:   z.string().uuid(),
   paymentDate:  z.string(),
   method:       z.enum(['cash', 'bank_transfer', 'cheque', 'wallet']),
+  // The company bank account the money left (lib/bankAccounts.ts
+  // moneyAccountCode, checked against the SUPPLIER's company): required for a
+  // wallet (JazzCash / Easypaisa), and for a bank payment when the company has
+  // two or more banks; never with cash.
+  bankAccountId: z.string().min(1).nullable().optional(),
   reference:    z.string().optional().nullable(),
   amountCents:  zMoneyCents('This payment', { sign: 'positive' }),
   notes:        z.string().optional().nullable(),
   applications: z.array(paymentApplicationSchema).optional(),
+})
+
+const creditNoteCreateSchema = z.object({
+  number:      z.string().trim().min(1).max(100),
+  date:        z.string().min(1),
+  reason:      z.enum(CREDIT_NOTE_REASONS),
+  lines:       z.array(z.object({
+    billLineId:    z.string().uuid(),
+    qty:           z.number().positive().finite().nullable().optional(),
+    unitCostCents: zMoneyCents('A credit per unit', { sign: 'positive' }).nullable().optional(),
+  })).min(1),
+  taxCents:    zMoneyCents('The credit note\'s tax').optional(),
+  returnStock: z.boolean().optional(),
+  applyToBill: z.boolean().optional(),
+  notes:       z.string().max(500).nullable().optional(),
+})
+
+const creditApplicationSchema = z.object({
+  billId:      z.string().uuid(),
+  amountCents: zMoneyCents('An amount applied to a bill', { sign: 'positive' }),
 })
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -274,14 +328,16 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const supplier = await findSupplierInScope(req, req.params.id, 'read')
-      const [bills, payments, aging] = await Promise.all([
-        prisma.supplierBill.findMany({ where: { supplierId: req.params.id }, orderBy: { billDate: 'desc' } }),
+      const [bills, creditNotes, payments, aging] = await Promise.all([
+        prisma.supplierBill.findMany({ where: { supplierId: req.params.id, kind: 'bill' }, orderBy: { billDate: 'desc' } }),
+        prisma.supplierBill.findMany({ where: { supplierId: req.params.id, kind: 'credit_note' }, orderBy: { billDate: 'desc' } }),
         prisma.supplierPayment.findMany({ where: { supplierId: req.params.id }, orderBy: { paymentDate: 'desc' }, include: { applications: true } }),
         supplierAging(req.params.id),
       ])
-      // ONE balance, the AP aging row's total: open bills net of withholding
-      // plus the posted opening balance, less unapplied payments — which is
-      // this supplier's AP 2010 balance in the ledger. The opening balance is
+      // ONE balance, the AP aging row's total: open bills net of withholding,
+      // payments and credit notes applied, plus the posted opening balance,
+      // less unapplied payments and unapplied credit notes — which is this
+      // supplier's AP 2010 balance in the ledger. The opening balance is
       // counted once, inside it (openingBalance.ts posts it).
       const outstanding = aging?.total ?? 0
       return {
@@ -292,7 +348,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         openingUnpostedCents: aging?.openingUnpostedCents ?? 0,
         aging,
         bills,
-        payments,
+        creditNotes: await withOriginalBill(creditNotes),
+        payments: await withBankNames(payments),
       }
     },
   )
@@ -463,25 +520,33 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     return agingReport(scope.tenantIds)
   })
 
-  fastify.get<{ Querystring: { supplierId?: string; status?: string; overdue?: string } }>(
+  // Bills by default. A supplier credit note is a SupplierBill row too (kind
+  // 'credit_note'); ?kind=credit_note lists them (with the original bill's
+  // number), ?kind=all both. Every existing caller (petty cash's bill picker,
+  // the payment allocator, the Accounting widgets) asks for bills.
+  fastify.get<{ Querystring: { supplierId?: string; status?: string; overdue?: string; kind?: string } }>(
     '/bills',
     { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const tenantWhere = await supplierScopeWhere(req, 'read')
-      return prisma.supplierBill.findMany({
+      const kind = z.enum(['bill', 'credit_note', 'all']).default('bill').parse(req.query.kind ?? undefined)
+      const rows = await prisma.supplierBill.findMany({
         where: {
           supplier: tenantWhere,
+          ...(kind !== 'all' && { kind }),
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
           ...(req.query.status     && { status: req.query.status }),
           ...(req.query.overdue === 'true' && {
+            kind:    'bill',
             status:  { in: ['open', 'partially_paid'] },
             dueDate: { lt: new Date() },
           }),
         },
-        include: { supplier: { select: { name: true } }, po: { select: { id: true, reference: true } } },
+        include: { supplier: { select: { name: true, tenantId: true } }, po: { select: { id: true, reference: true } } },
         orderBy: { billDate: 'desc' },
         take: 200,
       })
+      return kind === 'bill' ? rows : withOriginalBill(rows)
     },
   )
 
@@ -496,10 +561,15 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           po:       true,
           lines:    { include: { inventoryItem: true, poLine: { include: { inventoryItem: true } } } },
           applications: { include: { payment: true } },
+          // Credit notes applied to this bill / bills this credit note settles.
+          creditsReceived: { include: { creditNote: { select: { id: true, billNumber: true, billDate: true } } } },
+          creditsGiven:    { include: { bill: { select: { id: true, billNumber: true } } } },
         },
       })
       if (!bill) throw new NotFoundError('SupplierBill', req.params.id)
-      return bill
+      const [withOriginal] = await withOriginalBill([bill])
+      // For a bill: what is left to credit, line by line (the credit-note form).
+      return { ...withOriginal, creditable: bill.kind === 'bill' ? await creditableBill(bill.id) : null }
     },
   )
 
@@ -513,15 +583,49 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(bill)
   })
 
-  // Bill guard — used by void / match / payment-allocate. Looks up the bill,
-  // scopes it through its supplier's company (404 when foreign).
+  // Bill guard — used by void / match / credit notes. Looks up the bill (or
+  // credit note), scopes it through its supplier's company (404 when foreign).
   async function guardBill(req: FastifyRequest, billId: string) {
     const bill = await prisma.supplierBill.findFirst({
       where:  { id: billId, supplier: await supplierScopeWhere(req, 'write') },
-      select: { id: true },
+      select: { id: true, kind: true, supplier: { select: { tenantId: true } } },
     })
     if (!bill) throw new NotFoundError('SupplierBill', billId)
+    return bill
   }
+
+  // A credit note, scoped the same way (404 when foreign, or not a credit note).
+  async function guardCreditNote(req: FastifyRequest, id: string) {
+    const cn = await prisma.supplierBill.findFirst({
+      where:  { id, kind: 'credit_note', supplier: await supplierScopeWhere(req, 'write') },
+      select: { id: true, billNumber: true, supplierId: true, supplier: { select: { tenantId: true } } },
+    })
+    if (!cn) throw new NotFoundError('SupplierCreditNote', id)
+    return cn
+  }
+
+  // Bills named in a request body (a payment's or credit's applications) must
+  // be in the operator's companies: a foreign id is 404 — never a message
+  // that names another company's bill. Same-supplier is checked after.
+  async function assertBillsInScope(req: FastifyRequest, billIds: string[]) {
+    const ids = Array.from(new Set(billIds))
+    if (ids.length === 0) return
+    const found = await prisma.supplierBill.findMany({
+      where:  { id: { in: ids }, supplier: await supplierScopeWhere(req, 'write') },
+      select: { id: true },
+    })
+    const missing = ids.find((id) => !found.some((b) => b.id === id))
+    if (missing) throw new NotFoundError('SupplierBill', missing)
+  }
+
+  const auditMoney = (req: FastifyRequest, action: string, entity: string, entityId: string, tenantId: string | null, metadata: Record<string, unknown>) =>
+    audit({
+      category: 'accounting', action, entity, entityId,
+      userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+      // The document's company (the supplier's), which the operator belongs to.
+      tenantId,
+      metadata,
+    })
 
   // Read-only views of a bill (the 3-way match) scope like the bill list.
   async function guardBillRead(req: FastifyRequest, billId: string) {
@@ -536,10 +640,81 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/bills/:id/void',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      await guardBill(req, req.params.id)
+      const found = await guardBill(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
+      // A credit note voids through its own path (stock back, its reversal).
+      if (found.kind === 'credit_note') {
+        const r = await voidCreditNote(req.params.id, req.staffUser!.id, reason)
+        if (!r.alreadyVoid) await auditMoney(req, 'supplier.credit_note.void', 'SupplierBill', req.params.id, found.supplier.tenantId, { reason })
+        return r.creditNote
+      }
       // The ledger reversal commits with the void (service.ts voidBill).
-      return voidBill(req.params.id, req.staffUser!.id, reason)
+      const voided = await voidBill(req.params.id, req.staffUser!.id, reason)
+      await auditMoney(req, 'supplier.bill.void', 'SupplierBill', req.params.id, found.supplier.tenantId, { reason })
+      return voided
+    },
+  )
+
+  // ── Supplier credit notes / returns (finance gaps 14a, ./creditNotes.ts) ──
+
+  // Record the supplier's credit note against one of its bills: lines picked
+  // from the bill, goods optionally sent back (stock drops), posted in the
+  // same transaction (a closed month is PERIOD_LOCKED 422 — nothing saved),
+  // applied to the bill at once unless applyToBill is false.
+  fastify.post<{ Params: { id: string } }>(
+    '/bills/:id/credit-notes',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const found = await guardBill(req, req.params.id)
+      const body = creditNoteCreateSchema.parse(req.body)
+      const r = await createCreditNote({ ...body, billId: req.params.id, createdBy: req.staffUser!.id })
+      await auditMoney(req, 'supplier.credit_note.create', 'SupplierBill', r.creditNote.id, found.supplier.tenantId, {
+        billId: req.params.id, billNumber: r.billNumber, number: r.creditNote.billNumber, reason: body.reason,
+        totalCents: toCents(r.creditNote.totalCents), whtCents: toCents(r.creditNote.whtCents),
+        returnStock: body.returnStock ?? false, appliedCents: r.appliedCents, entryId: r.entryId,
+      })
+      return reply.status(201).send({ ...r.creditNote, appliedCents: r.appliedCents })
+    },
+  )
+
+  // Apply a credit note to open bills of the same supplier (no ledger change).
+  fastify.post<{ Params: { id: string } }>(
+    '/credit-notes/:id/apply',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const cn = await guardCreditNote(req, req.params.id)
+      const body = z.object({ applications: z.array(creditApplicationSchema).min(1) }).parse(req.body)
+      await assertBillsInScope(req, body.applications.map((a) => a.billId))
+      const r = await applyCreditNote(req.params.id, body.applications, req.staffUser!.id)
+      await auditMoney(req, 'supplier.credit_note.apply', 'SupplierBill', req.params.id, cn.supplier.tenantId, { applications: body.applications })
+      return r
+    },
+  )
+
+  // Take a credit note off a bill (no ledger change).
+  fastify.post<{ Params: { id: string } }>(
+    '/credit-notes/:id/unapply',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const cn = await guardCreditNote(req, req.params.id)
+      const { billId } = z.object({ billId: z.string().uuid() }).parse(req.body)
+      await assertBillsInScope(req, [billId])
+      const r = await unapplyCreditNote(req.params.id, billId)
+      await auditMoney(req, 'supplier.credit_note.unapply', 'SupplierBill', req.params.id, cn.supplier.tenantId, { billId, amountCents: r.amountCents })
+      return { creditNoteId: r.creditNoteId, billId: r.billId, amountCents: r.amountCents, billStatus: r.billStatus }
+    },
+  )
+
+  // Void a credit note entered in error — only while applied to no bill.
+  fastify.post<{ Params: { id: string } }>(
+    '/credit-notes/:id/void',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const cn = await guardCreditNote(req, req.params.id)
+      const { reason } = z.object({ reason: z.string().trim().min(1) }).parse(req.body)
+      const r = await voidCreditNote(req.params.id, req.staffUser!.id, reason)
+      if (!r.alreadyVoid) await auditMoney(req, 'supplier.credit_note.void', 'SupplierBill', req.params.id, cn.supplier.tenantId, { reason })
+      return r.creditNote
     },
   )
 
@@ -556,42 +731,92 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...AP_READERS) },
     async (req) => {
       const tenantWhere = await supplierScopeWhere(req, 'read')
-      return prisma.supplierPayment.findMany({
+      const rows = await prisma.supplierPayment.findMany({
         where: {
           supplier: tenantWhere,
           ...(req.query.supplierId ? { supplierId: req.query.supplierId } : {}),
         },
         include: {
-          supplier:     { select: { name: true } },
-          applications: { include: { bill: { select: { billNumber: true, totalCents: true } } } },
+          supplier:     { select: { name: true, tenantId: true } },
+          applications: { include: { bill: { select: { id: true, billNumber: true, totalCents: true } } } },
         },
         orderBy: { paymentDate: 'desc' },
         take: 200,
       })
+      return withBankNames(rows)
     },
   )
 
   fastify.post('/payments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = paymentCreateSchema.parse(req.body)
-    // createPayment then checks every applied bill is this supplier's.
-    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    // createPayment then checks every applied bill is this supplier's, and
+    // the bank account is a live, linked account of the supplier's company
+    // (another company's bank is 422 BANK_ACCOUNT_NOT_IN_COMPANY, nothing saved).
+    const supplier = await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    await assertBillsInScope(req, (body.applications ?? []).map((a) => a.billId))
     // Posted in the same transaction (service.ts createPaymentTx): a payment
     // dated in a closed month is PERIOD_LOCKED 422 and is not saved.
     const payment = await createPayment({ ...body, createdBy: req.staffUser!.id })
-    return reply.status(201).send(payment)
+    await auditMoney(req, 'supplier.payment.create', 'SupplierPayment', payment.id, supplier.tenantId, {
+      supplierId: supplier.id, method: payment.method, bankAccountId: payment.bankAccountId,
+      amountCents: toCents(payment.amountCents), appliedCents: toCents(payment.appliedCents),
+    })
+    const [withBank] = await withBankNames([payment])
+    return reply.status(201).send(withBank)
   })
+
+  async function guardPayment(req: FastifyRequest, id: string) {
+    const payment = await prisma.supplierPayment.findFirst({
+      where:  { id, supplier: await supplierScopeWhere(req, 'write') },
+      select: { id: true, supplier: { select: { tenantId: true } } },
+    })
+    if (!payment) throw new NotFoundError('SupplierPayment', id)
+    return payment
+  }
 
   fastify.post<{ Params: { id: string }; Body: { applications: Array<{ billId: string; amountAppliedCents: number }> } }>(
     '/payments/:id/allocate',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const payment = await prisma.supplierPayment.findFirst({
-        where:  { id: req.params.id, supplier: await supplierScopeWhere(req, 'write') },
-        select: { id: true },
-      })
-      if (!payment) throw new NotFoundError('SupplierPayment', req.params.id)
+      await guardPayment(req, req.params.id)
       const body = z.object({ applications: z.array(paymentApplicationSchema).min(1) }).parse(req.body)
+      await assertBillsInScope(req, body.applications.map((a) => a.billId))
       return allocatePayment(req.params.id, body.applications)
+    },
+  )
+
+  // Take a payment off one bill: the bill re-opens, the money is an unapplied
+  // credit again. No ledger change (the payment already debited AP 2010).
+  fastify.post<{ Params: { id: string } }>(
+    '/payments/:id/unapply',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const payment = await guardPayment(req, req.params.id)
+      const { billId } = z.object({ billId: z.string().uuid() }).parse(req.body)
+      await assertBillsInScope(req, [billId])
+      const r = await unapplyPayment(req.params.id, billId)
+      await auditMoney(req, 'supplier.payment.unapply', 'SupplierPayment', req.params.id, payment.supplier.tenantId, { billId, amountCents: r.amountCents })
+      return { paymentId: req.params.id, billId, amountCents: r.amountCents, billStatus: r.bill.status }
+    },
+  )
+
+  // Void a payment (bounced cheque, recorded twice) — only while it is
+  // applied to no bill. Its entry is reversed in the same transaction
+  // ('supplier.payment.void', dated today); voiding twice is a no-op.
+  fastify.post<{ Params: { id: string } }>(
+    '/payments/:id/void',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const payment = await guardPayment(req, req.params.id)
+      const { reason } = z.object({ reason: z.string().trim().min(1) }).parse(req.body)
+      const r = await voidPayment(req.params.id, req.staffUser!.id, reason)
+      if (!r.alreadyVoid) {
+        await auditMoney(req, 'supplier.payment.void', 'SupplierPayment', req.params.id, payment.supplier.tenantId, {
+          reason, amountCents: toCents(r.payment.amountCents), reversalEntryId: r.reversal?.entryId ?? null,
+        })
+      }
+      const [withBank] = await withBankNames([r.payment])
+      return withBank
     },
   )
 
@@ -659,13 +884,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const tenantIds = (await resolveTenantScope(req)).tenantIds
     if (tenantIds.length === 0) return { dryRun: body.dryRun, rows: [] }
     const [bills, payments, entries] = await Promise.all([
+      // Bills only: a credit note posts in the transaction that saves it.
       prisma.supplierBill.findMany({
-        where:   { status: { notIn: ['void', 'draft'] }, supplier: { tenantId: { in: tenantIds } } },
+        where:   { kind: 'bill', status: { notIn: ['void', 'draft'] }, supplier: { tenantId: { in: tenantIds } } },
         select:  { id: true, billNumber: true, billDate: true, totalCents: true, subtotalCents: true, taxCents: true, supplier: { select: { name: true, tenantId: true } } },
         orderBy: { billDate: 'asc' },
       }),
       prisma.supplierPayment.findMany({
-        where:   { supplier: { tenantId: { in: tenantIds } } },
+        where:   { voidedAt: null, supplier: { tenantId: { in: tenantIds } } },
         select:  { id: true, paymentDate: true, amountCents: true, supplier: { select: { name: true, tenantId: true } } },
         orderBy: { paymentDate: 'asc' },
       }),

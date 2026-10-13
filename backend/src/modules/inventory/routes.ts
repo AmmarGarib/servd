@@ -586,10 +586,31 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         })
       })
 
+      // Dr 5040 / Cr 1210 in the item's company, awaited: a refusal (a missing
+      // or inactive account, a DB error) never undoes the waste the kitchen
+      // logged — it is flagged posting_failed and re-posted by Reconciliation
+      // → Backfill unposted. Idempotent on the waste log.
       const { postWasteLog } = await import('../accounting/supplierPosting.js')
-      postWasteLog(wasteLog.id).catch((err) =>
-        req.log.error({ err: (err as Error).message, wasteLogId: wasteLog.id }, 'postWasteLog failed'),
-      )
+      let refused: string | null = null
+      try {
+        const r = await postWasteLog(wasteLog.id)
+        if (!r.posted && r.reason && r.reason !== 'zero_cost') refused = r.reason
+      } catch (err) {
+        refused = (err as Error).message
+      }
+      if (refused) {
+        req.log.error({ err: refused, wasteLogId: wasteLog.id }, 'postWasteLog failed')
+        const { flagPostingFailed } = await import('../accounting/journal.js')
+        await flagPostingFailed({
+          tenantId: item.tenantId,
+          sourceType: 'inventory.waste', sourceId: wasteLog.id,
+          entityType: 'WasteLog', entityId: wasteLog.id,
+          reason: refused,
+          title: `Waste of ${item.name} did not reach the ledger`,
+          actorId: req.staffUser?.id ?? null,
+          amountCents: cost,
+        })
+      }
 
       return reply.status(201).send(hide ? { ...wasteLog, estimatedCostCents: null, costsHidden: true } : wasteLog)
     },

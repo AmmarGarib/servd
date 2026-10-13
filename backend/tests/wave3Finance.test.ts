@@ -59,7 +59,9 @@ async function mkUser(key: string, role: string, tenantId: string, extra: { modu
 const call = (who: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url: `/api/v1${url}`, headers: { authorization: tokens[who]! }, ...(payload !== undefined && { payload: payload as never }) })
 const get = (who: string, url: string) => call(who, 'GET', url)
-const idsOf = (body: unknown): string[] => (body as Array<{ id: string }>).map((r) => r.id)
+// A list is an array, or a page { items, nextCursor } (GET /gift-cards).
+const idsOf = (body: unknown): string[] =>
+  ((Array.isArray(body) ? body : (body as { items: unknown[] }).items) as Array<{ id: string }>).map((r) => r.id)
 
 beforeAll(async () => {
   tenantA = (await prisma.tenant.create({ data: { name: 'GS Foods (w3)', slug: `gs-w3-${stamp}` } })).id
@@ -425,7 +427,7 @@ describe('W3B-RV-2 finance reads the gift-card register without the bearer codes
   it('finance sees masked codes and no buyer / recipient email; a manager sees the full card', async () => {
     await prisma.giftCard.update({ where: { id: ids.gA }, data: { buyerEmail: 'buyer@example.com', recipientEmail: 'friend@example.com', message: 'Happy birthday' } })
     const full = `W3A-${stamp}`
-    const fin = (await get('finA', '/gift-cards')).json() as Array<{ id: string; code: string; buyerEmail: string | null; recipientEmail: string | null; message: string | null }>
+    const fin = (await get('finA', '/gift-cards')).json().items as Array<{ id: string; code: string; buyerEmail: string | null; recipientEmail: string | null; message: string | null }>
     const card = fin.find((c) => c.id === ids.gA)!
     expect(card.code).toBe(`••••${full.slice(-4)}`)
     expect(card.buyerEmail).toBeNull()
@@ -434,7 +436,7 @@ describe('W3B-RV-2 finance reads the gift-card register without the bearer codes
     expect(JSON.stringify(fin)).not.toContain(full)
     const hist = (await get('finA', `/gift-cards/${ids.gA}/redemptions`)).json() as { card: { code: string } }
     expect(hist.card.code).toBe(`••••${full.slice(-4)}`)
-    const admin = (await get('adminA', '/gift-cards')).json() as Array<{ id: string; code: string; buyerEmail: string | null }>
+    const admin = (await get('adminA', '/gift-cards')).json().items as Array<{ id: string; code: string; buyerEmail: string | null }>
     expect(admin.find((c) => c.id === ids.gA)?.code).toBe(full)
     expect(admin.find((c) => c.id === ids.gA)?.buyerEmail).toBe('buyer@example.com')
   })

@@ -576,3 +576,59 @@ describe('ONL-R2-01: migration 20261011160000 moves each legacy balance to one c
     expect(await walletAt(tenantA, neg)).toBe(1_000)
   })
 })
+
+// ─── Finance gaps #9 (2026-10-13): the bank a paid top-up went into ─────────
+
+describe('finance gaps #9: a paid bank top-up is booked to the bank it was received into', () => {
+  it('two banks: no pick is 422 with nothing moved; the picked bank is debited and stored on the wallet row; a foreign bank is 422', async () => {
+    const tenantC = (await prisma.tenant.create({ data: { name: 'Wallet C', slug: `rw-c-${RUN}` } })).id
+    await ensureChartOfAccounts(tenantC)
+    const slugC = `rw-c-${RUN}`
+    const conceptC = (await prisma.concept.create({
+      data: { name: slugC, slug: slugC, type: 'restaurant', tenantId: tenantC, taxRate: 17, taxRateCash: 15, taxRateCard: 8, isActive: true },
+    })).id
+    await mkStaff('mgrC', tenantC)
+    await prisma.account.create({ data: { tenantId: tenantC, code: '1021', name: 'Bank — C Second', type: 'asset', isActive: true } })
+    await prisma.bankAccount.create({ data: { tenantId: tenantC, name: 'C Ops', accountCode: '1020' } })
+    const second = (await prisma.bankAccount.create({ data: { tenantId: tenantC, name: 'C Second', accountCode: '1021' } })).id
+    const ofB = (await prisma.bankAccount.create({ data: { tenantId: tenantB, name: 'B Ops', accountCode: '1020' } })).id
+    const c = await mkCustomer([conceptC])
+
+    const noPick = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank' })
+    expect(noPick.statusCode).toBe(422)
+    expect(noPick.json().error.code).toBe('BANK_ACCOUNT_REQUIRED')
+    const foreign = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank', bankAccountId: ofB })
+    expect(foreign.statusCode).toBe(422)
+    expect(foreign.json().error.code).toBe('BANK_ACCOUNT_NOT_IN_COMPANY')
+    expect(await walletAt(tenantC, c)).toBe(0)
+    expect(await prisma.walletTransaction.count({ where: { customerId: c } })).toBe(0)
+
+    // A bank account goes with a bank transfer only.
+    expect((await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, bankAccountId: second })).statusCode).toBe(400)
+    expect((await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'cash', bankAccountId: second })).statusCode).toBe(400)
+
+    const ok = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank', bankAccountId: second })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const je = await entryLines(tenantC, `wallet.topup:${ok.json().transactionId}`)
+    expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([
+      ['credit', '2050', 10_000], ['debit', '1021', 10_000],
+    ])
+    expect(je!.lines.every((l) => l.account.tenantId === tenantC)).toBe(true)
+    expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: ok.json().transactionId } })).bankAccountId).toBe(second)
+    expect(await walletAt(tenantC, c)).toBe(10_000)
+  })
+
+  it('a one-bank company uses its only bank without a pick; cash and card stay 1010 / 1030 with no bank', async () => {
+    // B has exactly one bank (created above).
+    const ofB = (await prisma.bankAccount.findFirstOrThrow({ where: { tenantId: tenantB, deletedAt: null } })).id
+    const c = await mkCustomer([conceptB])
+    const r = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 7_000, kind: 'paid', tender: 'bank' })
+    expect(r.statusCode, r.body).toBe(201)
+    const je = await entryLines(tenantB, `wallet.topup:${r.json().transactionId}`)
+    expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([['credit', '2050', 7_000], ['debit', '1020', 7_000]])
+    expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: r.json().transactionId } })).bankAccountId).toBe(ofB)
+    const card = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 3_000, kind: 'paid', tender: 'card' })
+    expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: card.json().transactionId } })).bankAccountId).toBeNull()
+    expect((await entryLines(tenantB, `wallet.topup:${card.json().transactionId}`))!.lines.some((l) => l.account.code === '1030' && l.type === 'debit')).toBe(true)
+  })
+})

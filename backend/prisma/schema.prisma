@@ -710,6 +710,11 @@ enum GiftCardStatus {
   voided
 }
 
+enum GiftCardKind {
+  sold
+  promotional
+}
+
 model GiftCard {
   id                String         @id @default(uuid())
   // Company that sold the card; a card is spent only at that company's brands (owner decision 14).
@@ -728,18 +733,27 @@ model GiftCard {
   recipientEmail  String?
   message         String?
 
-  issuedById String? // staff user; null for storefront purchase
-  conceptId  String? // null = redeemable everywhere
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  voidedAt   DateTime?
-  voidReason String?
+  issuedById      String? // staff user; null for storefront purchase
+  conceptId       String? // null = redeemable everywhere
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  voidedAt        DateTime?
+  voidReason      String?
+  // Finance gaps (2026-10-13): how the card was paid for, so its issue entry
+  // debits the right account and a void can send the value back the same way.
+  // 'promotional' cards are given away (Dr 6060 at issue, never cash).
+  kind            GiftCardKind @default(sold)
+  paymentMethod   String? // cash | card | bank_transfer; null for promotional / storefront
+  bankAccountId   String? // the bank a bank_transfer sale landed in (same company)
+  expiredAt       DateTime?
+  voidDisposition String? // refund | payment_not_received | forfeit
 
   redemptions GiftCardRedemption[]
 
   @@index([status])
   @@index([buyerEmail])
   @@index([tenantId])
+  @@index([tenantId, status, expiresAt])
   @@map("gift_cards")
 }
 
@@ -2450,40 +2464,70 @@ model ItemPriceHistory {
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierBill {
-  id            String    @id @default(uuid())
-  supplierId    String
-  poId          String? // optional link to a PO for 3-way match
-  billNumber    String // supplier's invoice/bill number
-  billDate      DateTime
-  dueDate       DateTime
-  status        String    @default("open") // draft | open | partially_paid | paid | void
-  subtotalCents BigInt    @default(0)
-  taxCents      BigInt    @default(0)
-  totalCents    BigInt    @default(0)
+  id             String    @id @default(uuid())
+  supplierId     String
+  poId           String? // optional link to a PO for 3-way match
+  billNumber     String // supplier's invoice/bill number
+  billDate       DateTime
+  dueDate        DateTime
+  status         String    @default("open") // draft | open | partially_paid | paid | void
+  subtotalCents  BigInt    @default(0)
+  taxCents       BigInt    @default(0)
+  totalCents     BigInt    @default(0)
   // Income-tax withheld at source (s.153), fixed when the bill is recorded
   // and booked by postSupplierBill: the supplier is owed totalCents − whtCents
   // (credited to AP 2010) and the rest is owed to FBR (2040). Every "still
   // due" figure — payments, status, AP aging, the supplier statement — is net
   // of it, so a bill paid net of withholding clears, as it does in the ledger.
-  whtCents      BigInt    @default(0)
-  paidCents     BigInt    @default(0) // running total of payments applied
-  notes         String?
-  attachmentUrl String? // S3/R2 link to scanned bill
-  createdBy     String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  voidedAt      DateTime?
-  voidReason    String?
+  whtCents       BigInt    @default(0)
+  paidCents      BigInt    @default(0) // running total of payments applied
+  notes          String?
+  attachmentUrl  String? // S3/R2 link to scanned bill
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  voidedAt       DateTime?
+  voidReason     String?
+  // A supplier credit note / return is a SupplierBill of kind 'credit_note'
+  // against its original bill (one AP subledger, never a second table).
+  // creditedCents on a bill = credit notes applied to it; still due =
+  // total − wht − paid − credited.
+  kind           String    @default("bill") // bill | credit_note
+  originalBillId String?
+  creditedCents  BigInt    @default(0)
 
-  supplier     Supplier                     @relation(fields: [supplierId], references: [id])
-  po           PurchaseOrder?               @relation(fields: [poId], references: [id])
-  lines        SupplierBillLine[]
-  applications SupplierPaymentApplication[]
+  supplier        Supplier                     @relation(fields: [supplierId], references: [id])
+  po              PurchaseOrder?               @relation(fields: [poId], references: [id])
+  lines           SupplierBillLine[]
+  applications    SupplierPaymentApplication[]
+  creditsGiven    SupplierCreditApplication[]  @relation("CreditNoteApplications")
+  creditsReceived SupplierCreditApplication[]  @relation("BillCreditApplications")
 
   @@unique([supplierId, billNumber])
   @@index([supplierId, status])
   @@index([dueDate, status])
+  @@index([originalBillId])
   @@map("supplier_bills")
+}
+
+// A supplier credit note applied to a bill. tenantId = the supplier's company.
+// BOOKS-06: money columns are BIGINT paisa (lib/money.ts returns them as JS numbers).
+model SupplierCreditApplication {
+  id           String   @id @default(uuid())
+  tenantId     String
+  creditNoteId String
+  billId       String
+  amountCents  BigInt
+  createdBy    String?
+  createdAt    DateTime @default(now())
+
+  creditNote SupplierBill @relation("CreditNoteApplications", fields: [creditNoteId], references: [id], onDelete: Cascade)
+  bill       SupplierBill @relation("BillCreditApplications", fields: [billId], references: [id], onDelete: Cascade)
+
+  @@unique([creditNoteId, billId])
+  @@index([tenantId])
+  @@index([billId])
+  @@map("supplier_credit_applications")
 }
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
@@ -2496,6 +2540,7 @@ model SupplierBillLine {
   quantity        Float
   unitCostCents   BigInt
   lineTotalCents  BigInt
+  returnQty       Float? // credit note lines: stock sent back to the supplier
 
   bill          SupplierBill       @relation(fields: [billId], references: [id], onDelete: Cascade)
   inventoryItem InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
@@ -2509,21 +2554,26 @@ model SupplierBillLine {
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model SupplierPayment {
-  id           String   @id @default(uuid())
-  supplierId   String
-  paymentDate  DateTime @default(now())
-  method       String // cash | bank_transfer | cheque | wallet
-  reference    String? // cheque #, bank ref
-  amountCents  BigInt
-  appliedCents BigInt   @default(0) // sum of applications
-  notes        String?
-  createdBy    String?
-  createdAt    DateTime @default(now())
+  id            String    @id @default(uuid())
+  supplierId    String
+  paymentDate   DateTime  @default(now())
+  method        String // cash | bank_transfer | cheque | wallet
+  reference     String? // cheque #, bank ref
+  amountCents   BigInt
+  appliedCents  BigInt    @default(0) // sum of applications
+  notes         String?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+  // The company bank account the money left (lib/bankAccounts.ts moneyAccountCode).
+  bankAccountId String?
+  voidedAt      DateTime?
+  voidReason    String?
 
   supplier     Supplier                     @relation(fields: [supplierId], references: [id])
   applications SupplierPaymentApplication[]
 
   @@index([supplierId, paymentDate(sort: Desc)])
+  @@index([bankAccountId])
   @@map("supplier_payments")
 }
 
@@ -3363,17 +3413,18 @@ model CustomerWallet {
 }
 
 model WalletTransaction {
-  id           String   @id @default(uuid())
+  id            String   @id @default(uuid())
   // The company whose wallet moved (ONL-R2-01). Every write sets it; null only
   // on a row the 20261011160000 backfill could not attribute (none expected).
-  tenantId     String?
-  customerId   String
-  type         String // topup | spend | refund | bonus | expire
-  amountCents  Int // positive = credit, negative = debit
-  balanceAfter Int // the balance of THIS company's wallet after the move
-  description  String?
-  orderId      String?
-  createdAt    DateTime @default(now())
+  tenantId      String?
+  customerId    String
+  type          String // topup | spend | refund | bonus | expire
+  amountCents   Int // positive = credit, negative = debit
+  balanceAfter  Int // the balance of THIS company's wallet after the move
+  description   String?
+  orderId       String?
+  createdAt     DateTime @default(now())
+  bankAccountId String? // a top-up received into a company bank account
 
   customer Customer @relation(fields: [customerId], references: [id])
 
@@ -4436,6 +4487,9 @@ model OpexCategory {
   tenantId           String?
   conceptId          String? // null = company-wide
   name               String // 'Rent' | 'Utilities' | 'Payroll' | 'Software' | etc.
+  // The 6xxx account this category's payments post to (in its company's
+  // chart). Null = not mapped yet: the payment names one and it is remembered.
+  expenseAccountCode String?
   emoji              String? // surfaced in UI
   budgetMonthlyCents BigInt    @default(0) // monthly cap; variance vs actual flagged
   notes              String?
@@ -4517,6 +4571,7 @@ model CapexPayment {
   paymentRef      String? // bank ref, cheque #, transaction ID
   notes           String?
   createdAt       DateTime  @default(now())
+  bankAccountId   String? // the company bank account it was paid from
 
   line CapexLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
 
@@ -5705,30 +5760,75 @@ model ReceivableInvoice {
   voidReason         String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+  // Credit notes are ReceivableInvoice rows of kind 'credit_note' against
+  // their original invoice (numbered AR-CN-YYYY-NNNN). creditedCents on an
+  // invoice = credit notes against it; still due = total − paid − credited.
+  kind               String    @default("invoice") // invoice | credit_note
+  originalInvoiceId  String?
+  creditedCents      BigInt    @default(0)
+  // Income tax the customer withheld at source (s.153) and paid to FBR for
+  // us: Dr 1330 — it settles that part of the invoice.
+  whtCents           BigInt    @default(0)
 
   payments ReceivablePayment[]
 
   @@unique([tenantId, number])
   @@index([tenantId, status, dueDate])
+  @@index([originalInvoiceId])
   @@map("receivable_invoices")
 }
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
 model ReceivablePayment {
-  id          String   @id @default(uuid())
-  tenantId    String
-  invoiceId   String
-  amountCents BigInt
-  receivedAt  DateTime
-  method      String // bank | cash | cheque | card
-  reference   String?
-  createdById String?
-  createdAt   DateTime @default(now())
+  id             String    @id @default(uuid())
+  tenantId       String
+  invoiceId      String
+  amountCents    BigInt
+  receivedAt     DateTime
+  method         String // bank | cash | cheque | card
+  reference      String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  bankAccountId  String? // the company bank account it was received into
+  // A bounced cheque / reversed receipt: the payment stays for the record,
+  // its entry is reversed and the invoice owes it again.
+  reversedAt     DateTime?
+  reversedReason String?
 
   invoice ReceivableInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
   @@map("receivable_payments")
+}
+
+// A payment of tax to an authority (sales tax output to FBR/SRB/PRA/KPRA/BRA,
+// or income tax withheld from suppliers — 'wht'), per company and period.
+// Its journal entry ('salestax.payment:<id>') is excluded from the return's
+// "output for the period" so paying the tax never lowers what was charged.
+// A manual entry already posted for a payment can be LINKED instead
+// (journalEntryId, linked = true) — never posted twice.
+// BOOKS-06: money columns are BIGINT paisa (lib/money.ts returns them as JS numbers).
+model SalesTaxPayment {
+  id                String   @id @default(uuid())
+  tenantId          String
+  authority         String // fbr | pra | srb | kpra | bra | wht
+  periodFrom        DateTime
+  periodTo          DateTime
+  outputSetOffCents BigInt   @default(0)
+  inputSetOffCents  BigInt   @default(0)
+  paidCents         BigInt   @default(0)
+  paidAt            DateTime
+  bankAccountId     String?
+  cprNumber         String? // the challan / CPR number
+  journalEntryId    String?
+  linked            Boolean  @default(false)
+  notes             String?
+  createdById       String?
+  createdAt         DateTime @default(now())
+
+  @@unique([tenantId, authority, periodFrom])
+  @@index([tenantId, paidAt])
+  @@map("sales_tax_payments")
 }
 
 // ════════════════════════════════════════════════════════════════════════════

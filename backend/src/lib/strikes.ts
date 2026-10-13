@@ -35,24 +35,50 @@ interface RecordStrikeArgs {
   recordedById?: string | null
 }
 
-export async function recordStrike(args: RecordStrikeArgs): Promise<void> {
+/**
+ * Record a strike. ONE strike per incident: a strike that names its source
+ * (sourceType + sourceId) is written at most once per (customer, kind,
+ * source) — reversed ones included, so a forgiven incident reported again
+ * stays forgiven. Two reports of the same unpaid order used to write two
+ * strikes, and two of severity 2 banned the customer. The check and the
+ * insert run under a transaction-scoped advisory lock on the incident, so two
+ * racing reports cannot both insert.
+ */
+export async function recordStrike(args: RecordStrikeArgs): Promise<{ recorded: boolean; duplicate: boolean }> {
   try {
     const expiresAt = new Date(Date.now() + STRIKE_TTL_DAYS * 86_400_000)
-    await defaultPrisma.customerStrike.create({
-      data: {
-        customerId:    args.customerId,
-        kind:          args.kind,
-        sourceType:    args.sourceType ?? null,
-        sourceId:      args.sourceId   ?? null,
-        severity:      args.severity   ?? 1,
-        reason:        args.reason     ?? null,
-        expiresAt,
-        recordedById:  args.recordedById ?? null,
-      },
-    })
+    const data = {
+      customerId:    args.customerId,
+      kind:          args.kind,
+      sourceType:    args.sourceType ?? null,
+      sourceId:      args.sourceId   ?? null,
+      severity:      args.severity   ?? 1,
+      reason:        args.reason     ?? null,
+      expiresAt,
+      recordedById:  args.recordedById ?? null,
+    }
+    let duplicate = false
+    if (args.sourceType && args.sourceId) {
+      const key = `strike:${args.customerId}:${args.kind}:${args.sourceType}:${args.sourceId}`
+      duplicate = await defaultPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}::text))`
+        const existing = await tx.customerStrike.findFirst({
+          where: { customerId: args.customerId, kind: args.kind, sourceType: args.sourceType!, sourceId: args.sourceId! },
+          select: { id: true },
+        })
+        if (existing) return true
+        await tx.customerStrike.create({ data })
+        return false
+      })
+    } else {
+      await defaultPrisma.customerStrike.create({ data })
+    }
+    if (duplicate) return { recorded: false, duplicate: true }
     await maybePromoteToBan(args.customerId)
+    return { recorded: true, duplicate: false }
   } catch (err) {
     console.error(`[strikes] recordStrike failed for ${args.customerId}:`, (err as Error).message)
+    return { recorded: false, duplicate: false }
   }
 }
 

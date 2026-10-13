@@ -1019,10 +1019,25 @@ export async function postOrderRefund(
           data: { reversedAt: new Date() },
         })
         if (claimed.count === 0) return null   // already reversed
+        // The value goes back on the card under its row lock (the void and
+        // the expiry sweep take the same lock — giftCards/books.ts). Only a
+        // card that could still be spent (active, or emptied by spending)
+        // becomes active again. A VOIDED card (fraud, refunded, payment never
+        // received) or an EXPIRED one is never reopened — that used to put
+        // spendable value back on a card a manager had closed. Its balance
+        // takes the value (2080 owes it to the customer, as booked below) but
+        // nobody can spend it: Gift cards → Books check lists a voided card
+        // holding value and a manager settles it with Void (refund to cash /
+        // card / bank); an expired card's balance waits like any other
+        // expired balance (pending owner decision G10).
+        await tx.$queryRaw`SELECT id FROM gift_cards WHERE id = ${r.giftCardId} FOR UPDATE`
+        const card = await tx.giftCard.findUniqueOrThrow({ where: { id: r.giftCardId }, select: { status: true } })
+        const reopen = card.status === 'active' || card.status === 'redeemed_full'
         await tx.giftCard.update({
           where: { id: r.giftCardId },
-          data: { balanceCents: { increment: r.amountCents }, status: 'active' },
+          data: { balanceCents: { increment: r.amountCents }, ...(reopen && { status: 'active' as const }) },
         })
+        if (!reopen) console.warn(`[refund] gift card ${r.giftCardId} is ${card.status}: PKR ${(r.amountCents / 100).toFixed(2)} from order ${orderId} is held on it for a manager to settle`)
         if (!sold || !tenantId || r.amountCents <= 0) return null
         if (legacyCardSale) {
           console.warn(`[refund] gift card ${r.giftCardId} re-credited on order ${orderId}; its sale predates the 2080 debit, so no restore entry is booked`)
@@ -1049,12 +1064,4 @@ export async function postOrderRefund(
   }
 
   return results
-}
-
-// Single-item void on the KDS: derecognise the item's contribution. For now
-// we do NOT post a partial-reversal (would require recomputing taxes/discounts
-// on a per-item basis); the operator should issue a full refund + re-ring the
-// remaining items. This is a known iteration-1 limitation.
-export async function noteItemVoid(_itemId: string): Promise<void> {
-  // intentionally no-op — see comment above
 }

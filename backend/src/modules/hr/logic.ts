@@ -163,18 +163,6 @@ export function employedFraction(period: string, joiningDate: Date | null, lastW
   return inclusiveDays(from, to) / daysInPeriod(period)
 }
 
-/** Salary for the days [from, to], month by month on the same calendar-day
- *  basis as a payslip — so paying the tail of a month here and the rest on a
- *  payroll adds up to the month's salary. */
-export function salaryForDays(grossCents: number, from: Date, to: Date): number {
-  if (to < from) return 0
-  let total = 0
-  for (let p = periodOf(from); periodIndex(p) <= periodIndex(periodOf(to)); p = nextPeriod(p)) {
-    total += Math.round(grossCents * employedFraction(p, from, to))
-  }
-  return total
-}
-
 export function nextPeriod(period: string): string {
   const [y, m] = period.split('-').map(Number)
   return m === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`
@@ -520,26 +508,119 @@ export interface SettlementInputs {
   loanOutstandingCents: number
   deductionsCents: number
   otherAdjustmentsCents: number
+  /** The gross in force for each month the settlement pays salary for
+   *  (service salaryForPeriod). A month not listed is paid at the employee's
+   *  gross — the same rule a payslip follows for its own month. */
+  salaryByPeriod?: Record<string, number>
+}
+
+/** One month of salary a full & final pays, worked out as that month's
+ *  payslip would have been. */
+export interface SettlementMonth {
+  period: string
+  salaryCents: number
+  taxCents: number
+  eobiEmployeeCents: number
+  eobiEmployerCents: number
+  sessiEmployerCents: number
 }
 
 export function finalSettlement(
-  emp: { grossSalaryCents: number; joiningDate: Date | null },
+  emp: { grossSalaryCents: number; joiningDate: Date | null; monthlyTaxCents?: number },
   lastWorkingDay: Date,
   inp: SettlementInputs,
   s: HrSettings,
 ) {
   const from = inp.salaryFrom && emp.joiningDate && emp.joiningDate > inp.salaryFrom ? emp.joiningDate : inp.salaryFrom
-  const salaryPayable = from ? salaryForDays(emp.grossSalaryCents, from, lastWorkingDay) : 0
+  // Each month the settlement pays salary for is that month's payslip —
+  // computePayslip, the one engine — so the leaver's last salary carries the
+  // same income tax, EOBI and SESSI a payroll would have taken for those days
+  // (finance gaps, extra finding "F&F has no statutory deductions"). `from`
+  // stands in for the joining date, so the first month is prorated from it.
+  const months: SettlementMonth[] = []
+  const warnings = new Set<string>()
+  if (from && from <= lastWorkingDay) {
+    for (let p = periodOf(from); periodIndex(p) <= periodIndex(periodOf(lastWorkingDay)); p = nextPeriod(p)) {
+      const slip = computePayslip({
+        grossSalaryCents: inp.salaryByPeriod?.[p] ?? emp.grossSalaryCents,
+        monthlyTaxCents: emp.monthlyTaxCents ?? 0,
+        joiningDate: from, lastWorkingDay,
+      }, p, EMPTY_INPUTS, s)
+      const line = (code: string) => slip.lines.filter((l) => l.code === code).reduce((a, l) => a + l.amountCents, 0)
+      months.push({
+        period: p, salaryCents: slip.grossCents, taxCents: line('tax'),
+        eobiEmployeeCents: line('eobi_employee'), eobiEmployerCents: line('eobi_employer'), sessiEmployerCents: line('sessi_employer'),
+      })
+      for (const w of slip.warnings) warnings.add(w)
+    }
+  }
+  const total = (k: keyof Omit<SettlementMonth, 'period'>) => months.reduce((a, m) => a + m[k], 0)
   const leaveEncashment = s.encashLeaveOnExit && inp.leaveBalanceDays > 0
     ? Math.round(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s))
     : 0
-  const net = salaryPayable + inp.otPayableCents + leaveEncashment
-    - inp.deductionsCents - inp.loanOutstandingCents + inp.otherAdjustmentsCents
-  return {
-    salaryPayable, otPayable: inp.otPayableCents, leaveEncashment,
-    deductions: inp.deductionsCents, loanRecovery: inp.loanOutstandingCents,
-    otherAdjustments: inp.otherAdjustmentsCents, netAmount: net,
+  const parts: SettlementParts = {
+    salaryPayable: total('salaryCents'), otPayable: inp.otPayableCents, leaveEncashment,
+    deductions: inp.deductionsCents, loanRecovery: inp.loanOutstandingCents, otherAdjustments: inp.otherAdjustmentsCents,
+    // Income tax here is the monthly figure HR keeps on the employee, as on a
+    // payslip. Tax on the leave encashment or another lump sum is not worked
+    // out by servd (payroll has no s.149 engine either) — HR adjusts the
+    // income tax figure on the settlement before approving it.
+    incomeTax: total('taxCents'), eobiEmployee: total('eobiEmployeeCents'),
+    eobiEmployer: total('eobiEmployerCents'), sessiEmployer: total('sessiEmployerCents'),
   }
+  // No gratuity: whether and how it is paid is pending owner decision G2 — it
+  // becomes one more earning here and in hr/ledger.ts postFinalSettlementAccrual.
+  return { ...parts, netAmount: settlementNet(parts), months, warnings: Array.from(warnings) }
+}
+
+/** The figures of a full & final, as its record holds them (data keys). The
+ *  employer EOBI / SESSI are the company's cost: posted, never off the net. */
+export interface SettlementParts {
+  salaryPayable: number
+  otPayable: number
+  leaveEncashment: number
+  deductions: number
+  loanRecovery: number
+  otherAdjustments: number   // signed
+  incomeTax: number
+  eobiEmployee: number
+  eobiEmployer: number
+  sessiEmployer: number
+}
+
+/** A record's figures; a missing or non-numeric one is zero (a format saved
+ *  before the statutory lines existed has none). */
+export function settlementParts(data: unknown): SettlementParts {
+  const d = (data ?? {}) as Record<string, unknown>
+  const n = (k: keyof SettlementParts) => (typeof d[k] === 'number' && Number.isFinite(d[k]) ? Math.round(d[k] as number) : 0)
+  return {
+    salaryPayable: n('salaryPayable'), otPayable: n('otPayable'), leaveEncashment: n('leaveEncashment'),
+    deductions: n('deductions'), loanRecovery: n('loanRecovery'), otherAdjustments: n('otherAdjustments'),
+    incomeTax: n('incomeTax'), eobiEmployee: n('eobiEmployee'), eobiEmployer: n('eobiEmployer'), sessiEmployer: n('sessiEmployer'),
+  }
+}
+
+/**
+ * The first payroll month an approved full & final settles: payroll leaves the
+ * leaver out of it and every later month, and the settlement pays it. The
+ * month of `_salaryFrom` — the first day no payroll had paid, stored when the
+ * settlement is approved — else (approved before that was stored, or paying
+ * no salary at all) the month of the last working day.
+ */
+export function settledFromPeriod(rec: { endDate: Date | null; data: unknown }): string | null {
+  const from = ((rec.data ?? {}) as Record<string, unknown>)['_salaryFrom']
+  if (typeof from === 'string') {
+    const d = new Date(from)
+    if (!Number.isNaN(d.getTime())) return periodOf(d)
+  }
+  return rec.endDate ? periodOf(rec.endDate) : null
+}
+
+/** What the leaver is paid: the ONE formula — the record's net on save, the
+ *  Wages Payable credit when it is booked. */
+export function settlementNet(p: SettlementParts): number {
+  return p.salaryPayable + p.otPayable + p.leaveEncashment + p.otherAdjustments
+    - p.deductions - p.loanRecovery - p.incomeTax - p.eobiEmployee
 }
 
 // ─── Approvals ──────────────────────────────────────────────────────────────

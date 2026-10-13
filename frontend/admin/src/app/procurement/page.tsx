@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { ApAging } from '../../components/finance/ApAging'
-import { fmtPkrWhole } from '../../lib/money'
+import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
+import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
 import { useManagerRoles } from '../../lib/roles'
 
@@ -45,32 +46,85 @@ interface PurchaseOrder {
   lines?: PoLine[]
 }
 
+// A supplier credit note is a bill row too (kind 'credit_note', against
+// originalBillId): its creditedCents is how much of it has been applied.
 interface Bill {
   id: string; supplierId: string; poId?: string | null; billNumber: string
   billDate: string; dueDate: string; status: string
   subtotalCents: number; taxCents: number; totalCents: number; whtCents: number; paidCents: number
+  creditedCents?: number
+  kind?: 'bill' | 'credit_note'
+  originalBillId?: string | null
+  originalBill?: { id: string; billNumber: string } | null
   notes?: string | null; attachmentUrl?: string | null
-  supplier?: { name: string } | null
+  supplier?: { name: string; tenantId?: string | null } | null
   po?: { id: string; reference?: string | null } | null
 }
 
 // What the supplier is still owed: net of the withholding the ledger moved to
-// FBR (the server's billDueCents rule).
-const billDue = (b: Pick<Bill, 'totalCents' | 'whtCents' | 'paidCents'>) => b.totalCents - (b.whtCents ?? 0) - b.paidCents
+// FBR, payments and credit notes applied (the server's billDueCents rule).
+const billDue = (b: Pick<Bill, 'totalCents' | 'whtCents' | 'paidCents' | 'creditedCents'>) =>
+  b.totalCents - (b.whtCents ?? 0) - b.paidCents - (b.creditedCents ?? 0)
+
+// What is left of a credit note to apply to bills (what it took off AP, less what is applied).
+const creditLeft = (cn: Pick<Bill, 'totalCents' | 'whtCents' | 'creditedCents'>) =>
+  cn.totalCents - (cn.whtCents ?? 0) - (cn.creditedCents ?? 0)
+
+interface CreditableLine {
+  billLineId: string; description: string; quantity: number; unitCostCents: number; lineTotalCents: number
+  stockItemId: string | null; creditedCents: number; returnedQty: number; leftCents: number; returnableQty: number
+}
+
+interface BillDetail extends Bill {
+  creditable: { lines: CreditableLine[]; subtotalLeftCents: number; taxLeftCents: number } | null
+  creditsGiven?: Array<{ billId: string; amountCents: number; bill?: { id: string; billNumber: string } | null }>
+}
 
 interface SupplierPayment {
   id: string; supplierId: string; paymentDate: string; method: string
   reference?: string | null; amountCents: number; appliedCents: number
   notes?: string | null
-  supplier?: { name: string } | null
+  bankAccountId?: string | null
+  bankAccount?: { id: string; name: string; bankName?: string | null; accountCode?: string | null } | null
+  voidedAt?: string | null; voidReason?: string | null
+  applications?: Array<{ billId: string; amountAppliedCents: number; bill?: { id: string; billNumber: string } | null }>
+  supplier?: { name: string; tenantId?: string | null } | null
 }
 
+const PAYMENT_METHODS: Array<{ id: string; label: string }> = [
+  { id: 'bank_transfer', label: 'Bank transfer' },
+  { id: 'cheque',        label: 'Cheque' },
+  { id: 'wallet',        label: 'Wallet (JazzCash / Easypaisa)' },
+  { id: 'cash',          label: 'Cash' },
+]
+const methodLabel = (m: string) => PAYMENT_METHODS.find((x) => x.id === m)?.label ?? m.replace(/_/g, ' ')
 
-interface ReorderItem {
-  id: string; name: string; unit: string; currentStock: number; parLevel: number
-  reorderQty: number; costPerUnit?: number | null
-  suppliers?: Array<{ id: string; name: string }> | null
+const CREDIT_REASONS: Array<{ id: 'return' | 'price' | 'short' | 'damaged' | 'rebate'; label: string; hint: string }> = [
+  { id: 'return',  label: 'Goods returned',   hint: 'Goods went back to the supplier — credited at the billed price.' },
+  { id: 'damaged', label: 'Damaged goods',    hint: 'Damaged on arrival — sent back, or kept at an allowance.' },
+  { id: 'short',   label: 'Short delivery',   hint: 'Billed for more than arrived — no stock moves.' },
+  { id: 'price',   label: 'Price correction', hint: 'The supplier charged too much per unit — enter the credit per unit.' },
+  { id: 'rebate',  label: 'Rebate',           hint: 'A discount after the bill — enter the credit per unit.' },
+]
+
+// GET /procurement/reorder: items below par, grouped by their supplier —
+// each group is a purchase order ready to draft.
+interface ReorderLine {
+  inventoryItemId: string; name: string; unit: string
+  currentStock: number; parLevel: number; onOrder: number; suggestedQty: number; unitCostCents: number
 }
+interface ReorderGroup {
+  supplierId: string | null; supplierName: string; estimatedTotalCents: number
+  lines: ReorderLine[]
+}
+
+interface PoDraft {
+  supplierId: string
+  lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string }>
+}
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : 'That did not work')
+const rupeesToPaisa = (v: string) => Math.round(Number(v) * 100)
 
 interface InventoryItem { id: string; name: string; unit: string }
 interface PriceHistoryRow {
@@ -96,6 +150,7 @@ const STATUS_COLORS: Record<string, string> = {
   open: 'text-s-amber bg-amber-100/40',
   partially_paid: 'text-primary-ink bg-primary/10',
   paid: 'text-success bg-accent-dim',
+  applied: 'text-success bg-accent-dim',
   void: 'text-s-muted bg-s-elevated',
   overdue: 'text-s-red bg-red-100/40',
 }
@@ -163,7 +218,7 @@ export default function ProcurementPage() {
         {tab === 'payments'  && <PaymentsTab qc={qc} />}
         {tab === 'suppliers' && <SuppliersTab qc={qc} />}
         {tab === 'aging'     && <AgingTab />}
-        {tab === 'reorder'   && <ReorderTab />}
+        {tab === 'reorder'   && <ReorderTab qc={qc} />}
         {tab === 'approvals' && <ApprovalsTab qc={qc} />}
         {tab === 'history'   && <PriceHistoryTab />}
       </div>
@@ -449,7 +504,7 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
 
 // ─── Create PO form ───────────────────────────────────────────────────────────
 
-function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
+function CreatePoForm({ qc, onClose, initial }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft }) {
   const { data: suppliers = [] } = useQuery({
     queryKey: ['procurement', 'suppliers'],
     queryFn: () => api.get<Supplier[]>('/procurement/suppliers'),
@@ -459,11 +514,12 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
     queryFn: () => api.get<InventoryItem[]>('/inventory'),
   })
 
-  const [supplierId, setSupplierId] = useState('')
+  // A draft from the Reorder tab arrives pre-filled; the buyer can still change anything.
+  const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '')
   const [reference, setReference] = useState('')
   const [expectedDate, setExpectedDate] = useState('')
   const [notes, setNotes] = useState('')
-  const [lines, setLines] = useState([{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
+  const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
 
   const mut = useMutation({
     mutationFn: () => api.post('/procurement/purchase-orders', {
@@ -478,6 +534,8 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
+      // What is on order changes what the reorder list suggests.
+      void qc.invalidateQueries({ queryKey: ['procurement', 'reorder'] })
       onClose()
     },
   })
@@ -494,9 +552,12 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
   return (
     <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="font-bold text-s-text">New Purchase Order</p>
+        <p className="font-bold text-s-text">{initial ? 'Draft purchase order from reorder suggestions' : 'New Purchase Order'}</p>
         <button onClick={onClose} className="text-s-muted hover:text-s-text text-xs">✕</button>
       </div>
+      {initial && (
+        <p className="text-xs text-s-muted">Quantities bring each item back to its par level, after what is already on order. Check them and the prices, then create the PO — it is a draft until you submit it.</p>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="Supplier *">
@@ -572,12 +633,16 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
 // ══════════════════════════════════════════════════════════════════════════════
 
 function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+  const [view, setView] = useState<'bills' | 'credit_notes'>('bills')
   const [statusFilter, setStatusFilter] = useState('')
   const [overdue, setOverdue] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidReason, setVoidReason] = useState('')
   const [matchId, setMatchId] = useState<string | null>(null)
+  const [creditBillId, setCreditBillId] = useState<string | null>(null)
+  const [applyCn, setApplyCn] = useState<Bill | null>(null)
+  const [unapplyCnId, setUnapplyCnId] = useState<string | null>(null)
 
   const qs = new URLSearchParams()
   if (statusFilter) qs.set('status', statusFilter)
@@ -586,6 +651,13 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ['procurement', 'bills', statusFilter, overdue],
     queryFn: () => api.get<Bill[]>(`/procurement/bills?${qs}`),
+    enabled: view === 'bills',
+  })
+
+  const { data: creditNotes = [], isLoading: cnLoading } = useQuery({
+    queryKey: ['procurement', 'credit-notes'],
+    queryFn: () => api.get<Bill[]>('/procurement/bills?kind=credit_note'),
+    enabled: view === 'credit_notes',
   })
 
   const { data: matchResult } = useQuery({
@@ -594,39 +666,68 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
     enabled: !!matchId,
   })
 
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['procurement'] })
+    void qc.invalidateQueries({ queryKey: ['ap-aging'] })
+  }
+
+  // Voids a bill — or a credit note (the server routes it to the credit
+  // note's own void: stock goes back, its entry is reversed).
   const voidMut = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post(`/procurement/bills/${id}/void`, { reason }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'bills'] }); setVoidId(null); setVoidReason('') },
+    onSuccess: () => { refresh(); setVoidId(null); setVoidReason('') },
   })
 
   const statuses = ['', 'open', 'partially_paid', 'paid', 'void']
+  const voiding = voidId ? [...bills, ...creditNotes].find((b) => b.id === voidId) : null
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex gap-1 flex-wrap">
-          {statuses.map((s) => (
-            <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-                ${statusFilter === s && !overdue ? 'bg-accent-dim border border-accent text-s-text' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
-              {s || 'All'}
-            </button>
-          ))}
-          <button onClick={() => { setOverdue(!overdue); setStatusFilter('') }}
-            className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
-              ${overdue ? 'bg-s-red text-bone' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
-            Overdue
+      <div className="flex gap-1">
+        {([['bills', 'Bills'], ['credit_notes', 'Credit notes & returns']] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setView(id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors
+              ${view === id ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
+            {label}
           </button>
-        </div>
-        <button onClick={() => setShowCreate(true)}
-          className="ml-auto rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
-          + New Bill
-        </button>
+        ))}
       </div>
 
-      {showCreate && <CreateBillForm qc={qc} onClose={() => setShowCreate(false)} />}
+      {view === 'bills' && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex gap-1 flex-wrap">
+            {statuses.map((s) => (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
+                  ${statusFilter === s && !overdue ? 'bg-accent-dim border border-accent text-s-text' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
+                {s ? s.replace(/_/g, ' ') : 'All'}
+              </button>
+            ))}
+            <button onClick={() => { setOverdue(!overdue); setStatusFilter('') }}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
+                ${overdue ? 'bg-s-red text-bone' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
+              Overdue
+            </button>
+          </div>
+          <button onClick={() => setShowCreate(true)}
+            className="ml-auto rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
+            + New Bill
+          </button>
+        </div>
+      )}
 
-      {isLoading ? (
+      {view === 'credit_notes' && (
+        <p className="text-xs text-s-muted">
+          A credit note is recorded against a bill (Bills → Credit note). It lowers what the supplier is owed, the stock sent back and the input tax claimed.
+          Whatever is not yet applied to a bill is a credit with the supplier.
+        </p>
+      )}
+
+      {showCreate && view === 'bills' && <CreateBillForm qc={qc} onClose={() => setShowCreate(false)} />}
+
+      {voidMut.error && <p className="text-xs text-s-red">{errText(voidMut.error)}</p>}
+
+      {view === 'bills' && (isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : bills.length === 0 ? (
         <EmptyState icon="🧾" title="No bills" sub="Record supplier invoices here" />
@@ -658,12 +759,17 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(b.totalCents)}</td>
                     <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-s-red' : 'text-success'}`}>
                       {fmtPkrWhole(billDue(b))}
+                      {(b.creditedCents ?? 0) > 0 && <p className="text-[10px] font-normal text-s-muted">{fmtPkrWhole(b.creditedCents ?? 0)} credited</p>}
                     </td>
                     <td className="px-4 py-3"><Badge status={isOverdue ? 'overdue' : b.status} /></td>
                     <td className="px-4 py-3">
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button onClick={() => setMatchId(matchId === b.id ? null : b.id)}
                           className="text-xs text-sky-700 hover:opacity-80 font-semibold">Match</button>
+                        {b.status !== 'void' && (
+                          <button onClick={() => setCreditBillId(b.id)}
+                            className="text-xs text-primary-ink hover:opacity-80 font-semibold whitespace-nowrap">Credit note / return</button>
+                        )}
                         {b.status !== 'void' && (
                           <button onClick={() => { setVoidId(b.id); setVoidReason('') }}
                             className="text-xs text-s-red hover:opacity-80 font-semibold">Void</button>
@@ -677,7 +783,69 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           </table>
           </div>
         </div>
-      )}
+      ))}
+
+      {view === 'credit_notes' && (cnLoading ? (
+        <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
+      ) : creditNotes.length === 0 ? (
+        <EmptyState icon="↩" title="No credit notes" sub="Record a supplier's credit note or a return from the bill it is against" />
+      ) : (
+        <div className="rounded-xl border border-s-border overflow-hidden">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-s-border bg-s-surface/40">
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Credit note #</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Against bill</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Date</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Amount</th>
+                <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Not yet applied</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Status</th>
+                <th className="px-4 py-2.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {creditNotes.map((cn) => {
+                const left = cn.status === 'void' ? 0 : creditLeft(cn)
+                return (
+                  <tr key={cn.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30 transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="font-mono text-xs text-primary-ink">{cn.billNumber}</p>
+                      {cn.notes && <p className="text-[11px] text-s-muted">{cn.notes}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-s-text font-medium">{cn.supplier?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-muted font-mono text-xs hidden md:table-cell">{cn.originalBill?.billNumber ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(cn.billDate)}</td>
+                    <td className={`px-4 py-3 font-semibold text-right ${cn.status === 'void' ? 'text-s-muted line-through' : 'text-success'}`}>
+                      {fmtPkrWhole(-cn.totalCents)}
+                      {cn.whtCents > 0 && <p className="text-[10px] font-normal text-s-muted">incl. {fmtPkrWhole(cn.whtCents)} withholding</p>}
+                    </td>
+                    <td className={`px-4 py-3 text-right font-semibold ${left > 0 ? 'text-s-amber' : 'text-s-muted'}`}>{fmtPkrWhole(left)}</td>
+                    <td className="px-4 py-3"><Badge status={cn.status} /></td>
+                    <td className="px-4 py-3">
+                      {cn.status !== 'void' && (
+                        <div className="flex flex-wrap gap-2">
+                          {left > 0 && (
+                            <button onClick={() => setApplyCn(cn)} className="text-xs text-primary-ink hover:opacity-80 font-semibold">Apply</button>
+                          )}
+                          {(cn.creditedCents ?? 0) > 0 && (
+                            <button onClick={() => setUnapplyCnId(cn.id)} className="text-xs text-sky-700 hover:opacity-80 font-semibold">Unapply</button>
+                          )}
+                          {(cn.creditedCents ?? 0) === 0 && (
+                            <button onClick={() => { setVoidId(cn.id); setVoidReason('') }} className="text-xs text-s-red hover:opacity-80 font-semibold">Void</button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      ))}
 
       {/* 3-way match result */}
       {matchId && matchResult && (
@@ -690,26 +858,287 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         </div>
       )}
 
-      {/* Void modal */}
+      {creditBillId && <CreditNoteForm billId={creditBillId} onDone={refresh} onClose={() => setCreditBillId(null)} />}
+      {applyCn && <ApplyCreditModal cn={applyCn} onDone={refresh} onClose={() => setApplyCn(null)} />}
+      {unapplyCnId && <UnapplyCreditModal creditNoteId={unapplyCnId} onDone={refresh} onClose={() => setUnapplyCnId(null)} />}
+
+      {/* Void modal — a bill, or a credit note */}
       {voidId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
           <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">Void Bill</p>
+            <p className="font-bold text-s-text">{voiding?.kind === 'credit_note' ? 'Void credit note' : 'Void Bill'}</p>
+            {voiding?.kind === 'credit_note' && (
+              <p className="text-xs text-s-muted">Its entry is reversed, any stock sent back goes back into stock, and the bill owes the credited amount again.</p>
+            )}
             <Field label="Reason (required)">
               <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus />
             </Field>
+            {voidMut.error && <p className="text-xs text-s-red">{errText(voidMut.error)}</p>}
             <div className="flex gap-2">
               <button disabled={!voidReason || voidMut.isPending}
                 onClick={() => voidMut.mutate({ id: voidId, reason: voidReason })}
                 className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Void
               </button>
-              <button onClick={() => { setVoidId(null); setVoidReason('') }}
+              <button onClick={() => { setVoidId(null); setVoidReason(''); voidMut.reset() }}
                 className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Credit note / return against a bill ──────────────────────────────────────
+//
+// POST /procurement/bills/:id/credit-notes. Lines come from the bill; money is
+// typed in rupees. The server caps everything at what is left on the bill and
+// refuses a return that would take stock below zero.
+
+function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: () => void; onClose: () => void }) {
+  const { data: bill, isLoading, error } = useQuery({
+    queryKey: ['procurement', 'bill', billId],
+    queryFn: () => api.get<BillDetail>(`/procurement/bills/${billId}`),
+  })
+
+  const [number, setNumber] = useState('')
+  const [date, setDate] = useState(todayPktIso())
+  const [reason, setReason] = useState<(typeof CREDIT_REASONS)[number]['id']>('return')
+  const [tax, setTax] = useState('')
+  const [notes, setNotes] = useState('')
+  const [returnStock, setReturnStock] = useState(true)
+  const [applyToBill, setApplyToBill] = useState(true)
+  const [picked, setPicked] = useState<Record<string, { on: boolean; qty: string; price: string }>>({})
+
+  const byQuantity = reason === 'return' || reason === 'short' || reason === 'damaged'
+  const lines = bill?.creditable?.lines ?? []
+  const row = (l: CreditableLine) => picked[l.billLineId] ?? {
+    on: false,
+    qty: String(byQuantity && l.stockItemId ? Math.min(l.quantity, l.returnableQty || l.quantity) : l.quantity),
+    price: byQuantity ? String(l.unitCostCents / 100) : '',
+  }
+  const setRow = (l: CreditableLine, patch: Partial<{ on: boolean; qty: string; price: string }>) =>
+    setPicked((p) => ({ ...p, [l.billLineId]: { ...row(l), ...patch } }))
+
+  const chosen = lines.filter((l) => row(l).on)
+  const canSendBack = (reason === 'return' || reason === 'damaged') && chosen.some((l) => l.stockItemId)
+  const subtotal = chosen.reduce((s, l) => s + Math.round((Number(row(l).qty) || 0) * rupeesToPaisa(row(l).price || '0')), 0)
+  const taxCents = tax ? rupeesToPaisa(tax) : 0
+  const valid = !!number.trim() && !!date && chosen.length > 0 &&
+    chosen.every((l) => Number(row(l).qty) > 0 && Number(row(l).price) > 0)
+
+  const mut = useMutation({
+    mutationFn: () => api.post(`/procurement/bills/${billId}/credit-notes`, {
+      number: number.trim(), date, reason,
+      lines: chosen.map((l) => ({ billLineId: l.billLineId, qty: Number(row(l).qty), unitCostCents: rupeesToPaisa(row(l).price) })),
+      taxCents, returnStock: canSendBack && returnStock, applyToBill, notes: notes.trim() || null,
+    }),
+    onSuccess: () => { onDone(); onClose() },
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
+      <div className="bg-s-surface border border-s-border rounded-2xl p-5 w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="font-bold text-s-text">Credit note / return{bill ? ` — bill ${bill.billNumber}` : ''}</p>
+          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
+        </div>
+        {isLoading && <p className="text-sm text-s-muted">Loading…</p>}
+        {error && <p className="text-sm text-s-red">{errText(error)}</p>}
+        {bill && (
+          <>
+            <p className="text-xs text-s-muted">
+              {bill.supplier?.name} · bill total {fmtPkrWhole(bill.totalCents)} · still owed {fmtPkrWhole(billDue(bill))}
+              {bill.creditable && <> · {fmtPkrWhole(bill.creditable.subtotalLeftCents)} of goods left to credit</>}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label="Supplier's credit note no. *">
+                <input value={number} onChange={(e) => setNumber(e.target.value)} className={fi} placeholder="CN-1043" />
+              </Field>
+              <Field label="Date *">
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={fi} />
+              </Field>
+              <Field label="Why *">
+                <select value={reason} onChange={(e) => { setReason(e.target.value as typeof reason); setPicked({}) }} className={fi}>
+                  {CREDIT_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+              </Field>
+            </div>
+            <p className="text-xs text-s-muted">{CREDIT_REASONS.find((r) => r.id === reason)?.hint}</p>
+
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Lines credited</p>
+              {lines.map((l) => {
+                const r = row(l)
+                return (
+                  <div key={l.billLineId} className={`rounded-lg border p-3 space-y-2 ${r.on ? 'border-primary bg-s-bg' : 'border-s-border'}`}>
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input type="checkbox" checked={r.on} onChange={(e) => setRow(l, { on: e.target.checked })} className="mt-1 accent-accent" />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm text-s-text font-medium">{l.description}{l.stockItemId ? '' : ' (not a stock item)'}</span>
+                        <span className="block text-xs text-s-muted">
+                          Billed {l.quantity} × {fmtPkrWhole(l.unitCostCents)} = {fmtPkrWhole(l.lineTotalCents)}
+                          {l.creditedCents > 0 && <> · {fmtPkrWhole(l.creditedCents)} already credited</>}
+                          {l.stockItemId && l.returnedQty > 0 && <> · {l.returnedQty} already sent back</>}
+                        </span>
+                      </span>
+                    </label>
+                    {r.on && (
+                      <div className="grid grid-cols-2 gap-2 pl-6">
+                        <Field label={byQuantity ? 'Quantity' : 'Quantity it applies to'}>
+                          <input type="number" min="0" step="any" value={r.qty} onChange={(e) => setRow(l, { qty: e.target.value })} className={fi} />
+                        </Field>
+                        <Field label={byQuantity ? 'Price per unit (PKR)' : 'Credit per unit (PKR) *'}>
+                          <input type="number" min="0" step="any" value={r.price} onChange={(e) => setRow(l, { price: e.target.value })} className={fi} placeholder="0" />
+                        </Field>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Sales tax on the credit note (PKR)">
+                <input type="number" min="0" step="any" value={tax} onChange={(e) => setTax(e.target.value)} className={fi} placeholder="0" />
+              </Field>
+              <Field label="Note">
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} className={fi} placeholder="Optional" />
+              </Field>
+            </div>
+            {canSendBack && (
+              <label className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
+                <input type="checkbox" checked={returnStock} onChange={(e) => setReturnStock(e.target.checked)} className="mt-1 accent-accent" />
+                <span>Goods sent back — take them out of stock <span className="block text-xs text-s-muted">Refused if it would take stock below zero; count the item first.</span></span>
+              </label>
+            )}
+            <label className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
+              <input type="checkbox" checked={applyToBill} onChange={(e) => setApplyToBill(e.target.checked)} className="mt-1 accent-accent" />
+              <span>Take it off this bill now <span className="block text-xs text-s-muted">Up to what the bill still owes; the rest stays a credit with the supplier to apply later.</span></span>
+            </label>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-s-border">
+              <p className="text-sm font-bold text-s-text">Credit note total: {fmtPkrWhole(-(subtotal + taxCents))}</p>
+              <div className="flex gap-2">
+                <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
+                  className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                  {mut.isPending ? 'Saving…' : 'Record credit note'}
+                </button>
+                <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+              </div>
+            </div>
+            {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Apply a credit note to open bills of the same supplier (no ledger change).
+function ApplyCreditModal({ cn, onDone, onClose }: { cn: Bill; onDone: () => void; onClose: () => void }) {
+  const { data: bills = [] } = useQuery({
+    queryKey: ['procurement', 'bills', 'supplier', cn.supplierId],
+    queryFn: () => api.get<Bill[]>(`/procurement/bills?supplierId=${cn.supplierId}`),
+  })
+  const open = bills.filter((b) => b.status !== 'void' && billDue(b) > 0)
+  const [amounts, setAmounts] = useState<Record<string, string>>({})
+  const left = creditLeft(cn)
+  const adding = Object.values(amounts).reduce((s, v) => s + (Number(v) > 0 ? rupeesToPaisa(v) : 0), 0)
+
+  const mut = useMutation({
+    mutationFn: () => api.post(`/procurement/credit-notes/${cn.id}/apply`, {
+      applications: Object.entries(amounts).filter(([, v]) => Number(v) > 0).map(([billId, v]) => ({ billId, amountCents: rupeesToPaisa(v) })),
+    }),
+    onSuccess: () => { onDone(); onClose() },
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
+      <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-lg space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="font-bold text-s-text">Apply credit note {cn.billNumber}</p>
+          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
+        </div>
+        <p className="text-xs text-s-muted">{fmtPkrWhole(left)} left to apply to {cn.supplier?.name ?? 'this supplier'}&apos;s bills.</p>
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {open.map((b) => (
+            <div key={b.id} className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-s-text font-medium">{b.billNumber}</p>
+                <p className="text-xs text-s-muted">Owed: {fmtPkrWhole(billDue(b))}</p>
+              </div>
+              <input type="number" min="0" step="any" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
+                value={amounts[b.id] ?? ''} onChange={(e) => setAmounts({ ...amounts, [b.id]: e.target.value })} />
+            </div>
+          ))}
+          {open.length === 0 && <p className="text-s-muted text-sm">This supplier has no open bills.</p>}
+        </div>
+        {adding > left && <p className="text-xs text-s-red">That is more than is left on the credit note.</p>}
+        {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
+        <div className="flex gap-2 pt-2">
+          <button onClick={() => mut.mutate()} disabled={mut.isPending || adding <= 0 || adding > left}
+            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+            {mut.isPending ? 'Applying…' : 'Apply'}
+          </button>
+          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Take a credit note off the bills it settles (no ledger change).
+function UnapplyCreditModal({ creditNoteId, onDone, onClose }: { creditNoteId: string; onDone: () => void; onClose: () => void }) {
+  const { data: cn, refetch } = useQuery({
+    queryKey: ['procurement', 'bill', creditNoteId],
+    queryFn: () => api.get<BillDetail>(`/procurement/bills/${creditNoteId}`),
+  })
+  const mut = useMutation({
+    mutationFn: (billId: string) => api.post(`/procurement/credit-notes/${creditNoteId}/unapply`, { billId }),
+    onSuccess: () => { onDone(); void refetch() },
+  })
+  const applied = cn?.creditsGiven ?? []
+  return (
+    <UnapplyList
+      title={`Unapply credit note ${cn?.billNumber ?? ''}`}
+      rows={applied.map((a) => ({ billId: a.billId, billNumber: a.bill?.billNumber ?? a.billId.slice(-8), amountCents: a.amountCents }))}
+      pending={mut.isPending} error={mut.error} onUnapply={(id) => mut.mutate(id)} onClose={onClose}
+    />
+  )
+}
+
+function UnapplyList({ title, rows, pending, error, onUnapply, onClose }: {
+  title: string
+  rows: Array<{ billId: string; billNumber: string; amountCents: number }>
+  pending: boolean
+  error: unknown
+  onUnapply: (billId: string) => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
+      <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-md space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="font-bold text-s-text">{title}</p>
+          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
+        </div>
+        <p className="text-xs text-s-muted">The bill owes that amount again; the money stays on account with the supplier. The ledger does not change.</p>
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.billId} className="flex items-center justify-between gap-3 text-sm">
+              <span className="font-mono text-xs text-s-text">{r.billNumber}</span>
+              <span className="text-s-text">{fmtPkrWhole(r.amountCents)}</span>
+              <button disabled={pending} onClick={() => onUnapply(r.billId)}
+                className="text-xs text-s-red hover:opacity-80 font-semibold disabled:opacity-50">Unapply</button>
+            </div>
+          ))}
+          {rows.length === 0 && <p className="text-sm text-s-muted">Not applied to any bill.</p>}
+        </div>
+        {!!error && <p className="text-xs text-s-red">{errText(error)}</p>}
+        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Done</button>
+      </div>
     </div>
   )
 }
@@ -825,11 +1254,29 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
 function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   const [showCreate, setShowCreate] = useState(false)
   const [allocateId, setAllocateId] = useState<string | null>(null)
+  const [unapplyId, setUnapplyId] = useState<string | null>(null)
+  const [voidId, setVoidId] = useState<string | null>(null)
+  const [voidReason, setVoidReason] = useState('')
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['procurement', 'payments'],
     queryFn: () => api.get<SupplierPayment[]>('/procurement/payments'),
   })
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['procurement'] })
+    void qc.invalidateQueries({ queryKey: ['ap-aging'] })
+  }
+
+  const unapplyMut = useMutation({
+    mutationFn: ({ id, billId }: { id: string; billId: string }) => api.post(`/procurement/payments/${id}/unapply`, { billId }),
+    onSuccess: refresh,
+  })
+  const voidMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post(`/procurement/payments/${id}/void`, { reason }),
+    onSuccess: () => { refresh(); setVoidId(null); setVoidReason('') },
+  })
+  const unapplying = unapplyId ? payments.find((p) => p.id === unapplyId) : null
 
   return (
     <div className="p-6 space-y-4">
@@ -854,7 +1301,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               <tr className="border-b border-s-border bg-s-surface/40">
                 <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Date</th>
                 <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
-                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Method</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Paid from</th>
                 <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Ref</th>
                 <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Amount</th>
                 <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Unallocated</th>
@@ -862,31 +1309,86 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               </tr>
             </thead>
             <tbody>
-              {payments.map((p) => (
-                <tr key={p.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
-                  <td className="px-4 py-3 text-s-muted">{fmt(p.paymentDate)}</td>
-                  <td className="px-4 py-3 text-s-text font-medium">{p.supplier?.name ?? '—'}</td>
-                  <td className="px-4 py-3 text-s-muted hidden md:table-cell capitalize">{p.method.replace(/_/g, ' ')}</td>
-                  <td className="px-4 py-3 text-s-muted font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
-                  <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(p.amountCents)}</td>
-                  <td className={`px-4 py-3 text-right font-semibold ${p.amountCents - p.appliedCents > 0 ? 'text-s-amber' : 'text-s-muted'}`}>
-                    {fmtPkrWhole(p.amountCents - p.appliedCents)}
-                  </td>
-                  <td className="px-4 py-3">
-                    {p.amountCents - p.appliedCents > 0 && (
-                      <button onClick={() => setAllocateId(p.id)}
-                        className="text-xs text-primary-ink hover:underline font-semibold">Allocate</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {payments.map((p) => {
+                const isVoid = !!p.voidedAt
+                const unallocated = isVoid ? 0 : p.amountCents - p.appliedCents
+                return (
+                  <tr key={p.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
+                    <td className="px-4 py-3 text-s-muted">{fmt(p.paymentDate)}</td>
+                    <td className="px-4 py-3 text-s-text font-medium">
+                      {p.supplier?.name ?? '—'}
+                      {p.applications && p.applications.length > 0 && (
+                        <p className="text-[11px] text-s-muted font-normal">Bills: {p.applications.map((a) => a.bill?.billNumber ?? '—').join(', ')}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">
+                      {methodLabel(p.method)}
+                      {p.bankAccount && <p className="text-[11px]">{p.bankAccount.name}{p.bankAccount.accountCode ? ` (${p.bankAccount.accountCode})` : ''}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-s-muted font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
+                    <td className={`px-4 py-3 font-semibold text-right ${isVoid ? 'text-s-muted line-through' : 'text-s-text'}`}>{fmtPkrWhole(p.amountCents)}</td>
+                    <td className={`px-4 py-3 text-right font-semibold ${unallocated > 0 ? 'text-s-amber' : 'text-s-muted'}`}>
+                      {fmtPkrWhole(unallocated)}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isVoid ? (
+                        <span title={p.voidReason ?? undefined}><Badge status="void" /></span>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {unallocated > 0 && (
+                            <button onClick={() => setAllocateId(p.id)} className="text-xs text-primary-ink hover:underline font-semibold">Allocate</button>
+                          )}
+                          {p.appliedCents > 0 && (
+                            <button onClick={() => setUnapplyId(p.id)} className="text-xs text-sky-700 hover:underline font-semibold">Unapply</button>
+                          )}
+                          {p.appliedCents === 0 && (
+                            <button onClick={() => { setVoidId(p.id); setVoidReason('') }} className="text-xs text-s-red hover:underline font-semibold">Void</button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
           </div>
         </div>
       )}
 
-      {allocateId && <AllocateModal paymentId={allocateId} qc={qc} onClose={() => setAllocateId(null)} />}
+      {allocateId && <AllocateModal paymentId={allocateId} supplierId={payments.find((p) => p.id === allocateId)?.supplierId ?? ''} qc={qc} onClose={() => setAllocateId(null)} />}
+
+      {unapplying && (
+        <UnapplyList
+          title={`Unapply payment of ${fmtPkrWhole(unapplying.amountCents)}`}
+          rows={(unapplying.applications ?? []).map((a) => ({ billId: a.billId, billNumber: a.bill?.billNumber ?? a.billId.slice(-8), amountCents: a.amountAppliedCents }))}
+          pending={unapplyMut.isPending} error={unapplyMut.error}
+          onUnapply={(billId) => unapplyMut.mutate({ id: unapplying.id, billId })}
+          onClose={() => { setUnapplyId(null); unapplyMut.reset() }}
+        />
+      )}
+
+      {voidId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="font-bold text-s-text">Void payment</p>
+            <p className="text-xs text-s-muted">For a bounced cheque or a payment recorded by mistake. Its ledger entry is reversed today. Cash paid out of petty cash or a till can&apos;t be voided here.</p>
+            <Field label="Reason (required)">
+              <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus placeholder="e.g. cheque bounced" />
+            </Field>
+            {voidMut.error && <p className="text-xs text-s-red">{errText(voidMut.error)}</p>}
+            <div className="flex gap-2">
+              <button disabled={!voidReason.trim() || voidMut.isPending}
+                onClick={() => voidMut.mutate({ id: voidId, reason: voidReason.trim() })}
+                className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                Void
+              </button>
+              <button onClick={() => { setVoidId(null); setVoidReason(''); voidMut.reset() }}
+                className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -894,19 +1396,27 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
 
-  const [form, setForm] = useState({ supplierId: '', paymentDate: '', method: 'bank_transfer', reference: '', amountCents: '', notes: '' })
+  const [form, setForm] = useState({ supplierId: '', paymentDate: '', method: 'bank_transfer', bankAccountId: '', reference: '', amountCents: '', notes: '' })
+  // The bank list is the SUPPLIER's company's (the server checks the same).
+  const supplierTenant = suppliers.find((s) => s.id === form.supplierId)?.tenantId ?? null
+  const usesBank = form.method !== 'cash'
 
   const mut = useMutation({
     mutationFn: () => api.post('/procurement/payments', {
       supplierId: form.supplierId, paymentDate: form.paymentDate,
       method: form.method, reference: form.reference || null,
-      amountCents: Math.round(Number(form.amountCents) * 100),
+      bankAccountId: usesBank && form.bankAccountId ? form.bankAccountId : null,
+      amountCents: rupeesToPaisa(form.amountCents),
       notes: form.notes || null,
     }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'payments'] }); onClose() },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['procurement'] })
+      void qc.invalidateQueries({ queryKey: ['ap-aging'] })
+      onClose()
+    },
   })
 
-  const valid = form.supplierId && form.paymentDate && form.amountCents
+  const valid = form.supplierId && form.paymentDate && Number(form.amountCents) > 0 && (form.method !== 'wallet' || form.bankAccountId)
 
   return (
     <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
@@ -914,9 +1424,9 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
         <p className="font-bold text-s-text">Record Payment</p>
         <button onClick={onClose} className="text-s-muted text-xs">✕</button>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field label="Supplier *">
-          <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} className={fi}>
+          <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value, bankAccountId: '' })} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
@@ -925,15 +1435,30 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
           <input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} className={fi} />
         </Field>
         <Field label="Method *">
-          <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className={fi}>
-            {['cash', 'bank_transfer', 'cheque', 'wallet'].map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
+          <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value, bankAccountId: '' })} className={fi}>
+            {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </Field>
+        {usesBank && form.supplierId && (
+          <div>
+            <BankAccountSelect
+              id="supplier-payment-bank"
+              label={form.method === 'wallet' ? 'Wallet account *' : 'Paid from'}
+              tenantId={supplierTenant}
+              value={form.bankAccountId}
+              onChange={(bankAccountId) => setForm({ ...form, bankAccountId })}
+              className={fi}
+            />
+            {form.method === 'wallet' && (
+              <p className="text-[11px] text-s-muted mt-1">A JazzCash / Easypaisa wallet is its own account — add it under Configuration → Bank accounts.</p>
+            )}
+          </div>
+        )}
         <Field label="Reference">
-          <input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="CHQ-001" className={fi} />
+          <input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder={form.method === 'cheque' ? 'Cheque no.' : 'Bank reference'} className={fi} />
         </Field>
         <Field label="Amount (PKR) *">
-          <input type="number" value={form.amountCents} onChange={(e) => setForm({ ...form, amountCents: e.target.value })} placeholder="50000" className={fi} />
+          <input type="number" min="0" step="any" value={form.amountCents} onChange={(e) => setForm({ ...form, amountCents: e.target.value })} placeholder="50000" className={fi} />
         </Field>
         <Field label="Notes">
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
@@ -946,15 +1471,19 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
         </button>
         <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
       </div>
+      {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
     </div>
   )
 }
 
-function AllocateModal({ paymentId, qc, onClose }: { paymentId: string; qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
+function AllocateModal({ paymentId, supplierId, qc, onClose }: { paymentId: string; supplierId: string; qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
+  // This supplier's bills that still owe something (open or part-paid).
   const { data: bills = [] } = useQuery({
-    queryKey: ['procurement', 'bills', '', false],
-    queryFn: () => api.get<Bill[]>('/procurement/bills?status=open'),
+    queryKey: ['procurement', 'bills', 'supplier', supplierId],
+    queryFn: () => api.get<Bill[]>(`/procurement/bills?supplierId=${supplierId}`),
+    enabled: !!supplierId,
   })
+  const owing = bills.filter((b) => b.status !== 'void' && billDue(b) > 0)
 
   const [allocations, setAllocations] = useState<Record<string, string>>({})
 
@@ -962,39 +1491,40 @@ function AllocateModal({ paymentId, qc, onClose }: { paymentId: string; qc: Retu
     mutationFn: () => {
       const applications = Object.entries(allocations)
         .filter(([, v]) => v && Number(v) > 0)
-        .map(([billId, v]) => ({ billId, amountAppliedCents: Math.round(Number(v) * 100) }))
+        .map(([billId, v]) => ({ billId, amountAppliedCents: rupeesToPaisa(v) }))
       return api.post(`/procurement/payments/${paymentId}/allocate`, { applications })
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['procurement', 'payments'] })
-      void qc.invalidateQueries({ queryKey: ['procurement', 'bills'] })
+      void qc.invalidateQueries({ queryKey: ['procurement'] })
+      void qc.invalidateQueries({ queryKey: ['ap-aging'] })
       onClose()
     },
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
       <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-lg space-y-4">
         <div className="flex items-center justify-between">
           <p className="font-bold text-s-text">Allocate to Bills</p>
           <button onClick={onClose} className="text-s-muted text-xs">✕</button>
         </div>
         <div className="space-y-2 max-h-64 overflow-y-auto">
-          {bills.filter((b) => billDue(b) > 0).map((b) => (
+          {owing.map((b) => (
             <div key={b.id} className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-s-text font-medium">{b.billNumber}</p>
                 <p className="text-xs text-s-muted">Outstanding: {fmtPkrWhole(billDue(b))}</p>
               </div>
-              <input type="number" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
+              <input type="number" min="0" step="any" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
                 value={allocations[b.id] ?? ''}
                 onChange={(e) => setAllocations({ ...allocations, [b.id]: e.target.value })} />
             </div>
           ))}
-          {bills.filter((b) => billDue(b) > 0).length === 0 && (
+          {owing.length === 0 && (
             <p className="text-s-muted text-sm">No open bills to allocate to.</p>
           )}
         </div>
+        {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
         <div className="flex gap-2 pt-2">
           <button onClick={() => mut.mutate()} disabled={mut.isPending || Object.values(allocations).every((v) => !v || Number(v) <= 0)}
             className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
@@ -1023,7 +1553,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
   const { data: statement } = useQuery({
     queryKey: ['procurement', 'statement', statementId],
-    queryFn: () => api.get<{ supplier: Supplier; outstanding: number; openingUnpostedCents?: number; bills: Bill[]; payments: SupplierPayment[] }>(`/procurement/suppliers/${statementId}/statement`),
+    queryFn: () => api.get<{ supplier: Supplier; outstanding: number; openingUnpostedCents?: number; bills: Bill[]; creditNotes?: Bill[]; payments: SupplierPayment[] }>(`/procurement/suppliers/${statementId}/statement`),
     enabled: !!statementId,
   })
 
@@ -1098,7 +1628,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             <p className="font-bold text-s-text">{statement.supplier.name} — Statement</p>
             <button onClick={() => setStatementId(null)} className="text-s-muted text-xs">✕</button>
           </div>
-          <div className="flex gap-6">
+          <div className="flex flex-wrap gap-6">
             <div>
               <p className="text-xs text-s-muted">Outstanding balance</p>
               <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-s-red' : 'text-success'}`}>{fmtPkrWhole(statement.outstanding)}</p>
@@ -1111,12 +1641,12 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               )}
             </div>
           </div>
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid md:grid-cols-3 gap-4">
             <div>
               <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Bills</p>
               <div className="space-y-1">
                 {statement.bills.slice(0, 5).map((b) => (
-                  <div key={b.id} className="flex items-center justify-between text-xs">
+                  <div key={b.id} className="flex items-center justify-between gap-2 text-xs">
                     <span className="text-s-muted font-mono">{b.billNumber}</span>
                     <span className="text-s-text">{fmtPkrWhole(b.totalCents)}</span>
                     <Badge status={b.status} />
@@ -1125,13 +1655,26 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               </div>
             </div>
             <div>
+              <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Credit notes</p>
+              <div className="space-y-1">
+                {(statement.creditNotes ?? []).slice(0, 5).map((cn) => (
+                  <div key={cn.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-s-muted font-mono" title={cn.originalBill ? `Against bill ${cn.originalBill.billNumber}` : undefined}>{cn.billNumber}</span>
+                    <span className={cn.status === 'void' ? 'text-s-muted line-through' : 'text-success'}>{fmtPkrWhole(-cn.totalCents)}</span>
+                    <Badge status={cn.status} />
+                  </div>
+                ))}
+                {(statement.creditNotes ?? []).length === 0 && <p className="text-xs text-s-muted">None</p>}
+              </div>
+            </div>
+            <div>
               <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Payments</p>
               <div className="space-y-1">
                 {statement.payments.slice(0, 5).map((p) => (
-                  <div key={p.id} className="flex items-center justify-between text-xs">
+                  <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
                     <span className="text-s-muted">{fmt(p.paymentDate)}</span>
-                    <span className="text-s-text capitalize">{p.method.replace(/_/g, ' ')}</span>
-                    <span className="text-success font-semibold">{fmtPkrWhole(p.amountCents)}</span>
+                    <span className="text-s-text">{p.bankAccount?.name ?? methodLabel(p.method)}</span>
+                    <span className={p.voidedAt ? 'text-s-muted line-through' : 'text-success font-semibold'}>{fmtPkrWhole(p.amountCents)}</span>
                   </div>
                 ))}
               </div>
@@ -1280,61 +1823,90 @@ function AgingTab() {
 // REORDER TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
-function ReorderTab() {
-  const { data, isLoading } = useQuery({
+// GET /procurement/reorder returns items below par grouped by their supplier
+// (service.ts reorderSuggestions — quantities already net of open POs). Each
+// group drafts ONE purchase order through the normal PO form, so the
+// company checks and the approval limit apply as for any PO. This tab used to
+// expect a flat item list the API never sent: blank names, "NaN% below par".
+function ReorderTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+  const { data = [], isLoading, error } = useQuery({
     queryKey: ['procurement', 'reorder'],
-    queryFn: () => api.get<ReorderItem[]>('/procurement/reorder'),
+    queryFn: () => api.get<ReorderGroup[]>('/procurement/reorder'),
   })
+  const [draft, setDraft] = useState<PoDraft | null>(null)
 
   if (isLoading) return <div className="p-6"><p className="text-s-muted text-sm">Loading…</p></div>
-  if (!data || data.length === 0) return <div className="p-6"><EmptyState icon="🔄" title="All stocked up" sub="No items below reorder threshold" /></div>
+  if (error) return <div className="p-6"><p className="text-s-red text-sm">{errText(error)}</p></div>
+  if (data.length === 0) return <div className="p-6"><EmptyState icon="🔄" title="All stocked up" sub="No items below their par level, counting what is already on order" /></div>
+
+  const itemCount = data.reduce((s, g) => s + g.lines.length, 0)
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="font-bold text-s-text text-lg">Reorder Suggestions</p>
-          <p className="text-sm text-s-muted">{data.length} item{data.length !== 1 ? 's' : ''} below par level</p>
-        </div>
+      <div>
+        <p className="font-bold text-s-text text-lg">Reorder Suggestions</p>
+        <p className="text-sm text-s-muted">
+          {itemCount} item{itemCount !== 1 ? 's' : ''} below par level, from {data.length} supplier{data.length !== 1 ? 's' : ''}. Quantities bring each item back to par after what is already on order.
+        </p>
       </div>
 
-      <div className="rounded-xl border border-s-border overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-s-border bg-s-surface/40">
-              <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Item</th>
-              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">In stock</th>
-              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Par level</th>
-              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Reorder qty</th>
-              <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Est. cost</th>
-              <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Suppliers</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((item) => {
-              const estCost = item.costPerUnit != null ? item.reorderQty * item.costPerUnit : null
-              const pctBelow = ((item.parLevel - item.currentStock) / item.parLevel * 100).toFixed(0)
-              return (
-                <tr key={item.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
-                  <td className="px-4 py-3">
-                    <p className="text-s-text font-medium">{item.name}</p>
-                    <p className="text-xs text-s-red">{pctBelow}% below par</p>
-                  </td>
-                  <td className="px-4 py-3 text-right text-s-red font-bold">{item.currentStock} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-s-muted">{item.parLevel} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-s-amber font-semibold">{item.reorderQty} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-s-muted hidden md:table-cell">{estCost != null ? fmtPkrWhole(estCost * 100) : '—'}</td>
-                  <td className="px-4 py-3 text-s-muted text-xs hidden md:table-cell">
-                    {item.suppliers?.map((s) => s.name).join(', ') ?? '—'}
-                  </td>
+      {draft && <CreatePoForm key={draft.supplierId} qc={qc} initial={draft} onClose={() => setDraft(null)} />}
+
+      {data.map((g) => (
+        <div key={g.supplierId ?? 'unassigned'} className="rounded-xl border border-s-border overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-s-surface/40 border-b border-s-border">
+            <div>
+              <p className="font-semibold text-s-text">{g.supplierName}</p>
+              <p className="text-xs text-s-muted">
+                {g.lines.length} item{g.lines.length !== 1 ? 's' : ''} · about {fmtPkrWhole(g.estimatedTotalCents)} at current cost
+              </p>
+            </div>
+            {g.supplierId ? (
+              <button
+                onClick={() => setDraft({
+                  supplierId: g.supplierId!,
+                  lines: g.lines.map((l) => ({
+                    inventoryItemId: l.inventoryItemId,
+                    quantityOrdered: String(l.suggestedQty),
+                    unitCostCents: l.unitCostCents ? String(l.unitCostCents / 100) : '',
+                    notes: '',
+                  })),
+                })}
+                className="rounded-xl bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90">
+                Draft PO
+              </button>
+            ) : (
+              <p className="text-xs text-s-amber max-w-xs">These items have no supplier of this company — set one on each item (Inventory) to order them here.</p>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-s-border">
+                  <th className="text-left px-4 py-2 text-xs text-s-muted font-semibold">Item</th>
+                  <th className="text-right px-4 py-2 text-xs text-s-muted font-semibold">In stock</th>
+                  <th className="text-right px-4 py-2 text-xs text-s-muted font-semibold hidden sm:table-cell">On order</th>
+                  <th className="text-right px-4 py-2 text-xs text-s-muted font-semibold hidden sm:table-cell">Par level</th>
+                  <th className="text-right px-4 py-2 text-xs text-s-muted font-semibold">Order</th>
+                  <th className="text-right px-4 py-2 text-xs text-s-muted font-semibold hidden md:table-cell">Est. cost</th>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {g.lines.map((l) => (
+                  <tr key={l.inventoryItemId} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
+                    <td className="px-4 py-2.5 text-s-text font-medium">{l.name}</td>
+                    <td className="px-4 py-2.5 text-right text-s-red font-semibold">{l.currentStock} {l.unit}</td>
+                    <td className="px-4 py-2.5 text-right text-s-muted hidden sm:table-cell">{l.onOrder > 0 ? `${l.onOrder} ${l.unit}` : '—'}</td>
+                    <td className="px-4 py-2.5 text-right text-s-muted hidden sm:table-cell">{l.parLevel} {l.unit}</td>
+                    <td className="px-4 py-2.5 text-right text-s-amber font-semibold">{l.suggestedQty} {l.unit}</td>
+                    <td className="px-4 py-2.5 text-right text-s-muted hidden md:table-cell">{l.unitCostCents ? fmtPkrWhole(l.suggestedQty * l.unitCostCents) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   )
 }
