@@ -155,6 +155,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Sales tax return', href: '/accounting/sales-tax-return', sub: true },
     { label: 'Fixed assets', href: '/accounting/fixed-assets', sub: true },
     { label: 'Petty cash', href: '/finance/petty-cash', sub: true },
+    { label: 'Cash vouchers', href: '/finance/cash-vouchers', sub: true, hint: 'HOD signs, director approves, the signed photo puts it in petty cash' },
     { label: 'Deposit drops', href: '/finance/deposit-drops', sub: true },
     { label: 'Bank accounts', href: '/configuration/bank-accounts', sub: true },
   ],
@@ -320,6 +321,11 @@ export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
   // only the caller (or the employee whose code + PIN is entered), so every
   // login opens it; the Workforce sidebar link stays with staff_directory.
   '/time-clock',
+  // Cash vouchers: the cashier who holds a box (Jamil sb) pays against the
+  // printed voucher and uploads the signed photo without the accounting
+  // module. The API scopes the list to the boxes they hold; preparing,
+  // signing and cancelling stay with cash keepers server-side.
+  '/finance/cash-vouchers',
   ...PERSONAL_PAGES.map((p) => p.href),
 ]
 

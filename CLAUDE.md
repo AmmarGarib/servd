@@ -794,6 +794,25 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   under `reconciliation`, receiving accounts on `/setup` (finance).
   Runbooks: `docs/raast.md` (finance + cashier), `docs/raast-sms-forwarder.md` (IT).
 
+### Cash vouchers (owner, 2026-10-13; format v1, owner will revise)
+
+- **Flow:** HOD prepares + signs → director (role `admin`, never the HOD's
+  login: 409 `SAME_SIGNER`) approves → printed → the box's custodian (the
+  cashier, Jamil sb) pays and signs the paper → the PHOTO of the signed paper
+  is uploaded. **Only that upload puts it in cash** — one petty-cash spend on
+  the voucher's box, once (claim `approved → disbursed` in the same
+  transaction). Making, signing, approving or printing never touches cash.
+- `CashVoucher` / `CashVoucherAttachment` (tenantId; number `CV-00001` per
+  company under an advisory lock; the photo is stored as bytes, ≤3 MB, magic
+  bytes checked). API `/trustops/cash-vouchers` (`trustops/cashVouchers.ts`);
+  admin `/finance/cash-vouchers` (always open: a custodian without the
+  accounting module lists only approved/paid vouchers on boxes they hold).
+  Approvals inbox type `cash_voucher` (CEO).
+- **`recordPettyCashSpendTx` (`trustops/pettyCash.ts`) is THE one way money
+  leaves a petty-cash box** (manual spend and voucher). Float changes are
+  always relative + conditional (`floatCents >= amount`), never "set to what
+  we read".
+
 ## Claude Code operating policy — model routing & parallel agents
 
 Per the product owner (2026-09-27): optimize for **speed AND efficiency

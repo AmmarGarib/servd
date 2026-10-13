@@ -64,6 +64,13 @@ export default function PettyCashPage() {
       </header>
 
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-3">
+        <Link href="/finance/cash-vouchers" className="s-card-hover flex items-center justify-between gap-3 px-5 py-4">
+          <div className="min-w-0">
+            <p className="font-black text-white/90">Cash vouchers</p>
+            <p className="text-xs text-white/45 mt-0.5">Signed and paid vouchers land here as spends — the HOD signs, the director approves, and the photo of the cashier-signed voucher books it on its box.</p>
+          </div>
+          <span className="text-sm font-bold text-primary-ink shrink-0">Open →</span>
+        </Link>
         {boxes.length === 0 && (
           <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="font-bold text-white/85">No petty cash boxes</p>

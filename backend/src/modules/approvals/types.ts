@@ -16,6 +16,7 @@ export const APPROVAL_TYPES = [
   'payroll_run',
   'tip_pool',
   'stock_transfer',
+  'cash_voucher',
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 

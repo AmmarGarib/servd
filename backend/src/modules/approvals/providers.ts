@@ -447,6 +447,62 @@ const stockTransfers: ApprovalProvider = {
   },
 }
 
+// ── Cash vouchers waiting for the director ───────────────────────────────────
+// trustops/cashVouchers.ts: GET /trustops/cash-vouchers?status=hod_signed
+// (CASH_GUARD), POST /trustops/cash-vouchers/:id/approve|reject — ADMIN_ONLY
+// (the director). Never the login that signed as HOD (409 SAME_SIGNER): such
+// an item is listed with Approve disabled, Reject stays.
+const cashVouchers: ApprovalProvider = {
+  type: 'cash_voucher',
+  label: 'Cash vouchers',
+  module: 'accounting',
+  link: '/finance/cash-vouchers',
+  approverRoles: ADMIN_ONLY,
+  delegable: true,
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; number: string; voucherDate: string; payeeName: string; purpose: string
+      amountCents: number; category: string | null; department: string | null; conceptName: string | null
+      boxName: string; preparedByName: string | null; hodSignedById: string | null; hodSignedByName: string | null
+      hodSignedAt: string | null; createdAt: string
+    }
+    const res = await ctx.read<{ items: Row[] }>('/trustops/cash-vouchers?status=hod_signed&limit=200')
+    if (res === null) return null
+    return res.items.map((r): ApprovalItem => {
+      const base = `/trustops/cash-vouchers/${r.id}`
+      return {
+        type: 'cash_voucher',
+        id: r.id,
+        tenantId: r.tenantId,
+        title: `${r.number} — ${r.payeeName} — ${pkr(r.amountCents)}`,
+        subtitle: r.purpose,
+        facts: facts([
+          ['Voucher', r.number],
+          ['Pay to', r.payeeName],
+          ['Amount', pkr(r.amountCents)],
+          ['Purpose', r.purpose],
+          ['Date', ymd(r.voucherDate)],
+          ['Brand', r.conceptName],
+          ['Department', r.department],
+          ['Paid from', r.boxName],
+          ['Prepared by', r.preparedByName],
+          ['HOD signed by', r.hodSignedByName],
+        ]),
+        amountCents: r.amountCents,
+        waitingSince: iso(r.hodSignedAt ?? r.createdAt),
+        link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
+        actions: [
+          { kind: 'approve', label: 'Sign as director', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Sign this voucher as director? The cashier pays it against the signed paper; nothing leaves the cash box until the photo of that paper is uploaded.',
+            ...(r.hodSignedById === ctx.user.id && { disabledReason: 'You signed this as HOD — a different person must sign as director' }) },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
 /** Every approval type, in the order the inbox shows them. */
 export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   staffLogins,
@@ -457,6 +513,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   payrollRuns,
   tipPools,
   stockTransfers,
+  cashVouchers,
 ]
 
 export type { ProviderContext }

@@ -4806,6 +4806,10 @@ model Tenant {
   taxInvoices      TaxInvoice[]       @relation("TenantTaxInvoices")
   taxInvoiceSeries TaxInvoiceSeries[] @relation("TenantTaxInvoiceSeries")
 
+  // Cash vouchers (2026-10-13)
+  cashVouchers           CashVoucher[]           @relation("TenantCashVouchers")
+  cashVoucherAttachments CashVoucherAttachment[] @relation("TenantCashVoucherAttachments")
+
   // Raast QR (2026-10-12)
   raastReceipts  RaastReceipt[]  @relation("TenantRaastReceipts")
   bankSmsDevices BankSmsDevice[] @relation("TenantBankSmsDevices")
@@ -5216,7 +5220,8 @@ model PettyCashBox {
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
 
-  movements PettyCashMovement[]
+  movements    PettyCashMovement[]
+  cashVouchers CashVoucher[]
 
   @@index([conceptId])
   @@index([tenantId])
@@ -6529,4 +6534,85 @@ model BankSmsAlert {
   @@index([tenantId, bankRef])
   @@index([status, createdAt])
   @@map("bank_sms_alerts")
+}
+
+// ─── Cash vouchers (owner, 2026-10-13) ───────────────────────────────────────
+// GS Foods' internal cash payment voucher. The HOD prepares and signs it, the
+// director (CEO) signs it, it is printed, the cashier (the cash box's
+// custodian) signs the paper and pays the cash, and a photo of the signed
+// paper is uploaded. Only that upload puts it in cash: it then becomes ONE
+// petty-cash spend on its box (PettyCashMovement). Generating, signing or
+// printing a voucher never touches cash.
+
+enum CashVoucherStatus {
+  draft // prepared, not yet signed by the HOD
+  hod_signed // signed by the HOD — waiting for the director
+  approved // signed by the director — print, cashier signs and pays
+  disbursed // signed photo uploaded — booked as a petty-cash spend
+  rejected // the director refused it (with a note)
+  cancelled // withdrawn before payment
+}
+
+model CashVoucher {
+  id                  String            @id @default(cuid())
+  tenantId            String
+  seq                 Int // per company, from 1
+  number              String // "CV-00001"
+  voucherDate         DateTime
+  payeeName           String // who receives the cash
+  payeeUserId         String?
+  purpose             String
+  category            String? // expense category (the petty-cash spend's category)
+  conceptId           String? // brand / cost centre (the company's own)
+  department          String?
+  // Paid out of a petty-cash box (INT4 like PettyCashMovement), so INT4.
+  amountCents         Int
+  boxId               String // the cash box it is paid from — its custodian is the cashier
+  status              CashVoucherStatus @default(draft)
+  preparedById        String
+  hodSignedById       String?
+  hodSignedAt         DateTime?
+  directorSignedById  String?
+  directorSignedAt    DateTime?
+  rejectedById        String?
+  rejectedAt          DateTime?
+  rejectNote          String?
+  cancelledById       String?
+  cancelledAt         DateTime?
+  cancelNote          String?
+  disbursedById       String? // who uploaded the signed photo
+  disbursedAt         DateTime?
+  cashierName         String? // the box custodian's name when it was paid
+  pettyCashMovementId String?           @unique // the spend it became
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
+  box         PettyCashBox            @relation(fields: [boxId], references: [id])
+  attachments CashVoucherAttachment[]
+
+  @@unique([tenantId, seq])
+  @@index([tenantId, status, createdAt])
+  @@map("cash_vouchers")
+}
+
+/// The photo of the signed paper voucher. Stored in the database (file
+/// storage is not configured on every server); the admin compresses it first.
+model CashVoucherAttachment {
+  id           String   @id @default(cuid())
+  tenantId     String
+  voucherId    String
+  kind         String   @default("signed_voucher")
+  mime         String // image/jpeg | image/png | image/webp
+  sizeBytes    Int
+  data         Bytes
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  tenant  Tenant      @relation("TenantCashVoucherAttachments", fields: [tenantId], references: [id])
+  voucher CashVoucher @relation(fields: [voucherId], references: [id])
+
+  @@index([voucherId])
+  @@index([tenantId])
+  @@map("cash_voucher_attachments")
 }

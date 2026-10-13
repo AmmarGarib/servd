@@ -34,6 +34,7 @@ const { recipeRoutes } = await import('../src/modules/recipes/routes.js')
 const { hrRoutes } = await import('../src/modules/hr/routes.js')
 const { tipPoolRoutes } = await import('../src/modules/tipPools/routes.js')
 const { stockTransferRoutes } = await import('../src/modules/stockTransfers/routes.js')
+const { trustopsRoutes } = await import('../src/modules/trustops/routes.js')
 const { registerApprovalsPlugin, APPROVAL_PROVIDERS, collectApprovals } = await import('../src/modules/approvals/index.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
 
@@ -124,6 +125,16 @@ async function seedCompany(co: 'A' | 'B', hod: string, owner: string) {
   const item = await prisma.inventoryItem.create({ data: { name: `${P} flour ${co}`, unit: 'kg', tenantId } })
   const tr = await prisma.stockTransfer.create({ data: { inventoryItemId: item.id, fromLocationId: l1.id, toLocationId: l2.id, quantity: 5, unit: 'kg', requestedById: U[hod]!.id, status: 'requested' } })
   ids[co]['stock_transfer'] = tr.id
+
+  // A cash voucher the HOD signed, waiting for the director.
+  const cashBox = await prisma.pettyCashBox.create({ data: { tenantId, name: `${P} box ${co}`, custodianId: U[hod]!.id, floatCents: 100_000_00 } })
+  const voucher = await prisma.cashVoucher.create({
+    data: {
+      tenantId, seq: 1, number: 'CV-00001', voucherDate: new Date(), payeeName: `${P} payee ${co}`, purpose: 'Site visit',
+      amountCents: 5_000_00, boxId: cashBox.id, status: 'hod_signed', preparedById: U[hod]!.id, hodSignedById: U[hod]!.id, hodSignedAt: new Date(),
+    },
+  })
+  ids[co]['cash_voucher'] = voucher.id
 }
 
 beforeAll(async () => {
@@ -154,6 +165,7 @@ beforeAll(async () => {
     await api.register(hrRoutes, { prefix: '/hr' })
     await api.register(tipPoolRoutes, { prefix: '/tip-pools' })
     await api.register(stockTransferRoutes, { prefix: '/stock-transfers' })
+    await api.register(trustopsRoutes, { prefix: '/trustops' })
     await registerApprovalsPlugin(api)
   }, { prefix: '/api/v1' })
   await app.ready()
@@ -170,9 +182,9 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual(
-      ['hr_request', 'payroll_run', 'purchase_order', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool'],
+      ['cash_voucher', 'hr_request', 'payroll_run', 'purchase_order', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool'],
     )
-    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer']) {
+    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher']) {
       expect(countOf(body, t), t).toBe(1)
       expect(body.items.find((i) => i.type === t)?.id, t).toBe(ids.A[t])
     }
@@ -195,9 +207,11 @@ describe('two companies', () => {
     const one = (await counts('ceoBoth')).json() as Inbox
     expect(countOf(one, 'purchase_order')).toBe(1)
     expect(countOf(one, 'staff_login')).toBe(1)
+    expect(countOf(one, 'cash_voucher')).toBe(1)
     const both = (await counts('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
     expect(countOf(both, 'purchase_order')).toBe(2)
     expect(countOf(both, 'stock_transfer')).toBe(2)
+    expect(countOf(both, 'cash_voucher')).toBe(2)
     expect(both.total).toBeGreaterThan(one.total)
     // /counts carries no items.
     expect((both as unknown as { items?: unknown }).items).toBeUndefined()

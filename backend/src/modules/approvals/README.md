@@ -48,6 +48,7 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `payroll_run` | `GET /hr/payroll/runs` (drafts) | `POST /hr/payroll/runs/:id/approve` | admin, owner, management (never whoever prepared it) |
 | `tip_pool` | `GET /tip-pools` (window over, or posted) | opens /tip-pools (post / pay need review) | admin, owner |
 | `stock_transfer` | `GET /stock-transfers?status=requested` | `PATCH /stock-transfers/:id/approve`, `/cancel` | managers |
+| `cash_voucher` | `GET /trustops/cash-vouchers?status=hod_signed` | `POST /trustops/cash-vouchers/:id/approve`, `/reject` (note) | admin — the director (never the login that signed as HOD) |
 
 `approverRoles` in `providers.ts` mirrors each approve route's `requireAuth`
 list. It only narrows (a queue route wider than its approve route — the

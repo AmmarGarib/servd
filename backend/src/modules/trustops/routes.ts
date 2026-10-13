@@ -11,8 +11,10 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { verifyManagerPin } from '../auth/managerPin.js'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM, HR_TEAM } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, HR_TEAM } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
+import { CASH_GUARD, recordPettyCashSpendTx, insufficientFloatError } from './pettyCash.js'
+import { cashVoucherRoutes } from './cashVouchers.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { audit } from '../../lib/audit.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
@@ -78,7 +80,8 @@ async function isMemberOf(userId: string, tenantId: string): Promise<boolean> {
 //   MEAL_READERS — the staff-meal log: the manager tiers plus HR. The page is
 //     in HR's 'staff_directory' (Workforce); HR reads it, nobody writes here
 //     (meals are rung through the till).
-const CASH_KEEPERS = FINANCE_TEAM
+// CASH_KEEPERS / CASH_GUARD live in pettyCash.ts, shared with the cash
+// vouchers (cashVouchers.ts) so both pages are gated the same way.
 const MEAL_READERS = HR_TEAM
 // /trustops is not a central module-gated prefix (and must not be wholesale:
 // /petty-cash/movements is ALL_STAFF), so the roles newly let in must also
@@ -86,7 +89,6 @@ const MEAL_READERS = HR_TEAM
 // 'staff_directory' — or the CEO's Module Access untick closes nothing
 // (W3B-RV-1). The deposit-drop POST posts Dr bank / Cr cash. Manager tiers
 // pass exactly as before.
-const CASH_GUARD = [requireAuth(...CASH_KEEPERS), moduleGateForNewRoles(['accounting'])]
 const MEAL_GUARD = [requireAuth(...MEAL_READERS), moduleGateForNewRoles(['staff_directory'])]
 
 type MealRow = { id: string; conceptId: string | null; shiftId: string | null; staffId: string }
@@ -365,12 +367,13 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       body.type === 'spend' ? -Math.abs(body.amountCents) :
       body.amountCents
 
+    // Fast refusal before anything is written (a bill payment included). For
+    // a spend the authoritative check is recordPettyCashSpendTx's conditional
+    // update inside the transaction.
     const newFloat = box.floatCents + signedAmount
-    if (newFloat < 0) {
-      throw new AppError('INSUFFICIENT_FLOAT', `This spend of PKR ${(absAmount / 100).toFixed(0)} exceeds box float of PKR ${(box.floatCents / 100).toFixed(0)}.`, 400)
-    }
+    if (newFloat < 0) throw insufficientFloatError(absAmount, box.floatCents)
 
-    const { movement, supplierPaymentId } = await prisma.$transaction(async (tx) => {
+    const { movement, supplierPaymentId, newFloatCents } = await prisma.$transaction(async (tx) => {
       let supplierPaymentId: string | null = null
       if (bill) {
         const { createPaymentTx } = await import('../procurement/service.js')
@@ -386,6 +389,22 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         })
         supplierPaymentId = payment.id
       }
+      // A spend goes through the ONE spend path (pettyCash.ts) — the same one
+      // a disbursed cash voucher uses.
+      if (body.type === 'spend') {
+        const spent = await recordPettyCashSpendTx(tx, {
+          box,
+          amountCents: absAmount,
+          category: body.category ?? null,
+          reason: body.reason,
+          receiptUrl: body.receiptUrl ?? null,
+          vendorName: body.vendorName ?? bill?.supplierName ?? null,
+          approvedById,
+          supplierPaymentId,
+          createdById: req.staffUser!.id,
+        })
+        return { movement: spent.movement, supplierPaymentId, newFloatCents: spent.newFloatCents }
+      }
       const m = await tx.pettyCashMovement.create({
         data: {
           boxId: box.id,
@@ -400,11 +419,19 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
           createdById: req.staffUser!.id,
         },
       })
-      await tx.pettyCashBox.update({
-        where: { id: box.id },
-        data: { floatCents: newFloat },
+      // Relative, never "set to what we read": a voucher payment or another
+      // movement racing this one must not be overwritten. Money out of the
+      // box only when the float still covers it.
+      const moved = await tx.pettyCashBox.updateMany({
+        where: { id: box.id, deletedAt: null, ...(signedAmount < 0 && { floatCents: { gte: -signedAmount } }) },
+        data: { floatCents: { increment: signedAmount } },
       })
-      return { movement: m, supplierPaymentId }
+      if (moved.count === 0) {
+        const cur = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: box.id }, select: { floatCents: true } })
+        throw insufficientFloatError(absAmount, cur.floatCents)
+      }
+      const after = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: box.id }, select: { floatCents: true } })
+      return { movement: m, supplierPaymentId, newFloatCents: after.floatCents }
     })
 
     // The supplier payment's entry (Dr 2010 / Cr 1010) was posted inside the
@@ -420,7 +447,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       metadata: { ip: req.ip, approvedById, supplierPaymentId },
     })
 
-    return reply.status(201).send({ movement, newFloatCents: newFloat })
+    return reply.status(201).send({ movement, newFloatCents })
   })
 
   // GET /trustops/petty-cash/boxes/:id/reconcile — show variance vs physical count
@@ -428,16 +455,22 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     { preHandler: CASH_GUARD },
     async (req, reply) => {
       const body = z.object({ countedCents: z.number().int().min(0), notes: z.string().max(500).optional() }).parse(req.body)
-      const box = await findBoxInScope(req, req.params.id)
-      const variance = body.countedCents - box.floatCents
-
-      const movement = await prisma.pettyCashMovement.create({
-        data: {
-          boxId: box.id, type: 'reconcile',
-          amountCents: variance, reason: body.notes ?? 'Reconciliation', createdById: req.staffUser!.id,
-        },
+      const scoped = await findBoxInScope(req, req.params.id)
+      // The variance is against the float AS LOCKED, so a spend or voucher
+      // payment landing during the count is never folded into the variance.
+      const { movement, box, variance } = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM petty_cash_boxes WHERE id = ${scoped.id} FOR UPDATE`
+        const box = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: scoped.id } })
+        const variance = body.countedCents - box.floatCents
+        const movement = await tx.pettyCashMovement.create({
+          data: {
+            boxId: box.id, type: 'reconcile',
+            amountCents: variance, reason: body.notes ?? 'Reconciliation', createdById: req.staffUser!.id,
+          },
+        })
+        await tx.pettyCashBox.update({ where: { id: box.id }, data: { floatCents: body.countedCents } })
+        return { movement, box, variance }
       })
-      await prisma.pettyCashBox.update({ where: { id: box.id }, data: { floatCents: body.countedCents } })
 
       // Variance flag — beyond the box's company's cash tolerance
       // (Configuration → Receipts, the same limit the till drawers use).
@@ -461,6 +494,14 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       return reply.status(200).send({ movement, varianceCents: variance })
     },
   )
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 2b. CASH VOUCHERS — /trustops/cash-vouchers (cashVouchers.ts)
+  // ════════════════════════════════════════════════════════════════════════
+  // GS Foods' internal cash payment voucher: HOD signs, director signs, the
+  // cashier signs the paper and pays; the photo of the signed paper turns it
+  // into ONE petty-cash spend through recordPettyCashSpendTx.
+  await fastify.register(cashVoucherRoutes, { prefix: '/cash-vouchers' })
 
   // ════════════════════════════════════════════════════════════════════════
   // 3. DEPOSIT DROP — cash to bank
