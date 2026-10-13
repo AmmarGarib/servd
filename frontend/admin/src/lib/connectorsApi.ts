@@ -637,6 +637,16 @@ export function useRaastSettings(opts: { refetchMs?: number } = {}) {
 
 interface TenantMine { id: string; name: string; isActive?: boolean }
 
+/** Every company the operator belongs to (the sidebar switcher's list). */
+export function useMyCompanies(): TenantMine[] {
+  const { data } = useQuery<TenantMine[]>({
+    queryKey: ['my-tenants'],
+    queryFn: () => api.get<TenantMine[]>('/tenants/mine'),
+    staleTime: 30_000,
+  })
+  return data ?? []
+}
+
 /** The operator's active company (the one every /connectors call binds to). */
 export function useActiveCompany(): TenantMine | null {
   const { data } = useQuery<TenantMine[]>({

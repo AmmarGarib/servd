@@ -208,10 +208,13 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     const include = { payments: { orderBy: [{ receivedAt: 'desc' as const }, { createdAt: 'desc' as const }] } }
 
     // Summary: every invoice still owed, and every one that could be in credit
-    // (only a credit note can push an invoice below zero).
+    // (a credit note, or a reversed refund, can push an invoice below zero).
     const [owed, maybeInCredit] = await Promise.all([
       prisma.receivableInvoice.findMany({ where: { ...scope, kind: INVOICE, status: { in: ['open', 'partial'] } }, include }),
-      prisma.receivableInvoice.findMany({ where: { ...scope, kind: INVOICE, status: 'paid', creditedCents: { gt: 0 } }, include }),
+      prisma.receivableInvoice.findMany({
+        where: { ...scope, kind: INVOICE, status: 'paid', OR: [{ creditedCents: { gt: 0 } }, { payments: { some: { reversedAt: { not: null } } } }] },
+        include,
+      }),
     ])
     const inCredit = maybeInCredit.filter((r) => balanceOf(r) < 0)
     const now = new Date()
@@ -674,6 +677,9 @@ export async function receivableRoutes(fastify: FastifyInstance) {
 
       const done = await prisma.$transaction(async (tx) => {
         const inv = await lockInvoice(tx, found.id)
+        // A voided invoice is closed: its receipts are settled by the void's
+        // own reversals, never one by one afterwards.
+        if (inv.status === 'void') throw new AppError('INVOICE_VOID', 'This invoice is void — nothing on it can be reversed', 409)
         const claimed = await tx.receivablePayment.updateMany({
           where: { id: pay.id, reversedAt: null },
           data: { reversedAt: new Date(), reversedReason: body.reason },
@@ -735,11 +741,14 @@ export async function receivableRoutes(fastify: FastifyInstance) {
 
     await prisma.$transaction(async (tx) => {
       const claimed = await tx.receivableInvoice.updateMany({
-        where: { id: found.id, kind: INVOICE, status: 'open', paidCents: 0, creditedCents: 0, whtCents: 0 },
+        // Nothing received, credited or withheld — and no live receipt or
+        // refund row either (a payment and a refund that net to zero still
+        // sit in 1110 until reversed).
+        where: { id: found.id, kind: INVOICE, status: 'open', paidCents: 0, creditedCents: 0, whtCents: 0, payments: { none: { reversedAt: null } } },
         data: { status: 'void', voidedAt: new Date(), voidReason: body.reason },
       })
       if (claimed.count === 0) {
-        throw new AppError('CANNOT_VOID', 'Only an invoice with nothing received, credited or withheld can be voided — issue a credit note instead', 409)
+        throw new AppError('CANNOT_VOID', 'Only an invoice with nothing received, credited, withheld or refunded can be voided — reverse those first, or issue a credit note instead', 409)
       }
       await reverseJournalEntry(found.tenantId, 'receivable.issue', found.id, body.reason, {
         tx, postedBy: req.staffUser!.id,

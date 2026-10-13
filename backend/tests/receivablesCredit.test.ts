@@ -338,6 +338,29 @@ describe('credit notes', () => {
     // Now the invoice can be voided.
     expect((await call('admA', 'POST', `${AR}/${i.id}/void`, { reason: 'raised in error' })).statusCode).toBe(200)
   })
+
+  it('a receipt and a refund that net to zero still block the void; a void invoice refuses reversals', async () => {
+    const i = await raise('admA', { taxCents: 0, amountCents: 50_000 })
+    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    expect(p.statusCode, p.body).toBe(201)
+    const cn = (await call('admA', 'POST', `${AR}/${i.id}/credit-notes`, { amountCents: 50_000, reason: 'Event cancelled', date: today() })).json()
+    const r = await call('admA', 'POST', `${AR}/${i.id}/refunds`, { amountCents: 50_000, date: today(), method: 'bank', bankAccountId: bankA2 })
+    expect(r.statusCode, r.body).toBe(201)
+    expect((await call('admA', 'POST', `${AR}/${cn.id}/void`, { reason: 'credit raised by mistake' })).statusCode).toBe(200)
+    // paid 50,000 − refunded 50,000 = 0 and nothing credited, but both rows
+    // still sit in 1110 — the invoice cannot be voided until they are reversed.
+    const v = await call('admA', 'POST', `${AR}/${i.id}/void`, { reason: 'raised in error' })
+    expect(v.statusCode).toBe(409)
+    expect(v.json().error.code).toBe('CANNOT_VOID')
+
+    // A void invoice (another path) refuses a reversal of anything on it.
+    const j = await raise('admA', { taxCents: 0, amountCents: 20_000 })
+    const pj = await call('admA', 'POST', `${AR}/${j.id}/payments`, { amountCents: 20_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    await prisma.receivableInvoice.update({ where: { id: j.id }, data: { status: 'void' } })
+    const rv = await call('admA', 'POST', `${AR}/${j.id}/payments/${pj.json().id}/reverse`, { reason: 'bounced' })
+    expect(rv.statusCode).toBe(409)
+    expect(rv.json().error.code).toBe('INVOICE_VOID')
+  })
 })
 
 // ─── 14d income tax withheld by the client ──────────────────────────────────

@@ -8,7 +8,7 @@ import { fmtPkrWhole } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
-import { useActiveCompany } from '../../lib/connectorsApi'
+import { useActiveCompany, useMyCompanies } from '../../lib/connectorsApi'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
@@ -57,8 +57,13 @@ export default function CRMPage() {
   // A bank-transfer top-up names the active company's bank it landed in (the
   // server books it there — lib/bankAccounts.ts moneyAccountCode).
   const [walletBank, setWalletBank] = useState('')
+  // The company the top-up belongs to — picked here (not by the "All
+  // companies" guard) so the bank list and the write agree.
+  const [walletCompany, setWalletCompany] = useState('')
   const [walletError, setWalletError] = useState<string | null>(null)
   const activeCompany = useActiveCompany()
+  const myCompanies = useMyCompanies()
+  const walletTenantId = walletCompany || activeCompany?.id || ''
 
   // Deep link: /crm?customer=<id> opens that customer's detail pane. There is
   // no /crm/:id page — orders, complaints and the old /customers list link
@@ -107,7 +112,7 @@ export default function CRMPage() {
         : {
             customerId: id, amountCents: amount, kind: 'paid', tender: walletKind, description: `Paid top-up (${walletKind})`,
             ...(walletKind === 'bank' && walletBank ? { bankAccountId: walletBank } : {}),
-          }),
+          }, walletTenantId ? { tenantId: walletTenantId } : undefined),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['customer-detail', selectedId] })
       void qc.invalidateQueries({ queryKey: ['customers'] })
@@ -202,11 +207,19 @@ export default function CRMPage() {
                 <option value="bank">Customer paid — bank transfer</option>
               </select>
               <p className="text-xs text-s-muted mt-1">
-                Credited to the customer&apos;s wallet at the company you are working in, and spendable only at its brands.
+                Credited to the customer&apos;s wallet at the company below, and spendable only at its brands.
               </p>
             </div>
+            {myCompanies.length > 1 && (
+              <div>
+                <label htmlFor="wallet-company" className="text-xs text-s-muted mb-1 block">Company</label>
+                <select id="wallet-company" value={walletTenantId} onChange={(e) => { setWalletCompany(e.target.value); setWalletBank('') }} className={inp}>
+                  {myCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
             {walletKind === 'bank' && (
-              <BankAccountSelect tenantId={activeCompany?.id} value={walletBank} onChange={setWalletBank} id="wallet-bank" label="Received into" className={inp} />
+              <BankAccountSelect tenantId={walletTenantId} value={walletBank} onChange={setWalletBank} id="wallet-bank" label="Received into" className={inp} />
             )}
             {walletError && <p className="text-xs text-s-red">{walletError}</p>}
             <div className="flex gap-3">
