@@ -462,3 +462,6 @@ RESUME ORDER:
   = finished agents); relaunch died agents via .handoff/wf/waveb-build.js args {ids, note:"CONTINUE: a previous run of your brief was cut
   off by a usage limit; your files may hold its partial work — read them, keep what is right, finish, run your tests"}; then gate
   (tsc backend+admin, each agent's tests on its own DB, patch notes) -> commit "wave B wN" -> next stage.
+- ~23:35 UTC OWNER APPROVED: "downgrade stage 4" -> W4 builders run on SONNET via args.models (waveb-build.js supports
+  args.model / args.models[id]); EXCEPTION w4-integration (approvals providers, REPOSTERS, merges = money) stays OPUS.
+  W1-W3 stay Opus.
