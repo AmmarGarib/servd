@@ -6,6 +6,7 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { beforeAll, afterAll } from 'vitest'
 import { PrismaClient } from '@prisma/client'
+import { CHART_OF_ACCOUNTS } from '../src/lib/chartOfAccounts.js'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -47,12 +48,13 @@ beforeAll(async () => {
   // `db push` builds only what schema.prisma can express. The raw-SQL objects
   // production has (0_init's last section: the reservations no-overlap
   // exclusion constraint and the recipe-ingredient one-source check, plus the
-  // btree_gist extension the first needs) are applied here, read straight
-  // from the migration so there is one copy of the SQL. Without them the
+  // btree_gist extension the first needs; finance wave B's partial uniques,
+  // composite foreign key and CHECKs) are applied here, read straight from
+  // the migrations so there is one copy of the SQL. Without them the
   // race-proof booking tests ran against a table that allowed double bookings.
   await applyRawSqlObjects(prisma)
 
-  // Seed only the accounts we need for posting tests — not the full demo data
+  // The company-less chart (see seedTestAccounts) — not the full demo data.
   await seedTestAccounts(prisma)
 }, 60_000)
 
@@ -60,15 +62,58 @@ afterAll(async () => {
   await globalThis.__TEST_PRISMA__?.$disconnect()
 })
 
-async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
-  const sql = readFileSync(new URL('../prisma/migrations/0_init/migration.sql', import.meta.url), 'utf8')
-  const marker = sql.indexOf('-- ─── Raw-SQL objects')
-  if (marker === -1) throw new Error('0_init: raw-SQL section not found — update tests/setup.ts')
-  await prisma.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS btree_gist')
-  const statements = sql.slice(marker)
+/**
+ * The statements of one marked section of a migration file: from the line
+ * starting `from` up to the line starting `to` (or the end of the file),
+ * full-line comments dropped, split on ';'. A section read this way must hold
+ * no ';' inside a statement and no trailing comments — the migration says so
+ * next to its marker.
+ */
+function migrationSection(migration: string, from: string, to?: string): string[] {
+  const sql = readFileSync(new URL(`../prisma/migrations/${migration}/migration.sql`, import.meta.url), 'utf8')
+  const start = sql.indexOf(from)
+  if (start === -1) throw new Error(`${migration}: marker '${from}' not found — update tests/setup.ts`)
+  const end = to === undefined ? sql.length : sql.indexOf(to, start)
+  if (end === -1) throw new Error(`${migration}: marker '${to}' not found after '${from}' — update tests/setup.ts`)
+  return sql.slice(start, end)
     .split('\n').filter((line) => !line.trimStart().startsWith('--')).join('\n')
     .split(';').map((s) => s.trim()).filter(Boolean)
-  for (const statement of statements) await prisma.$executeRawUnsafe(statement)
+}
+
+/**
+ * Run one raw-SQL object statement so that running it twice is harmless: an
+ * index gets IF NOT EXISTS, a constraint already on its table is skipped.
+ * Only those two shapes are accepted — anything else in a section means the
+ * section changed shape, and this helper has to learn it first.
+ */
+async function applyIdempotent(prisma: PrismaClient, statement: string): Promise<void> {
+  const index = /^CREATE\s+(UNIQUE\s+)?INDEX\s+(?!IF\s+NOT\s+EXISTS\b)/i.exec(statement)
+  if (index) {
+    await prisma.$executeRawUnsafe(`CREATE ${index[1] ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${statement.slice(index[0].length)}`)
+    return
+  }
+  const constraint = /^ALTER\s+TABLE\s+"([^"]+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"/i.exec(statement)
+  if (constraint) {
+    const [, table, name] = constraint
+    const found = await prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT 1 AS n FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname = ${table} AND t.relnamespace = current_schema()::regnamespace AND c.conname = ${name}`
+    if (found.length === 0) await prisma.$executeRawUnsafe(statement)
+    return
+  }
+  throw new Error(`tests/setup.ts: unexpected raw-SQL statement shape: ${statement.slice(0, 120)}`)
+}
+
+async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
+  await prisma.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS btree_gist')
+  for (const statement of migrationSection('0_init', '-- ─── Raw-SQL objects')) await applyIdempotent(prisma, statement)
+  // Finance wave B: the partial / expression unique indexes, the fleet-rate
+  // composite foreign key and the CHECK constraints (plan sections 5 and 6)
+  // — everything between the migration's SQL-only marker and its row-level
+  // security marker. (RLS stays out: the test database has no RLS helpers,
+  // and the migration's own DO block skips itself without them.)
+  for (const statement of migrationSection('20261014090000_finance_wave_b',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
   // Partial unique indexes that live only in later migrations (db push can't
   // express them). Keep in step with the migration that creates each one.
   // 20261010210100_pos_connector — at most one live card-machine charge per order.

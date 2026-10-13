@@ -69,6 +69,41 @@ export type ExceptionKind =
   // over one of them must match the stand-in too — see STAND_IN_KINDS.
   | 'tip_pool_outlier'       // one member takes over 40% of a tip pool of 3+ people
   | 'capex_over_budget'      // a CapEx project's commitments passed its budget envelope
+  // Finance wave B (2026-10-14). Plain String column — no migration.
+  // Fixed assets
+  | 'depreciation_failed'        // the monthly depreciation run could not post an asset's month
+  | 'capex_uncapitalised'        // CapEx paid for equipment that never reached the asset register
+  | 'capex_advance_overdue'      // a CapEx supplier advance (1340) still not delivered past its date
+  | 'capex_orphan_advance'       // a CapEx advance on 1340 that belongs to no live asset or project line
+  | 'capex_prepaid_unscheduled'  // a prepaid CapEx/OpEx payment with no release schedule (legacy rows)
+  | 'fixed_asset_gl_mismatch'    // the register and its ledger codes disagree, or a register code was posted to by hand
+  | 'bill_equipment_override'    // a supplier bill line that looked like equipment was booked as an expense (finance override)
+  | 'equipment_override'         // the same override anywhere other than a supplier bill (OpEx, petty cash …)
+  // Food cost and stock
+  | 'stock_shortfall'            // stock sold or used beyond what the lots held (cost estimated)
+  | 'stock_unrecorded'           // an item counted or used with no receipt or opening cost on record
+  | 'recipe_foreign_stock'       // a recipe draws an item of another company (skipped, never depleted)
+  | 'stock_restore_failed'       // returning or wasting a cancelled / voided line's stock failed after commit
+  // People, close and inter-company
+  | 'period_close_override'      // the CEO closed a period over a blocking close check
+  | 'intercompany_mismatch'      // the two sides of a company pair's due-to / due-from disagree
+  // Cash requests
+  | 'cash_advance_overdue'       // a paid cash request still not settled with receipts past its due date
+  | 'cash_request_needs_review'  // a cash request a person must look at (receipts over the advance, odd lines)
+  // Delivery
+  | 'delivery_code_rerouted'     // the hand-over code was sent to the rider's number (Emergency overrides)
+  | 'food_returned'              // a rider brought a delivery back; the food was booked as waste
+  | 'delivery_door_problem'      // a rider reported a problem at the door (refused, unreachable …)
+  | 'cod_cash_overdue'           // delivered cash-on-delivery money not paid in by the rider in time
+  | 'delivery_on_road_overdue'   // a delivery picked up hours ago, neither delivered nor returned
+  // On-account clients and the till clearing account
+  | 'on_account_card_revoked_used' // a revoked on-account QR card was scanned at the till
+  | 'on_account_overdue'         // an on-account statement or invoice past its due date
+  | 'on_account_unbilled'        // on-account charges booked but not on a statement for too long
+  | 'till_clearing_unexpected'   // 1115 Till Clearing holds a balance nothing explains
+  // Tax
+  | 'card_payout_unmatched'      // a card machine's sales with no matching bank payout
+  | 'gift_card_breakage_held'    // a sold gift card expired but its breakage could not be booked yet
 
 /**
  * The kind a flag was filed under before it had its own. A query that looks

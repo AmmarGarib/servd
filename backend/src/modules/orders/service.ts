@@ -13,6 +13,7 @@ import type { OrderPrice } from '../../lib/pricing.js'
 import { generateDeliveryOtp } from '../../lib/deliveryOtp.js'
 import { courseOf, isLiveLine, isFireable, fireOrderItems } from '../expo/fire.js'
 import type { FiscalView } from '../../connectors/fiscal/view.js'
+import { withSavepoint } from '../../lib/savepoint.js'
 
 // ─── Inventory deduction (recipe-driven) ─────────────────────────────────────
 //
@@ -2088,24 +2089,9 @@ export function completionDoor(order: { source: string; fulfilmentType: string; 
   return 'handoff'
 }
 
-/**
- * Run a statement block inside the caller's transaction behind a SAVEPOINT:
- * if it throws, only its own writes roll back and the transaction carries on
- * (Postgres aborts the whole transaction on a failed statement otherwise).
- * Used for the completion claim's outbox writes, so a fiscal bug can never
- * stop a sale's ledger, loyalty and notice — and is flagged, never silent.
- */
-async function withSavepoint<T>(tx: Prisma.TransactionClient, name: string, fn: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: Error }> {
-  await tx.$executeRawUnsafe(`SAVEPOINT ${name}`)
-  try {
-    const value = await fn()
-    await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${name}`)
-    return { ok: true, value }
-  } catch (err) {
-    await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${name}`)
-    return { ok: false, error: err as Error }
-  }
-}
+// withSavepoint (lib/savepoint.ts) runs the completion claim's outbox writes
+// behind a SAVEPOINT, so a fiscal bug can never stop a sale's ledger, loyalty
+// and notice — and is flagged, never silent.
 
 type QueuedDoc = { id: string; status: string }
 

@@ -155,6 +155,28 @@ const EXPECTED_BIGINT_FIELDS = [
   'SupplierBill.creditedCents', 'SupplierCreditApplication.amountCents',
   'SalesTaxPayment.outputSetOffCents', 'SalesTaxPayment.inputSetOffCents', 'SalesTaxPayment.paidCents',
   'ReceivablePayment.amountCents',
+  // Finance gaps wave B (2026-10-14, migration 20261014090000): company-level
+  // money. FIFO stock lots and their movements, GRNI, count and prep values
+  // (food cost); the fixed-asset register v2 (events, tax years, runs);
+  // prepaid releases; CapEx / OpEx tax, WHT and deposits; customer-withheld
+  // sales tax; inter-company transfers; card payouts; on-account clients and
+  // bad-debt write-offs. Per-ticket, per-unit and per-box amounts stay INT4.
+  'StockLot.valueInCents', 'StockLot.remainingValueCents',
+  'StockMovement.valueCents', 'StockMovement.shortfallValueCents',
+  'GrniMatch.grniCents', 'GrniMatch.priceDiffCents', 'GrniMatch.absorbedCents', 'GrniMatch.usedCents',
+  'PhysicalCountLine.valueCents', 'PrepBatch.drawValueCents',
+  'FixedAsset.originalCostCents', 'FixedAsset.inputTaxCents', 'FixedAsset.carriedAccumulatedCents',
+  'FixedAssetEvent.amountCents', 'FixedAssetEvent.costOutCents', 'FixedAssetEvent.accumOutCents',
+  'FixedAssetTaxYear.openingWdvCents', 'FixedAssetTaxYear.additionsCents', 'FixedAssetTaxYear.initialAllowanceCents',
+  'FixedAssetTaxYear.depreciationCents', 'FixedAssetTaxYear.disposalProceedsCents', 'FixedAssetTaxYear.closingWdvCents',
+  'FixedAssetRun.chargedCents', 'PrepaidRelease.amountCents',
+  'CapexLine.inputTaxCents', 'CapexPayment.whtCents', 'CapexPayment.depositReturnedCents', 'CapexPayment.depositForfeitedCents',
+  'OpexPayment.inputTaxCents', 'OpexPayment.whtCents',
+  'SalesTaxPayment.customerWithheldSetOffCents', 'IntercompanyTransfer.amountCents',
+  'CardSettlement.grossCents', 'CardSettlement.feeCents', 'CardSettlement.feeTaxCents', 'CardSettlement.netCents',
+  'CardSettlementDay.grossCents',
+  'CustomerAccount.creditLimitCents', 'CustomerAccount.requestedCreditLimitCents',
+  'ReceivableInvoice.writtenOffCents', 'ReceivableWriteOff.amountCents', 'ReceivableWriteOff.recoveredCents',
 ].sort()
 
 describe('(1) the money boundary', () => {
@@ -179,10 +201,10 @@ describe('(1) the money boundary', () => {
     expect(() => JSON.stringify({ a: 2n ** 60n })).toThrow(expect.objectContaining({ code: 'AMOUNT_OUT_OF_RANGE' }))
   })
 
-  it('DMMF canary: the BIGINT fields are exactly the 43 money fields', () => {
+  it('DMMF canary: the BIGINT fields are exactly the 92 money fields', () => {
     const got = Prisma.dmmf.datamodel.models.flatMap((m) => m.fields.filter((f) => f.type === 'BigInt').map((f) => `${m.name}.${f.name}`)).sort()
     expect(got).toEqual(EXPECTED_BIGINT_FIELDS)
-    expect(got).toHaveLength(50)
+    expect(got).toHaveLength(92)
   })
 
   describe('a PKR 25m entry reads back as an exact JS number through every shape, on both clients', () => {
