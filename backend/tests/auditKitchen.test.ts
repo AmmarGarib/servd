@@ -36,7 +36,7 @@ import { stationRoutes } from '../src/modules/stations/routes.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
 import { foodSafetyRoutes } from '../src/modules/foodSafety/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
-import { postStockCount } from '../src/modules/crosschecks/countPosting.js'
+import { postStockCount } from '../src/modules/accounting/inventoryPosting.js'
 import { addLotTx, ensureFifoReady } from '../src/lib/stockLedger.js'
 
 let app: FastifyInstance

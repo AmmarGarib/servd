@@ -42,7 +42,7 @@ const SCOPES = [
 
 const PHASE_META: Record<Phase, { label: string; bg: string; fg: string }> = {
   planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
-  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: 'var(--erp-warning)' },
+  quoting:   { label: 'Quoting',    bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)',  fg: 'var(--erp-warning)' },
   executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary-ink)' },
   snagging:  { label: 'Snagging',   bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
   live:      { label: 'Live',       bg: 'rgb(var(--erp-accent-rgb) / 0.15)',   fg: 'var(--erp-success)' },
@@ -54,7 +54,7 @@ const STATUS_META: Record<Status, { label: string; fg: string }> = {
   ordered:       { label: 'Ordered',       fg: 'var(--erp-primary-ink)' },
   partial_paid:  { label: 'Paid',          fg: 'var(--erp-success)' },
   delivered:     { label: 'Delivered',     fg: 'var(--erp-success)' },
-  installed:     { label: 'Installed',     fg: '#7DD3FC' },
+  installed:     { label: 'Installed',     fg: 'var(--erp-primary-ink)' },
   commissioned:  { label: 'Commissioned',  fg: 'var(--erp-success)' },
   snag:          { label: 'Snag',          fg: 'var(--erp-danger)' },
   done:          { label: 'Done',          fg: 'var(--erp-success)' },
@@ -489,7 +489,7 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
       {/* Empty state */}
       {categories.length === 0 && (
         <div className="rounded-2xl p-8 text-center"
-          style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.18)' }}>
+          style={{ background: 'color-mix(in srgb, var(--erp-warning) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 20%, transparent)' }}>
           <p className="text-3xl mb-2">💸</p>
           <p className="font-bold text-white/85">No recurring costs tied to this project</p>
           <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
@@ -693,7 +693,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
             <label className="text-xs text-white/55">Next due</label>
             <input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
           </div>
-          {save.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
+          {save.error && <ErrorBanner error={save.error} />}
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
@@ -1422,15 +1422,20 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
 // Instalments are paid from one of the PROJECT's company's bank accounts
 // (backend lib/bankAccounts.ts moneyAccountCode): picked when scheduling or
 // when marking paid; with one bank it is used automatically, with several a
-// pick is required (BANK_ACCOUNT_REQUIRED).
-function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: string | null; onChange: () => void }) {
+// pick is required (BANK_ACCOUNT_REQUIRED). Marking one paid posts it to the
+// books at once: income tax is withheld at the supplier's filer rate (gross,
+// withheld and net are shown), a rent advance must say which months it covers,
+// and a refundable deposit can be returned or partly kept.
+function PaymentPanel({ project, line, tenantId, onChange }: { project: Project; line: Line; tenantId: string | null; onChange: () => void }) {
+  const caps = useFaCapabilities()
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState<'deposit' | 'midpoint' | 'balance' | 'extra'>('deposit')
   const [amountCents, setAmountCents] = useState(0)
   const [dueDate, setDueDate] = useState('')
   const [bankAccountId, setBankAccountId] = useState('')
   const [paying, setPaying] = useState<Payment | null>(null)
-  const [payBankId, setPayBankId] = useState('')
+  const [returning, setReturning] = useState<Payment | null>(null)
+  const [reclassing, setReclassing] = useState<Payment | null>(null)
   const { data: banks = [] } = useBankAccounts()
   const bankName = (id: string | null) => (id ? banks.find((b) => b.id === id)?.name ?? null : null)
 
@@ -1441,14 +1446,6 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
     }),
     onSuccess: () => { setAdding(false); setAmountCents(0); setDueDate(''); setBankAccountId(''); onChange() },
   })
-  const markPaid = useMutation({
-    mutationFn: (p: Payment) => api.patch(`/finance/capex/payments/${p.id}`, {
-      paidAt: new Date().toISOString(),
-      paidAmountCents: p.amountCents,
-      ...(payBankId && { bankAccountId: payBankId }),
-    }),
-    onSuccess: () => { setPaying(null); onChange() },
-  })
   const remove = useMutation({
     mutationFn: (pid: string) => api.delete(`/finance/capex/payments/${pid}`),
     onSuccess: () => onChange(),
@@ -1456,46 +1453,66 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
 
   return <Section heading={`Payment schedule · ${line.payments.length}`}>
     <div className="space-y-1.5">
-      {line.payments.map((p) => (
-        <div key={p.id} className="rounded-lg p-3"
-          style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-          <div className="grid grid-cols-[80px_auto_1fr_auto_auto] gap-2 items-center">
-            <span className="text-xs font-bold uppercase tracking-wider text-white/65">{p.label}</span>
-            <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
-            <span className="text-xs text-white/45">
-              {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
-              {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
-              {bankName(p.bankAccountId) && <span className="ml-2">· {p.paidAt ? 'from' : 'to pay from'} {bankName(p.bankAccountId)}</span>}
-            </span>
-            {p.paidAt ? (
-              line.ledger?.payments[p.id]?.status === 'posted'
-                ? <span className="text-[10px] font-black text-success" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
-                : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
-            ) : (
-              <button onClick={() => { setPaying(paying?.id === p.id ? null : p); setPayBankId(p.bankAccountId ?? '') }}
-                className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
-            )}
-            <button onClick={() => remove.mutate(p.id)} className="text-white/30 hover:text-s-red">✕</button>
-          </div>
-          {paying?.id === p.id && (
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <div className="min-w-[200px] flex-1">
-                <BankAccountSelect tenantId={tenantId} value={payBankId} onChange={setPayBankId}
-                  id={`capex-pay-bank-${p.id}`} label="Paid from" className={fieldCls} />
-              </div>
-              <button onClick={() => setPaying(null)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-              <button onClick={() => markPaid.mutate(p)} disabled={markPaid.isPending}
-                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
-                {markPaid.isPending ? 'Saving…' : `Paid ${PKR(p.amountCents)} today`}
-              </button>
+      {line.payments.map((p) => {
+        const posted = line.ledger?.payments[p.id]
+        const isDeposit = !!p.paidAt && posted?.status === 'posted' && (posted.accountCode === '1360' || line.treatment === 'deposit')
+        const isLegacyPrepaid = !!p.paidAt && posted?.status === 'posted' && posted.accountCode === '1310' && p.releasedCents === 0 && line.treatment !== 'deposit'
+        const gross = p.paidAmountCents ?? p.amountCents
+        return (
+          <div key={p.id} className="rounded-lg p-3"
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-white/65 w-20">{p.label}</span>
+              <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
+              <span className="text-xs text-white/45 min-w-0 flex-1 basis-40">
+                {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
+                {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
+                {bankName(p.bankAccountId) && <span className="ml-2">· {p.paidAt ? 'from' : 'to pay from'} {bankName(p.bankAccountId)}</span>}
+              </span>
+              {p.paidAt ? (
+                p.source === 'cash'
+                  ? <span className="s-badge-purple" title="Paid from petty cash or a cash request. Correct it there.">Paid in cash</span>
+                  : posted?.status === 'posted'
+                    ? <span className="text-[10px] font-black text-success" title={`Booked to ${posted.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
+                    : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books. An admin can post it.">PAID · NOT POSTED</span>
+              ) : (
+                <button onClick={() => setPaying(paying?.id === p.id ? null : p)}
+                  className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
+              )}
+              <button onClick={() => remove.mutate(p.id)} aria-label="Delete instalment" className="text-white/30 hover:text-s-red">&times;</button>
             </div>
-          )}
-        </div>
-      ))}
+
+            {p.paidAt && (p.whtCents > 0 || p.coversMonths || isDeposit || p.whtOverrideReason) && (
+              <div className="mt-2 text-[11px] text-white/55 space-y-0.5">
+                {p.whtCents > 0 && <p>Income tax withheld {PKR(p.whtCents)} · net to the bank {PKR(gross - p.whtCents)}{p.whtOverrideReason ? ` · your own figure: ${p.whtOverrideReason}` : ''}</p>}
+                {p.coversMonths && p.coversFrom && <p>Covers {p.coversMonths} month{p.coversMonths === 1 ? '' : 's'} from {p.coversFrom} · {PKR(p.releasedCents)} released to rent so far</p>}
+                {isDeposit && (
+                  <p>
+                    Refundable deposit
+                    {p.depositReturnedCents > 0 && ` · ${PKR(p.depositReturnedCents)} returned`}
+                    {p.depositForfeitedCents > 0 && ` · ${PKR(p.depositForfeitedCents)} kept by the landlord`}
+                    {p.depositReturnedCents + p.depositForfeitedCents === 0 && ' · still held'}
+                  </p>
+                )}
+              </div>
+            )}
+            {(isDeposit || (isLegacyPrepaid && caps.canApprove)) && (
+              <div className="mt-2 flex flex-wrap gap-3">
+                {isDeposit && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setReturning(p)}>Deposit back…</button>}
+                {isLegacyPrepaid && caps.canApprove && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setReclassing(p)}>This is a security deposit, not rent…</button>}
+              </div>
+            )}
+
+            {paying?.id === p.id && (
+              <MarkPaidForm project={project} line={line} payment={p} tenantId={tenantId} onClose={() => setPaying(null)} onDone={() => { setPaying(null); onChange() }} />
+            )}
+          </div>
+        )
+      })}
     </div>
 
-    {(markPaid.error || remove.error) && <ErrorBanner error={markPaid.error ?? remove.error} />}
-    <CapitalisePanel line={line} onChange={onChange} />
+    {remove.error && <ErrorBanner error={remove.error} />}
+    <CapitalisePanel project={project} line={line} onChange={onChange} />
 
     {adding ? (
       <div className="rounded-xl p-3 mt-2"
@@ -1508,7 +1525,7 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
             <option value="extra">Extra</option>
           </select>
           <MoneyInput value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
-          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} />
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
         </div>
         <div className="mt-2">
           <BankAccountSelect tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId}
@@ -1527,61 +1544,90 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
         + Schedule payment
       </button>
     )}
+
+    {returning && <DepositReturnModal payment={returning} line={line} project={project} onClose={() => setReturning(null)} onDone={() => { setReturning(null); onChange() }} />}
+    {reclassing && <ReclassDepositModal payment={reclassing} line={line} project={project} onClose={() => setReclassing(null)} onDone={() => { setReclassing(null); onChange() }} />}
   </Section>
 }
 
-// Capitalise a delivered item onto the fixed-asset register (owner decision
-// 24): Dr the asset / Cr the advances already paid, Cr the supplier for the
-// rest. Admin only on the server; the register then charges depreciation.
-const ASSET_CATEGORY_OPTIONS = [
-  { key: 'kitchen_equipment',  label: 'Kitchen equipment' },
-  { key: 'furniture_fixtures', label: 'Furniture & fixtures' },
-  { key: 'it_equipment',       label: 'IT equipment' },
-  { key: 'vehicles',           label: 'Vehicles' },
-  { key: 'leasehold',          label: 'Leasehold improvements' },
-] as const
-const DELIVERED: Status[] = ['delivered', 'installed', 'commissioned', 'done'] as Status[]
+// Mark one instalment paid: from which bank, on which day, how much, what the
+// income-tax withholding comes to (gross / withheld / net) and, for a rent
+// advance, the months it covers (422 PREPAID_TERM_REQUIRED without them).
+function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
+  project: Project; line: Line; payment: Payment; tenantId: string | null; onClose: () => void; onDone: () => void
+}) {
+  const preview = useWithholdingPreview()
+  const [bankId, setBankId] = useState(payment.bankAccountId ?? '')
+  const [paidOn, setPaidOn] = useState(new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10))
+  const [amount, setAmount] = useState(payment.amountCents)
+  const [coversFrom, setCoversFrom] = useState(payment.coversFrom ?? '')
+  const [coversMonths, setCoversMonths] = useState(payment.coversMonths ? String(payment.coversMonths) : '')
+  const [needsTerm, setNeedsTerm] = useState(false)
+  const [override, setOverride] = useState(false)
+  const [overrideCents, setOverrideCents] = useState(0)
+  const [overrideReason, setOverrideReason] = useState('')
 
-function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void }) {
-  // Capitalising books Dr asset / Cr advances — the CEO's (ADMIN_ONLY on the
-  // API). Finance and the managers work the tracker; they don't see a button
-  // the server would refuse.
-  const canCapitalise = useAuthStore((s) => s.isRole('admin'))
-  const [category, setCategory] = useState<string>('kitchen_equipment')
-  const [lifeMonths, setLifeMonths] = useState(60)
-  const cap = useMutation({
-    mutationFn: () => api.post(`/finance/capex/lines/${line.id}/capitalise`, { category, usefulLifeMonths: lifeMonths }),
-    onSuccess: () => onChange(),
+  const supplier = project.lookups.suppliers.find((x) => x.id === line.supplierId)
+  const lineTotal = line.negotiatedCents ?? line.unitCostCents * line.quantity
+  const taxShare = lineTotal > 0 ? Math.round((line.inputTaxCents * amount) / lineTotal) : 0
+  const termExpected = line.treatment === 'prepaid' || (!line.treatment && /\b(rent|lease)\b/i.test(`${line.scope} ${line.category ?? ''} ${line.item}`))
+  const termRequired = line.treatment === 'prepaid' || needsTerm
+  const wht = preview({ grossCents: amount, inputTaxCents: taxShare, section: line.whtSection, supplier, paidOn, treatment: line.treatment })
+
+  const pay = useMutation({
+    mutationFn: () => api.patch(`/finance/capex/payments/${payment.id}`, {
+      paidAt: new Date(`${paidOn}T12:00:00+05:00`).toISOString(),
+      paidAmountCents: amount,
+      ...(bankId && { bankAccountId: bankId }),
+      ...((termExpected || needsTerm) && coversFrom && coversMonths ? { coversFrom, coversMonths: Number(coversMonths) } : {}),
+      ...(override ? { whtOverrideCents: overrideCents, whtOverrideReason: overrideReason.trim() } : {}),
+    }),
+    onSuccess: onDone,
+    onError: (e) => { if ((e as { code?: string }).code === 'PREPAID_TERM_REQUIRED') setNeedsTerm(true) },
   })
-  if (line.ledger?.asset) {
-    return (
-      <p className="text-[11px] text-success mt-2">
-        On the fixed-asset register at {PKR(line.ledger.asset.costCents)} — <a href="/accounting/fixed-assets" className="underline">view</a>
-      </p>
-    )
-  }
-  if (!DELIVERED.includes(line.status) && !line.actualDeliveryDate) return null
-  if ((line.ledger?.prepaidCents ?? 0) > 0 || (line.ledger?.expensedCents ?? 0) > 0) return null
-  if (!canCapitalise) {
-    return <p className="text-[11px] text-white/45 mt-2">Delivered — the CEO puts it on the fixed-asset register.</p>
-  }
+
+  const termOk = !termRequired || (!!coversFrom && Number(coversMonths) >= 1)
+  const overrideOk = !override || (overrideReason.trim().length >= 5 && overrideCents < amount)
+
   return (
-    <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
-      <p className="text-xs text-white/70 mb-2">Delivered — put it on the fixed-asset register ({PKR(line.ledger?.advancedCents ?? 0)} advanced so far).</p>
-      <div className="grid grid-cols-3 gap-2">
-        <label className="sr-only" htmlFor={`cap-cat-${line.id}`}>Asset category</label>
-        <select id={`cap-cat-${line.id}`} value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
-          {ASSET_CATEGORY_OPTIONS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </select>
-        <label className="sr-only" htmlFor={`cap-life-${line.id}`}>Useful life (months)</label>
-        <input id={`cap-life-${line.id}`} type="number" min={1} max={600} value={lifeMonths}
-          onChange={(e) => setLifeMonths(parseInt(e.target.value || '0', 10))} className={fieldCls} />
-        <button onClick={() => cap.mutate()} disabled={cap.isPending || lifeMonths < 1}
+    <div className="mt-3 space-y-3 rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-1">
+          <BankAccountSelect tenantId={tenantId} value={bankId} onChange={setBankId} id={`capex-pay-bank-${payment.id}`} label="Paid from" className={fieldCls} />
+        </div>
+        <Field label="Paid on"><input type="date" value={paidOn} max={new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} /></Field>
+        <Field label="Amount (PKR)"><MoneyInput value={amount} onChange={setAmount} className={fieldCls} /></Field>
+      </div>
+
+      {(termExpected || needsTerm) && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={`Covers from${termRequired ? ' *' : ''}`}><input type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} /></Field>
+          <Field label={`Covers how many months${termRequired ? ' *' : ''}`}><input type="number" min={1} max={240} value={coversMonths} onChange={(e) => setCoversMonths(e.target.value)} className={fieldCls} /></Field>
+          <div className="col-span-2"><Hint>A rent advance is spread over the months it covers, one month at a time.</Hint></div>
+        </div>
+      )}
+
+      <ExemptionLine supplier={supplier} />
+      <WhtPreview result={wht} grossCents={amount} override={override ? overrideCents : null} />
+      <label className="flex items-center gap-2 text-xs text-white/65">
+        <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
+        Use my own withholding figure (for example, the supplier&rsquo;s certificate is not on file yet)
+      </label>
+      {override && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Income tax withheld (PKR)"><MoneyInput value={overrideCents} onChange={setOverrideCents} className={fieldCls} /></Field>
+          <Field label="Why (at least 5 characters)"><input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} className={fieldCls} /></Field>
+        </div>
+      )}
+
+      {pay.error && <ErrorBanner error={pay.error} />}
+      <div className="flex gap-2 justify-end">
+        <button onClick={onClose} className="text-xs text-white/55 hover:text-white">Cancel</button>
+        <button onClick={() => pay.mutate()} disabled={pay.isPending || amount <= 0 || !termOk || !overrideOk}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
-          {cap.isPending ? 'Capitalising…' : 'Capitalise'}
+          {pay.isPending ? 'Saving…' : `Paid ${PKR(amount)}`}
         </button>
       </div>
-      {cap.error && <ErrorBanner error={cap.error} />}
     </div>
   )
 }
@@ -1618,8 +1664,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
-  const msg = error instanceof Error ? error.message : 'Failed'
-  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" role="alert" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{errorWords(error)}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

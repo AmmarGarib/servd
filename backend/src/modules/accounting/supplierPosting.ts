@@ -65,10 +65,6 @@ import {
 import { computeWithholding, WHT_SECTION_LABEL, whtSectionOrNull, type WhtSection } from '../../lib/withholding.js'
 import { AUTHORITIES, inputTaxCodeFor, isAuthorityKey } from './taxAuthorities.js'
 
-// Waste posts from accounting/inventoryPosting.ts (FIFO value, class accounts,
-// brand split). Re-exported so older importers keep working.
-export { postWasteLog } from './inventoryPosting.js'
-
 type Tx = Prisma.TransactionClient
 type Db = Prisma.TransactionClient | PrismaClient
 

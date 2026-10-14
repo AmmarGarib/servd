@@ -5,9 +5,8 @@ Dated 2026-10-14. For finance (Hasnain) and the CEO. The page is
 customer owes GS Foods for a sale made on credit and invoiced by finance (a
 catering job, a bulk order, an event).
 
-Not covered here: there is **no corporate "on account" client list, QR card,
-credit limit or monthly statement** in this release; that work was set aside by
-the owner on 2026-10-13. Till clearing stays on account 1110, exactly as before.
+This page is only about ordinary sales invoices raised by finance. Till clearing
+stays on account 1110, exactly as before.
 
 ## The invoice
 

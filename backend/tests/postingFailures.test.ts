@@ -389,7 +389,7 @@ describe('waste from a line voided after firing', () => {
     expect((await postVoidWaste(tenantA, line.id, [log.id], conceptA)).posted).toBe(false)
     expect(await countRefs(`pos.void_waste:${line.id}`)).toBe(1)
     // The waste log itself is never booked again as a manual waste.
-    const { postWasteLog } = await import('../src/modules/accounting/supplierPosting.js')
+    const { postWasteLog } = await import('../src/modules/accounting/inventoryPosting.js')
     expect((await postWasteLog(log.id)).reason).toBe('booked_by_void')
   })
 
