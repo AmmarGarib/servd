@@ -25,6 +25,7 @@ import { audit } from '../../lib/audit.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, APPROVERS } from '../auth/middleware.js'
 import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { REQUIRED_ACCOUNT_CODES } from '../../lib/chartOfAccounts.js'
 import {
   scopeTenantWhere, assertConceptOwned, conceptIdsInScope, conceptWhere, type ScopeMode,
   activeTenantId as requireActiveTenant,
@@ -51,6 +52,38 @@ async function brandRowWhere(
   const tenant = await scopeTenantWhere(req, mode)
   if (conceptId) return { ...tenant, ...(await conceptWhere(req, conceptId, mode)) }
   return { ...tenant }
+}
+
+/**
+ * Chart of accounts: may this account be switched off? (PATCH
+ * /setup/chart-of-accounts/:id isActive:false.) Throws 422 when the books
+ * need it — see the route.
+ */
+async function assertAccountMayBeSwitchedOff(acc: { tenantId: string | null; code: string; name: string; controlledBy: string | null }): Promise<void> {
+  const label = `${acc.code} ${acc.name}`
+  if (acc.tenantId) {
+    const cls = await prisma.fixedAssetClass.findFirst({
+      where: { tenantId: acc.tenantId, isActive: true, OR: [{ costAccountCode: acc.code }, { accumAccountCode: acc.code }] },
+      select: { label: true, costAccountCode: true },
+    })
+    if (cls) {
+      throw new AppError(
+        'ACCOUNT_IN_USE',
+        `${label} is the ${cls.costAccountCode === acc.code ? 'cost' : 'accumulated depreciation'} account of the fixed-asset class "${cls.label}" — switch that class off first (Accounting → Fixed assets → Classes)`,
+        422,
+      )
+    }
+  }
+  if (acc.controlledBy) {
+    const who = acc.controlledBy === 'intercompany' ? 'the inter-company module (a Due-from / Due-to of a company pair)'
+      : acc.controlledBy === 'fixed_asset' ? 'the fixed-asset register'
+      : acc.controlledBy === 'head_office' ? 'the head-office module'
+      : `'${acc.controlledBy}'`
+    throw new AppError('ACCOUNT_CONTROLLED', `${label} is kept by ${who} — it cannot be switched off here (renaming is fine)`, 422)
+  }
+  if ((REQUIRED_ACCOUNT_CODES as readonly string[]).includes(acc.code)) {
+    throw new AppError('ACCOUNT_IN_USE', `${label} is one of the accounts servd posts to on its own — it cannot be switched off (renaming is fine)`, 422)
+  }
 }
 
 /** 422 unless `conceptId` is a live brand of `tenantId`. */
@@ -981,6 +1014,17 @@ export async function setupRoutes(fastify: FastifyInstance) {
     })
     return reply.status(201).send(created)
   })
+  // Renaming (name / description) is always allowed. Switching an account OFF
+  // is refused when the books need it (finance wave B):
+  //   422 ACCOUNT_IN_USE      a REQUIRED_ACCOUNT_CODES code (the posting engine
+  //                           cannot run without it — /health checks them), or
+  //                           the cost / accumulated-depreciation code of an
+  //                           active fixed-asset class of the account's company
+  //   422 ACCOUNT_CONTROLLED  an account a module controls (Account.controlledBy:
+  //                           an inter-company Due-from / Due-to, a head-office
+  //                           link, the register's 15xx / 2012)
+  // The type is never edited here, and POST never sets controlledBy (the
+  // modules create their controlled accounts themselves).
   fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
     const body = z.object({
       name:        z.string().min(1).max(120).optional(),
@@ -991,6 +1035,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
+    if (body.isActive === false && existing.isActive) await assertAccountMayBeSwitchedOff(existing)
     const updated = await prisma.account.update({ where: { id: existing.id }, data: body })
     await audit({ category: 'accounting',
       action: 'account.update',

@@ -94,7 +94,7 @@ export default function PoolsPage() {
     <FaFrame title="Smallwares" subtitle="Plates, knives, bowls and other small items, counted as pools per outlet, brand and type. They wear out over 24 months.">
       {notice && <Notice tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Notice>}
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Stat label="Units on hand" value={totalUnits.toLocaleString('en-PK')} />
         <Stat label="Cost" value={money(totalCost)} />
         <Stat label="Book value" value={money(totalNbv)} />

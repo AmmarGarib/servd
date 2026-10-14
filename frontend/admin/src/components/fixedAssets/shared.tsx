@@ -249,7 +249,7 @@ export function Stat({ label, value, tone, sub }: { label: string; value: string
   return (
     <div className="rounded-2xl p-4" style={card}>
       <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
-      <p className={`text-lg font-black mt-1 ${tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-s-red' : 'text-white/90'}`}>{value}</p>
+      <p className={`text-lg font-black mt-1 break-words ${tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-s-red' : 'text-white/90'}`}>{value}</p>
       {sub && <p className="text-[11px] text-white/40 mt-0.5">{sub}</p>}
     </div>
   )

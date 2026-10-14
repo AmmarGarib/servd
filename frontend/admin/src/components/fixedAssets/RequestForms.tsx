@@ -117,7 +117,7 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
 
   const reasonOk = kind === 'transfer' || reason.trim().length >= MIN_REASON
   const valid = reasonOk && (
-    kind === 'disposal' ? (dKind !== 'sale' || proceeds >= 0) && !(dKind === 'sale' && proceeds > 0 && method !== 'cash' && lookups.bankAccounts.filter((b) => b.tenantId === asset.tenantId).length > 1 && !bankId)
+    kind === 'disposal' ? (dKind !== 'sale' || proceeds >= 0) && !(dKind === 'sale' && proceeds > 0 && method !== 'cash' && lookups.bankAccounts.filter((b) => b.tenantId === asset.tenantId && b.accountCode).length > 1 && !bankId)
     : kind === 'impairment' ? writeDown > 0 && writeDown <= asset.nbvCents
     : kind === 'change_estimate' ? (!!life && Number(life) >= 1) || changeSalvage
     : kind === 'transfer' ? toConcept !== '__keep' || toLocation !== '__keep'

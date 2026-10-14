@@ -18,7 +18,7 @@ import { MoneyInput } from '../ui/MoneyInput'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
-import { FA_BASE, L, Modal, ErrorLine, Notice, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, todayIso, useFaCapabilities } from './shared'
+import { FA_BASE, L, Modal, ErrorLine, Notice, errorWords, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, todayIso, useFaCapabilities } from './shared'
 import type { CapexLookups, CapexSupplier, Line, Orphan, Payment, Project } from './capexTypes'
 
 // ─── Words ──────────────────────────────────────────────────────────────────
@@ -281,6 +281,10 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
     return <p className="text-[11px] text-white/45 mt-2">Delivered. Finance prepares it for the fixed-asset register and the CEO approves.</p>
   }
 
+  if (classes.length === 0) {
+    return <p className="text-[11px] text-white/45 mt-2">Delivered. This project is not bound to a company yet, so it cannot be prepared for the register. Pick its company first.</p>
+  }
+
   const unitsTagged = !cls?.pooled && line.quantity > 1 ? line.quantity : 0
   const delivery = inService
   const closed = closedThrough !== null && new Date(`${delivery}T23:59:59+05:00`).getTime() <= closedThrough
@@ -436,7 +440,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   return (
     <Modal title="Buy equipment (Quick buy)" onClose={onClose} wide>
       {lookups.isLoading && <p className="text-sm text-white/45">Loading…</p>}
-      {lookups.error && <Notice tone="bad">{(lookups.error as Error).message}</Notice>}
+      {lookups.error && <Notice tone="bad">{errorWords(lookups.error)}</Notice>}
       {L0 && (
         <form onSubmit={(e) => { e.preventDefault(); send.mutate() }} className="space-y-3">
           <p className="text-xs text-white/55">
