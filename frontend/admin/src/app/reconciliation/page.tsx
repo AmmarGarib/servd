@@ -6,8 +6,8 @@ import { fmtPkr, todayPktIso } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
 import { format } from 'date-fns'
 import { BackfillUnposted } from './BackfillUnposted'
-import { MissedBillVariances } from './MissedBillVariances'
 import { RaastTab } from './RaastTab'
+import { CardPayouts, CardPayoutChip, CardPayoutSuggest, cardPayoutErrorText, useCardPayoutBanks, type CardSettlementChip } from './CardPayouts'
 import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseConfirm'
 import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
 import { useAuthStore } from '../../store/auth'
@@ -65,12 +65,15 @@ interface StatementLine {
   amountCents: number; matchStatus: 'unmatched' | 'matched' | 'adjusted' | 'ignored'; notes: string | null
   /** The Raast QR payment this line matched (absent on an API without Raast). */
   raastReceipt?: { id: string; bankRef: string | null; orderId: string; amountCents: number } | null
+  /** The card payout (H12) this line settles — undone on the Card payouts tab, never by Unmatch. */
+  cardSettlement?: CardSettlementChip | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type ReconTab = 'shifts' | 'bank' | 'raast'
-const TABS: readonly ReconTab[] = ['shifts', 'bank', 'raast']
+type ReconTab = 'shifts' | 'bank' | 'cards' | 'raast'
+const TABS: readonly ReconTab[] = ['shifts', 'bank', 'cards', 'raast']
+// COD custody is PARKED (owner, 2026-10-13): no COD tab; /reconciliation/cod is an empty stub.
 
 // The till's tenders (owner, 2026-10-12): Cash, Card – Keenu, Raast QR.
 // Keenu QR is retired — its rows are older sales.
@@ -104,7 +107,7 @@ function VariancePill({ cents, balanced }: { cents: number | null; balanced: boo
   if (cents === null) return <span className="text-xs text-s-muted">Pending</span>
   return (
     <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-      balanced ? 'bg-green-100/20 text-green-700' : 'bg-red-100/20 text-red-700'
+      balanced ? 'bg-success/10 text-success' : 'bg-s-red-dim text-s-red'
     }`}>
       {cents === 0 ? 'Balanced' : cents > 0 ? `+${fmtPkr(cents)}` : fmtPkr(cents)}
     </span>
@@ -322,7 +325,7 @@ function ShiftDetailPanel({
               </div>
             )}
             {complete.data && (
-              <div className={`rounded-lg p-3 text-sm ${complete.data.isBalanced ? 'bg-green-100/20 text-green-700' : 'bg-red-100/20 text-red-700'}`}>
+              <div className={`rounded-lg p-3 text-sm ${complete.data.isBalanced ? 'bg-success/10 text-success' : 'bg-s-red-dim text-s-red'}`}>
                 {complete.data.isBalanced
                   ? 'Balanced — shift closed and posted.'
                   : `Variance of ${fmtPkr(Math.abs(complete.data.varianceCents ?? 0))} flagged for review. Shift closed and posted.`}
@@ -465,7 +468,7 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
           ))}
           <div className="flex flex-wrap items-center gap-3">
             <button onClick={() => setRows((rs) => [...rs, { code: '', type: otherSide, amount: '' }])} className="text-primary-ink">+ Add line</button>
-            <span className={off === 0 ? 'text-green-700' : 'text-s-red'}>
+            <span className={off === 0 ? 'text-success' : 'text-s-red'}>
               {off === 0 ? 'Balanced' : `Off by ${fmtPkr(Math.abs(off))} (${off > 0 ? 'more debits' : 'more credits'})`}
             </span>
           </div>
@@ -481,14 +484,28 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
         </button>
         <button onClick={onCancel} className="text-s-muted">Cancel</button>
       </div>
-      {adjust.error && <p className="text-s-red">{(adjust.error as Error).message}</p>}
+      {adjust.error && (
+        <p className="text-s-red">
+          {adjust.error instanceof ApiError && adjust.error.code === 'USE_CARD_PAYOUT_CONFIRM'
+            ? cardPayoutErrorText(adjust.error)
+            : (adjust.error as Error).message}
+        </p>
+      )}
     </div>
   )
 }
 
-function StatementLines({ importId, raastAccount, onOpenRaast }: { importId: string; raastAccount: boolean; onOpenRaast: () => void }) {
+function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpenCards }: {
+  importId: string
+  raastAccount: boolean
+  /** This statement's bank is the one Keenu pays card sales into (card payout matching on). */
+  payoutBank: boolean
+  onOpenRaast: () => void
+  onOpenCards: () => void
+}) {
   const qc = useQueryClient()
   const [adjusting, setAdjusting] = useState<string | null>(null)
+  const [cardLine, setCardLine] = useState<string | null>(null)
   const canBook = useAuthStore((s) => s.isRole(...ADJUSTMENT_BOOKERS))
   const canUnmatch = useAuthStore((s) => s.isRole(...LINE_UNMATCHERS))
   const { data: lines = [], isLoading } = useQuery<StatementLine[]>({
@@ -512,7 +529,9 @@ function StatementLines({ importId, raastAccount, onOpenRaast }: { importId: str
         <p className="px-4 pt-2 text-xs text-s-red">
           {lineError instanceof ApiError && lineError.code === 'RAAST_MATCHED_LINE'
             ? 'That line is matched to a Raast payment — unmatch it on the Raast tab.'
-            : (lineError as Error).message}
+            : lineError instanceof ApiError && lineError.code === 'CARD_PAYOUT_LINE'
+              ? cardPayoutErrorText(lineError)
+              : (lineError as Error).message}
         </p>
       )}
       <table className="w-full text-xs">
@@ -529,10 +548,13 @@ function StatementLines({ importId, raastAccount, onOpenRaast }: { importId: str
                       Raast #{orderRef(l.raastReceipt.orderId)}
                     </button>
                   )}
+                  {l.cardSettlement && <CardPayoutChip chip={l.cardSettlement} onOpen={onOpenCards} />}
                 </td>
                 <td className={`px-4 py-2 text-right font-mono ${l.amountCents < 0 ? 'text-s-red' : 'text-s-text'}`}>{fmtPkr(l.amountCents)}</td>
                 <td className="px-4 py-2 text-right whitespace-nowrap">
-                  {l.matchStatus === 'matched' && !l.raastReceipt && canUnmatch ? (
+                  {l.matchStatus === 'matched' && l.cardSettlement ? (
+                    <button onClick={onOpenCards} className="text-s-muted underline hover:text-s-text">card payout — undo on Card payouts</button>
+                  ) : l.matchStatus === 'matched' && !l.raastReceipt && canUnmatch ? (
                     <span className="inline-flex gap-3">
                       <span className="text-s-muted">matched</span>
                       <button onClick={() => { if (confirm('Undo this match? The line goes back to unmatched and its journal line is free again.')) unmatch.mutate(l.id) }}
@@ -542,9 +564,14 @@ function StatementLines({ importId, raastAccount, onOpenRaast }: { importId: str
                     <span className="text-s-muted">{l.matchStatus}</span>
                   ) : adjusting === l.id ? (
                     <span className="text-s-muted">booking…</span>
+                  ) : cardLine === l.id ? (
+                    <span className="text-s-muted">card payout…</span>
                   ) : (
-                    <span className="inline-flex gap-3">
-                      {canBook && <button onClick={() => setAdjusting(l.id)} className="text-primary-ink">Book adjustment</button>}
+                    <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
+                      {payoutBank && l.amountCents > 0 && (
+                        <button onClick={() => { setAdjusting(null); setCardLine(l.id) }} className="text-primary-ink font-semibold">Card payout?</button>
+                      )}
+                      {canBook && <button onClick={() => { setCardLine(null); setAdjusting(l.id) }} className="text-primary-ink">Book adjustment</button>}
                       <button onClick={() => ignore.mutate(l.id)} className="text-s-muted hover:text-s-text">Ignore</button>
                     </span>
                   )}
@@ -554,6 +581,13 @@ function StatementLines({ importId, raastAccount, onOpenRaast }: { importId: str
                 <tr className="border-t border-s-border/50">
                   <td colSpan={4} className="p-0">
                     <AdjustForm line={l} raastAccount={raastAccount} onCancel={() => setAdjusting(null)} onDone={() => { setAdjusting(null); refresh() }} />
+                  </td>
+                </tr>
+              )}
+              {cardLine === l.id && l.matchStatus === 'unmatched' && (
+                <tr className="border-t border-s-border/50">
+                  <td colSpan={4} className="p-0">
+                    <CardPayoutSuggest lineId={l.id} onCancel={() => setCardLine(null)} onDone={() => { setCardLine(null); refresh() }} />
                   </td>
                 </tr>
               )}
@@ -598,6 +632,7 @@ export default function ReconciliationPage() {
     enabled: tab === 'bank',
   })
   const raastAccountIds = useRaastAccountIds(banks)
+  const payoutBankIds = useCardPayoutBanks(tab === 'bank')
 
   const balancedCount = summary?.balancedShifts ?? 0
   const totalCount = summary?.totalShifts ?? 0
@@ -612,15 +647,14 @@ export default function ReconciliationPage() {
         />
       )}
 
-      <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
+      <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4">
         <h1 className="text-xl font-bold text-s-text">Reconciliation</h1>
-        <p className="text-xs text-s-muted mt-0.5">POS shift cash reconciliation, bank statements and Raast QR payments</p>
+        <p className="text-xs text-s-muted mt-0.5">POS shift cash reconciliation, bank statements, card payouts and Raast QR payments</p>
       </header>
 
-      <div className="p-6 max-w-5xl mx-auto space-y-4">
+      <div className="px-4 py-6 sm:p-6 max-w-5xl mx-auto space-y-4">
 
         {tab === 'shifts' && <BackfillUnposted />}
-        {tab === 'shifts' && <MissedBillVariances />}
 
         {/* Summary KPI strip (shifts tab) */}
         {tab === 'shifts' && summary && (
@@ -631,11 +665,11 @@ export default function ReconciliationPage() {
             </div>
             <div className="s-card p-4">
               <p className="text-xs text-s-muted">Balanced</p>
-              <p className="text-2xl font-bold text-green-700 mt-0.5">{balancedCount}</p>
+              <p className="text-2xl font-bold text-success mt-0.5">{balancedCount}</p>
             </div>
             <div className="s-card p-4">
               <p className="text-xs text-s-muted">Variance / Pending</p>
-              <p className={`text-2xl font-bold mt-0.5 ${unbalancedCount > 0 ? 'text-red-700' : 'text-s-muted'}`}>
+              <p className={`text-2xl font-bold mt-0.5 ${unbalancedCount > 0 ? 'text-s-red' : 'text-s-muted'}`}>
                 {unbalancedCount}
               </p>
             </div>
@@ -643,16 +677,17 @@ export default function ReconciliationPage() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-s-border pb-0">
+        <div className="flex gap-1 border-b border-s-border pb-0 overflow-x-auto">
           {([
             { key: 'shifts', label: 'POS Shifts' },
             { key: 'bank', label: 'Bank Imports' },
+            { key: 'cards', label: 'Card payouts' },
             { key: 'raast', label: 'Raast' },
           ] as { key: ReconTab; label: string }[]).map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+              className={`shrink-0 px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
                 tab === t.key
                   ? 'border-s-teal text-primary-ink bg-s-bg-soft'
                   : 'border-transparent text-s-muted hover:text-s-text'
@@ -739,6 +774,9 @@ export default function ReconciliationPage() {
         {/* ── Raast tab ── */}
         {tab === 'raast' && <RaastTab />}
 
+        {/* ── Card payouts tab (H12) ── */}
+        {tab === 'cards' && <CardPayouts />}
+
         {/* ── Bank imports tab ── */}
         {tab === 'bank' && (
           <div className="s-card overflow-hidden">
@@ -781,7 +819,13 @@ export default function ReconciliationPage() {
                     </tr>
                     {openImport === i.id && (
                       <tr><td colSpan={6} className="p-0">
-                        <StatementLines importId={i.id} raastAccount={!!i.bankAccountId && raastAccountIds.has(i.bankAccountId)} onOpenRaast={() => setTab('raast')} />
+                        <StatementLines
+                          importId={i.id}
+                          raastAccount={!!i.bankAccountId && raastAccountIds.has(i.bankAccountId)}
+                          payoutBank={!!i.bankAccountId && payoutBankIds.has(i.bankAccountId)}
+                          onOpenRaast={() => setTab('raast')}
+                          onOpenCards={() => setTab('cards')}
+                        />
                       </td></tr>
                     )}
                   </Fragment>

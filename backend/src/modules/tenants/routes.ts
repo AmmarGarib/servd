@@ -482,6 +482,11 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       const body = z.object({
         templateKey: z.enum(TEMPLATE_KEYS as [string, ...string[]]),
         conceptName: z.string().min(1).max(100).optional(),
+        // The new brand's primary service vessel — a REQUIRED choice at brand
+        // creation, no default (owner's FINAL packaging rule; same field as
+        // POST /concepts): 'plate' or 'packaging' (packaging IS the vessel,
+        // e.g. Stackd — a dish's Packaging section is used on every order).
+        serviceVessel: z.enum(['plate', 'packaging']),
       }).parse(req.body)
 
       const tpl = getTemplate(body.templateKey)
@@ -497,7 +502,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         const c = await tx.concept.create({
           data: {
             tenantId,
-            slug: conceptSlug, name: conceptName, type: tpl.conceptType,
+            slug: conceptSlug, name: conceptName, type: tpl.conceptType, serviceVessel: body.serviceVessel,
             primaryColor: tpl.primaryColor, taxRate: tpl.taxRate,
             heroTagline: tpl.heroTagline, isActive: true, storefrontVisible: true,
           },

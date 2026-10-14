@@ -20,7 +20,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
-import { useAuthStore } from '../../../store/auth'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import Link from 'next/link'
 import WithholdingRates from './WithholdingRates'
@@ -174,8 +173,6 @@ const errText = (e: unknown) => {
   const x = e as { code?: string; message?: string } | null
   return (x?.code && ERROR_TEXT[x.code]) || x?.message || 'Something went wrong'
 }
-// Who may record payments, link entries and post reclasses (backend TAX_PAYERS).
-const TAX_PAYERS = ['admin', 'finance']
 
 /** Rupees typed → paisa. */
 const toPaisa = (rupees: string) => Math.round((Number(rupees) || 0) * 100)
@@ -204,7 +201,18 @@ function Field({ label, children, hint }: { label: string; children: React.React
 export default function SalesTaxReturnPage() {
   const [from, setFrom] = useState(startOfMonthPktIso())
   const [to,   setTo]   = useState(todayPktIso())
-  const canPay = useAuthStore((s) => s.isRole(...TAX_PAYERS))
+  // Who may record payments, link entries and post reclasses is the API's
+  // TAX_PAYER_ROLES — the same roles as the withholding rates' `canEdit`
+  // flag, so the page reads that flag instead of keeping a role list.
+  const { data: rateCaps } = useQuery({
+    queryKey: ['withholding-rates'],
+    queryFn: () => api.get<{ canEdit: boolean }>('/accounting/withholding/rates'),
+    retry: false,
+    staleTime: 60_000,
+    // Only a capability read: no payment buttons when it fails (the tab shows its own error).
+    meta: { inlineErrors: true },
+  })
+  const canPay = rateCaps?.canEdit ?? false
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('return')
   // ?tab=withholding-rates (Configuration → Operations links here). Read once

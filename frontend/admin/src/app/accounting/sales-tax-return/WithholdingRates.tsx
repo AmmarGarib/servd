@@ -49,6 +49,7 @@ export default function WithholdingRates() {
   const q = useQuery({
     queryKey: ['withholding-rates'],
     queryFn: () => api.get<RatesResp>('/accounting/withholding/rates'),
+    meta: { inlineErrors: true },
   })
   const [form, setForm] = useState<Record<string, { filer: string; nonFiler: string }>>({})
   const [saved, setSaved] = useState(false)

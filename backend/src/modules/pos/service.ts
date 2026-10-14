@@ -964,6 +964,9 @@ export async function quoteOrderForTender(orderId: string, method: 'cash' | 'car
     taxRatePct: price?.taxRatePct ?? order.taxRatePct,
     taxCents: price?.taxCents ?? order.taxCents,
     serviceChargeCents: price?.serviceChargeCents ?? order.serviceChargeCents,
+    /** The delivery fee before GST, and its GST at this tender's rate (of taxCents; H9). */
+    deliveryFeeCents: order.deliveryFeeCents,
+    deliveryFeeTaxCents: price?.deliveryFeeTaxCents ?? order.deliveryFeeTaxCents,
     discountCents: order.discountCents,
     tipCents: order.tipCents,
     totalCents,

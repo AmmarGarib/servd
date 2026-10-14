@@ -206,6 +206,17 @@ const createConceptSchema = z.object({
   name: z.string().min(1),
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
   type: z.enum(['restaurant', 'digital', 'cart']),
+  // The brand's PRIMARY service vessel (owner's FINAL packaging rule,
+  // 2026-10-13): 'plate' (dine-in on plates — a dish's Packaging section is
+  // used on takeaway / delivery, and on dine-in only when staff tap "Box
+  // given") or 'packaging' (packaging IS the service vessel, e.g. Stackd —
+  // used on every order). A REQUIRED choice when a brand is created (no
+  // default here — 400 when missing); editable later (PATCH, audited). A
+  // change applies to lines rung up from then on: OrderItem.serviceVessel is
+  // snapshotted at ring-up, so past cost is never restated.
+  serviceVessel: z.enum(['plate', 'packaging'], {
+    errorMap: () => ({ message: "Pick the brand's service vessel: 'plate' or 'packaging'" }),
+  }),
   description: z.string().optional(),
   // Same rule as the wordmark/mascot below (and the Brand Editor's marketing
   // tier): the uploader can hand back a root-relative path, and a value the
@@ -553,6 +564,22 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id },
       data,
     })
+    if (rest.serviceVessel !== undefined && rest.serviceVessel !== owned.serviceVessel) {
+      await audit({
+        category: 'identity',
+        action: 'concept.service_vessel',
+        entity: 'Concept',
+        entityId: owned.id,
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: owned.tenantId,
+        before: { serviceVessel: owned.serviceVessel },
+        after: { serviceVessel: rest.serviceVessel },
+        metadata: {
+          note: 'Applies to order lines rung up from now on. Lines already rung up keep the vessel snapshotted on them, so past food cost is not restated.',
+        },
+      })
+    }
     const changedKeys = Object.keys(rest).filter((k) => (rest as Record<string, unknown>)[k] !== undefined)
     if (storefrontLayout !== undefined) changedKeys.push('storefrontLayout')
     await audit({
