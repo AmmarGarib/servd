@@ -91,8 +91,12 @@ export type PathMode = 'base' | 'host'
  * (SERVD_LINK_ORIGIN is empty when NEXT_PUBLIC_SITE_URL is unset).
  */
 export function servdHref(path: string, onBrandHost: boolean): string {
-  if (!onBrandHost || !path.startsWith('/') || path.startsWith('//')) return path
-  return SERVD_LINK_ORIGIN ? `${SERVD_LINK_ORIGIN}${path}` : path
+  // '/home' is how brand fields name servd's home; it lives at servd's root
+  // now (owner, 2026-10-14), so link there directly rather than via the
+  // /home → / redirect.
+  const p = /^\/home(?=$|[?#])/.test(path) ? path.replace(/^\/home/, '/').replace(/^\/\//, '/') : path
+  if (!onBrandHost || !p.startsWith('/') || p.startsWith('//')) return p
+  return SERVD_LINK_ORIGIN ? `${SERVD_LINK_ORIGIN}${p}` : p
 }
 
 /** The path part of an href (no query or hash). */

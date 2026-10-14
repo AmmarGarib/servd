@@ -26,7 +26,7 @@ export function Nav({ fields }: SectionProps) {
   return (
     <nav aria-label="Primary" className="sv-nav">
       <div className="sv-nav-inner">
-        <Link href="/home" aria-label={`${alt} home`} className="sv-nav-mark">
+        <Link href="/" aria-label={`${alt} home`} className="sv-nav-mark">
           {logo
             // eslint-disable-next-line @next/next/no-img-element
             ? <img src={logo} alt={alt} style={{ height: logoHeight, width: 'auto', display: 'block' }} />

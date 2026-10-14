@@ -81,7 +81,7 @@ function servdText(brands: Brand[]): string {
     '',
     '## Menus and ordering',
     '',
-    `- [servd home](${SERVD_ORIGIN}/home): every kitchen on servd in one place`,
+    `- [servd home](${SERVD_ORIGIN}/): every kitchen on servd in one place`,
     ...brands.flatMap((b) => [
       `- [${label(b.name)} menu](${brandCanonical(b.slug, 'menu')}): the ${label(b.name)} menu`,
       `- [Order from ${label(b.name)}](${SERVD_ORIGIN}/${b.slug}): order online on servd`,
@@ -120,7 +120,7 @@ function brandText(b: Brand): string {
     `# ${b.name}`,
     '',
     ...(b.description ? [`> ${b.description}`, ''] : []),
-    `${b.name} is in ${where || 'Karachi'}.${filled(b.loc.cuisine) ? ` Cuisine: ${filled(b.loc.cuisine)}.` : ''} Orders are taken online through servd (${SERVD_ORIGIN}/home), GS Foods' ordering platform in Karachi.`,
+    `${b.name} is in ${where || 'Karachi'}.${filled(b.loc.cuisine) ? ` Cuisine: ${filled(b.loc.cuisine)}.` : ''} Orders are taken online through servd (${SERVD_ORIGIN}/), GS Foods' ordering platform in Karachi.`,
     '',
     '## Pages',
     '',

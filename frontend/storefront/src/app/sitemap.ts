@@ -80,7 +80,7 @@ function brandEntries(slug: string, published: Map<string, string>, livePages: s
 /** servd.pk's own pages. */
 function servdEntries(brands: BrandLocation[], published: Map<string, string>, livePages: string[]): Entry[] {
   const top: Entry[] = [
-    { url: `${SERVD_ORIGIN}/home`,     ...lastModifiedOf(published, 'servd:home'),     changeFrequency: 'daily',   priority: 1.0 },
+    { url: `${SERVD_ORIGIN}/`,     ...lastModifiedOf(published, 'servd:home'),     changeFrequency: 'daily',   priority: 1.0 },
     { url: `${SERVD_ORIGIN}/reserve`,  ...lastModifiedOf(published, 'servd:reserve'),  changeFrequency: 'weekly',  priority: 0.8 },
     { url: `${SERVD_ORIGIN}/waitlist`, ...lastModifiedOf(published, 'servd:waitlist'), changeFrequency: 'monthly', priority: 0.5 },
     { url: `${SERVD_ORIGIN}/press`,    ...lastModifiedOf(published, 'servd:press'),    changeFrequency: 'monthly', priority: 0.5 },

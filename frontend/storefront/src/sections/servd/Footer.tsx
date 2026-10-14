@@ -24,7 +24,7 @@ interface LinkItem { text?: unknown; href?: unknown }
  *  /brand/<slug> paths replaced by where they end up. */
 function footerHref(v: unknown, fallback = '#'): string {
   const href = safeHref(v, fallback)
-  if (href === '/') return '/home'
+  if (/^\/home(?=$|[?#])/.test(href)) return href.replace(/^\/home/, '/').replace(/^\/\//, '/')
   const m = /^\/brand\/([a-z0-9-]+)(?:\/([^?#]*?))?\/?$/i.exec(href)
   if (m) {
     const slug = m[1]!.toLowerCase()
@@ -107,7 +107,7 @@ export function Footer({ fields }: SectionProps) {
         }}>
           <div>
             <FooterLink
-              href={footerHref(fields.wordmarkHref, '/home')}
+              href={footerHref(fields.wordmarkHref, '/')}
               style={{
                 fontFamily: 'var(--font-display)',
                 fontSize: '2rem',

@@ -21,7 +21,7 @@ import { frameAncestors } from './lib/adminOrigins'
 //      its canonical origin in BRAND_ORIGIN there.
 //   3. Add the domain in the hosting provider / tunnel so SSL is issued.
 //
-// Redirects done here: servd.pk/ → /home; /<brand>/menu and /<brand>/order →
+// Redirects done here: servd.pk/home → / (servd's home is its root, owner 2026-10-14); /<brand>/menu and /<brand>/order →
 // /<brand> for any brand; on a brand domain,
 // /brand/<own-slug>[/menu|…] → the brand-domain path (/, /menu, …); and
 // www.<domain>/brand/… → <domain>, settled the same way. All 308 (permanent),
@@ -144,19 +144,20 @@ function isServdHost(bare: string): boolean {
 
 /**
  * Where a page path settles for a host, so every redirect lands in ONE hop,
- * and how sure that is. servd's / is /home (owner, 2026-10-07); on a brand
+ * and how sure that is. servd's home is its root / (owner, 2026-10-14; /home
+ * forwards there); on a brand
  * domain its own /brand/<slug>/… pages are the brand-domain paths. Permanent
  * (308) only when the host was positively placed. A host that is neither
  * servd's nor a known brand's — an unknown or not-yet-loaded custom domain, an
- * internal hostname — still has / sent to /home, but as a 307: a 308 is cached
- * by the browser with no expiry and read by Google as a move, and a lookup
- * failure must never be able to do that to a brand domain's home page.
+ * internal hostname — gets no home redirect at all: a 308 is cached by the
+ * browser with no expiry and read by Google as a move, and a lookup failure
+ * must never be able to do that to a brand domain's home page.
  */
 function settle(pathname: string, slug: string | null, servd: boolean): { path: string; status: 307 | 308 } {
   const hop = orderingHop(pathname)
   if (hop) return { path: hop, status: 308 }
   if (slug) return { path: brandSelfPath(pathname, slug) ?? pathname, status: 308 }
-  if (pathname === '/') return { path: '/home', status: servd ? 308 : 307 }
+  if (servd && pathname === '/home') return { path: '/', status: 308 }
   return { path: pathname, status: 308 }
 }
 
@@ -227,9 +228,9 @@ export async function middleware(req: NextRequest) {
   const bare = bareHost(host)
   const slug = await hostBrand(bare)
 
-  // Redirects to the canonical path: servd.pk/ → /home (done here, not in
-  // app/page.tsx, so it is a real redirect status rather than a render-time
-  // hop), and on a brand domain /brand/<own-slug>[/…] → /, /menu, …
+  // Redirects to the canonical path: servd.pk/home → / (a real redirect
+  // status, so search engines move the old address onto the root), and on a
+  // brand domain /brand/<own-slug>[/…] → /, /menu, …
   const settled = settle(req.nextUrl.pathname, slug, isServdHost(bare))
   if (settled.path !== req.nextUrl.pathname) {
     const url = req.nextUrl.clone()

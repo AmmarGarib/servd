@@ -83,7 +83,7 @@ export default function ClaimOfferPage() {
       <Centered>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>Offer not found</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>{error ?? 'This offer link is no longer active.'}</p>
-        <Link href="/home" className="servd-btn-primary">servd home</Link>
+        <Link href="/" className="servd-btn-primary">servd home</Link>
       </Centered>
     )
   }

@@ -65,7 +65,7 @@ export function organizationSchema(o: OrgGraphInput): Record<string, unknown> {
  */
 export function websiteSchema(opts: { name?: string; url?: string; ownedByServd?: boolean } = {}): Record<string, unknown> {
   const isServd = !opts.url
-  const url = opts.url ?? `${SERVD_ORIGIN}/home`
+  const url = opts.url ?? `${SERVD_ORIGIN}/`
   const origin = url.replace(/\/home$/, '').replace(/\/+$/, '')
   return {
     '@context': 'https://schema.org',
@@ -80,7 +80,7 @@ export function websiteSchema(opts: { name?: string; url?: string; ownedByServd?
     ...(isServd && {
       potentialAction: {
         '@type':       'SearchAction',
-        target:        `${SERVD_ORIGIN}/home?q={search_term_string}`,
+        target:        `${SERVD_ORIGIN}/?q={search_term_string}`,
         'query-input': 'required name=search_term_string',
       },
     }),

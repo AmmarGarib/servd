@@ -10,6 +10,7 @@ const journals = Array.isArray(args?.journals) ? args.journals : []
 const reviewFocus = args?.reviewFocus || ''
 const db = args?.db || 'servd_test_wb_gate'
 const redis = args?.redis ?? 25
+const note = typeof args?.note === 'string' && args.note ? `\n\nOrchestrator note: ${args.note}` : ''
 
 const COMMON = `Repo /home/user/servd (read CLAUDE.md; it applies). Wave B of the finance build, stage ${wave} just finished. Plan files: ${SP}/build-waves.md
 (read its "Gates between waves" section and the ${wave} table), ${SP}/shared-files.md, ${SP}/parked/PARKED.md (binding: parked areas stay parked).
@@ -18,7 +19,7 @@ The builders' reports are the "type":"result" lines of these workflow journals: 
 Tests: from backend/, DATABASE_URL=postgresql://postgres@127.0.0.1:5432/<db> REDIS_URL=redis://127.0.0.1:6390/<idx>
 JWT_SECRET=test-secret-for-local-verification-only-not-a-real-key JWT_REFRESH_SECRET=test-refresh-secret-for-local-verification-only
 SERVD_SECRET_KEY=$(node -e "console.log(Buffer.alloc(32,7).toString('base64'))") NODE_ENV=test npx vitest run <files>. Never production, never
-git commit/stash/reset/checkout (the orchestrator commits), no next build, no dev server.`
+git commit/stash/reset/checkout (the orchestrator commits), no next build, no dev server.` + note
 
 const GATE_SCHEMA = { type: 'object', properties: {
   summary: { type: 'string' },

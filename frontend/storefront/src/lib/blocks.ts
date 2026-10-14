@@ -437,14 +437,14 @@ export const BLOCK_CATALOG: BlockSpec[] = [
       title: 'Headline goes here',
       subtitle: "Short paragraph telling visitors what they're looking at.",
       align: 'left', height: 'lg',
-      primaryCta: { text: 'Order Now', href: '/home#kitchens' },
+      primaryCta: { text: 'Order Now', href: '/#kitchens' },
     }),
   },
   {
     type: 'cta_button', label: 'CTA Button', description: 'A single prominent action button', icon: '🔘',
     default: () => ({
       type: 'cta_button',
-      text: 'Order Now', href: '/home#kitchens',
+      text: 'Order Now', href: '/#kitchens',
       style: 'primary', size: 'lg', align: 'center', trailingArrow: true,
     }),
   },
@@ -554,7 +554,7 @@ export function defaultServdHomeLayout(): Block[] {
       title: 'Every kitchen, one place.',
       subtitle: 'Explore the brands, order what you are craving, and join Insiders for rewards on every order.',
       align: 'left', height: 'screen',
-      primaryCta: { text: 'Order Now', href: '/home#kitchens' },
+      primaryCta: { text: 'Order Now', href: '/#kitchens' },
     },
     {
       id: 's-1', type: 'stat_strip',
@@ -588,7 +588,7 @@ export function defaultServdHomeLayout(): Block[] {
     },
     {
       id: 'c-1', type: 'cta_button',
-      text: 'All kitchens', href: '/home#kitchens',
+      text: 'All kitchens', href: '/#kitchens',
       style: 'primary', size: 'huge', align: 'center',
       trailingArrow: true, paddingY: 'xl',
     },

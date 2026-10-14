@@ -76,7 +76,7 @@ export default async function LocationPage({ params }: Params) {
     // so this node matches the one on the brand's domain and /home.
     restaurantSchema({ loc: brand, ownedByServd: isServdCompanyBrand(brand.slug, live) }),
     breadcrumbSchema([
-      { name: 'servd',                            url: `${SERVD_ORIGIN}/home` },
+      { name: 'servd',                            url: `${SERVD_ORIGIN}/` },
       { name: brand.name,                         url: brandCanonical(brand.slug) },
       { name: addressLine(brand) || brand.name,   url: canonicalFor(brand) },
     ]),

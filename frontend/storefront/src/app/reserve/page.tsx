@@ -44,7 +44,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ReservePage() {
   const live = await fetchLiveConcepts()
   const schema = breadcrumbSchema([
-    { name: 'servd',   url: `${SERVD_ORIGIN}/home` },
+    { name: 'servd',   url: `${SERVD_ORIGIN}/` },
     { name: 'Reserve', url: CANONICAL },
   ])
   return (
