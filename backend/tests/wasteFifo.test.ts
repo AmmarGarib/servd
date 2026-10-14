@@ -3,7 +3,7 @@
 // What this guards:
 //   - The quantity leaves the lots oldest first; WasteLog.estimatedCostCents
 //     is that FIFO value and the log carries the item's company, the brand
-//     and the outlet; 'inventory.waste:<id>' posts Dr 5040 / Cr the class
+//     and the outlet; 'inventory.waste:<id>' posts Dr 1290 / Cr the class
 //     inventory (1230 for packaging), tagged with the brand.
 //   - More than on hand is 422 NEGATIVE_STOCK and nothing is written; the
 //     photo rule reads the FIFO value.
@@ -77,7 +77,7 @@ afterAll(async () => {
 })
 
 describe('waste on the lots', () => {
-  it('FIFO across two lots; the log carries company, brand and outlet; Dr 5040 / Cr 1210 for that brand', async () => {
+  it('FIFO across two lots; the log carries company, brand and outlet; Dr 1290 / Cr 1210 for that brand', async () => {
     const beef = await item(A, { qty: 1, cost: 10_000 })
     const sup = await prisma.supplier.create({ data: { tenantId: A.tenantId, name: 'Waste Meat Co' } })
     await receiveGoods({ actor: { id: u.ceoAB!.id, role: 'admin' }, supplierId: sup.id, lines: [{ inventoryItemId: beef.id, quantityReceived: 2, unitCostCents: 16_000 }] })
@@ -92,7 +92,7 @@ describe('waste on the lots', () => {
     expect(moves).toHaveLength(2)
     expect(moves.every((m) => m.conceptId === A.conceptId && m.locationId === A.locationId)).toBe(true)
     expect(await entryLines(A.tenantId, `inventory.waste:${res.json().id}`)).toEqual([
-      ['1210', 'credit', 26_000, A.conceptId], ['5040', 'debit', 26_000, A.conceptId],
+      ['1210', 'credit', 26_000, A.conceptId], ['1290', 'debit', 26_000, A.conceptId],
     ].sort())
   })
 
@@ -104,7 +104,7 @@ describe('waste on the lots', () => {
     expect(res.json()).toMatchObject({ estimatedCostCents: null, costsHidden: true })
     expect((await prisma.wasteLog.findUniqueOrThrow({ where: { id: res.json().id } })).estimatedCostCents).toBe(5_000)
     const lines = (await entryLines(A.tenantId, `inventory.waste:${res.json().id}`))!
-    expect(lines.map(([code, type, cents]) => [code, type, cents])).toEqual([['1230', 'credit', 5_000], ['5040', 'debit', 5_000]])
+    expect(lines.map(([code, type, cents]) => [code, type, cents])).toEqual([['1230', 'credit', 5_000], ['1290', 'debit', 5_000]])
   })
 
   it('more than on hand → 422 NEGATIVE_STOCK, nothing written; a big waste needs a photo, valued FIFO', async () => {
@@ -125,12 +125,12 @@ describe('waste on the lots', () => {
 
   it('a refused posting leaves the waste standing and flags it with its date', async () => {
     const it0 = await item(A, { qty: 5, cost: 10_000 })
-    await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '5040' }, data: { isActive: false } })
+    await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '1290' }, data: { isActive: false } })
     let res
     try {
       res = await call(u.chefA!, 'POST', `/inventory/${it0.id}/waste`, { quantity: 1, unit: 'kg', reason: 'over_prep' })
     } finally {
-      await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '5040' }, data: { isActive: true } })
+      await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '1290' }, data: { isActive: true } })
     }
     expect(res.statusCode, res.body).toBe(201)
     expect(res.json().ledger.posted).toBe(false)

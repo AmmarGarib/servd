@@ -6,7 +6,7 @@
 //     ('order_item.sale' + line), and a replay writes nothing;
 //   - an unfired void goes back to the very same lots, once;
 //   - a fired void is relabelled sale_void + waste (stock unchanged), one
-//     WasteLog per item with the FIFO value, Dr 5040 / Cr 1210 + Cr 1230 in the
+//     WasteLog per item with the FIFO value, Dr 1290 / Cr 1210 + Cr 1230 in the
 //     order's company under 'pos.void_waste:<line>' — once;
 //   - a cancel wastes the fired lines 'cancelled_after_fire' and returns the
 //     unfired ones; its audit row carries the ORDER's company;
@@ -150,7 +150,7 @@ describe('a sale on FIFO lots', () => {
     expect(await orderStockCostCents(o.id)).toBe(0)
   })
 
-  it('a fired void is relabelled to waste: stock unchanged, a WasteLog per item, Dr 5040 / Cr 1210 + 1230 — once', async () => {
+  it('a fired void is relabelled to waste: stock unchanged, a WasteLog per item, Dr 1290 / Cr 1210 + 1230 — once', async () => {
     const o = await ring(A, [{ menuItemId: A.items.nihari, name: 'Beef Nihari' }], 'takeout')
     const line = o.items[0]!
     const sale = (await movesOf(o.id)).filter((m) => m.kind === 'sale')
@@ -178,7 +178,7 @@ describe('a sale on FIFO lots', () => {
     const je = await entryOf(`pos.void_waste:${line.id}`)
     expect(je?.tenantId).toBe(A.tenantId)
     const amt = (code: string, type: string) => je!.lines.filter((l) => l.account.code === code && l.type === type).reduce((s, l) => s + Number(l.amountCents), 0)
-    expect(amt('5040', 'debit')).toBe(beefValue + 3_000)
+    expect(amt('1290', 'debit')).toBe(beefValue + 3_000)
     expect(amt('1210', 'credit')).toBe(beefValue)
     expect(amt('1230', 'credit')).toBe(3_000)
 
@@ -263,7 +263,7 @@ describe('KDS recall → remake', () => {
     expect(await stockOf(beefA)).toBeCloseTo(before - 0.3, 6)
     const je = await entryOf(`inventory.waste:${logs[0]!.id}`)
     expect(je?.tenantId).toBe(A.tenantId)
-    expect(je!.lines.find((l) => l.type === 'debit')!.account.code).toBe('5040')
+    expect(je!.lines.find((l) => l.type === 'debit')!.account.code).toBe('1290')
 
     // Bumped again, recalled again: a second remake, its own log.
     await updateItemStatus(line.id, 'bumped', mgrA.id)

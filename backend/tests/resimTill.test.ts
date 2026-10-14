@@ -13,7 +13,7 @@
 //              points at the order.
 //   BOH-R2-03  a line voided after it was fired is booked as waste: its FIFO
 //              sale rows relabelled sale_void + waste, a WasteLog
-//              (void_after_fire) + Dr 5040 / Cr 1210 in the ORDER's company,
+//              (void_after_fire) + Dr 1290 / Cr 1210 in the ORDER's company,
 //              once; a closed period → the void stands, a posting_failed flag.
 //   R2-UI-01   the ring-up answers with payments: [] (fresh and replay).
 //   R2-UI-07   an 11-digit cash tender is 422 AMOUNT_TOO_LARGE, not a 500.
@@ -379,7 +379,7 @@ describe('BOH-R2-03 — a line voided after firing is booked as waste in the ord
     include: { lines: { include: { account: { select: { code: true } } } } },
   })
 
-  it('company A: WasteLog (void_after_fire, PKR 300) + Dr 5040 / Cr 1210 in A, stock stays out, nothing in B', async () => {
+  it('company A: WasteLog (void_after_fire, PKR 300) + Dr 1290 / Cr 1210 in A, stock stays out, nothing in B', async () => {
     const { o, nihari } = await firedTicket(mgrA, A)
     const sale = await prisma.stockMovement.findMany({ where: { orderItemId: nihari.id, kind: 'sale' } })
     expect(sale.reduce((s, m) => s - m.qty, 0)).toBeCloseTo(0.15, 6)
@@ -408,7 +408,7 @@ describe('BOH-R2-03 — a line voided after firing is booked as waste in the ord
     const cr = je!.lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
     expect(dr).toBe(30_000)
     expect(cr).toBe(30_000)
-    expect(je!.lines.find((l) => l.type === 'debit')!.account.code).toBe('5040')
+    expect(je!.lines.find((l) => l.type === 'debit')!.account.code).toBe('1290')
     expect(je!.lines.find((l) => l.type === 'credit')!.account.code).toBe('1210')
     expect(await prisma.journalEntry.count({ where: { reference: `pos.void_waste:${nihari.id}`, tenantId: B.tenantId } })).toBe(0)
 

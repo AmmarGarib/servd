@@ -6,7 +6,7 @@
 //     (422 SHORTFALL_REASON_REQUIRED) — nothing changes on a refusal.
 //   - A shortfall is booked as waste reason 'transit_loss': drawn FIFO, a
 //     WasteLog in the item's company tagged with the sending outlet, and
-//     'inventory.waste:<id>' Dr 5040 / Cr 1210, once (a second receive is 409).
+//     'inventory.waste:<id>' Dr 1290 / Cr 1210, once (a second receive is 409).
 //   - Two companies: another company's transfer is 404; a company-less item
 //     cannot be transferred.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -97,7 +97,7 @@ describe('receiving a transfer', () => {
     expect(await stockOf(it0.id)).toBe(10)
   })
 
-  it('a shortfall is transit-loss waste: FIFO value, the sending outlet, Dr 5040 / Cr 1210 — once', async () => {
+  it('a shortfall is transit-loss waste: FIFO value, the sending outlet, Dr 1290 / Cr 1210 — once', async () => {
     const it0 = await item(A, 10, 10_000)
     const id = await shipped(it0.id, 4000, 'g')
     const res = await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/receive`, { receivedQuantity: 3500, shortfallReason: 'bag split in the van' })
@@ -108,7 +108,7 @@ describe('receiving a transfer', () => {
     expect(log).toMatchObject({ tenantId: A.tenantId, locationId: A.locationId, reason: 'transit_loss', quantity: 0.5, unit: 'kg', estimatedCostCents: 5_000 })
     expect(log.notes).toContain('bag split in the van')
     const e = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: A.tenantId, reference: `inventory.waste:${log.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
-    expect(e.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([['1210', 'credit', 5_000], ['5040', 'debit', 5_000]])
+    expect(e.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([['1210', 'credit', 5_000], ['1290', 'debit', 5_000]])
 
     const again = await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/receive`, { receivedQuantity: 3000, shortfallReason: 'second try' })
     expect(again.statusCode).toBe(409)

@@ -357,9 +357,10 @@ describe('waste log cost (BOH-07)', () => {
 
     const je = await waitFor(() => entry(tenantA, `inventory.waste:${res.json().id}`), (v) => v != null)
     expect(je).not.toBeNull()
+    // H20: the cost waits in 1290 Stock Differences Suspense until the CEO approves it into 5040.
     expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([
       ['credit', '1210', 900_000],
-      ['debit', '5040', 900_000],
+      ['debit', '1290', 900_000],
     ])
     expect(je!.lines.every((l) => l.account.tenantId === tenantA)).toBe(true)
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantB, reference: `inventory.waste:${res.json().id}` } })).toBe(0)
@@ -409,7 +410,7 @@ describe('food-safety breach flag (BOH-08)', () => {
 // ─── BOH-12: stock counts reach the ledger ───────────────────────────────────
 
 describe('stock-count adjustment posting (BOH-12)', () => {
-  it('a shortage posts Dr 5050 / Cr 1210 at the FIFO value of the lots, in the count’s company', async () => {
+  it('a shortage posts Dr 1290 (awaiting the CEO, H20) / Cr 1210 at the FIFO value of the lots, in the count’s company', async () => {
     const bun = await stockItem({ name: 'Potato bun', unit: 'pcs', currentStock: 35, unitCostCents: 6_000, tenantId: tenantA })
     const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: bun.id, physicalQty: 30, reason: 'end of day count' }] })
     expect(res.statusCode).toBe(201)
@@ -421,7 +422,7 @@ describe('stock-count adjustment posting (BOH-12)', () => {
     expect(je).not.toBeNull()
     expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([
       ['credit', '1210', 30_000],
-      ['debit', '5050', 30_000],
+      ['debit', '1290', 30_000],
     ])
     expect(je!.lines.every((l) => l.account.tenantId === tenantA)).toBe(true)
 
@@ -440,8 +441,8 @@ describe('stock-count adjustment posting (BOH-12)', () => {
     const je = await entry(tenantA, `inventory.count:${res.json().id}`)
     const sum = (type: string, code: string) => je!.lines.filter((l) => l.type === type && l.account.code === code).reduce((s, l) => s + l.amountCents, 0)
     expect(sum('debit', '1210')).toBe(50_000)   // 2 L milk over
-    expect(sum('credit', '5050')).toBe(50_000)
-    expect(sum('debit', '5050')).toBe(30_000)   // 10 eggs short
+    expect(sum('credit', '1290')).toBe(50_000)  // H20: differences wait in 1290 for the CEO
+    expect(sum('debit', '1290')).toBe(30_000)   // 10 eggs short
     expect(sum('credit', '1210')).toBe(30_000)
     const debits = je!.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
     const credits = je!.lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)

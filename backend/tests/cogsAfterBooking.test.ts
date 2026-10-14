@@ -6,7 +6,8 @@
 // stock event after that must move cost of sales itself, so that for each
 // class the change in the GL inventory account equals the change in the lots:
 //
-//   - cancel after the home close: fired lines Dr 5040 / Cr 50x0 (not 12x0),
+//   - cancel after the home close: fired lines Dr 1290 (stock differences,
+//     waiting for the CEO's approval into 5040 — H20) / Cr 50x0 (not 12x0),
 //     unfired lines back to the lots with Dr 12x0 / Cr 50x0;
 //   - a till void after the home close: the same, per line;
 //   - "Box given" after completion: Dr 5030 / Cr 1230 under its own key; its
@@ -66,6 +67,8 @@ async function snap(): Promise<Snap> {
     out[cogs] = await gl(cogs)
   }
   out['5040'] = await gl('5040')
+  // H20: waste waits in 1290 Stock Differences Suspense until the CEO approves it into 5040.
+  out['1290'] = await gl('1290')
   return out
 }
 const delta = (a: Snap, b: Snap, k: string) => (b[k] ?? 0) - (a[k] ?? 0)
@@ -137,7 +140,8 @@ describe('a ticket whose home drawer close already booked its cost', () => {
     expectTies(s0, s2)
     expect(delta(s0, s2, '5010')).toBe(0)                // the close's food cost became waste
     expect(delta(s0, s2, '5020')).toBe(0)                // the cola went back on the shelf
-    expect(delta(s0, s2, '5040')).toBe(30_000)
+    expect(delta(s0, s2, '1290')).toBe(30_000)          // waiting for the CEO (H20)
+    expect(delta(s0, s2, '5040')).toBe(0)
     expect(delta(s0, s2, 'lots:beverage')).toBe(0)
     const ret = await prisma.journalEntry.findFirst({ where: { tenantId: A.tenantId, reference: `order_item.return:${kheer.id}` }, include: { lines: { include: { account: true } } } })
     expect(ret?.lines.map((l) => [l.account.code, l.type, Number(l.amountCents), l.conceptId]).sort()).toEqual([
@@ -165,7 +169,8 @@ describe('a ticket whose home drawer close already booked its cost', () => {
     expectTies(s0, s1)
     expect(delta(s0, s1, '5010')).toBe(0)
     expect(delta(s0, s1, '5020')).toBe(0)
-    expect(delta(s0, s1, '5040')).toBe(15_000)
+    expect(delta(s0, s1, '1290')).toBe(15_000)
+    expect(delta(s0, s1, '5040')).toBe(0)
     const waste = await prisma.journalEntry.findFirst({ where: { tenantId: A.tenantId, reference: `pos.void_waste:${nihari.id}` }, include: { lines: { include: { account: true } } } })
     expect(waste?.lines.filter((l) => l.type === 'credit').map((l) => l.account.code)).toEqual(['5010'])
   })
@@ -263,7 +268,8 @@ describe('a shortfall settled by a late receipt, then the order is cancelled (ne
       // The receipt's lot came in outside the GL here (its receiving entry is not part of this test).
       expectTies(s0, s1, { food: 1_200_000 })
       expect(delta(s0, s1, '5010')).toBe(0)
-      expect(delta(s0, s1, '5040')).toBe(fired ? 220_000 : 0)
+      expect(delta(s0, s1, '1290')).toBe(fired ? 220_000 : 0)
+      expect(delta(s0, s1, '5040')).toBe(0)
       const je = await prisma.journalEntry.findFirst({ where: { tenantId: A.tenantId, reference: `order.cancel_settle:${o.id}` }, include: { lines: { include: { account: true } } } })
       expect(je?.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([['1210', 'debit', 120_000], ['5010', 'credit', 120_000]].sort())
     })

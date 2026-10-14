@@ -34,6 +34,7 @@ import { postShiftClose } from '../src/modules/accounting/shiftPosting.js'
 import { brandSalesRevenueCents } from '../src/modules/accounting/reports.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../src/modules/accounting/dates.js'
 import { managementRoutes } from '../src/modules/management/routes.js'
+import { listStockDifferences } from '../src/modules/stockDifferences/service.js'
 import {
   foodCostSummary, inventoryValuation, ingredientVariance, inventoryCloseChecks, type FoodCostCompanyBlock,
 } from '../src/modules/reports/foodCost.js'
@@ -197,8 +198,11 @@ describe('the identity and the buckets', () => {
     for (const b of c.brands) expect(b.identityDiffCents, b.name).toBe(0)
     const sum = c.theoretical.totalCents + c.explainedCents + c.unexplainedCents + c.alignmentCents + c.timing!.totalCents
     expect(sum).toBe(c.actual!.totalCents)
-    // The only timing: the open ticket its closed drawer booked before the sale completed. Stock documents are all posted.
-    expect(c.timing!.stockDocsCents).toBe(0)
+    // The timing: the open ticket its closed drawer booked before the sale completed, and (H20) the waste and
+    // count differences still waiting in 1290 for the CEO — explained by their documents, not yet cost of sales.
+    const waiting = (await listStockDifferences({ tenantIds: [A.tenantId], status: 'pending' })).totals.netCents
+    expect(waiting).toBeGreaterThan(0)
+    expect(c.timing!.stockDocsCents).toBe(-waiting)
     expect(c.timing!.salesCents).toBe(openTicketCost)
     expect(c.alignmentCents).toBe(0)
     expect(c.warnings.find((w) => w.code === 'open_orders')).toMatchObject({ severity: 'timing' })

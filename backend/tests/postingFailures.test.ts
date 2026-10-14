@@ -186,14 +186,14 @@ afterAll(async () => {
 describe('manual waste — a refused posting is flagged and re-posted', () => {
   it('flags in the item\'s company; B\'s backfill never lists, posts or closes it; A\'s posts it once on its own day', async () => {
     const beef = await inventoryItem(tenantA, 'Beef mince', 180_000, 10)
-    await setActive(tenantA, '5040', false)
+    await setActive(tenantA, '1290', false)
     let wasteId: string
     try {
       const res = await call('chefA', 'POST', `/inventory/${beef.id}/waste`, { quantity: 0.1, unit: 'kg', reason: 'spoilage', photoUrl: PHOTO })
       expect(res.statusCode, res.body).toBe(201)
       wasteId = res.json().id
     } finally {
-      await setActive(tenantA, '5040', true)
+      await setActive(tenantA, '1290', true)
     }
     expect(await entry(tenantA, `inventory.waste:${wasteId}`)).toBeNull()
     const flags = await openFlags(wasteId)
@@ -216,7 +216,7 @@ describe('manual waste — a refused posting is flagged and re-posted', () => {
 
     expect(rowOf(await backfill('adminA', false), 'inventory.waste', wasteId)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `inventory.waste:${wasteId}`)
-    expect(sum(je!.lines, '5040', 'debit')).toBe(18_000)
+    expect(sum(je!.lines, '1290', 'debit')).toBe(18_000)
     expect(sum(je!.lines, '1210', 'credit')).toBe(18_000)
     expect(je!.entryDate.toISOString()).toBe(log.recordedAt.toISOString())
     expect(await openFlags(wasteId)).toHaveLength(0)
@@ -241,7 +241,7 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
   it('flags in the count\'s company (no variance is not a failure); the backfill posts it once', async () => {
     const bun = await inventoryItem(tenantA, 'Potato bun', 6_000, 35)
     const salt = await inventoryItem(tenantA, 'Salt', 5_000, 4)
-    await setActive(tenantA, '5050', false)
+    await setActive(tenantA, '1290', false)
     let countId: string
     let flatId: string
     try {
@@ -253,7 +253,7 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
       expect(flat.json().ledger).toMatchObject({ posted: false, reason: 'no_variance' })
       flatId = flat.json().id
     } finally {
-      await setActive(tenantA, '5050', true)
+      await setActive(tenantA, '1290', true)
     }
     const flags = await openFlags(countId)
     expect(flags).toHaveLength(1)
@@ -265,7 +265,7 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
     expect(rowOf(await backfill('adminA', true), 'inventory.count', countId)).toMatchObject({ outcome: 'would_post' })
     expect(rowOf(await backfill('adminA', false), 'inventory.count', countId)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `inventory.count:${countId}`)
-    expect(sum(je!.lines, '5050', 'debit')).toBe(30_000)
+    expect(sum(je!.lines, '1290', 'debit')).toBe(30_000)
     expect(sum(je!.lines, '1210', 'credit')).toBe(30_000)
     expect(await openFlags(countId)).toHaveLength(0)
     expect(rowOf(await backfill('adminA', false), 'inventory.count', countId)).toBeUndefined()
@@ -381,7 +381,7 @@ describe('waste from a line voided after firing', () => {
     expect(rowOf(await backfill('adminA', true), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'would_post', date: log.recordedAt.toISOString() })
     expect(rowOf(await backfill('adminA', false), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `pos.void_waste:${line.id}`)
-    expect(sum(je!.lines, '5040', 'debit')).toBe(30_000)
+    expect(sum(je!.lines, '1290', 'debit')).toBe(30_000)
     expect(sum(je!.lines, '1210', 'credit')).toBe(30_000)
     expect(je!.entryDate.toISOString()).toBe(log.recordedAt.toISOString())
     expect(await openFlags(line.id)).toHaveLength(0)
@@ -407,7 +407,7 @@ describe('waste from a line voided after firing', () => {
       const je = await entry(tenantA, `pos.void_waste:${line.id}`)
       expect(je!.entryDate.getTime()).toBeGreaterThan(Date.now() - 60_000)
       for (const l of je!.lines) expect(l.memo).toContain(`dated ${ymd(at)}`)
-      expect(sum(je!.lines, '5040', 'debit')).toBe(12_000)
+      expect(sum(je!.lines, '1290', 'debit')).toBe(12_000)
       expect(await openFlags(line.id)).toHaveLength(0)
     } finally {
       await unlock()

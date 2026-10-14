@@ -3,9 +3,9 @@
 //
 // What this guards:
 //   - Short: the difference leaves the lots FIFO ('count_loss') at the lots'
-//     value; Dr 5050 / Cr the class inventory at exactly that value.
+//     value; Dr 1290 / Cr the class inventory at exactly that value.
 //   - Over: a 'count_gain' lot at the LATEST PURCHASE price (not the FIFO
-//     head), Dr class inventory / Cr 5050.
+//     head), Dr class inventory / Cr 1290.
 //   - A zero-book over raises 'stock_unrecorded' (variancePct null) instead
 //     of a 0 % line and never a shrinkage flag.
 //   - Every difference carries a reason (≥ 3 characters, H20).
@@ -97,7 +97,7 @@ afterAll(async () => {
 })
 
 describe('a spot count on the lots', () => {
-  it('short: count_loss FIFO across two lots at their value; Dr 5050 / Cr 1210', async () => {
+  it('short: count_loss FIFO across two lots at their value; Dr 1290 / Cr 1210', async () => {
     const it0 = await item(A, { qty: 2, cost: 10_000 })
     await receive(A, it0.id, 3, 15_000)
     expect(await stockOf(it0.id)).toBe(5)
@@ -115,11 +115,11 @@ describe('a spot count on the lots', () => {
     const moves = await prisma.stockMovement.findMany({ where: { sourceType: 'physical_count_line', sourceId: line.id, kind: 'count_loss' } })
     expect(moves.reduce((s, m) => s + Number(m.valueCents), 0)).toBe(-42_500)
     const ls = (await entryLines(A.tenantId, `inventory.count:${body.id}`))!
-    expect(sum(ls, '5050', 'debit')).toBe(42_500)
+    expect(sum(ls, '1290', 'debit')).toBe(42_500)
     expect(sum(ls, '1210', 'credit')).toBe(42_500)
   })
 
-  it('over: a count_gain lot at the LATEST purchase price, not the FIFO head; Dr 1210 / Cr 5050', async () => {
+  it('over: a count_gain lot at the LATEST purchase price, not the FIFO head; Dr 1210 / Cr 1290', async () => {
     const it0 = await item(A)
     await receive(A, it0.id, 2, 10_000)
     await receive(A, it0.id, 2, 12_000)
@@ -131,7 +131,7 @@ describe('a spot count on the lots', () => {
     expect(lot).toMatchObject({ qtyIn: 1, unitCostCents: 12_000 })
     const ls = (await entryLines(A.tenantId, `inventory.count:${res.json().id}`))!
     expect(sum(ls, '1210', 'debit')).toBe(12_000)
-    expect(sum(ls, '5050', 'credit')).toBe(12_000)
+    expect(sum(ls, '1290', 'credit')).toBe(12_000)
     expect(await stockOf(it0.id)).toBe(5)
   })
 
@@ -140,7 +140,7 @@ describe('a spot count on the lots', () => {
     const res = await call(u.chefA!, 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: cola.id, physicalQty: 8, reason: 'two cans missing' }] })
     expect(res.statusCode, res.body).toBe(201)
     const ls = (await entryLines(A.tenantId, `inventory.count:${res.json().id}`))!
-    expect(sum(ls, '5050', 'debit')).toBe(10_000)
+    expect(sum(ls, '1290', 'debit')).toBe(10_000)
     expect(sum(ls, '1220', 'credit')).toBe(10_000)
     expect(sum(ls, '1210', 'credit')).toBe(0)
   })
@@ -182,12 +182,12 @@ describe('a spot count on the lots', () => {
 
   it('a refused posting keeps the count and the stock, and flags it with the document date', async () => {
     const it0 = await item(A, { qty: 10, cost: 10_000 })
-    await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '5050' }, data: { isActive: false } })
+    await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '1290' }, data: { isActive: false } })
     let res
     try {
       res = await call(u.chefA!, 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: it0.id, physicalQty: 7, reason: 'three missing' }] })
     } finally {
-      await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '5050' }, data: { isActive: true } })
+      await prisma.account.updateMany({ where: { tenantId: A.tenantId, code: '1290' }, data: { isActive: true } })
     }
     expect(res.statusCode, res.body).toBe(201)
     expect(res.json().ledger.posted).toBe(false)
