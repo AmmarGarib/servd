@@ -65,14 +65,21 @@ const REASON_LABEL: Record<VoidWasteReason, string> = {
   returned_food: 'returned food',
 }
 
-/** The movement kinds that make up a sold line's draw on the lots. */
-const LINE_KINDS = ['sale', 'sale_return', 'sale_void'] as const
+/**
+ * The movement kinds that make up a sold line's draw on the lots: its sale
+ * rows, a late receipt's settle of its shortfall (drawn for the line from the
+ * new lot; giving it back credits the order's cost of sales, which nets the
+ * settle's own posting), and what was already given back or relabelled.
+ */
+const LINE_KINDS = ['sale', 'shortfall_settle', 'sale_return', 'sale_void'] as const
+const DRAW_KINDS: ReadonlySet<string> = new Set(['sale', 'shortfall_settle'])
 
 const asClass = (v: string): CostClass => ((COST_CLASSES as readonly string[]).includes(v) ? (v as CostClass) : 'food')
 
 /**
- * What a sold line still has out of each lot: its 'sale' rows net of its
- * 'sale_return' and 'sale_void' rows, per (item, lot), as rows returnToLotsTx
+ * What a sold line still has out of each lot: its 'sale' (and
+ * 'shortfall_settle') rows net of its 'sale_return' and 'sale_void' rows, per
+ * (item, lot), as rows returnToLotsTx
  * and relabelToWasteTx take (signed out: qty and value negative; id = one of
  * the line's sale rows of that lot, so the original order / line / brand /
  * outlet are copied). Lot-less shortfall rows have nothing to give back.
@@ -90,13 +97,14 @@ export async function lineNetOutRowsTx(tx: Tx, a: {
   })
   const net = new Map<string, { itemId: string; lotId: string; qty: number; value: number; saleId: string | null; costClass: CostClass }>()
   for (const r of rows) {
-    if (r.kind === 'sale' && a.saleSourceTypes && !a.saleSourceTypes.includes(r.sourceType)) continue
-    if (r.kind !== 'sale' && a.returnSourceTypes && !a.returnSourceTypes.includes(r.sourceType)) continue
+    const draw = DRAW_KINDS.has(r.kind)
+    if (draw && a.saleSourceTypes && !a.saleSourceTypes.includes(r.sourceType)) continue
+    if (!draw && a.returnSourceTypes && !a.returnSourceTypes.includes(r.sourceType)) continue
     const key = `${r.inventoryItemId}|${r.lotId}`
     const g = net.get(key) ?? { itemId: r.inventoryItemId, lotId: r.lotId!, qty: 0, value: 0, saleId: null, costClass: asClass(r.costClass) }
     g.qty += r.qty
     g.value += toCents(r.valueCents)
-    if (r.kind === 'sale' && !g.saleId) g.saleId = r.id
+    if (draw && !g.saleId) g.saleId = r.id
     net.set(key, g)
   }
   const out: MovementRow[] = []

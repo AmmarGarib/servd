@@ -225,6 +225,28 @@ describe('cancel', () => {
   })
 })
 
+describe('a shortfall settled by a late receipt', () => {
+  it('a cancel gives back the settled part too (into the receipt\'s lot), so the lots hold what is on the shelf', async () => {
+    const saffron = (await prisma.inventoryItem.create({ data: { tenantId: A.tenantId, name: 'Saffron', unit: 'kg', category: 'dry_goods' } })).id
+    await lot(A.tenantId, saffron, 0.1, 1_000_000, 3)
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: A.conceptId } })
+    const dish = (await prisma.menuItem.create({ data: { conceptId: A.conceptId, categoryId: cat.id, name: 'Saffron rice', priceCents: 100_000 } })).id
+    await prisma.recipe.create({ data: { kind: 'plate', menuItemId: dish, servings: 1, ingredients: { create: [{ inventoryItemId: saffron, quantity: 200, unit: 'kg' }] } } })
+    const o = await ring(A, [{ menuItemId: dish, name: 'Saffron rice' }])
+    expect(await stockOf(saffron)).toBe(0)                          // 0.1 taken, 0.1 short
+    const src = `ostk-rcpt-${++seq}`
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: A.tenantId, inventoryItemId: saffron, qty: 1, unitCostCents: 1_200_000, kind: 'receipt', lotSourceType: 'goods_receipt_line',
+      lotSourceId: src, movementSourceType: 'goods_receipt_line', movementSourceId: src, receivedAt: new Date(),
+    }))
+    expect(await stockOf(saffron)).toBeCloseTo(0.9, 6)              // the receipt settled the 0.1 short
+    await cancelOrder(o.id, { reason: 'Kitchen out of rice', actor: { id: mgrA.id, tenantId: A.tenantId } })
+    expect(await stockOf(saffron)).toBeCloseTo(1.1, 6)
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: saffron }, orderBy: { receivedAt: 'asc' } })
+    expect(lots.map((l) => l.remainingQty)).toEqual([expect.closeTo(0.1, 6), expect.closeTo(1, 6)])
+  })
+})
+
 describe('KDS recall → remake', () => {
   it('books the recipe as remake waste, once per recall, at FIFO value, without the packaging', async () => {
     const o = await ring(A, [{ menuItemId: A.items.nihari, name: 'Beef Nihari', quantity: 2 }], 'takeout')

@@ -545,11 +545,19 @@ export async function postSupplierBillVoid(
     const already = await tx.journalEntry.findFirst({ where: { reference: `supplier.bill.void:${billId}`, tenantId }, select: { id: true } })
     if (already) return { posted: false, entryId: already.id, reason: 'already_reversed' }
 
+    // Lock the bill's POs and receipt lines (as posting and receiving do)
+    // BEFORE reading its matches: a receipt settling one of its pending
+    // matches either commits first (and is read as live here) or waits.
+    const preMatches = await tx.grniMatch.findMany({ where: { billId, status: { not: 'void' } }, select: { receiptLineId: true } })
+    await lockBillDocsTx(
+      tx,
+      bill.lines.map((l) => l.poLineId ?? ''),
+      [...bill.lines.map((l) => l.receiptLineId ?? ''), ...preMatches.map((m) => m.receiptLineId ?? '')],
+    )
     const matches = await tx.grniMatch.findMany({
       where: { billId, status: { not: 'void' } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     })
-    await lockBillDocsTx(tx, bill.lines.map((l) => l.poLineId ?? ''), matches.map((m) => m.receiptLineId ?? ''))
 
     const postedBy = opts.postedBy ?? 'system'
     const result = await reverseJournalEntry(tenantId, 'supplier.bill', billId, reason, { tx, suffix: 'void', postedBy })
@@ -873,9 +881,11 @@ export async function postSupplierCreditNote(
 
     const original = await tx.supplierBill.findUnique({
       where:  { id: cn.originalBillId },
-      select: { id: true, billNumber: true, createdAt: true, lines: { select: { description: true, inventoryItemId: true, expenseAccountCode: true } } },
+      select: { id: true, billNumber: true, createdAt: true, lines: { select: { description: true, inventoryItemId: true, expenseAccountCode: true, poLineId: true, receiptLineId: true } } },
     })
     if (!original) return { posted: false, entryId: null, reason: 'bill_not_found' }
+    // Serialise with receipts settling the bill's pending matches (PO lock).
+    await lockBillDocsTx(tx, original.lines.map((l) => l.poLineId ?? ''), original.lines.map((l) => l.receiptLineId ?? ''))
     // The credit undoes part of the bill's entry; a bill that never reached
     // the ledger has nothing to undo.
     const billEntry = await tx.journalEntry.findFirst({ where: { reference: billRef(original.id), tenantId }, select: { id: true } })
