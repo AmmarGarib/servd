@@ -466,6 +466,9 @@ export async function unapplyCreditNote(creditNoteId: string, billId: string) {
  * refuses it). Idempotent: voiding a void credit note returns it unchanged.
  */
 export async function voidCreditNote(creditNoteId: string, userId: string, reason: string) {
+  // Returned goods go back into FIFO lots (the company's cut-over first, outside the transaction).
+  const owner = await prisma.supplierBill.findUnique({ where: { id: creditNoteId }, select: { supplier: { select: { tenantId: true } } } })
+  if (owner?.supplier.tenantId) await ensureFifoReady(owner.supplier.tenantId)
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${creditNoteId} FOR UPDATE`
     const cn = await tx.supplierBill.findUnique({
