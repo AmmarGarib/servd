@@ -35,7 +35,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function WaitlistPage() {
   const schema = breadcrumbSchema([
-    { name: 'servd',    url: `${SERVD_ORIGIN}/home` },
+    { name: 'servd',    url: `${SERVD_ORIGIN}/` },
     { name: 'Waitlist', url: CANONICAL },
   ])
   return (

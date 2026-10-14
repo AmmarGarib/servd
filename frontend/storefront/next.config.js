@@ -42,8 +42,8 @@ const LEGACY_REDIRECTS = [
   { source: '/:concept(stackd|simmer|flipd)/order', destination: '/:concept', permanent: true },
   // The brand picker merged into /home, the one landing page (owner,
   // 2026-10-07) — permanent, so /home is the URL that gets indexed.
-  { source: '/browse',            destination: '/home',                permanent: true },
-  { source: '/order',             destination: '/home',                permanent: true },
+  { source: '/browse',            destination: '/',                    permanent: true },
+  { source: '/order',             destination: '/',                    permanent: true },
   // The icon paths browsers and crawlers probe without reading the page's
   // <link> tags; the real one is app/apple-icon.png.
   { source: '/apple-touch-icon.png',             destination: '/apple-icon.png', permanent: true },

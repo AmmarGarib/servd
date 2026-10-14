@@ -30,7 +30,7 @@ export async function Kitchens({ block }: { block: KitchensBlock }) {
           )}
         </div>
         {block.showAllLink && (
-          <Link href="/home#kitchens" className="servd-btn-secondary" style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem' }}>
+          <Link href="/#kitchens" className="servd-btn-secondary" style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem' }}>
             See all →
           </Link>
         )}

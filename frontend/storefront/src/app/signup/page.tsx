@@ -13,7 +13,7 @@ export default function SignupPage() {
       <SmokeyBackground color="#5c3458" backdropBlur="sm" />
 
       <div className="relative z-10 w-full max-w-sm">
-        <Link href="/home" aria-label="servd home" className="mb-6 block text-center"
+        <Link href="/" aria-label="servd home" className="mb-6 block text-center"
           style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
           servd<span style={{ color: 'var(--servd-green)' }}>.</span>
         </Link>
@@ -22,7 +22,7 @@ export default function SignupPage() {
           <SignupForm />
         </div>
 
-        <Link href="/home" className="mt-6 block text-center text-xs font-semibold text-white/50 hover:text-white/80 transition-colors" style={{ textDecoration: 'none' }}>
+        <Link href="/" className="mt-6 block text-center text-xs font-semibold text-white/50 hover:text-white/80 transition-colors" style={{ textDecoration: 'none' }}>
           ← Back to home
         </Link>
       </div>

@@ -295,18 +295,22 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
   footers only; footers exclude pin-reveal and sticky-stack; Simmer pages
   exclude text-reveal. No animation library.
 
-## servd home is /home (owner, 2026-10-07)
+## servd home is servd.pk/ (owner, 2026-10-07; root address 2026-10-14)
 
 The landing page and the old `/browse` brand picker were merged into ONE
-Apple-style page at **`servd.pk/home`** (`app/home/page.tsx` +
-`components/HomeClient.tsx`). `/` redirects there in the middleware (servd
-host only — brand hosts still rewrite `/` to their microsite); `/browse` and
-`/order` redirect in `next.config.js`. The hero is the scroll-expansion
+Apple-style page, served at the ROOT **`servd.pk/`** (owner, 2026-10-14:
+search engines rank a site's root for its name). `app/home/page.tsx` holds it
+and `app/page.tsx` re-exports it; the middleware sends `servd.pk/home` to `/`
+with a 308 (servd host only — brand hosts still rewrite `/` to their
+microsite, and `/home` on a brand host is still the servd page); `/browse` and
+`/order` redirect to `/` in `next.config.js`. Canonical, sitemap and JSON-LD
+use `https://servd.pk/`. Brand fields keep naming servd's home `/home`;
+`servdHref` (sections/brand/util.ts) turns it into servd's root. The hero is the scroll-expansion
 hero (`LandingScrollHero` → `ui/scroll-expansion-hero.tsx`) — keep it; a jump
 far down the page (an `Order` link to `#kitchens`) finishes the expansion
 instead of snapping back to the top. Search is the nav's `SearchSheet`
-(`openSearch()`), not a page. Link to `/home` or `/home#kitchens`, never
-`/browse`. The hero is the `servd.scrollHero` section on `servd:home`: a
+(`openSearch()`), not a page. On servd's own pages link to `/` or `/#kitchens`
+(never `/browse`; `/home` still works but redirects). The hero is the `servd.scrollHero` section on `servd:home`: a
 background SLIDESHOW behind it (`bgSlides`, 1-10 photos the owner adds in
 Admin -> Storefront, `bgSlideSeconds` 3-15; empty = the single `bgImageSrc`,
 default the dining-room photo `/brand/servd-hero-bg.webp`; only the current

@@ -1,4 +1,4 @@
-// servd home page (/home — `/` and `/browse` redirect here). Every section on it
+// servd home page, served at servd.pk/ (app/page.tsx re-exports it; /home and /browse redirect to /). Every section on it
 // is content (SiteLayout `servd:home`, Admin → Storefront, CEO-approved): the
 // scroll-expansion hero, the kitchen tiles, how it works, Insiders, Visit and
 // the waitlist strip. Nothing published → the catalogue's default sections,
@@ -18,7 +18,7 @@ import { HomeSearchParam } from '../../sections/servd/HomeSearchParam'
 
 export const dynamic = 'force-dynamic'
 
-const CANONICAL = `${SERVD_ORIGIN}/home`
+const CANONICAL = `${SERVD_ORIGIN}/`
 const DESCRIPTION = 'One place to order from Simmer, Stackd, and Flipd. Explore the kitchens and join Insiders for rewards on every order.'
 
 export async function generateMetadata(): Promise<Metadata> {
