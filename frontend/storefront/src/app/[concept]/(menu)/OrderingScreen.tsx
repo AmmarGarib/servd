@@ -91,7 +91,7 @@ interface Concept    {
 /** The brand as the server resolved it — only what the hero needs, all
  *  serialisable. null when the API didn't answer and the slug isn't a bundled
  *  brand: the page then shows the slug as the name until the client lookup. */
-export type OrderingConcept = Pick<Concept, 'id' | 'slug' | 'name' | 'description' | 'primaryColor' | 'type' | 'logoUrl' | 'reservationsEnabled'>
+export type OrderingConcept = Pick<Concept, 'id' | 'slug' | 'name' | 'description' | 'primaryColor' | 'type' | 'logoUrl' | 'reservationsEnabled'> & { isTestCompany?: boolean }
 
 // ─── Table (dine-in) context ────────────────────────────────────────────────
 // The customer is seated at this brand's table: the menu URL carried

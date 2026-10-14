@@ -372,6 +372,19 @@ export async function syncKitToConceptTx(
 }
 
 /**
+ * Lock the brand's live kit row (if any) — the FIRST lock a CEO PATCH of a
+ * kit-owned Concept field takes, BEFORE it updates the Concept (fr-6). The
+ * publish / rollback / kit delete paths lock the kit row and then write the
+ * Concept, so taking the locks in the same order means the two never
+ * deadlock. refreshKitSnapshotTx re-takes the same lock (a no-op then).
+ */
+export async function lockKitRowTx(tx: Prisma.TransactionClient, concept: { slug: string; tenantId: string | null }): Promise<void> {
+  if (!concept.tenantId) return
+  const slug = `brand:${concept.slug}:kit`
+  await tx.$queryRaw`SELECT id FROM site_layouts WHERE slug = ${slug} AND "tenantId" = ${concept.tenantId} AND "liveVersion" > 0 FOR UPDATE`
+}
+
+/**
  * The CEO PATCHed a kit-owned Concept field directly (the guard allows it)
  * while the brand has a live kit: that value becomes the brand's own value,
  * so it replaces the field in the kit row's pre-kit snapshot. A later kit

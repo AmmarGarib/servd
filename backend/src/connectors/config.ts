@@ -179,6 +179,35 @@ export function reportingRequiredOf(raw: unknown): boolean {
 }
 
 /**
+ * When "Fiscal reporting required" was last switched ON after being off
+ * (`settings.reportingRequiredSince`, ISO time, written by
+ * setFiscalReportingRequired — e.g. a test company made real). Null for a
+ * company that has always reported (the default): nothing changes for it.
+ */
+export function reportingRequiredSinceOf(raw: unknown): Date | null {
+  const v = asObject(raw)['reportingRequiredSince']
+  if (typeof v !== 'string') return null
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * THE rule for "should this sale be filed?" (fr-2): reporting is required
+ * now, the company is not a test company, and the sale was completed while
+ * reporting was required — never a sale completed before
+ * `reportingRequiredSince` (a test company's past sales are never filed, by
+ * any path: live completion, the recovery sweep, the legacy drain, a refund
+ * with no sale document). `completedAt` null = completing now.
+ */
+export function saleFileable(settings: unknown, opts: { hasRow: boolean; isTest: boolean; completedAt: Date | null }): boolean {
+  if (opts.isTest) return false
+  if (!opts.hasRow) return true
+  if (!reportingRequiredOf(settings)) return false
+  const since = reportingRequiredSinceOf(settings)
+  return !since || !opts.completedAt || opts.completedAt >= since
+}
+
+/**
  * §17.7 — does this company file its sales with the fiscal POS at all?
  * Default TRUE. FALSE only for a company the CEO marked non-commercial / test
  * (a test company, the owner's home kitchen): its completions create no

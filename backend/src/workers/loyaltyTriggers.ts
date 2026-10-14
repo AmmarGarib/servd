@@ -8,6 +8,7 @@ import { calculatePointsValue } from '../lib/loyaltySettings.js'
 import { creditPoints, creditPointsTx, bookEarn, loyaltyProgram } from '../modules/loyalty/service.js'
 import { formatBrandName } from '../lib/brandName.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
+import { realCompanyOrderWhere } from '../lib/testCompany.js'
 
 // Automated customer messages and point bonuses.
 //
@@ -66,7 +67,7 @@ async function reach(c: { email: string | null; phone: string | null }, subject:
 /** The company of a customer's first completed order (null when none) — who a first-order message is from. */
 async function firstOrderTenantId(customerId: string): Promise<string | null> {
   const o = await prisma.order.findFirst({
-    where: { customerId, status: 'completed', deletedAt: null },
+    where: { customerId, status: 'completed', deletedAt: null, ...realCompanyOrderWhere() },
     select: { concept: { select: { tenantId: true } } },
     orderBy: { completedAt: 'asc' },
   }).catch(() => null)
@@ -238,7 +239,11 @@ async function runEncourageSecondOrderTrigger() {
     SELECT c.id
     FROM customers c
     WHERE c."firstOrderAt" < ${fifteenDaysAgo}
-      AND (SELECT COUNT(*) FROM orders o WHERE o."customerId" = c.id AND o."deletedAt" IS NULL) = 1
+      AND (SELECT COUNT(*) FROM orders o
+             JOIN concepts oc ON oc.id = o."conceptId"
+             LEFT JOIN tenants ot ON ot.id = oc."tenantId"
+            WHERE o."customerId" = c.id AND o."deletedAt" IS NULL
+              AND COALESCE(ot."isTest", false) = false) = 1
     LIMIT 500
   `
   const singleOrderCustomers = await prisma.customer.findMany({
@@ -478,8 +483,9 @@ export async function runReferralRewardTrigger() {
     // The order that triggered this has to be worth more than the reward.
     // Its company gives both bonuses (F1 / LEDGER-R8): the referral paid off
     // for that company, whose books carry the liability.
+    // A test company's order never pays a referral (fr-4): only real orders.
     const firstOrder = await prisma.order.findFirst({
-      where: { customerId: referee.id, status: 'completed', deletedAt: null },
+      where: { customerId: referee.id, status: 'completed', deletedAt: null, ...realCompanyOrderWhere() },
       select: { totalCents: true, concept: { select: { tenantId: true } } },
       orderBy: { completedAt: 'asc' },
     })

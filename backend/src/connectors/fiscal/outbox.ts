@@ -27,7 +27,8 @@ import { getFiscalQueue } from '../../lib/queue.js'
 import { getIOSafe } from '../../lib/ws.js'
 import type { ConnectorCtx, FiscalAuthority, FiscalDriver, FiscalPayload, FiscalResult, FiscalSettings, Outcome } from '../types.js'
 import { fiscalDriverOf, getConnectorFresh, buildCtx, connectorNow, ensureConnectorRow, type LoadedConnector } from '../registry.js'
-import { parseFiscalSettings, reportingRequiredOf } from '../config.js'
+import { parseFiscalSettings, reportingRequiredOf, reportingRequiredSinceOf, saleFileable } from '../config.js'
+import { isTestTenant } from '../../lib/testCompany.js'
 import { nextDelayMs, scrubMessage, withTimeout } from '../util.js'
 import { alertFiscalAuth, alertFiscalDocument, notifyConnectorPeople } from '../alerts.js'
 import { buildFiscalSaleTx, buildRefundPayload, payloadHash, totalsCheck, type RefundOriginal, type TotalsCheck, type VoidReturnSplit } from './payload.js'
@@ -67,6 +68,19 @@ async function fiscalConnectorTx(tx: Tx, tenantId: string) {
     live: !!row && row.enabled && row.driver !== 'none' && !!fiscalDriverOf(row.driver),
     driver: row ? fiscalDriverOf(row.driver) : null,
   }
+}
+
+/**
+ * Does this order's sale go to the fiscal POS at all (fr-2)? Reporting is
+ * required, the company is not a test company, and the sale was completed
+ * after reporting became required (config.ts saleFileable) — a test
+ * company's past sales are never filed once test mode is turned off.
+ */
+async function saleFileableTx(tx: Tx, conn: { row: { settings: Prisma.JsonValue } | null; required: boolean }, tenantId: string, orderId: string): Promise<boolean> {
+  if (!conn.required) return false
+  const isTest = await isTestTenant(tenantId, tx)
+  const order = await tx.order.findUnique({ where: { id: orderId }, select: { completedAt: true } })
+  return saleFileable(conn.row?.settings ?? {}, { hasRow: !!conn.row, isTest, completedAt: order?.completedAt ?? null })
 }
 
 /** Insert once on (tenantId, idempotencyKey) without aborting the caller's transaction on a race. */
@@ -154,7 +168,7 @@ export async function enqueueFiscalSaleTx(tx: Tx, input: { orderId: string; tena
   if (existing) return { ...existing, created: false }
 
   const conn = await fiscalConnectorTx(tx, input.tenantId)
-  if (!conn.required) return null
+  if (!(await saleFileableTx(tx, conn, input.tenantId, input.orderId))) return null
 
   const id = newDocumentId()
   const built = await buildFiscalSaleTx(tx, input.orderId, id, conn.settings)
@@ -250,7 +264,10 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
     where: { tenantId_idempotencyKey: { tenantId: input.tenantId, idempotencyKey: `sale:${input.orderId}` } },
   })
   const conn = await fiscalConnectorTx(tx, input.tenantId)
-  if (!sale && !conn.required) return null
+  // No sale document and the sale is not one that files (reporting off, a
+  // test company, or completed before reporting became required — fr-2):
+  // its return files nothing either.
+  if (!sale && !(await saleFileableTx(tx, conn, input.tenantId, input.orderId))) return null
 
   const id = newDocumentId()
   const now = connectorNow()
@@ -1025,10 +1042,20 @@ export async function releaseHeld(tenantId: string, opts: { conceptId?: string |
   })
   let released = 0
   const now = connectorNow()
+  // fr-2 belt and braces: a sale document created AFTER reporting became
+  // required for an order completed BEFORE it can only have come from a
+  // retroactive path (a test company's past sale) — it stays held, never
+  // filed. Held documents created while the company was reporting are real
+  // sales and release as usual.
+  const since = reportingRequiredSinceOf(conn.row.settings)
   for (const r of rows) {
     const moved = await prisma.$transaction(async (tx) => {
       const doc = await tx.fiscalDocument.findFirst({ where: { id: r.id, tenantId, status: 'held' } })
       if (!doc) return false
+      if (since && doc.kind === 'sale' && doc.createdAt >= since) {
+        const o = await tx.order.findUnique({ where: { id: doc.orderId }, select: { completedAt: true } })
+        if (o?.completedAt && o.completedAt < since) return false
+      }
       let payload = asPayload(doc.payload)
       let total = doc.amountCents
       let registrations = payload.registrations ?? []

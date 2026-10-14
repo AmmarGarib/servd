@@ -16,6 +16,7 @@ import { SERVD_ORIGIN, pageMetadata } from '../../../lib/brandDomains'
 import { filled, locationFromConcept } from '../../../lib/brandLocations'
 import { formatBrandName } from '../../../lib/concept'
 import { brandImageUrl } from '../../../lib/jsonLd'
+import { TestCompanyStripe } from '../../../components/TestCompanyStripe'
 import { asSentence, fitSentences, lookupConcept } from '../../../lib/liveConcepts'
 
 export const dynamic = 'force-dynamic'
@@ -24,8 +25,9 @@ type Params = { params: Promise<{ slug: string }> | { slug: string } }
 
 export default async function ReserveBrandLayout({ children, params }: Params & { children: React.ReactNode }) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
-  if ((await lookupConcept(slug)).status === 'missing') notFound()
-  return <>{children}</>
+  const { status, concept } = await lookupConcept(slug)
+  if (status === 'missing') notFound()
+  return <><TestCompanyStripe concept={concept} />{children}</>
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {

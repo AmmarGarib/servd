@@ -127,13 +127,15 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   }
 
   // Test companies (lib/testCompany.ts) are left out of a portfolio READ
-  // ("All companies" totals) — except the active company. Writes (non-GET)
-  // keep every member company, exactly as before.
+  // ("All companies" totals) — every one, the active company included. If
+  // that leaves nothing (the caller belongs to test companies only), fall
+  // back to the active company so the page isn't empty-scoped by accident.
+  // Writes (non-GET) keep every member company, exactly as before.
   if (portfolio && typeof tenantFilter === 'object' && tenantFilter !== null) {
     const tests = await testTenantIds()
     if (tests.size > 0) {
-      const kept = tenantFilter.in.filter((id) => !tests.has(id) || id === effectiveTenantId)
-      if (effectiveTenantId && !kept.includes(effectiveTenantId)) kept.push(effectiveTenantId)
+      const kept = tenantFilter.in.filter((id) => !tests.has(id))
+      if (kept.length === 0 && effectiveTenantId) kept.push(effectiveTenantId)
       tenantFilter = { in: kept }
     }
   }

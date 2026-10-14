@@ -49,19 +49,25 @@ export async function resolveTenantScope(req: FastifyRequest): Promise<TenantSco
       tenantId:  activeTenant,
     }
   } else {
-    // Portfolio mode: pull every tenant the user is a member of. Always
-    // include the active tenant as a safety net (in case the membership
-    // row was deleted but the user.tenantId still points at it).
+    // Portfolio mode: pull every tenant the user is a member of, plus the
+    // active tenant as a safety net (in case the membership row was deleted
+    // but the user.tenantId still points at it) — unless it is a test
+    // company (below).
     const memberships = await prisma.tenantMember.findMany({
       where: { userId: req.staffUser.id },
       select: { tenantId: true },
     })
     // Test companies (lib/testCompany.ts) are left out of "All companies"
-    // totals — except the active company, so switching INTO a test company
-    // still shows its own data. Never affects 'write' / 'create' modes.
+    // totals — EVERY one, the active company included ("never counted in All
+    // companies totals"). Their own data shows in the single-company view.
+    // Only when that leaves nothing (the caller belongs to test companies
+    // alone) does the active company stay, so the page isn't empty-scoped by
+    // accident. Never affects 'write' / 'create' modes.
     const tests = await testTenantIds()
-    const ids = new Set<string>(memberships.map((m) => m.tenantId).filter((id) => !tests.has(id)))
-    if (activeTenant) ids.add(activeTenant)
+    const all = new Set<string>(memberships.map((m) => m.tenantId))
+    if (activeTenant) all.add(activeTenant)
+    const ids = new Set<string>(Array.from(all).filter((id) => !tests.has(id)))
+    if (ids.size === 0 && activeTenant) ids.add(activeTenant)
     scope = {
       portfolio: true,
       tenantIds: Array.from(ids),

@@ -10,6 +10,7 @@
 
 import type { PrismaClient } from '@prisma/client'
 import { prisma as defaultPrisma } from './prisma.js'
+import { realCompanyOrderWhere } from './testCompany.js'
 
 type Tx = PrismaClient | Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
 
@@ -66,14 +67,15 @@ export async function recomputeCustomerRollups(
     // Order history. Only COMPLETED orders count: a cancelled or rejected
     // order is not a visit and its total is not revenue, and "completed their
     // first order" is what the referral reward is supposed to mean.
+    // A test company's orders never count (lib/testCompany.ts — fr-4).
     tx.order.aggregate({
-      where: { customerId, status: 'completed', deletedAt: null },
+      where: { customerId, status: 'completed', deletedAt: null, ...realCompanyOrderWhere() },
       _count: { _all: true },
       _sum: { totalCents: true },
       _max: { completedAt: true },
     }),
     tx.order.findFirst({
-      where: { customerId, status: 'completed', deletedAt: null },
+      where: { customerId, status: 'completed', deletedAt: null, ...realCompanyOrderWhere() },
       select: { completedAt: true },
       orderBy: { completedAt: 'asc' },
     }),

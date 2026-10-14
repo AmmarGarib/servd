@@ -568,6 +568,35 @@ describe('round-2 review fixes', () => {
     expect((await app.inject({ method: 'PATCH', url: `/api/v1/concepts/${pid}`, headers: auth(ceo), payload: { primaryColor: '#202020' } })).statusCode).toBe(200)
     expect(await prisma.siteLayout.findUnique({ where: { slug: kitSlug(plain) } })).toBeNull()
   })
+
+  it('fr-6: a CEO PATCH of a kit-owned field locks the kit row BEFORE the Concept (the publish order — no deadlock)', async () => {
+    const b = await brand('brand-lockorder', tenantA, { primaryColor: '#303030' })
+    const id = (await prisma.concept.findUniqueOrThrow({ where: { slug: b } })).id
+    await saveKit(marketer, b, { v: 1, roles: { ordering: '#404040' } })
+    expect((await call('POST', `/${enc(kitSlug(b))}/approve`, auth(ceo), {})).statusCode).toBe(200)
+
+    // A publish holds the kit row (as kitLiveSettingsTx does) …
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let markLocked!: () => void
+    const isLocked = new Promise<void>((r) => { markLocked = r })
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM site_layouts WHERE slug = ${kitSlug(b)} FOR UPDATE`
+      markLocked()
+      await held
+    }, { timeout: 20_000, maxWait: 10_000 })
+    await isLocked
+    // … the PATCH waits on that row WITHOUT having locked the Concept first.
+    const patching = app.inject({ method: 'PATCH', url: `/api/v1/concepts/${id}`, headers: auth(ceo), payload: { primaryColor: '#505050' } })
+    await new Promise((r) => setTimeout(r, 400))
+    const probe = await prisma.$queryRaw`SELECT id FROM concepts WHERE id = ${id} FOR UPDATE NOWAIT`.then(() => 'free', () => 'locked')
+    release()
+    await holder
+    const r = await patching
+    expect(probe).toBe('free')
+    expect(r.statusCode, r.body).toBe(200)
+    expect((await concept(b)).primaryColor).toBe('#505050')
+  })
 })
 
 describe('company merge', () => {

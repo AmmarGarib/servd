@@ -12,7 +12,7 @@ import { invalidateTestTenants } from '../src/lib/testCompany.js'
 import { storefrontRoutes } from '../src/modules/storefront/routes.js'
 import { locationRoutes } from '../src/modules/locations/routes.js'
 import { activeDomainHosts } from '../src/modules/domains/routes.js'
-import { orderingBrands } from '../src/adapters/whatsapp/conversation.js'
+import { orderingBrands, defaultConcept } from '../src/adapters/whatsapp/conversation.js'
 import { buildReceiptData, buildReceiptHtml } from '../src/modules/pos/receipt.js'
 import { renderInvoiceHtml } from '../src/modules/invoices/service.js'
 import { readFileSync } from 'node:fs'
@@ -82,6 +82,21 @@ describe('public listings hide a test company\'s brands', () => {
     const hosts = (await activeDomainHosts()).map((h) => h.hostname)
     expect(hosts).toContain(`${realSlug}.example.test`)
     expect(hosts).not.toContain(`${testSlug}.example.test`)
+  })
+})
+
+describe('fr-7: the WhatsApp default-brand fallback never picks a test brand', () => {
+  it('WHATSAPP_DEFAULT_CONCEPT naming a test company\'s brand resolves to nothing; a real one resolves', async () => {
+    const saved = process.env['WHATSAPP_DEFAULT_CONCEPT']
+    try {
+      process.env['WHATSAPP_DEFAULT_CONCEPT'] = testSlug
+      expect(await defaultConcept()).toBeNull()
+      process.env['WHATSAPP_DEFAULT_CONCEPT'] = realSlug
+      expect(await defaultConcept()).toMatchObject({ slug: realSlug, tenantId: realTenant })
+    } finally {
+      if (saved === undefined) delete process.env['WHATSAPP_DEFAULT_CONCEPT']
+      else process.env['WHATSAPP_DEFAULT_CONCEPT'] = saved
+    }
   })
 })
 

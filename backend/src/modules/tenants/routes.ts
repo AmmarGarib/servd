@@ -9,7 +9,7 @@ import { closedAcrossYearEnd, DEFAULT_FISCAL_YEAR_END_MONTH } from '../accountin
 import { ensureFifoReady, readFifoCutoverAt } from '../../lib/stockLedger.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import { invalidateTestTenants } from '../../lib/testCompany.js'
-import { setFiscalReportingRequired } from '../connectors/routes.js'
+import { setFiscalReportingRequired, seedFiscalReportingOffTx } from '../connectors/routes.js'
 import { fiscalReportingRequired } from '../../connectors/config.js'
 
 function slugify(s: string): string {
@@ -612,20 +612,28 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       })
       // Switch active tenant to the new one
       await tx.user.update({ where: { id: req.staffUser!.id }, data: { tenantId: t.id } })
-      return t
+      // A test company never files with FBR/SRB: its fiscal switch is
+      // written OFF in the same transaction as the company (fr-3), so a test
+      // company can never exist with reporting required.
+      const fiscalRow = isTest ? await seedFiscalReportingOffTx(tx, t.id, req.staffUser!.id) : null
+      return { ...t, fiscalRowId: fiscalRow?.id ?? null }
     })
+    const { fiscalRowId, ...created } = tenant
     if (isTest) {
       invalidateTestTenants()
       await audit({
-        category: 'identity', action: 'tenant.test_mode', entity: 'Tenant', entityId: tenant.id,
-        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: tenant.id,
+        category: 'identity', action: 'tenant.test_mode', entity: 'Tenant', entityId: created.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: created.id,
         before: null, after: { isTest: true }, metadata: { reason: 'Created as a test company' },
       })
-      // A test company never files with FBR/SRB — same storage, lock and
-      // audit as PUT /connectors/fiscal/reporting-required.
-      await setFiscalReportingRequired(tenant.id, false, { userId: req.staffUser!.id, userEmail: req.staffUser!.email, reason: 'Test company' })
+      await audit({
+        category: 'identity', action: 'fiscal.reporting_required', entity: 'PosConnector', entityId: fiscalRowId ?? created.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: created.id,
+        before: { fiscalReportingRequired: true }, after: { fiscalReportingRequired: false },
+        metadata: { reason: 'Test company', heldCount: 0 },
+      })
     }
-    return reply.status(201).send(tenant)
+    return reply.status(201).send(created)
   })
 
   // ── Switch active tenant (verifies membership) ──────────────────────────
@@ -942,28 +950,40 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       select: { id: true, isTest: true },
     })
     if (!existing) throw new NotFoundError('Tenant', req.params.id)
-    const updated = existing.isTest === body.isTest
-      ? await prisma.tenant.findUniqueOrThrow({ where: { id: existing.id } })
-      : await prisma.tenant.update({ where: { id: existing.id }, data: { isTest: body.isTest } })
+    // The flag and the fiscal switch are written in ONE transaction under the
+    // connector lock (fr-3) — PUT /connectors/fiscal/reporting-required takes
+    // the same lock and re-reads isTest there, so the two never disagree.
+    // ON switches reporting off; OFF makes it required again and stamps
+    // reportingRequiredSince, so the test sales are never filed (fr-2).
+    const wantRequired = !body.isTest
+    // Nothing to change: no write, never a no-op audit row.
+    if (existing.isTest === body.isTest && (await fiscalReportingRequired(existing.id)) === wantRequired) {
+      return { ...(await prisma.tenant.findUniqueOrThrow({ where: { id: existing.id } })), fiscalReportingRequired: wantRequired }
+    }
+    let wasTest = existing.isTest
+    const fiscal = await setFiscalReportingRequired(existing.id, wantRequired, {
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email,
+      reason: body.isTest ? `Test company: ${body.reason}` : `Test mode off: ${body.reason}`,
+    }, {
+      underLock: async (tx) => {
+        const cur = await tx.tenant.findUniqueOrThrow({ where: { id: existing.id }, select: { isTest: true } })
+        wasTest = cur.isTest
+        if (cur.isTest !== body.isTest) await tx.tenant.update({ where: { id: existing.id }, data: { isTest: body.isTest } })
+        // A test company made real files from NOW, even if its switch was
+        // somehow already on — never its test sales.
+        return { stampSince: cur.isTest && !body.isTest }
+      },
+    })
     invalidateTestTenants()
-    if (existing.isTest !== body.isTest) {
+    if (wasTest !== body.isTest) {
       await audit({
         category: 'identity', action: 'tenant.test_mode', entity: 'Tenant', entityId: existing.id,
         userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: existing.id,
-        before: { isTest: existing.isTest }, after: { isTest: body.isTest }, metadata: { reason: body.reason },
+        before: { isTest: wasTest }, after: { isTest: body.isTest }, metadata: { reason: body.reason },
       })
     }
-    // The fiscal switch follows the flag. Re-asserted when the flag did not
-    // change too, if the two disagree (never a no-op audit row).
-    const wantRequired = !body.isTest
-    if (existing.isTest !== body.isTest || (await fiscalReportingRequired(existing.id)) !== wantRequired) {
-      const fiscal = await setFiscalReportingRequired(existing.id, wantRequired, {
-        userId: req.staffUser!.id, userEmail: req.staffUser!.email,
-        reason: body.isTest ? `Test company: ${body.reason}` : `Test mode off: ${body.reason}`,
-      })
-      return { ...updated, fiscalReportingRequired: fiscal.fiscalReportingRequired, heldCount: fiscal.heldCount, heldNote: fiscal.heldNote }
-    }
-    return { ...updated, fiscalReportingRequired: wantRequired }
+    const updated = await prisma.tenant.findUniqueOrThrow({ where: { id: existing.id } })
+    return { ...updated, fiscalReportingRequired: fiscal.fiscalReportingRequired, heldCount: fiscal.heldCount, heldNote: fiscal.heldNote }
   })
 
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {

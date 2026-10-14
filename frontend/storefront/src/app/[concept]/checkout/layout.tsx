@@ -10,6 +10,7 @@
 import type { Metadata } from 'next'
 import { formatBrandName } from '../../../lib/concept'
 import { lookupConcept } from '../../../lib/liveConcepts'
+import { TestCompanyStripe } from '../../../components/TestCompanyStripe'
 
 type Params = { params: Promise<{ concept: string }> | { concept: string } }
 
@@ -29,6 +30,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   }
 }
 
-export default function CheckoutLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>
+export default async function CheckoutLayout({ children, params }: Params & { children: React.ReactNode }) {
+  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string }>)
+  const { concept } = await lookupConcept(slug)
+  return <><TestCompanyStripe concept={concept} />{children}</>
 }

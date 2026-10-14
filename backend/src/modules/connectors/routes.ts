@@ -181,17 +181,32 @@ export function heldNoteOf(reportingRequired: boolean, held: number): string | n
  * PUT route below and the test-company create / toggle (tenants/routes.ts)
  * all go through it. Same row lock as PUT /connectors/fiscal (W1-R10),
  * audited `fiscal.reporting_required`. Callers decide who may flip it.
+ *
+ * `underLock(tx)` runs inside the same transaction, after the connector row
+ * is locked and before the switch is written — the test-mode toggle writes
+ * `Tenant.isTest` there, and the PUT route re-reads isTest there (fr-3), so
+ * the flag and the switch can never be left disagreeing by a race.
+ *
+ * Switching reporting ON after it was off stamps `reportingRequiredSince`
+ * (ISO): sales completed before it are never filed by any later path
+ * (config.ts saleFileable — fr-2). Switching it OFF drops the stamp (nothing
+ * files while off; the next ON stamps afresh). `underLock` may ask for a
+ * fresh stamp even when reporting was already on (a test company made real).
  */
 export async function setFiscalReportingRequired(
   tenantId: string,
   required: boolean,
   by: { userId: string; userEmail?: string | null; reason: string },
+  opts: { underLock?: (tx: Prisma.TransactionClient) => Promise<{ stampSince?: boolean } | void> } = {},
 ): Promise<{ fiscalReportingRequired: boolean; heldCount: number; heldNote: string | null }> {
   const seeded = await ensureConnectorRow(tenantId, 'fiscal')
   const { row, before } = await prisma.$transaction(async (tx) => {
     const row = await lockConnectorTx(tx, seeded.id)
+    const hook = opts.underLock ? await opts.underLock(tx) : undefined
     const before = reportingRequiredOf(row.settings)
-    const settings = { ...asObject(row.settings), fiscalReportingRequired: required }
+    const settings: Record<string, unknown> = { ...asObject(row.settings), fiscalReportingRequired: required }
+    if (!required) delete settings.reportingRequiredSince
+    else if (!before || hook?.stampSince) settings.reportingRequiredSince = new Date().toISOString()
     await tx.posConnector.update({ where: { id: row.id }, data: { settings: JSON.parse(JSON.stringify(settings)) as Prisma.InputJsonValue, updatedById: by.userId } })
     return { row, before }
   }, { maxWait: 10_000, timeout: 15_000 })
@@ -206,6 +221,21 @@ export async function setFiscalReportingRequired(
     metadata: { reason: by.reason, heldCount },
   })
   return { fiscalReportingRequired: required, heldCount, heldNote: heldNoteOf(required, heldCount) }
+}
+
+/**
+ * A brand-new company's fiscal connector row, created inside the caller's
+ * transaction with reporting OFF (the test-company create — fr-3: the
+ * company and its switch commit together or not at all). The caller audits.
+ */
+export async function seedFiscalReportingOffTx(tx: Prisma.TransactionClient, tenantId: string, userId: string): Promise<{ id: string }> {
+  return tx.posConnector.create({
+    data: {
+      tenantId, kind: 'fiscal', driver: 'none', enabled: false, webhookToken: newWebhookToken(),
+      settings: { fiscalReportingRequired: false }, updatedById: userId,
+    },
+    select: { id: true },
+  })
 }
 
 export async function connectorRoutes(fastify: FastifyInstance) {
@@ -457,10 +487,17 @@ export async function connectorRoutes(fastify: FastifyInstance) {
     const tenantId = activeTenantId(req)
     // A test company never files (lib/testCompany.ts): switching reporting
     // back ON is refused — turn test mode off on the company first.
-    if (body.required && await isTestTenant(tenantId, serviceClient)) {
-      throw new AppError('TEST_COMPANY_NO_FISCAL', 'This is a test company — its sales are never sent to FBR/SRB. Turn test mode off for the company first (Companies → edit) to make fiscal reporting required.', 409)
-    }
-    return setFiscalReportingRequired(tenantId, body.required, { userId: req.staffUser!.id, userEmail: req.staffUser!.email, reason: body.reason })
+    const testRefusal = () => new AppError('TEST_COMPANY_NO_FISCAL', 'This is a test company — its sales are never sent to FBR/SRB. Turn test mode off for the company first (Companies → edit) to make fiscal reporting required.', 409)
+    if (body.required && await isTestTenant(tenantId, serviceClient)) throw testRefusal()
+    return setFiscalReportingRequired(tenantId, body.required, { userId: req.staffUser!.id, userEmail: req.staffUser!.email, reason: body.reason }, {
+      // Re-read under the connector lock (fr-3): a concurrent test-mode ON
+      // takes the same lock, so it can never slip between check and write.
+      underLock: async (tx) => {
+        if (!body.required) return
+        const t = await tx.tenant.findUnique({ where: { id: tenantId }, select: { isTest: true } })
+        if (t?.isTest) throw testRefusal()
+      },
+    })
   })
 
   // PUT /connectors/fiscal/brand-pos-ids — writes the existing Concept columns.

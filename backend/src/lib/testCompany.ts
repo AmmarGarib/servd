@@ -95,3 +95,15 @@ export function invalidateTestTenants(): void {
   inflight = null
   generation++
 }
+
+/**
+ * Spread into an `Order` where-clause to leave out orders of test companies
+ * (fr-4): customers are platform-wide, so a real customer's test order must
+ * never move their shared rollups (firstOrderAt, lastOrderAt,
+ * totalSpentCents) or the cross-company first / second order triggers
+ * (welcome, referral payout, second-order nudge). A NOT, so a legacy brand
+ * with no company still counts exactly as before.
+ */
+export function realCompanyOrderWhere(): { concept: { NOT: { tenant: { isTest: true } } } } {
+  return { concept: { NOT: { tenant: { isTest: true } } } }
+}

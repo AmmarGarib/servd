@@ -8,7 +8,7 @@ import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
-import { KIT_CONCEPT_FIELDS, refreshKitSnapshotTx } from '../siteLayouts/service.js'
+import { KIT_CONCEPT_FIELDS, lockKitRowTx, refreshKitSnapshotTx } from '../siteLayouts/service.js'
 
 // What a till role (cashier, foh/waiter) may read about a brand: enough to
 // pick it at the till and see its tender GST split, nothing else. The brand
@@ -593,6 +593,8 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     // never restores the value from before the CEO's edit (rv-7).
     const kitFieldsSent = KIT_CONCEPT_FIELDS.filter((f) => (rest as Record<string, unknown>)[f] !== undefined)
     const concept = await prisma.$transaction(async (tx) => {
+      // Kit row first, then the Concept — the publish path's order (fr-6).
+      if (kitFieldsSent.length > 0) await lockKitRowTx(tx, { slug: owned.slug, tenantId: owned.tenantId })
       const c = await tx.concept.update({ where: { id: req.params.id }, data })
       if (kitFieldsSent.length > 0) {
         await refreshKitSnapshotTx(tx, { slug: owned.slug, tenantId: owned.tenantId },

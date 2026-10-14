@@ -123,11 +123,40 @@ export type ConceptLookup =
   | { status: 'live' | 'fallback'; concept: Concept }
   | { status: 'missing' | 'unverified'; concept: null }
 
+/**
+ * A test company's brand by slug via GET /storefront/<slug>/menu (its concept
+ * payload carries isTestCompany). null when the call fails or the brand is
+ * not a test brand. The payload is slimmer than a list row, so the missing
+ * fields get neutral defaults.
+ */
+async function fetchTestConceptBySlug(slug: string): Promise<Concept | null> {
+  if (!/^[a-z0-9][a-z0-9-]{0,80}$/i.test(slug)) return null
+  try {
+    const res = await fetch(`${API_URL}/api/v1/storefront/${encodeURIComponent(slug)}/menu`, { cache: 'no-store' })
+    if (!res.ok) return null
+    const body = (await res.json()) as { concept?: Partial<Concept> & { isTestCompany?: boolean } } | null
+    const c = body?.concept
+    if (!c || c.isTestCompany !== true || c.slug !== slug) return null
+    return {
+      id: '', type: 'restaurant', tenantId: null, description: null, logoUrl: null, primaryColor: null,
+      ...c, name: c.name ?? slug, slug, isTestCompany: true,
+    } as Concept
+  } catch {
+    return null
+  }
+}
+
 export async function lookupConcept(slug: string): Promise<ConceptLookup> {
   const list = await fetchConceptList()
   if (list && list.length > 0) {
     const live = list.find((c) => c.slug === slug)
-    return live ? { status: 'live', concept: live } : { status: 'missing', concept: null }
+    if (live) return { status: 'live', concept: live }
+    // Not listed. A TEST company's brand is hidden from the list on purpose
+    // but stays reachable by direct link, so ask the direct-by-slug API.
+    // Only a brand that says isTestCompany counts; a real brand the owner
+    // hid or deactivated stays 'missing'.
+    const test = await fetchTestConceptBySlug(slug)
+    return test ? { status: 'live', concept: test } : { status: 'missing', concept: null }
   }
   const bundled = fallbackConcept(slug)
   return bundled ? { status: 'fallback', concept: bundled } : { status: 'unverified', concept: null }

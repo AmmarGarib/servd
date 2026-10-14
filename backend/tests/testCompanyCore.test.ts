@@ -182,9 +182,29 @@ describe('"All companies" leaves the test company out; its own view does not', (
   it('sales report: the test company\'s own view includes its order', async () => {
     const own = await call('ceo', 'GET', `/reports/sales?${RANGE}`, undefined, { 'x-servd-active-tenant': testCo })
     expect((own.json() as { totals: { orders: number; gross: number } }).totals).toMatchObject({ orders: 1, gross: 70_000 })
-    // …and while the ACTIVE company is the test company, portfolio still shows it.
+    // …and while the ACTIVE company is the test company, "All companies"
+    // still leaves it out (fr-1: never counted in All companies totals).
     const asActive = await call('ceo', 'GET', `/reports/sales?${RANGE}`, undefined, { 'x-servd-portfolio': '1', 'x-servd-active-tenant': testCo })
-    expect((asActive.json() as { totals: { orders: number; gross: number } }).totals).toMatchObject({ orders: 2, gross: 80_000 })
+    expect((asActive.json() as { totals: { orders: number; gross: number } }).totals).toMatchObject({ orders: 1, gross: 10_000 })
+  })
+
+  it('portfolio while the user\'s saved active company is the test company still leaves it out', async () => {
+    await prisma.user.update({ where: { id: users.ceo!.id }, data: { tenantId: testCo } })
+    try {
+      const res = await call('ceo', 'GET', `/reports/sales?${RANGE}`, undefined, { 'x-servd-portfolio': '1' })
+      expect((res.json() as { totals: { orders: number; gross: number } }).totals).toMatchObject({ orders: 1, gross: 10_000 })
+      const pl = await call('ceo', 'GET', `/accounting/pl-ledger?${RANGE}`, undefined, { 'x-servd-portfolio': '1' })
+      expect((pl.json() as { totals: { revenueCents: number } }).totals.revenueCents).toBe(10_000)
+    } finally {
+      await prisma.user.update({ where: { id: users.ceo!.id }, data: { tenantId: realCo } })
+    }
+  })
+
+  it('a login that belongs only to test companies falls back to its active company in portfolio', async () => {
+    await mkUser('testOnly', 'admin', testCo, [testCo])
+    const res = await call('testOnly', 'GET', `/reports/sales?${RANGE}`, undefined, { 'x-servd-portfolio': '1' })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { totals: { orders: number; gross: number } }).totals).toMatchObject({ orders: 1, gross: 70_000 })
   })
 
   it('P&L (ledger): portfolio excludes the test company; its own P&L has its sale', async () => {

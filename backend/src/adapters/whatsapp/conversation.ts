@@ -92,11 +92,13 @@ function replyScope(session: WaSession | null | undefined): SendScope {
   return customerScope(session?.tenantId ?? null)
 }
 
-async function defaultConcept(): Promise<OrderingBrand | null> {
+export async function defaultConcept(): Promise<OrderingBrand | null> {
   const slug = process.env['WHATSAPP_DEFAULT_CONCEPT']?.trim()
   if (!slug) return null
   const c = await prisma.concept.findFirst({
-    where: { slug, isActive: true, deletedAt: null, tenantId: { not: null } },
+    // LIVE_BRAND (incl. publicBrandWhere — fr-7): never a test company's or a
+    // storefront-hidden brand, even as the fallback.
+    where: { slug, ...LIVE_BRAND },
     select: { id: true, name: true, slug: true, tenantId: true },
   }).catch(() => null)
   return c ? { id: c.id, name: c.name, slug: c.slug, tenantId: c.tenantId! } : null

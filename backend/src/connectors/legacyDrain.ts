@@ -27,7 +27,8 @@ import { Queue } from 'bullmq'
 import { prisma } from '../lib/prisma.js'
 import { redis } from '../lib/redis.js'
 import { withTimeout } from './util.js'
-import { fiscalReportingRequired, parseFiscalSettings } from './config.js'
+import { parseFiscalSettings, saleFileable } from './config.js'
+import { isTestTenant } from '../lib/testCompany.js'
 import { buildFiscalSaleTx, payloadHash } from './fiscal/payload.js'
 import { newDocumentId, enqueueFiscalRefundTx } from './fiscal/outbox.js'
 
@@ -90,12 +91,15 @@ export async function drainLegacyTaxQueues(): Promise<DrainResult> {
     try {
       const order = await prisma.order.findUnique({
         where: { id: orderId },
-        select: { id: true, status: true, fbrInvoiceNumber: true, srbInvoiceNumber: true, concept: { select: { tenantId: true } } },
+        select: { id: true, status: true, completedAt: true, fbrInvoiceNumber: true, srbInvoiceNumber: true, concept: { select: { tenantId: true } } },
       })
       const tenantId = order?.concept.tenantId
       if (!order || !tenantId || order.fbrInvoiceNumber || order.srbInvoiceNumber) continue
       if (!['completed', 'refunded'].includes(order.status)) continue
-      if (!(await fiscalReportingRequired(tenantId))) continue
+      // Only a sale that files (config.ts saleFileable — fr-2): never a test
+      // company's, never one completed while reporting was off.
+      const conn = await prisma.posConnector.findUnique({ where: { tenantId_kind: { tenantId, kind: 'fiscal' } }, select: { settings: true } })
+      if (!saleFileable(conn?.settings ?? {}, { hasRow: !!conn, isTest: await isTestTenant(tenantId), completedAt: order.completedAt })) continue
       const exists = await prisma.fiscalDocument.findFirst({ where: { tenantId, orderId, kind: 'sale' }, select: { id: true } })
       if (exists) continue
       const created = await prisma.$transaction(async (tx) => {

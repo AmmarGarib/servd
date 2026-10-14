@@ -80,7 +80,8 @@ type Tx = Prisma.TransactionClient
 
 const activeTenant = (req: FastifyRequest): string => activeTenantId(req, 'HR records belong to one company')
 /** Companies this operator can read HR for. Portfolio view spans all of them,
- *  minus test companies other than the active one: on a portfolio GET the auth
+ *  minus every test company (the active one only when nothing else is left):
+ *  on a portfolio GET the auth
  *  middleware's `tenantFilter` is already that set (lib/testCompany.ts), so it
  *  is the source here; anything else falls back to every member company. */
 function readTenants(req: FastifyRequest): string[] {

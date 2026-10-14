@@ -2332,8 +2332,8 @@ export async function recoverIncompleteCompletions(opts: { graceMs?: number; lim
      LIMIT ${limit}`
 
   // (2) Claimed, in a company that reports sales, with no sale document.
-  const undocumented = await prisma.$queryRaw<Array<{ id: string; tenantId: string }>>`
-    SELECT o.id, c."tenantId" FROM audit_logs a
+  const undocumented = await prisma.$queryRaw<Array<{ id: string; tenantId: string; completedAt: Date | null }>>`
+    SELECT o.id, c."tenantId", o."completedAt" FROM audit_logs a
       JOIN orders o ON o.id = a."entityId"
       JOIN concepts c ON c.id = o."conceptId"
      WHERE a.entity = 'Order' AND a.action = ${COMPLETE_CLAIM}
@@ -2344,12 +2344,22 @@ export async function recoverIncompleteCompletions(opts: { graceMs?: number; lim
        AND NOT EXISTS (SELECT 1 FROM fiscal_documents f WHERE f."tenantId" = c."tenantId" AND f."idempotencyKey" = 'sale:' || o.id)
      ORDER BY a."createdAt" ASC
      LIMIT ${limit * 5}`
-  const { fiscalReportingRequired } = await import('../../connectors/config.js')
-  const reports = new Map<string, boolean>()
+  // Only sales that file (config.ts saleFileable — fr-2): reporting on, not
+  // a test company, and completed after reporting became required. A test
+  // company's sales are never picked up here once test mode is turned off.
+  // enqueueFiscalSaleTx applies the same rule again under the order lock.
+  const { saleFileable } = await import('../../connectors/config.js')
+  const { isTestTenant } = await import('../../lib/testCompany.js')
+  const companies = new Map<string, { settings: unknown; hasRow: boolean; isTest: boolean }>()
   const needSale: string[] = []
   for (const u of undocumented) {
-    if (!reports.has(u.tenantId)) reports.set(u.tenantId, await fiscalReportingRequired(u.tenantId))
-    if (reports.get(u.tenantId)) needSale.push(u.id)
+    let co = companies.get(u.tenantId)
+    if (!co) {
+      const row = await prisma.posConnector.findUnique({ where: { tenantId_kind: { tenantId: u.tenantId, kind: 'fiscal' } }, select: { settings: true } })
+      co = { settings: row?.settings ?? {}, hasRow: !!row, isTest: await isTestTenant(u.tenantId) }
+      companies.set(u.tenantId, co)
+    }
+    if (saleFileable(co.settings, { hasRow: co.hasRow, isTest: co.isTest, completedAt: u.completedAt })) needSale.push(u.id)
     if (needSale.length >= limit) break
   }
 
