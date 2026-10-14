@@ -11,6 +11,14 @@
 //         Cr its input account 132x (input set off — that authority's only, H8)
 //         Cr 1335 Sales Tax Withheld by Customers (withheld set off, H13 —
 //            what clients withheld from us for THAT authority, capped)
+//         Cr 1320 GST Input (FBR) — federal input on raw materials set off
+//            against a PROVINCIAL authority (crossSetOffCents, H8; Hasnain
+//            2026-10-14): capped at the company's pool
+//            (salesTaxReturn.ts federalCrossSetOffAvailable — eligible
+//            federal input to date − cross set-offs already recorded, never
+//            more than 1320 holds after what FBR is owed) else 422
+//            CROSS_SETOFF_TOO_LARGE; refused for FBR, withholding and
+//            statutory payments (422 NO_CROSS_SET_OFF)
 //         Cr the bank or cash it was paid from (paid)
 //       withholding as an agent: 'wht' income tax withheld from suppliers
 //         (Dr 2040 / Cr bank), 'stwh' sales tax withheld as a withholding
@@ -25,7 +33,9 @@
 //     bank-reconciliation adjustment) is LINKED as that period's payment, never
 //     posted again; the return then leaves that entry out of the period's
 //     output, as it does a payment posted here. A Cr 1335 line in it is read
-//     as customer-withheld tax set off, never as money paid.
+//     as customer-withheld tax set off, never as money paid; a Cr 1320 in a
+//     provincial payment as the federal cross set-off (H8, held to the same
+//     pool, without the ledger cap — the entry's own credit is already in it).
 //   • voidTaxPayment — a payment recorded in error: a posted one is reversed
 //     ('salestax.payment.reversal:<id>', today) and its record removed; a
 //     linked one is unlinked (its entry stays as it was posted). Removing the
@@ -56,7 +66,7 @@ import { AUTHORITIES, isAuthorityKey, outputTaxCodeFor, type AuthorityKey } from
 // so the import cycle stays safe.
 import {
   WITHHOLDING, TAX_PAYMENT_SOURCE, TAX_RECLASS_SOURCE,
-  debitBalanceAt, misroutedOutputTax, type WithholdingKey,
+  crossSetOffAllowed, debitBalanceAt, federalCrossSetOffAvailable, misroutedOutputTax, type WithholdingKey,
 } from './salesTaxReturn.js'
 
 /** Any client: `prisma`, `serviceClient` or a transaction (all are assignable to it). */
@@ -176,6 +186,11 @@ export interface RecordTaxPaymentInput {
    * against its output (sales tax only). Optional: 0 when not given.
    */
   customerWithheldSetOffCents?: number
+  /**
+   * Federal input on raw materials (1320) set off against this PROVINCIAL
+   * authority's output (H8). Optional: 0 when not given.
+   */
+  crossSetOffCents?: number
   paidAt: string
   method: TaxPaymentMethod
   bankAccountId: string | null
@@ -243,6 +258,20 @@ export async function assertWithheldNotSetOff(tx: Prisma.TransactionClient, tena
   }
 }
 
+/** One writer of 1320 per company at a time (the FBR input set-off and every cross set-off take it). */
+async function lockFederalInput(tx: Prisma.TransactionClient, tenantId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext(${`tax-input:${ACCT.GST_INPUT}`}::text))`
+}
+
+function crossTooLarge(cents: number, available: number, label: string, at: Date): AppError {
+  return new AppError(
+    'CROSS_SETOFF_TOO_LARGE',
+    `Federal input set off against ${label} (PKR ${(cents / 100).toFixed(2)}) is more than is claimable (PKR ${(available / 100).toFixed(2)} on ${fmtPktDate(at)}): eligible federal input on raw materials, less what earlier payments already set off and what FBR is still owed`,
+    422,
+    { availableCents: available },
+  )
+}
+
 function withheldTooLarge(cents: number, available: number, label: string, at: Date): AppError {
   return new AppError(
     'WITHHELD_SET_OFF_TOO_LARGE',
@@ -256,6 +285,14 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
   const { periodFrom, periodTo } = periodOf(input.periodFrom, input.periodTo)
   const paidAt = paidAtOf(input.paidAt)
   const withheldCents = input.customerWithheldSetOffCents ?? 0
+  const crossCents = input.crossSetOffCents ?? 0
+  if (crossCents > 0 && !crossSetOffAllowed(input.authority)) {
+    throw new AppError(
+      'NO_CROSS_SET_OFF',
+      `Federal input on raw materials (1320) is set off only against a provincial authority's output (SRB, PRA, KPRA, BRA) — not against ${acc.label}${input.authority === 'fbr' ? ' (use "Input set off" for FBR\'s own input)' : ''}`,
+      422,
+    )
+  }
   if (acc.input === null && input.inputSetOffCents > 0) {
     throw new AppError('NO_INPUT_SET_OFF', `${acc.label} is paid in full — there is no input tax to set off against it`, 422)
   }
@@ -266,11 +303,11 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
       422,
     )
   }
-  if (input.paidCents < 0 || input.inputSetOffCents < 0 || withheldCents < 0) throw new AppError('BAD_AMOUNT', 'Amounts cannot be negative', 422)
-  if (input.paidCents + input.inputSetOffCents + withheldCents <= 0) {
+  if (input.paidCents < 0 || input.inputSetOffCents < 0 || withheldCents < 0 || crossCents < 0) throw new AppError('BAD_AMOUNT', 'Amounts cannot be negative', 422)
+  if (input.paidCents + input.inputSetOffCents + withheldCents + crossCents <= 0) {
     throw new AppError('NOTHING_PAID', 'Enter the amount paid (or the tax set off)', 422)
   }
-  const outputSetOffCents = input.paidCents + input.inputSetOffCents + withheldCents
+  const outputSetOffCents = input.paidCents + input.inputSetOffCents + withheldCents + crossCents
   assertMoneyFits(outputSetOffCents, 'This payment')
 
   const existing = await prisma.salesTaxPayment.findFirst({
@@ -288,6 +325,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
         acc.liability,
         ...(acc.input && input.inputSetOffCents > 0 ? [acc.input] : []),
         ...(withheldCents > 0 ? [ACCT.ST_WITHHELD_BY_CUSTOMERS] : []),
+        ...(crossCents > 0 ? [ACCT.GST_INPUT] : []),
       ])
       // Where the money came from: the named bank of THIS company (422 when
       // it is another company's, deleted or unlinked), its only bank, cash.
@@ -312,6 +350,16 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
             422,
           )
         }
+      }
+      // Federal input cross set-off (H8): never more than the company's pool
+      // on the payment's date — eligible federal input to date, less what
+      // payments already set off, within what 1320 holds after FBR's own
+      // output. One writer of 1320 per company (the FBR input set-off takes
+      // the same lock), so two payments cannot both spend it.
+      if (crossCents > 0) {
+        await lockFederalInput(tx, input.tenantId)
+        const pool = await federalCrossSetOffAvailable(tx, input.tenantId, paidAt)
+        if (crossCents > pool.availableCents) throw crossTooLarge(crossCents, pool.availableCents, acc.label, paidAt)
       }
       // Customer-withheld set off (H13): never more than 1335 holds (on the
       // day and counting everything after it), and never more than clients
@@ -347,6 +395,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
       const lines: JournalLineInput[] = [{ accountCode: acc.liability, type: 'debit', amountCents: outputSetOffCents, memo }]
       if (acc.input && input.inputSetOffCents > 0) lines.push({ accountCode: acc.input, type: 'credit', amountCents: input.inputSetOffCents, memo: `Input set off — ${memo}` })
       if (withheldCents > 0) lines.push({ accountCode: ACCT.ST_WITHHELD_BY_CUSTOMERS, type: 'credit', amountCents: withheldCents, memo: `Withheld by customers (${acc.label}) set off — ${memo}` })
+      if (crossCents > 0) lines.push({ accountCode: ACCT.GST_INPUT, type: 'credit', amountCents: crossCents, memo: `Federal input on raw materials set off against ${acc.label} (H8) — ${memo}`.slice(0, 250) })
       if (money && input.paidCents > 0) lines.push({ accountCode: money.code, type: 'credit', amountCents: input.paidCents, memo })
       const posted = await postJournalEntry({
         tenantId: input.tenantId,
@@ -383,6 +432,9 @@ async function settlementOf(tenantId: string, entryId: string, authority: TaxPay
   // A Cr 1335 against a sales tax authority's output is client-withheld tax
   // set off (H13) — never money paid.
   const customerWithheldSetOffCents = acc.withheldSetOff ? Math.max(0, net(ACCT.ST_WITHHELD_BY_CUSTOMERS, 'credit')) : 0
+  // A Cr 1320 against a PROVINCIAL authority's output is the federal input
+  // cross set-off (H8) — never money paid. (FBR's own 1320 is acc.input.)
+  const crossSetOffCents = crossSetOffAllowed(authority) ? Math.max(0, net(ACCT.GST_INPUT, 'credit')) : 0
   // Cash and bank: cash on hand, petty cash, the drawer, the 102x bank codes
   // and any code a bank account of the company is linked to.
   const banks = await prisma.bankAccount.findMany({
@@ -396,7 +448,7 @@ async function settlementOf(tenantId: string, entryId: string, authority: TaxPay
   const moneyOutCents = moneyCodes.reduce((t, c) => t + net(c, 'credit'), 0)
   const matching = banks.filter((b) => moneyCodes.includes(b.accountCode!))
   return {
-    entry, acc, outputSetOffCents, inputSetOffCents, customerWithheldSetOffCents, moneyOutCents,
+    entry, acc, outputSetOffCents, inputSetOffCents, customerWithheldSetOffCents, crossSetOffCents, moneyOutCents,
     bankAccountId: matching.length === 1 ? matching[0]!.id : null,
   }
 }
@@ -433,7 +485,7 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
   if (s.outputSetOffCents <= 0) {
     throw new AppError('NOT_A_TAX_PAYMENT', `This entry does not debit ${s.acc.liability} (${s.acc.label}) — it is not a payment of that tax`, 422)
   }
-  const paidCents = s.outputSetOffCents - s.inputSetOffCents - s.customerWithheldSetOffCents
+  const paidCents = s.outputSetOffCents - s.inputSetOffCents - s.customerWithheldSetOffCents - s.crossSetOffCents
   if (paidCents < 0) {
     throw new AppError('NOT_A_TAX_PAYMENT', `This entry sets off more input / withheld tax than the ${s.acc.label} tax it settles`, 422)
   }
@@ -452,6 +504,14 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
         select: { id: true },
       })
       if (existing) throw alreadyPaid(s.acc.label, periodFrom)
+      // The entry's Cr 1320 is already posted (so it is in 1320's balance):
+      // held to the pool without the ledger cap, so it is never claimed twice.
+      // 1320 before the withheld lock — the order recordTaxPayment takes them.
+      if (s.crossSetOffCents > 0) {
+        await lockFederalInput(tx, input.tenantId)
+        const pool = await federalCrossSetOffAvailable(tx, input.tenantId, s.entry.entryDate, { ledgerCap: false })
+        if (s.crossSetOffCents > pool.availableCents) throw crossTooLarge(s.crossSetOffCents, pool.availableCents, s.acc.label, s.entry.entryDate)
+      }
       // The entry's 1335 set-off is already posted; recording it here uses up
       // that authority's withheld tax, so it is held to the same cap.
       if (s.customerWithheldSetOffCents > 0) {

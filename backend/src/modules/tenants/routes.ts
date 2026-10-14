@@ -6,6 +6,7 @@ import { AppError, ConflictError, NotFoundError } from '../../lib/errors.js'
 import { TEMPLATES, getTemplate, TEMPLATE_KEYS } from './templates.js'
 import { audit } from '../../lib/audit.js'
 import { closedAcrossYearEnd, DEFAULT_FISCAL_YEAR_END_MONTH } from '../accounting/fiscalYear.js'
+import { ensureFifoReady, readFifoCutoverAt } from '../../lib/stockLedger.js'
 
 function slugify(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
@@ -21,6 +22,159 @@ async function uniqueSlug(baseName: string, table: 'tenant' | 'concept'): Promis
     if (!existing) return slug
     i++; slug = `${slugify(baseName)}-${i}`
   }
+}
+
+// ─── Combining companies: the finance wave B tables ──────────────────────────
+//
+// What the merge refuses before any write (422), and what it moves. Kept here
+// beside the route so one file says what a merge does.
+
+type MergeTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+
+/**
+ * A merge the books cannot absorb is refused (read-only; run before the FIFO
+ * cut-over and again inside the merge transaction):
+ *   422 MERGE_HAS_INTERCOMPANY       either company has inter-company activity (H30):
+ *                                    a Due-from / Due-to account with entries, a
+ *                                    transfer, or a shared-fleet rate
+ *   422 FY_END_MISMATCH              the two fiscal year ends differ and BOTH
+ *                                    companies have closed across a year end (H29)
+ *   422 MERGE_CARD_SETTLEMENT_CLASH  both companies claimed the same card-payout
+ *                                    day for the same unit (H12)
+ */
+async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: string): Promise<void> {
+  const pair = [src, dst]
+  const [icAccounts, transfers, fleetRates] = await Promise.all([
+    db.account.count({
+      where: {
+        controlledBy: 'intercompany',
+        OR: [{ tenantId: { in: pair } }, { counterpartyTenantId: { in: pair } }],
+        journalLines: { some: {} },
+      },
+    }),
+    db.intercompanyTransfer.count({ where: { OR: [{ tenantId: { in: pair } }, { counterpartyTenantId: { in: pair } }] } }),
+    db.fleetRate.count({ where: { OR: [{ tenantId: { in: pair } }, { clientTenantId: { in: pair } }] } }),
+  ])
+  if (icAccounts + transfers + fleetRates > 0) {
+    throw new AppError(
+      'MERGE_HAS_INTERCOMPANY',
+      'One of these companies has inter-company activity (Due-from / Due-to entries, transfers or shared-fleet rates). Merging would fold both sides of those balances into one company — settle them first, then ask finance how to close them.',
+      422,
+      { icAccountsWithEntries: icAccounts, transfers, fleetRates },
+    )
+  }
+  const tenants = await db.tenant.findMany({ where: { id: { in: pair } }, select: { id: true, fiscalYearEndMonth: true } })
+  const monthOf = (id: string) => tenants.find((t) => t.id === id)?.fiscalYearEndMonth ?? DEFAULT_FISCAL_YEAR_END_MONTH
+  if (monthOf(src) !== monthOf(dst)
+    && await closedAcrossYearEnd(db, src, [monthOf(src)])
+    && await closedAcrossYearEnd(db, dst, [monthOf(dst)])) {
+    throw new AppError(
+      'FY_END_MISMATCH',
+      `The two companies end their fiscal years in different months (${monthOf(src)} and ${monthOf(dst)}) and both have closed their books across a year end — merging would re-present closed years. Align the year ends first.`,
+      422,
+      { sourceMonth: monthOf(src), targetMonth: monthOf(dst) },
+    )
+  }
+  const [clash] = await db.$queryRaw<Array<{ n: number }>>`
+    SELECT count(*)::int AS n
+      FROM card_settlement_days a
+      JOIN card_settlement_days b ON b.unit = a.unit AND b.day = a.day
+     WHERE a."tenantId" = ${src} AND b."tenantId" = ${dst}`
+  if ((clash?.n ?? 0) > 0) {
+    throw new AppError(
+      'MERGE_CARD_SETTLEMENT_CLASH',
+      `Both companies have card payouts claiming the same day(s) (${clash!.n}) — undo one side on Reconciliation → Card payouts before merging.`,
+      422,
+      { days: clash!.n },
+    )
+  }
+}
+
+/** `base` made unique against `taken`: base, then base-2, base-3 … (added to `taken`). */
+function freeName(base: string, taken: Set<string>): string {
+  let name = base
+  for (let i = 2; taken.has(name); i++) name = `${base}-${i}`
+  taken.add(name)
+  return name
+}
+
+/**
+ * Move every finance wave B company table (and the finance-wave-A parents they
+ * hang off) from `src` to `dst`, inside the merge transaction. Company-keyed
+ * unique keys stay unique: a fixed-asset class the target already has (by
+ * key) absorbs the source's (assets and pools name their class by key); a
+ * colliding asset tag or receivable-invoice number gets '-<source slug>'; the
+ * source's cash requests are renumbered after the target's (seq is per
+ * company; the printed number keeps its old digits plus '-<source slug>').
+ * PARKED (owner, 2026-10-13): customer_accounts / _cards / _charges and
+ * customer_strikes / customer_bans are NOT moved — the on-account and
+ * strikes / bans features are parked; the resume adds them here.
+ */
+async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug: string) {
+  // Fixed assets — classes by key.
+  const srcClasses = await tx.fixedAssetClass.findMany({ where: { tenantId: src }, select: { id: true, key: true } })
+  if (srcClasses.length > 0) {
+    const dstKeys = new Set((await tx.fixedAssetClass.findMany({ where: { tenantId: dst }, select: { key: true } })).map((c) => c.key))
+    for (const c of srcClasses) {
+      if (dstKeys.has(c.key)) await tx.fixedAssetClass.delete({ where: { id: c.id } })
+      else await tx.fixedAssetClass.update({ where: { id: c.id }, data: { tenantId: dst } })
+    }
+  }
+  // Asset tags are unique per company.
+  let assetTagsRenamed = 0
+  const srcTagged = await tx.fixedAsset.findMany({ where: { tenantId: src, assetTag: { not: null } }, select: { id: true, assetTag: true } })
+  if (srcTagged.length > 0) {
+    const taken = new Set((await tx.fixedAsset.findMany({ where: { tenantId: dst, assetTag: { not: null } }, select: { assetTag: true } }))
+      .map((a) => a.assetTag!))
+    for (const a of srcTagged) {
+      if (!taken.has(a.assetTag!)) { taken.add(a.assetTag!); continue }
+      await tx.fixedAsset.update({ where: { id: a.id }, data: { assetTag: freeName(`${a.assetTag}-${srcSlug}`, taken) } })
+      assetTagsRenamed++
+    }
+  }
+  // Receivable invoice numbers are unique per company.
+  let invoiceNumbersRenamed = 0
+  const srcInvoices = await tx.receivableInvoice.findMany({ where: { tenantId: src }, select: { id: true, number: true } })
+  if (srcInvoices.length > 0) {
+    const taken = new Set((await tx.receivableInvoice.findMany({ where: { tenantId: dst }, select: { number: true } })).map((i) => i.number))
+    for (const inv of srcInvoices) {
+      if (!taken.has(inv.number)) { taken.add(inv.number); continue }
+      await tx.receivableInvoice.update({ where: { id: inv.id }, data: { number: freeName(`${inv.number}-${srcSlug}`, taken) } })
+      invoiceNumbersRenamed++
+    }
+  }
+  // Cash requests: seq is per company — the source's continue after the target's.
+  let cashRequestsRenumbered = 0
+  const dstMaxSeq = (await tx.cashVoucher.aggregate({ where: { tenantId: dst }, _max: { seq: true } }))._max.seq ?? 0
+  if (dstMaxSeq > 0) {
+    const srcVouchers = await tx.cashVoucher.findMany({ where: { tenantId: src }, select: { id: true, number: true }, orderBy: { seq: 'asc' } })
+    let next = dstMaxSeq
+    for (const v of srcVouchers) {
+      await tx.cashVoucher.update({ where: { id: v.id }, data: { tenantId: dst, seq: ++next, number: `${v.number}-${srcSlug}` } })
+      cashRequestsRenumbered++
+    }
+  }
+
+  const repoint: Array<{
+    updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
+  }> = [
+    // Fixed assets (v2) and prepayment releases.
+    tx.fixedAsset, tx.fixedAssetEvent, tx.fixedAssetPool, tx.fixedAssetTaxYear, tx.fixedAssetRun, tx.fixedAssetDepreciation,
+    tx.prepaidRelease,
+    // Food cost on FIFO lots: the lots and their movements, GRNI matches, and
+    // the stock documents' own company columns.
+    tx.stockLot, tx.stockMovement, tx.grniMatch, tx.goodsReceipt, tx.wasteLog, tx.physicalCount, tx.prepBatch,
+    // Card payouts (H12).
+    tx.cardSettlement, tx.cardSettlementDay,
+    // Receivables (the invoices the bad-debt write-offs belong to) and G12 write-offs + evidence.
+    tx.receivableInvoice, tx.receivablePayment, tx.receivableWriteOff, tx.receivableWriteOffAttachment,
+    // Petty cash and cash requests (the boxes and requests the settlements, spend lines and movements belong to).
+    tx.pettyCashBox, tx.cashVoucher, tx.cashVoucherAttachment, tx.cashVoucherSettlement, tx.pettyCashSpendLine, tx.pettyCashMovement,
+  ]
+  for (const model of repoint) {
+    await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
+  }
+  return { assetTagsRenamed, invoiceNumbersRenamed, cashRequestsRenumbered }
 }
 
 export async function tenantRoutes(fastify: FastifyInstance) {
@@ -180,6 +334,12 @@ export async function tenantRoutes(fastify: FastifyInstance) {
   // row with the same company-keyed unique key the target's row wins and the
   // source's duplicate is dropped — except kitchen staff, where the merge is
   // refused so two people's payroll history is never silently collapsed.
+  // Finance wave B: the fixed-asset register, FIFO lots / movements / GRNI,
+  // card payouts, receivables + bad-debt write-offs and petty cash / cash
+  // requests move too (mergeFinanceTables); assertMergeable refuses a merge
+  // the books cannot absorb (inter-company activity, a fiscal-year clash,
+  // clashing card-payout days). When only one company holds its stock on FIFO
+  // lots, the other is cut over first so the merged items all live on lots.
   fastify.post('/merge', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
       sourceId: z.string().min(1),
@@ -204,7 +364,18 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       if (!live.some((t) => t.id === id)) throw new NotFoundError('Tenant', id)
     }
 
+    await assertMergeable(prisma, src, dst)
+    // FIFO lots: a company on lots and one not would leave the merged items
+    // half on lots (or cut over twice) — cut the other one over first.
+    const [srcFifo, dstFifo] = await Promise.all([readFifoCutoverAt(prisma, src), readFifoCutoverAt(prisma, dst)])
+    if ((srcFifo || dstFifo) && !(srcFifo && dstFifo)) {
+      await ensureFifoReady(src)
+      await ensureFifoReady(dst)
+    }
+    const srcSlug = (await prisma.tenant.findUniqueOrThrow({ where: { id: src }, select: { slug: true } })).slug
+
     const result = await prisma.$transaction(async (tx) => {
+      await assertMergeable(tx, src, dst)
       // Refuse before any write if a kitchen staffer (unique per company on
       // CNIC) exists on both sides.
       const srcStaff = await tx.kitchenStaff.findMany({ where: { tenantId: src }, select: { cnic: true } })
@@ -247,6 +418,13 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       // pointing at a source account is repointed to the destination's account
       // with the same code before the entries move. A code the destination
       // doesn't have is carried across as-is. Source accounts are then retired.
+      // Inter-company pair accounts with no entries (assertMergeable refused
+      // any with entries) are lazy — ensurePairAccounts re-creates them — so
+      // the source's, and the target's facing the source, are dropped first:
+      // they would otherwise land on another pair's code or face themselves.
+      await tx.account.deleteMany({
+        where: { controlledBy: 'intercompany', OR: [{ tenantId: src }, { tenantId: dst, counterpartyTenantId: src }] },
+      })
       const srcAccounts = await tx.account.findMany({
         where: { tenantId: src }, select: { id: true, code: true },
       })
@@ -280,6 +458,9 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       for (const model of repoint) {
         await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
       }
+
+      // Finance wave B tables (see mergeFinanceTables).
+      const finance = await mergeFinanceTables(tx, src, dst, srcSlug)
 
       // Per-company singleton configs — unique on (tenantId, scope, scopeId).
       // The target's row wins on a clash; the source's duplicate is dropped.
@@ -375,7 +556,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         where: { id: src },
         data: { deletedAt: new Date(), isActive: false },
       })
-      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count }
+      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count, ...finance }
     }, {
       // Many sequential statements — the default 5s interactive-transaction
       // budget is too tight for a company with real history.

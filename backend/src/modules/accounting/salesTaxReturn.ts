@@ -42,14 +42,29 @@
 //   • The authority table is accounting/taxAuthorities.ts (AUTHORITIES,
 //     re-exported here) — never a second copy. Input tax on bills, OpEx and
 //     CapEx is booked to the CHARGING authority's own input account
-//     (1320–1324) and set off only against that authority (H8).
+//     (1320–1324) and set off against that authority (H8).
+//   • Federal input on raw materials, cross set-off (H8, Hasnain 2026-10-14,
+//     "as per SRB eligibility"): FBR input (1320) booked on SUPPLIER BILLS for
+//     stock lines whose cost class is in CROSS_SETOFF_ELIGIBLE_CLASSES (food
+//     and drinks — the one switch point) may ALSO be set off against a
+//     provincial authority's output (SRB, PRA, KPRA, BRA). Pool per company:
+//     eligible federal input booked to date − cross set-offs already recorded
+//     (any period, any authority), never more than 1320 still holds after
+//     what FBR is owed (federal output uses 1320 first). Shared over the
+//     provincial authorities in AUTHORITIES order; unused, it carries
+//     forward. A payment sets it off with crossSetOffCents (taxPayments.ts:
+//     Dr the output / Cr 1320). Another company's input never counts.
 //   • Delivery charges (H9): Order.deliveryFeeCents / deliveryFeeTaxCents are
 //     their own supply ('delivery_charge') at the order's rate; the item parts
 //     share the rest of the order's tax. Taxable sales include 4110 Delivery
 //     Fee Income per brand.
-//   • Kept no-show deposits (H10): 'reservation.deposit_capture:' entries
-//     credit brand revenue + output tax (tax inside, card rate) and are
-//     declared as 'deposit_forfeit' rows.
+//   • Kept no-show deposits (H10, Hasnain 2026-10-14): untaxed compensation —
+//     'reservation.deposit_capture:' entries credit 4210 (other income) with
+//     no output tax, so they are not supplies and the return lists nothing
+//     for them. Entries posted under the earlier treatment (brand revenue +
+//     output tax inside, card rate) stay declared as they were filed: a
+//     capture entry that credited an output-tax account is a 'deposit_forfeit'
+//     row, flagged 'pre-H10' in the notes (its reversal counts the other way).
 //   • Sales tax withheld by customers (H13): 1335, from 'receivable.st_withheld:'
 //     entries (and their reversals), per authority (ReceivablePayment.
 //     taxAuthority) — deducted from that authority's net (netAfterWithheld).
@@ -71,6 +86,7 @@ import { ACCT, revenueCodeForConcept } from './journal.js'
 import { fmtPktDate } from './dates.js'
 import { homeShiftOf } from './orderPosting.js'
 import { sumCents, toCents } from '../../lib/money.js'
+import { costClassOf, type CostClass } from '../../lib/inventoryClass.js'
 import {
   AUTHORITIES, AUTHORITY_LIST, TAX_AUTHORITY_KEYS, authorityOfOutputCode, isAuthorityKey, outputTaxCodeFor,
   type AuthorityKey,
@@ -180,6 +196,180 @@ export async function debitBalanceAt(db: Db, tenantId: string, code: string, asO
 /** The authority whose OUTPUT account `code` is; an unknown code files with FBR. */
 const authorityOfOutput = (code: string) => AUTHORITIES[authorityOfOutputCode(code) ?? 'fbr']
 
+// ─── Federal input on raw materials, cross set-off (H8) ─────────────────────
+
+/**
+ * THE switch point (H8, Hasnain 2026-10-14; H34 default): the stock cost
+ * classes (lib/inventoryClass.ts) whose federal input tax on supplier bills
+ * may be set off against a provincial authority's output — food (meat,
+ * chicken, vegetables, dry goods …) and drinks. Add 'packaging' here, and only
+ * here, if the CA confirms it is eligible.
+ */
+export const CROSS_SETOFF_ELIGIBLE_CLASSES: readonly CostClass[] = ['food', 'beverage']
+
+/** The authorities eligible federal input may be set off against: every provincial one (never FBR — 1320 is FBR's own). */
+export const CROSS_SETOFF_AUTHORITIES: readonly AuthorityKey[] = TAX_AUTHORITY_KEYS.filter((k) => k !== 'fbr')
+
+export function crossSetOffAllowed(authority: string): authority is AuthorityKey {
+  return (CROSS_SETOFF_AUTHORITIES as readonly string[]).includes(authority)
+}
+
+/** The supplier documents whose 1320 lines are federal input on goods: a bill (+), its void (−), a credit note (−), its void (+). */
+const BILL_INPUT_PREFIXES = ['supplier.bill:', 'supplier.bill.void:', 'supplier.credit_note:', 'supplier.credit_note.void:'] as const
+
+/** Every entry ever dated: a balance including everything after a date. */
+const END_OF_TIME = new Date('9999-12-31T00:00:00Z')
+
+/**
+ * Federal input (1320) on supplier bills that is ELIGIBLE for the cross
+ * set-off, booked in [from, to] (from null = since the beginning), net:
+ * each 1320 line of a bill, its void, a credit note or its void, times the
+ * share of that document's line value that is stock of an eligible class
+ * (the line's item — or its PO line's — category, lib/inventoryClass.ts
+ * costClassOf; a non-stock line, an item-less line or another company's item
+ * is not eligible). A credit note with no lines of its own takes its
+ * original bill's share. Only `tenantId`'s entries, documents and items.
+ */
+export async function eligibleFederalInputCents(db: Db, tenantId: string, from: Date | null, to: Date): Promise<number> {
+  const lines = await db.journalLine.findMany({
+    where: {
+      account: { tenantId, code: ACCT.GST_INPUT },
+      journalEntry: {
+        tenantId,
+        entryDate: { ...(from ? { gte: from } : {}), lte: to },
+        OR: BILL_INPUT_PREFIXES.map((p) => ({ reference: { startsWith: p } })),
+      },
+    },
+    select: { type: true, amountCents: true, journalEntry: { select: { reference: true } } },
+  })
+  if (lines.length === 0) return 0
+  const docIdOf = (ref: string | null): string | null => {
+    const p = BILL_INPUT_PREFIXES.find((x) => ref?.startsWith(x))
+    return p ? ref!.slice(p.length) : null
+  }
+  const share = await eligibleShareOfDocs(db, tenantId, [...new Set(lines.map((l) => docIdOf(l.journalEntry.reference)).filter((x): x is string => !!x))])
+  let total = 0
+  for (const l of lines) {
+    const id = docIdOf(l.journalEntry.reference)
+    const s = id ? share.get(id) : undefined
+    if (!s || s.all <= 0 || s.eligible <= 0) continue
+    const cents = Math.round((toCents(l.amountCents) * s.eligible) / s.all)
+    total += l.type === 'debit' ? cents : -cents
+  }
+  return total
+}
+
+/** Per supplier document: its eligible stock-line value and its whole line value (both ≥ 0). */
+async function eligibleShareOfDocs(db: Db, tenantId: string, ids: string[]): Promise<Map<string, { eligible: number; all: number }>> {
+  const out = new Map<string, { eligible: number; all: number }>()
+  if (ids.length === 0) return out
+  const select = {
+    id: true, kind: true, originalBillId: true,
+    lines: { select: { lineTotalCents: true, inventoryItemId: true, expenseAccountCode: true, poLine: { select: { inventoryItemId: true } } } },
+  } as const
+  const docs = await db.supplierBill.findMany({ where: { id: { in: ids }, supplier: { tenantId } }, select })
+  // A credit note without lines of its own reads its original bill's.
+  const originals = [...new Set(docs.filter((d) => d.lines.length === 0 && d.originalBillId).map((d) => d.originalBillId!))]
+    .filter((id) => !docs.some((d) => d.id === id))
+  const all = originals.length > 0
+    ? [...docs, ...await db.supplierBill.findMany({ where: { id: { in: originals }, supplier: { tenantId } }, select })]
+    : docs
+  const itemIds = [...new Set(all.flatMap((d) => d.lines.map((l) => l.inventoryItemId ?? l.poLine?.inventoryItemId ?? null)).filter((x): x is string => !!x))]
+  const items = itemIds.length > 0
+    ? await db.inventoryItem.findMany({ where: { id: { in: itemIds }, tenantId }, select: { id: true, category: true } })
+    : []
+  const eligibleItem = new Set(items.filter((i) => CROSS_SETOFF_ELIGIBLE_CLASSES.includes(costClassOf(i.category))).map((i) => i.id))
+  const own = new Map<string, { eligible: number; all: number }>()
+  for (const d of all) {
+    let eligible = 0, whole = 0
+    for (const l of d.lines) {
+      const v = Math.abs(toCents(l.lineTotalCents))
+      whole += v
+      const itemId = l.inventoryItemId ?? l.poLine?.inventoryItemId ?? null
+      if (itemId && !l.expenseAccountCode && eligibleItem.has(itemId)) eligible += v
+    }
+    own.set(d.id, { eligible, all: whole })
+  }
+  for (const d of docs) {
+    const s = own.get(d.id)!
+    out.set(d.id, s.all > 0 || !d.originalBillId ? s : (own.get(d.originalBillId) ?? s))
+  }
+  return out
+}
+
+/**
+ * Cross set-off recorded per payment: Cr − Dr on 1320 in the entry of each
+ * live provincial payment (posted here or linked) — a provincial payment's
+ * own input is its own 132x, so a 1320 line in it is always the cross
+ * set-off. A voided payment's row is gone (its reversal nets its entry).
+ */
+export async function crossSetOffByPayment(
+  db: Db, tenantId: string, rows: Array<{ id: string; authority: string; journalEntryId: string | null }>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  const live = rows.filter((r) => r.journalEntryId && crossSetOffAllowed(r.authority))
+  if (live.length === 0) return out
+  const lines = await db.journalLine.findMany({
+    where: { journalEntryId: { in: live.map((r) => r.journalEntryId!) }, account: { tenantId, code: ACCT.GST_INPUT }, journalEntry: { tenantId } },
+    select: { journalEntryId: true, type: true, amountCents: true },
+  })
+  const byEntry = new Map<string, number>()
+  for (const l of lines) byEntry.set(l.journalEntryId, (byEntry.get(l.journalEntryId) ?? 0) + (l.type === 'credit' ? toCents(l.amountCents) : -toCents(l.amountCents)))
+  for (const r of live) {
+    const c = byEntry.get(r.journalEntryId!) ?? 0
+    if (c !== 0) out.set(r.id, c)
+  }
+  return out
+}
+
+export interface FederalCrossSetOffPool {
+  /** The classes counted (CROSS_SETOFF_ELIGIBLE_CLASSES). */
+  eligibleClasses: CostClass[]
+  /** Eligible federal input booked up to the date. */
+  eligibleToDateCents: number
+  /** Cross set-offs recorded in payments (any period, any provincial authority). */
+  usedCents: number
+  /** What 1320 holds (on the date, and counting everything after it — the lower). */
+  ledgerHeldCents: number
+  /** FBR output still owed on the date (2030, never negative) — federal output takes 1320 first. */
+  federalOutputOwedCents: number
+  /** What may still be set off against a provincial authority. Never negative. */
+  availableCents: number
+}
+
+/**
+ * The cross set-off still available to `tenantId` on `asOf` (H8): eligible
+ * federal input to date − cross set-offs already recorded; with `ledgerCap`
+ * (the default) also never more than 1320 holds after what FBR is still
+ * owed. `ledgerCap: false` is for linking an entry that already credited
+ * 1320 (its own credit is in the balance). One company's books only.
+ */
+export async function federalCrossSetOffAvailable(
+  db: Db, tenantId: string, asOf: Date, opts: { ledgerCap?: boolean } = {},
+): Promise<FederalCrossSetOffPool> {
+  const live = await db.salesTaxPayment.findMany({
+    where: { tenantId, authority: { in: [...CROSS_SETOFF_AUTHORITIES] }, journalEntryId: { not: null } },
+    select: { id: true, authority: true, journalEntryId: true },
+  })
+  const [eligibleToDateCents, used, owed, held, heldLater] = await Promise.all([
+    eligibleFederalInputCents(db, tenantId, null, asOf),
+    crossSetOffByPayment(db, tenantId, live),
+    creditBalancesAt(db, tenantId, [ACCT.GST_OUTPUT], asOf),
+    debitBalanceAt(db, tenantId, ACCT.GST_INPUT, asOf),
+    debitBalanceAt(db, tenantId, ACCT.GST_INPUT, END_OF_TIME),
+  ])
+  const usedCents = [...used.values()].reduce((t, v) => t + v, 0)
+  const ledgerHeldCents = Math.min(held, heldLater)
+  const federalOutputOwedCents = Math.max(0, owed.get(ACCT.GST_OUTPUT) ?? 0)
+  let available = eligibleToDateCents - usedCents
+  if (opts.ledgerCap !== false) available = Math.min(available, ledgerHeldCents - federalOutputOwedCents)
+  return {
+    eligibleClasses: [...CROSS_SETOFF_ELIGIBLE_CLASSES],
+    eligibleToDateCents, usedCents, ledgerHeldCents, federalOutputOwedCents,
+    availableCents: Math.max(0, available),
+  }
+}
+
 export type WithholdingKey = 'wht' | 'stwh'
 
 /**
@@ -229,6 +419,21 @@ export interface AuthorityReturn {
   ledgerBalanceAtEndCents: number
   /** The input account's balance (still recoverable) at the period's end. */
   inputLedgerBalanceAtEndCents: number
+  /**
+   * H8 cross set-off (provincial authorities only; 0 for FBR): federal input
+   * on raw materials (1320) already set off against THIS authority in
+   * payments for the period.
+   */
+  crossSetOffForPeriodCents: number
+  /**
+   * "Federal input on raw materials claimable against <authority>": what of
+   * the company's pool (federalCrossSetOff.availableCents, shared over the
+   * provincial authorities in AUTHORITIES order) may still be set off against
+   * what this authority is owed for the period. Never more than it is owed.
+   */
+  federalInputClaimableCents: number
+  /** netAfterWithheldCents − crossSetOffForPeriodCents − federalInputClaimableCents: payable after the cross set-off. Negative = carried forward. */
+  netAfterCrossSetOffCents: number
 }
 
 export interface WithholdingReturn {
@@ -253,7 +458,7 @@ export const SUPPLY_LABEL: Readonly<Record<SupplyClass, string>> = {
   zero_rated: 'Zero-rated',
   exempt: 'Exempt',
   delivery_charge: 'Delivery charges',
-  deposit_forfeit: 'No-show deposits kept',
+  deposit_forfeit: 'No-show deposits kept (pre-H10)',
 }
 
 export interface RateLine {
@@ -262,7 +467,9 @@ export interface RateLine {
    * The item tax class: standard lines at the order's rate, custom at the
    * item's own, zero-rated / exempt at 0%; 'delivery_charge' = an order's
    * delivery fee at the order's rate (H9); 'deposit_forfeit' = a kept no-show
-   * deposit at the brand's card rate, tax inside (H10).
+   * deposit captured under the PRE-H10 treatment (brand revenue, tax inside at
+   * the brand's card rate). Since H10 a kept deposit is untaxed other income
+   * (4210) and is not a supply — no row.
    */
   supply: SupplyClass
   /** Order.taxRatePct (standard, delivery), the item's rate (custom), 0 (zero-rated / exempt), the brand's card rate (deposits); null = an order priced before the rate was stored. */
@@ -292,6 +499,8 @@ export interface TaxPaymentRow {
   inputSetOffCents: number
   /** Sales tax our clients withheld (1335) set off in this payment (H13). */
   customerWithheldSetOffCents: number
+  /** Federal input on raw materials (1320) set off against this provincial authority (H8); 0 for others. */
+  crossSetOffCents: number
   outputSetOffCents: number
   cprNumber: string | null
   bankAccountId: string | null
@@ -354,6 +563,21 @@ export interface SalesTaxReturnReport {
   netPayableCents: number
   /** Excess input (and withheld) tax per authority, carried forward with that authority (not a reduction of another's bill). */
   carryForwardCents: number
+  /**
+   * H8: federal input on raw materials that may be set off against provincial
+   * output — the company's pool at the period's end (what is still available
+   * after every set-off recorded) and the period's own figures.
+   */
+  federalCrossSetOff: FederalCrossSetOffPool & {
+    /** Eligible federal input booked in the period. */
+    eligibleInPeriodCents: number
+    /** Σ crossSetOffForPeriodCents over the provincial authorities. */
+    setOffForPeriodCents: number
+    /** Σ federalInputClaimableCents — never more than availableCents. */
+    claimableCents: number
+  }
+  /** Each authority's netAfterCrossSetOffCents, summed where positive: payable if the claimable federal input is set off. */
+  netPayableAfterCrossSetOffCents: number
   notes: string[]              // operator-facing caveats
 }
 
@@ -725,11 +949,14 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date, reclassTarg
       l.refundValueCents += o.taxCents > 0 ? Math.round((p.valueCents * tax) / o.taxCents) : 0
     }
   }
-  // Kept no-show deposits (H10): each capture entry credits the brand's
-  // revenue (the value) and its output-tax account (the tax inside, at the
-  // brand's card rate — the hold is card money). Filed with the authority
-  // whose account it credited (routed through a reclass like any sale); a
-  // reversal counts the other way.
+  // Kept no-show deposits. Since H10 (Hasnain, 2026-10-14) a capture credits
+  // 4210 other income with NO output tax: not a supply, nothing declared.
+  // A capture posted under the earlier treatment credited the brand's revenue
+  // (the value) and its output-tax account (the tax inside, at the brand's
+  // card rate) — it was declared that way and stays declared ('pre-H10'):
+  // filed with the authority whose account it credited (routed through a
+  // reclass like any sale); a reversal counts the other way. Old or new is
+  // read from the entry itself (a tax line), so no date cut-off can misfile.
   const depositEntries = entries.filter((e) => DEPOSIT_CAPTURE_PREFIXES.some((p) => e.reference?.startsWith(p)))
   if (depositEntries.length > 0) {
     const depLines = await prisma.journalLine.findMany({
@@ -752,7 +979,7 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date, reclassTarg
       // A capture credits revenue + tax; its reversal debits them.
       const own = (reversal ? reversalLines : depLines).filter((l) => l.journalEntryId === e.id)
       const taxLine = own.find((l) => OUTPUT_TAX_CODES.includes(l.account.code))
-      if (!taxLine) continue // a capture with no tax (a 0% brand) declares nothing here
+      if (!taxLine) continue // H10 (4210, no tax) — or a pre-H10 capture of a 0% brand: nothing to declare
       const value = own.filter((l) => l.account.type === 'revenue').reduce((t, l) => t + toCents(l.amountCents), 0)
       const tax = toCents(taxLine.amountCents)
       const conceptId = taxLine.conceptId
@@ -840,6 +1067,7 @@ export async function taxPaymentsFor(tenantId: string, from: Date, to: Date, opt
     ? await prisma.bankAccount.findMany({ where: { id: { in: bankIds }, tenantId }, select: { id: true, name: true } })
     : []
   const bankName = new Map(banks.map((b) => [b.id, b.name]))
+  const cross = await crossSetOffByPayment(prisma, tenantId, rows)
   const kindOf = (a: string): TaxPaymentRow['kind'] =>
     isAuthorityKey(a) ? 'sales_tax' : WITHHOLDING.some((w) => w.key === a) ? 'withholding' : 'statutory'
   return rows.map((r) => ({
@@ -852,6 +1080,7 @@ export async function taxPaymentsFor(tenantId: string, from: Date, to: Date, opt
     paidCents: toCents(r.paidCents),
     inputSetOffCents: toCents(r.inputSetOffCents),
     customerWithheldSetOffCents: toCents(r.customerWithheldSetOffCents),
+    crossSetOffCents: cross.get(r.id) ?? 0,
     outputSetOffCents: toCents(r.outputSetOffCents),
     cprNumber: r.cprNumber,
     bankAccountId: r.bankAccountId,
@@ -1018,11 +1247,39 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
       netAfterWithheldCents: output - input - withheld,
       ledgerBalanceAtEndCents: balances.get(a.outputCode) ?? 0,
       inputLedgerBalanceAtEndCents: 0 - (balances.get(a.inputCode) ?? 0),
+      crossSetOffForPeriodCents: paid.reduce((t, p) => t + p.crossSetOffCents, 0),
+      federalInputClaimableCents: 0,
+      netAfterCrossSetOffCents: 0,
     }
   }).filter((r) =>
     r.output.totalCents !== 0 || r.input.totalCents !== 0 || r.brands.length > 0
     || r.paidForPeriodCents !== 0 || r.inputSetOffForPeriodCents !== 0 || r.ledgerBalanceAtEndCents !== 0
-    || r.withheldByCustomersCents !== 0 || r.customerWithheldSetOffForPeriodCents !== 0)
+    || r.withheldByCustomersCents !== 0 || r.customerWithheldSetOffForPeriodCents !== 0 || r.crossSetOffForPeriodCents !== 0)
+
+  // H8: federal input on raw materials, set off against provincial output.
+  // The company's pool at the period's end is shared over the provincial
+  // authorities in AUTHORITIES order — never claimed twice — and each takes
+  // at most what it is still owed for the period after set-offs already made.
+  const [pool, eligibleInPeriodCents] = await Promise.all([
+    federalCrossSetOffAvailable(prisma, tenantId, to),
+    eligibleFederalInputCents(prisma, tenantId, from, to),
+  ])
+  let poolLeft = pool.availableCents
+  for (const r of byAuthority) {
+    const owed = r.netAfterWithheldCents - r.crossSetOffForPeriodCents
+    if (crossSetOffAllowed(r.key) && owed > 0 && poolLeft > 0) {
+      r.federalInputClaimableCents = Math.min(poolLeft, owed)
+      poolLeft -= r.federalInputClaimableCents
+    }
+    r.netAfterCrossSetOffCents = owed - r.federalInputClaimableCents
+  }
+  const federalCrossSetOff: SalesTaxReturnReport['federalCrossSetOff'] = {
+    ...pool,
+    eligibleInPeriodCents,
+    setOffForPeriodCents: byAuthority.reduce((t, r) => t + r.crossSetOffForPeriodCents, 0),
+    claimableCents: byAuthority.reduce((t, r) => t + r.federalInputClaimableCents, 0),
+  }
+  const netPayableAfterCrossSetOffCents = byAuthority.reduce((t, r) => t + Math.max(0, r.netAfterCrossSetOffCents), 0)
 
   // Withheld in the period: payments left out (as for sales tax), and the
   // one-time statutory reclass too — it moves legacy salary tax out of 2040,
@@ -1067,15 +1324,15 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     notes.push('Delivery charges are a taxable supply of their own: GST is added on top of the fee at the order\'s rate (15% cash, 8% card / Raast / online). They are declared on the "delivery_charge" rows, and the fee income (4110) is included in total taxable sales, per brand.')
   }
   if (byRate.some((r) => r.supply === 'deposit_forfeit')) {
-    notes.push('No-show deposits kept are taxable: the tax is inside the deposit, at the brand\'s card rate, and is declared on the "deposit_forfeit" rows. The rest of the deposit is the brand\'s revenue.')
+    notes.push('pre-H10: the "deposit_forfeit" rows are no-show deposits kept under the earlier treatment (brand revenue with the tax inside, at the brand\'s card rate) — they stay declared as they were booked. Since H10 a kept deposit is untaxed compensation, booked to 4210 No-show Deposits Kept (other income), and is not on the return.')
   }
   if (byAuthority.some((r) => r.withheldByCustomersCents !== 0 || r.customerWithheldAvailableCents !== 0)) {
     notes.push('Sales tax our clients withheld from us as withholding agents (1335) is deducted from that same authority\'s net ("Net after withheld") — SRB withholding never reduces PRA\'s. Set it off when recording the payment ("Withheld tax set off"); what is still available is shown per authority.')
   }
   notes.push('Output and input are what was charged and recovered in the period. Tax paid to the authorities (payments recorded here, and entries linked as payments) is left out of them and shown under "Paid for this period"; "Ledger balance at period end" is what the books still owe after every charge and payment up to then.')
-  notes.push('Input tax is set off only against the same authority\'s output: federal input on goods (1320) is never netted against provincial output on services. Whether any input is admissible (e.g. restaurant services at a reduced rate) is for your CA.')
+  notes.push('Input tax is set off against the same authority\'s output. The one exception (H8, as per SRB eligibility): federal input (1320) on supplier bills for raw materials — stock of the classes ' + CROSS_SETOFF_ELIGIBLE_CLASSES.join(' and ') + ' — may also be set off against a provincial authority\'s output ("Federal input on raw materials claimable against …", and "Net after federal input"). It is one pool per company: what was set off once is never claimed again, for any period or authority, and what FBR is owed takes 1320 first. Set it off when recording the payment ("Federal input set off"). Whether any other input is admissible (e.g. restaurant services at a reduced rate) is for your CA.')
   notes.push('Per-rate figures: sales are the orders booked in the period (online orders on completion, till orders on their drawer\'s close), less the tax the period\'s refunds reversed. Value is the pre-discount item value. "otherOutputCents" is ledger output tax not explained by them (manual journals, B2B invoices, older entries).')
-  notes.push('Supplies are classed by item tax class (standard / custom / zero-rated / exempt), with delivery charges and kept no-show deposits on their own rows. Adjust with your CA before filing.')
+  notes.push('Supplies are classed by item tax class (standard / custom / zero-rated / exempt), with delivery charges on their own rows. Kept no-show deposits are other income (4210, H10), not a supply. Adjust with your CA before filing.')
   notes.push('Withholding lists income tax withheld from vendors (2040) and sales tax withheld as an agent (2041). Salary tax, EOBI and SESSI are statutory payroll challans — see Statutory Payments.')
 
   return {
@@ -1117,6 +1374,8 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     taxableValueByConceptCents: taxableByConcept,
     netPayableCents,
     carryForwardCents,
+    federalCrossSetOff,
+    netPayableAfterCrossSetOffCents,
     notes,
   }
 }

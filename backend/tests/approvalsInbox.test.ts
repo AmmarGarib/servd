@@ -8,6 +8,10 @@
 //     route, whose own guard still applies (wrong role 403, other company 404).
 //   - Module access still applies through the module's own queue route.
 //   - The plugin works registered under /api/v1 (registerApprovalsPlugin).
+//   - Finance wave B types (fixed-asset requests, inter-company transfers, bad
+//     debts, Raast voids, GRNI write-offs, cash requests for the HOD, stock
+//     differences): per company, CEO-only buttons through the module routes,
+//     on_account_client PARKED (lists nothing).
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
@@ -35,6 +39,12 @@ const { hrRoutes } = await import('../src/modules/hr/routes.js')
 const { tipPoolRoutes } = await import('../src/modules/tipPools/routes.js')
 const { stockTransferRoutes } = await import('../src/modules/stockTransfers/routes.js')
 const { trustopsRoutes } = await import('../src/modules/trustops/routes.js')
+const { fixedAssetRoutes } = await import('../src/modules/fixedAssets/routes.js')
+const { receivableRoutes } = await import('../src/modules/receivables/routes.js')
+const { reconciliationRoutes } = await import('../src/modules/reconciliation/routes.js')
+const { grniRoutes } = await import('../src/modules/procurement/grniRoutes.js')
+const { intercompanyRoutes } = await import('../src/modules/intercompany/routes.js')
+const { ensureChartOfAccounts } = await import('../src/lib/chartOfAccounts.js')
 const { registerApprovalsPlugin, APPROVAL_PROVIDERS, collectApprovals } = await import('../src/modules/approvals/index.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
 
@@ -45,6 +55,8 @@ const T: Record<'A' | 'B', string> = { A: '', B: '' }
 const U: Record<string, { id: string; name: string; email: string; role: string }> = {}
 /** The ids of the fixtures per company, per type. */
 const ids: Record<'A' | 'B', Record<string, string>> = { A: {}, B: {} }
+/** The A → B inter-company transfer waiting for the CEO (it belongs to both companies). */
+let icTransferId = ''
 
 async function mkUser(key: string, role: string, tenants: string[], extra: Record<string, unknown> = {}) {
   const u = await prisma.user.create({
@@ -135,6 +147,45 @@ async function seedCompany(co: 'A' | 'B', hod: string, owner: string) {
     },
   })
   ids[co]['cash_voucher'] = voucher.id
+
+  // ── Finance wave B ──
+  const asker = co === 'A' ? U['finance']!.id : U['adminB']!.id
+  // A disposal request on a fixed asset, waiting for the CEO.
+  const asset = await prisma.fixedAsset.create({
+    data: { tenantId, name: `${P} oven ${co}`, category: 'kitchen_equipment', assetTag: `FA-${co}-1`, acquiredAt: new Date('2026-01-10'), costCents: 400_000_00, usefulLifeMonths: 60 },
+  })
+  const faEvent = await prisma.fixedAssetEvent.create({
+    data: { tenantId, assetId: asset.id, kind: 'disposal', status: 'pending', effectiveDate: new Date(), payload: { disposalKind: 'scrap' }, amountCents: 0, reason: 'Burnt out', requestedById: asker },
+  })
+  ids[co]['fixed_asset_request'] = faEvent.id
+  // A bad-debt write-off asked of the CEO.
+  const inv = await prisma.receivableInvoice.create({
+    data: { tenantId, conceptId: concept.id, number: `AR-${co}-0001`, customerName: `${P} client ${co}`, issueDate: new Date('2026-08-01'), dueDate: new Date('2026-08-31'), description: 'Catering', amountCents: 50_000_00 },
+  })
+  const wo = await prisma.receivableWriteOff.create({
+    data: { tenantId, invoiceId: inv.id, amountCents: 50_000_00, reason: 'Client closed down, nothing to recover', requestedById: asker, status: 'requested' },
+  })
+  ids[co]['bad_debt'] = wo.id
+  // A Raast receipt finance asked the CEO to void (its sale was never booked).
+  const bank = await prisma.bankAccount.create({ data: { tenantId, name: `${P} Raast ${co}`, accountCode: '1020' } })
+  const ord = await prisma.order.create({
+    data: { conceptId: concept.id, source: 'pos', status: 'cancelled', totalCents: 2_000_00, placedAt: new Date(), externalId: `${P}-raast-${co}` },
+  })
+  const raast = await prisma.raastReceipt.create({
+    data: {
+      tenantId, orderId: ord.id, conceptId: concept.id, bankAccountId: bank.id, ledgerCode: '1020', amountCents: 2_000_00, dueCents: 2_000_00,
+      bankRef: `${co}123456789`, bankRefRaw: `${co}123456789`, status: 'provisional', confirmedVia: 'cashier', confirmedAt: new Date(), cashierVerified: true,
+      idempotencyKey: `${P}-raast-${co}`, createdById: asker,
+      voidRequestedAt: new Date(), voidRequestedById: asker, voidRequestReason: 'Cancelled before the money arrived',
+    },
+  })
+  ids[co]['raast_void'] = raast.id
+  // A delivery the supplier will never bill — write-off asked of the CEO.
+  const receipt = await prisma.goodsReceipt.create({ data: { tenantId, supplierId: supplier.id, receivedById: U[hod]!.id, receivedAt: new Date('2026-09-01') } })
+  const grLine = await prisma.goodsReceiptLine.create({
+    data: { receiptId: receipt.id, description: `${P} sample crates ${co}`, receivedQty: 4, writeOffRequestedAt: new Date(), writeOffRequestedById: asker, writeOffReason: 'Free samples' },
+  })
+  ids[co]['grni_writeoff'] = grLine.id
 }
 
 beforeAll(async () => {
@@ -147,8 +198,12 @@ beforeAll(async () => {
   await mkUser('hodB', 'boh_management', [T.B])
   await mkUser('ceoBoth', 'admin', [T.A, T.B])
   await mkUser('ownerNoPayroll', 'owner', [T.A], { moduleDeny: ['payroll'] })
+  for (const t of [T.A, T.B]) await ensureChartOfAccounts(t)
   await seedCompany('A', 'hodA', 'owner')
   await seedCompany('B', 'hodB', 'ownerB')
+  icTransferId = (await prisma.intercompanyTransfer.create({
+    data: { tenantId: T.A, counterpartyTenantId: T.B, kind: 'charge', status: 'submitted', amountCents: 75_000_00, entryDate: new Date(), memo: 'Shared kitchen staff, September', preparedById: U['finance']!.id },
+  })).id
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -166,6 +221,12 @@ beforeAll(async () => {
     await api.register(tipPoolRoutes, { prefix: '/tip-pools' })
     await api.register(stockTransferRoutes, { prefix: '/stock-transfers' })
     await api.register(trustopsRoutes, { prefix: '/trustops' })
+    await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
+    await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
+    await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
+    await api.register(reconciliationRoutes, { prefix: '/reconciliation' })
+    await api.register(grniRoutes, { prefix: '/procurement/grni' })
+    // No /accounting/stock-differences here: the type answers 404 → not listed.
     await registerApprovalsPlugin(api)
   }, { prefix: '/api/v1' })
   await app.ready()
@@ -181,10 +242,12 @@ describe('two companies', () => {
     expect(a.statusCode).toBe(200)
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
-    expect(body.types.map((t) => t.type).sort()).toEqual(
-      ['cash_voucher', 'hr_request', 'payroll_run', 'purchase_order', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool'],
-    )
-    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher']) {
+    expect(body.types.map((t) => t.type).sort()).toEqual([
+      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'payroll_run',
+      'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool',
+    ])
+    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher',
+      'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff']) {
       expect(countOf(body, t), t).toBe(1)
       expect(body.items.find((i) => i.type === t)?.id, t).toBe(ids.A[t])
     }
@@ -195,6 +258,8 @@ describe('two companies', () => {
     expect(body.items.every((i) => i.tenantId === T.A)).toBe(true)
     expect(body.items.every((i) => i.companyName === 'Approvals Co A')).toBe(true)
     expect(body.total).toBe(body.types.reduce((n, t) => n + t.count, 0))
+    // The A → B transfer is listed in A's view under A (a party).
+    expect(body.items.filter((i) => i.type === 'intercompany_transfer').map((i) => i.id)).toEqual([icTransferId])
 
     const b = (await inbox('adminB')).json() as Inbox
     const bIds = new Set(b.items.map((i) => i.id))

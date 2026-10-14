@@ -8,7 +8,9 @@
 //
 //   1. claims the transition atomically (booked/confirmed → no_show, never a
 //      seated/completed/cancelled row, never twice),
-//   2. captures a held deposit as a no-show fee (journal: Dr Bank / Cr 4100),
+//   2. captures a held deposit as a no-show fee (journal: Dr 1030 card /
+//      gateway receivable / Cr 4210 No-show Deposits Kept — other income, no
+//      sales tax, no fiscal document; H10, depositCapture.ts),
 //   3. records a strike on the customer and refreshes their rollups,
 //   4. offers the freed slot to the next waitlist guest,
 //   5. tells open admin screens.
