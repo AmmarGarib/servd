@@ -748,11 +748,13 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         <NavLinks pathname={pathname} collapsed={false} onNavigate={() => setMobileOpen(false)} />
-        <UserFooter collapsed={false} switcher={false} />
+        {/* Called, not mounted: UserFooter is declared inside Shell, so as a
+            <Component/> it would remount (and rebuild the switcher) on every render. */}
+        {UserFooter({ collapsed: false, switcher: false })}
       </aside>
 
       {/* ── Phone: the switcher module, pinned bottom-left ─────────────────── */}
-      <TenantSwitcher placement="floating" />
+      <TenantSwitcher placement="floating" hidden={mobileOpen} />
 
       {/* ── Desktop sidebar ────────────────────────────────────────────────── */}
       <aside
@@ -800,7 +802,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         )}
 
         <NavLinks pathname={pathname} collapsed={collapsed} />
-        <UserFooter collapsed={collapsed} />
+        {UserFooter({ collapsed })}
       </aside>
 
       {/* ── Main content ──────────────────────────────────────────────────── */}
@@ -820,7 +822,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
         <PortfolioBanner />
         <ImpersonationBanner />
-        <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in">
+        <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in pb-20 md:pb-0">
           <PageGuard pathname={pathname}>{children}</PageGuard>
         </main>
       </div>

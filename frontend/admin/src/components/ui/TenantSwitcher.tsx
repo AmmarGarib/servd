@@ -65,7 +65,7 @@ const PORTFOLIO_STASH_KEY = 'servd_view_all_stash'
 // column per choice (Companies | Brands | View as) and opens upwards.
 export type SwitcherPlacement = 'sidebar' | 'collapsed' | 'floating'
 
-export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) {
+export function TenantSwitcher({ placement, hidden = false }: { placement: SwitcherPlacement; /** The phone pill hides while the drawer is open. */ hidden?: boolean }) {
   const qc = useQueryClient()
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -137,6 +137,8 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
     router.refresh()
   }
 
+  useEffect(() => { if (hidden) setOpen(false) }, [hidden])
+
   // Close on outside click (the trigger toggles itself) and on Escape.
   useEffect(() => {
     if (!open) return
@@ -145,7 +147,11 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
       if (popRef.current?.contains(t) || triggerRef.current?.contains(t)) return
       setOpen(false)
     }
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      setOpen(false)
+      triggerRef.current?.querySelector('button')?.focus()
+    }
     document.addEventListener('mousedown', onClick)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -163,7 +169,7 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
   if (tenants.length === 0 && !isSuper) return null
 
   const panel = open && (
-    <SwitcherPopover ref={popRef} tenants={tenants}
+    <SwitcherPopover panelRef={popRef} tenants={tenants}
       activeId={viewAll ? '__ALL__' : (active?.id ?? '')}
       onSwitch={(id) => switchTo.mutate(id)}
       onActivateAll={activateViewAll}
@@ -172,6 +178,7 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
       onClose={() => setOpen(false)}
       brands={showBrands ? brand.concepts : null}
       brandId={brand.brandId}
+      brandNotHere={brand.notHere}
       onPickBrand={(id) => { brand.pick(id); setOpen(false) }}
       viewAs={isSuper ? { role: viewAsRole, onPick: (r) => { setViewAsRole(r); setOpen(false) } } : null}
       triggerRef={triggerRef}
@@ -209,8 +216,9 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
 
   // Phone — a pill pinned to the bottom-left of the screen.
   if (placement === 'floating') {
+    if (hidden) return null
     return (
-      <div ref={triggerRef} className="erp-on-secondary fixed left-3 z-[45] md:hidden rounded-full"
+      <div ref={triggerRef} className="erp-on-secondary fixed left-3 z-[35] md:hidden rounded-full"
         style={{ bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))', background: 'var(--erp-secondary)', boxShadow: '0 8px 24px rgb(var(--ink-rgb) / 0.3)' }}>
         <button onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`Switch company, brand${isSuper ? ' or role' : ''}: ${summary}`}
           className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 max-w-[78vw] text-left">
@@ -222,6 +230,7 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
                 {[brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')}
               </span>
             )}
+            {brand.notHere && <span className="text-[10px] font-bold truncate" style={{ color: 'var(--erp-warning)' }}>Brand not filtered here</span>}
           </span>
           {chevron}
         </button>
@@ -265,8 +274,10 @@ export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) 
 
 const ROLE_TARGETS = APP_ROLES.filter((r) => r.value !== 'admin')
 
-const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, onPickBrand, viewAs, triggerRef, placement }: {
-  ref: React.Ref<HTMLDivElement>
+const SwitcherPopover = ({ panelRef, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, brandNotHere, onPickBrand, viewAs, triggerRef, placement }: {
+  // Not `ref`: on React 18 a function component never receives `ref` as a
+  // prop, which left the outside-click check blind to the panel.
+  panelRef: React.MutableRefObject<HTMLDivElement | null>
   tenants: Tenant[]
   activeId: string                // tenant id, or '__ALL__' when in portfolio view
   onSwitch: (id: string) => void
@@ -277,6 +288,7 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
   /** The brands column; null hides it (no brands, or the read was refused). */
   brands: PickerConcept[] | null
   brandId: string | null
+  brandNotHere: boolean
   onPickBrand: (id: string | null) => void
   /** The CEO's "View as" column; null for everyone else. */
   viewAs: { role: ViewAsRole; onPick: (role: ViewAsRole) => void } | null
@@ -293,6 +305,9 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
     const place = () => {
       const r = triggerRef.current?.getBoundingClientRect()
       if (!r) return
+      // The trigger was hidden (e.g. the window crossed the phone/desktop
+      // width): close rather than place the panel off-screen.
+      if (r.width === 0 && r.height === 0) { onClose(); return }
       const vw = window.innerWidth
       const vh = window.innerHeight
       const want = cols === 1 ? 280 : cols === 2 ? 500 : 700
@@ -306,14 +321,29 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
     place()
     window.addEventListener('resize', place)
     return () => window.removeEventListener('resize', place)
-  }, [cols, placement, triggerRef])
+  }, [cols, placement, triggerRef, onClose])
+
+  // Keyboard: focus the selected entry (else the first) when the panel opens,
+  // and give focus back to the trigger when it closes.
+  useEffect(() => {
+    if (!pos) return
+    const box = panelRef.current
+    const target = box?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ?? box?.querySelector<HTMLButtonElement>('button:not([disabled])')
+    target?.focus({ preventScroll: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!pos])
+  useEffect(() => () => {
+    const active = document.activeElement
+    if (!active || active === document.body || panelRef.current?.contains(active)) triggerRef.current?.querySelector('button')?.focus({ preventScroll: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   if (typeof document === 'undefined' || !pos) return null
 
   const allActive = activeId === '__ALL__'
   const colBorder = pos.stacked ? { borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)' } : { borderLeft: '1px solid rgb(var(--fg-rgb) / 0.08)' }
   const listMax = pos.stacked ? undefined : 'max-h-[320px] overflow-y-auto'
   return createPortal(
-    <div ref={ref} role="dialog" aria-label="Switch company, brand or role"
+    <div ref={panelRef} role="dialog" aria-label="Switch company, brand or role"
       className="erp-on-surface fixed z-[100] rounded-xl overflow-y-auto"
       style={{
         bottom: pos.bottom,
@@ -394,7 +424,7 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
       </div>
       {brands && (
         <div className="min-w-0" style={colBorder}>
-          <BrandColumn concepts={brands} brandId={brandId} onPick={onPickBrand} scroll={!pos.stacked} />
+          <BrandColumn concepts={brands} brandId={brandId} onPick={onPickBrand} scroll={!pos.stacked} notHere={brandNotHere} />
         </div>
       )}
       {viewAs && (

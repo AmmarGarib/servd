@@ -70,18 +70,21 @@ export function brandLabel(current: PickerConcept | null): string {
 }
 
 /** The brands column inside the company switcher's panel. */
-export function BrandColumn({ concepts, brandId, onPick, scroll = true }: {
+export function BrandColumn({ concepts, brandId, onPick, scroll = true, notHere = false }: {
   concepts: PickerConcept[]
   brandId: string | null
   onPick: (id: string | null) => void
   /** Own scroll box (side-by-side columns); off when the columns stack. */
   scroll?: boolean
+  /** The chosen brand does not narrow this page. */
+  notHere?: boolean
 }) {
   const rows = [{ id: null as string | null, name: 'All brands' }, ...concepts]
   return (
     <div className="min-w-0 flex flex-col">
       <div className="px-3 py-2 border-b border-white/[0.08]">
         <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">Brands</p>
+        {notHere && <p className="text-[10px] mt-0.5" style={{ color: 'var(--erp-warning)' }}>Not filtered on this page</p>}
       </div>
       <div className={scroll ? 'max-h-[320px] overflow-y-auto' : undefined}>
         {rows.map((c) => {
