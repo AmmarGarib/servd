@@ -1088,6 +1088,12 @@ Verification of money/tax/auth code is never delegated below Opus.
 
 - **Never commit credentials to this repo.** Use GitHub Actions Secrets.
 - **Never `git push --force` to main.**
+- **Ship when done (owner, 2026-10-14):** once a task is complete AND verified
+  (tsc, the affected tests, a production build, a click-through of the changed
+  screens, and proof nothing else changed — e.g. a pixel diff of the pages it
+  touches), deploy it to live without asking again. Tag the live images as
+  rollback first, deploy only the images that changed, never ship unverified
+  work that happens to sit on `main`, and smoke-check live afterwards.
 - **Work directly on `main` — no feature branches, no PRs.** Per the product
   owner: commit and push straight to `main`. Do not create a branch "to be
   safe" and do not open a pull request unless explicitly asked. (Ordinary
