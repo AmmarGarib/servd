@@ -142,7 +142,7 @@ export default function WithholdingRegister({ from, to }: { from: string; to: st
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-xs font-semibold text-s-text">
                         {fmtPkr(r.whtCents)}
-                        {(r.creditNoteWhtCents ?? 0) > 0 && <div className="text-s-muted font-sans font-normal">after credit notes {fmtPkr(r.creditNoteWhtCents ?? 0)}</div>}
+                        {(r.creditNoteWhtCents ?? 0) > 0 && <div className="text-s-muted font-sans font-normal">credit notes reversed {fmtPkr(r.creditNoteWhtCents ?? 0)}</div>}
                       </td>
                     </tr>
                   ))}

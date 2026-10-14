@@ -68,6 +68,19 @@ const ingredientSchema = z.object({
 )
 type IngredientInput = z.infer<typeof ingredientSchema>
 
+/** The RecipeIngredient row an input line is written as (create and PUT). */
+function ingredientRow(i: IngredientInput) {
+  return {
+    quantity: i.quantity,
+    yieldPct: i.yieldPct,
+    unit:     i.unit,
+    notes:    i.notes,
+    section:  i.section,
+    inventoryItemId: i.inventoryItemId ?? null,
+    prepRecipeId:    i.prepRecipeId ?? null,
+  }
+}
+
 // Split the schema into a plain object + a refined wrapper so PUT (full-replace
 // update) can use .partial() — zod's .superRefine wraps the schema in
 // ZodEffects, which doesn't expose .partial. We keep the refinement on POST
@@ -1243,23 +1256,29 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /recipes — handles both plate and component recipes (kind defaults to plate).
+  // POST /recipes — plate, component and modifier recipes (kind defaults to plate).
+  // Answers 201 with the recipe plus `warnings` (codes, never a block):
+  // PACKAGING_MISSING when a plate of a packaging-vessel brand has no
+  // Packaging line.
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = recipeSchema.parse(req.body)
 
-    // Company checks first (before the 409 below, which would otherwise
-    // confirm that another company's item has a recipe). A new recipe binds
-    // to the ACTIVE company: an existing menu item, or the brand and category
-    // of a deferred new one, must be that company's; ingredients must be its
-    // stock (or shared stock) and sub-recipes it can see.
+    // Company checks first (before the 409s below, which would otherwise
+    // confirm that another company's item or add-on has a recipe). A new
+    // recipe binds to the ACTIVE company: an existing menu item, the brand and
+    // category of a deferred new one, or a modifier's brand must be that
+    // company's; stock must be its own and sub-recipes ones it can see.
     let ownerTenantId: string
+    let serviceVessel: string | null = null
+    let modifierName: string | null = null
     if (body.kind === 'plate' && body.menuItemId) {
       const item = await prisma.menuItem.findFirst({
         where: { id: body.menuItemId, deletedAt: null, concept: { ...(await scopeTenantWhere(req, 'create')), deletedAt: null } },
-        select: { concept: { select: { tenantId: true } } },
+        select: { concept: { select: { tenantId: true, serviceVessel: true } } },
       })
       if (!item?.concept.tenantId) throw new NotFoundError('MenuItem', body.menuItemId)
       ownerTenantId = item.concept.tenantId
+      serviceVessel = item.concept.serviceVessel
     } else if (body.kind === 'plate' && body.newMenuItem) {
       const concept = await assertConceptOwned(req, body.newMenuItem.conceptId, 'create')
       const cat = await prisma.category.findFirst({
@@ -1268,20 +1287,29 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       })
       if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'That category is not part of this brand', 422)
       ownerTenantId = concept.tenantId!
+      serviceVessel = (await prisma.concept.findUnique({ where: { id: concept.id }, select: { serviceVessel: true } }))?.serviceVessel ?? null
+    } else if (body.kind === 'modifier') {
+      const mod = await resolveModifierForCreate(req, body.modifierId!)
+      ownerTenantId = mod.tenantId
+      modifierName = mod.name
     } else {
       const t = req.staffUser?.tenantId
       if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
       ownerTenantId = t
     }
-    await assertIngredientsUsable(req, body.ingredients, [ownerTenantId])
+    const lineWarnings = await validateRecipeLines(req, { kind: body.kind, tenantIds: [ownerTenantId] }, body.ingredients)
 
-    // Plate recipes are 1:1 with a MenuItem — check for an existing recipe on
-    // that menu item to surface a clean 409 instead of a Prisma unique-violation.
-    // Component recipes have no menuItemId, so no uniqueness check needed (multiple
-    // components with the same name are allowed; operator distinguishes by id).
+    // Plate recipes are 1:1 with a MenuItem, modifier recipes with a Modifier —
+    // check for an existing recipe to surface a clean 409 instead of a Prisma
+    // unique-violation. Component recipes have neither (several components
+    // may share a name; the operator distinguishes them by id).
     if (body.kind === 'plate' && body.menuItemId) {
       const existing = await prisma.recipe.findUnique({ where: { menuItemId: body.menuItemId } })
       if (existing) throw new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
+    }
+    if (body.kind === 'modifier') {
+      const existing = await prisma.recipe.findUnique({ where: { modifierId: body.modifierId! }, select: { id: true } })
+      if (existing) throw new AppError('MODIFIER_HAS_RECIPE', 'This add-on already has a recipe — open it instead', 409)
     }
 
     // New recipes start in `iteration` (testing). A testing plate must NOT
@@ -1300,49 +1328,56 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         }
       : null
 
-    const recipe = await prisma.recipe.create({
-      data: {
-        kind:         body.kind,
-        menuItemId:   resolvedMenuItemId,
-        pendingMenuItem: pendingMenuItem ?? Prisma.DbNull,
-        // Plate recipes normally inherit their name from the menu item, but a
-        // testing plate has none yet — carry the pending name so it's readable
-        // in the list/editor until approval creates the item.
-        name:         body.kind === 'plate' ? (pendingMenuItem?.name ?? null) : body.name,
-        yieldGrams:   body.yieldGrams ?? null,  // total recipe yield (g) — batch yield for components, cooked total for plates
-        servings:     body.servings,
-        portionSizeG: body.portionSizeG,
-        laborMinutes: body.laborMinutes,
-        notes:        body.notes,
-        steps:        body.steps,
-        stepsUrdu:    body.stepsUrdu,
-        seasons:      body.seasons,
-        seasonStart:  body.seasonStart ?? null,
-        seasonEnd:    body.seasonEnd ?? null,
-        isActive:     body.isActive,
-        qFactorPct:              body.qFactorPct,
-        targetProfitPct:         body.targetProfitPct,
-        targetFoodCostPct:       body.targetFoodCostPct,
-        packagingPct:            body.packagingPct,
-        actualSellingPriceCents: body.actualSellingPriceCents ?? null,
-        category:                body.category ?? null,
-        photoUrl:                body.photoUrl ?? null,
-        methodSteps:             body.methodSteps ?? Prisma.DbNull,
-        ingredients:  { create: body.ingredients.map((i) => ({
-          quantity: i.quantity,
-          yieldPct: i.yieldPct,
-          unit:     i.unit,
-          notes:    i.notes,
-          inventoryItemId: i.inventoryItemId ?? null,
-          prepRecipeId:    i.prepRecipeId ?? null,
-        })) },
-      },
-      include: {
-        ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
-        menuItem: true,
-      },
-    })
-    return reply.status(201).send(recipe)
+    let recipe
+    try {
+      recipe = await prisma.recipe.create({
+        data: {
+          kind:         body.kind,
+          menuItemId:   resolvedMenuItemId,
+          modifierId:   body.kind === 'modifier' ? body.modifierId! : null,
+          pendingMenuItem: pendingMenuItem ?? Prisma.DbNull,
+          // Plate recipes normally inherit their name from the menu item, but a
+          // testing plate has none yet — carry the pending name so it's readable
+          // in the list/editor until approval creates the item. A modifier
+          // recipe is named after its add-on ("Burger — Extra cheese").
+          name: body.kind === 'plate' ? (pendingMenuItem?.name ?? null)
+            : body.kind === 'modifier' ? (body.name?.trim() || modifierName)
+            : body.name,
+          yieldGrams:   body.yieldGrams ?? null,  // total recipe yield (g) — batch yield for components, cooked total for plates
+          servings:     body.servings,
+          portionSizeG: body.portionSizeG,
+          laborMinutes: body.laborMinutes,
+          notes:        body.notes,
+          steps:        body.steps,
+          stepsUrdu:    body.stepsUrdu,
+          seasons:      body.seasons,
+          seasonStart:  body.seasonStart ?? null,
+          seasonEnd:    body.seasonEnd ?? null,
+          isActive:     body.isActive,
+          qFactorPct:              body.qFactorPct,
+          targetProfitPct:         body.targetProfitPct,
+          targetFoodCostPct:       body.targetFoodCostPct,
+          actualSellingPriceCents: body.actualSellingPriceCents ?? null,
+          category:                body.category ?? null,
+          photoUrl:                body.photoUrl ?? null,
+          methodSteps:             body.methodSteps ?? Prisma.DbNull,
+          ingredients:  { create: body.ingredients.map(ingredientRow) },
+        },
+        include: {
+          ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
+          menuItem: true,
+        },
+      })
+    } catch (err) {
+      // Two creates racing for one menu item / add-on: the unique index wins.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw body.kind === 'modifier'
+          ? new AppError('MODIFIER_HAS_RECIPE', 'This add-on already has a recipe — open it instead', 409)
+          : new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
+      }
+      throw err
+    }
+    return reply.status(201).send({ ...recipe, warnings: saveWarnings(lineWarnings, body.kind, serviceVessel, body.ingredients) })
   })
 
   // PUT /recipes/:id — full replace.
@@ -1358,9 +1393,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = recipeUpdateSchema.parse(req.body)
       const owned = await assertRecipeInScope(req, req.params.id)
-      if (body.ingredients) {
-        await assertIngredientsUsable(req, body.ingredients, await recipeCompanies(req, owned.plateTenantId))
-      }
+      // Only new or changed lines are refused (validateRecipeLines): a line the
+      // user did not touch never blocks the save.
+      const lineWarnings = body.ingredients
+        ? await validateRecipeLines(req, { kind: owned.kind, tenantIds: await recipeCompanies(req, owned.ownerTenantId) }, body.ingredients, owned.lines)
+        : []
+      const warnings = saveWarnings(lineWarnings, owned.kind, owned.serviceVessel, body.ingredients ?? owned.lines)
       return prisma.$transaction(async (tx) => {
         if (body.ingredients) {
           await tx.recipeIngredient.deleteMany({ where: { recipeId: req.params.id } })
@@ -1383,23 +1421,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             ...(body.qFactorPct              != null      && { qFactorPct:              body.qFactorPct }),
             ...(body.targetProfitPct         != null      && { targetProfitPct:         body.targetProfitPct }),
             ...(body.targetFoodCostPct       != null      && { targetFoodCostPct:       body.targetFoodCostPct }),
-            ...(body.packagingPct            != null      && { packagingPct:            body.packagingPct }),
             ...(body.actualSellingPriceCents !== undefined && { actualSellingPriceCents: body.actualSellingPriceCents }),
             ...(body.category                !== undefined && { category:                body.category }),
             ...(body.photoUrl                !== undefined && { photoUrl:                body.photoUrl }),
             ...(body.methodSteps             !== undefined && { methodSteps:             body.methodSteps ?? Prisma.DbNull }),
-            ...(body.ingredients  && {
-              ingredients: {
-                create: body.ingredients.map((i) => ({
-                  quantity: i.quantity,
-                  yieldPct: i.yieldPct,
-                  unit:     i.unit,
-                  notes:    i.notes,
-                  inventoryItemId: i.inventoryItemId ?? null,
-                  prepRecipeId:    i.prepRecipeId ?? null,
-                })),
-              },
-            }),
+            ...(body.ingredients  && { ingredients: { create: body.ingredients.map(ingredientRow) } }),
           },
           include: {
             ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
@@ -1422,7 +1448,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             data:  { priceCents: body.actualSellingPriceCents },
           })
         }
-        return updated
+        return { ...updated, warnings }
       })
     },
   )
@@ -1674,7 +1700,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const body = stepInputSchema.parse(req.body)
       const recipe = await assertRecipeInScope(req, req.params.recipeId)
-      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe.plateTenantId))
+      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe.ownerTenantId))
       // Dependency-self / cycle guard: only allow deps that already exist on
       // this recipe. Future steps in the editor will be added one-at-a-time
       // so cycles are impossible by construction.
@@ -1705,7 +1731,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (!existing) throw new NotFoundError('RecipeStep', req.params.stepId)
       // Scope through the parent recipe — another company's step is 404.
       const recipe = await assertRecipeInScope(req, existing.recipeId, () => new NotFoundError('RecipeStep', req.params.stepId))
-      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe.plateTenantId))
+      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe.ownerTenantId))
       // No self-dependency.
       if (body.dependsOnIds?.includes(existing.id)) {
         throw new AppError('SELF_DEP', 'A step cannot depend on itself', 400)

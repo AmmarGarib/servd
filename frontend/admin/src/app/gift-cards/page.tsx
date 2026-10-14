@@ -67,7 +67,9 @@ const BREAKAGE_HELD_LABEL: Record<string, string> = {
   ISSUE_NOT_BOOKED: 'held — the card\'s sale is not in the books yet; book the sale and the next daily run books the breakage',
   POSTING_REFUSED: 'held — the books refused the entry (see Reconciliation → Exceptions); the next daily run tries again',
 }
-const heldLabel = (reason: string | null | undefined) => (reason && BREAKAGE_HELD_LABEL[reason]) || 'held — the next daily run books it'
+// A refused posting is stored as 'POSTING_REFUSED: <the books' message>'.
+const heldLabel = (reason: string | null | undefined) =>
+  (reason && BREAKAGE_HELD_LABEL[reason.split(':')[0]!.trim()]) || 'held — the next daily run books it'
 
 const STATUS_BADGE: Record<Status, string> = {
   active:        's-badge-green',
@@ -102,8 +104,8 @@ const errText = (e: unknown) => {
   const x = e as { code?: string; message?: string } | null
   return (x?.code && ERROR_TEXT[x.code]) || x?.message || 'Something went wrong'
 }
-/** A voided card can be settled again only when a refund put value back on it. */
-const canVoid = (c: { status: Status; balanceCents: number }) => c.status !== 'voided' || c.balanceCents > 0
+/** A voided or expired card can be settled only while it still holds value (a refund put some back, or breakage is held). */
+const canVoid = (c: { status: Status; balanceCents: number }) => (c.status !== 'voided' && c.status !== 'expired') || c.balanceCents > 0
 
 export default function GiftCardsPage() {
   const qc = useQueryClient()

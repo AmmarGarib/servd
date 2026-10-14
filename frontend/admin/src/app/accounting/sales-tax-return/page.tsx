@@ -125,8 +125,16 @@ const TENDER_LABEL: Record<RateLine['tender'], string> = { cash: 'Cash', card: '
 // The API's SUPPLY_LABEL (backend accounting/salesTaxReturn.ts).
 const SUPPLY_LABEL: Record<Supply, string> = {
   standard: 'Standard-rated', custom: 'Own rate', zero_rated: 'Zero-rated', exempt: 'Exempt',
-  delivery_charge: 'Delivery charges', deposit_forfeit: 'No-show deposits kept',
+  delivery_charge: 'Delivery charges',
+  // H10 (accountant, 2026-10-14): a kept no-show deposit is untaxed OTHER
+  // income (4210), not a supply. Until the API stops sending these rows they
+  // are shown apart from the return's rows and are never declared.
+  deposit_forfeit: 'Other income, not taxable (H10)',
 }
+/** Rows the return declares: every supply except the H10 no-show deposits. */
+const isDeclared = (r: RateLine) => r.supply !== 'deposit_forfeit'
+/** The API's old H10 caveat ("No-show deposits kept are taxable…") is superseded. */
+const isStaleNote = (n: string) => /no-show deposits? kept are taxable|deposit_forfeit/i.test(n)
 const PAY_LABEL: Record<PayKey, string> = {
   fbr: 'FBR sales tax', pra: 'PRA', srb: 'SRB', kpra: 'KPRA', bra: 'BRA',
   wht: 'Income tax withheld', stwh: 'Sales tax withheld',
@@ -154,6 +162,13 @@ const ERROR_TEXT: Record<string, string> = {
   NO_ACTIVE_COMPANY: 'Pick a company first — a return is filed by one company.',
   RECLASS_ONE_MONTH: 'A reclass is for one month — pick dates inside the same month.',
   RECLASS_FUTURE_MONTH: 'That month has not started yet.',
+  INPUT_SET_OFF_TOO_LARGE: 'That is more input tax than this authority\'s input account still holds. Lower "Input tax set off".',
+  TAX_PAYMENT_EXISTS: 'A payment of this tax for the same period is already recorded — void it first to record it again.',
+  NOT_A_TAX_PAYMENT: 'That entry is not a payment of this tax (it does not debit the tax account from a bank or cash account).',
+  NOT_LINKABLE: 'Only a manual journal or a bank-reconciliation adjustment can be linked. Entries posted by sales, bills or payroll belong to their own document.',
+  NOT_PROVINCIAL: 'This brand files its sales tax with FBR (2030) — there is nothing to move.',
+  BAD_AUTHORITY: 'Pick which tax this payment is for.',
+  WITHHELD_ALREADY_SET_OFF: 'That withheld tax has already been set off in a sales-tax payment — void or correct that payment first.',
 }
 const errText = (e: unknown) => {
   const x = e as { code?: string; message?: string } | null
@@ -214,7 +229,7 @@ export default function SalesTaxReturnPage() {
     catch (e) { setCsvError((e as Error).message) }
   }
 
-  const [paying, setPaying] = useState<{ key: PayKey; paidCents: number; inputSetOffCents: number } | null>(null)
+  const [paying, setPaying] = useState<PayTarget | null>(null)
   const [linking, setLinking] = useState(false)
   const [voiding, setVoiding] = useState<TaxPayment | null>(null)
   const [reclassMsg, setReclassMsg] = useState<Record<string, string>>({})
@@ -230,6 +245,9 @@ export default function SalesTaxReturnPage() {
   // Statutory payroll challans belong to Statutory payments — never listed here
   // (the API leaves them out; this keeps it so if it ever sends one).
   const returnPayments = (data?.payments ?? []).filter((p) => p.kind !== 'statutory')
+  const declaredRates = (data?.byRate ?? []).filter(isDeclared)
+  const depositRows = (data?.byRate ?? []).filter((r) => !isDeclared(r))
+  const notes = (data?.notes ?? []).filter((n) => !isStaleNote(n))
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -512,7 +530,7 @@ export default function SalesTaxReturnPage() {
 
             {/* Per rate — the brand's cash and card rates, refunds netted */}
             <div className="s-card overflow-hidden">
-              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By rate (cash 15% / card and Raast QR 8%; zero-rated, exempt, delivery charges and kept no-show deposits on their own rows) — refunds netted</div>
+              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By rate (cash 15% / card and Raast QR 8%; zero-rated, exempt and delivery charges on their own rows) — refunds netted</div>
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-s-muted">
@@ -527,7 +545,7 @@ export default function SalesTaxReturnPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.byRate.map((r) => (
+                  {declaredRates.map((r) => (
                     <tr key={`${r.authority}-${r.supply}-${r.tender}-${r.ratePct ?? 'none'}`} className="border-t border-s-border">
                       <td className="px-4 py-2 text-s-text">{r.authority}</td>
                       <td className="px-4 py-2 text-s-text">{SUPPLY_LABEL[r.supply] ?? r.supply} · {TENDER_LABEL[r.tender]} · {r.ratePct == null ? 'rate not stored' : `${r.ratePct}%`}</td>
@@ -538,13 +556,47 @@ export default function SalesTaxReturnPage() {
                       <td className="px-4 py-2 text-right font-mono text-xs font-semibold text-s-text">{fmtPkr(r.taxCents)}</td>
                     </tr>
                   ))}
-                  {data.byRate.length === 0 && (
+                  {declaredRates.length === 0 && (
                     <tr><td colSpan={7} className="px-4 py-3 text-xs text-s-muted">No order sales in this period</td></tr>
                   )}
                 </tbody>
               </table>
               </div>
             </div>
+
+            {/* H10: kept no-show deposits — other income (4210), never declared */}
+            {depositRows.length > 0 && (
+              <div className="s-card overflow-hidden">
+                <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">
+                  {SUPPLY_LABEL.deposit_forfeit} — no-show deposits kept
+                  <span className="block font-normal text-s-muted">
+                    Not a supply: a kept deposit is other income (4210) with no sales tax. Shown for reference only — not declared on this return. Tax an older entry booked on a deposit sits in the output account above; correct it with a journal before filing.
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-s-muted">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-medium">Authority</th>
+                      <th className="px-4 py-2 text-right font-medium">Deposits</th>
+                      <th className="px-4 py-2 text-right font-medium">Value kept</th>
+                      <th className="px-4 py-2 text-right font-medium">Tax booked on it (old rule)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {depositRows.map((r) => (
+                      <tr key={`${r.authority}-${r.tender}-${r.ratePct ?? 'none'}`} className="border-t border-s-border">
+                        <td className="px-4 py-2 text-s-text">{r.authority}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{r.orders}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.taxableValueCents)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkr(r.taxCents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+              </div>
+            )}
 
             {/* Tax still in 2030 for provincially-taxed brands */}
             {data.reclassification.length > 0 && (
@@ -644,11 +696,11 @@ export default function SalesTaxReturnPage() {
               </div>
             </div>
 
-            {data.notes.length > 0 && (
+            {notes.length > 0 && (
               <div className="s-card p-4 border-l-4 border-s-amber">
                 <p className="text-xs font-semibold text-s-amber mb-1">Caveats — read before filing</p>
                 <ul className="text-xs text-s-text space-y-1 list-disc list-inside">
-                  {data.notes.map((n, i) => <li key={i}>{n}</li>)}
+                  {notes.map((n, i) => <li key={i}>{n}</li>)}
                 </ul>
               </div>
             )}
@@ -819,7 +871,7 @@ function VoidModal({ payment, onClose }: { payment: TaxPayment; onClose: () => v
   const go = useMutation({
     mutationFn: () => api.post(`/accounting/sales-tax-return/payments/${payment.id}/void`, { reason }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['sales-tax-return'] }); onClose() },
-    onError: (e: Error) => setErr(e.message),
+    onError: (e: Error) => setErr(errText(e)),
   })
   return (
     <Modal title={payment.linked ? 'Unlink this payment' : 'Void this payment'} onClose={onClose}>

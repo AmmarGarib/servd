@@ -3065,8 +3065,9 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
 
     if (order.source !== 'pos') {
       // Non-till: its cash moved 1010 → 1015 (Cr 1010); its card and its
-      // Raast money were booked nowhere.
-      for (const p of here) addParked(parked, parkAccountOf(p), p.amountCents)
+      // Raast money were booked nowhere. (A Raast receipt the CEO voided as
+      // never booked is no money taken: nothing is parked or handed back for it.)
+      for (const p of here) if (!isVoidedRaast(p)) addParked(parked, parkAccountOf(p), p.amountCents)
       continue
     }
 
