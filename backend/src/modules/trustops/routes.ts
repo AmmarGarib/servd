@@ -918,10 +918,19 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }).parse(req.body ?? {})
     const movement = await prisma.pettyCashMovement.findFirst({
       where: { id: req.params.id, box: await scopeTenantWhere(req, 'write') },
-      select: { id: true, boxId: true, box: { select: { tenantId: true, name: true, conceptId: true } } },
+      select: { id: true, boxId: true, cashVoucherId: true, box: { select: { tenantId: true, name: true, conceptId: true } } },
     })
     if (!movement || !movement.box.tenantId) throw new NotFoundError('PettyCashMovement', req.params.id)
     const tenantId = movement.box.tenantId
+    // The cash request this spend paid, if any: its row is locked before the
+    // box below (cash-pay-reclass-race) — the same request → box order as the
+    // pay and the return-change — so a settlement or change that read this
+    // pay's account cannot commit alongside a reclass that moves it
+    // (CASH_REQUEST_PAID_FIXED then reads committed counters).
+    const voucherIds = (await prisma.cashVoucher.findMany({
+      where: { tenantId, OR: [{ pettyCashMovementId: movement.id }, ...(movement.cashVoucherId ? [{ id: movement.cashVoucherId }] : [])] },
+      select: { id: true },
+    })).map((v) => v.id).sort()
     const line = await prisma.pettyCashSpendLine.findFirst({ where: { id: req.params.lineId, movementId: movement.id, tenantId } })
     if (!line) throw new NotFoundError('PettyCashSpendLine', req.params.lineId)
     if (line.kind !== 'expense') {
@@ -934,6 +943,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }, { role: req.staffUser!.role })
     if (acct.code === line.accountCode && acct.categoryKey === line.categoryKey) return { line, entryId: null, outcome: 'unchanged' }
     const result = await prisma.$transaction(async (tx) => {
+      for (const id of voucherIds) await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${id} FOR UPDATE`
       await tx.$queryRaw`SELECT id FROM petty_cash_boxes WHERE id = ${movement.boxId} FOR UPDATE`
       const updated = await tx.pettyCashSpendLine.update({ where: { id: line.id }, data: { accountCode: acct.code, categoryKey: acct.categoryKey } })
       const posted = await postPettyCashMovementTx(tx, movement.id, { postedBy: req.staffUser!.id })

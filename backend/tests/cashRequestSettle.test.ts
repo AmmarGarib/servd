@@ -398,6 +398,33 @@ describe('a settlement reclasses out of the account the pay booked', () => {
     expect(r.json().error.code).toBe('CASH_REQUEST_PAID_FIXED')
     expect((await prisma.pettyCashSpendLine.findUniqueOrThrow({ where: { id: line.id } })).accountCode).toBe('6140')
   })
+
+  it('a pay reclass racing a settlement waits for the request and then sees it (cash-pay-reclass-race)', async () => {
+    const v = await paid(2_500)
+    const line = await prisma.pettyCashSpendLine.findFirstOrThrow({ where: { movementId: v.pettyCashMovementId! } })
+    // A settlement in flight: it holds the request's row, then commits its counters.
+    let release!: () => void
+    const gate = new Promise<void>((res) => { release = res })
+    const settling = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${v.id} FOR UPDATE`
+      await gate
+      await tx.cashVoucher.update({ where: { id: v.id }, data: { settledCents: { increment: 500 } } })
+    }, { timeout: 60_000, maxWait: 10_000 })
+    const reclass = call('finA', 'PATCH', `/trustops/petty-cash/movements/${v.pettyCashMovementId}/lines/${line.id}`, { categoryKey: 'marketing' })
+    // The reclass queues on the request's row lock (it used to take only the box's).
+    for (let i = 0; ; i++) {
+      const rows = await prisma.$queryRaw<Array<{ c: bigint }>>`SELECT count(*)::bigint AS c FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`
+      if (Number(rows[0]!.c) >= 1) break
+      if (i > 200) throw new Error('the pay reclass never waited for the request')
+      await new Promise((res) => setTimeout(res, 50))
+    }
+    release()
+    await settling
+    const r = await reclass
+    expect(r.statusCode, r.body).toBe(409)
+    expect(r.json().error.code).toBe('CASH_REQUEST_PAID_FIXED')
+    expect((await prisma.pettyCashSpendLine.findUniqueOrThrow({ where: { id: line.id } })).accountCode).toBe('6140')
+  })
 })
 
 describe('a legacy voucher booked as an advance settles against 1355', () => {
