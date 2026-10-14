@@ -162,8 +162,12 @@ describe('receiving against a PO — one path, PO + stock + cost together', () =
     })
     expect(r1.statusCode).toBe(201)
     expect(r1.json().poStatus).toBe('partial')
-    // Moving average: 11 @ 100 + 10 @ 210 → round((1100 + 2100) / 21) = 152
-    expect(await item(flour)).toMatchObject({ currentStock: 21, unitCostCents: 152 })
+    // FIFO lots (wave B): 11 @ 100 + 10 @ 210 → 21 on hand; the item's cost
+    // is the FIFO head (the oldest open lot) — 100 until that stock is used.
+    expect(await item(flour)).toMatchObject({ currentStock: 21, unitCostCents: 100 })
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: flour }, orderBy: { receivedAt: 'asc' } })
+    expect(lots.reduce((s, l) => s + l.remainingQty, 0)).toBe(21)
+    expect(lots.at(-1)).toMatchObject({ qtyIn: 10, unitCostCents: 210, sourceType: 'goods_receipt_line' })
     expect((await item(sugar)).currentStock).toBe(0)
     const after1 = await prisma.purchaseOrderLine.findMany({ where: { purchaseOrderId: po.id } })
     expect(after1.find((l) => l.id === fl)!.quantityReceived).toBe(10)
@@ -174,7 +178,10 @@ describe('receiving against a PO — one path, PO + stock + cost together', () =
     // The sugar that didn't arrive is a 100% short shipment → flagged.
     expect(grn1.varianceFlag).toBe(true)
     expect(await prisma.exceptionFlag.count({ where: { kind: 'short_shipment', entityId: grn1.id } })).toBe(1)
-    expect(await prisma.itemPriceHistory.count({ where: { inventoryItemId: flour, source: 'po_receive', newCostCents: 152 } })).toBe(1)
+    expect(await prisma.itemPriceHistory.count({ where: { inventoryItemId: flour, source: 'po_receive', newCostCents: 210 } })).toBe(1)
+    // Booked on arrival (H17): Dr 1210 / Cr 2015 GRNI at the PO price.
+    const grnEntry = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: tenantA, reference: `procurement.receipt:${grn1.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(grnEntry.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([['1210', 'debit', 2_100], ['2015', 'credit', 2_100]])
 
     // A second receipt defaults to what is outstanding — here via the PO route, sugar only.
     const r2 = await call('ceo', 'POST', `/procurement/purchase-orders/${po.id}/receive`, { photoUrl: PHOTO, lines: [{ poLineId: sg, quantityReceived: 4 }] })
@@ -200,7 +207,7 @@ describe('receiving against a PO — one path, PO + stock + cost together', () =
 })
 
 describe('receiving without a PO — manager tiers, unit cost at the dock', () => {
-  it('requires a unit cost, then receives at that cost (moving average)', async () => {
+  it('requires a unit cost, then receives at that cost (a new FIFO lot)', async () => {
     const before = await item(sugar)   // 4 @ 300
     const noCost = await call('mgr2', 'POST', '/crosschecks/receiving', { supplierId: supA, photoUrl: PHOTO, lines: [{ inventoryItemId: sugar, quantityReceived: 4 }] })
     expect(noCost.json().error.code).toBe('UNIT_COST_REQUIRED')
@@ -209,7 +216,8 @@ describe('receiving without a PO — manager tiers, unit cost at the dock', () =
     expect(res.statusCode).toBe(201)
     expect(res.json().poId).toBeNull()
     expect(before).toMatchObject({ currentStock: 4, unitCostCents: 300 })
-    expect(await item(sugar)).toMatchObject({ currentStock: 8, unitCostCents: 400 })
+    // Two lots: 4 @ 300 then 4 @ 500; the head (oldest) cost is 300.
+    expect(await item(sugar)).toMatchObject({ currentStock: 8, unitCostCents: 300 })
     expect(await prisma.itemPriceHistory.count({ where: { inventoryItemId: sugar, source: 'dock_receive' } })).toBe(1)
   })
 

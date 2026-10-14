@@ -23,17 +23,25 @@
 //            credit note already debited AP 2010 in full.
 //   unapply  the reverse, also with no ledger change.
 //   void     only while nothing is applied: reverses the entry (dated today),
-//            puts returned stock back and restores item cost.
+//            puts returned stock back into the lots it came from and undoes
+//            the lot re-pricing.
+//
+// Stock is on FIFO lots (finance wave B): goods sent back leave the BILL's own
+// lots first (then FIFO); a price credit re-prices the bill's lots (the share
+// already cooked goes to 5060) — accounting/supplierPosting.ts.
 //
 // Caps: a credit note can never credit more than the bill — per bill line
 // (lines with the same stock item and description count together), in total,
-// in tax and in quantity sent back.
+// in tax and in quantity sent back. Goods sent back are also capped at what is
+// left in the bill's own lots (a bill from before the FIFO cut-over has none:
+// the stock on hand caps it).
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
-import { postSupplierCreditNote, postSupplierCreditNoteVoid, type CreditNoteReason } from '../accounting/supplierPosting.js'
+import { billLotsForItem, postSupplierCreditNote, postSupplierCreditNoteVoid, type CreditNoteReason } from '../accounting/supplierPosting.js'
+import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { assertPayableBill, billDueCents, creditNoteAvailableCents, lockBills, settledStatus } from './service.js'
 
 type Tx = Prisma.TransactionClient
@@ -112,7 +120,22 @@ async function creditsAgainst(db: Db, billId: string) {
 
 type BillForCredit = Prisma.SupplierBillGetPayload<{ include: { lines: { include: { poLine: { select: { inventoryItemId: true } } } } } }>
 
-function creditableOf(bill: BillForCredit, prior: Awaited<ReturnType<typeof creditsAgainst>>): CreditableBill {
+/**
+ * Quantity left in the bill's own lots per stock item (absent = the bill has
+ * no lots for it — recorded before the FIFO cut-over, or billed ahead).
+ */
+async function lotsLeftByItem(db: Tx, bill: BillForCredit & { supplier?: { tenantId: string | null } | null }, tenantId: string | null): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (!tenantId) return out
+  const itemIds = [...new Set(bill.lines.map((l) => l.inventoryItemId ?? l.poLine?.inventoryItemId ?? null).filter((x): x is string => !!x))]
+  for (const itemId of itemIds) {
+    const lots = await billLotsForItem(db, tenantId, bill.id, itemId)
+    if (lots.length > 0) out.set(itemId, lots.reduce((s, l) => s + Math.max(0, l.remainingQty), 0))
+  }
+  return out
+}
+
+function creditableOf(bill: BillForCredit, prior: Awaited<ReturnType<typeof creditsAgainst>>, lotsLeft: Map<string, number> = new Map()): CreditableBill {
   const groupTotal = new Map<string, number>()
   const groupQty = new Map<string, number>()
   const base = bill.lines.map((l) => {
@@ -135,7 +158,9 @@ function creditableOf(bill: BillForCredit, prior: Awaited<ReturnType<typeof cred
       creditedCents,
       returnedQty,
       leftCents:      Math.max(0, Math.min(toCents(l.lineTotalCents), (groupTotal.get(k) ?? 0) - creditedCents)),
-      returnableQty:  stockItemId ? Math.max(0, Math.min(l.quantity, (groupQty.get(k) ?? 0) - returnedQty)) : 0,
+      returnableQty:  stockItemId
+        ? Math.max(0, Math.min(l.quantity, (groupQty.get(k) ?? 0) - returnedQty, lotsLeft.get(stockItemId) ?? Number.POSITIVE_INFINITY))
+        : 0,
     }
   })
   return {
@@ -151,10 +176,11 @@ function creditableOf(bill: BillForCredit, prior: Awaited<ReturnType<typeof cred
 export async function creditableBill(billId: string, db: Db = prisma): Promise<CreditableBill | null> {
   const bill = await db.supplierBill.findUnique({
     where:   { id: billId },
-    include: { lines: { include: { poLine: { select: { inventoryItemId: true } } } } },
+    include: { supplier: { select: { tenantId: true } }, lines: { include: { poLine: { select: { inventoryItemId: true } } } } },
   })
   if (!bill || bill.kind !== 'bill') return null
-  return creditableOf(bill, await creditsAgainst(db, billId))
+  const lotsLeft = await lotsLeftByItem(db as Tx, bill, bill.supplier.tenantId)
+  return creditableOf(bill, await creditsAgainst(db, billId), lotsLeft)
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────
@@ -191,6 +217,11 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
   const taxCents = input.taxCents ?? 0
   assertMoneyFits(taxCents, 'The credit note\'s tax')
 
+  // Goods go back out of FIFO lots: the company's one-time cut-over runs
+  // first if it has not (outside the transaction).
+  const owner = await prisma.supplierBill.findUnique({ where: { id: input.billId }, select: { supplier: { select: { tenantId: true } } } })
+  if (owner?.supplier.tenantId) await ensureFifoReady(owner.supplier.tenantId)
+
   try {
     return await prisma.$transaction(async (tx) => {
       // The bill's row lock serialises two credit notes against it (the caps
@@ -210,7 +241,8 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
       }
 
       const prior = await creditsAgainst(tx, bill.id)
-      const view = creditableOf(bill, prior)
+      const lotsLeft = await lotsLeftByItem(tx, bill, bill.supplier.tenantId)
+      const view = creditableOf(bill, prior, lotsLeft)
 
       const built = input.lines.map((l, i) => {
         const orig = view.lines.find((x) => x.billLineId === l.billLineId)
@@ -253,7 +285,10 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
         const g = groups.get(k) ?? {
           cents: 0, returnQty: 0, description: b.orig.description,
           left: sameKey.reduce((s, x) => s + x.lineTotalCents, 0) - (prior.creditedByKey.get(k) ?? 0),
-          returnable: sameKey.reduce((s, x) => s + x.quantity, 0) - (prior.returnedByKey.get(k) ?? 0),
+          returnable: Math.min(
+            sameKey.reduce((s, x) => s + x.quantity, 0) - (prior.returnedByKey.get(k) ?? 0),
+            b.orig.stockItemId ? (lotsLeft.get(b.orig.stockItemId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY,
+          ),
         }
         g.cents += b.total
         g.returnQty += b.returnQty ?? 0

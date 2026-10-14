@@ -9,6 +9,7 @@ import {
 } from './service.js'
 import { raastReconciliationRoutes, raastPaidCents } from './raastRoutes.js'
 import cardPayoutRoutes from './cardPayoutRoutes.js'
+import { cardSettlementChips } from './cardPayouts.js'
 import codRoutes from './codRoutes.js'
 import pettyCashBackfillRoutes from './pettyCashBackfillRoutes.js'
 import { drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
@@ -60,6 +61,13 @@ const adjustLineSchema = z.object({
     amountCents: zMoneyCents('A split line', { sign: 'positive' }),
     memo: z.string().trim().max(500).optional(),
   })).min(1).max(20).optional(),
+  // H12 card payouts (cardPayouts.ts): the card days a split crediting 1030 on
+  // the payout bank settles, and the unit ('brand:<id>' / 'terminal:<id>')
+  // when the company is paid per brand / machine.
+  cardDays: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1).max(5).optional(),
+  cardUnit: z.string().trim().min(1).max(120).optional(),
+  // Posting to a fixed-asset register account needs a reason (audited + flagged).
+  registerOverride: z.object({ reason: z.string().trim().min(10).max(500) }).optional(),
 }).refine((b) => !!b.contraAccountCode !== !!b.lines, {
   message: 'Give either contraAccountCode or lines (a split), not both',
 })
@@ -92,7 +100,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       })
       if (!imp) throw new NotFoundError('BankStatementImport', req.params.id)
       // A line matched to a Raast payment carries it (the Raast tab's chip).
-      return prisma.bankStatementLine.findMany({
+      const rows = await prisma.bankStatementLine.findMany({
         where: {
           importId: imp.id,
           ...(req.query.status && { matchStatus: req.query.status }),
@@ -100,6 +108,9 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         orderBy: { postedDate: 'asc' },
         include: { raastReceipt: { select: { id: true, bankRef: true, orderId: true, amountCents: true } } },
       })
+      // A line that settles card days (H12) carries its chip (Card payouts tab).
+      const chips = await cardSettlementChips(prisma, rows.map((l) => l.id))
+      return rows.map((l) => ({ ...l, cardSettlement: chips.get(l.id) ?? null }))
     },
   )
 
@@ -159,6 +170,11 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         lines: body.lines,
         memo: body.memo,
         postedById: req.staffUser!.id,
+        cardDays: body.cardDays,
+        cardUnit: body.cardUnit,
+        registerOverride: body.registerOverride,
+        actorEmail: req.staffUser!.email ?? null,
+        actorTenantId: req.staffUser!.tenantId ?? null,
       })
     },
   )
@@ -370,64 +386,5 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     // `rows` / `summary` stay the shifts' (the admin page reads them);
     // `orders` carries the order / loyalty / refund rows.
     return { dryRun: body.dryRun, ...result, orders }
-  })
-
-  // POST /reconciliation/apply-missed-bill-variances — NEEDS 21 (BK2-RV-2).
-  // Supplier bills booked before their goods carried their price difference
-  // in 1210 until the goods arrived; receipts made before receiving applied it
-  // itself never did. This applies those missed slices once
-  // (supplierPosting.applyMissedCarriedBillVariances): the share still on
-  // hand re-averages the item, the rest goes to 5060 dated today. CEO only
-  // (role admin); dry run unless { dryRun: false }. The companies in view, or
-  // the one picked (`tenantId`, which must be one of them — else 404).
-  // Idempotent — a second run finds nothing. A company whose books are closed
-  // through today is listed as 'locked' and nothing of it is applied.
-  fastify.post('/apply-missed-bill-variances', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const body = z.object({
-      dryRun:   z.boolean().default(true),
-      tenantId: z.string().min(1).optional(),
-    }).parse(req.body ?? {})
-    const scope = await resolveTenantScope(req)
-    if (scope.tenantIds.length === 0) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
-    if (body.tenantId && !scope.tenantIds.includes(body.tenantId)) throw new NotFoundError('Company', body.tenantId)
-    const tenantIds = body.tenantId ? [body.tenantId] : scope.tenantIds
-    const { applyMissedCarriedBillVariances } = await import('../accounting/supplierPosting.js')
-    const { withBackfillSlot, BackfillRunningError } = await import('./backfillOrders.js')
-    const runAll = () => applyMissedCarriedBillVariances({ tenantIds, dryRun: body.dryRun })
-    let ran: Awaited<ReturnType<typeof runAll>>
-    try {
-      // A real run is single-flight per company (it shares the backfill's
-      // slot); a dry run writes nothing and never waits.
-      ran = body.dryRun ? await runAll() : await withBackfillSlot(tenantIds, runAll)
-    } catch (err) {
-      if (err instanceof BackfillRunningError) throw new AppError('BACKFILL_RUNNING', err.message, 409)
-      throw err
-    }
-    if (!body.dryRun && ran.rows.length > 0) {
-      // One audit row per company the run touched, filed under THAT company
-      // with only its own lines — never under the operator's home company
-      // (which may not be one of them, and must not see another's lines).
-      const byCompany = new Map<string, typeof ran.rows>()
-      for (const r of ran.rows) byCompany.set(r.tenantId, [...(byCompany.get(r.tenantId) ?? []), r])
-      for (const [companyId, rows] of byCompany) {
-        const summary: Record<string, number> = { lines: rows.length, quantity: rows.reduce((s, r) => s + r.quantity, 0) }
-        for (const r of rows) summary[r.outcome] = (summary[r.outcome] ?? 0) + 1
-        await audit({
-          category: 'accounting',
-          action: 'supplier.bill.variance_catch_up',
-          entity: 'SupplierBill',
-          userId: req.staffUser!.id,
-          userEmail: req.staffUser!.email,
-          tenantId: companyId,
-          after: summary,
-          metadata: {
-            tenantId: companyId,
-            applied: rows.filter((r) => r.outcome === 'applied').map((r) => ({ poLineId: r.poLineId, quantity: r.quantity, movedCents: r.movedCents })),
-            notApplied: rows.filter((r) => r.outcome !== 'applied').map((r) => ({ poLineId: r.poLineId, outcome: r.outcome, detail: r.detail })),
-          },
-        })
-      }
-    }
-    return { dryRun: body.dryRun, tenantIds, ...ran }
   })
 }

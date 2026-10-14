@@ -27,6 +27,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError, errorResponse } from '../src/lib/errors.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 import {
   ingestOrder, processCoursePacingTick, updateOrderStatus, releaseDuePreOrders,
   PRE_ORDER_PREP_MS, PRE_ORDER_RELEASE,
@@ -103,7 +104,13 @@ beforeAll(async () => {
   const cat = (await prisma.category.create({ data: { conceptId: conceptA, name: 'Mains' } })).id
   grillA = (await prisma.station.create({ data: { conceptId: conceptA, name: 'Grill', displayOrder: 1 } })).id
   const fry = (await prisma.station.create({ data: { conceptId: conceptA, name: 'Fry', displayOrder: 2 } })).id
-  beefId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Beef', unit: 'kg', currentStock: 100 } })).id
+  // Company A's stock is on FIFO lots (finance wave B): cut over, 100 kg of beef in one lot.
+  await prisma.setting.create({ data: { key: fifoCutoverKey(tenantA), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+  beefId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Beef', unit: 'kg' } })).id
+  await prisma.$transaction((tx) => addLotTx(tx, {
+    tenantId: tenantA, inventoryItemId: beefId, qty: 100, unitCostCents: 150_000, kind: 'count_gain', lotSourceType: 'count_gain',
+    lotSourceId: 'ip2-beef', movementSourceType: 'test', movementSourceId: 'ip2-beef', receivedAt: new Date(Date.now() - 86_400_000),
+  }))
   const menu = async (name: string, stationId: string, labor: number, withBeef = false) => {
     const id = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat, name, priceCents: 50_000, stationId } })).id
     await prisma.recipe.create({
@@ -536,6 +543,11 @@ describe('OK2 review fixes', () => {
     const claim = await prisma.auditLog.findFirst({ where: { entity: 'Order', entityId: order.id, action: { not: PRE_ORDER_RELEASE }, category: 'order' } })
     const dep = await prisma.auditLog.findFirstOrThrow({ where: { entity: 'Order', entityId: order.id, action: 'stock.sale_deplete' } })
     if (claim) expect(dep.createdAt.getTime()).toBeLessThanOrEqual(claim.createdAt.getTime())
+    // The stock came off the lots, as the order's own sale rows.
+    const sale = await prisma.stockMovement.findMany({ where: { orderId: order.id, kind: 'sale' } })
+    expect(sale.length).toBeGreaterThan(0)
+    expect(sale.every((m) => m.tenantId === tenantA && m.inventoryItemId === beefId && m.sourceType === 'order_item.sale')).toBe(true)
+    if (claim) expect(Math.max(...sale.map((m) => m.createdAt.getTime()))).toBeLessThanOrEqual(claim.createdAt.getTime())
   })
 
   it('OK2-RV-1: a held pre-order refunded before this release is still released (stock out) by the worker at its window', async () => {

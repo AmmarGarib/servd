@@ -38,6 +38,25 @@
 // are left out, so paying last month's SRB in this month never lowers this
 // month's output (finance gap 6).
 //
+// Finance wave B (H8–H13):
+//   • The authority table is accounting/taxAuthorities.ts (AUTHORITIES,
+//     re-exported here) — never a second copy. Input tax on bills, OpEx and
+//     CapEx is booked to the CHARGING authority's own input account
+//     (1320–1324) and set off only against that authority (H8).
+//   • Delivery charges (H9): Order.deliveryFeeCents / deliveryFeeTaxCents are
+//     their own supply ('delivery_charge') at the order's rate; the item parts
+//     share the rest of the order's tax. Taxable sales include 4110 Delivery
+//     Fee Income per brand.
+//   • Kept no-show deposits (H10): 'reservation.deposit_capture:' entries
+//     credit brand revenue + output tax (tax inside, card rate) and are
+//     declared as 'deposit_forfeit' rows.
+//   • Sales tax withheld by customers (H13): 1335, from 'receivable.st_withheld:'
+//     entries (and their reversals), per authority (ReceivablePayment.
+//     taxAuthority) — deducted from that authority's net (netAfterWithheld).
+//   • The payments list is sales tax + withholding only: statutory payroll
+//     challans (2042–2044) are the statutory page's (accounting/statutory.ts).
+//     The one-time statutory reclass (Dr 2040) is not "withheld in the period".
+//
 // Caveats:
 //   1. Supplies are classed by each item's CURRENT tax class (MenuItem.
 //      taxClassification — what priceOrder charges); there is no snapshot on
@@ -50,8 +69,17 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, revenueCodeForConcept } from './journal.js'
 import { fmtPktDate } from './dates.js'
-import { homeShiftOf, outputTaxCodeFor } from './orderPosting.js'
+import { homeShiftOf } from './orderPosting.js'
 import { sumCents, toCents } from '../../lib/money.js'
+import {
+  AUTHORITIES, AUTHORITY_LIST, TAX_AUTHORITY_KEYS, authorityOfOutputCode, isAuthorityKey, outputTaxCodeFor,
+  type AuthorityKey,
+} from './taxAuthorities.js'
+// taxPayments.ts imports this file too: use these only inside functions.
+import { customerWithheldAvailable, type StatutoryKey } from './taxPayments.js'
+
+/** THE authority table (accounting/taxAuthorities.ts), re-exported for the return's callers. */
+export { AUTHORITIES, type AuthorityKey } from './taxAuthorities.js'
 
 type Db = Prisma.TransactionClient
 
@@ -61,6 +89,17 @@ export const TAX_PAYMENT_SOURCE = 'salestax.payment'
 export const TAX_RECLASS_SOURCE = 'salestax.reclass'
 /** Entries that are payments by reference: the posting and its reversal ('salestax.payment.reversal:<id>'). */
 const PAYMENT_REF_PREFIXES = [`${TAX_PAYMENT_SOURCE}:`, `${TAX_PAYMENT_SOURCE}.reversal:`]
+/**
+ * The one-time statutory reclass (accounting/statutory.ts STATUTORY_RECLASS_SOURCE,
+ * kept literal here to avoid an import cycle): it moves legacy salary tax OUT
+ * of 2040 — a move, never income tax withheld in the period.
+ */
+const STATUTORY_RECLASS_PREFIX = 'statutory.reclass:'
+/** Sales tax a client withheld from us (H13): Dr 1335 / Cr 1110, per ReceivablePayment ('st_withheld'), and its reversal. */
+export const CUSTOMER_WITHHELD_SOURCE = 'receivable.st_withheld'
+const CUSTOMER_WITHHELD_PREFIXES = [`${CUSTOMER_WITHHELD_SOURCE}:`, `${CUSTOMER_WITHHELD_SOURCE}.reversal:`]
+/** A kept no-show deposit (reservations/depositCapture.ts, H10), and its reversal. */
+const DEPOSIT_CAPTURE_PREFIXES = ['reservation.deposit_capture:', 'reservation.deposit_capture.reversal:']
 
 interface AccountTotal {
   code: string
@@ -138,30 +177,25 @@ export async function debitBalanceAt(db: Db, tenantId: string, code: string, asO
   return 0 - ((await creditBalancesAt(db, tenantId, [code], asOf)).get(code) ?? 0)
 }
 
-export type AuthorityKey = 'fbr' | 'pra' | 'srb' | 'kpra' | 'bra'
-
-/** Each authority: its output (payable) and input (recoverable) accounts. */
-export const AUTHORITIES: Array<{ key: AuthorityKey; authority: string; name: string; output: string; input: string }> = [
-  { key: 'fbr',  authority: 'FBR',  name: 'Federal Board of Revenue',              output: ACCT.GST_OUTPUT,      input: ACCT.GST_INPUT },
-  { key: 'pra',  authority: 'PRA',  name: 'Punjab Revenue Authority',              output: ACCT.PRA_TAX_OUTPUT,  input: '1321' },
-  { key: 'srb',  authority: 'SRB',  name: 'Sindh Revenue Board',                   output: ACCT.SRB_TAX_OUTPUT,  input: '1322' },
-  { key: 'kpra', authority: 'KPRA', name: 'Khyber Pakhtunkhwa Revenue Authority',  output: ACCT.KPRA_TAX_OUTPUT, input: '1323' },
-  { key: 'bra',  authority: 'BRA',  name: 'Balochistan Revenue Authority',         output: ACCT.BRA_TAX_OUTPUT,  input: '1324' },
-]
-const authorityOfOutput = (code: string) => AUTHORITIES.find((a) => a.output === code) ?? AUTHORITIES[0]!
+/** The authority whose OUTPUT account `code` is; an unknown code files with FBR. */
+const authorityOfOutput = (code: string) => AUTHORITIES[authorityOfOutputCode(code) ?? 'fbr']
 
 export type WithholdingKey = 'wht' | 'stwh'
 
 /**
  * Tax the company withholds from others and pays over: income tax withheld
- * from suppliers (and salaries) — 2040, paid to FBR; sales tax withheld as a
- * withholding agent — 2041. Paid from the return like sales tax, never set
- * off against input.
+ * from vendors (supplier bills, OpEx and CapEx payments, s.153 / s.155) —
+ * 2040, paid to FBR; sales tax withheld as a withholding agent — 2041. Paid
+ * from the return like sales tax, never set off against input. Salary tax is
+ * NOT here: it is a statutory payable (2042, accounting/statutory.ts).
  */
 export const WITHHOLDING: Array<{ key: WithholdingKey; authority: string; name: string; account: string }> = [
-  { key: 'wht',  authority: 'WHT',  name: 'Income tax withheld (paid to FBR)', account: ACCT.WHT_PAYABLE },
+  { key: 'wht',  authority: 'WHT',  name: 'Income tax withheld from vendors (paid to FBR)', account: ACCT.WHT_PAYABLE },
   { key: 'stwh', authority: 'STWH', name: 'Sales tax withheld (as withholding agent)', account: ACCT.STWH_PAYABLE },
 ]
+
+/** The payment authorities the return lists: the five sales-tax authorities and the two withholdings — never statutory challans. */
+export const RETURN_PAYMENT_KEYS: ReadonlyArray<AuthorityKey | WithholdingKey> = [...TAX_AUTHORITY_KEYS, ...WITHHOLDING.map((w) => w.key)]
 
 export interface AuthorityReturn {
   key: AuthorityKey
@@ -179,6 +213,18 @@ export interface AuthorityReturn {
   paidForPeriodCents: number
   /** Input tax set off in those payments. */
   inputSetOffForPeriodCents: number
+  /**
+   * Sales tax our clients withheld for this authority in the period (H13):
+   * Dr − Cr on 1335 from 'receivable.st_withheld:' entries and their
+   * reversals dated in the period, by the receipt's authority.
+   */
+  withheldByCustomersCents: number
+  /** Customer-withheld tax (1335) set off in this period's payments to this authority. */
+  customerWithheldSetOffForPeriodCents: number
+  /** Customer-withheld tax still available to set off against this authority at the period's end. */
+  customerWithheldAvailableCents: number
+  /** output − input − withheld by customers: what this authority is owed for the period. Negative = carried forward. */
+  netAfterWithheldCents: number
   /** The output account's balance (still owed) at the period's end, after every charge and payment up to then. */
   ledgerBalanceAtEndCents: number
   /** The input account's balance (still recoverable) at the period's end. */
@@ -195,13 +241,31 @@ export interface WithholdingReturn {
   ledgerBalanceAtEndCents: number
 }
 
-export type SupplyClass = 'standard' | 'zero_rated' | 'exempt' | 'custom'
+export type SupplyClass = 'standard' | 'zero_rated' | 'exempt' | 'custom' | 'delivery_charge' | 'deposit_forfeit'
+
+/** The order the return lists supplies in, within an authority. Every SupplyClass is here. */
+export const SUPPLY_ORDER: readonly SupplyClass[] = ['standard', 'custom', 'zero_rated', 'exempt', 'delivery_charge', 'deposit_forfeit']
+
+/** How each supply class reads on the return screen and its CSV. */
+export const SUPPLY_LABEL: Readonly<Record<SupplyClass, string>> = {
+  standard: 'Standard-rated',
+  custom: 'Own rate',
+  zero_rated: 'Zero-rated',
+  exempt: 'Exempt',
+  delivery_charge: 'Delivery charges',
+  deposit_forfeit: 'No-show deposits kept',
+}
 
 export interface RateLine {
   authority: string
-  /** The item tax class: standard lines at the order's rate, custom at the item's own, zero-rated / exempt at 0%. */
+  /**
+   * The item tax class: standard lines at the order's rate, custom at the
+   * item's own, zero-rated / exempt at 0%; 'delivery_charge' = an order's
+   * delivery fee at the order's rate (H9); 'deposit_forfeit' = a kept no-show
+   * deposit at the brand's card rate, tax inside (H10).
+   */
   supply: SupplyClass
-  /** Order.taxRatePct (standard), the item's rate (custom), 0 (zero-rated / exempt); null = an order priced before the rate was stored. */
+  /** Order.taxRatePct (standard, delivery), the item's rate (custom), 0 (zero-rated / exempt), the brand's card rate (deposits); null = an order priced before the rate was stored. */
   ratePct: number | null
   /** Which of the brand's two rates the order was billed at (cash 15% / card 8%). */
   tender: 'cash' | 'card' | 'other'
@@ -218,12 +282,16 @@ export interface RateLine {
 
 export interface TaxPaymentRow {
   id: string
-  authority: AuthorityKey | WithholdingKey
+  authority: AuthorityKey | WithholdingKey | StatutoryKey
+  /** What the payment settles: a sales-tax authority, a withholding, or a statutory payroll challan (listed only on request). */
+  kind: 'sales_tax' | 'withholding' | 'statutory'
   periodFrom: string
   periodTo: string
   paidAt: string
   paidCents: number
   inputSetOffCents: number
+  /** Sales tax our clients withheld (1335) set off in this payment (H13). */
+  customerWithheldSetOffCents: number
   outputSetOffCents: number
   cprNumber: string | null
   bankAccountId: string | null
@@ -270,19 +338,27 @@ export interface SalesTaxReturnReport {
   /** Reclass entries dated in the period (already posted). */
   reclassesPosted: Array<{ conceptId: string; conceptName: string; month: string; reference: string; entryDate: string; fromAccount: string; toAccount: string; amountCents: number }>
   withholding: WithholdingReturn[]
-  /** Payments whose period overlaps this one. */
+  /** Sales-tax and withholding payments whose period overlaps this one (statutory challans are not listed). */
   payments: TaxPaymentRow[]
-  taxableSalesCents: number    // sum of all per-concept revenue
-  taxableValueByConceptCents: Array<{ conceptSlug: string; conceptName: string; revenueCents: number }>
-  /** What is payable: each authority's own net, summed where positive — never one authority's input against another's output. */
+  /** Per-brand revenue plus delivery fees (4110). */
+  taxableSalesCents: number
+  /** Delivery fees (4110, Cr − Dr) booked in the period — a taxable supply of their own (H9). */
+  deliveryFeesCents: number
+  /** Per brand: its revenue account and its 4110 delivery fees (lines tagged with the brand). */
+  taxableValueByConceptCents: Array<{ conceptSlug: string; conceptName: string; revenueCents: number; deliveryFeeCents: number }>
+  /**
+   * What is payable: each authority's own net AFTER customer-withheld tax
+   * (netAfterWithheldCents), summed where positive — never one authority's
+   * input or withholding against another's output.
+   */
   netPayableCents: number
-  /** Excess input tax per authority, carried forward with that authority (not a reduction of another's bill). */
+  /** Excess input (and withheld) tax per authority, carried forward with that authority (not a reduction of another's bill). */
   carryForwardCents: number
   notes: string[]              // operator-facing caveats
 }
 
 /** Every output sales-tax account the return files: FBR 2030 + PRA/SRB/KPRA/BRA. */
-export const OUTPUT_TAX_CODES: string[] = AUTHORITIES.map((a) => a.output)
+export const OUTPUT_TAX_CODES: string[] = AUTHORITY_LIST.map((a) => a.outputCode)
 
 /**
  * Sales tax collected in the period, from the ledger — the output accounts the
@@ -318,6 +394,7 @@ export async function outputTaxCollectedCents(tenantIds: string[], from: Date, t
 
 const ORDER_FOR_RETURN = {
   id: true, status: true, source: true, conceptId: true, taxCents: true, taxRatePct: true,
+  deliveryFeeCents: true, deliveryFeeTaxCents: true,
   concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, taxRateCash: true, taxRateCard: true } },
   items: {
     select: {
@@ -328,12 +405,15 @@ const ORDER_FOR_RETURN = {
   },
 } as const
 
-interface ReturnOrder {
+export interface ReturnOrder {
   id: string
   conceptId: string
   status: string
   taxCents: number
   taxRatePct: number | null
+  /** The delivery fee before tax and its GST (H9); 0 on a legacy order (the fee was not stored apart). */
+  deliveryFeeCents: number
+  deliveryFeeTaxCents: number
   concept: { slug: string; tenantId: string | null; province: string | null; srbPosId: number | null; taxRateCash: number; taxRateCard: number }
   items: Array<{
     unitPriceCents: number; quantity: number; status: string
@@ -342,7 +422,7 @@ interface ReturnOrder {
   }>
 }
 
-interface SupplyPart {
+export interface SupplyPart {
   supply: SupplyClass
   ratePct: number | null
   valueCents: number
@@ -368,13 +448,24 @@ function shareOut<T extends { weight: number }>(total: number, parts: T[], set: 
 /**
  * An order's supplies by tax class (MenuItem.taxClassification — the class
  * priceOrder charged): standard lines at the order's rate, custom lines at the
- * item's own rate, zero-rated and exempt lines at 0%. The order's STORED tax
- * is shared over the taxed parts in proportion to the tax each would bear, so
- * the parts always add up to what the ledger booked. A bill that carried tax
- * although none of its lines is taxed today (an item reclassified after the
- * sale) is declared as standard-rated: tax was charged, so it is output.
+ * item's own rate, zero-rated and exempt lines at 0%. The delivery fee is a
+ * part of its own ('delivery_charge': the fee at the order's rate, with the
+ * fee's stored GST — H9). The rest of the order's STORED tax (taxCents −
+ * deliveryFeeTaxCents) is shared over the taxed item parts in proportion to
+ * the tax each would bear, so the parts always add up to what the ledger
+ * booked. A bill that carried item tax although none of its lines is taxed
+ * today (an item reclassified after the sale) is declared as standard-rated:
+ * tax was charged, so it is output.
  */
-function supplyParts(o: ReturnOrder): SupplyPart[] {
+export function supplyParts(o: ReturnOrder): SupplyPart[] {
+  // The fee's GST, never more than the order's whole tax (a malformed row
+  // must not make the item parts negative).
+  const feeCents = Math.max(0, o.deliveryFeeCents ?? 0)
+  const feeTax = Math.min(Math.max(0, o.deliveryFeeTaxCents ?? 0), Math.max(0, o.taxCents))
+  const itemTax = o.taxCents - feeTax
+  const fee: SupplyPart[] = feeCents > 0 || feeTax > 0
+    ? [{ supply: 'delivery_charge', ratePct: o.taxRatePct, valueCents: feeCents, taxCents: feeTax }]
+    : []
   const parts = new Map<string, SupplyPart & { weight: number }>()
   for (const i of o.items) {
     if (i.status === 'voided') continue
@@ -399,12 +490,14 @@ function supplyParts(o: ReturnOrder): SupplyPart[] {
   }
   const taxed = list.filter((p) => p.weight > 0)
   if (taxed.length === 0) {
-    if (o.taxCents === 0) return list.map(({ weight: _w, ...p }) => p)
+    if (itemTax === 0) return [...list.map(({ weight: _w, ...p }) => p), ...fee]
+    // Item tax on a bill none of whose lines is taxed today: declare it
+    // standard — the item tax only, the fee keeps its own part.
     const valueCents = list.reduce((t, p) => t + p.valueCents, 0)
-    return [{ supply: 'standard', ratePct: o.taxRatePct, valueCents, taxCents: o.taxCents }]
+    return [{ supply: 'standard', ratePct: o.taxRatePct, valueCents, taxCents: itemTax }, ...fee]
   }
-  shareOut(o.taxCents, taxed, (p, cents) => { p.taxCents = cents })
-  return list.map(({ weight: _w, ...p }) => p)
+  shareOut(itemTax, taxed, (p, cents) => { p.taxCents = cents })
+  return [...list.map(({ weight: _w, ...p }) => p), ...fee]
 }
 
 function tenderOfRate(o: ReturnOrder): RateLine['tender'] {
@@ -470,6 +563,7 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date, reclassTarg
         { reference: { startsWith: 'order.refund:' } },
         { reference: { startsWith: 'order.refund_wallet:' } },
         { reference: { startsWith: 'order.refund_giftcard:' } },
+        ...DEPOSIT_CAPTURE_PREFIXES.map((p) => ({ reference: { startsWith: p } })),
       ],
     },
     select: { id: true, reference: true, entryDate: true },
@@ -587,7 +681,7 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date, reclassTarg
 
   const lines = new Map<string, RateLine>()
   const lineFor = (o: ReturnOrder, accountCode: string, part: SupplyPart) => {
-    const authority = authorityOfOutput(accountCode).authority
+    const authority = authorityOfOutput(accountCode).label
     const tender = tenderOfRate(o)
     const key = `${authority}|${part.supply}|${part.ratePct ?? 'null'}|${tender}`
     let l = lines.get(key)
@@ -631,12 +725,62 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date, reclassTarg
       l.refundValueCents += o.taxCents > 0 ? Math.round((p.valueCents * tax) / o.taxCents) : 0
     }
   }
+  // Kept no-show deposits (H10): each capture entry credits the brand's
+  // revenue (the value) and its output-tax account (the tax inside, at the
+  // brand's card rate — the hold is card money). Filed with the authority
+  // whose account it credited (routed through a reclass like any sale); a
+  // reversal counts the other way.
+  const depositEntries = entries.filter((e) => DEPOSIT_CAPTURE_PREFIXES.some((p) => e.reference?.startsWith(p)))
+  if (depositEntries.length > 0) {
+    const depLines = await prisma.journalLine.findMany({
+      where: { journalEntryId: { in: depositEntries.map((e) => e.id) }, type: 'credit' },
+      select: { journalEntryId: true, amountCents: true, conceptId: true, account: { select: { code: true, type: true } } },
+    })
+    const reversalLines = await prisma.journalLine.findMany({
+      where: { journalEntryId: { in: depositEntries.map((e) => e.id) }, type: 'debit' },
+      select: { journalEntryId: true, amountCents: true, conceptId: true, account: { select: { code: true, type: true } } },
+    })
+    const conceptIds = [...new Set([...depLines, ...reversalLines].map((l) => l.conceptId).filter((x): x is string => !!x))]
+    const rateOf = new Map(
+      (conceptIds.length > 0
+        ? await prisma.concept.findMany({ where: { id: { in: conceptIds }, tenantId }, select: { id: true, taxRateCard: true } })
+        : []
+      ).map((c) => [c.id, c.taxRateCard]),
+    )
+    for (const e of depositEntries) {
+      const reversal = e.reference!.startsWith(DEPOSIT_CAPTURE_PREFIXES[1]!)
+      // A capture credits revenue + tax; its reversal debits them.
+      const own = (reversal ? reversalLines : depLines).filter((l) => l.journalEntryId === e.id)
+      const taxLine = own.find((l) => OUTPUT_TAX_CODES.includes(l.account.code))
+      if (!taxLine) continue // a capture with no tax (a 0% brand) declares nothing here
+      const value = own.filter((l) => l.account.type === 'revenue').reduce((t, l) => t + toCents(l.amountCents), 0)
+      const tax = toCents(taxLine.amountCents)
+      const conceptId = taxLine.conceptId
+      const code = routed(taxLine.account.code, conceptId, e.entryDate)
+      const authority = authorityOfOutput(code).label
+      const ratePct = conceptId ? (rateOf.get(conceptId) ?? null) : null
+      const key = `${authority}|deposit_forfeit|${ratePct ?? 'null'}|card`
+      let l = lines.get(key)
+      if (!l) {
+        l = { authority, supply: 'deposit_forfeit', ratePct, tender: 'card', orders: 0, salesValueCents: 0, salesTaxCents: 0, refundValueCents: 0, refundTaxCents: 0, taxableValueCents: 0, taxCents: 0 }
+        lines.set(key, l)
+      }
+      if (reversal) {
+        l.refundValueCents += value
+        l.refundTaxCents += tax
+      } else {
+        l.orders += 1
+        l.salesValueCents += value
+        l.salesTaxCents += tax
+      }
+    }
+  }
+
   for (const l of lines.values()) {
     l.taxableValueCents = l.salesValueCents - l.refundValueCents
     l.taxCents = l.salesTaxCents - l.refundTaxCents
   }
-  const SUPPLY_ORDER: SupplyClass[] = ['standard', 'custom', 'zero_rated', 'exempt']
-  const order = (a: RateLine) => AUTHORITIES.findIndex((x) => x.authority === a.authority)
+  const order = (a: RateLine) => AUTHORITY_LIST.findIndex((x) => x.label === a.authority)
   return [...lines.values()].sort((a, b) =>
     order(a) - order(b)
     || SUPPLY_ORDER.indexOf(a.supply) - SUPPLY_ORDER.indexOf(b.supply)
@@ -677,10 +821,18 @@ export async function misroutedOutputTax(
     .filter((r) => r.amountCents !== 0)
 }
 
-/** Payments of `tenantId` whose period overlaps [from, to], oldest first. */
-export async function taxPaymentsFor(tenantId: string, from: Date, to: Date): Promise<TaxPaymentRow[]> {
+/**
+ * Payments of `tenantId` whose period overlaps [from, to], oldest first: the
+ * sales-tax authorities and the two withholdings (RETURN_PAYMENT_KEYS).
+ * Statutory payroll challans (salary tax, EOBI, SESSI — the statutory page's)
+ * are left out unless `opts.statutory` asks for them; every row says its kind.
+ */
+export async function taxPaymentsFor(tenantId: string, from: Date, to: Date, opts: { statutory?: boolean } = {}): Promise<TaxPaymentRow[]> {
   const rows = await prisma.salesTaxPayment.findMany({
-    where: { tenantId, periodFrom: { lte: to }, periodTo: { gte: from } },
+    where: {
+      tenantId, periodFrom: { lte: to }, periodTo: { gte: from },
+      ...(opts.statutory ? {} : { authority: { in: [...RETURN_PAYMENT_KEYS] } }),
+    },
     orderBy: [{ periodFrom: 'asc' }, { authority: 'asc' }],
   })
   const bankIds = [...new Set(rows.map((r) => r.bankAccountId).filter((x): x is string => !!x))]
@@ -688,14 +840,18 @@ export async function taxPaymentsFor(tenantId: string, from: Date, to: Date): Pr
     ? await prisma.bankAccount.findMany({ where: { id: { in: bankIds }, tenantId }, select: { id: true, name: true } })
     : []
   const bankName = new Map(banks.map((b) => [b.id, b.name]))
+  const kindOf = (a: string): TaxPaymentRow['kind'] =>
+    isAuthorityKey(a) ? 'sales_tax' : WITHHOLDING.some((w) => w.key === a) ? 'withholding' : 'statutory'
   return rows.map((r) => ({
     id: r.id,
     authority: r.authority as TaxPaymentRow['authority'],
+    kind: kindOf(r.authority),
     periodFrom: fmtPktDate(r.periodFrom),
     periodTo: fmtPktDate(r.periodTo),
     paidAt: fmtPktDate(r.paidAt),
     paidCents: toCents(r.paidCents),
     inputSetOffCents: toCents(r.inputSetOffCents),
+    customerWithheldSetOffCents: toCents(r.customerWithheldSetOffCents),
     outputSetOffCents: toCents(r.outputSetOffCents),
     cprNumber: r.cprNumber,
     bankAccountId: r.bankAccountId,
@@ -707,30 +863,68 @@ export async function taxPaymentsFor(tenantId: string, from: Date, to: Date): Pr
   }))
 }
 
+/**
+ * Sales tax our clients withheld from us in [from, to] (H13), per authority:
+ * Dr − Cr on 1335 in the 'receivable.st_withheld:' entries (and their
+ * reversals) dated in the period. Each entry's authority is its receipt's
+ * (ReceivablePayment.taxAuthority — the output account the invoice's issue
+ * entry credited); a receipt with no authority files with FBR.
+ */
+export async function withheldByCustomersIn(tenantId: string, from: Date, to: Date): Promise<Map<AuthorityKey, number>> {
+  const out = new Map<AuthorityKey, number>(TAX_AUTHORITY_KEYS.map((k) => [k, 0]))
+  const lines = await prisma.journalLine.findMany({
+    where: {
+      account: { tenantId, code: ACCT.ST_WITHHELD_BY_CUSTOMERS },
+      journalEntry: {
+        tenantId, entryDate: { gte: from, lte: to },
+        OR: CUSTOMER_WITHHELD_PREFIXES.map((p) => ({ reference: { startsWith: p } })),
+      },
+    },
+    select: { type: true, amountCents: true, journalEntry: { select: { reference: true } } },
+  })
+  if (lines.length === 0) return out
+  // 'receivable.st_withheld[.reversal]:<paymentId>[@n]' → the receipt.
+  const paymentIdOf = (ref: string | null): string | null => {
+    const prefix = CUSTOMER_WITHHELD_PREFIXES.find((p) => ref?.startsWith(p))
+    return prefix ? ref!.slice(prefix.length).split('@')[0]! : null
+  }
+  const ids = [...new Set(lines.map((l) => paymentIdOf(l.journalEntry.reference)).filter((x): x is string => !!x))]
+  const receipts = await prisma.receivablePayment.findMany({ where: { id: { in: ids }, tenantId }, select: { id: true, taxAuthority: true } })
+  const authorityOf = new Map(receipts.map((r) => [r.id, isAuthorityKey(r.taxAuthority) ? r.taxAuthority : 'fbr' as AuthorityKey]))
+  for (const l of lines) {
+    const id = paymentIdOf(l.journalEntry.reference)
+    const key = (id && authorityOf.get(id)) || 'fbr'
+    const amt = toCents(l.amountCents)
+    out.set(key, (out.get(key) ?? 0) + (l.type === 'debit' ? amt : -amt))
+  }
+  return out
+}
+
 export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Promise<SalesTaxReturnReport> {
+  const returnCodes = [...AUTHORITY_LIST.flatMap((a) => [a.outputCode, a.inputCode]), ...WITHHOLDING.map((w) => w.account)]
   const accounts = await prisma.account.findMany({
-    where: { tenantId, code: { in: [...AUTHORITIES.flatMap((a) => [a.output, a.input]), ...WITHHOLDING.map((w) => w.account)] } },
+    where: { tenantId, code: { in: returnCodes } },
     select: { code: true, name: true },
   })
   const named = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
 
   const exclude = await notSettlement(prisma, [tenantId], from, to)
-  const ledger = await Promise.all(AUTHORITIES.map(async (a) => ({
+  const ledger = await Promise.all(AUTHORITY_LIST.map(async (a) => ({
     a,
-    output: await netCreditCents(tenantId, a.output, from, to, exclude),
-    input:  0 - (await netCreditCents(tenantId, a.input, from, to, exclude)),
+    output: await netCreditCents(tenantId, a.outputCode, from, to, exclude),
+    input:  0 - (await netCreditCents(tenantId, a.inputCode, from, to, exclude)),
   })))
   const of = (key: AuthorityKey) => ledger.find((l) => l.a.key === key)!
   const total = (side: 'output' | 'input') => ledger.reduce((t, l) => t + l[side], 0)
 
   // Balances at the period's end — everything charged and paid up to then.
-  const balances = await creditBalancesAt(
-    prisma, tenantId,
-    [...AUTHORITIES.flatMap((a) => [a.output, a.input]), ...WITHHOLDING.map((w) => w.account)],
-    to,
-  )
+  const balances = await creditBalancesAt(prisma, tenantId, returnCodes, to)
   const payments = await taxPaymentsFor(tenantId, from, to)
   const paidFor = (key: string) => payments.filter((p) => p.authority === key)
+  const withheldByCustomers = await withheldByCustomersIn(tenantId, from, to)
+  const withheldAvailable = new Map<AuthorityKey, number>(await Promise.all(
+    TAX_AUTHORITY_KEYS.map(async (k) => [k, await customerWithheldAvailable(prisma, tenantId, k, to)] as [AuthorityKey, number]),
+  ))
 
   // Every brand of the company, active or not, deleted or not — a brand
   // closed or removed mid-month still made taxable supplies in it.
@@ -741,35 +935,60 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   })
 
   // Per-concept revenue for the period
-  const taxableByConcept: Array<{ conceptSlug: string; conceptName: string; revenueCents: number }> = []
+  const taxableByConcept: SalesTaxReturnReport['taxableValueByConceptCents'] = []
   let taxableSales = 0
   const revenueAccounts = await prisma.account.findMany({ where: { tenantId, type: 'revenue' }, select: { id: true, code: true } })
+  // Delivery fees (4110, H9) per brand: the lines are tagged with the brand.
+  const feeByConcept = new Map<string | null, number>()
+  const feeAccount = revenueAccounts.find((a) => a.code === ACCT.DELIVERY_FEE_REVENUE)
+  if (feeAccount) {
+    const sums = await prisma.journalLine.groupBy({
+      by: ['conceptId', 'type'], _sum: { amountCents: true },
+      where: { accountId: feeAccount.id, journalEntry: { tenantId, entryDate: { gte: from, lte: to } } },
+    })
+    for (const x of sums) {
+      const amt = sumCents(x._sum.amountCents)
+      feeByConcept.set(x.conceptId, (feeByConcept.get(x.conceptId) ?? 0) + (x.type === 'credit' ? amt : -amt))
+    }
+  }
+  const deliveryFeesCents = [...feeByConcept.values()].reduce((t, v) => t + v, 0)
   // A brand with no entry in the code map falls back to 4090 (Other/Catering),
   // and several brands can share it. The loop looked the account up per brand
   // and summed it each time, so 4090's revenue was counted once per unmapped
   // brand — over-declaring taxable sales, and therefore output GST, on a return
   // filed with FBR/SRB. Count each account at most once.
   const countedAccountIds = new Set<string>()
+  const conceptIds = new Set(concepts.map((c) => c.id))
   for (const c of concepts) {
     // Find the matching 4xxx account by code-mapping in journal.ts (revenueCodeForConcept)
     const revAccount = revenueAccounts.find((a) => a.code === revenueCodeForConcept(c.slug))
-    if (!revAccount) continue
-    if (countedAccountIds.has(revAccount.id)) continue
-    countedAccountIds.add(revAccount.id)
-    const sums = await prisma.journalLine.groupBy({
-      by: ['type'], _sum: { amountCents: true },
-      where: { accountId: revAccount.id, journalEntry: { tenantId, entryDate: { gte: from, lte: to } } },
-    })
-    let debit = 0, credit = 0
-    for (const s of sums) {
-      if (s.type === 'debit') debit  = sumCents(s._sum.amountCents)
-      else                     credit = sumCents(s._sum.amountCents)
+    let revenue = 0
+    if (revAccount && !countedAccountIds.has(revAccount.id)) {
+      countedAccountIds.add(revAccount.id)
+      const sums = await prisma.journalLine.groupBy({
+        by: ['type'], _sum: { amountCents: true },
+        where: { accountId: revAccount.id, journalEntry: { tenantId, entryDate: { gte: from, lte: to } } },
+      })
+      let debit = 0, credit = 0
+      for (const x of sums) {
+        if (x.type === 'debit') debit  = sumCents(x._sum.amountCents)
+        else                     credit = sumCents(x._sum.amountCents)
+      }
+      revenue = Math.max(0, credit - debit)
     }
-    const revenue = Math.max(0, credit - debit)
-    if (revenue > 0) {
-      taxableByConcept.push({ conceptSlug: c.slug, conceptName: c.name, revenueCents: revenue })
-      taxableSales += revenue
+    const deliveryFeeCents = feeByConcept.get(c.id) ?? 0
+    if (revenue > 0 || deliveryFeeCents !== 0) {
+      taxableByConcept.push({ conceptSlug: c.slug, conceptName: c.name, revenueCents: revenue, deliveryFeeCents })
+      taxableSales += revenue + deliveryFeeCents
     }
+  }
+  // 4110 lines with no brand of this company's (should not happen — order
+  // postings tag the brand): declared on a row of their own so the per-brand
+  // rows still add up to the total.
+  const untaggedFees = [...feeByConcept.entries()].filter(([id]) => !id || !conceptIds.has(id)).reduce((t, [, v]) => t + v, 0)
+  if (untaggedFees !== 0) {
+    taxableByConcept.push({ conceptSlug: '', conceptName: 'Delivery fees (no brand)', revenueCents: 0, deliveryFeeCents: untaggedFees })
+    taxableSales += untaggedFees
   }
 
   const reclasses = await reclassesIn(tenantId, from, to)
@@ -778,38 +997,52 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   const conceptName = new Map(concepts.map((c) => [c.id, c.name]))
 
   const byAuthority: AuthorityReturn[] = ledger.map(({ a, output, input }) => {
-    const brands = concepts.filter((c) => outputTaxCodeFor(c) === a.output).map((c) => c.slug)
-    const fromOrders = byRate.filter((r) => r.authority === a.authority).reduce((t, r) => t + r.taxCents, 0)
+    const brands = concepts.filter((c) => outputTaxCodeFor(c) === a.outputCode).map((c) => c.slug)
+    const fromOrders = byRate.filter((r) => r.authority === a.label).reduce((t, r) => t + r.taxCents, 0)
     const paid = paidFor(a.key)
+    const withheld = withheldByCustomers.get(a.key) ?? 0
     return {
       key: a.key,
-      authority: a.authority,
+      authority: a.label,
       name: a.name,
-      output: { code: a.output, name: named(a.output), totalCents: output },
-      input:  { code: a.input,  name: named(a.input),  totalCents: input },
+      output: { code: a.outputCode, name: named(a.outputCode), totalCents: output },
+      input:  { code: a.inputCode,  name: named(a.inputCode),  totalCents: input },
       netPayableCents: output - input,
       brands,
       otherOutputCents: output - fromOrders,
       paidForPeriodCents: paid.reduce((t, p) => t + p.paidCents, 0),
       inputSetOffForPeriodCents: paid.reduce((t, p) => t + p.inputSetOffCents, 0),
-      ledgerBalanceAtEndCents: balances.get(a.output) ?? 0,
-      inputLedgerBalanceAtEndCents: 0 - (balances.get(a.input) ?? 0),
+      withheldByCustomersCents: withheld,
+      customerWithheldSetOffForPeriodCents: paid.reduce((t, p) => t + p.customerWithheldSetOffCents, 0),
+      customerWithheldAvailableCents: withheldAvailable.get(a.key) ?? 0,
+      netAfterWithheldCents: output - input - withheld,
+      ledgerBalanceAtEndCents: balances.get(a.outputCode) ?? 0,
+      inputLedgerBalanceAtEndCents: 0 - (balances.get(a.inputCode) ?? 0),
     }
   }).filter((r) =>
     r.output.totalCents !== 0 || r.input.totalCents !== 0 || r.brands.length > 0
-    || r.paidForPeriodCents !== 0 || r.inputSetOffForPeriodCents !== 0 || r.ledgerBalanceAtEndCents !== 0)
+    || r.paidForPeriodCents !== 0 || r.inputSetOffForPeriodCents !== 0 || r.ledgerBalanceAtEndCents !== 0
+    || r.withheldByCustomersCents !== 0 || r.customerWithheldSetOffForPeriodCents !== 0)
 
+  // Withheld in the period: payments left out (as for sales tax), and the
+  // one-time statutory reclass too — it moves legacy salary tax out of 2040,
+  // it is not income tax withheld from anyone.
+  const withheldExclude: Prisma.JournalEntryWhereInput = {
+    AND: [exclude, { OR: [{ reference: null }, { NOT: { reference: { startsWith: STATUTORY_RECLASS_PREFIX } } }] }],
+  }
   const withholding: WithholdingReturn[] = await Promise.all(WITHHOLDING.map(async (w) => ({
     key: w.key,
     authority: w.authority,
     name: w.name,
-    account: { code: w.account, name: named(w.account), totalCents: await netCreditCents(tenantId, w.account, from, to, exclude) },
+    account: { code: w.account, name: named(w.account), totalCents: await netCreditCents(tenantId, w.account, from, to, withheldExclude) },
     paidForPeriodCents: paidFor(w.key).reduce((t, p) => t + p.paidCents, 0),
     ledgerBalanceAtEndCents: balances.get(w.account) ?? 0,
   })))
 
-  const netPayableCents   = byAuthority.reduce((t, r) => t + Math.max(0, r.netPayableCents), 0)
-  const carryForwardCents = byAuthority.reduce((t, r) => t + Math.max(0, -r.netPayableCents), 0)
+  // Each authority's own net after what clients withheld for it (H13): never
+  // one authority's input or withholding against another's output.
+  const netPayableCents   = byAuthority.reduce((t, r) => t + Math.max(0, r.netAfterWithheldCents), 0)
+  const carryForwardCents = byAuthority.reduce((t, r) => t + Math.max(0, -r.netAfterWithheldCents), 0)
 
   const notes: string[] = []
   const noProvince = concepts.filter((c) => !c.province && c.srbPosId == null && !c.deletedAt)
@@ -824,34 +1057,44 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     )
   }
   if (total('input') === 0) {
-    notes.push('No input tax recorded. Verify supplier bills are tagging GST Input (1320) or the provincial input account when applicable.')
+    notes.push('No input tax recorded. Input tax comes from "Tax charged by" on supplier bills and OpEx (and CapEx) payments — each charging authority\'s own input account (FBR 1320, PRA 1321, SRB 1322, KPRA 1323, BRA 1324). Check those documents name the tax and who charged it.')
   }
   const unclassed = byRate.filter((r) => r.supply === 'zero_rated' || r.supply === 'exempt')
   if (unclassed.length > 0) {
     notes.push('Zero-rated and exempt lines are declared on their own rows, at 0%, by each item\'s tax class as it is set today (Menu → item → tax class). "Total taxable sales" is ledger revenue and includes them.')
   }
+  if (deliveryFeesCents !== 0 || byRate.some((r) => r.supply === 'delivery_charge')) {
+    notes.push('Delivery charges are a taxable supply of their own: GST is added on top of the fee at the order\'s rate (15% cash, 8% card / Raast / online). They are declared on the "delivery_charge" rows, and the fee income (4110) is included in total taxable sales, per brand.')
+  }
+  if (byRate.some((r) => r.supply === 'deposit_forfeit')) {
+    notes.push('No-show deposits kept are taxable: the tax is inside the deposit, at the brand\'s card rate, and is declared on the "deposit_forfeit" rows. The rest of the deposit is the brand\'s revenue.')
+  }
+  if (byAuthority.some((r) => r.withheldByCustomersCents !== 0 || r.customerWithheldAvailableCents !== 0)) {
+    notes.push('Sales tax our clients withheld from us as withholding agents (1335) is deducted from that same authority\'s net ("Net after withheld") — SRB withholding never reduces PRA\'s. Set it off when recording the payment ("Withheld tax set off"); what is still available is shown per authority.')
+  }
   notes.push('Output and input are what was charged and recovered in the period. Tax paid to the authorities (payments recorded here, and entries linked as payments) is left out of them and shown under "Paid for this period"; "Ledger balance at period end" is what the books still owe after every charge and payment up to then.')
   notes.push('Input tax is set off only against the same authority\'s output: federal input on goods (1320) is never netted against provincial output on services. Whether any input is admissible (e.g. restaurant services at a reduced rate) is for your CA.')
   notes.push('Per-rate figures: sales are the orders booked in the period (online orders on completion, till orders on their drawer\'s close), less the tax the period\'s refunds reversed. Value is the pre-discount item value. "otherOutputCents" is ledger output tax not explained by them (manual journals, B2B invoices, older entries).')
-  notes.push('Supplies are classed by item tax class only (standard / custom / zero-rated / exempt). Adjust with your CA before filing.')
+  notes.push('Supplies are classed by item tax class (standard / custom / zero-rated / exempt), with delivery charges and kept no-show deposits on their own rows. Adjust with your CA before filing.')
+  notes.push('Withholding lists income tax withheld from vendors (2040) and sales tax withheld as an agent (2041). Salary tax, EOBI and SESSI are statutory payroll challans — see Statutory Payments.')
 
   return {
     tenantId,
     period: { from: fmtPktDate(from), to: fmtPktDate(to) },
     outputTax: {
-      fbr:  { code: ACCT.GST_OUTPUT,      name: named(ACCT.GST_OUTPUT),      totalCents: of('fbr').output },
-      pra:  { code: ACCT.PRA_TAX_OUTPUT,  name: named(ACCT.PRA_TAX_OUTPUT),  totalCents: of('pra').output },
-      srb:  { code: ACCT.SRB_TAX_OUTPUT,  name: named(ACCT.SRB_TAX_OUTPUT),  totalCents: of('srb').output },
-      kpra: { code: ACCT.KPRA_TAX_OUTPUT, name: named(ACCT.KPRA_TAX_OUTPUT), totalCents: of('kpra').output },
-      bra:  { code: ACCT.BRA_TAX_OUTPUT,  name: named(ACCT.BRA_TAX_OUTPUT),  totalCents: of('bra').output },
+      fbr:  { code: AUTHORITIES.fbr.outputCode,  name: named(AUTHORITIES.fbr.outputCode),  totalCents: of('fbr').output },
+      pra:  { code: AUTHORITIES.pra.outputCode,  name: named(AUTHORITIES.pra.outputCode),  totalCents: of('pra').output },
+      srb:  { code: AUTHORITIES.srb.outputCode,  name: named(AUTHORITIES.srb.outputCode),  totalCents: of('srb').output },
+      kpra: { code: AUTHORITIES.kpra.outputCode, name: named(AUTHORITIES.kpra.outputCode), totalCents: of('kpra').output },
+      bra:  { code: AUTHORITIES.bra.outputCode,  name: named(AUTHORITIES.bra.outputCode),  totalCents: of('bra').output },
       totalCents: total('output'),
     },
     inputTax: {
-      fbr:  { code: ACCT.GST_INPUT, name: named(ACCT.GST_INPUT), totalCents: of('fbr').input },
-      pra:  { code: '1321', name: named('1321'), totalCents: of('pra').input },
-      srb:  { code: '1322', name: named('1322'), totalCents: of('srb').input },
-      kpra: { code: '1323', name: named('1323'), totalCents: of('kpra').input },
-      bra:  { code: '1324', name: named('1324'), totalCents: of('bra').input },
+      fbr:  { code: AUTHORITIES.fbr.inputCode,  name: named(AUTHORITIES.fbr.inputCode),  totalCents: of('fbr').input },
+      pra:  { code: AUTHORITIES.pra.inputCode,  name: named(AUTHORITIES.pra.inputCode),  totalCents: of('pra').input },
+      srb:  { code: AUTHORITIES.srb.inputCode,  name: named(AUTHORITIES.srb.inputCode),  totalCents: of('srb').input },
+      kpra: { code: AUTHORITIES.kpra.inputCode, name: named(AUTHORITIES.kpra.inputCode), totalCents: of('kpra').input },
+      bra:  { code: AUTHORITIES.bra.inputCode,  name: named(AUTHORITIES.bra.inputCode),  totalCents: of('bra').input },
       totalCents: total('input'),
     },
     byAuthority,
@@ -870,6 +1113,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     withholding,
     payments,
     taxableSalesCents: taxableSales,
+    deliveryFeesCents,
     taxableValueByConceptCents: taxableByConcept,
     netPayableCents,
     carryForwardCents,

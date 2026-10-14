@@ -7,7 +7,9 @@
 // THE SALE SIDE uses the one sale-to-ledger formula, computeSaleAccounting
 // (orderPosting.ts), applied to every till order the shift books and summed
 // per brand: item revenue to the brand's 4xxx, service charge to 4100, tips to
-// 2095 (FOH-14: the till puts a tip on Order.tipCents and its total), output
+// 2095 (FOH-14: the till puts a tip on Order.tipCents and its total), a
+// delivery fee to 4110 (H9 — till sales carry none today, but the formula is
+// the one the online completion uses), output
 // tax to the brand's authority (2032 SRB for a Sindh kitchen, else 2030 —
 // outputTaxCodeFor, BOOKS-10), discounts to 7010, wallet to 2050, and what a
 // gift card paid to 2080 (ONL-05 — one line per order, naming it, so a refund
@@ -82,12 +84,12 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
 import {
-  computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, outputTaxCodeFor, withTenderTips,
+  computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, isVoidedRaast, outputTaxCodeFor, withTenderTips,
   GIFT_CARD_LIABILITY, REFUND_DUE_PREFIX, refundDueMemo, RAAST_RECEIPTS_MEMO, raastLedgerCodeOrNull, raastAccountUnknown,
   type SaleOrderFields, type TaxJurisdiction,
 } from './orderPosting.js'
 import { drawerExpectationOf } from '../../lib/drawer.js'
-import { cogsForSoldLines } from '../../lib/recipeCost.js'
+import { cogsLinesForOrders } from './cogs.js'
 import { SHIFT_COMPANY_INCLUDE, shiftTenantId } from '../../lib/tenantScope.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 
@@ -134,7 +136,7 @@ export const SHIFT_SALE_PAYMENT_INCLUDE = {
     select: {
       id: true, source: true, status: true, conceptId: true,
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
-      promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
+      promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
       concept: { select: { id: true, slug: true, province: true, srbPosId: true } },
       payments: {
         select: {
@@ -169,6 +171,8 @@ export interface ShiftBrandSales {
   serviceChargeCents: number
   tipCents: number
   taxCents: number
+  /** Delivery fees ex-tax (Cr 4110, H9) — their GST is in taxCents. */
+  deliveryFeeCents: number
   discountCents: number
   walletAppliedCents: number
   giftCardAppliedCents: number
@@ -262,7 +266,7 @@ function addRaast(
 export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]): ShiftSales {
   const out: ShiftSales = {
     byConcept: new Map(),
-    totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
+    totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
     cashCents: 0, cardPaidCents: 0, cardAwaitingCents: 0, raastByCode: new Map(), raastUnknown: [], compCents: 0,
     unsettledCents: 0, settledElsewhereCents: 0, roundingCents: 0, nonTillCashCents: 0,
     cancelledPaid: { cashCents: 0, cardCents: 0, raastByCode: new Map(), orderIds: [], byOrder: [] },
@@ -278,10 +282,13 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     if (order.status && NEVER_SOLD.has(order.status)) {
       // FOH-09: a cancelled ticket that took money is not a sale — every
       // drawer holds its own receipts for it as a refund due. (A comp is not
-      // money; there is nothing to give back.)
+      // money; there is nothing to give back. Nor is a Raast tender whose
+      // receipt the CEO voided as never booked — no entry may ever debit the
+      // bank for it, so a late close books nothing for it either; the same
+      // rule as orderPosting refundDueCents.)
       let cents = 0
       for (const p of here) {
-        if (p.method === 'comp') continue
+        if (p.method === 'comp' || isVoidedRaast(p)) continue
         if (p.method === 'cash') out.cancelledPaid.cashCents += p.amountCents
         // Raast: held on the receiving bank it went into, never 1030.
         else if (p.method === 'raast') addRaast(out.cancelledPaid.raastByCode, out.raastUnknown, order.id, p)
@@ -329,7 +336,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     const brand = out.byConcept.get(order.conceptId) ?? {
       conceptId: order.conceptId, conceptSlug: order.concept.slug, taxAccountCode: outputTaxCodeFor(order.concept),
       orderIds: [], giftCards: [], orders: 0,
-      revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0,
+      revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0,
     }
     brand.orders             += 1
     brand.orderIds.push(order.id)
@@ -337,6 +344,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     brand.serviceChargeCents += sa.serviceChargeCents
     brand.tipCents           += sa.tipCents
     brand.taxCents           += sa.taxCents
+    brand.deliveryFeeCents   += sa.deliveryFeeCents
     brand.discountCents      += sa.discountCents
     brand.walletAppliedCents += sa.walletAppliedCents
     brand.giftCardAppliedCents += sa.giftCardAppliedCents
@@ -355,6 +363,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     out.totals.serviceChargeCents += b.serviceChargeCents
     out.totals.tipCents           += b.tipCents
     out.totals.taxCents           += b.taxCents
+    out.totals.deliveryFeeCents   += b.deliveryFeeCents
     out.totals.discountCents      += b.discountCents
     out.totals.walletAppliedCents += b.walletAppliedCents
     out.totals.giftCardAppliedCents += b.giftCardAppliedCents
@@ -507,21 +516,16 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     }
   }
 
-  // ── Cost of sales: what the till's orders took out of stock, per brand ──
+  // ── Cost of sales: what the till's orders took out of the lots, per brand ──
   // Online orders book COGS as each completes (orderPosting.ts); till sales
-  // reach the ledger only here, so this is where their COGS is booked, from
-  // the same recipe explosion (lib/recipeCost.ts) at the same plate cost.
+  // reach the ledger only here, so this is where their COGS is booked — the
+  // ONE cost-of-sales function (accounting/cogs.ts): one pair per class
+  // (food 5010/1210, drinks 5020/1220, packaging 5030/1230) at the value of
+  // the FIFO lots the orders relieved, read from THIS drawer's company; a
+  // pre-cut-over order books its old plate cost memo'd 'pre-FIFO order'.
   for (const b of sales.byConcept.values()) {
     if (b.orderIds.length === 0) continue
-    const soldLines = await prisma.orderItem.findMany({
-      where: { orderId: { in: b.orderIds } },
-      select: { menuItemId: true, quantity: true, status: true },
-    })
-    const cogsCents = await cogsForSoldLines(soldLines)
-    if (cogsCents > 0) {
-      lines.push({ accountCode: ACCT.FOOD_COST,      type: 'debit',  amountCents: cogsCents, memo: `COGS @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
-      lines.push({ accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: cogsCents, memo: `Inventory used @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
-    }
+    lines.push(...await cogsLinesForOrders(tenantId, b.orderIds, { conceptId: b.conceptId, memo: `@ ${b.conceptSlug} ${tag}` }))
   }
 
   for (const b of sales.byConcept.values()) {
@@ -585,6 +589,10 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     if (b.tipCents > 0) {
       lines.push({ accountCode: ACCT.TIPS_PAYABLE, type: 'credit', amountCents: b.tipCents, memo: `Tips @ ${b.conceptSlug}`, conceptId: b.conceptId })
     }
+    // Delivery fees ex-tax (H9) — their GST is in the brand's tax line below.
+    if (b.deliveryFeeCents > 0) {
+      lines.push({ accountCode: ACCT.DELIVERY_FEE_REVENUE, type: 'credit', amountCents: b.deliveryFeeCents, memo: `Delivery fees @ ${b.conceptSlug}`, conceptId: b.conceptId })
+    }
     // Output tax per brand, to the brand's authority (BOOKS-10), tagged like
     // an order's own entry, so tax is measurable per brand as well as per
     // company.
@@ -604,7 +612,7 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     `unsettled=${sales.unsettledCents} settledElsewhere=${sales.settledElsewhereCents} rounding=${sales.roundingCents} ` +
     `nonTillCash=${sales.nonTillCashCents} variance=${cashVariance} drops=${drawer.dropsCents} in=${cashIn} ` +
     `cashRefunds=${cashRefundsToBook} cardRefunds=${cardRefundsToBook} payouts=${payoutsToBook} ` +
-    `tax=${sales.totals.taxCents} revenue=${sales.totals.revenueCents} svc=${sales.totals.serviceChargeCents} ` +
+    `tax=${sales.totals.taxCents} revenue=${sales.totals.revenueCents} fee=${sales.totals.deliveryFeeCents} svc=${sales.totals.serviceChargeCents} ` +
     `tips=${sales.totals.tipCents} discounts=${sales.totals.discountCents} wallet=${sales.totals.walletAppliedCents} ` +
     `giftCards=${sales.totals.giftCardAppliedCents} cancelledPaid=${cp.cashCents + cp.cardCents + cancelledRaastCents} ` +
     `cancelledRaast=${cancelledRaastCents}[${perCode(cp.raastByCode)}]`

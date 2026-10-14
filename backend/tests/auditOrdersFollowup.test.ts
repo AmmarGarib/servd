@@ -34,6 +34,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { addLotTx, consumeFifoTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 import {
   ingestOrder, updateOrderStatus, cancelOrder, processCoursePacingTick, type IngestOrderDTO,
 } from '../src/modules/orders/service.js'
@@ -112,6 +113,22 @@ async function depleted(orderId: string) {
   await settle(200)
 }
 
+/** Bring the patties to `n` through the stock ledger (a count gain lot, or a count loss off the lots). */
+async function setPatty(n: number) {
+  const current = (await prisma.inventoryItem.findUniqueOrThrow({ where: { id: pattyId } })).currentStock
+  const src = `follow-patty-${randomUUID()}`
+  if (n > current) {
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: tenantA, inventoryItemId: pattyId, qty: n - current, unitCostCents: 20_000, kind: 'count_gain', lotSourceType: 'count_gain',
+      lotSourceId: src, movementSourceType: 'test', movementSourceId: src, receivedAt: new Date(),
+    }))
+  } else if (n < current) {
+    await prisma.$transaction((tx) => consumeFifoTx(tx, {
+      tenantId: tenantA, inventoryItemId: pattyId, qty: current - n, kind: 'count_loss', sourceType: 'test', sourceId: src, clamp: false, occurredAt: new Date(),
+    }))
+  }
+}
+
 type Card = { id: string; paid: boolean }
 type Queue = { awaitingFire: Card[]; inProgress: Card[]; ready: Card[] }
 const queue = async (token = tokenA) => (await req('GET', '/expo/queue', token)).json() as Queue
@@ -136,8 +153,11 @@ beforeAll(async () => {
   passId = (await prisma.station.create({ data: { conceptId: conceptA, name: 'Expo / Pass', displayOrder: 9 } })).id
   retiredId = (await prisma.station.create({ data: { conceptId: conceptA, name: 'Old Fryer', isActive: false } })).id
 
-  pattyId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Patty', unit: 'pcs', currentStock: 100 } })).id
-  // Never counted in: currentStock is the default 0.
+  // Company A's stock is on FIFO lots (finance wave B): cut over, 100 patties in a lot.
+  await prisma.setting.create({ data: { key: fifoCutoverKey(tenantA), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+  pattyId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Patty', unit: 'pcs' } })).id
+  await setPatty(100)
+  // Never counted in: no lot, currentStock 0.
   oilId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Frying oil', unit: 'pcs' } })).id
 
   const menu = async (name: string, stationId: string | null, labor: number, ingredients: string[] = []) => {
@@ -422,7 +442,7 @@ describe('R5 — only a retired station falls back to the pass', () => {
 describe('R2 / R6 — auto-86 only when a sale ran the stock out; the till keeps selling it, not a manual 86', () => {
   it('runs the whole day', async () => {
     // One patty left; everything on.
-    await prisma.inventoryItem.update({ where: { id: pattyId }, data: { currentStock: 1 } })
+    await setPatty(1)
     await prisma.menuItem.updateMany({ where: { id: { in: [burgerId, sliderId, friesId] } }, data: { isAvailable: true } })
     // Uncounted oil (stock 0): selling fries takes nothing and 86s nothing.
     const fries = await ringUp([{ id: friesId, name: 'Fries' }])
@@ -456,13 +476,13 @@ describe('R2 / R6 — auto-86 only when a sale ran the stock out; the till keeps
 
     // The patties arrive: only the slider (still the stock's 86) is offered
     // back — not the burger the chef pulled, not the fries.
-    await prisma.inventoryItem.update({ where: { id: pattyId }, data: { currentStock: 20 } })
+    await setPatty(20)
     const list = (await req('GET', '/kds/auto-86/back-in-stock', tokenA)).json() as { items: Array<{ menuItemId: string }> }
     expect(list.items.map((i) => i.menuItemId)).toEqual([sliderId])
     expect(((await req('GET', '/kds/auto-86/back-in-stock', tokenB)).json() as { items: unknown[] }).items).toEqual([])
 
     // Put everything back on for the rest of the file.
-    await prisma.inventoryItem.update({ where: { id: pattyId }, data: { currentStock: 100 } })
+    await setPatty(100)
     await prisma.menuItem.updateMany({ where: { id: { in: [burgerId, sliderId, friesId] } }, data: { isAvailable: true } })
   })
 })

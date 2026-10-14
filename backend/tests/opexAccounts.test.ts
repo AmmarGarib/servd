@@ -224,6 +224,9 @@ describe('OpEx payments post to the category account, from the right bank', () =
     const je = await entry(`opex.payment:${p1.json().id}`)
     expect(amt(je!.rows, '6200', 'debit')).toBe(80_000)
     expect(amt(je!.rows, '1021', 'credit')).toBe(80_000)
+    // No tax and no withholding (wave B): still the two-line entry; cash = invoice = expense.
+    expect(je!.rows).toHaveLength(2)
+    expect(p1.json().amounts).toEqual({ cashCents: 80_000, whtCents: 0, inputTaxCents: 0, invoiceCents: 80_000, expenseCents: 80_000 })
     expect(je!.rows.find((r) => r.code === '6200')!.conceptId).toBe(conceptA)
     // Booked on the day it was paid, not the day it was keyed.
     expect(je!.entryDate.toISOString().slice(0, 10)).toBe('2026-09-28')
@@ -379,6 +382,8 @@ describe('post old OpEx payments (admin): preview, then post', () => {
     const noBankLine = await prisma.opexLine.create({ data: { categoryId: ins.id, name: 'Theft policy', amountCents: 2_000, paymentMethod: 'cheque' } })
     const noBank = await prisma.opexPayment.create({ data: { lineId: noBankLine.id, periodStart: new Date('2026-09-01'), periodEnd: new Date('2026-09-30'), expectedCents: 2_000, actualCents: 2_000, paidAt: new Date('2026-09-05T07:00:00Z') } })
     const lockedP = await prisma.opexPayment.create({ data: { lineId: insLine.id, periodStart: new Date('2026-07-01'), periodEnd: new Date('2026-07-31'), expectedCents: 40_000, actualCents: 40_000, paidAt: new Date('2026-07-03T07:00:00Z') } })
+    // Wave B: input tax with no authority on it — fix it on the payment.
+    const noAuthority = await prisma.opexPayment.create({ data: { lineId: insLine.id, periodStart: new Date('2026-09-01'), periodEnd: new Date('2026-09-30'), expectedCents: 11_000, actualCents: 11_000, inputTaxCents: 1_000, paidAt: new Date('2026-09-06T07:00:00Z') } })
     await prisma.periodLock.create({ data: { tenantId: tenantA, lockedThrough: new Date('2026-07-31T18:59:59Z'), lockedBy: users.adminA!.id } })
 
     // Finance works OpEx but the backfill is the CEO's.
@@ -395,6 +400,8 @@ describe('post old OpEx payments (admin): preview, then post', () => {
     expect(pr.find((r) => r.paymentId === unmapped.id)!.category).toBe('Sundries')
     expect(outcomeOf(pr, noBank.id)).toBe('needs_bank')
     expect(outcomeOf(pr, lockedP.id)).toBe('period_locked')
+    expect(outcomeOf(pr, noAuthority.id)).toBe('needs_tax_details')
+    expect(pr.find((r) => r.paymentId === noAuthority.id)!.code).toBe('INPUT_TAX_AUTHORITY_REQUIRED')
     // The preview wrote nothing.
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA } })).toBe(before)
     expect(await prisma.opexCategory.findUniqueOrThrow({ where: { id: odd.id } }).then((c) => c.expenseAccountCode)).toBeNull()

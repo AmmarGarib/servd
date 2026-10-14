@@ -33,12 +33,32 @@
 //     taken out of stock.
 //   • No kitchen labour in plate cost (owner decision 26, 2026-09-27). Labour
 //     reaches the price only through payroll, as opex per portion.
+//   • Q is a PRICING allowance only (H18): never a stock quantity, never
+//     posted. It applies to the ingredient lines, not the Packaging section.
+//
+// Sections and the packaging rule (owner's FINAL rule, 2026-10-13):
+//
+//   • A plate recipe's lines are 'ingredients' or 'packaging'
+//     (RecipeIngredient.section). A sale consumes the Packaging section ONLY
+//     when packagingApplies(order, line): takeaway / delivery (every
+//     off-premise fulfilment) → yes; else the line's snapshotted brand vessel
+//     (OrderItem.serviceVessel, Concept.serviceVessel at ring-up) is
+//     'packaging' → yes; else (dine-in at a plate brand) → only when staff
+//     tapped "Box given" on the line. THE one seam — stock depletion, the books
+//     and the food-cost report all follow it.
+//   • A modifier (add-on) has its own recipe (RecipeKind 'modifier',
+//     Recipe.modifierId): what ONE unit of the add-on uses, per unit of the
+//     dish. Only a modifier recipe may carry negative lines ('removes', e.g.
+//     "no cheese"); a line's total per ingredient is clamped at zero.
+//   • A sale consumes only the ORDER's company's items: an item of another
+//     company, or of none, is excluded (never consumed) and reported.
 //
 // The costing functions are pure over a RecipeGraph so they can be unit-tested
 // without a database; the loaders at the bottom build the graph with Prisma.
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
+import { costClassOf, COST_CLASSES, zeroByClass, type CostClass } from './inventoryClass.js'
 
 // ─── Units ────────────────────────────────────────────────────────────────────
 
@@ -111,7 +131,16 @@ export interface CostItem {
   id: string
   unit: string | null
   unitCostCents: number | null
+  /** The item's company. Null = company-less: never consumed by a sale. Undefined = not loaded (pure costing). */
+  tenantId?: string | null
+  /** InventoryItem.category — its cost class (lib/inventoryClass.ts costClassOf). */
+  category?: string | null
 }
+
+/** RecipeIngredient.section. */
+export type RecipeSection = 'ingredients' | 'packaging'
+/** Concept.serviceVessel (snapshotted on OrderItem.serviceVessel at ring-up). */
+export type ServiceVessel = 'plate' | 'packaging'
 
 export interface CostLine {
   id?: string
@@ -120,16 +149,22 @@ export interface CostLine {
   quantity: number
   yieldPct: number
   inventoryItem: CostItem | null
+  /** 'ingredients' (default) | 'packaging' — packaging lines only on plate recipes. */
+  section?: string | null
 }
 
 export interface CostRecipe {
   id: string
   kind: string
   menuItemId?: string | null
+  /** kind 'modifier': the add-on it costs. */
+  modifierId?: string | null
   servings: number
   yieldGrams: number | null
   qFactorPct: number
   ingredients: CostLine[]
+  /** A plate's brand vessel (Concept.serviceVessel) — decides the dine-in target MC. Null/undefined = 'plate'. */
+  serviceVessel?: string | null
 }
 
 /** Every recipe a costing or explosion may need, by id (plates + their sub-recipes). */
@@ -152,16 +187,36 @@ function linePurchaseQty(line: CostLine): number {
   return measureToPurchaseUnits(line.quantity / lineYield(line.yieldPct), line.inventoryItem?.unit)
 }
 
-function explodeBatches(graph: RecipeGraph, recipeId: string, batches: number, out: Map<string, number>, stack: Set<string>): void {
+const isPackagingLine = (line: CostLine): boolean => line.section === 'packaging'
+
+/** Which of the TOP recipe's lines an explosion takes (sub-recipes always explode whole). */
+interface TopFilter {
+  sections: 'all' | RecipeSection
+  /** Negative ('removes') lines count — modifier recipes only. Elsewhere they are skipped. */
+  allowNegative: boolean
+}
+
+function explodeBatches(
+  graph: RecipeGraph, recipeId: string, batches: number, out: Map<string, number>, stack: Set<string>, top: TopFilter | null,
+): void {
   const r = graph.get(recipeId)
   if (!r || stack.has(recipeId) || !(batches > 0)) return   // unknown, cyclic (A→B→A) or nothing to make
   stack.add(recipeId)
   for (const line of r.ingredients) {
+    if (top && top.sections !== 'all' && (isPackagingLine(line) ? 'packaging' : 'ingredients') !== top.sections) continue
+    if (line.quantity < 0 && !top?.allowNegative) continue
     if (line.prepRecipeId) {
       const sub = graph.get(line.prepRecipeId)
       // A sub-recipe with no batch yield can't be scaled to the grams used.
       if (sub?.yieldGrams && sub.yieldGrams > 0) {
-        explodeBatches(graph, sub.id, batches * (line.quantity / sub.yieldGrams), out, stack)
+        if (line.quantity > 0) {
+          explodeBatches(graph, sub.id, batches * (line.quantity / sub.yieldGrams), out, stack, null)
+        } else if (line.quantity < 0) {
+          // A modifier that removes a sub-recipe: its exploded quantities, negated.
+          const back = new Map<string, number>()
+          explodeBatches(graph, sub.id, batches * (-line.quantity / sub.yieldGrams), back, stack, null)
+          for (const [k, v] of back) out.set(k, (out.get(k) ?? 0) - v)
+        }
       }
     } else if (line.inventoryItemId && line.inventoryItem) {
       out.set(line.inventoryItemId, (out.get(line.inventoryItemId) ?? 0) + batches * linePurchaseQty(line))
@@ -172,10 +227,17 @@ function explodeBatches(graph: RecipeGraph, recipeId: string, batches: number, o
 
 export type ExplodeBasis = 'portion' | 'batch' | 'gram'
 
+function batchesOf(r: CostRecipe, qty: number, per: ExplodeBasis): number {
+  return per === 'batch' ? qty
+    : per === 'gram' ? (r.yieldGrams && r.yieldGrams > 0 ? qty / r.yieldGrams : 0)
+    : qty / Math.max(r.servings || 1, 1)
+}
+
 /**
  * What `qty` of a recipe takes out of stock, per inventory item, in PURCHASE
  * units (kg / litres / pcs — the unit currentStock is held in), recursing
- * through sub-recipes. `per`:
+ * through sub-recipes. Every section (ingredients + packaging) — a sale reads
+ * consumptionPerLine instead, which applies the packaging rule. `per`:
  *   'portion' (default) — qty portions of a plate (a batch makes `servings`)
  *   'batch'             — qty whole batches
  *   'gram'              — qty grams of a sub-recipe (against its yieldGrams)
@@ -184,11 +246,7 @@ export function explodeRecipe(graph: RecipeGraph, recipeId: string, qty: number,
   const out = new Map<string, number>()
   const r = graph.get(recipeId)
   if (!r) return out
-  const batches =
-    per === 'batch' ? qty :
-    per === 'gram'  ? (r.yieldGrams && r.yieldGrams > 0 ? qty / r.yieldGrams : 0) :
-                      qty / Math.max(r.servings || 1, 1)
-  explodeBatches(graph, recipeId, batches, out, new Set())
+  explodeBatches(graph, recipeId, batchesOf(r, qty, per), out, new Set(), { sections: 'all', allowNegative: r.kind === 'modifier' })
   return out
 }
 
@@ -217,13 +275,13 @@ export interface RecipeLineCost {
 
 export interface RecipeCost {
   lines: RecipeLineCost[]
-  /** Raw inventory lines of THIS recipe, before Q. */
+  /** Raw inventory lines of THIS recipe (both sections), before Q. */
   rawIngredientCents: number
   /** Sub-recipe lines (each already carrying its own Q). */
   componentCents: number
-  /** raw + components — "ingredient cost" on the screens. */
+  /** raw + components — "ingredient cost" on the screens (packaging section included, as before). */
   ingredientCents: number
-  /** This recipe's Q factor, on its raw lines only. */
+  /** This recipe's Q factor on its INGREDIENT raw lines (one batch) — a pricing allowance only (H18): never stock, never posted. */
   qCents: number
   /** One batch: ingredientCents + qCents. No labour (decision 26). */
   totalCents: number
@@ -231,11 +289,26 @@ export interface RecipeCost {
   perPortionCents: number
   /** Sub-recipes: totalCents ÷ yieldGrams. Null without a yield. */
   perGramCents: number | null
+  // ── Material cost (MC), PER PORTION, ex-Q, every depth (wave B, owner's FINAL packaging rule) ──
+  /** Everything the dish can consume by cost class (food / drinks / packaging), Packaging section included. */
+  stockByClass: Record<CostClass, number>
+  /** The dish's Packaging section alone (plate recipes). */
+  packagingCents: number
+  /** The plate MC: what every sale of it consumes — stockByClass less the Packaging section (food + drinks). */
+  standardCents: number
+  /**
+   * The TARGET MC per order type: standardCents + packagingCents where the
+   * packaging applies to that order type for the recipe's brand vessel —
+   * takeaway and delivery always; dine-in only at a 'packaging' brand (a
+   * dine-in "Box given" is an ACTUAL, not a target).
+   */
+  targetMcCents: { dine_in: number; takeout: number; delivery: number }
 }
 
 const EMPTY_COST: RecipeCost = {
   lines: [], rawIngredientCents: 0, componentCents: 0, ingredientCents: 0,
   qCents: 0, totalCents: 0, perPortionCents: 0, perGramCents: null,
+  stockByClass: zeroByClass(), packagingCents: 0, standardCents: 0, targetMcCents: { dine_in: 0, takeout: 0, delivery: 0 },
 }
 
 /**
@@ -254,12 +327,26 @@ function costOf(graph: RecipeGraph, recipeId: string, memo: Map<string, RecipeCo
   stack.add(recipeId)
 
   let raw = 0
+  let rawForQ = 0
   let comp = 0
+  let packBatch = 0
+  const byClassBatch = zeroByClass()
   const lines: RecipeLineCost[] = r.ingredients.map((line) => {
     if (line.prepRecipeId) {
-      const cpg = costOf(graph, line.prepRecipeId, memo, stack).perGramCents ?? 0
+      const subCost = costOf(graph, line.prepRecipeId, memo, stack)
+      const cpg = subCost.perGramCents ?? 0
       const costCents = cpg * line.quantity
       comp += costCents
+      // The sub-recipe's MC by class, ex-Q, scaled from its batch to the grams used.
+      const sub = graph.get(line.prepRecipeId)
+      if (sub?.yieldGrams && sub.yieldGrams > 0) {
+        const servings = Math.max(sub.servings || 1, 1)
+        for (const c of COST_CLASSES) {
+          const v = (subCost.stockByClass[c] * servings / sub.yieldGrams) * line.quantity
+          byClassBatch[c] += v
+          if (isPackagingLine(line)) packBatch += v
+        }
+      }
       return {
         ingredientId: line.id ?? null, inventoryItemId: null, prepRecipeId: line.prepRecipeId,
         quantity: line.quantity, purchaseQty: 0, costPerMeasureCents: cpg, costCents,
@@ -269,6 +356,9 @@ function costOf(graph: RecipeGraph, recipeId: string, memo: Map<string, RecipeCo
     const purchaseQty = item ? linePurchaseQty(line) : 0
     const costCents = item ? purchaseQty * (item.unitCostCents ?? 0) : 0
     raw += costCents
+    if (isPackagingLine(line)) packBatch += costCents
+    else rawForQ += costCents
+    if (item) byClassBatch[costClassOf(item.category)] += costCents
     return {
       ingredientId: line.id ?? null, inventoryItemId: line.inventoryItemId, prepRecipeId: null,
       quantity: line.quantity, purchaseQty,
@@ -278,8 +368,15 @@ function costOf(graph: RecipeGraph, recipeId: string, memo: Map<string, RecipeCo
   })
   stack.delete(recipeId)
 
-  const qCents = raw * ((r.qFactorPct ?? 10) / 100)
+  const servings = Math.max(r.servings || 1, 1)
+  const qCents = rawForQ * ((r.qFactorPct ?? 10) / 100)
   const totalCents = raw + comp + qCents
+  const stockByClass = zeroByClass()
+  for (const c of COST_CLASSES) stockByClass[c] = byClassBatch[c] / servings
+  const packagingCents = packBatch / servings
+  const allCents = COST_CLASSES.reduce((sum, c) => sum + stockByClass[c], 0)
+  const standardCents = allCents - packagingCents
+  const vessel = r.serviceVessel === 'packaging' ? 'packaging' : 'plate'
   const result: RecipeCost = {
     lines,
     rawIngredientCents: raw,
@@ -287,8 +384,16 @@ function costOf(graph: RecipeGraph, recipeId: string, memo: Map<string, RecipeCo
     ingredientCents: raw + comp,
     qCents,
     totalCents,
-    perPortionCents: totalCents / Math.max(r.servings || 1, 1),
+    perPortionCents: totalCents / servings,
     perGramCents: r.yieldGrams && r.yieldGrams > 0 ? totalCents / r.yieldGrams : null,
+    stockByClass,
+    packagingCents,
+    standardCents,
+    targetMcCents: {
+      dine_in: standardCents + (vessel === 'packaging' ? packagingCents : 0),
+      takeout: standardCents + packagingCents,
+      delivery: standardCents + packagingCents,
+    },
   }
   memo.set(recipeId, result)
   return result
@@ -318,21 +423,29 @@ export function belowParWhere(): Prisma.InventoryItemWhereInput {
 type Db = Prisma.TransactionClient
 
 const COST_RECIPE_SELECT = {
-  id: true, kind: true, menuItemId: true, servings: true, yieldGrams: true, qFactorPct: true,
+  id: true, kind: true, menuItemId: true, modifierId: true, servings: true, yieldGrams: true, qFactorPct: true,
+  menuItem: { select: { concept: { select: { serviceVessel: true } } } },
   ingredients: {
     select: {
-      id: true, inventoryItemId: true, prepRecipeId: true, quantity: true, yieldPct: true,
-      inventoryItem: { select: { id: true, unit: true, unitCostCents: true } },
+      id: true, inventoryItemId: true, prepRecipeId: true, quantity: true, yieldPct: true, section: true,
+      inventoryItem: { select: { id: true, unit: true, unitCostCents: true, tenantId: true, category: true } },
     },
   },
 } satisfies Prisma.RecipeSelect
+
+type LoadedRecipe = Prisma.RecipeGetPayload<{ select: typeof COST_RECIPE_SELECT }>
+
+function toCostRecipe(r: LoadedRecipe): CostRecipe {
+  const { menuItem, ...rest } = r
+  return { ...rest, serviceVessel: menuItem?.concept.serviceVessel ?? null }
+}
 
 /**
  * Load the recipes matching `where` plus every sub-recipe they reach, however
  * deep. Returns the graph and the matched (root) recipes.
  */
 export async function loadRecipeGraph(where: Prisma.RecipeWhereInput, db: Db = prisma): Promise<{ graph: RecipeGraph; roots: CostRecipe[] }> {
-  const roots = (await db.recipe.findMany({ where, select: COST_RECIPE_SELECT })) as CostRecipe[]
+  const roots = (await db.recipe.findMany({ where, select: COST_RECIPE_SELECT })).map(toCostRecipe)
   const graph = buildRecipeGraph(roots)
   let pending = roots
   while (pending.length > 0) {
@@ -341,7 +454,7 @@ export async function loadRecipeGraph(where: Prisma.RecipeWhereInput, db: Db = p
       for (const l of r.ingredients) if (l.prepRecipeId && !graph.has(l.prepRecipeId)) missing.add(l.prepRecipeId)
     }
     if (missing.size === 0) break
-    pending = (await db.recipe.findMany({ where: { id: { in: [...missing] } }, select: COST_RECIPE_SELECT })) as CostRecipe[]
+    pending = (await db.recipe.findMany({ where: { id: { in: [...missing] } }, select: COST_RECIPE_SELECT })).map(toCostRecipe)
     for (const r of pending) graph.set(r.id, r)
   }
   return { graph, roots }
@@ -357,23 +470,196 @@ export async function menuItemPlateCosts(menuItemIds: string[], db: Db = prisma)
   return out
 }
 
-export interface SoldLine { menuItemId: string | null; quantity: number; status?: string | null }
+// ─── The packaging rule ───────────────────────────────────────────────────────
 
-/** What a set of sold lines takes out of stock, per inventory item, in purchase units. Voided lines are skipped. */
-export async function consumptionForSoldLines(lines: SoldLine[], db: Db = prisma): Promise<Map<string, number>> {
-  const live = lines.filter((l) => l.menuItemId && l.status !== 'voided' && l.quantity > 0)
-  const out = new Map<string, number>()
-  if (live.length === 0) return out
-  const { graph, roots } = await loadRecipeGraph({ menuItemId: { in: [...new Set(live.map((l) => l.menuItemId!))] } }, db)
-  const byMenuItem = new Map(roots.map((r) => [r.menuItemId, r.id]))
-  for (const l of live) {
-    const rid = byMenuItem.get(l.menuItemId)
-    if (rid) mergeQuantities(out, explodeRecipe(graph, rid, l.quantity, 'portion'))
-  }
-  return out
+/**
+ * THE packaging seam (owner's FINAL rule, 2026-10-13): does this sold line use
+ * its dish's Packaging section?
+ *   • takeaway / delivery (every off-premise fulfilment) → yes;
+ *   • else the line's brand vessel (OrderItem.serviceVessel, snapshotted at
+ *     ring-up; a legacy line with none reads `concept`, the brand's current
+ *     vessel) is 'packaging' (e.g. Stackd) → yes;
+ *   • else (dine-in at a plate brand) → only when staff tapped "Box given".
+ * Stock depletion, the books and the food-cost report all follow it.
+ */
+export function packagingApplies(
+  order: { fulfilmentType: string },
+  line: { serviceVessel: ServiceVessel | string | null; boxGiven: boolean },
+  concept?: { serviceVessel?: string | null } | null,
+): boolean {
+  if (order.fulfilmentType !== 'dine_in') return true
+  const vessel = line.serviceVessel ?? concept?.serviceVessel ?? 'plate'
+  if (vessel === 'packaging') return true
+  return line.boxGiven === true
 }
 
-/** Theoretical cost of goods for a set of sold lines, in paisa. Voided lines and items without a recipe cost 0. */
+/**
+ * Staff tapped "Box given" on a dine-in line at a plate brand (leftovers boxed),
+ * or undid it. Implemented in modules/orders/stock.ts (it moves stock) — see
+ * there; re-exported here because the packaging rule lives here.
+ */
+export async function markBoxGiven(
+  orderItemId: string,
+  actor: { id: string; tenantIds?: string[] },
+  opts: { undo?: boolean } = {},
+): Promise<{ boxGiven: boolean; depleted: boolean }> {
+  const { markBoxGiven: impl } = await import('../modules/orders/stock.js')
+  return impl(orderItemId, actor, opts)
+}
+
+// ─── What a sale consumes ─────────────────────────────────────────────────────
+
+export interface SoldLine {
+  /** OrderItem.id, when there is one. */
+  id?: string
+  menuItemId: string | null
+  quantity: number
+  status?: string | null
+  /** OrderItemModifier.modifierId of each add-on picked — one unit of the add-on per unit of the dish. */
+  modifierIds?: Array<string | null>
+  /** OrderItem.serviceVessel (null on legacy lines → the brand's current vessel). */
+  serviceVessel?: string | null
+  boxGiven?: boolean
+}
+
+export interface NeedRow { qty: number; costClass: CostClass }
+export interface ExcludedItem {
+  itemId: string
+  reason: 'foreign' | 'company_less'
+  /** The dish that drew it (one recipe_foreign_stock flag per (menu item, company)). */
+  menuItemId: string | null
+}
+
+export interface LineConsumption {
+  line: SoldLine
+  /** What the line takes, per item, in purchase units: its ingredients + add-ons, plus its packaging when it applies. */
+  need: Map<string, NeedRow>
+  /** The dish's Packaging section alone, whether or not it applies (for "Box given"). */
+  packaging: Map<string, NeedRow>
+  packagingApplies: boolean
+  /** Items of another company or of none — never consumed. */
+  excluded: ExcludedItem[]
+}
+
+export interface ConsumptionOpts {
+  /** The ORDER's company: only its items are consumed. */
+  tenantId: string
+  /** Order.fulfilmentType — 'dine_in' | 'takeout' | 'delivery'. */
+  fulfilmentType: string
+  /** The brand's current vessel, read by legacy lines with no snapshot. */
+  serviceVessel?: string | null
+}
+
+/**
+ * Per sold line (same order as `lines`; a voided / empty / unmapped line gets
+ * empty maps): what it takes out of stock in PURCHASE units — the dish's
+ * ingredients and sub-recipes, its add-ons' modifier recipes (clamped at zero
+ * per ingredient per line: a 'removes' line can only take an ingredient out of
+ * the dish, never below none), and its Packaging section when
+ * packagingApplies. Items not of `o.tenantId` are excluded and reported.
+ */
+export async function consumptionPerLine(lines: SoldLine[], db: Db, o: ConsumptionOpts): Promise<LineConsumption[]> {
+  const live = (l: SoldLine) => !!l.menuItemId && l.status !== 'voided' && l.quantity > 0
+  const menuItemIds = [...new Set(lines.filter(live).map((l) => l.menuItemId!))]
+  const modifierIds = [...new Set(lines.filter(live).flatMap((l) => (l.modifierIds ?? []).filter((m): m is string => !!m)))]
+  const empty = (line: SoldLine): LineConsumption => ({ line, need: new Map(), packaging: new Map(), packagingApplies: false, excluded: [] })
+  if (menuItemIds.length === 0) return lines.map(empty)
+
+  const { graph, roots } = await loadRecipeGraph({
+    OR: [
+      { menuItemId: { in: menuItemIds } },
+      ...(modifierIds.length > 0 ? [{ modifierId: { in: modifierIds }, kind: 'modifier' as const }] : []),
+    ],
+  }, db)
+  const byMenuItem = new Map(roots.filter((r) => r.menuItemId && r.kind !== 'modifier').map((r) => [r.menuItemId!, r]))
+  const byModifier = new Map(roots.filter((r) => r.modifierId && r.kind === 'modifier').map((r) => [r.modifierId!, r]))
+  const items = new Map<string, CostItem>()
+  for (const r of graph.values()) for (const l of r.ingredients) if (l.inventoryItem) items.set(l.inventoryItem.id, l.inventoryItem)
+
+  return lines.map((line) => {
+    if (!live(line)) return empty(line)
+    const dish = byMenuItem.get(line.menuItemId!)
+    const base = new Map<string, number>()
+    const pack = new Map<string, number>()
+    if (dish) {
+      const batches = batchesOf(dish, line.quantity, 'portion')
+      explodeBatches(graph, dish.id, batches, base, new Set(), { sections: 'ingredients', allowNegative: false })
+      explodeBatches(graph, dish.id, batches, pack, new Set(), { sections: 'packaging', allowNegative: false })
+    }
+    for (const mid of line.modifierIds ?? []) {
+      const mod = mid ? byModifier.get(mid) : undefined
+      if (!mod) continue
+      explodeBatches(graph, mod.id, batchesOf(mod, line.quantity, 'portion'), base, new Set(), { sections: 'all', allowNegative: true })
+    }
+    const applies = packagingApplies(
+      { fulfilmentType: o.fulfilmentType },
+      { serviceVessel: line.serviceVessel ?? null, boxGiven: !!line.boxGiven },
+      { serviceVessel: o.serviceVessel ?? null },
+    )
+    const excluded: ExcludedItem[] = []
+    const seen = new Set<string>()
+    const keep = (src: Map<string, number>): Map<string, NeedRow> => {
+      const out = new Map<string, NeedRow>()
+      for (const [itemId, q] of src) {
+        const qty = Math.max(0, q)           // clamp: a 'removes' line never takes below none
+        if (!(qty > 0)) continue
+        const item = items.get(itemId)
+        const tenantId = item?.tenantId ?? null
+        if (tenantId !== o.tenantId) {
+          if (!seen.has(itemId)) {
+            seen.add(itemId)
+            excluded.push({ itemId, reason: tenantId ? 'foreign' : 'company_less', menuItemId: line.menuItemId })
+          }
+          continue
+        }
+        out.set(itemId, { qty, costClass: costClassOf(item?.category) })
+      }
+      return out
+    }
+    const baseNeed = keep(base)
+    const packNeed = keep(pack)
+    const need = new Map(baseNeed)
+    if (applies) {
+      for (const [id, r] of packNeed) {
+        const cur = need.get(id)
+        need.set(id, cur ? { qty: cur.qty + r.qty, costClass: cur.costClass } : { ...r })
+      }
+    }
+    return { line, need, packaging: packNeed, packagingApplies: applies, excluded }
+  })
+}
+
+/**
+ * What a set of sold lines of ONE order (or one company and fulfilment) takes
+ * out of stock, per inventory item, in purchase units — consumptionPerLine
+ * merged. Voided lines are skipped; other companies' items are excluded.
+ */
+export async function consumptionForSoldLines(
+  lines: SoldLine[], db: Db, o: ConsumptionOpts,
+): Promise<{ need: Map<string, NeedRow>; excluded: ExcludedItem[] }> {
+  const per = await consumptionPerLine(lines, db, o)
+  const need = new Map<string, NeedRow>()
+  const excluded: ExcludedItem[] = []
+  const seen = new Set<string>()
+  for (const p of per) {
+    for (const [id, r] of p.need) {
+      const cur = need.get(id)
+      need.set(id, cur ? { qty: cur.qty + r.qty, costClass: cur.costClass } : { ...r })
+    }
+    for (const e of p.excluded) {
+      const k = `${e.itemId}|${e.menuItemId ?? ''}`
+      if (!seen.has(k)) { seen.add(k); excluded.push(e) }
+    }
+  }
+  return { need, excluded }
+}
+
+/**
+ * Theoretical cost of goods for a set of sold lines, in paisa: the plate cost
+ * (lib costing, Q included) × quantity. Voided lines and items without a
+ * recipe cost 0. Menu engineering and the pre-FIFO legacy COGS fallback
+ * (accounting/cogs.ts) only — the books cost a FIFO order at its lots.
+ */
 export async function cogsForSoldLines(lines: SoldLine[], db: Db = prisma): Promise<number> {
   const live = lines.filter((l) => l.menuItemId && l.status !== 'voided' && l.quantity > 0)
   if (live.length === 0) return 0
@@ -383,7 +669,7 @@ export async function cogsForSoldLines(lines: SoldLine[], db: Db = prisma): Prom
   return Math.round(total)
 }
 
-/** Theoretical COGS of one order — what the ledger books at completion. */
+/** Theoretical COGS of one order (the legacy plate-cost rule — see cogsForSoldLines). */
 export async function orderCogsCents(orderId: string, db: Db = prisma): Promise<number> {
   const items = await db.orderItem.findMany({
     where: { orderId },

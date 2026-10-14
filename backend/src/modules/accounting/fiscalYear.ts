@@ -14,6 +14,10 @@
 // This part is pure (wave 0). The database helpers (fiscalYearEndMonthOf,
 // fiscalYearsFor) are added below by the close build.
 
+import type { Prisma, PrismaClient } from '@prisma/client'
+
+type Db = Prisma.TransactionClient | PrismaClient
+
 const PKT_OFFSET_MS = 5 * 3600_000
 
 /** H29: a company's fiscal year ends 30 June unless the CEO sets otherwise. */
@@ -88,4 +92,54 @@ export function isFiscalYearEndInRange(endMonth: number, prevLock: Date | null, 
   let end = pktEndOfMonth(month >= endMonth ? year : year - 1, endMonth)
   if (end.getTime() > newLock.getTime()) end = pktEndOfMonth(pktYearMonth(end).year - 1, endMonth)
   return prevLock === null || end.getTime() > prevLock.getTime()
+}
+
+// ─── Database helpers (the close build) ──────────────────────────────────────
+
+/** A company's own fiscal year end month (1–12) — `Tenant.fiscalYearEndMonth`, else 30 June (H29). */
+export async function fiscalYearEndMonthOf(db: Db, tenantId: string): Promise<number> {
+  const t = await db.tenant.findUnique({ where: { id: tenantId }, select: { fiscalYearEndMonth: true } })
+  const m = t?.fiscalYearEndMonth
+  return Number.isInteger(m) && m! >= 1 && m! <= 12 ? m! : DEFAULT_FISCAL_YEAR_END_MONTH
+}
+
+export interface CompanyFiscalYear {
+  tenantId: string
+  endMonth: number
+  start: Date
+  end: Date
+  label: string
+}
+
+/**
+ * The fiscal year each company is in AT `at` — a report passes its own asOf,
+ * never today, so a balance sheet as of last June shows last year's split.
+ * Every company keeps its own year end; one in the list that does not exist
+ * gets the default year end (it has no books to split anyway).
+ */
+export async function fiscalYearsFor(db: Db, tenantIds: string[], at: Date): Promise<CompanyFiscalYear[]> {
+  if (tenantIds.length === 0) return []
+  const rows = await db.tenant.findMany({ where: { id: { in: tenantIds } }, select: { id: true, fiscalYearEndMonth: true } })
+  const monthOf = new Map(rows.map((r) => [r.id, r.fiscalYearEndMonth]))
+  return tenantIds.map((tenantId) => {
+    const m = monthOf.get(tenantId)
+    const endMonth = Number.isInteger(m) && m! >= 1 && m! <= 12 ? m! : DEFAULT_FISCAL_YEAR_END_MONTH
+    const fy = fiscalYearOf(endMonth, at)
+    return { tenantId, endMonth, start: fy.start, end: fy.end, label: fy.label }
+  })
+}
+
+/**
+ * Whether the company's books have been closed across a fiscal year end — for
+ * any of `endMonths` (pass the current and a proposed month): some year end
+ * lies between its first journal entry and its latest lock. Changing the year
+ * end then re-presents years already closed, so it needs the CEO's reason.
+ */
+export async function closedAcrossYearEnd(db: Db, tenantId: string, endMonths: number[]): Promise<boolean> {
+  const lock = await db.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+  if (!lock) return false
+  const first = await db.journalEntry.findFirst({ where: { tenantId }, orderBy: { entryDate: 'asc' }, select: { entryDate: true } })
+  const from = new Date((first?.entryDate ?? lock.lockedThrough).getTime() - 1)
+  if (from.getTime() >= lock.lockedThrough.getTime()) return false
+  return endMonths.some((m) => isFiscalYearEndInRange(m, from, lock.lockedThrough))
 }

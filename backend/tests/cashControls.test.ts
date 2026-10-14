@@ -5,8 +5,10 @@
 // in B, so a row stamped with the operator's company instead of the
 // document's shows up as B.
 //
-//   Petty cash   /movements takes topup|spend only; a top-up only by a cash
-//                keeper or the custodian; INT4 bounds (422); the opening float
+//   Petty cash   /movements takes topup|spend only; a top-up or a spend only
+//                by a cash keeper or the custodian, each booked (finance wave
+//                B: 1011 against the source / the category's code, counts to
+//                8010, transfers nothing); INT4 bounds (422); the opening float
 //                is a 'topup' movement + an audit row; box → box transfers in
 //                one company (422 across companies, 404 for a stranger);
 //                PATCH name / custodian / limit (raising needs a PIN); the
@@ -69,6 +71,11 @@ const lockToday = (tenantId: string) =>
 const sumMovements = async (boxId: string) =>
   (await prisma.pettyCashMovement.findMany({ where: { boxId }, select: { amountCents: true } })).reduce((s, m) => s + m.amountCents, 0)
 const floatOf = async (boxId: string) => (await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: boxId } })).floatCents
+/** [code, type, amount] of the entry `reference` in `tenantId`'s books, sorted. */
+const linesOf = async (reference: string, tenantId: string) => {
+  const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId, reference }, include: { lines: { include: { account: { select: { code: true } } } } } })
+  return je.lines.map((l) => [l.account.code, l.type, l.amountCents]).sort()
+}
 
 beforeAll(async () => {
   A = await mkCompany(`cc-a-${randomBytes(2).toString('hex')}`)
@@ -122,6 +129,10 @@ describe('petty cash: one movement writer, guarded doors', () => {
     expect(r.json()).toMatchObject({ tenantId: A.tenantId, floatCents: 50_000, topUpLimitCents: 20_000 })
     const moves = await prisma.pettyCashMovement.findMany({ where: { boxId: box } })
     expect(moves.map((m) => [m.type, m.amountCents, m.reason, m.createdById])).toEqual([['topup', 50_000, 'Opening float', finA.id]])
+    // The opening comes from the Garibsons cashier unless told otherwise (H1): Dr 1011 / Cr 2210, Booked.
+    expect(moves[0]).toMatchObject({ source: 'garibsons', accountCode: '2210', tenantId: A.tenantId })
+    expect(moves[0]!.journalEntryId).not.toBeNull()
+    expect(await linesOf(`pettycash.topup:${moves[0]!.id}`, A.tenantId)).toEqual([['1011', 'debit', 50_000], ['2210', 'credit', 50_000]])
     const a = await prisma.auditLog.findFirstOrThrow({ where: { action: 'petty_cash.box_create', entityId: box } })
     expect(a.tenantId).toBe(A.tenantId)
     expect(a.after).toMatchObject({ floatCents: 50_000, custodianId: cashA.id })
@@ -166,29 +177,45 @@ describe('petty cash: one movement writer, guarded doors', () => {
     expect(await floatOf(box)).toBe(50_000)
   })
 
-  it('a top-up is a cash keeper\'s or the custodian\'s; a spend any staff of the company', async () => {
-    const stranger = await call(cashA2, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill' })
+  it('a top-up or a spend is a cash keeper\'s or the custodian\'s, and each is booked', async () => {
+    const stranger = await call(cashA2, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill', source: 'safe' })
     expect(stranger.statusCode).toBe(403)
     expect(stranger.json().error.code).toBe('TOPUP_NOT_ALLOWED')
     // finance without the books module is not a cash keeper
-    const noBooks = await call(finNoBooks, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill' })
+    const noBooks = await call(finNoBooks, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill', source: 'safe' })
     expect(noBooks.statusCode).toBe(403)
     expect(await floatOf(box)).toBe(50_000)
+    // A top-up says where the cash came from.
+    const noSource = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill' })
+    expect(noSource.statusCode).toBe(400)
+    expect(noSource.json().error.code).toBe('TOPUP_SOURCE_REQUIRED')
 
-    const custodian = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill from safe' })
+    const custodian = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill from safe', source: 'safe' })
     expect(custodian.statusCode, custodian.body).toBe(201)
     expect(custodian.json().newFloatCents).toBe(51_000)
-    const keeper = await call(finA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill' })
+    expect(custodian.json().booked).toBe(true)
+    expect(await linesOf(`pettycash.topup:${custodian.json().movement.id}`, A.tenantId)).toEqual([['1010', 'credit', 1_000], ['1011', 'debit', 1_000]])
+    const keeper = await call(finA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 1_000, reason: 'refill', source: 'garibsons' })
     expect(keeper.statusCode).toBe(201)
+    expect(await linesOf(`pettycash.topup:${keeper.json().movement.id}`, A.tenantId)).toEqual([['1011', 'debit', 1_000], ['2210', 'credit', 1_000]])
     // Over the limit still needs a PIN, even for the custodian.
-    const over = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 25_000, reason: 'big' })
+    const over = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'topup', amountCents: 25_000, reason: 'big', source: 'safe' })
     expect(over.json().error.code).toBe('TOPUP_OVER_LIMIT')
 
-    const spend = await call(cashA2, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'spend', amountCents: 2_000, reason: 'Milk' })
-    expect(spend.statusCode).toBe(201)
+    // A spend: the custodian or a keeper — not any staff member any more.
+    const notHolder = await call(cashA2, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'spend', amountCents: 2_000, reason: 'Milk for staff tea', categoryKey: 'staff_welfare' })
+    expect(notHolder.statusCode).toBe(403)
+    expect(notHolder.json().error.code).toBe('SPEND_NOT_ALLOWED')
+    // A spend says what it was for.
+    const noCat = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'spend', amountCents: 2_000, reason: 'Milk' })
+    expect(noCat.json().error.code).toBe('SPEND_CATEGORY_REQUIRED')
+    const spend = await call(cashA, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'spend', amountCents: 2_000, reason: 'Milk for staff tea', categoryKey: 'staff_welfare' })
+    expect(spend.statusCode, spend.body).toBe(201)
     expect(spend.json().newFloatCents).toBe(50_000)
+    expect(spend.json().movement).toMatchObject({ type: 'spend', amountCents: -2_000, tenantId: A.tenantId, category: 'staff_welfare' })
+    expect(await linesOf(`pettycash.spend:${spend.json().movement.id}`, A.tenantId)).toEqual([['1011', 'credit', 2_000], ['6180', 'debit', 2_000]])
     // B's people never reach A's box.
-    expect((await call(ceoB, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'spend', amountCents: 1, reason: 'x' })).statusCode).toBe(404)
+    expect((await call(ceoB, 'POST', '/trustops/petty-cash/movements', { boxId: box, type: 'spend', amountCents: 1, reason: 'x', categoryKey: 'office' })).statusCode).toBe(404)
   })
 
   it('transfers move cash between two boxes of one company, with one shared reference', async () => {
@@ -201,6 +228,9 @@ describe('petty cash: one movement writer, guarded doors', () => {
     expect(inbound).toMatchObject({ boxId: box2, type: 'transfer', amountCents: 7_500 })
     expect(out.reason).toContain(ref)
     expect(inbound.reason).toContain(ref)
+    expect([out.transferRef, inbound.transferRef]).toEqual([ref, ref])
+    // Both boxes sit on 1011: a transfer books nothing.
+    expect(await prisma.journalEntry.count({ where: { reference: { in: [`pettycash.transfer:${out.id}`, `pettycash.transfer:${inbound.id}`] } } })).toBe(0)
     const a = await prisma.auditLog.findFirstOrThrow({ where: { action: 'petty_cash.transfer', entityId: box } })
     expect(a.tenantId).toBe(A.tenantId)
     expect(a.metadata).toMatchObject({ outMovementId: out.id, inMovementId: inbound.id })
@@ -252,6 +282,7 @@ describe('petty cash: one movement writer, guarded doors', () => {
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().varianceCents).toBe(-500)
     expect(r.json().movement).toMatchObject({ type: 'reconcile', amountCents: -500, reason: 'Monthly count' })
+    expect(await linesOf(`pettycash.reconcile:${r.json().movement.id}`, A.tenantId)).toEqual([['1011', 'credit', 500], ['8010', 'debit', 500]])
     expect((await prisma.auditLog.findFirstOrThrow({ where: { action: 'petty_cash.reconcile', entityId: r.json().movement.id } })).tenantId).toBe(A.tenantId)
     for (const id of [box, box2, boxB]) expect(await sumMovements(id)).toBe(await floatOf(id))
   })
@@ -430,7 +461,7 @@ describe('reservation deposits', () => {
       include: { lines: { include: { account: { select: { code: true } } } } },
     })
     expect(je.lines.map((l) => [l.account.code, l.type, l.amountCents, l.conceptId]).sort()).toEqual([
-      ['1030', 'debit', 80_000, A.conceptId], ['4100', 'credit', 80_000, A.conceptId],
+      ['1030', 'debit', 80_000, A.conceptId], ['2032', 'credit', 5_926, A.conceptId], ['4090', 'credit', 74_074, A.conceptId],
     ])
     expect(je.entryDate.getTime()).toBeGreaterThanOrEqual(t0 - 1_000)
     const after = await prisma.reservation.findUniqueOrThrow({ where: { id: r.id } })

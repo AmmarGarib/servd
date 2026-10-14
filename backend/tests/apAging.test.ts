@@ -48,9 +48,22 @@ const get = (who: string, url: string) =>
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString()
 
 async function bill(supplierId: string, number: string, costCents: number, dueDaysAgo: number) {
+  const sup = await prisma.supplier.findUniqueOrThrow({ where: { id: supplierId }, select: { tenantId: true } })
+  if (!sup.tenantId) {
+    // A legacy bill of a company-less supplier (createBill refuses new ones):
+    // it never posts and sits in the aging's "unassigned" block.
+    return prisma.supplierBill.create({
+      data: {
+        supplierId, billNumber: number, billDate: new Date(daysAgo(dueDaysAgo + 10)), dueDate: new Date(daysAgo(dueDaysAgo)),
+        subtotalCents: costCents, totalCents: costCents, status: 'open',
+        lines: { create: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: costCents, lineTotalCents: costCents }] },
+      },
+    })
+  }
+  // A line that is not stock names its expense account (wave B).
   const b = await createBill({
     supplierId, billNumber: number, billDate: daysAgo(dueDaysAgo + 10), dueDate: daysAgo(dueDaysAgo),
-    lines: [{ description: 'Flour', quantity: 1, unitCostCents: costCents }],
+    lines: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: costCents, expenseAccountCode: '6040' }],
     createdBy: users['ceo']!.id,
   })
   await postSupplierBill(b.id)

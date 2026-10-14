@@ -629,14 +629,30 @@ describe('(5) group-scale receivables, fixed assets and a customer\'s lifetime s
   })
 
   it('a PKR 60m fixed asset over 60 months charges exactly PKR 1m a month and books exact values', async () => {
-    const r = await call('ceoA', 'POST', '/accounting/fixed-assets', {
-      name: `Central kitchen line ${RUN}`, category: 'kitchen_equipment', funding: 'bank', acquiredAt: '2026-01-15', costCents: 6_000_000_000, usefulLifeMonths: 60,
-    })
-    expect(r.statusCode, r.body).toBeLessThan(300)
-    const reg = (await call('ceoA', 'GET', '/accounting/fixed-assets')).json() as { assets: Array<{ name: string; costCents: number; monthlyCents: number; bookValueCents: number }> }
-    const a = reg.assets.find((x) => x.name === `Central kitchen line ${RUN}`)!
-    expect(a).toMatchObject({ costCents: 6_000_000_000, monthlyCents: 100_000_000, bookValueCents: 6_000_000_000 })
-    expect((await call('ceoA', 'POST', '/accounting/fixed-assets', { name: 'x', category: 'kitchen_equipment', funding: 'bank', acquiredAt: '2026-01-15', costCents: MAX_MONEY_CENTS + 1, usefulLifeMonths: 60 })).statusCode).toBe(422)
+    // Equipment reaches the register only through CapEx (owner, 2026-10-13):
+    // a delivered PKR 60m line, capitalised by the CEO (applied at once).
+    const { prepareCapitalisation } = await import('../src/modules/financePlanning/capexPosting.js')
+    const { scheduleAssetOf } = await import('../src/modules/fixedAssets/service.js')
+    const { nextMonthlyCharge } = await import('../src/modules/fixedAssets/schedule.js')
+    const { classOf } = await import('../src/modules/fixedAssets/classes.js')
+    const ceo = { id: users['ceoA']!.id, role: 'admin' }
+    const project = await prisma.capexProject.create({ data: { tenantId: tenantA, name: `Central kitchen ${RUN}` } })
+    const line = await prisma.capexLine.create({ data: {
+      projectId: project.id, scope: 'Equipment', item: `Central kitchen line ${RUN}`, unitCostCents: 6_000_000_000,
+      status: 'delivered', actualDeliveryDate: new Date('2026-01-15T12:00:00+05:00'),
+    } })
+    const r = await prepareCapitalisation({ lineId: line.id, classKey: 'kitchen_equipment', usefulLifeMonths: 60 }, ceo)
+    expect(r.applied).toBe(true)
+    const a = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: r.assetIds[0]! } })
+    expect(a).toMatchObject({ costCents: 6_000_000_000, originalCostCents: 6_000_000_000, capexLineId: line.id })
+    expect(nextMonthlyCharge(scheduleAssetOf(a, await classOf(tenantA, 'kitchen_equipment')), new Map())).toBe(100_000_000)
+    const acq = await prisma.journalLine.findMany({ where: { journalEntry: { tenantId: tenantA, reference: `fixed_asset.acquire:${a.id}` } }, include: { account: { select: { code: true } } } })
+    expect(acq.map((l) => [l.account.code, l.type, l.amountCents]).sort()).toEqual([['1510', 'debit', 6_000_000_000], ['2012', 'credit', 6_000_000_000]])
+    // Above the cap is 422 AMOUNT_TOO_LARGE, never a raw 500.
+    const big = await prisma.capexLine.create({ data: {
+      projectId: project.id, scope: 'Equipment', item: 'x', unitCostCents: 1, status: 'delivered', actualDeliveryDate: new Date('2026-01-15T12:00:00+05:00'),
+    } })
+    await expect(prepareCapitalisation({ lineId: big.id, classKey: 'kitchen_equipment', costCents: MAX_MONEY_CENTS + 1 }, ceo)).rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422 })
     expect(await imbalance(tenantA)).toBe(0)
   })
 

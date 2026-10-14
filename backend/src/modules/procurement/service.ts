@@ -8,8 +8,9 @@
 //      sendPoToSupplier, or marked sent by staff who phoned it in (markPoSent).
 //      Approval used to stamp 'sent' + sentAt though nothing was sent, so staff
 //      believed a PO had gone out that the supplier never got.
-//  - Receiving (receiving.ts: GRN + moving-average cost + price history + variance log)
-//  - Supplier bills (AP), 3-way matching (PO ↔ receipt ↔ bill)
+//  - Receiving (receiving.ts: GRN + FIFO lots + GRNI, the one stock-in path)
+//  - Supplier bills (AP), 3-way matching (PO ↔ receipt ↔ bill); a stock line
+//    clears 2015 GRNI against its receipt (accounting/supplierPosting.ts)
 //  - Multi-bill payment allocation, unapplying and voiding a payment
 //  - Aging report
 //  - Reorder suggestions
@@ -28,6 +29,13 @@ import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
 import type { Prisma } from '@prisma/client'
 import { type DbMoney, assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
+import { ensureFifoReady } from '../../lib/stockLedger.js'
+import { flagException } from '../../lib/exceptions.js'
+import { audit } from '../../lib/audit.js'
+import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
+import { assertExpenseCode } from '../accounting/expenseCategories.js'
+import { isAuthorityKey, type AuthorityKey } from '../accounting/taxAuthorities.js'
+import { whtSectionOrNull, type WhtSection } from '../../lib/withholding.js'
 
 // ─── Amount ceilings (BOOKS-06) ──────────────────────────────────────────────
 //
@@ -92,9 +100,10 @@ export async function createPo(input: CreatePoInput) {
   // company can't be ordered from (receiving refuses it for the same reason).
   const supplier = await prisma.supplier.findUnique({
     where:  { id: input.supplierId },
-    select: { id: true, name: true, tenantId: true, deletedAt: true },
+    select: { id: true, name: true, tenantId: true, deletedAt: true, systemKind: true },
   })
   if (!supplier || supplier.deletedAt) throw new NotFoundError('Supplier', input.supplierId)
+  if (supplier.systemKind) throw systemSupplierError(supplier.name)
   if (!supplier.tenantId) {
     throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before ordering from it', 422)
   }
@@ -370,6 +379,26 @@ export async function markPoSent(poId: string, userId: string, input: { channel:
 
 // ─── Bills (Accounts Payable) ────────────────────────────────────────────────
 
+/** A system supplier ('Cash purchases') is never ordered from or billed. */
+function systemSupplierError(name: string): AppError {
+  return new AppError('SYSTEM_SUPPLIER', `${name} is a system supplier for goods bought with cash — it is never ordered from or billed`, 422)
+}
+
+export interface CreateBillLineInput {
+  inventoryItemId?:    string | null
+  poLineId?:           string | null
+  /** A stock line billed against one receipt line (else its PO line, matched FIFO). */
+  receiptLineId?:      string | null
+  /** A line that is NOT stock: the 6xxx account it is booked to. */
+  expenseAccountCode?: string | null
+  /** An expense line that looks like equipment, booked as an expense anyway (finance / CEO, with a reason). */
+  notEquipment?:       boolean
+  notEquipmentReason?: string | null
+  description:         string
+  quantity:            number
+  unitCostCents:       number
+}
+
 export interface CreateBillInput {
   supplierId:    string
   poId?:         string | null
@@ -377,16 +406,17 @@ export interface CreateBillInput {
   billDate:      string
   dueDate?:      string | null   // if absent, computed from supplier paymentTermsDays
   taxCents?:     number
+  /** Who charged the sales tax (H8) — default the supplier's usual authority, else FBR. */
+  taxAuthority?: AuthorityKey | null
+  /** The withholding section — default the supplier's usual one, else 153(1)(a); 'none' withholds nothing. */
+  whtSection?:   WhtSection | 'none' | null
   notes?:        string | null
   attachmentUrl?: string | null
-  lines: Array<{
-    inventoryItemId?: string | null
-    poLineId?:        string | null
-    description:      string
-    quantity:         number
-    unitCostCents:    number
-  }>
+  lines: CreateBillLineInput[]
   createdBy: string
+  /** The recorder's role — decides an equipment override (finance / CEO only). */
+  actorRole?: string
+  actorEmail?: string | null
 }
 
 export async function createBill(input: CreateBillInput) {
@@ -394,22 +424,24 @@ export async function createBill(input: CreateBillInput) {
 
   const supplier = await prisma.supplier.findUnique({ where: { id: input.supplierId } })
   if (!supplier) throw new NotFoundError('Supplier', input.supplierId)
-  await assertBillReferences(input, supplier)
+  if (supplier.systemKind) throw systemSupplierError(supplier.name)
+  if (!supplier.tenantId) {
+    throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before recording its bills', 422)
+  }
+  const tenantId = supplier.tenantId
+  const lines = await resolveBillLines(input, { id: supplier.id, name: supplier.name, tenantId })
 
   // Every line, the subtotal, the tax and the total must fit a money column
   // (and a ledger line — the bill posts in the same transaction): 422, never
   // a 500 at insert.
   //
-  // A stock line's unit cost re-averages the item's INT4 stock cost, so it
-  // stays ≤ INT4; its line total (quantity × cost) may be BIGINT — a group's
-  // bulk food purchase is genuinely stock and belongs in 1210.
-  //
-  // A NON-stock line (no item, no PO line) stays at the INT4 cap, line by line
-  // AND in total (MONEY-BIG-1): postSupplierBill books a bill's whole subtotal
-  // to 1210 Inventory – Food, so a PKR 30m "kitchen fit-out" line would show
-  // as food stock on the balance sheet and as food purchases in the
-  // actual-vs-theoretical food cost, and never reach the fixed-asset register.
-  // Capital spend goes through CapEx (payments → 1340, capitalise → 15x0).
+  // A STOCK line's unit cost becomes a GrniMatch billed unit cost and a lot's
+  // unit cost (per-unit stock cost, INT4 by BOOKS-06); its line total may be
+  // BIGINT. A NON-stock line stays at the INT4 cap, line by line AND in total
+  // (MONEY-BIG-1): capital spend (fit-out, equipment) goes through CapEx
+  // (payments → 1340, capitalise → 15x0), never a bill — and an
+  // equipment-looking line is refused (USE_CAPEX) unless finance or the CEO
+  // overrides it with a reason.
   const assertNonStockFits = (cents: number, what: string) => {
     try { assertInt4Fits(cents, what) } catch (err) {
       if (!(err instanceof AppError)) throw err
@@ -417,40 +449,66 @@ export async function createBill(input: CreateBillInput) {
     }
   }
   let nonStockCents = 0
-  input.lines.forEach((l, i) => {
+  const overrides: Array<{ line: number; description: string; reason: string }> = []
+  for (const [i, l] of lines.entries()) {
     const lineCents = Math.round(l.unitCostCents * l.quantity)
-    if (l.inventoryItemId || l.poLineId) {
+    if (l.inventoryItemId) {
       assertInt4Fits(l.unitCostCents, `Line ${i + 1}'s unit cost (a stock item)`)
       assertMoneyFits(lineCents, `Line ${i + 1} (quantity × unit cost)`)
-    } else {
-      assertNonStockFits(l.unitCostCents, `Line ${i + 1}'s unit cost (not a stock item)`)
-      assertNonStockFits(lineCents, `Line ${i + 1} (quantity × unit cost, not a stock item)`)
-      nonStockCents += lineCents
+      continue
     }
-  })
+    assertNonStockFits(l.unitCostCents, `Line ${i + 1}'s unit cost (not a stock item)`)
+    assertNonStockFits(lineCents, `Line ${i + 1} (quantity × unit cost, not a stock item)`)
+    nonStockCents += lineCents
+    const code = l.expenseAccountCode?.trim()
+    if (!code) {
+      throw new AppError('EXPENSE_ACCOUNT_REQUIRED', `Line ${i + 1} ("${l.description}") is not a stock item — pick the expense account it is booked to`, 422)
+    }
+    // Equipment and smallwares go through CapEx (USE_CAPEX); stock lines are never checked.
+    const eq = assertNotEquipmentLine(
+      { description: l.description, expenseAccountCode: code, notEquipment: l.notEquipment, notEquipmentReason: l.notEquipmentReason },
+      { role: input.actorRole ?? '' },
+    )
+    if (eq.overridden) overrides.push({ line: i + 1, description: l.description, reason: (l.notEquipmentReason ?? '').trim() })
+    await assertExpenseCode(tenantId, code)
+  }
   assertNonStockFits(nonStockCents, 'This bill\'s lines that are not stock items')
-  const subtotalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantity), 0)
+  const subtotalCents = lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantity), 0)
   const taxCents      = input.taxCents ?? 0
   const totalCents    = subtotalCents + taxCents
   assertMoneyFits(subtotalCents, 'This bill\'s subtotal')
   assertMoneyFits(taxCents, 'This bill\'s tax')
   assertMoneyFits(totalCents, 'This bill\'s total')
-  // Withholding is fixed now, from the supplier's company's settings, and the
-  // ledger books this same figure (postSupplierBill) — see SupplierBill.whtCents.
-  const whtCents      = await withholdingForBill(subtotalCents, supplier.tenantId)
 
   const billDate = new Date(input.billDate)
+  if (Number.isNaN(billDate.getTime())) throw new AppError('INVALID_DATE', 'The bill date is not a date', 400)
   const dueDate  = input.dueDate
     ? new Date(input.dueDate)
     : new Date(billDate.getTime() + supplier.paymentTermsDays * 24 * 60 * 60 * 1000)
 
-  // The bill and its ledger entry commit together (postSupplierBill in the
-  // same transaction): a bill dated in a closed month is PERIOD_LOCKED 422 and
-  // nothing is saved. It used to be saved (201) and then fail to post after
-  // commit, so AP aging owed money the ledger's AP 2010 did not.
+  // Tax (H8): who charged the sales tax decides the input account. Withholding
+  // (H8 / H28): the ONE resolver, fixed now and booked from these stored figures.
+  const authority = input.taxAuthority ?? supplier.defaultTaxAuthority ?? 'fbr'
+  if (!isAuthorityKey(authority)) throw new AppError('BAD_TAX_AUTHORITY', `Unknown sales tax authority "${authority}"`, 422)
+  const sectionAsked = input.whtSection ?? supplier.defaultWhtSection ?? '153_1_a'
+  const section = sectionAsked === 'none' ? null : whtSectionOrNull(sectionAsked)
+  const wht = await withholdingForBill(prisma, {
+    tenantId, supplier: { filerStatus: supplier.filerStatus, whtExemptUntil: supplier.whtExemptUntil },
+    subtotalCents, section, at: billDate,
+  })
+
+  // The stock goes into the books on FIFO lots: the company's one-time
+  // cut-over runs first if it has not (outside the transaction).
+  await ensureFifoReady(tenantId)
+
+  // The bill, its GRNI matches, its lot re-pricing and its ledger entry commit
+  // together (postSupplierBill in the same transaction): a bill dated in a
+  // closed month is PERIOD_LOCKED 422, quantity beyond what was received and
+  // ordered is OVER_BILLED 422 — nothing is saved.
+  let bill
   try {
-    return await prisma.$transaction(async (tx) => {
-      const bill = await tx.supplierBill.create({
+    bill = await prisma.$transaction(async (tx) => {
+      const created = await tx.supplierBill.create({
         data: {
           supplierId:   input.supplierId,
           poId:         input.poId      ?? null,
@@ -460,27 +518,32 @@ export async function createBill(input: CreateBillInput) {
           subtotalCents,
           taxCents,
           totalCents,
-          whtCents,
+          whtCents:     wht.whtCents,
+          taxAuthority: authority,
+          whtSection:   section ?? (sectionAsked === 'none' ? 'none' : null),
+          whtRateBps:   wht.rateBps,
           notes:        input.notes         ?? null,
           attachmentUrl: input.attachmentUrl ?? null,
           createdBy:    input.createdBy,
           status:       'open',
           lines: {
-            create: input.lines.map((l) => ({
-              inventoryItemId: l.inventoryItemId ?? null,
-              poLineId:        l.poLineId        ?? null,
-              description:     l.description,
-              quantity:        l.quantity,
-              unitCostCents:   l.unitCostCents,
-              lineTotalCents:  Math.round(l.unitCostCents * l.quantity),
+            create: lines.map((l) => ({
+              inventoryItemId:    l.inventoryItemId,
+              poLineId:           l.poLineId,
+              receiptLineId:      l.receiptLineId,
+              expenseAccountCode: l.inventoryItemId ? null : (l.expenseAccountCode?.trim() || null),
+              description:        l.description,
+              quantity:           l.quantity,
+              unitCostCents:      l.unitCostCents,
+              lineTotalCents:     Math.round(l.unitCostCents * l.quantity),
             })),
           },
         },
         include: { supplier: true, lines: true, po: true },
       })
-      await postSupplierBill(bill.id, { tx })
-      return bill
-    })
+      await postSupplierBill(created.id, { tx })
+      return created
+    }, { timeout: 30_000 })
   } catch (err) {
     const e = err as Prisma.PrismaClientKnownRequestError
     if (e.code === 'P2002') {
@@ -488,6 +551,71 @@ export async function createBill(input: CreateBillInput) {
     }
     throw err
   }
+
+  // An equipment-looking line booked as an expense: audited and flagged
+  // (high) in the supplier's company — after commit, never undoing the bill.
+  for (const o of overrides) {
+    await audit({
+      category: 'accounting', action: 'supplier_bill.not_equipment_override', entity: 'SupplierBill', entityId: bill.id,
+      userId: input.createdBy, userEmail: input.actorEmail ?? null, tenantId,
+      metadata: { billNumber: bill.billNumber, line: o.line, description: o.description, reason: o.reason },
+    })
+    await flagException({
+      tenantId, kind: 'bill_equipment_override', severity: 'high',
+      title: `Equipment-looking bill line booked as an expense: ${o.description}`.slice(0, 200),
+      description: `${supplier.name} bill ${bill.billNumber}, line ${o.line}: "${o.description}" was booked as an expense, not through CapEx. Reason: ${o.reason}`,
+      entityType: 'SupplierBill', entityId: bill.id, actorId: input.createdBy,
+      metadata: { supplierId: supplier.id, line: o.line, reason: o.reason },
+    })
+  }
+  return bill
+}
+
+/**
+ * A bill's lines resolved against the supplier: a PO line gives the line its
+ * item; a receipt line must be this supplier's receipt of the same item (422
+ * RECEIPT_LINE_MISMATCH); a stock line needs a PO line or a receipt line (422
+ * STOCK_LINE_NEEDS_RECEIPT — "receive it at the dock first").
+ */
+async function resolveBillLines(
+  input: Pick<CreateBillInput, 'supplierId' | 'poId' | 'lines'>,
+  supplier: { id: string; name: string; tenantId: string },
+): Promise<Array<CreateBillLineInput & { inventoryItemId: string | null; poLineId: string | null; receiptLineId: string | null }>> {
+  await assertBillReferences(input, supplier)
+  const poLineIds = [...new Set(input.lines.map((l) => l.poLineId).filter((x): x is string => !!x))]
+  const poLines = poLineIds.length === 0 ? [] : await prisma.purchaseOrderLine.findMany({ where: { id: { in: poLineIds } }, select: { id: true, inventoryItemId: true } })
+  const rlIds = [...new Set(input.lines.map((l) => l.receiptLineId).filter((x): x is string => !!x))]
+  const rls = rlIds.length === 0 ? [] : await prisma.goodsReceiptLine.findMany({
+    where: { id: { in: rlIds } },
+    select: { id: true, inventoryItemId: true, poLineId: true, writtenOffAt: true, receipt: { select: { supplierId: true, tenantId: true, settledByType: true } } },
+  })
+  const resolved = input.lines.map((l, i) => {
+    let itemId = l.inventoryItemId ?? null
+    const pl = l.poLineId ? poLines.find((x) => x.id === l.poLineId) : null
+    if (pl) {
+      if (itemId && itemId !== pl.inventoryItemId) {
+        throw new AppError('PO_LINE_MISMATCH', `Line ${i + 1}: that PO line is for a different item`, 422)
+      }
+      itemId = pl.inventoryItemId
+    }
+    if (l.receiptLineId) {
+      const rl = rls.find((x) => x.id === l.receiptLineId)
+      const ok = rl && rl.receipt.supplierId === supplier.id && (rl.receipt.tenantId ?? supplier.tenantId) === supplier.tenantId
+        && !rl.receipt.settledByType && !rl.writtenOffAt
+        && (!itemId || rl.inventoryItemId === itemId) && (!l.poLineId || rl.poLineId === l.poLineId)
+      if (!ok) {
+        throw new AppError('RECEIPT_LINE_MISMATCH', `Line ${i + 1}: that receipt is not ${supplier.name}'s delivery of this item`, 422)
+      }
+      itemId = rl!.inventoryItemId
+    }
+    if (itemId && !l.poLineId && !l.receiptLineId) {
+      throw new AppError('STOCK_LINE_NEEDS_RECEIPT', `Line ${i + 1} ("${l.description}") is a stock item — receive it at the dock first, then bill it against the receipt or its PO line`, 422)
+    }
+    return { ...l, inventoryItemId: itemId, poLineId: l.poLineId ?? null, receiptLineId: l.receiptLineId ?? null }
+  })
+  const itemIds = resolved.map((l) => l.inventoryItemId).filter((x): x is string => !!x)
+  if (itemIds.length > 0) await assertItemsOfCompany(itemIds, supplier.tenantId, supplier.name)
+  return resolved
 }
 
 /**
@@ -533,11 +661,13 @@ async function assertBillReferences(
 }
 
 export async function voidBill(billId: string, userId: string, reason: string) {
-  // The void and the ledger reversal (plus undoing the bill's item-cost
-  // re-average) commit together; a reversal the ledger refuses (e.g. today is
-  // in a closed period) refuses the void. The checks run under the bill's row
+  // The void and the ledger reversal (plus re-opening GRNI and undoing the
+  // bill's lot re-pricing) commit together; a reversal the ledger refuses
+  // (e.g. today is in a closed period) refuses the void. The checks run under the bill's row
   // lock, so a payment or credit note applied at the same moment either lands
   // first (and is seen here) or waits and then finds the bill void.
+  const owner = await prisma.supplierBill.findUnique({ where: { id: billId }, select: { supplier: { select: { tenantId: true } } } })
+  if (owner?.supplier.tenantId) await ensureFifoReady(owner.supplier.tenantId)
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${billId} FOR UPDATE`
     const bill = await tx.supplierBill.findUnique({
@@ -568,7 +698,7 @@ export async function voidBill(billId: string, userId: string, reason: string) {
     })
     await postSupplierBillVoid(billId, reason, { tx, postedBy: userId })
     return updated
-  })
+  }, { timeout: 30_000 })
 }
 
 /**

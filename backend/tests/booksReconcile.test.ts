@@ -517,7 +517,11 @@ describe('capex — advances, capitalised on delivery; rent prepaid; fees expens
     expect(sum(je!.rows, '1340', 'debit')).toBe(1_000_000)
     expect(sum(je!.rows, '1020', 'credit')).toBe(1_000_000)
 
-    const rp = await call('admin', 'POST', `/finance/capex/lines/${rent.id}/payments`, { label: 'deposit', amountCents: 900_000, paidAt: '2026-09-02' })
+    // A rent advance says which months it covers (H25: released monthly).
+    const noTerm = await call('admin', 'POST', `/finance/capex/lines/${rent.id}/payments`, { label: 'deposit', amountCents: 900_000, paidAt: '2026-09-02' })
+    expect(noTerm.json().error.code).toBe('PREPAID_TERM_REQUIRED')
+    const rp = await call('admin', 'POST', `/finance/capex/lines/${rent.id}/payments`, { label: 'deposit', amountCents: 900_000, paidAt: '2026-09-02', coversFrom: '2026-09', coversMonths: 3 })
+    expect(rp.statusCode).toBe(201)
     je = await entry(`capex.payment:${rp.json().id}`)
     expect(sum(je!.rows, '1310', 'debit')).toBe(900_000)
     const bp = await call('admin', 'POST', `/finance/capex/lines/${broker.id}/payments`, { label: 'deposit', amountCents: 200_000, paidAt: '2026-09-02' })
@@ -526,30 +530,46 @@ describe('capex — advances, capitalised on delivery; rent prepaid; fees expens
     expect(je!.rows.find((r) => r.code === '6110')!.conceptId).toBe(conceptA)
 
     // Not delivered yet.
-    const early = await call('admin', 'POST', `/finance/capex/lines/${oven.id}/capitalise`, { category: 'kitchen_equipment', usefulLifeMonths: 60 })
+    const early = await call('admin', 'POST', `/finance/capex/lines/${oven.id}/capitalise`, { classKey: 'kitchen_equipment', usefulLifeMonths: 60 })
     expect(early.json().error.code).toBe('NOT_DELIVERED')
     // A fee never becomes an asset.
     await prisma.capexLine.update({ where: { id: broker.id }, data: { status: 'delivered' } })
-    expect((await call('admin', 'POST', `/finance/capex/lines/${broker.id}/capitalise`, { category: 'kitchen_equipment', usefulLifeMonths: 60 })).json().error.code).toBe('NOT_CAPITAL')
+    expect((await call('admin', 'POST', `/finance/capex/lines/${broker.id}/capitalise`, { classKey: 'kitchen_equipment', usefulLifeMonths: 60 })).json().error.code).toBe('NOT_CAPITAL')
 
     await prisma.capexLine.update({ where: { id: oven.id }, data: { status: 'delivered', actualDeliveryDate: new Date('2026-09-20T12:00:00Z') } })
-    const cap = await call('admin', 'POST', `/finance/capex/lines/${oven.id}/capitalise`, { category: 'kitchen_equipment', usefulLifeMonths: 60 })
-    expect(cap.statusCode).toBe(201)
-    je = await entry(`fixed_asset.acquire:${cap.json().asset.id}`)
+    // The CEO's own preparation applies at once (201).
+    const cap = await call('admin', 'POST', `/finance/capex/lines/${oven.id}/capitalise`, { classKey: 'kitchen_equipment', usefulLifeMonths: 60 })
+    expect(cap.statusCode, cap.body).toBe(201)
+    expect(cap.json().applied).toBe(true)
+    const assetId = cap.json().assetIds[0] as string
+    // The link is a column — never the notes.
+    expect((await prisma.fixedAsset.findUniqueOrThrow({ where: { id: assetId } })).capexLineId).toBe(oven.id)
+    je = await entry(`fixed_asset.acquire:${assetId}`)
     expect(sum(je!.rows, '1510', 'debit')).toBe(3_000_000)
     expect(sum(je!.rows, '1340', 'credit')).toBe(1_000_000)
-    expect(sum(je!.rows, '2010', 'credit')).toBe(2_000_000)
-    expect((await call('admin', 'POST', `/finance/capex/lines/${oven.id}/capitalise`, { category: 'kitchen_equipment', usefulLifeMonths: 60 })).statusCode).toBe(409)
+    expect(sum(je!.rows, '2012', 'credit')).toBe(2_000_000)
+    expect((await call('admin', 'POST', `/finance/capex/lines/${oven.id}/capitalise`, { classKey: 'kitchen_equipment', usefulLifeMonths: 60 })).statusCode).toBe(409)
 
-    // The balance paid after delivery settles the supplier.
+    // The balance paid after delivery settles the capital supplier (2012).
     const bal = await call('admin', 'POST', `/finance/capex/lines/${oven.id}/payments`, { label: 'balance', amountCents: 2_000_000, paidAt: '2026-09-25' })
     je = await entry(`capex.payment:${bal.json().id}`)
-    expect(sum(je!.rows, '2010', 'debit')).toBe(2_000_000)
+    expect(sum(je!.rows, '2012', 'debit')).toBe(2_000_000)
 
     const view = await call('admin', 'GET', `/finance/capex/${project.id}`)
     expect(view.json().books.capitalisedCents).toBe(3_000_000)
     expect(view.json().books.notYetCapitalisedCents).toBe(0)
     expect(view.json().books.prepaidCents).toBe(900_000)
+    expect(view.json().lines.find((l: { id: string }) => l.id === oven.id).capitalisation.assetIds).toEqual([assetId])
+
+    // A legacy line whose capitalisation credited 2010: later payments settle 2010.
+    const old = await prisma.capexLine.create({ data: { projectId: project.id, scope: 'Equipment', item: 'Old fryer', unitCostCents: 500_000, status: 'delivered', actualDeliveryDate: new Date('2026-09-05T12:00:00Z') } })
+    const legacy = await prisma.fixedAsset.create({ data: { tenantId: tenantA, name: 'Old fryer', category: 'kitchen_equipment', acquiredAt: new Date('2026-09-05T12:00:00Z'), costCents: 500_000, originalCostCents: 500_000, usefulLifeMonths: 60, capexLineId: old.id, acquisitionCreditCode: '2010' } })
+    const { postJournalEntry } = await import('../src/modules/accounting/journal.js')
+    await postJournalEntry({ tenantId: tenantA, sourceType: 'fixed_asset.acquire', sourceId: legacy.id, description: 'Legacy capitalisation', entryDate: new Date('2026-09-05T12:00:00Z'), postedBy: 'test', lines: [
+      { accountCode: '1510', type: 'debit', amountCents: 500_000 }, { accountCode: '2010', type: 'credit', amountCents: 500_000 },
+    ] })
+    const lp = await call('admin', 'POST', `/finance/capex/lines/${old.id}/payments`, { label: 'balance', amountCents: 500_000, paidAt: '2026-09-26' })
+    expect(sum((await entry(`capex.payment:${lp.json().id}`))!.rows, '2010', 'debit')).toBe(500_000)
 
     // The old capital-ledger writer is gone; the ProForma API too.
     expect((await call('admin', 'POST', '/finance/capital-ledger', { date: '2026-09-01', amountCents: 1, description: 'x' })).statusCode).toBe(404)

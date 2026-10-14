@@ -89,3 +89,17 @@ export async function assertBankAccountOfCompany(tenantId: string | null, bankAc
     : null
   if (!ok) throw new AppError('BANK_ACCOUNT_NOT_IN_COMPANY', 'That bank account does not belong to this company', 422)
 }
+
+/**
+ * 422 unless `supplierId` is a live, pickable supplier of `tenantId` (system
+ * suppliers such as 'cash_purchases' are never attached by hand). A row whose
+ * company is null (a legacy project) → 422 PROJECT_HAS_NO_COMPANY.
+ */
+export async function assertSupplierOfCompany(tenantId: string | null, supplierId: string): Promise<void> {
+  if (!tenantId) throw new AppError('PROJECT_HAS_NO_COMPANY', 'This capex project is not bound to a company — pick its company first', 422)
+  const ok = await prisma.supplier.findFirst({
+    where: { id: supplierId, tenantId, deletedAt: null, systemKind: null },
+    select: { id: true },
+  })
+  if (!ok) throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'That supplier does not belong to this company', 422)
+}

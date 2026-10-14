@@ -19,7 +19,7 @@
 // Posting is idempotent on (sourceType, sourceId) — see journal.ts. Replays
 // from concurrent KDS bumps, retried webhooks, or worker reruns are no-ops.
 
-import type { Order, OrderItem, Payment, Concept, Prisma, PrismaClient } from '@prisma/client'
+import type { Order, Payment, Concept, Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
 import { cogsLinesForOrders } from './cogs.js'
@@ -241,7 +241,6 @@ type PostingPayment = Payment & { raastReceipt: { ledgerCode: string; status: st
 interface OrderForPosting extends Order {
   concept:  Concept
   payments: PostingPayment[]
-  items: OrderItem[]
   giftCardRedemptions: Array<{ id: string; amountCents: number; reversedAt: Date | null }>
 }
 
@@ -249,7 +248,7 @@ async function loadOrderForPosting(orderId: string): Promise<OrderForPosting | n
   return prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: true, items: true,
+      concept: true,
       // A Raast tender's receipt: the receiving bank's code it is debited to.
       payments: { include: { raastReceipt: { select: { ledgerCode: true, status: true } } } },
       giftCardRedemptions: { select: { id: true, amountCents: true, reversedAt: true } },
@@ -268,18 +267,6 @@ export function giftCardAppliedOf(redemptions: Array<{ amountCents: number }> | 
   return (redemptions ?? []).reduce((t, r) => t + Math.max(0, r.amountCents), 0)
 }
 
-// Theoretical food cost for the order: THE plate cost (lib/recipeCost.ts —
-// the same number the recipe and menu-engineering screens price against, and
-// the same explosion that took the stock out at sale) × quantity, over the
-// non-voided items. That means each recipe's own Q factor (default 10%, not
-// the old fixed 5%), applied once — the old copy applied it again on top of
-// sub-recipe lines — sub-recipes costed at any depth, and no kitchen labour
-// (owner decision 26). Items without a recipe contribute 0: their cost is
-// recognised when their inventory is counted or wasted, not at sale time.
-function computeOrderCogsCents(order: OrderForPosting): Promise<number> {
-  return cogsForSoldLines(order.items)
-}
-
 export interface SaleAccounting {
   // Customer-facing money flow (charged to a payment instrument)
   totalChargedCents:   number   // hits cash drawer / card receivable
@@ -295,12 +282,15 @@ export interface SaleAccounting {
   grossRevenueCents: number     // cr revenue (subtotal before discount, ex-tax)
   serviceChargeCents: number    // cr 4100 service charge revenue
   tipCents:        number       // cr 2095 tips payable to staff
+  /** cr 4110 Delivery Fee Income — the fee ex-tax (H9; its GST is inside taxCents). 0 on a till sale and on a legacy delivery. */
+  deliveryFeeCents: number
 }
 
 /** The order columns the sale formula reads. */
 export type SaleOrderFields = Pick<
   Order,
   'totalCents' | 'walletAmountCents' | 'taxCents' | 'discountCents' | 'promoDiscountCents' | 'serviceChargeCents' | 'tipCents'
+  | 'deliveryFeeCents'
 > & {
   /**
    * What gift cards paid (giftCardAppliedOf). Not an Order column: the redeem
@@ -320,7 +310,13 @@ export type SaleOrderFields = Pick<
  * other order credited 4100.
  *
  * By construction it balances: charged + wallet + gift card + loyalty + discount
- *   = revenue + tax + service charge + tip.
+ *   = revenue + tax + service charge + tip + delivery fee.
+ *
+ * The delivery fee (Order.deliveryFeeCents, ex-tax — H9) is its own revenue,
+ * 4110, never the brand's food revenue; its GST is already in taxCents (the
+ * order's taxCents = food GST + deliveryFeeTaxCents), so the one output-tax
+ * credit carries both. A legacy delivery order (fee column 0) and every till
+ * sale book exactly as before.
  */
 export function computeSaleAccounting(order: SaleOrderFields): SaleAccounting {
   const totalChargedCents   = order.totalCents
@@ -331,11 +327,13 @@ export function computeSaleAccounting(order: SaleOrderFields): SaleAccounting {
   const discountCents        = order.discountCents + order.promoDiscountCents
   const serviceChargeCents  = order.serviceChargeCents ?? 0
   const tipCents            = order.tipCents ?? 0
+  const deliveryFeeCents    = Math.max(0, order.deliveryFeeCents ?? 0)
 
-  // Items-side gross subtotal (excludes service charge + tip, both modelled
-  // separately so they hit dedicated accounts). Computed from the PRE-card
-  // total: the card paid part of the bill, it did not discount it.
-  // gross_subtotal = charged + wallet + gift card + loyalty + discount − tax − svc − tip
+  // Items-side gross subtotal (excludes service charge, tip and the delivery
+  // fee, each modelled separately so they hit dedicated accounts). Computed
+  // from the PRE-card total: the card paid part of the bill, it did not
+  // discount it.
+  // gross_subtotal = charged + wallet + gift card + loyalty + discount − tax − svc − tip − fee
   const grossRevenueCents =
     totalChargedCents +
     walletAppliedCents +
@@ -344,7 +342,8 @@ export function computeSaleAccounting(order: SaleOrderFields): SaleAccounting {
     discountCents -
     taxCents -
     serviceChargeCents -
-    tipCents
+    tipCents -
+    deliveryFeeCents
 
   return {
     totalChargedCents,
@@ -356,6 +355,7 @@ export function computeSaleAccounting(order: SaleOrderFields): SaleAccounting {
     grossRevenueCents,
     serviceChargeCents,
     tipCents,
+    deliveryFeeCents,
   }
 }
 
@@ -364,9 +364,19 @@ export function giftCardSaleMemo(slug: string, orderId: string): string {
   return `Gift card redeemed on ${slug} order ${orderId}`
 }
 
-function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsCents: number): JournalLineInput[] {
+/** The memo every line of an order's completion entry is built on: '<slug> #<ref>'. */
+function saleMemoOf(order: { id: string; concept: { slug: string } }): string {
+  return `${order.concept.slug} #${orderRefOf(order.id)}`
+}
+
+/**
+ * The completion entry's lines. `cogsLines` are the order's cost-of-sales
+ * pairs by class from its lots (accounting/cogs.ts cogsLinesForOrders), each
+ * already balanced and tagged with the brand.
+ */
+function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsLines: JournalLineInput[]): JournalLineInput[] {
   const lines: JournalLineInput[] = []
-  const conceptMemo = `${order.concept.slug} #${orderRefOf(order.id)}`
+  const conceptMemo = saleMemoOf(order)
 
   // ── Debits: where the money / value moved TO ───────────────────────────
   if (sa.totalChargedCents > 0) {
@@ -443,15 +453,17 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsCents: n
   if (sa.tipCents > 0) {
     lines.push({ accountCode: ACCT.TIPS_PAYABLE, type: 'credit', amountCents: sa.tipCents, memo: `Tip received on ${conceptMemo}` })
   }
+  // The delivery fee, ex-tax (H9): its own revenue account. Its GST is in the
+  // tax credit below (taxCents = food GST + fee GST).
+  if (sa.deliveryFeeCents > 0) {
+    lines.push({ accountCode: ACCT.DELIVERY_FEE_REVENUE, type: 'credit', amountCents: sa.deliveryFeeCents, memo: `Delivery fee on ${conceptMemo}` })
+  }
   if (sa.taxCents > 0) {
     lines.push({ accountCode: outputTaxCodeFor(order.concept), type: 'credit', amountCents: sa.taxCents, memo: `Sales tax output on ${conceptMemo}` })
   }
 
-  // ── COGS leg (separate balanced pair appended to the same entry) ───────
-  if (cogsCents > 0) {
-    lines.push({ accountCode: ACCT.FOOD_COST,      type: 'debit',  amountCents: cogsCents, memo: `COGS for ${conceptMemo}` })
-    lines.push({ accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: cogsCents, memo: `Inventory derecognised for ${conceptMemo}` })
-  }
+  // ── Cost of sales: one balanced pair per class from the lots relieved ──
+  lines.push(...cogsLines)
 
   // Every line on this entry belongs to a single order → tag with its brand so
   // per-brand revenue AND cost are measured (not estimated) in the brand P&L.
@@ -483,13 +495,14 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
     return { posted: false, entryId: null, reason: 'zero_value_order' }
   }
 
-  const sa = computeSaleAccounting(withTenderTips({ ...order, giftCardAppliedCents }, order.payments))
-  const cogsCents = await computeOrderCogsCents(order)
-  const lines = buildSaleLines(order, sa, cogsCents)
-
-  // The order's brand decides whose books this lands in.
+  // The order's brand decides whose books this lands in — resolved before any
+  // line is built: the cost of sales is read from THIS company's lots.
   const tenantId = order.concept.tenantId
   if (!tenantId) return { posted: false, entryId: null, reason: 'concept_has_no_company' }
+
+  const sa = computeSaleAccounting(withTenderTips({ ...order, giftCardAppliedCents }, order.payments))
+  const cogsLines = await cogsLinesForOrders(tenantId, [order.id], { conceptId: order.conceptId, memo: saleMemoOf(order) })
+  const lines = buildSaleLines(order, sa, cogsLines)
 
   const result = await postJournalEntry({
     tenantId,
@@ -514,6 +527,7 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
 //   Dr brand revenue (4xxx)   the refund's ex-tax share of the item revenue
 //   Dr 4100 service charge    its share of the service charge
 //   Dr 2095 tips payable      its share of the tip
+//   Dr 4110 delivery fee      its share of the delivery fee, ex-tax (H9)
 //   Dr output tax             its share of the tax — the brand's authority
 //                             (2032 SRB for a Sindh kitchen, else 2030; see
 //                             outputTaxCodeFor), the account the sale credited
@@ -544,23 +558,26 @@ export interface RefundShare {
   serviceChargeCents: number
   tipCents: number
   taxCents: number
+  /** The refund's share of the delivery fee, ex-tax (Dr 4110 — H9). 0 when the order carries no fee. */
+  deliveryFeeCents: number
 }
 
 /**
  * The split of one refund of `thisCents`, given `priorCents` already refunded
  * on the same order (tender refunds first, then the wallet restore). Pure.
- * revenue + serviceCharge + tip + tax === thisCents, always.
+ * revenue + serviceCharge + tip + tax + deliveryFee === thisCents, always.
  */
 export function refundShareOf(order: SaleOrderFields, priorCents: number, thisCents: number): RefundShare {
   const value = order.totalCents + (order.walletAmountCents ?? 0) + Math.max(0, order.giftCardAppliedCents ?? 0)
-  if (value <= 0 || thisCents <= 0) return { revenueCents: Math.max(0, thisCents), serviceChargeCents: 0, tipCents: 0, taxCents: 0 }
+  if (value <= 0 || thisCents <= 0) return { revenueCents: Math.max(0, thisCents), serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0 }
   const upTo = Math.min(value, priorCents + thisCents)
   const from = Math.min(value, priorCents)
   const share = (x: number) => Math.round((x * upTo) / value) - Math.round((x * from) / value)
   const taxCents           = share(order.taxCents ?? 0)
   const serviceChargeCents = share(order.serviceChargeCents ?? 0)
   const tipCents           = share(order.tipCents ?? 0)
-  return { revenueCents: thisCents - taxCents - serviceChargeCents - tipCents, serviceChargeCents, tipCents, taxCents }
+  const deliveryFeeCents   = share(Math.max(0, order.deliveryFeeCents ?? 0))
+  return { revenueCents: thisCents - taxCents - serviceChargeCents - tipCents - deliveryFeeCents, serviceChargeCents, tipCents, taxCents, deliveryFeeCents }
 }
 
 /**
@@ -584,6 +601,7 @@ export function refundDebitLines(
   }
   if (sh.serviceChargeCents > 0) lines.push({ accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'debit', amountCents: sh.serviceChargeCents, memo: `Service charge — ${memo}` })
   if (sh.tipCents > 0)           lines.push({ accountCode: ACCT.TIPS_PAYABLE,           type: 'debit', amountCents: sh.tipCents,           memo: `Tip — ${memo}` })
+  if (sh.deliveryFeeCents > 0)   lines.push({ accountCode: ACCT.DELIVERY_FEE_REVENUE,   type: 'debit', amountCents: sh.deliveryFeeCents,   memo: `Delivery fee — ${memo}` })
   if (sh.taxCents > 0)           lines.push({ accountCode: taxAccountCode ?? outputTaxCodeFor(order.concept), type: 'debit', amountCents: sh.taxCents, memo: `Sales tax output — ${memo}` })
   return lines.map((l) => ({ ...l, conceptId: order.conceptId }))
 }
@@ -730,7 +748,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
       order: {
         select: {
           id: true, status: true, conceptId: true, source: true, totalCents: true, walletAmountCents: true, taxCents: true,
-          discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
+          discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
           concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true } },
           payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true } },
           giftCardRedemptions: { select: { amountCents: true } },
@@ -852,7 +870,7 @@ export async function postOrderRefund(
       customerId: true,
       conceptId: true,
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
-      promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
+      promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
       concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true } },
       payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true } },
       loyaltyTxs: {
@@ -1029,8 +1047,9 @@ export async function postOrderRefund(
         // takes the value (2080 owes it to the customer, as booked below) but
         // nobody can spend it: Gift cards → Books check lists a voided card
         // holding value and a manager settles it with Void (refund to cash /
-        // card / bank); an expired card's balance waits like any other
-        // expired balance (pending owner decision G10).
+        // card / bank); an expired card's refunded value waits for a manager
+        // too (books check expiredHoldingValue) — breakage is taken once, at
+        // the first expiry (H11), never on refunded value.
         await tx.$queryRaw`SELECT id FROM gift_cards WHERE id = ${r.giftCardId} FOR UPDATE`
         const card = await tx.giftCard.findUniqueOrThrow({ where: { id: r.giftCardId }, select: { status: true } })
         const reopen = card.status === 'active' || card.status === 'redeemed_full'

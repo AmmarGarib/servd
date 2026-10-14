@@ -11,7 +11,8 @@
 //   FOH-R2-03  a wrong / other-company PIN on an over-cap discount is 403
 //              INVALID_MANAGER_PIN; the discount alert is not a 'void' and
 //              points at the order.
-//   BOH-R2-03  a line voided after it was fired is booked as waste: WasteLog
+//   BOH-R2-03  a line voided after it was fired is booked as waste: its FIFO
+//              sale rows relabelled sale_void + waste, a WasteLog
 //              (void_after_fire) + Dr 5040 / Cr 1210 in the ORDER's company,
 //              once; a closed period → the void stands, a posting_failed flag.
 //   R2-UI-01   the ring-up answers with payments: [] (fresh and replay).
@@ -31,6 +32,7 @@ import { redisFast } from '../src/lib/redis.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { setFiscalKicker } from '../src/connectors/fiscal/outbox.js'
 import { deductInventoryForOrder } from '../src/modules/orders/service.js'
+import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 import { prisma, mkCompany, mkUser, caller, resetConnectorCache, type Company, type Who } from './connectorsFixtures.js'
 
 let app: FastifyInstance
@@ -85,7 +87,13 @@ beforeAll(async () => {
   await setManagerPin(mgrB.id, PIN_B)
   // Nihari takes 0.15 kg of beef at PKR 2,000/kg (plate cost PKR 300), in each company.
   for (const co of [A, B]) {
-    beef[co.tenantId] = (await prisma.inventoryItem.create({ data: { tenantId: co.tenantId, name: 'Beef', unit: 'kg', currentStock: 20, parLevel: 1, unitCostCents: 200_000 } })).id
+    // On FIFO lots (finance wave B): the company is cut over and holds 20 kg of beef in one lot.
+    await prisma.setting.create({ data: { key: fifoCutoverKey(co.tenantId), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+    beef[co.tenantId] = (await prisma.inventoryItem.create({ data: { tenantId: co.tenantId, name: 'Beef', unit: 'kg', parLevel: 1, unitCostCents: 200_000 } })).id
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: co.tenantId, inventoryItemId: beef[co.tenantId]!, qty: 20, unitCostCents: 200_000, kind: 'count_gain', lotSourceType: 'count_gain',
+      lotSourceId: `resimt-beef-${co.tenantId}`, movementSourceType: 'test', movementSourceId: `resimt-beef-${co.tenantId}`, receivedAt: new Date(Date.now() - 86_400_000),
+    }))
     await prisma.recipe.create({
       data: {
         kind: 'plate', menuItemId: co.items.nihari, servings: 1, qFactorPct: 0, laborMinutes: 5,
@@ -373,8 +381,9 @@ describe('BOH-R2-03 — a line voided after firing is booked as waste in the ord
 
   it('company A: WasteLog (void_after_fire, PKR 300) + Dr 5040 / Cr 1210 in A, stock stays out, nothing in B', async () => {
     const { o, nihari } = await firedTicket(mgrA, A)
-    const dep = await prisma.auditLog.findFirst({ where: { entity: 'Order', entityId: o.id, action: 'stock.sale_deplete' } })
-    expect((dep!.metadata as { taken: Record<string, number> }).taken[beef[A.tenantId]!]).toBeCloseTo(0.15, 6)
+    const sale = await prisma.stockMovement.findMany({ where: { orderItemId: nihari.id, kind: 'sale' } })
+    expect(sale.reduce((s, m) => s - m.qty, 0)).toBeCloseTo(0.15, 6)
+    expect(sale.every((m) => m.tenantId === A.tenantId && m.sourceType === 'order_item.sale')).toBe(true)
     const out = await stock(beef[A.tenantId]!)
     const v = await voidLine(mgrA, o.id, nihari.id)
     expect(v.statusCode, v.body).toBe(200)
@@ -382,8 +391,13 @@ describe('BOH-R2-03 — a line voided after firing is booked as waste in the ord
     expect(v.json().stockWasted).toEqual({ [beef[A.tenantId]!]: expect.closeTo(0.15, 6) })
     expect(await stock(beef[A.tenantId]!)).toBeCloseTo(out, 6)
 
-    const logs = await prisma.wasteLog.findMany({ where: { inventoryItemId: beef[A.tenantId]!, reason: 'void_after_fire', notes: { contains: nihari.id } } })
+    const logs = await prisma.wasteLog.findMany({ where: { inventoryItemId: beef[A.tenantId]!, reason: 'void_after_fire', orderItemId: nihari.id } })
     expect(logs).toHaveLength(1)
+    expect(logs[0]!.tenantId).toBe(A.tenantId)
+    // Relabelled, not re-drawn: the sale is netted out (sale_void) and taken as waste, on the same lot.
+    const relabel = await prisma.stockMovement.findMany({ where: { orderItemId: nihari.id, kind: { in: ['sale_void', 'waste'] } } })
+    expect(relabel.map((m) => m.kind).sort()).toEqual(['sale_void', 'waste'])
+    expect(relabel.every((m) => m.lotId === sale[0]!.lotId && m.sourceType === 'waste_log' && m.sourceId === logs[0]!.id)).toBe(true)
     expect(logs[0]!.estimatedCostCents).toBe(30_000)
     expect(logs[0]!.quantity).toBeCloseTo(0.15, 6)
     expect(logs[0]!.approvedById).toBe(mgrA.id)

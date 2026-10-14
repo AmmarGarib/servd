@@ -79,7 +79,7 @@ async function balance(tenantId: string, code: string): Promise<number> {
 async function bill(supplierId: string, number: string, cents: number) {
   return createBill({
     supplierId, billNumber: number, billDate: today(),
-    lines: [{ description: 'Flour', quantity: 1, unitCostCents: cents }],
+    lines: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: cents, expenseAccountCode: '6040' }],
     createdBy: users['ceoA']!.id,
   })
 }
@@ -334,7 +334,7 @@ describe('unapply and void a supplier payment', () => {
   })
 
   it('a payment can\'t be applied to another company\'s bill (404, nothing saved)', async () => {
-    const bB = await createBill({ supplierId: supB, billNumber: 'B-1', billDate: today(), lines: [{ description: 'Veg', quantity: 1, unitCostCents: 1_000 }], createdBy: users['ceoB']!.id })
+    const bB = await createBill({ supplierId: supB, billNumber: 'B-1', billDate: today(), lines: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: 1_000, expenseAccountCode: '6040' }], createdBy: users['ceoB']!.id })
     const res = await call('ceoA', 'POST', '/procurement/payments', {
       supplierId: supA, paymentDate: today(), method: 'cash', amountCents: 1_000,
       applications: [{ billId: bB.id, amountAppliedCents: 1_000 }],

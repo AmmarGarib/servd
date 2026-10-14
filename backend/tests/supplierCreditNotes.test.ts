@@ -3,11 +3,13 @@
 // What this guards:
 //   - A credit note is a SupplierBill of kind 'credit_note' against its bill,
 //     posted in the same transaction: Dr 2010 (total − WHT share) + Dr 2040
-//     (WHT share, pro rata) / Cr 1210 (the goods, as stock valuation moved) /
-//     Cr 1320 (its tax) — balanced; a price credit on stock already used goes
-//     to 5060 and the stock still on hand is re-averaged.
-//   - Goods sent back leave stock, conditionally (never negative — 422 and
-//     nothing saved); a 'short' credit moves no stock.
+//     (WHT share, pro rata) / Cr 1210 (the goods, at the FIFO value of the
+//     lots they left, or the on-hand share of a price credit) / Cr 1320 (its
+//     tax) — balanced; a price credit on stock already used goes to 5060 and
+//     the bill's lot is re-priced (wave B: FIFO lots).
+//   - Goods sent back leave the bill's own lots (never more than is left in
+//     them — 422 OVER_RETURN and nothing saved); a 'short' credit moves no
+//     stock.
 //   - It can never credit more than the bill (per line, tax, total).
 //   - It is applied to its bill (or another open bill of the same supplier);
 //     billDueCents = total − WHT − paid − credited drives the bill's status,
@@ -29,6 +31,8 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { createBill, createPayment, agingReport, billDueCents } from '../src/modules/procurement/service.js'
+import { receiveGoods } from '../src/modules/procurement/receiving.js'
+import { consumeFifoTx } from '../src/lib/stockLedger.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 
 let tenantA: string
@@ -81,6 +85,21 @@ async function item(id: string) {
   return prisma.inventoryItem.findUniqueOrThrow({ where: { id }, select: { currentStock: true, unitCostCents: true } })
 }
 
+/** A delivery taken at the dock (no PO) — its receipt line, to bill against. */
+async function dock(itemId: string, qty: number, unitCostCents: number): Promise<string> {
+  const r = await receiveGoods({
+    actor: { id: users['ceoA']!.id, role: 'admin' }, supplierId: supA, photoUrl: 'https://example.com/dock.jpg',
+    lines: [{ inventoryItemId: itemId, quantityReceived: qty, unitCostCents }],
+  })
+  return r.receipt.lines[0]!.id
+}
+
+/** Stock used (out of the lots, oldest first). */
+let used = 0
+const useStock = (itemId: string, qty: number) => prisma.$transaction((tx) => consumeFifoTx(tx, {
+  tenantId: tenantA, inventoryItemId: itemId, qty, kind: 'waste', sourceType: 'test.use', sourceId: `use-${++used}`, clamp: false, occurredAt: new Date(),
+}))
+
 beforeAll(async () => {
   tenantA = (await prisma.tenant.create({ data: { name: 'SCN A', slug: 'scn-a' } })).id
   tenantB = (await prisma.tenant.create({ data: { name: 'SCN B', slug: 'scn-b' } })).id
@@ -93,25 +112,28 @@ beforeAll(async () => {
   supA  = (await prisma.supplier.create({ data: { name: 'A Mills', tenantId: tenantA, paymentTermsDays: 10 } })).id
   supA2 = (await prisma.supplier.create({ data: { name: 'A Dairy', tenantId: tenantA, paymentTermsDays: 10 } })).id
   supB  = (await prisma.supplier.create({ data: { name: 'B Farms', tenantId: tenantB, paymentTermsDays: 10 } })).id
-  flour = (await prisma.inventoryItem.create({ data: { name: 'Flour', unit: 'kg', tenantId: tenantA, currentStock: 10, unitCostCents: 1_000 } })).id
-  oil   = (await prisma.inventoryItem.create({ data: { name: 'Oil', unit: 'l', tenantId: tenantA, currentStock: 10, unitCostCents: 500 } })).id
+  flour = (await prisma.inventoryItem.create({ data: { name: 'Flour', unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 1_000 } })).id
+  oil   = (await prisma.inventoryItem.create({ data: { name: 'Oil', unit: 'l', tenantId: tenantA, currentStock: 0, unitCostCents: 500 } })).id
 
   await mkUser('ceoA', 'admin', tenantA)
   await mkUser('ceoB', 'admin', tenantB)
 
+  // Stock is received at the dock first (one lot each), then billed against its receipt.
+  const flourRl = await dock(flour, 10, 1_000)
+  const oilRl = await dock(oil, 10, 500)
   const b1 = await createBill({
     supplierId: supA, billNumber: 'INV-1', billDate: today(), taxCents: 1_700,
-    lines: [{ inventoryItemId: flour, description: 'Flour', quantity: 10, unitCostCents: 1_000 }], createdBy: users['ceoA']!.id,
+    lines: [{ inventoryItemId: flour, receiptLineId: flourRl, description: 'Flour', quantity: 10, unitCostCents: 1_000 }], createdBy: users['ceoA']!.id,
   })
   bill1 = { id: b1.id, lineId: b1.lines[0]!.id }
   const b2 = await createBill({
     supplierId: supA, billNumber: 'INV-2', billDate: today(),
-    lines: [{ inventoryItemId: oil, description: 'Oil', quantity: 10, unitCostCents: 500 }], createdBy: users['ceoA']!.id,
+    lines: [{ inventoryItemId: oil, receiptLineId: oilRl, description: 'Oil', quantity: 10, unitCostCents: 500 }], createdBy: users['ceoA']!.id,
   })
   bill2 = { id: b2.id, lineId: b2.lines[0]!.id }
-  bill3 = (await createBill({ supplierId: supA, billNumber: 'INV-3', billDate: today(), lines: [{ description: 'Sacks', quantity: 1, unitCostCents: 3_000 }], createdBy: users['ceoA']!.id })).id
-  billOther = (await createBill({ supplierId: supA2, billNumber: 'D-1', billDate: today(), lines: [{ description: 'Milk', quantity: 1, unitCostCents: 3_000 }], createdBy: users['ceoA']!.id })).id
-  billB = (await createBill({ supplierId: supB, billNumber: 'B-1', billDate: today(), lines: [{ description: 'Veg', quantity: 1, unitCostCents: 3_000 }], createdBy: users['ceoB']!.id })).id
+  bill3 = (await createBill({ supplierId: supA, billNumber: 'INV-3', billDate: today(), lines: [{ description: 'Cleaning cloths', quantity: 1, unitCostCents: 3_000, expenseAccountCode: '6040' }], createdBy: users['ceoA']!.id })).id
+  billOther = (await createBill({ supplierId: supA2, billNumber: 'D-1', billDate: today(), lines: [{ description: 'Detergent', quantity: 1, unitCostCents: 3_000, expenseAccountCode: '6040' }], createdBy: users['ceoA']!.id })).id
+  billB = (await createBill({ supplierId: supB, billNumber: 'B-1', billDate: today(), lines: [{ description: 'Detergent', quantity: 1, unitCostCents: 3_000, expenseAccountCode: '6040' }], createdBy: users['ceoB']!.id })).id
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -193,16 +215,17 @@ describe('recording a credit note / return', () => {
     expect(await prisma.supplierBill.count({ where: { billNumber: 'CN-BIG' } })).toBe(0)
   })
 
-  it('a return can never drive stock negative — 422 and nothing saved', async () => {
-    await prisma.inventoryItem.update({ where: { id: flour }, data: { currentStock: 1 } })
+  it('a return never takes more than is left in the bill\'s own lots — 422 and nothing saved', async () => {
+    await useStock(flour, 5)   // 1 kg of the bill's lot left
+    const creditable = (await call('ceoA', 'GET', `/procurement/bills/${bill1.id}`)).json().creditable
+    expect(creditable.lines[0].returnableQty).toBe(1)
     const res = await call('ceoA', 'POST', `/procurement/bills/${bill1.id}/credit-notes`, {
       number: 'CN-NEG', date: today(), reason: 'return', returnStock: true, lines: [{ billLineId: bill1.lineId, qty: 2 }],
     })
     expect(res.statusCode).toBe(422)
-    expect(res.json().error.code).toBe('NEGATIVE_STOCK')
+    expect(res.json().error.code).toBe('OVER_RETURN')
     expect(await prisma.supplierBill.count({ where: { billNumber: 'CN-NEG' } })).toBe(0)
     expect((await item(flour)).currentStock).toBe(1)
-    await prisma.inventoryItem.update({ where: { id: flour }, data: { currentStock: 6 } })
   })
 
   it('a closed month is 422 and nothing is saved, stock included', async () => {
@@ -214,13 +237,13 @@ describe('recording a credit note / return', () => {
     expect(res.statusCode).toBe(422)
     expect(res.json().error.code).toBe('PERIOD_LOCKED')
     expect(await prisma.supplierBill.count({ where: { billNumber: 'CN-LOCK' } })).toBe(0)
-    expect((await item(flour)).currentStock).toBe(6)
+    expect((await item(flour)).currentStock).toBe(1)
     await prisma.periodLock.delete({ where: { id: lock.id } })
   })
 
-  it('a price credit on stock partly used: the share on hand re-averages the item, the used share goes to 5060', async () => {
+  it('a price credit on stock partly used: the share on hand re-prices the bill\'s lot, the used share goes to 5060', async () => {
     // 6 of the 10 litres billed are already used.
-    await prisma.inventoryItem.update({ where: { id: oil }, data: { currentStock: 4 } })
+    await useStock(oil, 6)
     const res = await call('ceoA', 'POST', `/procurement/bills/${bill2.id}/credit-notes`, {
       number: 'CN-2', date: today(), reason: 'price', applyToBill: false,
       lines: [{ billLineId: bill2.lineId, unitCostCents: 100 }],          // PKR 1 off each of the 10 litres
@@ -236,48 +259,49 @@ describe('recording a credit note / return', () => {
       { code: '5060', type: 'credit', amount: 600 },
     ]))
     expect(await item(oil)).toEqual({ currentStock: 4, unitCostCents: 400 })
-    const hist = await prisma.itemPriceHistory.findFirst({ where: { inventoryItemId: oil, source: 'supplier_credit' } })
-    expect(hist).toMatchObject({ oldCostCents: 500, newCostCents: 400 })
 
     // Unapplied, it is a credit on the AP aging.
     const row = (await agingReport([tenantA])).bySupplier.find((r) => r.supplierId === supA)!
     expect(row.creditNotesCents).toBe(955)
   })
 
-  it('a return billed above the average cost: the rest of the credit re-prices the stock left; its void puts it all back', async () => {
-    // Sugar sits at PKR 8.00 on average; this bill charged PKR 10.00.
-    const sugar = (await prisma.inventoryItem.create({ data: { name: 'Sugar', unit: 'kg', tenantId: tenantA, currentStock: 10, unitCostCents: 800 } })).id
+  it('a return leaves the bill\'s own lot (at the billed price); its void puts it all back', async () => {
+    // Received at PKR 8.00, billed at PKR 10.00: the bill re-priced the lot.
+    const sugar = (await prisma.inventoryItem.create({ data: { name: 'Sugar', unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 800 } })).id
+    const rl = await dock(sugar, 5, 800)
     const b = await createBill({
       supplierId: supA, billNumber: 'INV-4', billDate: today(),
-      lines: [{ inventoryItemId: sugar, description: 'Sugar', quantity: 5, unitCostCents: 1_000 }], createdBy: users['ceoA']!.id,
+      lines: [{ inventoryItemId: sugar, receiptLineId: rl, description: 'Sugar', quantity: 5, unitCostCents: 1_000 }], createdBy: users['ceoA']!.id,
     })
+    expect(await item(sugar)).toEqual({ currentStock: 5, unitCostCents: 1_000 })
     const res = await call('ceoA', 'POST', `/procurement/bills/${b.id}/credit-notes`, {
       number: 'CN-SUGAR', date: today(), reason: 'return', returnStock: true, applyToBill: false,
       lines: [{ billLineId: b.lines[0]!.id, qty: 2 }],
     })
     expect(res.statusCode).toBe(201)
-    // 2 kg leave at 8.00 (1,600); the other 400 of the credit comes off the 8 kg left.
-    expect(await item(sugar)).toEqual({ currentStock: 8, unitCostCents: 750 })
+    // 2 kg leave the lot at 10.00 (2,000) — exactly the credit: no 5060.
+    expect(await item(sugar)).toEqual({ currentStock: 3, unitCostCents: 1_000 })
     const lines = await entryLines(`supplier.credit_note:${res.json().id}`, tenantA)
     expect(lines).toEqual(expect.arrayContaining([{ code: '1210', type: 'credit', amount: 2_000 }]))
     expect(lines!.some((l) => l.code === '5060')).toBe(false)
-    expect(await prisma.itemPriceHistory.findFirst({ where: { inventoryItemId: sugar, source: 'supplier_return' } })).toMatchObject({ oldCostCents: 800, newCostCents: 750 })
 
     const v = await call('ceoA', 'POST', `/procurement/credit-notes/${res.json().id}/void`, { reason: 'supplier refused the return' })
     expect(v.statusCode).toBe(200)
-    expect(await item(sugar)).toEqual({ currentStock: 10, unitCostCents: 800 })
+    expect(await item(sugar)).toEqual({ currentStock: 5, unitCostCents: 1_000 })
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: `supplier.credit_note.void.price:${res.json().id}` } })).toBe(0)
   })
 
-  it('a short delivery credit moves no stock', async () => {
+  it('a short delivery credit on received goods moves no stock (it re-prices the bill\'s lot)', async () => {
     const before = await item(oil)
     const res = await call('ceoA', 'POST', `/procurement/bills/${bill2.id}/credit-notes`, {
       number: 'CN-SHORT', date: today(), reason: 'short', lines: [{ billLineId: bill2.lineId, qty: 1, unitCostCents: 400 }],
     })
     expect(res.statusCode).toBe(201)
-    expect(await item(oil)).toEqual(before)
+    expect((await item(oil)).currentStock).toBe(before.currentStock)
+    // 4 of the lot's 10 litres are on hand: 160 off the lot, 240 to 5060.
     expect(await entryLines(`supplier.credit_note:${res.json().id}`, tenantA)).toEqual(expect.arrayContaining([
-      { code: '1210', type: 'credit', amount: 400 },
+      { code: '1210', type: 'credit', amount: 160 },
+      { code: '5060', type: 'credit', amount: 240 },
     ]))
   })
 })
@@ -370,7 +394,8 @@ describe('voiding a credit note', () => {
     expect((await call('ceoA', 'POST', `/procurement/credit-notes/${cnPrice}/unapply`, { billId: bill3 })).statusCode).toBe(200)
     const res = await call('ceoA', 'POST', `/procurement/credit-notes/${cnPrice}/void`, { reason: 'supplier withdrew it' })
     expect(res.statusCode).toBe(200)
-    expect(await item(oil)).toEqual({ currentStock: 4, unitCostCents: 500 })
+    // CN-SHORT (still live) keeps 400 off the lot: (5,000 − 400) / 10.
+    expect(await item(oil)).toEqual({ currentStock: 4, unitCostCents: 460 })
     // Nothing used since: no true-up needed.
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: `supplier.credit_note.void.price:${cnPrice}` } })).toBe(0)
   })
