@@ -35,12 +35,28 @@
 // message already exist: a manager's "Sign-in code" (POST
 // /auth/staff/:id/sign-in-code) and an admin's password reissue (POST
 // /auth/users/:id/reissue-password). Password reset answers 503
-// RESET_UNAVAILABLE in the practice copy.
+// RESET_UNAVAILABLE in the practice copy, and every route that would SEND a
+// code to a typed phone / email answers 503 OTP_UNAVAILABLE up front
+// (`refuseCodeRequestInPractice`) instead of "a code is on its way".
+//
+// Who can reach it: the practice copy holds real personal data and echoes the
+// 2FA code, so it must sit behind Cloudflare Access (both addresses). In
+// production the API refuses to start without the Access settings and refuses
+// every request that did not come through Access (`registerPracticeAccessGuard`).
+// Its CORS / socket allowlist is its own admin only (`practiceOriginAllowed`).
+//
+// The copied data: on the first boot of each copy, `sandboxScrub` rotates the
+// copied POS-connector webhook tokens and switches off the copied bank-SMS
+// devices, outbound webhooks, push tokens and stored gateway / social / SMTP
+// credentials (marker setting `sandbox.scrubbedAt`, which a Neon "Reset from
+// parent" wipes, so a fresh copy is scrubbed again).
 
-import { randomBytes } from 'node:crypto'
+import { createPublicKey, randomBytes, type JsonWebKey, type KeyObject } from 'node:crypto'
+import jwt from 'jsonwebtoken'
 import type { FastifyInstance } from 'fastify'
 import type { PosConnector } from '@prisma/client'
 import { AppError } from './errors.js'
+import { isInternalRequest } from './internalRequest.js'
 
 export type SandboxKind =
   | 'whatsapp'
@@ -205,10 +221,232 @@ export function assertSandboxBoot(env: NodeJS.ProcessEnv = process.env): void {
   if (prodHosts.length === 0) {
     console.warn('[sandbox] SERVD_PROD_HOSTS is not set, so the boot check cannot tell the live database / Redis from the practice ones.')
   }
+  // A practice copy on the internet without Cloudflare Access would hand a
+  // 2FA code to anyone holding a leaked live password (the code is echoed).
+  if (env['NODE_ENV'] === 'production') {
+    const access = accessConfig(env)
+    if (!access) {
+      throw new Error(`Practice copy refused to start: ${ACCESS_TEAM_ENV} and ${ACCESS_AUD_ENV} must be set (Cloudflare Access in front of the practice copy, SETUP.md step 2).`)
+    }
+    if (!/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(access.team)) {
+      throw new Error(`Practice copy refused to start: ${ACCESS_TEAM_ENV} must be the Zero Trust team domain, <team>.cloudflareaccess.com (got '${access.team}').`)
+    }
+  }
   console.warn('[sandbox] PRACTICE COPY: messages, fiscal filing, card payments, webhooks, social posts and live-bucket uploads are blocked.')
 }
 
 /** GET /api/v1/meta/sandbox (no auth) → { sandbox }. */
 export async function sandboxMetaRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/sandbox', async () => ({ sandbox: isSandbox() }))
+}
+
+// ── Code requests ────────────────────────────────────────────────────────────
+
+const CODE_REFUSALS = {
+  staff: 'Practice copy: sign-in codes are not sent here. Ask a manager for a sign-in code (Workforce, "Sign-in code" next to your name) and enter it here.',
+  customer: 'Practice copy: codes and sign-in links are not sent here, so customer sign-up and contact checks are switched off.',
+  rider: 'Practice copy: rider sign-in codes are not sent here.',
+  waitlist: 'Practice copy: codes are not sent here, so the waitlist is switched off.',
+} as const
+
+/**
+ * First line of every route that would SEND a code or a sign-in link to a
+ * typed phone / email: floor-staff code sign-in, customer sign-up, contact
+ * check and magic link, rider sign-in, waitlist. The practice copy blocks the
+ * send, so "a code is on its way" would leave someone waiting for nothing:
+ * refuse with 503 OTP_UNAVAILABLE before any lookup — the same answer for
+ * every number, so it says nothing about who is staff. Live: returns.
+ */
+export function refuseCodeRequestInPractice(who: keyof typeof CODE_REFUSALS): void {
+  if (isSandbox()) throw new AppError('OTP_UNAVAILABLE', CODE_REFUSALS[who], 503)
+}
+
+// ── Browser origins ──────────────────────────────────────────────────────────
+
+const normOrigin = (v: string): string => v.trim().replace(/\/+$/, '').toLowerCase()
+
+/**
+ * The practice copy's CORS + socket.io origin check (corsAllowlist.ts asks
+ * this instead of the live allowlist when `isSandbox()`): its OWN admin
+ * (WEB_URL) only — never live servd's admin, storefront or brand sites, which
+ * the live allowlist trusts. No Origin (server-to-server, the healthcheck)
+ * passes, as on live.
+ */
+export function practiceOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true
+  const own = normOrigin(process.env['WEB_URL'] ?? '')
+  return own !== '' && normOrigin(origin) === own
+}
+
+// ── Cloudflare Access in front of the practice copy ─────────────────────────
+
+/** The Zero Trust team domain, `<team>.cloudflareaccess.com`. */
+const ACCESS_TEAM_ENV = 'SERVD_SANDBOX_ACCESS_TEAM'
+/** The Access application's Application Audience (AUD) tag. */
+const ACCESS_AUD_ENV = 'SERVD_SANDBOX_ACCESS_AUD'
+
+interface AccessConfig { team: string; aud: string }
+
+function accessConfig(env: NodeJS.ProcessEnv = process.env): AccessConfig | null {
+  const team = (env[ACCESS_TEAM_ENV] ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '')
+  const aud = (env[ACCESS_AUD_ENV] ?? '').trim()
+  return team && aud ? { team, aud } : null
+}
+
+const ACCESS_KEYS_TTL_MS = 60 * 60 * 1000
+const ACCESS_KEYS_REFETCH_MS = 30 * 1000
+let accessKeys: { team: string; at: number; keys: Map<string, KeyObject> } | null = null
+let accessKeysFetchedAt = 0
+
+/**
+ * The team's public signing key `kid`: cached for an hour; an unknown kid (a
+ * rotation) or an expired cache refetches at most every 30 s. A read-only GET
+ * of PUBLIC keys — nothing about the practice copy is sent. If the fetch
+ * fails, a key already held keeps working.
+ */
+async function accessKey(team: string, kid: string): Promise<KeyObject | null> {
+  const held = accessKeys?.team === team ? accessKeys : null
+  if (held && Date.now() - held.at < ACCESS_KEYS_TTL_MS && held.keys.has(kid)) return held.keys.get(kid)!
+  if (Date.now() - accessKeysFetchedAt < ACCESS_KEYS_REFETCH_MS) return held?.keys.get(kid) ?? null
+  accessKeysFetchedAt = Date.now()
+  try {
+    const res = await fetch(`https://${team}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const body = (await res.json()) as { keys?: Array<JsonWebKey & { kid?: string }> }
+    const keys = new Map<string, KeyObject>()
+    for (const k of body.keys ?? []) {
+      if (!k.kid || k.kty !== 'RSA') continue
+      try { keys.set(k.kid, createPublicKey({ key: k, format: 'jwk' })) } catch { /* not a usable key */ }
+    }
+    accessKeys = { team, at: Date.now(), keys }
+    return keys.get(kid) ?? null
+  } catch (err) {
+    console.warn(`[sandbox] could not read the Cloudflare Access keys: ${(err as Error).message}`)
+    return held?.keys.get(kid) ?? null
+  }
+}
+
+/** Tests only. */
+export function resetAccessKeyCache(): void {
+  accessKeys = null
+  accessKeysFetchedAt = 0
+}
+
+/**
+ * Is `token` a Cloudflare Access token for this practice copy? RS256, signed
+ * by one of the team's keys, this application's audience, the team as issuer,
+ * not expired.
+ */
+export async function verifyAccessToken(token: string, cfg: AccessConfig | null = accessConfig()): Promise<boolean> {
+  if (!cfg) return false
+  const decoded = jwt.decode(token, { complete: true })
+  const kid = decoded?.header.kid
+  if (!decoded || decoded.header.alg !== 'RS256' || !kid) return false
+  const key = await accessKey(cfg.team, kid)
+  if (!key) return false
+  try {
+    jwt.verify(token, key, { algorithms: ['RS256'], audience: cfg.aud, issuer: `https://${cfg.team}` })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Practice copy only: every request that came in from the internet must carry
+ * a valid Cloudflare Access token (Cf-Access-Jwt-Assertion, added by Access
+ * after its own sign-in). A missing or broken Access setup then CLOSES the
+ * practice copy, instead of opening a copy of real data — and its 2FA echo —
+ * to anyone holding a leaked password, with a login rate limit of its own.
+ * Exempt: CORS preflights (Access passes them to the origin without a token)
+ * and requests from inside the practice network with no forwarding headers
+ * (the container healthcheck). Live: not registered. Without the Access
+ * settings (development, tests — production refuses to boot without them)
+ * nothing is checked.
+ */
+export function registerPracticeAccessGuard(fastify: FastifyInstance): void {
+  if (!isSandbox()) return
+  const cfg = accessConfig()
+  if (!cfg) {
+    console.warn(`[sandbox] ${ACCESS_TEAM_ENV} / ${ACCESS_AUD_ENV} are not set: requests are NOT checked for Cloudflare Access.`)
+    return
+  }
+  fastify.addHook('onRequest', async (req) => {
+    if (req.method === 'OPTIONS' || isInternalRequest(req)) return
+    const token = req.headers['cf-access-jwt-assertion']
+    if (typeof token === 'string' && token !== '' && (await verifyAccessToken(token, cfg))) return
+    throw new AppError('ACCESS_REQUIRED', 'Practice copy: sign in through Cloudflare Access first. Open this address in your browser, sign in, then try again.', 403)
+  })
+}
+
+// ── The copied live data ─────────────────────────────────────────────────────
+
+/** Set once a copy has been scrubbed. A Neon "Reset from parent" wipes it. */
+export const SANDBOX_SCRUB_KEY = 'sandbox.scrubbedAt'
+
+/**
+ * Stored credentials copied from live: the Facebook / Instagram page, the
+ * WhatsApp gateway (lib/whatsapp.ts WA_URL_KEY / WA_KEY_KEY) and the SMTP
+ * login (lib/mailer.ts SMTP_USER_KEY / SMTP_PASS_KEY). Literal here: those
+ * modules import this one.
+ */
+const SCRUBBED_SETTINGS = [
+  'fb_page_id', 'fb_page_name', 'fb_page_token', 'ig_user_id',
+  'integrations.whatsapp.apiUrl', 'integrations.whatsapp.apiKey',
+  'integrations.smtp.user', 'integrations.smtp.pass',
+]
+
+export interface SandboxScrubResult {
+  connectorTokens: number
+  smsDevices: number
+  webhooks: number
+  pushTokens: number
+  settings: number
+}
+
+/**
+ * Practice copy, at boot before the API listens, once per copy of the data:
+ * every POS connector gets a NEW webhook token (the admin connector page shows
+ * it, and the copied one is live's), the copied bank-SMS counter phones,
+ * outbound webhooks and push tokens are switched off, and the stored gateway /
+ * social / SMTP credentials are deleted. The outbound edges are blocked anyway
+ * (`sandboxBlocks`); this keeps live's identifiers and credentials out of the
+ * practice copy's screens and database. Every step is idempotent; the marker
+ * is written last, so an interrupted scrub runs again on the next boot.
+ * Returns null when nothing ran (live, or this copy is already scrubbed).
+ */
+export async function sandboxScrub(): Promise<SandboxScrubResult | null> {
+  if (!isSandbox()) return null
+  const { serviceClient: db } = await import('./prisma.js')
+  if (await db.setting.findUnique({ where: { key: SANDBOX_SCRUB_KEY }, select: { key: true } })) return null
+  const { newWebhookToken } = await import('../connectors/registry.js')
+
+  const connectors = await db.posConnector.findMany({ select: { id: true } })
+  for (const c of connectors) {
+    await db.posConnector.update({ where: { id: c.id }, data: { webhookToken: newWebhookToken() } })
+  }
+  const now = new Date()
+  const sms = await db.bankSmsDevice.updateMany({ where: { active: true }, data: { active: false } })
+  const hooks = await db.webhookSubscription.updateMany({ where: { isActive: true }, data: { isActive: false } })
+  const push = await db.expoPushToken.updateMany({ where: { revokedAt: null }, data: { revokedAt: now } })
+  const settings = await db.setting.deleteMany({ where: { key: { in: SCRUBBED_SETTINGS } } })
+  await db.setting.upsert({
+    where: { key: SANDBOX_SCRUB_KEY },
+    create: { key: SANDBOX_SCRUB_KEY, value: now.toISOString() },
+    update: { value: now.toISOString() },
+  })
+
+  const result: SandboxScrubResult = {
+    connectorTokens: connectors.length,
+    smsDevices: sms.count,
+    webhooks: hooks.count,
+    pushTokens: push.count,
+    settings: settings.count,
+  }
+  console.warn(
+    `[sandbox] scrubbed the copied live data: ${result.connectorTokens} connector webhook token(s) rotated, ` +
+    `${result.smsDevices} bank-SMS phone(s), ${result.webhooks} webhook(s) and ${result.pushTokens} push token(s) switched off, ` +
+    `${result.settings} stored credential(s) deleted`,
+  )
+  return result
 }

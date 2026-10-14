@@ -1,5 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# servd PRACTICE COPY — https://sandbox.servd.pk (admin) + https://sandbox-api.servd.pk (API)
+# servd PRACTICE COPY — https://servd-practice.garibsons.app (admin)
+#                     + https://servd-practice-api.garibsons.app (API)
 #
 # A second, separate servd where staff try anything. Its database is a Neon
 # BRANCH of the live one (a copy of real data), so the API runs with
@@ -14,8 +15,15 @@
 #
 # Tunnel routes (Cloudflare Zero Trust → tunnel "servd-practice", never the
 # live tunnel):
-#   sandbox.servd.pk      → http://sandbox-admin:3000
-#   sandbox-api.servd.pk  → http://sandbox-api:3001
+#   servd-practice.garibsons.app      → http://sandbox-admin:3000
+#   servd-practice-api.garibsons.app  → http://sandbox-api:3001
+# BOTH behind one Cloudflare Access application (SETUP.md step 2). The API
+# refuses to start without the Access settings and refuses every request that
+# did not come through Access.
+#
+# Never under servd.pk: the browser treats every *.servd.pk address as the
+# same site as the live API (live sign-in cookies ride along), and the live
+# API's CORS allowlist trusts *.servd.pk.
 #
 # Every variable comes from .env in this folder (copy .env.example). Compose
 # refuses to start while a required one is empty.
@@ -76,15 +84,17 @@ services:
       # (reminders, scheduled reports, fiscal sweeps, auto-publish, …).
       ENABLE_WORKERS: "false"
       RLS_ENFORCE: "1"
-      API_URL: "https://sandbox-api.servd.pk"
-      WEB_URL: "https://sandbox.servd.pk"
+      API_URL: "https://servd-practice-api.garibsons.app"
+      # The practice admin. In practice mode it is the ONLY browser origin the
+      # API (and its sockets) accept — never live servd's admin or storefront.
+      WEB_URL: "https://servd-practice.garibsons.app"
       # Where password-reset links would point (reset is switched off in the
       # practice copy anyway). Never the live admin.
-      ADMIN_ORIGIN: "https://sandbox.servd.pk"
+      ADMIN_ORIGIN: "https://servd-practice.garibsons.app"
       # The API requires STOREFRONT_URL in production. The practice copy has
       # no storefront; any link it builds (table QR codes, tracking links)
       # points at the practice address, never at the live servd.pk.
-      STOREFRONT_URL: "https://sandbox.servd.pk"
+      STOREFRONT_URL: "https://servd-practice.garibsons.app"
       # The Neon BRANCH's connection string — never the live database.
       DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL in .env to the Neon practice BRANCH connection string (see SETUP.md step 1)}"
       REDIS_URL: "${REDIS_URL:-redis://sandbox-redis:6379}"
@@ -101,9 +111,25 @@ services:
       # The live database and Redis hostnames. The practice API refuses to
       # start if DATABASE_URL or REDIS_URL points at one of them.
       SERVD_PROD_HOSTS: "${SERVD_PROD_HOSTS:?Set SERVD_PROD_HOSTS in .env to the LIVE database and Redis hostnames (see SETUP.md step 3)}"
+      # Cloudflare Access in front of the practice copy (SETUP.md step 2). The
+      # API checks every request from the internet for a valid Access token
+      # of THIS application, and refuses to start without these two.
+      SERVD_SANDBOX_ACCESS_TEAM: "${CF_ACCESS_TEAM_DOMAIN:?Set CF_ACCESS_TEAM_DOMAIN in .env to the Zero Trust team domain, <team>.cloudflareaccess.com (see SETUP.md step 2)}"
+      SERVD_SANDBOX_ACCESS_AUD: "${CF_ACCESS_AUD:?Set CF_ACCESS_AUD in .env to the Access application's Application Audience (AUD) tag (see SETUP.md step 2)}"
     depends_on:
       sandbox-redis:
         condition: service_healthy
+    # Healthy ONLY when the API answers that it is in practice mode. An image
+    # without practice mode ignores SERVD_SANDBOX and would run as live on a
+    # copy of real data — then this check never passes, so the admin and the
+    # tunnel never start and nothing is reachable from outside.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/v1/meta/sandbox | grep -q '\"sandbox\":true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      # Migrations on the copied database run before the API listens.
+      start_period: 120s
     deploy:
       resources:
         # Caps so practice use can never starve the live ERP on the same box.
@@ -113,10 +139,11 @@ services:
     networks: [sandbox_net]
 
   # ─────────── Practice admin (Next.js) ──────────────────────────────────────
-  # admin-sandbox is built with NEXT_PUBLIC_API_URL=https://sandbox-api.servd.pk,
-  # NEXT_PUBLIC_WS_URL=wss://sandbox-api.servd.pk and NEXT_PUBLIC_SANDBOX=1
-  # (deploy/sandbox/build-admin.sh). The live :admin image talks to the live
-  # API and must never be used here.
+  # admin-sandbox is built with NEXT_PUBLIC_API_URL=https://servd-practice-api.garibsons.app,
+  # NEXT_PUBLIC_WS_URL=wss://servd-practice-api.garibsons.app,
+  # NEXT_PUBLIC_STOREFRONT_URL=https://servd-practice.garibsons.app and
+  # NEXT_PUBLIC_SANDBOX=1 (deploy/sandbox/build-admin.sh). The live :admin
+  # image talks to the live API and must never be used here.
   sandbox-admin:
     image: ammargarib/servd:${SANDBOX_ADMIN_TAG:-admin-sandbox}
     restart: unless-stopped
@@ -126,7 +153,8 @@ services:
       # Server-side fetches go straight to the practice API on this network.
       INTERNAL_API_URL: "http://sandbox-api:3001"
     depends_on:
-      - sandbox-api
+      sandbox-api:
+        condition: service_healthy
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 512m }
@@ -179,8 +207,9 @@ services:
     depends_on:
       sandbox-preflight:
         condition: service_completed_successfully
+      # Only once the API has proved it is in practice mode (healthcheck).
       sandbox-api:
-        condition: service_started
+        condition: service_healthy
       sandbox-admin:
         condition: service_started
     deploy:

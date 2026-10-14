@@ -28,20 +28,22 @@ echo [practice] Pulling the latest practice images...
 docker compose -p servd-sandbox pull
 if errorlevel 1 goto :fail
 
-echo [practice] Starting the practice copy...
+echo [practice] Starting the practice copy. This waits until the API has run its migrations and proved it is in practice mode - a few minutes.
 docker compose -p servd-sandbox up -d
 if errorlevel 1 goto :fail
 
 echo.
 docker compose -p servd-sandbox ps
 echo.
-echo [practice] Done. Open https://sandbox.servd.pk - the API runs its database migrations first, so give it a minute.
-echo [practice] Watch it start:  docker compose -p servd-sandbox logs -f sandbox-api
+echo [practice] Done. Open https://servd-practice.garibsons.app
+echo [practice] API log:  docker compose -p servd-sandbox logs -f sandbox-api
 goto :end
 
 :fail
 echo.
 echo [practice] FAILED - see the messages above. The live ERP was not touched.
+echo [practice] If sandbox-api is "unhealthy", it did not start in practice mode or its migrations failed:
+echo [practice]   docker compose -p servd-sandbox logs sandbox-api
 if /i not "%~1"=="/nopause" pause
 exit /b 1
 

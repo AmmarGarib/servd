@@ -64,7 +64,7 @@ import { supplierChatRoutes } from './modules/procurement/chat.js'
 import { startSocialPublishWorker } from './workers/socialPublish.js'
 import { randomBytes } from 'crypto'
 import { getOAuthUrl, exchangeCodeForTokens } from './lib/meta-social.js'
-import { assertSandboxBoot, sandboxHealthFields, sandboxMetaRoutes } from './lib/sandbox.js'
+import { assertSandboxBoot, sandboxHealthFields, sandboxMetaRoutes, registerPracticeAccessGuard, sandboxScrub } from './lib/sandbox.js'
 import { requireAuth, MANAGERS, OTP_LOGIN_ROLES } from './modules/auth/middleware.js'
 
 // Modules
@@ -273,6 +273,11 @@ async function build() {
     credentials: true,
     maxAge: 3600,
   })
+
+  // Practice copy only: every request from the internet must have come
+  // through Cloudflare Access (lib/sandbox.ts). After CORS, so the refusal is
+  // readable by the practice admin. Live: registers nothing.
+  registerPracticeAccessGuard(fastify)
 
   // Global default rate limit. Hot routes override via { config: { rateLimit } }.
   // Authenticated requests get a higher allowance keyed on user ID; anon falls
@@ -1231,6 +1236,15 @@ function validateProductionEnv() {
 async function start() {
   validateProductionEnv()
   assertSandboxBoot() // practice copy: refuses a malformed SERVD_SANDBOX or a live DB / Redis host
+  // Practice copy: scrub the copied live data once per copy, before serving
+  // (lib/sandbox.ts). Live: does nothing. A copy that can't be scrubbed is
+  // not served.
+  try {
+    await sandboxScrub()
+  } catch (err) {
+    console.error(`[sandbox] FATAL: could not scrub the copied live data: ${(err as Error).message}`)
+    process.exit(1)
+  }
   const fastify = await build()
 
   try {

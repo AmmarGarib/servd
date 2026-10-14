@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, ForbiddenError } from '../../lib/errors.js'
+import { refuseCodeRequestInPractice } from '../../lib/sandbox.js'
 import { requireAuth } from '../auth/middleware.js'
 import { requestOtp, verifyOtp, normalisePhone, normaliseEmail } from '../auth/otp.js'
 import { maskPhone } from '../auth/twoFactor.js'
@@ -191,6 +192,7 @@ export async function waitlistRoutes(fastify: FastifyInstance) {
   // POST /waitlist/request-code — sends a 6-digit WhatsApp code through the
   // shared customer code store (auth/otp.ts, purpose 'waitlist').
   fastify.post('/request-code', async (req, reply) => {
+    refuseCodeRequestInPractice('waitlist') // practice copy: nothing is sent (lib/sandbox.ts)
     const body = requestCodeSchema.parse(req.body)
     assertConsent(body)
     const phone = phoneOf(body.phone)

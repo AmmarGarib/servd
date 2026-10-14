@@ -7,13 +7,18 @@
 // at the top: a full-width stripe in the warning colour, and "[PRACTICE] " in
 // front of the tab title.
 //
-// It is on when EITHER
-//   - the admin image was built with NEXT_PUBLIC_SANDBOX=1 (baked at build,
-//     so it shows on the very first paint, before any request), OR
-//   - GET /api/v1/meta/sandbox answers { sandbox: true } — the API's own
-//     SERVD_SANDBOX switch, a backstop for an image built without the flag.
-// The live admin (flag unset, API answers false or has no such route)
-// renders nothing and changes nothing.
+// It is on ONLY when the admin image was built with NEXT_PUBLIC_SANDBOX=1
+// (deploy/sandbox/build-admin.sh refuses to build a practice image without
+// it). Next.js inlines the flag at build time, so on the live admin this is
+// the constant `false`: nothing renders and no request is made.
+//
+// On the practice copy the stripe also checks, once per page load and again
+// when the tab regains focus while there is a problem, that the practice API
+// answers and says it is in practice mode (GET /api/v1/meta/sandbox, with the
+// browser's Cloudflare Access sign-in). Two things it can say:
+//   - "not signed in to the practice API": Access lets the admin through but
+//     not (yet) the API address — open the API address once to sign in;
+//   - "the API is NOT in practice mode": stop, tell IT.
 //
 // The stripe is fixed to the top and the page is pushed down by its measured
 // height (body padding + the viewport-height utilities shortened to match),
@@ -23,38 +28,30 @@ import { useEffect, useRef, useState } from 'react'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const BAKED_IN = process.env['NEXT_PUBLIC_SANDBOX'] === '1'
+const API_CHECK_URL = `${API_URL}/api/v1/meta/sandbox`
 
 const TITLE_PREFIX = '[PRACTICE] '
 
-// One question per page load, shared by every caller. Only a real answer is
-// kept; a failure (API down, route missing) is not cached as "live".
-let apiAnswer: Promise<boolean> | null = null
-function askApi(): Promise<boolean> {
-  if (!apiAnswer) {
-    apiAnswer = fetch(`${API_URL}/api/v1/meta/sandbox`, { cache: 'no-store' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`meta/sandbox ${res.status}`)
-        const d = (await res.json()) as { sandbox?: unknown } | null
-        return d?.sandbox === true
-      })
-      .catch(() => {
-        apiAnswer = null
-        return false
-      })
-  }
-  return apiAnswer
+/** True on the practice copy (the admin image was built with NEXT_PUBLIC_SANDBOX=1). */
+export function useIsPracticeCopy(): boolean {
+  return BAKED_IN
 }
 
-/** True on the practice copy (baked-in flag, or the API says so). */
-export function useIsPracticeCopy(): boolean {
-  const [fromApi, setFromApi] = useState(false)
-  useEffect(() => {
-    if (BAKED_IN) return
-    let alive = true
-    void askApi().then((yes) => { if (alive && yes) setFromApi(true) })
-    return () => { alive = false }
-  }, [])
-  return BAKED_IN || fromApi
+type ApiState = 'checking' | 'ok' | 'signin' | 'not_practice'
+
+/** Practice copy only: does the practice API answer, and is it in practice mode? */
+async function checkPracticeApi(): Promise<ApiState> {
+  try {
+    const res = await fetch(API_CHECK_URL, { cache: 'no-store', credentials: 'include' })
+    if (!res.ok) return 'signin'
+    const d = (await res.json().catch(() => null)) as { sandbox?: unknown } | null
+    if (d?.sandbox === true) return 'ok'
+    return d?.sandbox === false ? 'not_practice' : 'signin'
+  } catch {
+    // Cloudflare Access answered with its sign-in redirect (no CORS) or the
+    // API is unreachable: either way, opening the API address shows which.
+    return 'signin'
+  }
 }
 
 // Static CSS (no input from anywhere). The height variable is set from the
@@ -74,6 +71,20 @@ export function SandboxBanner() {
   const on = useIsPracticeCopy()
   const bar = useRef<HTMLDivElement>(null)
   const [height, setHeight] = useState<number | null>(null)
+  const [api, setApi] = useState<ApiState>('checking')
+
+  // Practice copy only (never runs on live): check the practice API on load,
+  // and again on focus while it is not answering as a practice API.
+  useEffect(() => {
+    if (!on) return
+    let alive = true
+    let state: ApiState = 'checking'
+    const run = () => { void checkPracticeApi().then((s) => { if (alive) { state = s; setApi(s) } }) }
+    const onFocus = () => { if (state !== 'ok') run() }
+    run()
+    window.addEventListener('focus', onFocus)
+    return () => { alive = false; window.removeEventListener('focus', onFocus) }
+  }, [on])
 
   // Push the page down by exactly the stripe's height (it wraps to two or
   // three lines on a phone).
@@ -127,6 +138,20 @@ export function SandboxBanner() {
       >
         <strong className="font-black tracking-[0.12em]">PRACTICE COPY</strong>
         {' '}&mdash; a copy of servd for practice. Nothing here reaches the live ERP, customers, banks or FBR.
+        {api === 'signin' && (
+          <span className="block font-bold">
+            Not signed in to the practice API yet:{' '}
+            <a href={API_CHECK_URL} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+              open it once to sign in
+            </a>
+            , then come back to this tab.
+          </span>
+        )}
+        {api === 'not_practice' && (
+          <span className="block font-black">
+            STOP: this page is talking to a server that is NOT in practice mode. Do not use it; tell IT.
+          </span>
+        )}
       </div>
     </>
   )
@@ -134,9 +159,9 @@ export function SandboxBanner() {
 
 /**
  * "Practice copy — your code is 123456": the practice API sends nothing to
- * WhatsApp or email, so where the live API would send a code it returns it as
- * `practiceCode` instead, and the sign-in screens show it here. The live API
- * never returns the field, so on live this is never rendered.
+ * WhatsApp or email, so after a correct password it returns the 2FA code it
+ * would have sent as `practiceCode`, and the sign-in screen shows it here. The
+ * live API never returns the field, so on live this is never rendered.
  */
 export function PracticeCode({ code, children }: { code: string; children?: React.ReactNode }) {
   return (

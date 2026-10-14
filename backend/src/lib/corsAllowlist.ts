@@ -1,4 +1,5 @@
 import { isDomainOriginAllowed, describeDomainOrigins } from '../modules/domains/hostCache.js'
+import { isSandbox, practiceOriginAllowed } from './sandbox.js'
 // Origin allowlist for the API.
 //
 // Background:
@@ -84,6 +85,8 @@ const WILDCARD_PATTERNS: RegExp[] = [
 ]
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
+  // Practice copy: its own admin only, never live servd's hosts (lib/sandbox.ts).
+  if (isSandbox()) return practiceOriginAllowed(origin)
   if (!origin) return true                // server-to-server / curl / webhooks
   const o = normaliseOrigin(origin)
   if (STATIC_ALLOWED.has(o)) return true

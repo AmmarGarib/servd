@@ -24,6 +24,7 @@ import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import { normalisePhone, requestOtp, verifyOtp } from '../auth/otp.js'
 import { AppError } from '../../lib/errors.js'
+import { refuseCodeRequestInPractice } from '../../lib/sandbox.js'
 import { revokeToken, claimRevocation, isCutOff, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import {
   claim as claimRateLimit,
@@ -58,6 +59,7 @@ const ROTATED = 'rotated'
 export async function riderAuthRoutes(fastify: FastifyInstance) {
   // POST /rider-auth/otp/request
   fastify.post('/otp/request', async (req, reply) => {
+    refuseCodeRequestInPractice('rider') // practice copy: nothing is sent (lib/sandbox.ts)
     const body = z.object({ phone: phoneSchema }).parse(req.body)
     const phone = normalisePhone(body.phone)
 

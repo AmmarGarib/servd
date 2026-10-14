@@ -18,6 +18,8 @@
 // login rate limiters are real).
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { generateKeyPairSync, type KeyObject } from 'node:crypto'
+import jwt from 'jsonwebtoken'
 import https from 'node:https'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -66,7 +68,12 @@ const sandboxLib = await import('../src/lib/sandbox.js')
 const {
   isSandbox, sandboxBlocks, recentlyBlocked, sandboxBlockedCount, resetSandboxLog, practiceCodeField,
   sandboxHealthFields, sandboxUploadKey, assertSandboxBoot, sandboxMetaRoutes, practiceConnectorRow,
+  practiceOriginAllowed, verifyAccessToken, registerPracticeAccessGuard, resetAccessKeyCache,
+  sandboxScrub, SANDBOX_SCRUB_KEY,
 } = sandboxLib
+const { isAllowedOrigin } = await import('../src/lib/corsAllowlist.js')
+const { riderAuthRoutes } = await import('../src/modules/riderAuth/routes.js')
+const { waitlistRoutes } = await import('../src/modules/waitlist/routes.js')
 const { sendText, whatsappConfigured, invalidateWhatsappConfig, WA_URL_KEY } = await import('../src/lib/whatsapp.js')
 const { sendEmail, emailConfigured, invalidateMailConfig } = await import('../src/lib/mailer.js')
 const { deliverToSupplier } = await import('../src/lib/supplier-channels.js')
@@ -199,6 +206,8 @@ beforeAll(async () => {
   await app.register(sandboxMetaRoutes, { prefix: '/api/v1/meta' })
   await app.register(connectorWebhookRoutes, { prefix: '/api/v1/webhooks/pos' })
   await app.register(connectorRoutes, { prefix: '/api/v1/connectors' })
+  await app.register(riderAuthRoutes, { prefix: '/api/v1/rider-auth' })
+  await app.register(waitlistRoutes, { prefix: '/api/v1/waitlist' })
   await app.ready()
   const keys = await redis.keys(`*${CLIENT_IP}*`)
   if (keys.length) await redis.del(...keys)
@@ -208,7 +217,9 @@ afterAll(async () => {
   practice(false)
   await app?.close()
   fetchSpy.mockRestore()
-  await prisma.setting.deleteMany({ where: { key: { in: [WA_URL_KEY, 'fb_page_id', 'fb_page_token', 'ig_user_id'] } } })
+  await prisma.setting.deleteMany({
+    where: { key: { in: [WA_URL_KEY, 'integrations.whatsapp.apiKey', 'integrations.smtp.user', 'integrations.smtp.pass', 'fb_page_id', 'fb_page_name', 'fb_page_token', 'ig_user_id', SANDBOX_SCRUB_KEY] } },
+  })
   if (!tenantA) return
   await prisma.expoPushToken.deleteMany({ where: { userId: { in: users } } })
   await prisma.staffPasswordReset.deleteMany({ where: { userId: { in: users } } })
@@ -293,6 +304,14 @@ describe('lib/sandbox', () => {
     expect(() => assertSandboxBoot({ ...live, DATABASE_URL: 'postgresql://u@db.live.example:5432/servd' })).toThrow(/DATABASE_URL/)
     expect(() => assertSandboxBoot({ ...live, DATABASE_URL: 'postgresql://u@db.practice.example/servd', REDIS_URL: 'redis://redis.live.example:6379' })).toThrow(/REDIS_URL/)
     expect(() => assertSandboxBoot({ ...live, DATABASE_URL: 'postgresql://u@db.practice.example/servd', REDIS_URL: 'redis://redis.practice.example:6379' })).not.toThrow()
+    // Production: Cloudflare Access settings are required, and the team must be a cloudflareaccess.com domain.
+    const prod = { ...live, NODE_ENV: 'production', DATABASE_URL: 'postgresql://u@db.practice.example/servd', REDIS_URL: 'redis://redis.practice.example:6379' }
+    expect(() => assertSandboxBoot(prod)).toThrow(/SERVD_SANDBOX_ACCESS_TEAM and SERVD_SANDBOX_ACCESS_AUD must be set/)
+    expect(() => assertSandboxBoot({ ...prod, SERVD_SANDBOX_ACCESS_TEAM: 'gsfoods.cloudflareaccess.com' })).toThrow(/must be set/)
+    expect(() => assertSandboxBoot({ ...prod, SERVD_SANDBOX_ACCESS_TEAM: 'evil.example.com', SERVD_SANDBOX_ACCESS_AUD: 'aud' })).toThrow(/cloudflareaccess\.com/)
+    expect(() => assertSandboxBoot({ ...prod, SERVD_SANDBOX_ACCESS_TEAM: 'https://gsfoods.cloudflareaccess.com/', SERVD_SANDBOX_ACCESS_AUD: 'aud' })).not.toThrow()
+    // Live production never needs them.
+    expect(() => assertSandboxBoot({ NODE_ENV: 'production' })).not.toThrow()
     vi.mocked(console.warn).mockRestore()
   })
 
@@ -624,16 +643,41 @@ describe('login codes', () => {
     await prisma.user.update({ where: { id: ownerA.id }, data: { twoFactorPhone: null, twoFactorEnabledAt: null } })
   })
 
-  it('floor-staff code request (unauthenticated): the code is NEVER echoed, even in the practice copy', async () => {
+  it('code requests by a typed phone / email: the practice copy refuses up front (503), sends nothing, issues nothing, echoes nothing', async () => {
     practice(true)
-    const r = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: cashier.phone })
+    const phone = normalisePhone(cashier.phone)
+    const before = await prisma.phoneOtp.count({ where: { phone } })
+    const staff = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: cashier.phone })
+    expect(staff.status).toBe(503)
+    expect(staff.body.error.code).toBe('OTP_UNAVAILABLE')
+    expect(staff.body.error.message).toMatch(/Sign-in code/)
+    // The same answer for a number that is nobody's: it says nothing about who is staff.
+    const nobody = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: '03009999999' })
+    expect(nobody).toEqual(staff)
+    expect(await prisma.phoneOtp.count({ where: { phone } })).toBe(before)
+
+    const others: Array<[string, object, Record<string, string>?]> = [
+      ['/api/v1/auth/customer/request-signup-codes', { phone: '03001234567', email: 'someone@example.com' }],
+      ['/api/v1/auth/customer/request', { email: 'someone@example.com' }],
+      ['/api/v1/rider-auth/otp/request', { phone: '03001234567' }],
+      ['/api/v1/waitlist/request-code', { phone: '03001234567', consent: true }],
+    ]
+    for (const [url, body] of others) {
+      const r = await inject('POST', url, body)
+      expect(r.status, url).toBe(503)
+      expect(r.body.error.code, url).toBe('OTP_UNAVAILABLE')
+      expect(r.body.error.message, url).toMatch(/^Practice copy/)
+    }
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(mail.transports).toBe(0)
+    expect(recentlyBlocked()).toEqual([])
+  })
+
+  it('code requests, live: the floor-staff route still answers as before (no early refusal)', async () => {
+    // A number that belongs to nobody: live answers the generic 200 without sending anything.
+    const r = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: '03008888888' })
     expect(r.status).toBe(200)
     expect(r.body).toEqual({ sent: true, message: 'If that number belongs to a staff account, a code is on its way.' })
-    // It did try to send — to nobody.
-    expect(recentlyBlocked().map((e) => e.kind)).toContain('whatsapp')
-    const row = await prisma.phoneOtp.findFirst({ where: { phone: normalisePhone(cashier.phone), purpose: 'staff_login' }, orderBy: { createdAt: 'desc' } })
-    expect(row).toBeTruthy()
-    expect(JSON.stringify(r.body)).not.toContain(row!.code)
   })
 
   it('codes still issue under NODE_ENV=production in the practice copy (the send resolves, no 503)', async () => {
@@ -700,5 +744,198 @@ describe('workers that only message people or post outside', () => {
     const workers = recentlyBlocked().filter((e) => e.kind === 'worker').map((e) => e.summary).sort()
     expect(workers).toEqual(['deliveryWatch', 'loyaltyTriggers', 'reservationReminders', 'reviewPrompt', 'scheduledReports', 'socialPublish'])
     expect(fetchSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ── Browser origins ──────────────────────────────────────────────────────────
+
+describe('CORS / socket origins', () => {
+  const PRACTICE_ADMIN = 'https://servd-practice.garibsons.app'
+  afterEach(() => { delete process.env['WEB_URL'] })
+
+  it('live: the allowlist is unchanged', () => {
+    for (const o of ['https://admin.servd.pk', 'https://servd.pk', 'https://stackd.pk', 'https://www.simmer.pk', undefined]) {
+      expect(isAllowedOrigin(o), String(o)).toBe(true)
+    }
+    expect(isAllowedOrigin('https://evil.example.com')).toBe(false)
+  })
+
+  it("practice copy: its own admin only — never live servd's admin, storefront or brand sites", () => {
+    practice(true)
+    process.env['WEB_URL'] = `${PRACTICE_ADMIN}/`
+    expect(isAllowedOrigin(PRACTICE_ADMIN)).toBe(true)
+    expect(isAllowedOrigin(PRACTICE_ADMIN.toUpperCase())).toBe(true)
+    expect(isAllowedOrigin(undefined)).toBe(true) // server-to-server / healthcheck, as on live
+    for (const o of ['https://admin.servd.pk', 'https://servd.pk', 'https://www.servd.pk', 'https://stackd.pk', 'https://sandbox.servd.pk', 'http://admin.localhost:3000', 'https://evil.example.com']) {
+      expect(isAllowedOrigin(o), o).toBe(false)
+    }
+    delete process.env['WEB_URL']
+    expect(practiceOriginAllowed(PRACTICE_ADMIN)).toBe(false) // no WEB_URL: nothing in a browser is trusted
+  })
+})
+
+// ── Cloudflare Access ────────────────────────────────────────────────────────
+
+describe('Cloudflare Access guard', () => {
+  const TEAM = 'gsfoods-test.cloudflareaccess.com'
+  const AUD = 'practice-aud-tag-0123456789abcdef'
+  const KID = 'kid-practice-1'
+  const signer = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const stranger = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const certs = { keys: [{ ...(signer.publicKey.export({ format: 'jwk' }) as object), kid: KID, alg: 'RS256', use: 'sig' }] }
+  const TUNNEL = { 'x-forwarded-for': '203.0.113.9', 'cf-connecting-ip': '203.0.113.9' }
+
+  function token(opts: { key?: KeyObject; aud?: string; iss?: string; expired?: boolean; kid?: string } = {}) {
+    const now = Math.floor(Date.now() / 1000)
+    return jwt.sign(
+      { email: 'it@gsfoods.pk', type: 'app', iat: now - 120, exp: opts.expired ? now - 60 : now + 3600 },
+      opts.key ?? signer.privateKey,
+      { algorithm: 'RS256', keyid: opts.kid ?? KID, audience: opts.aud ?? AUD, issuer: opts.iss ?? `https://${TEAM}` },
+    )
+  }
+
+  async function guarded() {
+    const g = Fastify()
+    g.setErrorHandler((err, _req, reply) => {
+      if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code } })
+      return reply.status(500).send({ error: { code: 'ERR' } })
+    })
+    registerPracticeAccessGuard(g)
+    g.get('/api/v1/meta/x', async () => ({ ok: true }))
+    await g.ready()
+    return g
+  }
+  const call = async (g: FastifyInstance, headers: Record<string, string> = {}, method: 'GET' | 'OPTIONS' = 'GET') =>
+    (await g.inject({ method, url: '/api/v1/meta/x', headers })).statusCode
+
+  beforeEach(() => {
+    process.env['SERVD_SANDBOX_ACCESS_TEAM'] = TEAM
+    process.env['SERVD_SANDBOX_ACCESS_AUD'] = AUD
+    resetAccessKeyCache()
+    fetchSpy.mockImplementation(async (url) => {
+      if (String(url) === `https://${TEAM}/cdn-cgi/access/certs`) return new Response(JSON.stringify(certs), { status: 200 })
+      throw new Error(`network is not allowed in this test: ${String(url)}`)
+    })
+  })
+  afterEach(() => {
+    delete process.env['SERVD_SANDBOX_ACCESS_TEAM']
+    delete process.env['SERVD_SANDBOX_ACCESS_AUD']
+  })
+
+  it('live: registers nothing — tunnel traffic with no Access token is served as before', async () => {
+    const g = await guarded()
+    expect(await call(g, TUNNEL)).toBe(200)
+    await g.close()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('practice copy: internet requests need a valid Access token; the healthcheck and preflights do not', async () => {
+    practice(true)
+    const g = await guarded()
+    expect(await call(g)).toBe(200)                                   // inside the practice network (healthcheck)
+    expect(await call(g, TUNNEL, 'OPTIONS')).not.toBe(403)            // CORS preflight, which Access passes without a token
+    expect(await call(g, TUNNEL)).toBe(403)                           // through the tunnel, no token
+    expect(await call(g, { ...TUNNEL, 'cf-access-jwt-assertion': 'not-a-jwt' })).toBe(403)
+    expect(await call(g, { ...TUNNEL, 'cf-access-jwt-assertion': token() })).toBe(200)
+    expect(await call(g, { ...TUNNEL, 'cf-access-jwt-assertion': token() })).toBe(200)
+    // A client-supplied forwarding header does not make a request "internal".
+    expect(await call(g, { 'x-forwarded-for': '10.0.0.5' })).toBe(403)
+    await g.close()
+    // The team's public keys were read once (cached).
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a token for another application, another team, expired, or signed by another key', async () => {
+    practice(true)
+    expect(await verifyAccessToken(token())).toBe(true)
+    expect(await verifyAccessToken(token({ aud: 'some-other-app' }))).toBe(false)
+    expect(await verifyAccessToken(token({ iss: 'https://other-team.cloudflareaccess.com' }))).toBe(false)
+    expect(await verifyAccessToken(token({ expired: true }))).toBe(false)
+    expect(await verifyAccessToken(token({ key: stranger.privateKey }))).toBe(false)
+    expect(await verifyAccessToken(token({ kid: 'unknown-kid' }))).toBe(false)
+    const hs = jwt.sign({ email: 'x' }, 'shared-secret', { algorithm: 'HS256', keyid: KID, audience: AUD, issuer: `https://${TEAM}` })
+    expect(await verifyAccessToken(hs)).toBe(false)
+  })
+
+  it('practice copy without the Access settings (development / tests): nothing is checked, with a warning', async () => {
+    practice(true)
+    delete process.env['SERVD_SANDBOX_ACCESS_TEAM']
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const g = await guarded()
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(/NOT checked/)
+    warn.mockRestore()
+    expect(await call(g, TUNNEL)).toBe(200)
+    await g.close()
+  })
+})
+
+// ── The copied live data (last: it touches every row of these tables) ───────
+
+describe('scrub of the copied live data', () => {
+  it('live: does nothing', async () => {
+    await prisma.setting.deleteMany({ where: { key: SANDBOX_SCRUB_KEY } })
+    const before = await prisma.posConnector.findMany({ where: { tenantId: { in: [tenantA, tenantB] } }, select: { id: true, webhookToken: true } })
+    expect(await sandboxScrub()).toBeNull()
+    const after = await prisma.posConnector.findMany({ where: { tenantId: { in: [tenantA, tenantB] } }, select: { id: true, webhookToken: true } })
+    expect(after).toEqual(expect.arrayContaining(before))
+    expect(await prisma.setting.findUnique({ where: { key: SANDBOX_SCRUB_KEY } })).toBeNull()
+    expect((await prisma.webhookSubscription.findUniqueOrThrow({ where: { id: subA } })).isActive).toBe(true)
+  })
+
+  it('practice copy: rotates connector tokens and switches off copied phones, webhooks, push tokens and credentials — once', async () => {
+    await prisma.setting.deleteMany({ where: { key: SANDBOX_SCRUB_KEY } })
+    const existingRaast = await prisma.posConnector.findFirst({ where: { tenantId: tenantA, kind: 'raast' } })
+    const raast = existingRaast ?? await prisma.posConnector.create({
+      data: { tenantId: tenantA, kind: 'raast', driver: 'none', webhookToken: newWebhookToken(), settings: {} },
+    })
+    const device = await prisma.bankSmsDevice.create({
+      data: { tenantId: tenantA, connectorId: raast.id, label: 'Counter phone', tokenHash: `${PREFIX}-scrub-hash`, tokenEnc: 'enc', tokenHint: '…abcd', createdById: ownerA.id },
+    })
+    for (const key of ['fb_page_token', 'fb_page_id', 'ig_user_id', WA_URL_KEY, 'integrations.whatsapp.apiKey', 'integrations.smtp.user', 'integrations.smtp.pass']) {
+      await setSetting(key, 'copied-from-live')
+    }
+    await setSetting('integrations.smtp.host', 'smtp.example.com') // not a credential: kept
+    try {
+      const pushToken = await prisma.expoPushToken.upsert({
+        where: { userId_token: { userId: ownerA.id, token: `ExponentPushToken[${PREFIX}-scrub]` } },
+        create: { userId: ownerA.id, token: `ExponentPushToken[${PREFIX}-scrub]`, platform: 'android', device: 'tablet' },
+        update: { revokedAt: null },
+      })
+      const before = await prisma.posConnector.findMany({ where: { tenantId: { in: [tenantA, tenantB] } }, select: { id: true, webhookToken: true } })
+      practice(true)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const result = await sandboxScrub()
+      warn.mockRestore()
+      expect(result).not.toBeNull()
+      expect(result!.connectorTokens).toBeGreaterThanOrEqual(before.length)
+      expect(result!.smsDevices).toBeGreaterThanOrEqual(1)
+      expect(result!.webhooks).toBeGreaterThanOrEqual(1)
+      expect(result!.pushTokens).toBeGreaterThanOrEqual(1)
+      expect(result!.settings).toBeGreaterThanOrEqual(7)
+
+      const after = await prisma.posConnector.findMany({ where: { tenantId: { in: [tenantA, tenantB] } }, select: { id: true, webhookToken: true } })
+      for (const b of before) {
+        const a = after.find((x) => x.id === b.id)!
+        expect(a.webhookToken).not.toBe(b.webhookToken)
+        expect(a.webhookToken).toMatch(/^[0-9a-f]{64}$/)
+      }
+      expect((await prisma.bankSmsDevice.findUniqueOrThrow({ where: { id: device.id } })).active).toBe(false)
+      expect((await prisma.webhookSubscription.findUniqueOrThrow({ where: { id: subA } })).isActive).toBe(false)
+      expect((await prisma.expoPushToken.findUniqueOrThrow({ where: { id: pushToken.id } })).revokedAt).not.toBeNull()
+      const left = await prisma.setting.findMany({ where: { key: { in: ['fb_page_token', WA_URL_KEY, 'integrations.smtp.pass', 'integrations.smtp.host'] } } })
+      expect(left.map((r) => r.key)).toEqual(['integrations.smtp.host'])
+      expect(await prisma.setting.findUnique({ where: { key: SANDBOX_SCRUB_KEY } })).not.toBeNull()
+
+      // Once per copy: a restart does not rotate the tokens again.
+      expect(await sandboxScrub()).toBeNull()
+      const again = await prisma.posConnector.findMany({ where: { tenantId: { in: [tenantA, tenantB] } }, select: { id: true, webhookToken: true } })
+      expect(again).toEqual(expect.arrayContaining(after))
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      await prisma.bankSmsDevice.deleteMany({ where: { id: device.id } })
+      if (!existingRaast) await prisma.posConnector.deleteMany({ where: { id: raast.id } })
+      await prisma.setting.deleteMany({ where: { key: { in: ['integrations.smtp.host', SANDBOX_SCRUB_KEY] } } })
+      clearConnectorCache()
+    }
   })
 })
