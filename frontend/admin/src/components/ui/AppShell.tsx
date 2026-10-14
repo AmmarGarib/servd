@@ -12,7 +12,6 @@ import { useTeam } from '../../hooks/useTeam'
 import { useMyWorkspaces } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
-import { BrandPicker } from './BrandPicker'
 import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
@@ -771,7 +770,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         <TenantSwitcher collapsed={false} />
-        <BrandPicker collapsed={false} />
         <NavLinks pathname={pathname} collapsed={false} onNavigate={() => setMobileOpen(false)} />
         <UserFooter collapsed={false} />
       </aside>
@@ -822,7 +820,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         )}
 
         <TenantSwitcher collapsed={collapsed} />
-        <BrandPicker collapsed={collapsed} />
         <NavLinks pathname={pathname} collapsed={collapsed} />
         <UserFooter collapsed={collapsed} />
       </aside>

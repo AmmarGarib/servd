@@ -1,10 +1,12 @@
 'use client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
 import { useViewAsRole } from '../../store/viewAsRole'
+import { BrandColumn, brandLabel, useBrandOptions, type PickerConcept } from './BrandPicker'
 
 interface Tenant {
   id: string
@@ -60,6 +62,12 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false)
   const [viewAll, setViewAll] = useState(false)
   const popRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLDivElement | null>(null)
+  // The brand filter lives in this switcher's second column (owner,
+  // 2026-10-14). Always called here, so a brand from another company is
+  // dropped even while the panel is closed.
+  const brand = useBrandOptions()
+  const showBrands = !!brand.concepts && brand.concepts.length > 0
   // When the CEO impersonates a non-admin role, portfolio view is incoherent
   // — that role wouldn't have multi-company access in production. Auto-clear
   // it on impersonation, and hide the "All companies" entry from the popover.
@@ -120,7 +128,9 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   useEffect(() => {
     if (!open) return
     function onClick(e: MouseEvent) {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (popRef.current?.contains(t) || triggerRef.current?.contains(t)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
@@ -136,10 +146,10 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   // Collapsed sidebar — just a small badge with the first letter
   if (collapsed) {
     return (
-      <div className="relative z-20 flex justify-center py-2"
+      <div ref={triggerRef} className="relative z-20 flex flex-col items-center gap-1 py-2"
         style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         <button onClick={() => setOpen((o) => !o)}
-          title={displayLabel}
+          title={showBrands ? `${displayLabel} · ${brandLabel(brand.current)}` : displayLabel}
           className="h-7 w-7 rounded-lg flex items-center justify-center text-[11px] font-black hover:text-white transition-colors"
           style={{
             background: accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
@@ -148,6 +158,13 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
           }}>
           {displayInitial}
         </button>
+        {showBrands && brand.current && (
+          <button onClick={() => setOpen((o) => !o)} title={`Brand: ${brandLabel(brand.current)}`}
+            className="h-5 min-w-6 px-1 rounded-md text-[9px] font-black"
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary)' }}>
+            {brandLabel(brand.current).slice(0, 2)}
+          </button>
+        )}
         {open && active && (
           <SwitcherPopover ref={popRef} tenants={tenants}
             activeId={viewAll ? '__ALL__' : active.id}
@@ -156,6 +173,10 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
             allowPortfolio={!isImpersonating}
             switching={switchTo.isPending ? switchTo.variables ?? null : null}
             onClose={() => setOpen(false)}
+            brands={showBrands ? brand.concepts : null}
+            brandId={brand.brandId}
+            onPickBrand={(id) => { brand.pick(id); setOpen(false) }}
+            triggerRef={triggerRef}
             anchor="left" />
         )}
       </div>
@@ -164,9 +185,9 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
 
   // Expanded sidebar — full row with name + chevron
   return (
-    <div className="relative z-20"
+    <div ref={triggerRef} className="relative z-20"
       style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-      <button onClick={() => setOpen((o) => !o)}
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.03] transition-colors text-left">
         <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[11px] font-black"
           style={{
@@ -184,6 +205,13 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
             style={{ color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
             {displayLabel}
           </p>
+          {showBrands && (
+            <p className="text-[10px] font-bold truncate mt-0.5"
+              style={{ color: brand.current ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.5)' }}>
+              {brandLabel(brand.current)}
+            </p>
+          )}
+          {brand.notHere && <p className="text-[10px] mt-0.5" style={{ color: 'var(--erp-warning)' }}>Brand not filtered on this page</p>}
         </div>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`text-white/40 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}>
           <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -198,13 +226,17 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
           allowPortfolio={!isImpersonating}
           switching={switchTo.isPending ? switchTo.variables ?? null : null}
           onClose={() => setOpen(false)}
+          brands={showBrands ? brand.concepts : null}
+          brandId={brand.brandId}
+          onPickBrand={(id) => { brand.pick(id); setOpen(false) }}
+          triggerRef={triggerRef}
           anchor="below" />
       )}
     </div>
   )
 }
 
-const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, anchor }: {
+const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, onPickBrand, triggerRef, anchor }: {
   ref: React.Ref<HTMLDivElement>
   tenants: Tenant[]
   activeId: string                // tenant id, or '__ALL__' when in portfolio view
@@ -213,17 +245,42 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
   allowPortfolio: boolean         // hide "All companies" when impersonating non-admin
   switching: string | null
   onClose: () => void
+  /** The brands column; null hides it (no brands, or the read was refused). */
+  brands: PickerConcept[] | null
+  brandId: string | null
+  onPickBrand: (id: string | null) => void
+  triggerRef: React.RefObject<HTMLDivElement | null>
   anchor: 'below' | 'left'
 }) => {
+  // The sidebar clips its children (overflow-hidden, and the mobile drawer is
+  // a transformed box), so the panel is portalled to <body> and placed from
+  // the trigger's box: under it when the sidebar is open, beside it when
+  // collapsed. Two columns need more room than the 220px sidebar.
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  useLayoutEffect(() => {
+    const place = () => {
+      const r = triggerRef.current?.getBoundingClientRect()
+      if (!r) return
+      const vw = window.innerWidth
+      const want = brands ? 480 : 260
+      const width = Math.min(want, vw - 16)
+      const left0 = anchor === 'below' ? r.left + 8 : r.right + 8
+      const left = Math.max(8, Math.min(left0, vw - width - 8))
+      setPos({ top: anchor === 'below' ? r.bottom + 4 : r.top + 6, left, width })
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [anchor, brands, triggerRef])
+  if (typeof document === 'undefined' || !pos) return null
   const allActive = activeId === '__ALL__'
-  return (
+  return createPortal(
     <div ref={ref}
-      className="erp-on-surface absolute z-30 rounded-xl overflow-hidden"
+      className="erp-on-surface fixed z-[100] rounded-xl overflow-hidden"
       style={{
-        top: anchor === 'below' ? 'calc(100% + 4px)' : '6px',
-        left: anchor === 'below' ? '8px' : 'calc(100% + 8px)',
-        right: anchor === 'below' ? '8px' : undefined,
-        minWidth: anchor === 'left' ? '240px' : undefined,
+        top: pos.top,
+        left: pos.left,
+        width: pos.width,
         // The panel sits inside the purple sidebar but is a light card:
         // .erp-on-surface resets the area colours so its text reads on white.
         color: 'var(--text)',
@@ -231,6 +288,9 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
         border: '1px solid rgb(var(--fg-rgb) / 0.1)',
         boxShadow: '0 16px 40px rgb(var(--ink-rgb) / 0.18)',
       }}>
+      <div className={brands ? 'grid' : ''}
+        style={brands ? { gridTemplateColumns: 'minmax(0, 1.45fr) minmax(0, 1fr)' } : undefined}>
+      <div className="min-w-0">
       <div className="px-3 py-2 border-b border-white/[0.08]">
         <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">Your companies</p>
       </div>
@@ -292,6 +352,13 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
           )
         })}
       </div>
+      </div>
+      {brands && (
+        <div className="min-w-0" style={{ borderLeft: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+          <BrandColumn concepts={brands} brandId={brandId} onPick={onPickBrand} />
+        </div>
+      )}
+      </div>
       <div className="border-t border-white/[0.08] p-1.5">
         <Link href="/onboarding" onClick={onClose}
           className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-bold text-white/70 hover:text-white hover:bg-white/[0.05] transition-colors">
@@ -299,6 +366,7 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
           <span>Add new company</span>
         </Link>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
