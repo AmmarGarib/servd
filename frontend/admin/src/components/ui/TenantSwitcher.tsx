@@ -87,8 +87,19 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   const viewAsRole = useViewAsRole((s) => s.role)
   const isImpersonating = viewAsRole !== null
 
-  // Hydrate after mount so SSR doesn't mismatch
-  useEffect(() => { setViewAll(readViewAll()) }, [])
+  // Hydrate after mount so SSR doesn't mismatch, and follow every change:
+  // the sidebar, collapsed and phone switchers are mounted together, and only
+  // one of them runs the view-as stash below, so each listens for the event.
+  useEffect(() => {
+    const sync = () => setViewAll(readViewAll())
+    sync()
+    window.addEventListener(VIEW_ALL_EVENT, sync)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(VIEW_ALL_EVENT, sync)
+      window.removeEventListener('storage', sync)
+    }
+  }, [])
 
   // Auto-collapse portfolio when impersonation starts; restore when it ends.
   useEffect(() => {
