@@ -20,7 +20,7 @@ import { ZodError } from 'zod'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { AppError } from '../src/lib/errors.js'
 import { ACCT } from '../src/modules/accounting/journal.js'
-import { ensureFifoReady } from '../src/lib/stockLedger.js'
+import { ensureFifoReady, consumeFifoTx } from '../src/lib/stockLedger.js'
 import { receiveGoods } from '../src/modules/procurement/receiving.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
@@ -126,6 +126,22 @@ describe('an opening count', () => {
     expect(r.statusCode).toBe(422)
     expect(r.json().error.code).toBe('OPENING_NOT_ALLOWED')
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: received.id } })).currentStock).toBe(2)
+  })
+
+  it('a sale of an item with no lots (a lot-less shortfall row) does not block its opening count (stock-03)', async () => {
+    const it0 = await newItem(A.tenantId)
+    const sold = await prisma.$transaction((tx) => consumeFifoTx(tx, {
+      tenantId: A.tenantId, inventoryItemId: it0.id, qty: 0.5, kind: 'sale', sourceType: 'test.sale', sourceId: `sale:${it0.id}`, clamp: true, occurredAt: new Date(),
+    }))
+    expect(sold.shortfallQty).toBeCloseTo(0.5)
+    const rows = await prisma.stockMovement.findMany({ where: { inventoryItemId: it0.id }, select: { lotId: true, kind: true } })
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((r) => r.lotId === null)).toBe(true)
+    const res = await opening(u.finA!, [{ inventoryItemId: it0.id, physicalQty: 3, unitCostCents: 20_000 }])
+    expect(res.statusCode, res.body).toBe(201)
+    expect(await entryLines(A.tenantId, `inventory.count:${res.json().id}`)).toEqual([
+      ['1210', 'debit', 60_000], [OPENING_CREDIT, 'credit', 60_000],
+    ].sort())
   })
 
   it('the Count page reads what the operator may do from the server', async () => {

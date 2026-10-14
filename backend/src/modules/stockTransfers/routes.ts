@@ -277,10 +277,15 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       const t = await findOwnedTransfer(req, req.params.id)
       if (t.status === 'received') throw new AppError('IMMUTABLE', 'Cannot cancel a received transfer', 422)
       if (t.status === 'cancelled') return t
-      const updated = await prisma.stockTransfer.update({
-        where: { id: t.id },
+      // Conditional on the status read (stock-04): a receive that committed
+      // meanwhile (with its transit-loss waste and entry) is never overwritten
+      // by a cancel that read the transfer before it.
+      const moved = await prisma.stockTransfer.updateMany({
+        where: { id: t.id, status: t.status },
         data: { status: 'cancelled', cancelledAt: new Date(), cancelledById: req.staffUser!.id, cancelReason: body.reason ?? null },
       })
+      if (moved.count === 0) throw new AppError('BAD_STATE', 'This transfer was received, cancelled or moved on meanwhile — reload it.', 409)
+      const updated = await prisma.stockTransfer.findUniqueOrThrow({ where: { id: t.id } })
       await audit({ category: 'identity',
         action: 'stock-transfer.cancel', entity: 'StockTransfer', entityId: t.id,
         userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
@@ -309,10 +314,13 @@ async function transition(
       409,
     )
   }
-  const updated = await prisma.stockTransfer.update({
-    where: { id },
+  // Conditional: two clicks (or a cancel) racing this move — only one wins.
+  const moved = await prisma.stockTransfer.updateMany({
+    where: { id, status: expected },
     data: { status: next, ...patch },
   })
+  if (moved.count === 0) throw new AppError('BAD_STATE', `This transfer is no longer '${expected}' — reload it.`, 409)
+  const updated = await prisma.stockTransfer.findUniqueOrThrow({ where: { id } })
   await audit({ category: 'identity',
     action: `stock-transfer.${next}`,
     entity: 'StockTransfer',

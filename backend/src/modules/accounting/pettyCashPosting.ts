@@ -29,8 +29,9 @@
 //               financePlanning/capexPosting.ts) and left out here;
 //               a bill-paying spend: Dr 1010 / Cr 1011 (procurement
 //               createPaymentTx books Dr 2010 / Cr 1010 in the same tx);
-//               a lineless spend with a stored counter account (a legacy cash
-//               voucher the history backfill booked as an advance: 1355).
+//               a lineless spend with a stored counter account (only a legacy
+//               row already booked as an advance on 1355 — the history
+//               backfill now expenses an old-flow voucher's spend, H3).
 //               'pettycash.spend:<id>'
 //   reconcile   short Dr 8010 / Cr 1011, over Dr 1011 / Cr 8010, zero nothing.
 //   transfer    nothing — both boxes sit on 1011.
@@ -48,8 +49,9 @@
 //   a capex line              its own CapEx payment Dr 1340 / Cr <paid account>
 //   the same category         nothing (the pay already booked it)
 // Change handed back is a 'cash_request' top-up: Dr 1011 / Cr <paid account>.
-// A legacy voucher the history backfill booked as an advance reads back 1355
-// as its paid account, so it settles and takes change against 1355 the same way.
+// An old-flow voucher's spend is booked by the history backfill like any pay:
+// one expense line in the voucher's category (H3). Only a row already booked
+// as an advance (lineless, 1355) reads back 1355 as its paid account.
 //
 // The posting goes through syncSourcePosting, so a finance reclass of a spend
 // line reverses the live entry (today) and reposts it on the live entry's own
@@ -605,9 +607,9 @@ export function cashRequestPayLine(v: { number: string; purpose: string; categor
 /**
  * THE account a paid cash request's money sits on — what its settlements
  * reclass out of and what change handed back credits. Read back from what the
- * pay actually booked: the pay movement's one expense line (H3), or, for a
- * legacy voucher the history backfill booked as an advance, its counter
- * account (1355). 409 PAYMENT_NOT_BOOKED while the pay is not on the books
+ * pay actually booked: the pay movement's one expense line (H3 — the history
+ * backfill books an old-flow voucher's spend that way too), or, for a legacy
+ * row already booked as an advance, its counter account (1355). 409 PAYMENT_NOT_BOOKED while the pay is not on the books
  * (book the petty-cash history first); 409 VOUCHER_NOT_PAID before it is paid.
  */
 export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId: string): Promise<string> {
@@ -817,8 +819,9 @@ const TRF_RE = /TRF-[0-9A-F]{8}/
  *     'garibsons' → 2210);
  *   • every unbooked movement, through postPettyCashMovementTx after storing
  *     what it was missing: a top-up with no source → the historic source; a
- *     spend that paid a bill → Dr 1010; a spend a cash voucher made → an
- *     advance on 1355 (the request stays disbursed, receipts due); other
+ *     spend that paid a bill → Dr 1010; a spend a cash voucher made → ONE
+ *     expense line in the voucher's category (H3: expensed when paid, never
+ *     1355; needs_category until a pick when it names none); other
  *     spends by their PAYOUT key or category name (expenseCodeForCategoryName),
  *     else needs_category until a pick; counts → 8010; paired transfers →
  *     nothing (not listed); one-sided legacy transfers → needs_review until a
@@ -897,7 +900,7 @@ export async function backfillPettyCash(a: {
     const vouchers = movements.length
       ? await prisma.cashVoucher.findMany({
         where: { tenantId, OR: [{ pettyCashMovementId: { in: movements.map((m) => m.id) } }, { id: { in: movements.map((m) => m.cashVoucherId).filter((x): x is string => !!x) } }] },
-        select: { id: true, number: true, payeeName: true, pettyCashMovementId: true },
+        select: { id: true, number: true, payeeName: true, category: true, pettyCashMovementId: true },
       })
       : []
     const voucherOf = (m: { id: string; cashVoucherId: string | null }) =>
@@ -931,8 +934,21 @@ export async function backfillPettyCash(a: {
               fill = { accountCode: ACCT.CASH_ON_HAND }
               note = 'paid a supplier bill (the payment booked Dr 2010 / Cr 1010) — moves the cash from 1011 to 1010'
             } else if (v) {
-              fill = { accountCode: ACCT.CASH_ADVANCES, cashVoucherId: v.id }
-              note = `${v.number}: an advance to ${v.payeeName} on 1355 — the request stays paid, receipts due`
+              // H3 (Hasnain 2026-10-14): a cash request is expensed when it is
+              // paid — never parked on 1355. An old-flow voucher's spend is the
+              // final payment and carries the voucher's category (the old
+              // disburse wrote it on the movement): ONE expense line in it, so
+              // cashRequestPaidAccountTx reads that 6xxx as the paid account.
+              const resolved = await classifyVoucherSpend(tenantId, m, v, pick)
+              if (!resolved) {
+                companyRows.push({
+                  ...base, date: m.createdAt.toISOString(), accountCode: null, outcome: 'needs_category',
+                  detail: `${v.number} (${v.payeeName}): ${m.reason}${m.category || v.category ? ` (${m.category || v.category})` : ''} — pick the expense category it was paid for`,
+                })
+                continue
+              }
+              fill = { cashVoucherId: v.id, line: { categoryKey: resolved.categoryKey, accountCode: resolved.code, amountCents: Math.abs(m.amountCents), description: m.reason.slice(0, 200) } }
+              note = `${v.number}: expensed when paid (H3) — ${resolved.how}`
             } else {
               const resolved = await classifySpend(tenantId, m, pick)
               if (!resolved) {
@@ -1028,6 +1044,33 @@ async function classifySpend(
   const acct = await prisma.account.findFirst({ where: { tenantId, code, isActive: true }, select: { id: true } })
   if (!acct) return null
   return { code, categoryKey: null, how: `from the words "${m.category ?? m.reason}" → ${code}` }
+}
+
+/**
+ * An old-flow cash voucher's spend (H3: expensed when paid): a finance pick
+ * first, then the voucher's own category as stored (a PAYOUT key or an
+ * explicit account a keeper picked — on the movement, else on the voucher),
+ * then the category / reason words; null → needs_category.
+ */
+async function classifyVoucherSpend(
+  tenantId: string,
+  m: { category: string | null; reason: string },
+  v: { category: string | null },
+  pick: PickInput | undefined,
+): Promise<{ code: string; categoryKey: string | null; how: string } | null> {
+  if (pick?.categoryKey || pick?.accountCode) return classifySpend(tenantId, m, pick)
+  for (const category of [m.category, v.category]) {
+    const ref = categoryRefOf(category)
+    if (!ref.categoryKey && !ref.accountCode) continue
+    try {
+      const r = await resolveSpendAccount(prisma, tenantId, ref, { allowExplicit: true, allowCogs: true })
+      return { ...r, how: `the request's category ${category} → ${r.code}` }
+    } catch (err) {
+      if (!(err instanceof AppError)) throw err
+      // An unknown key or a code missing from the chart: try the words below.
+    }
+  }
+  return classifySpend(tenantId, { category: m.category ?? v.category, reason: m.reason }, undefined)
 }
 
 /** The opening of one box, computed with the box locked (critic: never from a stale read). */

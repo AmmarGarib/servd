@@ -217,8 +217,18 @@ async function scopedConceptIdSet(req: FastifyRequest, mode: ScopeMode = 'read')
   return new Set(concepts.map((c) => c.id))
 }
 
-/** Companies (tenant ids) that use each component recipe. */
-type ComponentCompanies = (recipeId: string) => Set<string>
+/**
+ * Companies (tenant ids) of each component recipe: the companies of the dishes
+ * and add-ons that use it (walking up nested sub-recipes) plus the companies
+ * of its own stock lines. `.users(id)` is only the first part — the companies
+ * whose sales consume it, NO_COMPANY left out — which is what its stock lines
+ * and stations must belong to. `.drawsOn(id)` is the companies of the stock it
+ * and every sub-recipe under it use.
+ */
+type ComponentCompanies = ((recipeId: string) => Set<string>) & {
+  users: (recipeId: string) => Set<string>
+  drawsOn: (recipeId: string) => Set<string>
+}
 
 // A plate whose brand has no company belongs to nobody — never in any scope.
 const NO_COMPANY = '\u0000none'
@@ -259,12 +269,16 @@ async function loadComponentCompanies(): Promise<ComponentCompanies> {
     return (cid && pendingTenant.get(cid)) || NO_COMPANY
   }
   const parents = new Map<string, string[]>()
+  const children = new Map<string, string[]>()
   const rawTenants = new Map<string, Set<string>>()
   for (const l of links) {
     if (l.prepRecipeId) {
       const list = parents.get(l.prepRecipeId) ?? []
       list.push(l.recipeId)
       parents.set(l.prepRecipeId, list)
+      const kids = children.get(l.recipeId) ?? []
+      kids.push(l.prepRecipeId)
+      children.set(l.recipeId, kids)
     }
     const t = l.inventoryItem?.tenantId
     if (t) {
@@ -273,12 +287,12 @@ async function loadComponentCompanies(): Promise<ComponentCompanies> {
       rawTenants.set(l.recipeId, set)
     }
   }
-  const memo = new Map<string, Set<string>>()
-  return (recipeId: string) => {
-    const hit = memo.get(recipeId)
+  // The companies of the dishes and add-ons above a recipe (cycle-safe walk up).
+  const userMemo = new Map<string, Set<string>>()
+  const usersOf = (recipeId: string): Set<string> => {
+    const hit = userMemo.get(recipeId)
     if (hit) return hit
-    const out = new Set<string>(rawTenants.get(recipeId) ?? [])
-    // Walk up through every recipe that uses this one (cycle-safe).
+    const out = new Set<string>()
     const seen = new Set<string>([recipeId])
     const stack = [...(parents.get(recipeId) ?? [])]
     while (stack.length) {
@@ -291,9 +305,33 @@ async function loadComponentCompanies(): Promise<ComponentCompanies> {
       else if (parent.kind === 'modifier') out.add(parent.modifier?.group.menuItem.concept.tenantId ?? NO_COMPANY)
       else stack.push(...(parents.get(pid) ?? []))
     }
-    memo.set(recipeId, out)
+    userMemo.set(recipeId, out)
     return out
   }
+  const memo = new Map<string, Set<string>>()
+  const all = ((recipeId: string) => {
+    const hit = memo.get(recipeId)
+    if (hit) return hit
+    const out = new Set<string>([...(rawTenants.get(recipeId) ?? []), ...usersOf(recipeId)])
+    memo.set(recipeId, out)
+    return out
+  }) as ComponentCompanies
+  all.users = (recipeId) => new Set([...usersOf(recipeId)].filter((t) => t !== NO_COMPANY))
+  // The stock companies of a recipe and every sub-recipe under it (cycle-safe walk down).
+  all.drawsOn = (recipeId) => {
+    const out = new Set<string>()
+    const seen = new Set<string>()
+    const stack = [recipeId]
+    while (stack.length) {
+      const id = stack.pop()!
+      if (seen.has(id)) continue
+      seen.add(id)
+      for (const t of rawTenants.get(id) ?? []) out.add(t)
+      stack.push(...(children.get(id) ?? []))
+    }
+    return out
+  }
+  return all
 }
 
 interface RecipeScope {
@@ -518,6 +556,17 @@ async function validateRecipeLines(
     if (subs.length !== subIds.length || (await filterInScope(subs, scope)).length !== subIds.length) {
       throw new AppError('INGREDIENT_NOT_IN_COMPANY', 'One or more sub-recipes are not available to this company', 422)
     }
+    // A sub-recipe already used by, or made from the stock of, a company this
+    // recipe does not belong to would put that company's stock into this
+    // company's dish — a sale skips foreign stock, so its cost would be
+    // missing and the other company's lots would never move (stock-01).
+    const comps = await scope.components()
+    for (const sub of subs) {
+      const others = [...comps(sub.id), ...comps.drawsOn(sub.id)].filter((t) => t !== NO_COMPANY && !allowed.has(t))
+      if (others.length > 0) {
+        throw new AppError('INGREDIENT_NOT_IN_COMPANY', 'That sub-recipe belongs to another company — use one of this company\'s own', 422)
+      }
+    }
   }
   return [...warnings]
 }
@@ -543,11 +592,24 @@ async function assertStationIn(stationId: string, tenantIds: string[]): Promise<
   if (!st.isActive) throw new AppError('STATION_NOT_LIVE', `${st.name} is switched off — pick a live station`, 422)
 }
 
-/** Companies a recipe's stations/ingredients may come from. */
-async function recipeCompanies(req: FastifyRequest, ownerTenantId: string | null): Promise<string[]> {
-  if (ownerTenantId) return [ownerTenantId]
-  const where = await scopeTenantWhere(req, 'write')
-  return typeof where.tenantId === 'string' ? [where.tenantId] : where.tenantId.in
+/**
+ * Companies a recipe's stations and stock lines may come from. A dish or an
+ * add-on: its brand's company. A component (sub-recipe): the companies of the
+ * dishes and add-ons that use it (walking up nested sub-recipes) — never the
+ * operator's whole write scope, which let a manager of two companies put
+ * company B's cheese into a sub-recipe only A's dishes use (stock-01). A
+ * component nothing uses yet — and a new one (`owned` null) — binds to the
+ * ACTIVE company, as create does (422 NO_ACTIVE_COMPANY without one).
+ */
+async function recipeCompanies(req: FastifyRequest, owned: Pick<OwnedRecipe, 'id' | 'kind' | 'ownerTenantId'> | null): Promise<string[]> {
+  if (owned?.ownerTenantId) return [owned.ownerTenantId]
+  if (owned?.kind === 'component') {
+    const users = [...(await loadComponentCompanies()).users(owned.id)]
+    if (users.length > 0) return users
+  }
+  const active = req.staffUser?.tenantId
+  if (!active) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+  return [active]
 }
 
 // ─── Material cost readout (wave B) ───────────────────────────────────────────
@@ -1009,7 +1071,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     let status = 'iteration'
     if (body.recipeId) {
       const owned = await assertRecipeInScope(req, body.recipeId)
-      owners = await recipeCompanies(req, owned.ownerTenantId)
+      owners = await recipeCompanies(req, owned)
       serviceVessel = owned.serviceVessel
       existing = owned.lines
       status = owned.status
@@ -1617,7 +1679,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // Only new or changed lines are refused (validateRecipeLines): a line the
       // user did not touch never blocks the save.
       const lineWarnings = body.ingredients
-        ? await validateRecipeLines(req, { kind: owned.kind, tenantIds: await recipeCompanies(req, owned.ownerTenantId) }, body.ingredients, owned.lines)
+        ? await validateRecipeLines(req, { kind: owned.kind, tenantIds: await recipeCompanies(req, owned) }, body.ingredients, owned.lines)
         : []
       const warnings = saveWarnings(lineWarnings, owned.kind, owned.serviceVessel, body.ingredients ?? owned.lines)
       return prisma.$transaction(async (tx) => {
@@ -1925,7 +1987,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const body = stepInputSchema.parse(req.body)
       const recipe = await assertRecipeInScope(req, req.params.recipeId)
-      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe.ownerTenantId))
+      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe))
       // Dependency-self / cycle guard: only allow deps that already exist on
       // this recipe. Future steps in the editor will be added one-at-a-time
       // so cycles are impossible by construction.
@@ -1956,7 +2018,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (!existing) throw new NotFoundError('RecipeStep', req.params.stepId)
       // Scope through the parent recipe — another company's step is 404.
       const recipe = await assertRecipeInScope(req, existing.recipeId, () => new NotFoundError('RecipeStep', req.params.stepId))
-      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe.ownerTenantId))
+      if (body.stationId) await assertStationIn(body.stationId, await recipeCompanies(req, recipe))
       // No self-dependency.
       if (body.dependsOnIds?.includes(existing.id)) {
         throw new AppError('SELF_DEP', 'A step cannot depend on itself', 400)

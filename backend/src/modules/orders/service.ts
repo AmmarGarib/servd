@@ -1970,7 +1970,7 @@ type QueuedDoc = { id: string; status: string }
  * Null sale when the company does not report sales (§17.7).
  */
 async function enqueueSaleDocumentsTx(tx: Prisma.TransactionClient, orderId: string, tenantId: string): Promise<{ sale: QueuedDoc | null; refunds: QueuedDoc[] }> {
-  const { enqueueFiscalSaleTx, enqueueFiscalRefundTx } = await import('../../connectors/fiscal/outbox.js')
+  const { enqueueFiscalSaleTx, enqueueFiscalRefundTx, voidRefundShape } = await import('../../connectors/fiscal/outbox.js')
   const sale = await enqueueFiscalSaleTx(tx, { orderId, tenantId })
   if (!sale) return { sale: null, refunds: [] }
   const given = await tx.payment.findMany({
@@ -1980,12 +1980,12 @@ async function enqueueSaleDocumentsTx(tx: Prisma.TransactionClient, orderId: str
   })
   const refunds: QueuedDoc[] = []
   for (const p of given) {
-    const meta = (p.gatewayMeta ?? {}) as { refund?: { reason?: unknown; voidedItemId?: unknown } }
-    const isVoid = typeof meta.refund?.voidedItemId === 'string'
+    const meta = (p.gatewayMeta ?? {}) as { refund?: { reason?: unknown } }
     const r = await enqueueFiscalRefundTx(tx, {
       orderId, tenantId, refundPaymentId: p.id, amountCents: Math.abs(p.amountCents),
       reason: typeof meta.refund?.reason === 'string' ? meta.refund.reason : undefined, method: p.method,
-      ...(isVoid && { tipShareCents: 0 }),
+      // A voided line's refund: no tip share, and its exact split on its own line (TILL-R3).
+      ...voidRefundShape(p),
     })
     if (r) refunds.push(r)
   }

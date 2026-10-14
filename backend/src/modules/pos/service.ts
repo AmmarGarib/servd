@@ -1859,6 +1859,9 @@ type PricedLineRow = { menuItemId: string | null; unitPriceCents: number; quanti
 
 type VoidBill = { totalCents: number; taxCents: number; serviceChargeCents: number; discountCents: number }
 
+/** What a void took off the bill, by part (sums to removedCents) — stored on its refund row as gatewayMeta.refund.split. */
+type VoidRefundSplit = { revenueCents: number; taxCents: number; serviceChargeCents: number; tipCents: number; deliveryFeeCents: number }
+
 /**
  * FOH-03 / BOH-02: what a voided line takes off the bill, inside the void's
  * transaction (the order is locked). THE pricing function prices the order
@@ -1873,7 +1876,7 @@ async function voidBillDeltaTx(
   order: Pick<Order, 'id' | 'source' | 'rawPayload' | 'totalCents' | 'taxCents' | 'serviceChargeCents' | 'discountCents' | 'taxRatePct' | 'deliveryFeeCents'>
     & { concept: { id: string; tenantId: string | null; taxRateCash: number; taxRateCard: number } },
   voidedLine: PricedLineRow,
-): Promise<{ bill: VoidBill; removedCents: number; liveLines: number }> {
+): Promise<{ bill: VoidBill; removedCents: number; liveLines: number; split: VoidRefundSplit }> {
   const remaining = await tx.orderItem.findMany({
     where: { orderId: order.id, status: { not: 'voided' } },
     select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
@@ -1902,6 +1905,10 @@ async function voidBillDeltaTx(
     },
     removedCents,
     liveLines: remaining.length,
+    // Exactly what came off, by part — the line's value net of its discount,
+    // its own GST and service charge; never the fee or the tip. A refund of
+    // the line books this split (orderPosting voidSplitOf), never pro rata.
+    split: { revenueCents: itemsOff - discountOff, taxCents: taxOff, serviceChargeCents: serviceOff, tipCents: 0, deliveryFeeCents: 0 },
   }
 }
 
@@ -2105,6 +2112,7 @@ export async function voidOrderItem(input: VoidInput) {
         approverId,
         actorId: input.actorId,
         voidedItemId: input.orderItemId,
+        voidSplit: delta.split,
         gatewayRef: raastOutRef,
         raast: raastSource,
       })
@@ -2689,6 +2697,12 @@ async function writeRefundTx(tx: Tx, r: {
   approverId: string | null
   actorId: string
   voidedItemId?: string
+  /**
+   * A void's exact split (voidBillDeltaTx) — stored as gatewayMeta.refund.split
+   * next to voidedItemId; postRefundPayment books it exactly (no fee, no tip,
+   * the line's own GST). Only with voidedItemId.
+   */
+  voidSplit?: VoidRefundSplit
   /** How the row is booked; default postRefundPayment. (A cancelled ticket's hand-back: bookCancelledHandBackTx.) */
   post?: (tx: Tx, refundPaymentId: string) => Promise<{ entryId: string | null; reason?: string }>
   /** Card machine refunds: the gateway, its reference and the refund charge. */
@@ -2713,7 +2727,10 @@ async function writeRefundTx(tx: Tx, r: {
       gateway: r.raast ? 'raast' : r.gateway ?? 'none',
       gatewayRef: r.gatewayRef?.trim() || null,
       gatewayMeta: {
-        refund: { reason: r.reason, approverId: r.approverId, actorId: r.actorId, ...(r.voidedItemId && { voidedItemId: r.voidedItemId }) },
+        refund: {
+          reason: r.reason, approverId: r.approverId, actorId: r.actorId,
+          ...(r.voidedItemId && { voidedItemId: r.voidedItemId, ...(r.voidSplit && { split: r.voidSplit }) }),
+        },
         ...(r.terminalChargeId && { terminalChargeId: r.terminalChargeId }),
         ...(r.raast && { raast: { receiptId: r.raast.receiptId, bankAccountId: r.raast.bankAccountId, ledgerCode: r.raast.ledgerCode } }),
       },

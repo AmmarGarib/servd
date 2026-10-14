@@ -443,34 +443,50 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         if (!modules.has('inventory')) throw new ForbiddenError('Your account does not have the inventory module. Ask the CEO to enable it in Module Access.')
       }
 
-      // A category change across cost classes on an item of a company: its lots move class.
-      const fromClass = costClassOf(item.category)
-      const toClass = data.category !== undefined ? costClassOf(data.category) : fromClass
-      const reclass = !!item.tenantId && fromClass !== toClass
-      if (reclass) await ensureFifoReady(item.tenantId!)
+      // A category change on an item of a company: the cut-over must be in
+      // place before its lots can move class (decided under the lock below).
+      if (data.category !== undefined && item.tenantId) await ensureFifoReady(item.tenantId)
       if (holdsStock) await ensureFifoReady(tenantId!)
 
       const { updated, opening } = await prisma.$transaction(async (tx) => {
         await lockItemsTx(tx, [item.id])
-        if (assigning) {
-          const fresh = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id }, select: { tenantId: true } })
-          if (fresh.tenantId) throw new AppError('ITEM_HAS_COMPANY', 'This ingredient already belongs to a company.', 422)
-        }
+        // Re-read under the item lock (stock-02): the category read before
+        // the lock may be stale — a concurrent edit that already moved the
+        // lots to another class would otherwise be missed, leaving lots of
+        // one class on an item of another.
+        const fresh = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id }, select: { tenantId: true, category: true } })
+        if (assigning && fresh.tenantId) throw new AppError('ITEM_HAS_COMPANY', 'This ingredient already belongs to a company.', 422)
+        // A category change across cost classes on an item of a company: its lots move class.
+        const fromClass = costClassOf(fresh.category)
+        const toClass = data.category !== undefined ? costClassOf(data.category) : fromClass
+        const reclass = !!fresh.tenantId && fromClass !== toClass
         if (reclass) {
           const auditRow = await tx.auditLog.create({
             data: {
-              category: 'accounting', tenantId: item.tenantId, action: 'inventory.category_change', entity: 'InventoryItem', entityId: item.id,
+              category: 'accounting', tenantId: fresh.tenantId, action: 'inventory.category_change', entity: 'InventoryItem', entityId: item.id,
               userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null,
-              before: { category: item.category, costClass: fromClass }, after: { category: data.category ?? null, costClass: toClass },
+              before: { category: fresh.category, costClass: fromClass }, after: { category: data.category ?? null, costClass: toClass },
             },
             select: { id: true },
           })
           const moved = await reclassItemLotsTx(tx, {
-            tenantId: item.tenantId!, itemId: item.id, toClass, sourceType: 'inventory.item_reclass', sourceId: auditRow.id, createdById: req.staffUser!.id,
+            tenantId: fresh.tenantId!, itemId: item.id, toClass, sourceType: 'inventory.item_reclass', sourceId: auditRow.id, createdById: req.staffUser!.id,
           })
-          for (const c of COST_CLASSES) {
-            if (moved.byFromClass[c] !== 0) {
-              await postItemReclassTx(tx, { itemId: item.id, auditLogId: auditRow.id, fromClass: c, toClass, valueCents: moved.byFromClass[c] })
+          // One entry per old class. Lots of more than one class (left by an
+          // earlier race) each get their own key — one shared key made every
+          // class after the first a "replay" that posted nothing while its
+          // lots had already moved (stock-02).
+          const classes = COST_CLASSES.filter((c) => moved.byFromClass[c] !== 0)
+          for (const c of classes) {
+            const auditLogId = classes.length === 1 ? auditRow.id : `${auditRow.id}:${c}`
+            await postItemReclassTx(tx, { itemId: item.id, auditLogId, fromClass: c, toClass, valueCents: moved.byFromClass[c] })
+          }
+          if (classes.length > 0) {
+            const posted = await tx.journalEntry.count({
+              where: { tenantId: fresh.tenantId!, reference: { startsWith: `inventory.item_reclass:${item.id}:${auditRow.id}` } },
+            })
+            if (posted !== classes.length) {
+              throw new AppError('RECLASS_NOT_POSTED', `${item.name}: the class change moved stock that the ledger did not book — nothing was changed`, 409)
             }
           }
         }

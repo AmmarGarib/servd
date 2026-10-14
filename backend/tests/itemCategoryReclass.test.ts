@@ -94,6 +94,60 @@ describe('category and cost class', () => {
     expect(es[1]!.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([['1220', 'credit', 50_000], ['1230', 'debit', 50_000]])
   })
 
+  it('lots of two classes (left by an earlier race) both move, and both values post (stock-02)', async () => {
+    const it0 = await item(A, { qty: 5, cost: 10_000 })          // food lot, 50,000
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: A.tenantId, inventoryItemId: it0.id, qty: 2, unitCostCents: 10_000, kind: 'count_gain', lotSourceType: 'count_gain',
+      lotSourceId: `gain:${it0.id}`, movementSourceType: 'test.gain', movementSourceId: it0.id, receivedAt: new Date(),
+    }))
+    // The second lot sits in the beverage class while the item is food (what the race left).
+    await prisma.stockLot.updateMany({ where: { inventoryItemId: it0.id, sourceType: 'count_gain' }, data: { costClass: 'beverage' } })
+    const r = await call(u.mgrA!, 'PATCH', `/inventory/${it0.id}`, { category: 'packaging' })
+    expect(r.statusCode, r.body).toBe(200)
+    const es = await reclassEntries(it0.id)
+    expect(es).toHaveLength(2)
+    const lines = es.flatMap((e) => e.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)])).sort()
+    expect(lines).toEqual([['1210', 'credit', 50_000], ['1220', 'credit', 20_000], ['1230', 'debit', 20_000], ['1230', 'debit', 50_000]])
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: it0.id }, select: { costClass: true } })
+    expect(lots.every((l) => l.costClass === 'packaging')).toBe(true)
+  })
+
+  it('two category edits at once: the second reads the category under the item lock (stock-02)', async () => {
+    const it0 = await item(A, { qty: 5, cost: 10_000 })
+    let release!: () => void
+    const gate = new Promise<void>((res) => { release = res })
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${it0.id} FOR UPDATE`
+      await gate
+    }, { timeout: 60_000, maxWait: 10_000 })
+    const waiting = async (n: number) => {
+      for (let i = 0; i < 200; i++) {
+        const rows = await prisma.$queryRaw<Array<{ c: bigint }>>`SELECT count(*)::bigint AS c FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`
+        if (Number(rows[0]!.c) >= n) return
+        await new Promise((res) => setTimeout(res, 50))
+      }
+      throw new Error('the edits never queued on the item lock')
+    }
+    const t1 = call(u.mgrA!, 'PATCH', `/inventory/${it0.id}`, { category: 'beverage' })
+    await waiting(1)
+    const t2 = call(u.mgrA!, 'PATCH', `/inventory/${it0.id}`, { category: 'dairy' })
+    await waiting(2)
+    release()
+    await holder
+    const [r1, r2] = await Promise.all([t1, t2])
+    expect([r1.statusCode, r2.statusCode]).toEqual([200, 200])
+    const after = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: it0.id }, select: { category: true } })
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: it0.id }, select: { costClass: true } })
+    const cls = after.category === 'beverage' ? 'beverage' : 'food'
+    expect(lots.every((l) => l.costClass === cls)).toBe(true)
+    // The ledger agrees with the lots: whatever moved to 1220 came back if the item ended in food.
+    const net = (await reclassEntries(it0.id)).flatMap((e) => e.lines).reduce((m, l) => {
+      m[l.account.code] = (m[l.account.code] ?? 0) + (l.type === 'debit' ? 1 : -1) * Number(l.amountCents)
+      return m
+    }, {} as Record<string, number>)
+    expect(net['1220'] ?? 0).toBe(cls === 'beverage' ? 50_000 : 0)
+  })
+
   it('a category off the list is 400 on create and edit', async () => {
     const it0 = await item(A)
     expect((await call(u.mgrA!, 'PATCH', `/inventory/${it0.id}`, { category: 'drinks' })).statusCode).toBe(400)

@@ -12,6 +12,7 @@
 // against it, so a deposit drop can finally be matched to its statement line.
 
 import { Prisma } from '@prisma/client'
+import { z } from 'zod'
 import { prisma } from './prisma.js'
 import { AppError } from './errors.js'
 import { sumCents } from './money.js'
@@ -112,11 +113,13 @@ async function liveBank(db: Db, tenantId: string, bankAccountId: string): Promis
 export type MoneyMethod =
   | 'cash'
   | 'card'
-  | 'bank' | 'bank_transfer' | 'cheque' | 'wallet' | 'online'
+  | 'bank' | 'bank_transfer' | 'bank_deposit' | 'cheque' | 'wallet' | 'online'
 
 const CASH_ON_HAND_CODE = '1010'
 const CARD_RECEIVABLE_CODE = '1030'
-const BANK_METHODS = new Set<string>(['bank', 'bank_transfer', 'cheque', 'wallet', 'online'])
+// 'bank_deposit' = the payer paid cash (or a cheque) straight into one of our
+// bank accounts at a branch — it lands in the named bank like a transfer.
+const BANK_METHODS = new Set<string>(['bank', 'bank_transfer', 'bank_deposit', 'cheque', 'wallet', 'online'])
 
 /**
  * THE one answer to "which account did this money go into / come out of" for
@@ -125,7 +128,7 @@ const BANK_METHODS = new Set<string>(['bank', 'bank_transfer', 'cheque', 'wallet
  * payroll and loans, OpEx (finance gaps #9, 2026-10-13).
  *
  *   cash → 1010 Cash on Hand · card → 1030 Card / Gateway Receivable
- *   bank-type (bank, bank_transfer, cheque, wallet, online) → the named bank
+ *   bank-type (bank, bank_transfer, bank_deposit, cheque, wallet, online) → the named bank
  *     account's chart code. It must be a live, active, LINKED account of
  *     `tenantId` (422 BANK_ACCOUNT_NOT_IN_COMPANY / BANK_ACCOUNT_NOT_LINKED).
  *     No account named: the company's only live linked bank; 1020 when it has
@@ -166,6 +169,72 @@ export async function moneyAccountCode(
   if (banks.length === 0) return { code: OPERATING_BANK_CODE, bankAccountId: null }
   if (banks.length === 1) return { code: banks[0]!.accountCode!, bankAccountId: banks[0]!.id }
   throw new AppError('BANK_ACCOUNT_REQUIRED', 'This company has more than one bank account — say which one the money went through', 422)
+}
+
+// ─── Money received outside the till (owner, 2026-10-14) ─────────────────────
+//
+// Every back-office screen that records money coming IN (gift-card sales,
+// wallet top-ups, receivable receipts and write-off recoveries, asset-sale
+// proceeds, CapEx deposit returns, inter-company settlements, bank deposit
+// drops) offers THESE methods and asks for a payment reference # on EVERY
+// method, cash included (owner: "required for every method"). A reference
+// used before is a warning, never a block (one transfer can pay several
+// invoices) — see lib/paymentRefs.ts. The till keeps its own tenders
+// (lib/tenders.ts). The admin copy lives in
+// components/finance/PaymentReceivedFields.tsx — keep the two in step.
+
+/** THE list of ways money can come in on a back-office screen. */
+export const RECEIPT_METHODS = ['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque'] as const
+export type ReceiptMethod = typeof RECEIPT_METHODS[number]
+
+/** Words for every method value servd has stored (old rows say 'bank' / 'online'). */
+export const RECEIPT_METHOD_LABEL: Record<string, string> = {
+  cash: 'Cash',
+  card: 'Card',
+  bank_transfer: 'Bank transfer',
+  bank_deposit: 'Bank deposit',
+  cheque: 'Cheque',
+  bank: 'Bank transfer',
+  online: 'Online payment',
+  wallet: 'Mobile wallet',
+}
+
+/** True when the money lands in (or leaves) a bank account — the form shows the bank picker. */
+export function isBankMethod(method: string | null | undefined): boolean {
+  return BANK_METHODS.has((method ?? '').trim())
+}
+
+/** zod: one of `allowed` (default RECEIPT_METHODS). */
+export function zReceiptMethod<T extends readonly [string, ...string[]]>(allowed?: T) {
+  return z.enum((allowed ?? RECEIPT_METHODS) as unknown as [string, ...string[]])
+}
+
+/** zod: the payment reference # as typed (trimmed, at most 100 characters). */
+export const zPaymentRef = z.string().trim().max(100)
+
+/**
+ * The payment reference # for a receipt, trimmed — 422 PAYMENT_REFERENCE_REQUIRED
+ * when it is missing (every method, cash included: owner 2026-10-14).
+ */
+export function assertPaymentReference(method: string | null | undefined, reference: string | null | undefined): string {
+  const ref = (reference ?? '').trim()
+  if (!ref) {
+    const label = RECEIPT_METHOD_LABEL[(method ?? '').trim()] ?? 'this payment'
+    throw new AppError(
+      'PAYMENT_REFERENCE_REQUIRED',
+      `Enter the payment reference # for ${label.toLowerCase()} — the receipt, slip, transfer or cheque number`,
+      422,
+    )
+  }
+  if (ref.length > 100) throw new AppError('PAYMENT_REFERENCE_TOO_LONG', 'The payment reference # is at most 100 characters', 422)
+  return ref
+}
+
+/** "bank deposit, ref 4471" — for journal descriptions and money-line memos. */
+export function receiptText(method: string | null | undefined, reference: string | null | undefined): string {
+  const label = (RECEIPT_METHOD_LABEL[(method ?? '').trim()] ?? (method ?? '').trim()) || 'payment'
+  const ref = (reference ?? '').trim()
+  return ref ? `${label.toLowerCase()}, ref ${ref}` : label.toLowerCase()
 }
 
 /**

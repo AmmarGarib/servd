@@ -648,7 +648,12 @@ async function assertOpeningAllowed(tx: Tx, items: Array<{ id: string; name: str
   const ids = items.map((i) => i.id)
   const [lots, moves, countLines, receiptLines, poLines] = await Promise.all([
     tx.stockLot.findMany({ where: { inventoryItemId: { in: ids } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] }),
-    tx.stockMovement.findMany({ where: { inventoryItemId: { in: ids } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] }),
+    // Only movements that carry a lot (stock-03): a sale of a dish using an
+    // item with no lots writes a lot-less 'sale' shortfall row (qty 0, value
+    // 0, shortfallQty > 0) — the item was still never received or counted, so
+    // its first count is an opening count (H19 → 3010), not a spot count that
+    // would credit cost of sales with stock that was never bought on the books.
+    tx.stockMovement.findMany({ where: { inventoryItemId: { in: ids }, lotId: { not: null } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] }),
     assignment ? [] : tx.physicalCountLine.findMany({ where: { inventoryItemId: { in: ids } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] }),
     assignment ? [] : tx.goodsReceiptLine.findMany({ where: { inventoryItemId: { in: ids }, receivedQty: { gt: 0 } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] }),
     assignment ? [] : tx.purchaseOrderLine.findMany({ where: { inventoryItemId: { in: ids }, quantityReceived: { gt: 0 } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] }),

@@ -148,6 +148,20 @@ export function payloadHash(p: FiscalPayload): string {
 /** The fee line's itemCode (H9) and its line id prefix — `delivery:<orderId>`. */
 export const DELIVERY_CHARGE_ITEM_CODE = 'DELIVERY-CHARGE' as const
 export const deliveryLineId = (orderId: string) => `delivery:${orderId}`
+/** The sale's delivery-charge line (H9) — never part of a voided dish's return. */
+export const isDeliveryChargeLine = (l: Pick<FiscalLine, 'lineId' | 'itemCode'>): boolean =>
+  l.itemCode === DELIVERY_CHARGE_ITEM_CODE || l.lineId.startsWith('delivery:')
+
+/** A TILL-R3 void's exact split, as a return document takes it (buildRefundPayload opts.voidSplit). */
+export interface VoidReturnSplit {
+  revenueCents: number
+  taxCents: number
+  serviceChargeCents: number
+  tipCents: number
+  deliveryFeeCents?: number
+  /** The voided order item — the sale line its value and GST go back on. */
+  lineId?: string | null
+}
 
 /** Human order ref: the last 8 characters of the order id, upper-cased. */
 export function orderRefOf(orderId: string): string {
@@ -492,6 +506,18 @@ export function buildRefundPayload(sale: FiscalPayload, opts: {
    * waiting refund rebuilt from its filed sale keeps it). Omitted → pro rata.
    */
   tipShareCents?: number
+  /**
+   * The exact split of a line voided on a paid, still-open order (TILL-R3):
+   * what the void took off the bill (orderPosting voidSplitOf — the line's
+   * value net of its discount, its own GST and service charge; never the
+   * delivery fee or the tip). Its value and GST go back on that line
+   * (`lineId`, the order item, when the sale lists it; else on the sale's
+   * lines other than the delivery charge) — never pro rata over the bill,
+   * which took a share off the delivery-charge line and reclaimed GST on a
+   * zero-rated line. Ignored (the tip rule above applies) when it does not
+   * add up to the refund or exceeds the sale.
+   */
+  voidSplit?: VoidReturnSplit
 }): FiscalPayload {
   const st = totalsOf(sale)
   const saleTotal = st.totalCents
@@ -505,7 +531,18 @@ export function buildRefundPayload(sale: FiscalPayload, opts: {
   let refundTip: number
   let refundFee: number
   let refundBillDiscount: number
-  if (opts.tipShareCents === undefined) {
+  const vs = opts.voidSplit
+  const voidExact = !!vs && [vs.revenueCents, vs.taxCents, vs.serviceChargeCents, vs.tipCents].every((x) => Number.isInteger(x) && x >= 0)
+    && (vs.deliveryFeeCents ?? 0) === 0
+    && vs.revenueCents + vs.taxCents + vs.serviceChargeCents + vs.tipCents === amount
+    && vs.taxCents <= st.taxCents && vs.serviceChargeCents <= st.serviceChargeCents && vs.tipCents <= st.tipCents
+  if (voidExact) {
+    refundTax = vs!.taxCents
+    refundService = vs!.serviceChargeCents
+    refundTip = vs!.tipCents
+    refundFee = 0
+    refundBillDiscount = 0
+  } else if (opts.tipShareCents === undefined) {
     refundTax = share(st.taxCents)
     refundService = share(st.serviceChargeCents)
     refundTip = share(st.tipCents)
@@ -552,14 +589,30 @@ export function buildRefundPayload(sale: FiscalPayload, opts: {
     returned = 0
   }
 
-  const lineValues = allocateTaxCents(sale.lines.map((l) => l.taxableCents), returned)
-  // Tax by returned value × rate; with no value returned (a fully discounted
-  // sale) by the sale's own line tax.
-  const refundTaxWeights = sale.lines.map((l, i) => lineValues[i]! * l.taxRatePct)
-  const lineTax = allocateTaxCents(
-    refundTaxWeights.some((w) => w > 0) ? refundTaxWeights : sale.lines.map((l) => l.taxCents),
-    refundTax,
-  )
+  // An exact void goes back on its own line when the sale lists it; else on
+  // the sale's lines other than the delivery charge (all of them only if
+  // nothing else carries value). Any other refund: pro rata over every line.
+  const voidIdx = voidExact && vs!.lineId ? sale.lines.findIndex((l) => l.lineId === vs!.lineId) : -1
+  const notFee = (w: number[]): number[] => {
+    const m = w.map((x, i) => (isDeliveryChargeLine(sale.lines[i]!) ? 0 : x))
+    return m.some((x) => x > 0) ? m : w
+  }
+  const pick = voidExact ? notFee : (w: number[]) => w
+  let lineValues: number[]
+  let lineTax: number[]
+  if (voidIdx >= 0) {
+    lineValues = sale.lines.map((_, i) => (i === voidIdx ? returned : 0))
+    lineTax = sale.lines.map((_, i) => (i === voidIdx ? refundTax : 0))
+  } else {
+    lineValues = allocateTaxCents(pick(sale.lines.map((l) => l.taxableCents)), returned)
+    // Tax by returned value × rate; with no value returned (a fully discounted
+    // sale) by the sale's own line tax.
+    const refundTaxWeights = sale.lines.map((l, i) => lineValues[i]! * l.taxRatePct)
+    lineTax = allocateTaxCents(
+      refundTaxWeights.some((w) => w > 0) ? refundTaxWeights : pick(sale.lines.map((l) => l.taxCents)),
+      refundTax,
+    )
+  }
   const lines: FiscalLine[] = sale.lines.flatMap((l, i) => {
     const v = lineValues[i]!
     const t = lineTax[i]!

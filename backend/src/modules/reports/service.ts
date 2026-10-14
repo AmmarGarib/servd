@@ -55,7 +55,7 @@ import { AppError } from '../../lib/errors.js'
 import type { TenantIdWhere } from '../../lib/tenantScope.js'
 import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../accounting/dates.js'
-import { refundShareOf, giftCardAppliedOf, saleBookingOf, type SaleOrderFields } from '../accounting/orderPosting.js'
+import { refundShareOf, giftCardAppliedOf, saleBookingOf, voidSplitOf, netOfVoidRefunds, isSplitVoidRefund, type RefundShare, type SaleOrderFields } from '../accounting/orderPosting.js'
 import { tenderLabel } from '../../lib/tenders.js'
 
 export interface SalesQuery {
@@ -315,10 +315,14 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   //    charge, tip and GST by the same cumulative pro-rata rule.
   //    The order is valued with its gift cards, as postRefundPayment values it
   //    (without them for a sale booked before ONL-05 — asBooked, R6-A).
+  //    A line voided on a paid, still-open order (TILL-R3) books its exact
+  //    split (orderPosting voidSplitOf — no fee, no tip, its own GST), and
+  //    every other refund values the order net of those voids, exactly as
+  //    postRefundPayment does.
   const refundOrder = {
     select: {
       ...SALE_FIELDS, id: true, source: true,
-      payments: { where: { status: 'refunded' as const }, select: { id: true, amountCents: true, createdAt: true } },
+      payments: { where: { status: 'refunded' as const }, select: { id: true, amountCents: true, createdAt: true, gatewayMeta: true } },
       giftCardRedemptions: { select: { amountCents: true } },
     },
   }
@@ -331,22 +335,31 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
         { processedAt: null, createdAt: { gte: q.from, lte: q.to } },
       ],
     },
-    select: { id: true, amountCents: true, processedAt: true, createdAt: true, order: refundOrder },
+    select: { id: true, amountCents: true, processedAt: true, createdAt: true, gatewayMeta: true, order: refundOrder },
   })
-  const addRefund = (at: Date, order: SaleOrderFields & { source: string }, prior: number, amount: number) => {
-    const share = refundShareOf(order, prior, amount)
-    const t = slot(keyAt(by, at, order.source))
+  const addShare = (at: Date, source: string, amount: number, share: RefundShare) => {
+    const t = slot(keyAt(by, at, source))
     t.refunds += amount
     t.tax     -= share.taxCents
     t.tips    -= share.tipCents
     t.deliveryFees -= share.deliveryFeeCents
   }
+  const addRefund = (at: Date, order: SaleOrderFields & { source: string }, prior: number, amount: number) =>
+    addShare(at, order.source, amount, refundShareOf(order, prior, amount))
+  /** The order net of its exact void refunds, and the refunded amount that is not one of them. */
+  const netOfVoids = <T extends SaleOrderFields & { payments: Array<{ amountCents: number; gatewayMeta: unknown }> }>(o: T) => ({
+    order: netOfVoidRefunds(o, o.payments),
+    tenderRefunded: o.payments.filter((r) => !isSplitVoidRefund(r)).reduce((s, r) => s + Math.abs(r.amountCents), 0),
+  })
   for (const p of refunds) {
+    const at = p.processedAt ?? p.createdAt
+    const split = voidSplitOf(p)
+    if (split) { addShare(at, p.order.source, Math.abs(p.amountCents), split); continue }
     // "Before this one" exactly as postRefundPayment orders them.
     const before = (r: { id: string; createdAt: Date }) =>
       r.createdAt.getTime() < p.createdAt.getTime() || (r.createdAt.getTime() === p.createdAt.getTime() && r.id < p.id)
-    const prior = p.order.payments.filter((r) => r.id !== p.id && before(r)).reduce((s, r) => s + Math.abs(r.amountCents), 0)
-    addRefund(p.processedAt ?? p.createdAt, await valued(p.order), prior, Math.abs(p.amountCents))
+    const prior = p.order.payments.filter((r) => r.id !== p.id && before(r) && !isSplitVoidRefund(r)).reduce((s, r) => s + Math.abs(r.amountCents), 0)
+    addRefund(at, await valued(netOfVoidRefunds(p.order, p.order.payments.filter((r) => r.id !== p.id))), prior, Math.abs(p.amountCents))
   }
 
   // 5. Wallet credit given back when an order is refunded in full ('order.
@@ -362,8 +375,8 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     })
     const at = new Map(restores.map((w) => [w.orderId!, w.createdAt]))
     for (const o of restored) {
-      const prior = o.payments.reduce((s, r) => s + Math.abs(r.amountCents), 0)
-      addRefund(at.get(o.id)!, await valued(o), prior, o.walletAmountCents)
+      const n = netOfVoids(o)
+      addRefund(at.get(o.id)!, await valued(n.order), n.tenderRefunded, o.walletAmountCents)
     }
   }
 
@@ -394,13 +407,13 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     const o = r.order
     if (!o || !r.reversedAt) continue
     if (await isLegacyCardSale(o.id)) continue
-    const tenderRefunded = o.payments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
-    let prior = tenderRefunded + (o.walletAmountCents > 0 ? o.walletAmountCents : 0)
+    const n = netOfVoids(o)
+    let prior = n.tenderRefunded + (o.walletAmountCents > 0 ? o.walletAmountCents : 0)
     for (const e of o.giftCardRedemptions) {
       if (e.id === r.id) break
       prior += Math.max(0, e.amountCents)
     }
-    addRefund(r.reversedAt, await valued(o), prior, r.amountCents)
+    addRefund(r.reversedAt, await valued(n.order), prior, r.amountCents)
   }
 
   for (const t of buckets.values()) finish(t)

@@ -543,7 +543,10 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
 // card) and are CUMULATIVE — each refund takes round(X·(prior+this)/V) −
 // round(X·prior/V) — so the tender refunds, then the wallet restore, then the
 // gift-card restore add up to exactly the order's GST, service charge and tip,
-// with no rounding paisa left behind.
+// with no rounding paisa left behind. The one exception is a line voided on a
+// paid, still-open order (TILL-R3): its refund books the exact split the void
+// took off the bill (voidSplitOf — no fee, no tip, the line's own GST), and
+// every other refund values the order net of it (netOfVoidRefunds).
 //
 // Why a per-refund entry rather than reversing the completion entry: till
 // sales never post 'order.complete' (they are booked by the shift close), so
@@ -580,6 +583,87 @@ export function refundShareOf(order: SaleOrderFields, priorCents: number, thisCe
   return { revenueCents: thisCents - taxCents - serviceChargeCents - tipCents - deliveryFeeCents, serviceChargeCents, tipCents, taxCents, deliveryFeeCents }
 }
 
+// ─── A line voided on a paid, still-open order (TILL-R3) ────────────────────
+//
+// pos/service voidOrderItem gives the line's value back as a refund row
+// without lowering the bill. What it gave back is EXACTLY what voidBillDeltaTx
+// took off: the line's value net of its discount, its own GST and service
+// charge — never a share of the delivery fee or the tip (the fee prices into
+// both sides of the void, so neither it nor its GST ever comes off with a
+// dish), and never GST on a zero-rated line. The pro-rata rule below got both
+// wrong: a void on a delivery order took a share of the fee out of 4110 and
+// left it in food revenue, and a zero-rated line's refund reclaimed GST it
+// never carried. So the refund row stores that exact split
+// (gatewayMeta.refund.split), its own entry books it, and every OTHER refund
+// on the order values the order net of those voids (netOfVoidRefunds) — so a
+// later full refund still nets 4110, the brand's revenue and the output tax
+// to zero. A void refund written before the split was stored has none: it
+// keeps the pro-rata rule it was booked with, both for its own entry and as
+// `prior`, so entries already posted stay consistent.
+
+/**
+ * The exact split stored on a TILL-R3 void refund row, or null (not a void
+ * refund, or one written before the split was stored, or a malformed one).
+ * Revenue may be negative (a discount larger than the line); every other part
+ * is a whole, non-negative paisa amount; the parts add up to the row's amount.
+ */
+export function voidSplitOf(p: { amountCents: number; gatewayMeta?: unknown }): RefundShare | null {
+  const meta = p.gatewayMeta
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null
+  const refund = (meta as { refund?: unknown }).refund as { voidedItemId?: unknown; split?: unknown } | undefined
+  if (!refund || typeof refund !== 'object' || typeof refund.voidedItemId !== 'string') return null
+  const s = refund.split
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null
+  const keys = ['revenueCents', 'serviceChargeCents', 'tipCents', 'taxCents', 'deliveryFeeCents'] as const
+  const out = {} as RefundShare
+  for (const k of keys) {
+    const v = (s as Record<string, unknown>)[k] ?? 0
+    if (typeof v !== 'number' || !Number.isInteger(v)) return null
+    if (k !== 'revenueCents' && v < 0) return null
+    out[k] = v
+  }
+  const sum = keys.reduce((t, k) => t + out[k], 0)
+  return sum === Math.abs(p.amountCents) ? out : null
+}
+
+/** A refund row with an exact void split (voidSplitOf) — kept out of every other refund's `prior`. */
+export function isSplitVoidRefund(p: { amountCents: number; gatewayMeta?: unknown }): boolean {
+  return voidSplitOf(p) !== null
+}
+
+/**
+ * The order as every refund that is NOT an exact void values it: the bill
+ * less each exact void refund on it (its amount off the total, its GST, service
+ * charge, tip and fee parts off theirs — the tip and fee parts are 0). Rows
+ * without a split change nothing. Pure.
+ */
+export function netOfVoidRefunds<T extends SaleOrderFields>(
+  order: T,
+  refundRows: Array<{ status?: string; amountCents: number; gatewayMeta?: unknown }>,
+): T {
+  let total = 0, tax = 0, svc = 0, tip = 0, fee = 0
+  for (const r of refundRows) {
+    if (r.status !== undefined && r.status !== 'refunded') continue
+    if (r.amountCents >= 0) continue
+    const s = voidSplitOf(r)
+    if (!s) continue
+    total += Math.abs(r.amountCents)
+    tax += s.taxCents
+    svc += s.serviceChargeCents
+    tip += s.tipCents
+    fee += s.deliveryFeeCents
+  }
+  if (total === 0) return order
+  return {
+    ...order,
+    totalCents: order.totalCents - total,
+    taxCents: (order.taxCents ?? 0) - tax,
+    serviceChargeCents: (order.serviceChargeCents ?? 0) - svc,
+    tipCents: (order.tipCents ?? 0) - tip,
+    deliveryFeeCents: (order.deliveryFeeCents ?? 0) - fee,
+  }
+}
+
 /**
  * The debit side of a refund of `amountCents`, tagged with the brand. The tax
  * share is debited to `taxAccountCode` — the account the sale credited
@@ -592,7 +676,16 @@ export function refundDebitLines(
   memo: string,
   taxAccountCode?: string,
 ): JournalLineInput[] {
-  const sh = refundShareOf(order, priorCents, amountCents)
+  return shareDebitLines(order, refundShareOf(order, priorCents, amountCents), memo, taxAccountCode)
+}
+
+/** The debit lines of one refund split (refundShareOf, or a void's exact split), tagged with the brand. */
+export function shareDebitLines(
+  order: { conceptId: string; concept: { slug: string } & TaxJurisdiction },
+  sh: RefundShare,
+  memo: string,
+  taxAccountCode?: string,
+): JournalLineInput[] {
   const lines: JournalLineInput[] = []
   if (sh.revenueCents !== 0) {
     // A refund can never be mostly tax, but guard the sign anyway: a negative
@@ -750,7 +843,8 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
           id: true, status: true, conceptId: true, source: true, totalCents: true, walletAmountCents: true, taxCents: true,
           discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
           concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true } },
-          payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true } },
+          // gatewayMeta: a TILL-R3 void refund's exact split (voidSplitOf).
+          payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
           giftCardRedemptions: { select: { amountCents: true } },
         },
       },
@@ -796,16 +890,25 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
     if (!booking.booked) return { posted: false, entryId: null, reason: 'receipt_never_booked' }
   }
 
-  const before = (r: { id: string; createdAt: Date }) =>
-    r.createdAt.getTime() < payment.createdAt.getTime() ||
-    (r.createdAt.getTime() === payment.createdAt.getTime() && r.id < payment.id)
-  const prior = order.payments
-    .filter((r) => r.status === 'refunded' && r.id !== payment.id && before(r))
-    .reduce((t, r) => t + Math.abs(r.amountCents), 0)
-
-  const share = refundShareOf(order, prior, amount)
+  // A TILL-R3 void refund books exactly what the void took off the bill (no
+  // fee, no tip, the line's own GST). Every other refund values the order net
+  // of those voids, with them left out of `prior` (netOfVoidRefunds).
+  const split = voidSplitOf(payment)
+  let share: RefundShare
+  if (split) {
+    share = split
+  } else {
+    const before = (r: { id: string; createdAt: Date }) =>
+      r.createdAt.getTime() < payment.createdAt.getTime() ||
+      (r.createdAt.getTime() === payment.createdAt.getTime() && r.id < payment.id)
+    const others = order.payments.filter((r) => r.status === 'refunded' && r.id !== payment.id)
+    const prior = others
+      .filter((r) => before(r) && !isSplitVoidRefund(r))
+      .reduce((t, r) => t + Math.abs(r.amountCents), 0)
+    share = refundShareOf(netOfVoidRefunds(order, others), prior, amount)
+  }
   const taxAccount = await refundTaxAccountFor(db, tenantId, order, booking.saleTaxAccount, share.taxCents)
-  const lines = [...refundDebitLines(order, prior, amount, memo, taxAccount), creditLine]
+  const lines = [...shareDebitLines(order, share, memo, taxAccount), creditLine]
   const result = await postJournalEntry({
     tenantId,
     sourceType: 'order.refund',
@@ -872,7 +975,7 @@ export async function postOrderRefund(
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
       promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
       concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true } },
-      payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true } },
+      payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
       loyaltyTxs: {
         where: { type: { in: ['earn', 'redeem'] } },
         orderBy: { createdAt: 'asc' },
@@ -893,14 +996,18 @@ export async function postOrderRefund(
   // FULL value, gift cards included — unless the sale was booked before the
   // 2080 debit existed (ONL-05), whose value was the post-card total.
   const booking = sold && tenantId ? await saleBookingOf(prisma, tenantId, order) : null
-  const valued = asBooked(order, giftCardAppliedOf(order.giftCardRedemptions), booking)
+  // Valued net of any TILL-R3 void refunds (their exact split came off the
+  // bill already), which are not part of the tender refunds' `prior` either —
+  // as postRefundPayment values the tender refunds.
+  const refundRows = order.payments.filter((p) => p.status === 'refunded')
+  const valued = asBooked(netOfVoidRefunds(order, refundRows), giftCardAppliedOf(order.giftCardRedemptions), booking)
   const restoreLines = async (priorCents: number, amountCents: number, memo: string) => {
     const share = refundShareOf(valued, priorCents, amountCents)
     const taxAccount = await refundTaxAccountFor(prisma, tenantId!, valued, booking?.saleTaxAccount ?? null, share.taxCents)
     return refundDebitLines(valued, priorCents, amountCents, memo, taxAccount)
   }
-  const tenderRefundedCents = order.payments
-    .filter((p) => p.status === 'refunded')
+  const tenderRefundedCents = refundRows
+    .filter((p) => !isSplitVoidRefund(p))
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
   const fail = (what: string, err: unknown) => {
     const msg = (err as Error).message
