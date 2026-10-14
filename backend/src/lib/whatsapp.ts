@@ -1,6 +1,7 @@
 import { serviceClient as prisma } from './prisma.js'
 import { decryptSecret, encryptSecret, isEncrypted, secretHint, secretKeyConfigured } from './secretBox.js'
 import { isSandbox, practiceId, sandboxBlocks } from './sandbox.js'
+import { testCompanyBlocks, testCompanyResult, type SendScope } from './outboundScope.js'
 
 // WhatsApp delivery via the garibsons.app gateway (Hasham's connector — admin
 // Dev → API → WhatsApp connector, /connectors/whatsapp).
@@ -207,9 +208,11 @@ export async function whatsappSecretHealth(): Promise<{ check: 'ok' | 'warn' | '
 }
 
 // Core send. `number` is digits-only E.164 without the + (e.g. 923001234567).
-async function send(number: string, message: string) {
+async function send(number: string, message: string, scope?: SendScope | null) {
   // Practice copy: never the gateway (the copied settings hold the real URL).
   if (sandboxBlocks('whatsapp', { to: number, summary: `${message.length} chars` })) return { id: practiceId(), practice: true }
+  // A test company never messages a customer (staff codes pass no scope).
+  if (await testCompanyBlocks('whatsapp', scope)) return testCompanyResult()
   const { url, key } = await config()
   if (!url) throw new Error('WhatsApp gateway not configured (set it in admin → Dev → API → WhatsApp connector)')
   const res = await fetch(url, {
@@ -224,8 +227,11 @@ async function send(number: string, message: string) {
   return res.json().catch(() => ({}))
 }
 
-export async function sendText(to: string, text: string) {
-  return send(to, text)
+export type { SendScope }
+
+/** `scope` names the company and audience — every customer send passes `{ tenantId, audience: 'customer' }`. */
+export async function sendText(to: string, text: string, scope?: SendScope | null) {
+  return send(to, text, scope)
 }
 
 // The gateway is text-only, so the interactive helpers degrade to a readable
@@ -236,6 +242,7 @@ export async function sendInteractiveList(
   bodyText: string,
   _buttonLabel: string,
   sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>,
+  scope?: SendScope | null,
 ) {
   // Rows are numbered across sections in order, so a customer on the text-only
   // gateway can reply with the number (adapters/whatsapp matchOption reads it).
@@ -246,14 +253,15 @@ export async function sendInteractiveList(
     for (const r of s.rows) lines.push(`${++n}. ${r.title}${r.description ? ` — ${r.description}` : ''}`)
     lines.push('')
   }
-  return send(to, lines.join('\n').trim())
+  return send(to, lines.join('\n').trim(), scope)
 }
 
 export async function sendButtons(
   to: string,
   bodyText: string,
   buttons: Array<{ id: string; title: string }>,
+  scope?: SendScope | null,
 ) {
   const lines = [bodyText, '', ...buttons.map((b, i) => `${i + 1}. ${b.title}`)]
-  return send(to, lines.join('\n'))
+  return send(to, lines.join('\n'), scope)
 }

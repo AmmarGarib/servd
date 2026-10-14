@@ -10,6 +10,7 @@ import type { Customer, CustomerConversation } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { sendText as sendWhatsApp } from './whatsapp.js'
 import { sendEmail, emailConfigured } from './mailer.js'
+import { testCompanyBlocks, customerScope } from './outboundScope.js'
 
 // ─── Outbound fan-out ─────────────────────────────────────────────────────────
 
@@ -19,6 +20,12 @@ interface DeliveryContext {
   body: string
   fromStaffName: string
   isFirstMessage?: boolean
+  /**
+   * The company sending (the staff member's active company — a thread has no
+   * company column). A test company never messages a customer
+   * (lib/outboundScope.ts): both channels come back 'skipped'.
+   */
+  tenantId?: string | null
 }
 
 interface DeliveryResult {
@@ -30,6 +37,7 @@ interface DeliveryResult {
 /** Best-effort fan-out — never throws. See supplier-channels.ts for rationale. */
 export async function deliverToCustomer(ctx: DeliveryContext): Promise<DeliveryResult> {
   const result: DeliveryResult = { email: 'skipped', whatsapp: 'skipped', errors: [] }
+  if (await testCompanyBlocks('whatsapp', customerScope(ctx.tenantId))) return result
   const tasks: Array<Promise<void>> = []
 
   if (ctx.customer.email) {
@@ -69,7 +77,7 @@ async function sendChatEmail(ctx: DeliveryContext): Promise<void> {
     replyTo,
   })
 
-  await sendEmailWithReplyTo(ctx.customer.email, subject, html, replyTo)
+  await sendEmailWithReplyTo(ctx.customer.email, subject, html, replyTo, ctx.tenantId ?? null)
 }
 
 async function sendChatWhatsApp(ctx: DeliveryContext, toNumber: string): Promise<void> {
@@ -78,7 +86,7 @@ async function sendChatWhatsApp(ctx: DeliveryContext, toNumber: string): Promise
   const prefix = ctx.isFirstMessage
     ? `*${ctx.fromStaffName}* (servd):\n\n`
     : `*${ctx.fromStaffName}*:\n\n`
-  await sendWhatsApp(normalized, prefix + ctx.body)
+  await sendWhatsApp(normalized, prefix + ctx.body, customerScope(ctx.tenantId))
 }
 
 // ─── Reply-address routing (mirror of supplier-channels) ─────────────────────
@@ -186,7 +194,7 @@ export async function hasOpenCustomerConversation(customerId: string): Promise<b
 
 // ─── Helpers (kept local — small enough to not warrant a shared module) ──────
 
-async function sendEmailWithReplyTo(to: string, subject: string, html: string, replyTo: string | null): Promise<void> {
+async function sendEmailWithReplyTo(to: string, subject: string, html: string, replyTo: string | null, tenantId: string | null): Promise<void> {
   // Was a second, independent transport built from process.env. One mail
   // configuration, one place to change it — otherwise setting the credentials
   // in admin fixes some emails and silently not others.
@@ -194,7 +202,7 @@ async function sendEmailWithReplyTo(to: string, subject: string, html: string, r
     console.log(`[customer-channels] EMAIL (not configured) to ${to}: ${subject}${replyTo ? ` (Reply-To: ${replyTo})` : ''}`)
     return
   }
-  await sendEmail({ to, subject, html, replyTo })
+  await sendEmail({ to, subject, html, replyTo, scope: customerScope(tenantId) })
 }
 
 function renderChatEmailHtml(opts: {

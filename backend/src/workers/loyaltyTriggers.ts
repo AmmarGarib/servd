@@ -2,6 +2,7 @@ import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail, sendPhoneMessage } from '../lib/notify.js'
+import { customerScope } from '../lib/outboundScope.js'
 import { reachableCustomer, reachableAtCompany } from '../lib/marketingAudience.js'
 import { calculatePointsValue } from '../lib/loyaltySettings.js'
 import { creditPoints, creditPointsTx, bookEarn, loyaltyProgram } from '../modules/loyalty/service.js'
@@ -51,10 +52,25 @@ async function alreadyCredited(ids: string[], tenantId: string, description: str
   return new Set(rows.map((r) => r.loyaltyAccount.customerId))
 }
 
-/** Email when we have one, else WhatsApp. */
-async function reach(c: { email: string | null; phone: string | null }, subject: string, html: string, text: string): Promise<void> {
-  if (c.email) await sendEmail(c.email, subject, html)
-  else if (c.phone) await sendPhoneMessage(c.phone, text)
+/**
+ * Email when we have one, else WhatsApp. `tenantId` is the company the message
+ * is from (null = platform-wide servd copy): a test company never messages a
+ * customer (lib/outboundScope.ts).
+ */
+async function reach(c: { email: string | null; phone: string | null }, subject: string, html: string, text: string, tenantId: string | null): Promise<void> {
+  const scope = customerScope(tenantId)
+  if (c.email) await sendEmail(c.email, subject, html, 'loyalty', scope)
+  else if (c.phone) await sendPhoneMessage(c.phone, text, 'loyalty', scope)
+}
+
+/** The company of a customer's first completed order (null when none) — who a first-order message is from. */
+async function firstOrderTenantId(customerId: string): Promise<string | null> {
+  const o = await prisma.order.findFirst({
+    where: { customerId, status: 'completed', deletedAt: null },
+    select: { concept: { select: { tenantId: true } } },
+    orderBy: { completedAt: 'asc' },
+  }).catch(() => null)
+  return o?.concept.tenantId ?? null
 }
 
 export function startLoyaltyTriggerWorker() {
@@ -152,7 +168,7 @@ export async function runBirthdayTriggers(today = new Date()) {
       const company = tenantNames.get(tenantId) ?? 'servd'
       const worth = `PKR ${((bonus * program.pointValueCents) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
       const msg = `Happy birthday, ${customer.name ?? 'there'}! ${company} has added ${bonus} loyalty points to your account — ${worth} off your next order with us.`
-      await reach(customer, `Happy birthday from ${company}`, `<p>${msg}</p>`, msg).catch(() => {})
+      await reach(customer, `Happy birthday from ${company}`, `<p>${msg}</p>`, msg, tenantId).catch(() => {})
       await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType } })
     }
   }
@@ -180,7 +196,7 @@ async function runWinBackTriggers() {
       if (alreadySent) continue
 
       const msg = `We miss you! It's been a while. Come back and get Rs. 200 off — use code COMEBACK at checkout.`
-      await reach(customer, 'We miss you — come back to servd', `<p>Hi ${customer.name ?? 'there'},</p><p>${msg}</p>`, msg).catch(() => {})
+      await reach(customer, 'We miss you — come back to servd', `<p>Hi ${customer.name ?? 'there'},</p><p>${msg}</p>`, msg, tenantId).catch(() => {})
       await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType } })
     }
   }
@@ -208,7 +224,7 @@ async function runActivateUsersTrigger() {
     if (alreadySent) continue
 
     const msg = `Hey ${customer.name ?? 'there'}! You signed up at servd but haven't ordered yet. Get your first order delivered — use WELCOME15 for 15% off!`
-    await reach(customer, 'Your first servd order is waiting! 🍽', `<p>${msg}</p>`, msg).catch(() => {})
+    await reach(customer, 'Your first servd order is waiting! 🍽', `<p>${msg}</p>`, msg, null).catch(() => {})
 
     await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType: 'activate' } })
   }
@@ -238,7 +254,7 @@ async function runEncourageSecondOrderTrigger() {
     if (alreadySent) continue
 
     const msg = `${customer.name ?? 'Hey'}! You loved your first order — ready for your second? Order again and get Rs. 100 off with code SECOND100.`
-    await reach(customer, 'Ready for round 2? 🍔', `<p>${msg}</p>`, msg).catch(() => {})
+    await reach(customer, 'Ready for round 2? 🍔', `<p>${msg}</p>`, msg, await firstOrderTenantId(customer.id)).catch(() => {})
 
     await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType: 'second_order' } })
   }
@@ -273,7 +289,7 @@ async function runFirstOrderWelcomeTrigger() {
       <p>If anything was off — and even if it wasn't — we'd love to hear from you. Reply to this email any time.</p>
       <p>Cooking with care,<br/>The servd team</p>`
 
-    await reach(c, 'Thanks for your first order 🍽', html, sms).catch(() => {})
+    await reach(c, 'Thanks for your first order 🍽', html, sms, await firstOrderTenantId(c.id)).catch(() => {})
 
     await prisma.triggerLog.create({ data: { customerId: c.id, triggerType: 'welcome' } })
   }
@@ -295,7 +311,7 @@ async function runComplaintFollowUpTrigger() {
     },
     select: {
       id: true, customerId: true,
-      concept: { select: { name: true } },
+      concept: { select: { name: true, tenantId: true } },
       order:   { select: { customer: { select: { name: true, email: true, phone: true } } } },
     },
     take: 100,
@@ -324,7 +340,7 @@ async function runComplaintFollowUpTrigger() {
         <p>— ${formatBrandName(c.concept.name)}</p>`
 
       // A service follow-up on the customer's own complaint, not marketing.
-      await reach(contact, `${formatBrandName(c.concept.name)}: did we make it right?`, html, sms).catch(() => {})
+      await reach(contact, `${formatBrandName(c.concept.name)}: did we make it right?`, html, sms, c.concept.tenantId).catch(() => {})
     }
 
     await prisma.orderComplaint.update({
@@ -385,7 +401,7 @@ export async function runSpendMilestoneTrigger() {
             <p>That's the kind of loyalty restaurants don't earn lightly. Thank you.</p>
             <p>We've credited <strong>${m.bonus} loyalty points</strong> to your account — that's ${worth} off whenever you next order with us.</p>
             <p>Genuinely,<br/>${company}</p>`
-          await reach(c, `Thanks for ${m.label}`, html, msg).catch(() => {})
+          await reach(c, `Thanks for ${m.label}`, html, msg, tenantId).catch(() => {})
         }
 
         await prisma.triggerLog.create({ data: { customerId: c.id, triggerType: triggerKey } })
@@ -517,7 +533,7 @@ export async function runReferralRewardTrigger() {
     // Notify the referrer, when marketing may reach them.
     if (referrer.bannedAt || referrer.marketingOptOutAt) continue
     const msg = `${referee.name ?? 'Your friend'} just placed their first order using your code — you've got ${REFERRER_BONUS} loyalty points (${await pointsWorth(REFERRER_BONUS, tenantId)} off your next order). Thanks for the love.`
-    await reach(referrer, `Your friend ordered — points credited`, `<p>${msg}</p>`, msg).catch(() => {})
+    await reach(referrer, `Your friend ordered — points credited`, `<p>${msg}</p>`, msg, tenantId).catch(() => {})
   }
 }
 
@@ -548,11 +564,12 @@ async function runAbandonedCartTrigger() {
     const msg = `You left something in your cart! Complete your order and enjoy your meal. It's waiting for you.`
 
     let sent = false
+    const scope = customerScope(cart.concept.tenantId) // a test company never messages its customers
     if (cart.customerEmail) {
-      await sendEmail(cart.customerEmail, 'You forgot something! 🛒', `<p>${msg}</p>`).catch(() => {})
+      await sendEmail(cart.customerEmail, 'You forgot something! 🛒', `<p>${msg}</p>`, 'cart.abandoned', scope).catch(() => {})
       sent = true
     } else if (cart.customerPhone) {
-      await sendPhoneMessage(cart.customerPhone, msg).catch(() => {})
+      await sendPhoneMessage(cart.customerPhone, msg, 'cart.abandoned', scope).catch(() => {})
       sent = true
     }
 

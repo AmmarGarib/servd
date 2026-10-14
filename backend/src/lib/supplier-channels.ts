@@ -19,12 +19,13 @@ import { prisma } from './prisma.js'
 import { sendEmail } from './notify.js'
 import { sendText as sendWhatsApp } from './whatsapp.js'
 import { sandboxBlocks } from './sandbox.js'
+import { testCompanyBlocks, externalScope } from './outboundScope.js'
 
 // ─── Outbound fan-out ─────────────────────────────────────────────────────────
 
 interface DeliveryContext {
   conversation: Pick<SupplierConversation, 'id' | 'subject'>
-  supplier: Pick<Supplier, 'id' | 'name' | 'email' | 'whatsappPhone' | 'phone'>
+  supplier: Pick<Supplier, 'id' | 'name' | 'email' | 'whatsappPhone' | 'phone'> & { tenantId?: string | null }
   body: string
   fromStaffName: string
   /** First message of the conversation? Used to set a friendlier subject. */
@@ -46,6 +47,14 @@ interface DeliveryResult {
  */
 export async function deliverToSupplier(ctx: DeliveryContext): Promise<DeliveryResult> {
   const result: DeliveryResult = { email: 'skipped', whatsapp: 'skipped', errors: [] }
+
+  // A test company never contacts a real supplier (lib/outboundScope.ts). The
+  // supplier's company comes from its row — read it here when the caller's
+  // pick did not carry it, so no caller can forget.
+  const tenantId = ctx.supplier.tenantId !== undefined
+    ? ctx.supplier.tenantId
+    : (await prisma.supplier.findUnique({ where: { id: ctx.supplier.id }, select: { tenantId: true } }).catch(() => null))?.tenantId ?? null
+  if (await testCompanyBlocks('supplier', externalScope(tenantId))) return result
 
   const tasks: Array<Promise<void>> = []
 

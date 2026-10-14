@@ -79,11 +79,18 @@ type Tx = Prisma.TransactionClient
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const activeTenant = (req: FastifyRequest): string => activeTenantId(req, 'HR records belong to one company')
-/** Companies this operator can read HR for. Portfolio view spans all of them. */
+/** Companies this operator can read HR for. Portfolio view spans all of them,
+ *  minus test companies other than the active one: on a portfolio GET the auth
+ *  middleware's `tenantFilter` is already that set (lib/testCompany.ts), so it
+ *  is the source here; anything else falls back to every member company. */
 function readTenants(req: FastifyRequest): string[] {
   const su = req.staffUser!
   const wantsAll = req.headers['x-servd-portfolio'] === '1'
-  if (wantsAll && su.memberTenantIds.length) return su.memberTenantIds
+  if (wantsAll && su.memberTenantIds.length) {
+    const f = su.tenantFilter
+    if (f && typeof f === 'object' && 'in' in f) return f.in.filter((id) => su.memberTenantIds.includes(id))
+    return su.memberTenantIds
+  }
   return su.tenantId ? [su.tenantId] : []
 }
 const inTenants = (req: FastifyRequest) => ({ tenantId: { in: readTenants(req) } })

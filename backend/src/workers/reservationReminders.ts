@@ -25,6 +25,7 @@ import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail } from '../lib/notify.js'
 import { sendText as sendWhatsApp } from '../lib/whatsapp.js'
+import { customerScope } from '../lib/outboundScope.js'
 import { getReservationPolicy } from '../lib/setup-config.js'
 import { formatBrandName } from '../lib/brandName.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
@@ -162,7 +163,7 @@ function leadLabel(hours: number): string {
 }
 
 async function sendReminder(
-  r: { id: string; guestName: string; guestPhone: string | null; guestEmail: string | null; partySize: number; startTime: Date; confirmToken: string | null; concept: { name: string } },
+  r: { id: string; guestName: string; guestPhone: string | null; guestEmail: string | null; partySize: number; startTime: Date; confirmToken: string | null; concept: { name: string; tenantId: string | null } },
   leadHours: number,
 ) {
   const when = r.startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -172,7 +173,8 @@ async function sendReminder(
 
   const digits = (r.guestPhone ?? '').replace(/[^\d]/g, '')
   if (digits) {
-    await sendWhatsApp(digits, text).catch((err: Error) => {
+    // A test company never messages its guests (lib/outboundScope.ts).
+    await sendWhatsApp(digits, text, customerScope(r.concept.tenantId)).catch((err: Error) => {
       console.warn(`[reservationReminders] WhatsApp reminder failed for ${r.id}:`, err.message)
     })
   }
@@ -180,6 +182,6 @@ async function sendReminder(
     const html = `<p>Hi ${r.guestName},</p>
       <p>Just a reminder — your table for ${r.partySize} at <strong>${formatBrandName(r.concept.name)}</strong> is <strong>${lead}</strong> (${when} PKT).</p>
       ${confirmUrl ? `<p><a href="${confirmUrl}">Cancel if you can't make it →</a></p>` : ''}`
-    await sendEmail(r.guestEmail, `${formatBrandName(r.concept.name)}: reservation reminder`, html).catch(() => {})
+    await sendEmail(r.guestEmail, `${formatBrandName(r.concept.name)}: reservation reminder`, html, 'reservation.reminder', customerScope(r.concept.tenantId)).catch(() => {})
   }
 }

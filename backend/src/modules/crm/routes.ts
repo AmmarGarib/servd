@@ -12,6 +12,7 @@ import {
   computeAllSegments, getSegmentsWithMembers, companySegments, segmentMemberIds, isSegmentSlug, SEGMENT_DEFS,
 } from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
+import { testCompanyBlocks, customerScope } from '../../lib/outboundScope.js'
 import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { walletBalancesOf, balanceInView } from '../wallet/service.js'
 import {
@@ -621,6 +622,10 @@ export async function crmRoutes(fastify: FastifyInstance) {
       }
       const campaignId = campaign.id
       const apiBase = process.env['API_URL'] ?? 'http://localhost:3001'
+      // A test company never messages customers (lib/outboundScope.ts): every
+      // recipient is recorded as not sent, with the reason, and nothing goes out.
+      const scope = customerScope(campaign.tenantId)
+      const testCompany = await testCompanyBlocks('email', scope)
 
       // Fire-and-forget — don't block the HTTP response. Walks the audience in
       // pages rather than loading it whole; there used to be a hard 2,000 cap
@@ -653,15 +658,19 @@ export async function crmRoutes(fastify: FastifyInstance) {
                 continue
               }
               const stop = unsubscribeUrl(send.id)
+              if (testCompany) {
+                await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'Test company: not sent to customers' } })
+                continue
+              }
               try {
                 if (campaign.channel === 'email' && c.email) {
                   const html = trackedHtml(campaign.body, send.id, apiBase) +
                     `<p style="font-size:11px;color:#888;margin-top:24px">Don't want these? <a href="${stop}">Unsubscribe</a>.</p>`
-                  await sendEmail(c.email, campaign.subject ?? campaign.name, html)
+                  await sendEmail(c.email, campaign.subject ?? campaign.name, html, 'campaign', scope)
                 } else if ((campaign.channel === 'whatsapp' || campaign.channel === 'sms') && c.phone) {
                   // Phone messages go through the WhatsApp gateway (owner
                   // decision 17). A legacy 'sms' campaign is sent the same way.
-                  await sendText(whatsappNumber(c.phone), `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`)
+                  await sendText(whatsappNumber(c.phone), `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`, scope)
                 } else {
                   await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
                   continue
@@ -862,6 +871,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
         body:         body.message,
         fromStaffName: req.staffUser!.name ?? 'servd',
         isFirstMessage: true,
+        tenantId: req.staffUser?.tenantId ?? null, // a test company never messages a customer
       }).catch((err) => console.error(`[crm/chat] fan-out failed for conv=${conversation.id}:`, (err as Error).message))
 
       return reply.status(201).send(conversation)
@@ -927,6 +937,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
         body:         body.body,
         fromStaffName: req.staffUser!.name ?? 'servd',
         isFirstMessage: false,
+        tenantId: req.staffUser?.tenantId ?? null, // a test company never messages a customer
       }).catch((err) => console.error(`[crm/chat] fan-out failed for conv=${conv.id}:`, (err as Error).message))
 
       return reply.status(201).send(message)

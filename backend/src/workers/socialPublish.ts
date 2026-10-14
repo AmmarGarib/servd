@@ -3,6 +3,7 @@ import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { publishInstagramPost, publishFacebookPost } from '../lib/meta-social.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
+import { testCompanyBlocks, externalScope } from '../lib/outboundScope.js'
 
 const QUEUE_NAME = 'social-publish'
 
@@ -18,8 +19,18 @@ export function startSocialPublishWorker() {
       // on the empty data payload.
       if (job.name !== 'publish') return
       const { postId } = job.data as { postId: string }
-      const post = await prisma.socialPost.findUnique({ where: { id: postId } })
+      const post = await prisma.socialPost.findUnique({ where: { id: postId }, include: { event: { select: { tenantId: true } } } })
       if (!post || post.status !== 'scheduled') return
+
+      // A test company never posts to the real social pages (lib/outboundScope.ts).
+      // Marked failed with a plain reason, so it is not picked up again.
+      if (await testCompanyBlocks('social', externalScope(post.event.tenantId))) {
+        await prisma.socialPost.update({
+          where: { id: postId },
+          data:  { status: 'failed', error: 'Test company: never posted to the real social pages.' },
+        })
+        return
+      }
 
       try {
         let platformPostId: string

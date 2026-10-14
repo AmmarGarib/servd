@@ -25,6 +25,7 @@ import { sendEmail } from '../../lib/notify.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { withholdingForBill, postSupplierBill, postSupplierBillVoid, postSupplierPayment, postSupplierPaymentVoid } from '../accounting/supplierPosting.js'
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
+import { testCompanyBlocks, externalScope } from '../../lib/outboundScope.js'
 import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
 import type { Prisma } from '@prisma/client'
@@ -255,6 +256,20 @@ export async function sendPoToSupplier(poId: string, userId: string) {
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   assertSendable(po.status)
 
+  // A test company never contacts a real supplier (lib/outboundScope.ts). The
+  // PO still moves on as if sent, so a test can run end to end (receive, bill,
+  // pay); the activity log says nothing was delivered.
+  if (await testCompanyBlocks('supplier', externalScope(po.supplier.tenantId))) {
+    const status = po.status === 'approved' ? 'sent' : po.status
+    await prisma.$transaction([
+      prisma.purchaseOrder.update({ where: { id: poId }, data: { sentAt: new Date(), status } }),
+      prisma.poActivityLog.create({
+        data: { purchaseOrderId: poId, userId, action: 'sent', details: { channels: [], testCompany: true, note: 'Test company: not sent to the supplier' } },
+      }),
+    ])
+    return { status, channels: [] as string[], sentTo: null, failed: [] as string[], testCompany: true }
+  }
+
   const email = po.supplier.email || null
   const waNumber = (po.supplier.whatsappPhone || po.supplier.phone || '').replace(/[^0-9]/g, '') || null
   if (!email && !waNumber) {
@@ -315,11 +330,11 @@ export async function sendPoToSupplier(poId: string, userId: string) {
   const sent: string[] = []
   const failed: string[] = []
   if (email) {
-    try { await sendEmail(email, `Purchase Order from servd — ${fmt(toCents(po.totalCents))}`, html); sent.push('email') }
+    try { await sendEmail(email, `Purchase Order from servd — ${fmt(toCents(po.totalCents))}`, html, 'purchase_order', externalScope(po.supplier.tenantId)); sent.push('email') }
     catch (err) { failed.push(`email: ${(err as Error).message}`) }
   }
   if (waNumber) {
-    try { await sendWhatsApp(waNumber, text); sent.push('whatsapp') }
+    try { await sendWhatsApp(waNumber, text, externalScope(po.supplier.tenantId)); sent.push('whatsapp') }
     catch (err) { failed.push(`whatsapp: ${(err as Error).message}`) }
   }
 

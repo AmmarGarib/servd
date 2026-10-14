@@ -40,6 +40,7 @@ import type { OrderDTO } from '@servd/types'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { priceOrder } from '../../lib/pricing.js'
 import { sendText, sendInteractiveList, sendButtons } from '../../lib/whatsapp.js'
+import { customerScope, type SendScope } from '../../lib/outboundScope.js'
 import {
   getSession, saveSession, clearSession, newSession,
   type WaSession, type CartItem, type WaOption,
@@ -81,6 +82,15 @@ const ORDERABLE_ITEM = { isAvailable: true, deletedAt: null, priceCents: { gt: 0
 const LIVE_SECTION = { isActive: true, deletedAt: null }
 
 /** The brand WHATSAPP_DEFAULT_CONCEPT names, if it is set and names a live brand. Never throws. */
+/**
+ * Replies about a brand's order name the brand's company: a test company's
+ * brand never messages a real customer (lib/outboundScope.ts). Before a brand
+ * is picked there is no company, and the reply goes out as before.
+ */
+function replyScope(session: WaSession | null | undefined): SendScope {
+  return customerScope(session?.tenantId ?? null)
+}
+
 async function defaultConcept(): Promise<OrderingBrand | null> {
   const slug = process.env['WHATSAPP_DEFAULT_CONCEPT']?.trim()
   if (!slug) return null
@@ -290,7 +300,7 @@ export async function handleWaMessage(phone: string, incoming: WaIncomingMessage
       return handleConfirm(phone, session, message)
     default:
       await clearSession(phone)
-      return sendText(phone, 'Your session has ended. Send "hi" to start a new order.')
+      return sendText(phone, 'Your session has ended. Send "hi" to start a new order.', replyScope(session))
   }
 }
 
@@ -298,7 +308,7 @@ export async function handleWaMessage(phone: string, incoming: WaIncomingMessage
 async function offerButtons(phone: string, session: WaSession, body: string, buttons: WaOption[]): Promise<unknown> {
   session.lastOptions = buttons.map((b) => ({ id: b.id, title: b.title }))
   await saveSession(session)
-  return sendButtons(phone, body, buttons.map((b) => ({ id: b.id, title: clip(b.title, 20) })))
+  return sendButtons(phone, body, buttons.map((b) => ({ id: b.id, title: clip(b.title, 20) })), replyScope(session))
 }
 
 /** Send a one-section list and remember its rows (a typed number or title picks one). */
@@ -313,7 +323,7 @@ async function offerList(
   return sendInteractiveList(phone, list.header, list.body, list.button, [{
     title: list.section,
     rows: rows.map((r) => ({ id: r.id, title: clip(r.title, 24), description: r.description ?? '' })),
-  }])
+  }], replyScope(session))
 }
 
 /**
@@ -492,7 +502,7 @@ async function chooseBrand(phone: string, session: WaSession, brand: OrderingBra
     await saveSession(session)
     return handleCartText(phone, session)
   }
-  await sendText(phone, `You are ordering from *${name}*.${await loyaltyLine(session)}`)
+  await sendText(phone, `You are ordering from *${name}*.${await loyaltyLine(session)}`, replyScope(session))
   return sendToMenu(phone, session)
 }
 
@@ -509,7 +519,7 @@ async function handleSwitch(phone: string, session: WaSession, message: WaIncomi
       session.pendingConceptId = null
       session.step = 'cart'
       await saveSession(session)
-      await sendText(phone, 'That kitchen is not taking orders right now. Your cart is unchanged.')
+      await sendText(phone, 'That kitchen is not taking orders right now. Your cart is unchanged.', replyScope(session))
       return handleCartText(phone, session)
     }
     session.cart = []
@@ -597,25 +607,25 @@ async function greetReturningMember(
  */
 async function handleReorderLast(phone: string, session: WaSession) {
   if (!session.customerId) {
-    await sendText(phone, 'Sorry, I lost track of your account. Send "hi" to start over.')
+    await sendText(phone, 'Sorry, I lost track of your account. Send "hi" to start over.', replyScope(session))
     return clearSession(phone)
   }
 
   const lastOrder = await lastOrderOf(session.customerId)
   if (!lastOrder || lastOrder.items.length === 0) {
-    await sendText(phone, 'There is no previous order to repeat. Here are the kitchens taking orders.')
+    await sendText(phone, 'There is no previous order to repeat. Here are the kitchens taking orders.', replyScope(session))
     return sendBrandMenu(phone, session)
   }
 
   const brands = await orderingBrands()
   const brand = brands.find((b) => b.id === lastOrder.conceptId)
   if (!brand) {
-    await sendText(phone, `${formatBrandName(lastOrder.concept.name)} is not taking orders right now.`)
+    await sendText(phone, `${formatBrandName(lastOrder.concept.name)} is not taking orders right now.`, replyScope(session))
     return sendBrandMenu(phone, session, brands)
   }
   if (session.cart.length > 0) {
     // Never replace a cart in progress behind the customer's back.
-    await sendText(phone, 'You already have items in your cart. Place or cancel that order first.')
+    await sendText(phone, 'You already have items in your cart. Place or cancel that order first.', replyScope(session))
     return handleCartText(phone, session)
   }
 
@@ -639,7 +649,7 @@ async function handleReorderLast(phone: string, session: WaSession) {
 
   if (session.cart.length === 0) {
     await saveSession(session)
-    await sendText(phone, 'Nothing from your last order is available right now. Here is the menu.')
+    await sendText(phone, 'Nothing from your last order is available right now. Here is the menu.', replyScope(session))
     return sendToMenu(phone, session)
   }
 
@@ -664,7 +674,7 @@ async function sendToMenu(phone: string, session: WaSession): Promise<unknown> {
   if (categories.length === 0) {
     session.lastOptions = []
     await saveSession(session)
-    return sendText(phone, 'The menu is unavailable right now. Please try again later, or send "brands" to pick another kitchen.')
+    return sendText(phone, 'The menu is unavailable right now. Please try again later, or send "brands" to pick another kitchen.', replyScope(session))
   }
 
   return offerList(
@@ -701,7 +711,7 @@ async function handleBrowsing(phone: string, session: WaSession, message: WaInco
       : []
 
     if (items.length === 0) {
-      return sendText(phone, 'No items are available in that category right now.')
+      return sendText(phone, 'No items are available in that category right now.', replyScope(session))
     }
 
     session.step = 'category'
@@ -732,7 +742,7 @@ async function handleCategory(phone: string, session: WaSession, message: WaInco
     // here, as is one whose section has been switched off since it was listed.
     if (!item || !item.isAvailable || item.deletedAt || item.conceptId !== session.conceptId || item.priceCents <= 0
       || !item.category?.isActive || item.category.deletedAt) {
-      return sendText(phone, 'Sorry, that item is not available right now.')
+      return sendText(phone, 'Sorry, that item is not available right now.', replyScope(session))
     }
 
     // Add or increment in cart
@@ -817,7 +827,7 @@ async function proceedToConfirm(phone: string, session: WaSession) {
   session.cart = lines
   if (lines.length === 0) {
     await saveSession(session)
-    await sendText(phone, 'Sorry, nothing in your cart is available right now. Here is the menu.')
+    await sendText(phone, 'Sorry, nothing in your cart is available right now. Here is the menu.', replyScope(session))
     return sendToMenu(phone, session)
   }
 
@@ -853,10 +863,10 @@ async function handleConfirm(phone: string, session: WaSession, message: WaIncom
 
   if (btnId === 'action:cancel') {
     await clearSession(phone)
-    return sendText(phone, 'Order cancelled. Send "hi" to start again.')
+    return sendText(phone, 'Order cancelled. Send "hi" to start again.', replyScope(session))
   }
 
-  return sendText(phone, 'Reply *Place order* to confirm or *Cancel* to start over.')
+  return sendText(phone, 'Reply *Place order* to confirm or *Cancel* to start over.', replyScope(session))
 }
 
 /** Refusals whose message is written for the customer. */
@@ -874,12 +884,12 @@ const CUSTOMER_FACING = new Set(['BRAND_CLOSED', 'ITEM_UNAVAILABLE', 'BANNED', '
  */
 export async function placeOrder(phone: string, session: WaSession) {
   if (!session.conceptId) {
-    await sendText(phone, 'Please pick a kitchen first.')
+    await sendText(phone, 'Please pick a kitchen first.', replyScope(session))
     return sendBrandMenu(phone, session)
   }
   const { concept, lines, price } = await priceCart(session)
   if (lines.length === 0) {
-    await sendText(phone, 'Sorry, nothing in your cart is available right now. Send "hi" to start again.')
+    await sendText(phone, 'Sorry, nothing in your cart is available right now. Send "hi" to start again.', replyScope(session))
     return clearSession(phone)
   }
   const key = session.orderKey ?? randomUUID()
@@ -945,7 +955,7 @@ export async function placeOrder(phone: string, session: WaSession) {
     // starts again.
     console.error(`[whatsapp] order for ${phone.slice(-4)} not placed:`, (err as Error).message)
     const why = err instanceof AppError && CUSTOMER_FACING.has(err.code) ? `${err.message}\n\n` : ''
-    await sendText(phone, `${why}Sorry, we could not place that order just now. Send "hi" to start again.`)
+    await sendText(phone, `${why}Sorry, we could not place that order just now. Send "hi" to start again.`, replyScope(session))
     return
   }
   await clearSession(phone)
@@ -953,7 +963,7 @@ export async function placeOrder(phone: string, session: WaSession) {
   const orderRef = result.order.id.slice(-8).toUpperCase()
   return sendText(
     phone,
-    `*Order Placed* at ${formatBrandName(concept.name)}.\n\nReference: *${orderRef}*\n\nPlease come to the counter to collect it. Thank you.`,
+    `*Order Placed* at ${formatBrandName(concept.name)}.\n\nReference: *${orderRef}*\n\nPlease come to the counter to collect it. Thank you.`, replyScope(session),
   )
 }
 

@@ -23,6 +23,7 @@
 import { randomBytes } from 'crypto'
 import { prisma } from '../../lib/prisma.js'
 import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
+import { customerScope } from '../../lib/outboundScope.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { formatBrandName } from '../../lib/brandName.js'
 
@@ -54,7 +55,7 @@ export async function tryPromoteWaitlist(freed: FreedSlot): Promise<{ promoted: 
       },
     },
     orderBy: { createdAt: 'asc' },           // FIFO — whoever joined first
-    include: { concept: { select: { name: true } } },
+    include: { concept: { select: { name: true, tenantId: true } } },
   })
 
   if (!candidate) {
@@ -92,6 +93,8 @@ export async function tryPromoteWaitlist(freed: FreedSlot): Promise<{ promoted: 
     void sendPhoneMessage(
       candidate.guestPhone,
       `${formatBrandName(candidate.concept.name)}: a table just opened up for ${candidate.partySize} on ${when} PKT. Confirm in 30 min: ${claimUrl}`,
+      'reservation.waitlist_promoted',
+      customerScope(candidate.concept.tenantId),
     ).catch(() => {})
   }
   if (candidate.guestEmail) {
@@ -104,6 +107,8 @@ export async function tryPromoteWaitlist(freed: FreedSlot): Promise<{ promoted: 
       candidate.guestEmail,
       `${formatBrandName(candidate.concept.name)} — a table just opened up`,
       html,
+      'reservation.waitlist_promoted',
+      customerScope(candidate.concept.tenantId),
     ).catch(() => {})
   }
 

@@ -17,6 +17,7 @@ import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendPhoneMessage, sendEmail } from '../lib/notify.js'
+import { customerScope } from '../lib/outboundScope.js'
 import { formatBrandName } from '../lib/brandName.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
 
@@ -65,7 +66,7 @@ async function runPromptSweep(): Promise<void> {
       conceptId: true,
       completedAt: true,
       customer: { select: { id: true, name: true, email: true, phone: true } },
-      concept:  { select: { name: true, slug: true } },
+      concept:  { select: { name: true, slug: true, tenantId: true } },
     },
   })
 
@@ -99,13 +100,15 @@ async function runPromptSweep(): Promise<void> {
       <p><a href="${reviewUrl}" style="background:#22c55e;color:#000;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">Rate my meal →</a></p>
       <p style="color:#666;font-size:12px">Honest feedback only — we read every word, and we use it to make things better.</p>`
 
+    // A test company never messages its customers (lib/outboundScope.ts).
+    const scope = customerScope(order.concept.tenantId)
     if (order.customer.phone) {
-      await sendPhoneMessage(order.customer.phone, sms).catch((err) => {
+      await sendPhoneMessage(order.customer.phone, sms, 'review.prompt', scope).catch((err) => {
         console.error(`[reviewPrompt] SMS failed for order ${order.id}:`, (err as Error).message)
       })
     }
     if (order.customer.email) {
-      await sendEmail(order.customer.email, `${brand}: how was your meal?`, html).catch((err) => {
+      await sendEmail(order.customer.email, `${brand}: how was your meal?`, html, 'review.prompt', scope).catch((err) => {
         console.error(`[reviewPrompt] email failed for order ${order.id}:`, (err as Error).message)
       })
     }

@@ -313,12 +313,17 @@ function kitRowBrand(row: Pick<SiteLayout, 'slug' | 'tenantId'>): string | null 
  */
 export async function kitLiveSettingsTx(
   tx: Prisma.TransactionClient,
-  row: Pick<SiteLayout, 'slug' | 'tenantId' | 'settings'>,
+  row: Pick<SiteLayout, 'id' | 'slug' | 'tenantId' | 'settings'>,
   next: unknown,
 ): Promise<{ settings: unknown; before: ConceptLook | null }> {
   const conceptSlug = kitRowBrand(row)
   if (!conceptSlug) return { settings: next, before: null }
-  let before = conceptBeforeOf(row.settings)
+  // Lock the row and read the snapshot as it is NOW: a CEO PATCH of a
+  // kit-owned field may have refreshed it since `row` was read
+  // (refreshKitSnapshotTx takes the same lock).
+  const fresh = await tx.$queryRaw<Array<{ settings: unknown }>>`
+    SELECT settings FROM site_layouts WHERE id = ${row.id} FOR UPDATE`
+  let before = conceptBeforeOf(fresh[0] ? fresh[0].settings : row.settings)
   if (!before) {
     const c = await tx.concept.findFirst({
       where: { slug: conceptSlug, tenantId: row.tenantId, deletedAt: null },

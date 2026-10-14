@@ -5124,6 +5124,10 @@ model Tenant {
   /// "profit for the year to date" (virtual roll-forward, no closing journal). CEO-only, audited.
   /// CHECK tenants_fy_end_month_chk (SQL only).
   fiscalYearEndMonth Int       @default(6)
+  /// Test company (owner, 2026-10-14): CEO-only, for trying things out. Fiscal reporting is OFF, it is left out of
+  /// "All companies" totals, it never messages customers or outside parties, and its brands are never advertised.
+  /// Its own books work normally. ONE predicate: lib/testCompany.ts (isTestTenant / testTenantIds).
+  isTest             Boolean   @default(false)
 
   concepts               Concept[]
   users                  User[]

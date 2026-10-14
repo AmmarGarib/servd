@@ -27,6 +27,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
 import { normalisePhone } from '../auth/otp.js'
 import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
+import { customerScope } from '../../lib/outboundScope.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
 import { formatBrandName } from '../../lib/brandName.js'
@@ -502,7 +503,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     // Best-effort confirmation
     const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     if (body.guestPhone) {
-      void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`)
+      void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`, 'reservation.confirmed', customerScope(r.concept.tenantId))
         .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation SMS failed'))
     }
     if (body.guestEmail) {
@@ -511,7 +512,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         ${body.notes ? `<p><em>Notes:</em> ${body.notes}</p>` : ''}
         <p>If you need to cancel, reply to this email or call us.</p>
         <p>— ${formatBrandName(r.concept.name)}</p>`
-      void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} reservation confirmed`, html)
+      void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} reservation confirmed`, html, 'reservation.confirmed', customerScope(r.concept.tenantId))
         .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation email failed'))
     }
 
@@ -1362,7 +1363,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // table) is placed (capacity.ts). It used to be stored with no table and
       // no check at all. The table can still be changed by the host; the
       // exclusion constraint guards against a staff write racing this one.
-      let r: Prisma.ReservationGetPayload<{ include: { concept: { select: { name: true } } } }>
+      let r: Prisma.ReservationGetPayload<{ include: { concept: { select: { name: true, tenantId: true } } } }>
       try {
         r = await withTableOverlapGuard(() =>
           prisma.$transaction(async (tx) => {
@@ -1411,7 +1412,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
                 waitlist:   false,
                 reminder24hSentAt: remindable ? null : new Date(),
               },
-              include: { concept: { select: { name: true } } },
+              include: { concept: { select: { name: true, tenantId: true } } },
             })
           }),
         )
@@ -1429,7 +1430,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
       if (notifyPhone) {
-        void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
+        void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`, 'reservation.requested', customerScope(r.concept.tenantId))
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking WhatsApp failed'))
       }
       if (notifyEmail && body.guestEmail) {
@@ -1437,7 +1438,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           <p>Your reservation at <strong>${formatBrandName(r.concept.name)}</strong> for <strong>${body.partySize} on ${when} PKT</strong> is pending confirmation.</p>
           <p><a href="${confirmUrl}" style="background:#22c55e;color:#000;padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:bold">Confirm or cancel</a></p>
           ${remindable ? '<p>We’ll send you a reminder before your booking.</p>' : ''}`
-        void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} — confirm your reservation`, html)
+        void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} — confirm your reservation`, html, 'reservation.requested', customerScope(r.concept.tenantId))
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking email failed'))
       }
 
@@ -1560,7 +1561,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
             promotionOfferedEndTime:   null,
             promotionOfferedTableId:   null,
           },
-          include: { concept: { select: { name: true } } },
+          include: { concept: { select: { name: true, tenantId: true } } },
         }),
       )
 
@@ -1575,13 +1576,15 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       })
       if (updated.guestPhone) {
-        void sendPhoneMessage(updated.guestPhone, `${formatBrandName(updated.concept.name)}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`).catch(() => {})
+        void sendPhoneMessage(updated.guestPhone, `${formatBrandName(updated.concept.name)}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`, 'reservation.confirmed', customerScope(updated.concept.tenantId)).catch(() => {})
       }
       if (updated.guestEmail) {
         void sendEmail(
           updated.guestEmail,
           `${formatBrandName(updated.concept.name)}: confirmed for ${when} PKT`,
           `<p>Hi ${updated.guestName}, you're all set — table for ${updated.partySize} at <strong>${formatBrandName(updated.concept.name)}</strong> on <strong>${when} PKT</strong>. See you soon.</p>`,
+          'reservation.confirmed',
+          customerScope(updated.concept.tenantId),
         ).catch(() => {})
       }
 

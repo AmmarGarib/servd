@@ -8,6 +8,9 @@ import { audit } from '../../lib/audit.js'
 import { closedAcrossYearEnd, DEFAULT_FISCAL_YEAR_END_MONTH } from '../accounting/fiscalYear.js'
 import { ensureFifoReady, readFifoCutoverAt } from '../../lib/stockLedger.js'
 import { assertInt4Fits } from '../../lib/money.js'
+import { invalidateTestTenants } from '../../lib/testCompany.js'
+import { setFiscalReportingRequired } from '../connectors/routes.js'
+import { fiscalReportingRequired } from '../../connectors/config.js'
 
 function slugify(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
@@ -35,6 +38,8 @@ type MergeTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
 /**
  * A merge the books cannot absorb is refused (read-only; run before the FIFO
  * cut-over and again inside the merge transaction):
+ *   422 TEST_COMPANY_MERGE           one company is a test company and the other is
+ *                                    not (test data never lands in real books)
  *   422 MERGE_HAS_INTERCOMPANY       either company has inter-company activity (H30):
  *                                    a Due-from / Due-to account with entries, a
  *                                    transfer, or a shared-fleet rate
@@ -57,6 +62,18 @@ type MergeTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
  */
 async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: string): Promise<void> {
   const pair = [src, dst]
+  // Test company (lib/testCompany.ts): test data must never land in real
+  // books, and a real company's books never become a test company's.
+  const flags = await db.tenant.findMany({ where: { id: { in: pair } }, select: { id: true, isTest: true } })
+  const testOf = (id: string) => flags.find((t) => t.id === id)?.isTest === true
+  if (testOf(src) !== testOf(dst)) {
+    throw new AppError(
+      'TEST_COMPANY_MERGE',
+      'One of these is a test company and the other is not. A test company\'s data must never land in a real company\'s books (or the reverse) — they cannot be combined.',
+      422,
+      { sourceIsTest: testOf(src), targetIsTest: testOf(dst) },
+    )
+  }
   const [icAccounts, transfers, fleetRates] = await Promise.all([
     db.account.count({
       where: {
@@ -560,13 +577,22 @@ export async function tenantRoutes(fastify: FastifyInstance) {
   // in-house onboarding wizard for adding a new brand/JV). Switches the
   // user's active tenant to the newly created one so subsequent wizard
   // steps populate it.
+  //
+  // `isTest: true` makes a TEST company (owner, 2026-10-14; lib/testCompany.ts)
+  // — the CEO (role admin) only, else 403 TEST_COMPANY_CEO_ONLY. Its fiscal
+  // reporting is switched off at once (audited, reason "Test company").
   fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = z.object({
       name:        z.string().min(1).max(200),
       industry:    z.string().max(40).nullable().optional(),
       countryCode: z.string().length(2).default('PK'),
       timezone:    z.string().max(64).default('Asia/Karachi'),
+      isTest:      z.boolean().optional(),
     }).parse(req.body)
+    if (body.isTest === true && req.staffUser!.role !== 'admin') {
+      throw new AppError('TEST_COMPANY_CEO_ONLY', 'Only the CEO can make a test company.', 403)
+    }
+    const isTest = body.isTest === true
 
     const slug = await uniqueSlug(body.name, 'tenant')
 
@@ -578,6 +604,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
           countryCode: body.countryCode,
           currency:    body.countryCode === 'PK' ? 'PKR' : 'USD',
           timezone:    body.timezone,
+          isTest,
         },
       })
       await tx.tenantMember.create({
@@ -587,6 +614,17 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       await tx.user.update({ where: { id: req.staffUser!.id }, data: { tenantId: t.id } })
       return t
     })
+    if (isTest) {
+      invalidateTestTenants()
+      await audit({
+        category: 'identity', action: 'tenant.test_mode', entity: 'Tenant', entityId: tenant.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: tenant.id,
+        before: null, after: { isTest: true }, metadata: { reason: 'Created as a test company' },
+      })
+      // A test company never files with FBR/SRB — same storage, lock and
+      // audit as PUT /connectors/fiscal/reporting-required.
+      await setFiscalReportingRequired(tenant.id, false, { userId: req.staffUser!.id, userEmail: req.staffUser!.email, reason: 'Test company' })
+    }
     return reply.status(201).send(tenant)
   })
 
@@ -889,6 +927,45 @@ export async function tenantRoutes(fastify: FastifyInstance) {
   // No password / no signup; this only mutates safe profile fields. The
   // onboarding wizard hits this on every "Continue". Only a company the
   // operator belongs to — a foreign id 404s rather than confirming it exists.
+  // ── Test mode on / off (owner, 2026-10-14; lib/testCompany.ts) — the CEO
+  // only, a reason, audited `tenant.test_mode`. ON switches fiscal reporting
+  // off; OFF makes it required again (audited), so the company files from its
+  // next sale. Membership-checked like PATCH /:id (foreign id → 404).
+  fastify.patch<{ Params: { id: string } }>('/:id/test-mode', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({
+      isTest: z.boolean(),
+      reason: z.string().trim().min(10).max(500),
+    }).parse(req.body)
+    if (!req.staffUser!.memberTenantIds.includes(req.params.id)) throw new NotFoundError('Tenant', req.params.id)
+    const existing = await prisma.tenant.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true, isTest: true },
+    })
+    if (!existing) throw new NotFoundError('Tenant', req.params.id)
+    const updated = existing.isTest === body.isTest
+      ? await prisma.tenant.findUniqueOrThrow({ where: { id: existing.id } })
+      : await prisma.tenant.update({ where: { id: existing.id }, data: { isTest: body.isTest } })
+    invalidateTestTenants()
+    if (existing.isTest !== body.isTest) {
+      await audit({
+        category: 'identity', action: 'tenant.test_mode', entity: 'Tenant', entityId: existing.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: existing.id,
+        before: { isTest: existing.isTest }, after: { isTest: body.isTest }, metadata: { reason: body.reason },
+      })
+    }
+    // The fiscal switch follows the flag. Re-asserted when the flag did not
+    // change too, if the two disagree (never a no-op audit row).
+    const wantRequired = !body.isTest
+    if (existing.isTest !== body.isTest || (await fiscalReportingRequired(existing.id)) !== wantRequired) {
+      const fiscal = await setFiscalReportingRequired(existing.id, wantRequired, {
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email,
+        reason: body.isTest ? `Test company: ${body.reason}` : `Test mode off: ${body.reason}`,
+      })
+      return { ...updated, fiscalReportingRequired: fiscal.fiscalReportingRequired, heldCount: fiscal.heldCount, heldNote: fiscal.heldNote }
+    }
+    return { ...updated, fiscalReportingRequired: wantRequired }
+  })
+
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
     const body = z.object({
       name:        z.string().min(1).max(200).optional(),

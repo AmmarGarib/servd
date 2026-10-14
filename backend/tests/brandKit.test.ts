@@ -13,7 +13,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
 import bcrypt from 'bcryptjs'
 
-const { serviceClient: prisma } = await import('../src/lib/prisma.js')
+const { serviceClient: prisma, prisma: routePrisma } = await import('../src/lib/prisma.js')
 const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
 const { siteLayoutRoutes } = await import('../src/modules/siteLayouts/routes.js')
@@ -459,6 +459,114 @@ describe('Library font family', () => {
     })
     const { kits } = (await call('GET', '/kits/live')).json()
     expect(kits[b].fonts).toEqual([expect.objectContaining({ id: `library:${f}`, family: 'Bkt Old' })])
+  })
+})
+
+describe('round-2 review fixes', () => {
+  it('rv-1: an upload CLEANS a given font family (commas, brackets) instead of refusing it', async () => {
+    const keys = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_URL'] as const
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+    Object.assign(process.env, { R2_ACCOUNT_ID: 'bkt-test', R2_ACCESS_KEY_ID: 'bkt', R2_SECRET_ACCESS_KEY: 'bkt', R2_PUBLIC_URL: 'https://cdn.example.com' })
+    try {
+      const cases: Array<[string, string, string]> = [
+        ['Inter-VariableFont_opsz,wght.ttf', 'Inter VariableFont opsz,wght', 'Inter VariableFont opsz wght'],
+        ['Roboto-Italic[wdth,wght].ttf', 'Roboto Italic[wdth,wght]', 'Roboto Italic wdth wght'],
+        ['Gotham Book (1).otf', 'Gotham Book (1)', 'Gotham Book 1'],
+      ]
+      for (const [filename, family, cleaned] of cases) {
+        const q = new URLSearchParams({ filename, contentType: filename.endsWith('.otf') ? 'font/otf' : 'font/ttf', kind: 'font', fontFamily: family })
+        const r = await app.inject({ method: 'GET', url: `/api/v1/media/upload-url?${q}`, headers: auth(marketer) })
+        expect(r.statusCode, filename).toBe(200)
+        const asset = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: r.json().assetId } })
+        expect(asset.fontFamily).toBe(cleaned)
+        expect(asset.tenantId).toBe(tenantA)
+      }
+      // Nothing usable left: falls back to the name / file name.
+      const q = new URLSearchParams({ filename: 'Bkt-Fallback.woff2', contentType: 'font/woff2', kind: 'font', fontFamily: '"();' })
+      const r = await app.inject({ method: 'GET', url: `/api/v1/media/upload-url?${q}`, headers: auth(marketer) })
+      expect(r.statusCode).toBe(200)
+      expect((await prisma.mediaAsset.findUniqueOrThrow({ where: { id: r.json().assetId } })).fontFamily).toBe('Bkt-Fallback')
+    } finally {
+      for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k] }
+    }
+  })
+
+  it('rv-2: a page using an older library font gets its face under the CLEANED family', async () => {
+    const f = await font(tenantA, 'BktPageFont')
+    await prisma.mediaAsset.update({ where: { id: f }, data: { fontFamily: 'Bkt Gotham (1)' } })
+    const b = await brand('brand-pagefont', tenantA)
+    await prisma.siteLayout.create({
+      data: { slug: `brand:${b}`, kind: 'page', tenantId: tenantA, liveVersion: 1,
+        blocks: [{ id: 'x1', type: 'text', text: 'hi', fontFamily: 'Bkt Gotham (1)' }], settings: {} },
+    })
+    const pub = (await call('GET', `/${enc(`brand:${b}`)}`)).json()
+    expect(pub.fonts).toEqual([{ family: 'Bkt Gotham 1', url: expect.stringContaining('.woff2') }])
+  })
+
+  it('rv-5: discarding a never-published row is conditional — a row that went live answers 409 and is kept', async () => {
+    const b = await brand('brand-discard', tenantA, { primaryColor: '#777777' })
+    expect((await saveKit(marketer, b, { v: 1, roles: { ordering: '#888888' } })).statusCode).toBe(200)
+    // Plain discard of a never-published draft still deletes the row.
+    expect((await call('DELETE', `/${enc(kitSlug(b))}/draft`, auth(marketer))).statusCode).toBe(204)
+    expect(await prisma.siteLayout.findUnique({ where: { slug: kitSlug(b) } })).toBeNull()
+
+    // A first publish landing between the discard's read (liveVersion 0) and
+    // its delete: the route's loadRow read is intercepted and the CEO approves
+    // right after it, before the delete runs.
+    expect((await saveKit(marketer, b, { v: 1, roles: { ordering: '#999999' } })).statusCode).toBe(200)
+    const id = (await prisma.siteLayout.findUniqueOrThrow({ where: { slug: kitSlug(b) } })).id
+    const delegate = routePrisma.siteLayout as unknown as { findUnique: (a: unknown) => Promise<unknown> }
+    const original = delegate.findUnique
+    let raced = false
+    let approved = 0
+    delegate.findUnique = async (args: unknown) => {
+      const r = await original(args) as { id: string; liveVersion: number } | null
+      if (!raced && r?.id === id && r.liveVersion === 0) {
+        raced = true
+        delegate.findUnique = original
+        approved = (await call('POST', `/${enc(kitSlug(b))}/approve`, auth(ceo), {})).statusCode
+      }
+      return r
+    }
+    try {
+      const r = await call('DELETE', `/${enc(kitSlug(b))}/draft`, auth(marketer))
+      expect(raced).toBe(true)
+      expect(approved).toBe(200)
+      expect(r.statusCode).toBe(409)
+      const kept = await prisma.siteLayout.findUniqueOrThrow({ where: { slug: kitSlug(b) } })
+      expect(kept.liveVersion).toBe(1)
+      expect((await concept(b)).primaryColor).toBe('#999999')
+    } finally {
+      delegate.findUnique = original
+    }
+  })
+
+  it('rv-7: a CEO PATCH of a kit-owned field while a kit is live refreshes the snapshot, so a later kit keeps the CEO edit', async () => {
+    const b = await brand('brand-ceoedit', tenantA, { primaryColor: '#101010', logoUrl: 'https://cdn.example.com/l0.png' })
+    const id = (await prisma.concept.findUniqueOrThrow({ where: { slug: b } })).id
+    await saveKit(marketer, b, { v: 1, images: { logo: 'https://cdn.example.com/l1.png' } })
+    expect((await call('POST', `/${enc(kitSlug(b))}/approve`, auth(ceo), {})).statusCode).toBe(200)
+    expect((await concept(b)).logoUrl).toBe('https://cdn.example.com/l1.png')
+
+    const r = await app.inject({ method: 'PATCH', url: `/api/v1/concepts/${id}`, headers: auth(ceo), payload: { logoUrl: 'https://cdn.example.com/x.png' } })
+    expect(r.statusCode).toBe(200)
+    const stored = await prisma.siteLayout.findUniqueOrThrow({ where: { slug: kitSlug(b) } })
+    expect((stored.settings as Record<string, Record<string, unknown>>)['conceptBefore']).toMatchObject({
+      logoUrl: 'https://cdn.example.com/x.png', primaryColor: '#101010',
+    })
+    // The public read never shows the snapshot.
+    expect(Object.keys((await call('GET', `/${enc(kitSlug(b))}`)).json().settings)).toEqual(['kit'])
+
+    // Kit v2 stops setting the logo: the brand keeps the CEO's value, not l0.
+    await saveKit(marketer, b, { v: 1, roles: { accent: '#E94E1B' } })
+    expect((await call('POST', `/${enc(kitSlug(b))}/approve`, auth(ceo), {})).statusCode).toBe(200)
+    expect((await concept(b)).logoUrl).toBe('https://cdn.example.com/x.png')
+
+    // A brand with no live kit: the PATCH changes only the Concept.
+    const plain = await brand('brand-ceoedit-nokit', tenantA)
+    const pid = (await prisma.concept.findUniqueOrThrow({ where: { slug: plain } })).id
+    expect((await app.inject({ method: 'PATCH', url: `/api/v1/concepts/${pid}`, headers: auth(ceo), payload: { primaryColor: '#202020' } })).statusCode).toBe(200)
+    expect(await prisma.siteLayout.findUnique({ where: { slug: kitSlug(plain) } })).toBeNull()
   })
 })
 

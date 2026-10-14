@@ -11,12 +11,16 @@
 // company cannot be resolved (null) the event is dropped: fanning it out to
 // every company's endpoints is exactly the leak this guards against.
 //
+// Test company: a test company's events are never fanned out (owner,
+// 2026-10-14) — its subscriptions may point at real endpoints.
+//
 // Failure isolation: failures here NEVER block the underlying transaction —
 // they are wrapped in catches and log warnings only.
 
 import { serviceClient as prisma } from './prisma.js'
 import { getWebhookQueue } from './queue.js'
 import { sandboxBlocks } from './sandbox.js'
+import { testCompanyBlocks, externalScope } from './outboundScope.js'
 
 export type DomainEvent =
   | 'order.placed'
@@ -45,6 +49,8 @@ export async function emitDomainEvent(event: DomainEvent, payload: unknown, tena
       console.warn(`[webhook-events] ${event} dropped — no owning company resolved`)
       return
     }
+    // A test company never calls outside endpoints (lib/outboundScope.ts).
+    if (await testCompanyBlocks('webhook', externalScope(tenantId))) return
     const subs = await prisma.webhookSubscription.findMany({
       where: { tenantId, isActive: true, deletedAt: null, events: { has: event } },
       select: { id: true },

@@ -14,6 +14,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { AppError, NotFoundError } from './errors.js'
 import { requestedBrand, markBrandApplied } from './brandScope.js'
+import { testTenantIds } from './testCompany.js'
 
 export interface TenantScope {
   /** True when the operator has portfolio mode engaged. */
@@ -55,7 +56,11 @@ export async function resolveTenantScope(req: FastifyRequest): Promise<TenantSco
       where: { userId: req.staffUser.id },
       select: { tenantId: true },
     })
-    const ids = new Set<string>(memberships.map((m) => m.tenantId))
+    // Test companies (lib/testCompany.ts) are left out of "All companies"
+    // totals — except the active company, so switching INTO a test company
+    // still shows its own data. Never affects 'write' / 'create' modes.
+    const tests = await testTenantIds()
+    const ids = new Set<string>(memberships.map((m) => m.tenantId).filter((id) => !tests.has(id)))
     if (activeTenant) ids.add(activeTenant)
     scope = {
       portfolio: true,

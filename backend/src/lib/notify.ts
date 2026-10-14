@@ -2,6 +2,7 @@ import { AppError } from './errors.js'
 import { sendEmail as sendMail, emailConfigured } from './mailer.js'
 import { formatBrandName } from './brandName.js'
 import { orderRefOf } from './orderRef.js'
+import { testCompanyBlocks, type SendScope } from './outboundScope.js'
 
 const isProd = process.env['NODE_ENV'] === 'production'
 
@@ -54,7 +55,14 @@ export function maskEmailForLog(raw: string): string {
   return `${local.slice(0, 1) || '?'}***@${domain || '?'}`
 }
 
-export async function sendEmail(to: string, subject: string, html: string, purpose = 'message'): Promise<void> {
+/**
+ * `scope` names the company and audience. Every CUSTOMER-facing caller passes
+ * `customerScope(tenantId)` (lib/outboundScope.ts): a test company's message is
+ * then skipped. Staff mail (password reset, 2FA, alerts) passes none.
+ */
+export async function sendEmail(to: string, subject: string, html: string, purpose = 'message', scope?: SendScope | null): Promise<void> {
+  // Before the configuration check: a test company's customer mail is never an outage.
+  if (await testCompanyBlocks('email', scope)) return
   if (!(await emailConfigured())) {
     if (isProd) {
       // In production a missing transport is an outage, not a benign skip.
@@ -63,7 +71,7 @@ export async function sendEmail(to: string, subject: string, html: string, purpo
     console.log(`[notify] email not sent (no SMTP configured) — to ${maskEmailForLog(to)}, ${purpose}`)
     return
   }
-  await sendMail({ to, subject, html })
+  await sendMail({ to, subject, html, scope })
 }
 
 // ─── Phone (WhatsApp) ─────────────────────────────────────────────────────────
@@ -83,14 +91,16 @@ export function whatsappNumber(raw: string): string {
   return digits
 }
 
-export async function sendPhoneMessage(to: string, body: string, purpose = 'message'): Promise<void> {
+/** `scope`: as sendEmail — customer callers pass `customerScope(tenantId)`; staff codes pass none. */
+export async function sendPhoneMessage(to: string, body: string, purpose = 'message', scope?: SendScope | null): Promise<void> {
+  if (await testCompanyBlocks('whatsapp', scope)) return
   const { sendText, whatsappConfigured } = await import('./whatsapp.js')
   if (!(await whatsappConfigured())) {
     // Never the body: see "What a skipped send may log" above.
     console.log(`[notify] WhatsApp not sent (not configured) — to ${maskPhoneForLog(to)}, ${purpose}`)
     return
   }
-  await sendText(whatsappNumber(to), body)
+  await sendText(whatsappNumber(to), body, scope)
 }
 
 /**
@@ -163,10 +173,13 @@ export async function sendOrderStatusUpdate(opts: {
   orderId: string
   status: string
   customerName?: string | null
+  /** The order's company (concept.tenantId) — a test company's customer is never messaged. */
+  tenantId?: string | null
 }): Promise<void> {
   const copy = STATUS_COPY[opts.status]
   if (!copy) return
   opts = { ...opts, conceptName: formatBrandName(opts.conceptName) }
+  const scope: SendScope = { tenantId: opts.tenantId ?? null, audience: 'customer' }
 
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
   const trackUrl = `${baseUrl}/orders/${opts.orderId}`
@@ -188,7 +201,7 @@ export async function sendOrderStatusUpdate(opts: {
   if (opts.email) {
     const tpl = await renderTemplate({ event, channel: 'email', conceptId: opts.conceptId, vars })
     if (tpl) {
-      await sendEmail(opts.email, tpl.subject ?? `${copy.subject} — ${opts.conceptName}`, tpl.body)
+      await sendEmail(opts.email, tpl.subject ?? `${copy.subject} — ${opts.conceptName}`, tpl.body, 'message', scope)
     } else {
       const html = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb">
@@ -203,17 +216,17 @@ export async function sendOrderStatusUpdate(opts: {
             <p style="color:#9ca3af;font-size:12px;margin-top:24px">Ref: ${ref}</p>
           </div>
         </div>`
-      await sendEmail(opts.email, `${copy.subject} — ${opts.conceptName}`, html)
+      await sendEmail(opts.email, `${copy.subject} — ${opts.conceptName}`, html, 'message', scope)
     }
   } else if (opts.phone) {
     // The operator's WhatsApp template wins; an old 'sms' template is the fallback copy.
     const tpl = (await renderTemplate({ event, channel: 'whatsapp', conceptId: opts.conceptId, vars }))
       ?? (await renderTemplate({ event, channel: 'sms', conceptId: opts.conceptId, vars }))
     if (tpl) {
-      await sendPhoneMessage(opts.phone, tpl.body, event)
+      await sendPhoneMessage(opts.phone, tpl.body, event, scope)
     } else {
       const fmt = (s: string) => s.toLowerCase()
-      await sendPhoneMessage(opts.phone, `${opts.conceptName}: ${fmt(copy.headline)}. Track: ${trackUrl}`, event)
+      await sendPhoneMessage(opts.phone, `${opts.conceptName}: ${fmt(copy.headline)}. Track: ${trackUrl}`, event, scope)
     }
   }
 }
@@ -227,8 +240,11 @@ export async function sendOrderReceipt(opts: {
   conceptName: string
   totalCents: number
   items: Array<{ name: string; quantity: number; unitPriceCents: number }>
+  /** The order's company (concept.tenantId) — a test company's customer is never messaged. */
+  tenantId?: string | null
 }): Promise<void> {
   opts = { ...opts, conceptName: formatBrandName(opts.conceptName) }
+  const scope: SendScope = { tenantId: opts.tenantId ?? null, audience: 'customer' }
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
   const trackUrl = `${baseUrl}/orders/${opts.orderId}`
   const fmt = (cents: number) => `Rs. ${(cents / 100).toLocaleString()}`
@@ -248,8 +264,8 @@ export async function sendOrderReceipt(opts: {
     <p><a href="${trackUrl}">Track your order →</a></p>`
 
   if (opts.email) {
-    await sendEmail(opts.email, `Order confirmed — ${opts.conceptName}`, html)
+    await sendEmail(opts.email, `Order confirmed — ${opts.conceptName}`, html, 'order.receipt', scope)
   } else if (opts.phone) {
-    await sendPhoneMessage(opts.phone, `Order confirmed at ${opts.conceptName}. Total ${fmt(opts.totalCents)}. Track: ${trackUrl}`, 'order.receipt')
+    await sendPhoneMessage(opts.phone, `Order confirmed at ${opts.conceptName}. Total ${fmt(opts.totalCents)}. Track: ${trackUrl}`, 'order.receipt', scope)
   }
 }

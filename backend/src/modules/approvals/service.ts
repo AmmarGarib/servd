@@ -3,6 +3,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { APPROVAL_PROVIDERS } from './providers.js'
+import { testTenantIds } from '../../lib/testCompany.js'
 import { NO_DELEGATIONS, type ApprovalDelegations } from './delegations.js'
 import type { ApprovalInbox, ApprovalItem, ApprovalProvider, ApprovalType, ApprovalTypeSummary, ProviderContext } from './types.js'
 
@@ -29,6 +30,9 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
   const inView = new Set(ctx.tenantIds)
   const member = new Set(ctx.memberTenantIds)
   const eligible = providers.filter((p) => mayApprove(p, ctx.user.role, delegated))
+  // Test companies are left out of "All companies" (lib/testCompany.ts), so
+  // their queues never count as waiting "elsewhere" either.
+  const tests = await testTenantIds()
 
   const results = await Promise.all(eligible.map(async (p) => {
     try {
@@ -45,7 +49,7 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
       const items = rows.filter((i) => i.tenantId === null || keep(i.tenantId))
       // Other companies of the user's own: counted (never listed) so the page
       // can point at "All companies".
-      const elsewhere = rows.filter((i) => i.tenantId !== null && !keep(i.tenantId) && member.has(i.tenantId)).length
+      const elsewhere = rows.filter((i) => i.tenantId !== null && !keep(i.tenantId) && member.has(i.tenantId) && !tests.has(i.tenantId)).length
       return { p, items, elsewhere, error: false, refused: false }
     } catch {
       return { p, items: [] as ApprovalItem[], elsewhere: 0, error: true, refused: false }

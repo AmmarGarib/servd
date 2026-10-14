@@ -10,6 +10,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { formatBrandName } from '../../lib/brandName.js'
 import { flagException } from '../../lib/exceptions.js'
 import { sendText } from '../../lib/whatsapp.js'
+import { customerScope } from '../../lib/outboundScope.js'
 import { DELIVERY_OTP_MAX_ATTEMPTS, deliveryOtpMatches, generateDeliveryOtp } from '../../lib/deliveryOtp.js'
 import { fleetMayCarry } from '../../lib/fleet.js'
 import { normalisePhone } from '../auth/otp.js'
@@ -376,7 +377,7 @@ export async function sendHandoverCode(orderId: string): Promise<void> {
       select: {
         id: true, deliveryOtp: true,
         customer: { select: { phone: true } },
-        concept: { select: { name: true } },
+        concept: { select: { name: true, tenantId: true } },
       },
     })
     const phone = o?.customer?.phone ? normalisePhone(o.customer.phone) : ''
@@ -387,6 +388,7 @@ export async function sendHandoverCode(orderId: string): Promise<void> {
       phone,
       `Your ${brand} order ${ref} is on its way. When your rider arrives, give them this code: ${o.deliveryOtp}. `
       + 'Only share it once you have your order in hand.',
+      customerScope(o.concept.tenantId), // a test company never messages its customer
     )
   } catch (err) {
     console.warn(`[rider] hand-over code WhatsApp failed for order ${orderRefOf(orderId)}: ${(err as Error).message}`)

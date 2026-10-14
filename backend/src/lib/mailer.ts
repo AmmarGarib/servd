@@ -32,6 +32,7 @@
 import { serviceClient as prisma } from './prisma.js'
 import { decryptSecret, encryptSecret, isEncrypted, secretKeyConfigured } from './secretBox.js'
 import { isSandbox, sandboxBlocks } from './sandbox.js'
+import { testCompanyBlocks, type SendScope } from './outboundScope.js'
 
 export const SMTP_HOST_KEY = 'integrations.smtp.host'
 export const SMTP_PORT_KEY = 'integrations.smtp.port'
@@ -190,9 +191,13 @@ export async function sendEmail(opts: {
   subject: string
   html: string
   replyTo?: string | null
+  /** Company + audience. A customer / outside-party email of a test company is skipped (lib/whatsapp.ts testCompanyBlocks). */
+  scope?: SendScope | null
 }): Promise<void> {
   // Practice copy: never the SMTP server (the copied settings may hold working credentials).
   if (sandboxBlocks('email', { to: opts.to, summary: `${opts.html.length} chars` })) return
+  // A test company never emails a customer or an outside party (staff mail passes no scope).
+  if (await testCompanyBlocks('email', opts.scope)) return
   const cfg = await mailConfig()
   if (!cfg.user || !cfg.pass) {
     throw new Error('Email is not configured (set it in admin → Configuration → Email)')

@@ -1716,7 +1716,7 @@ async function notifyNewOrder(orderId: string): Promise<void> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { name: true } },
+      concept: { select: { name: true, tenantId: true } },
       customer: { select: { email: true, phone: true, name: true } },
       items: { select: { name: true, quantity: true, unitPriceCents: true } },
     },
@@ -1730,6 +1730,7 @@ async function notifyNewOrder(orderId: string): Promise<void> {
     conceptName: order.concept.name,
     totalCents: order.totalCents,
     items: order.items,
+    tenantId: order.concept.tenantId, // a test company never messages its customer
   })
 }
 
@@ -1737,7 +1738,7 @@ async function notifyStatusChange(orderId: string, status: string): Promise<void
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { name: true } },
+      concept: { select: { name: true, tenantId: true } },
       customer: { select: { email: true, phone: true, name: true } },
     },
   })
@@ -1751,6 +1752,7 @@ async function notifyStatusChange(orderId: string, status: string): Promise<void
     orderId: order.id,
     status,
     customerName: order.customer?.name ?? order.customerName,
+    tenantId: order.concept.tenantId, // a test company never messages its customer
   })
 }
 

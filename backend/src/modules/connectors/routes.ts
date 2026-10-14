@@ -18,7 +18,8 @@ import { randomBytes } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { Prisma, PosConnector } from '@prisma/client'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
+import { isTestTenant } from '../../lib/testCompany.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { encryptSecret, secretHint } from '../../lib/secretBox.js'
@@ -173,6 +174,38 @@ const docsQuery = z.object({
 export function heldNoteOf(reportingRequired: boolean, held: number): string | null {
   if (reportingRequired || held <= 0) return null
   return `${held} sale${held === 1 ? ' was' : 's were'} held before "Fiscal reporting required" was switched off. They are kept as they are — no sale is ever skipped — and are not counted as a backlog while reporting is off. If reporting is switched back on, they release with the fiscal POS as usual (or record a manual filing for each).`
+}
+
+/**
+ * THE writer of a company's "Fiscal reporting required" switch (§17.7): the
+ * PUT route below and the test-company create / toggle (tenants/routes.ts)
+ * all go through it. Same row lock as PUT /connectors/fiscal (W1-R10),
+ * audited `fiscal.reporting_required`. Callers decide who may flip it.
+ */
+export async function setFiscalReportingRequired(
+  tenantId: string,
+  required: boolean,
+  by: { userId: string; userEmail?: string | null; reason: string },
+): Promise<{ fiscalReportingRequired: boolean; heldCount: number; heldNote: string | null }> {
+  const seeded = await ensureConnectorRow(tenantId, 'fiscal')
+  const { row, before } = await prisma.$transaction(async (tx) => {
+    const row = await lockConnectorTx(tx, seeded.id)
+    const before = reportingRequiredOf(row.settings)
+    const settings = { ...asObject(row.settings), fiscalReportingRequired: required }
+    await tx.posConnector.update({ where: { id: row.id }, data: { settings: JSON.parse(JSON.stringify(settings)) as Prisma.InputJsonValue, updatedById: by.userId } })
+    return { row, before }
+  }, { maxWait: 10_000, timeout: 15_000 })
+  invalidateConnector(tenantId, 'fiscal')
+  // The held backlog is left exactly as it is (no skip, §17.0); the answer
+  // says how many there are so the CEO's confirmation can state it.
+  const heldCount = await prisma.fiscalDocument.count({ where: { tenantId, status: 'held' } })
+  await audit({
+    category: 'identity', action: 'fiscal.reporting_required', entity: 'PosConnector', entityId: row.id,
+    userId: by.userId, userEmail: by.userEmail ?? undefined, tenantId,
+    before: { fiscalReportingRequired: before }, after: { fiscalReportingRequired: required },
+    metadata: { reason: by.reason, heldCount },
+  })
+  return { fiscalReportingRequired: required, heldCount, heldNote: heldNoteOf(required, heldCount) }
 }
 
 export async function connectorRoutes(fastify: FastifyInstance) {
@@ -422,26 +455,12 @@ export async function connectorRoutes(fastify: FastifyInstance) {
   fastify.put('/fiscal/reporting-required', { preHandler: requireAuth(...CEO) }, async (req) => {
     const body = z.object({ required: z.boolean(), reason: z.string().trim().min(3).max(300) }).parse(req.body)
     const tenantId = activeTenantId(req)
-    const seeded = await ensureConnectorRow(tenantId, 'fiscal')
-    // Under the same row lock as PUT /connectors/fiscal (W1-R10).
-    const { row, before } = await prisma.$transaction(async (tx) => {
-      const row = await lockConnectorTx(tx, seeded.id)
-      const before = reportingRequiredOf(row.settings)
-      const settings = { ...asObject(row.settings), fiscalReportingRequired: body.required }
-      await tx.posConnector.update({ where: { id: row.id }, data: { settings: JSON.parse(JSON.stringify(settings)) as Prisma.InputJsonValue, updatedById: req.staffUser!.id } })
-      return { row, before }
-    }, { maxWait: 10_000, timeout: 15_000 })
-    invalidateConnector(tenantId, 'fiscal')
-    // The held backlog is left exactly as it is (no skip, §17.0); the answer
-    // says how many there are so the CEO's confirmation can state it.
-    const heldCount = await prisma.fiscalDocument.count({ where: { tenantId, status: 'held' } })
-    await audit({
-      category: 'identity', action: 'fiscal.reporting_required', entity: 'PosConnector', entityId: row.id,
-      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
-      before: { fiscalReportingRequired: before }, after: { fiscalReportingRequired: body.required },
-      metadata: { reason: body.reason, heldCount },
-    })
-    return { fiscalReportingRequired: body.required, heldCount, heldNote: heldNoteOf(body.required, heldCount) }
+    // A test company never files (lib/testCompany.ts): switching reporting
+    // back ON is refused — turn test mode off on the company first.
+    if (body.required && await isTestTenant(tenantId, serviceClient)) {
+      throw new AppError('TEST_COMPANY_NO_FISCAL', 'This is a test company — its sales are never sent to FBR/SRB. Turn test mode off for the company first (Companies → edit) to make fiscal reporting required.', 409)
+    }
+    return setFiscalReportingRequired(tenantId, body.required, { userId: req.staffUser!.id, userEmail: req.staffUser!.email, reason: body.reason })
   })
 
   // PUT /connectors/fiscal/brand-pos-ids — writes the existing Concept columns.

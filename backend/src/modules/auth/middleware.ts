@@ -12,6 +12,7 @@ import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
 import { enforceModuleAccess } from '../../lib/moduleAccess.js'
 import { isAccountActive } from './accountStatus.js'
 import { ALL_ROLES } from '../../lib/roles.js'
+import { testTenantIds } from '../../lib/testCompany.js'
 
 // Staff access token comes from EITHER a Bearer header (tablet / mobile) OR the
 // httpOnly session cookie (manager web). The web app no longer holds the token
@@ -123,6 +124,18 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   let effectiveTenantId = u?.tenantId ?? null
   if (typeof headerActive === 'string' && headerActive && memberTenantIds.has(headerActive)) {
     effectiveTenantId = headerActive
+  }
+
+  // Test companies (lib/testCompany.ts) are left out of a portfolio READ
+  // ("All companies" totals) — except the active company. Writes (non-GET)
+  // keep every member company, exactly as before.
+  if (portfolio && typeof tenantFilter === 'object' && tenantFilter !== null) {
+    const tests = await testTenantIds()
+    if (tests.size > 0) {
+      const kept = tenantFilter.in.filter((id) => !tests.has(id) || id === effectiveTenantId)
+      if (effectiveTenantId && !kept.includes(effectiveTenantId)) kept.push(effectiveTenantId)
+      tenantFilter = { in: kept }
+    }
   }
 
   req.staffUser = {
