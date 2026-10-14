@@ -72,7 +72,12 @@ export async function findPaymentReferenceUses(
     const [cards, wallet, receipts, deposits, transfers, drops, disposals] = await Promise.all([
       db.giftCard.findMany({ where: { tenantId, paymentRef: eq }, select: { id: true, code: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: limit }),
       db.walletTransaction.findMany({ where: { tenantId, paymentRef: eq }, select: { id: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: limit }),
-      db.receivablePayment.findMany({ where: { tenantId, reference: eq }, select: { id: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: limit }),
+      // Money received only: not withholding certificates ('wht' / 'st_withheld')
+      // and not refunds (negative amounts) — those carry their own numbers.
+      db.receivablePayment.findMany({
+        where: { tenantId, reference: eq, method: { notIn: ['wht', 'st_withheld'] }, amountCents: { gt: 0 } },
+        select: { id: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: limit,
+      }),
       db.capexPayment.findMany({ where: { line: { project: { tenantId } }, depositReturnRef: eq }, select: { id: true, depositReturnedAt: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: limit }),
       db.intercompanyTransfer.findMany({
         where: { bankReference: eq, OR: [{ tenantId }, { counterpartyTenantId: tenantId }] },
@@ -80,7 +85,7 @@ export async function findPaymentReferenceUses(
       }),
       db.depositDrop.findMany({ where: { tenantId, slipNumber: eq }, select: { id: true, droppedAt: true }, orderBy: { droppedAt: 'desc' }, take: limit }),
       db.fixedAssetEvent.findMany({
-        where: { tenantId, kind: 'disposal', payload: { path: ['reference'], equals: ref } },
+        where: { tenantId, kind: 'disposal', status: { in: ['pending', 'posted'] }, payload: { path: ['reference'], equals: ref } },
         select: { id: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: limit,
       }),
     ])

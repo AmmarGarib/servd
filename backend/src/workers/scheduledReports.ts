@@ -17,12 +17,14 @@ import { agingReport } from '../modules/procurement/service.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../modules/accounting/dates.js'
 import { buildFoodCostEmail } from '../modules/reports/foodCost.js'
 import { getMenuEngineering } from '../modules/reports/menu-engineering.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
 
 const RUNNING = new Set<string>()  // dedupe concurrent ticks for the same row
 
 export function startScheduledReportsWorker(): void {
+  if (sandboxBlocks('worker', { summary: 'scheduledReports' })) return // practice copy: emails real recipients
   // Tick at the top of every minute. node-cron handles scheduling at the tick
   // level; per-report cron matching uses a tiny matcher below.
   cron.schedule('* * * * *', () => { void tick() })

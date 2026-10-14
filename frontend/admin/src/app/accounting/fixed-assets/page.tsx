@@ -288,7 +288,9 @@ export default function FixedAssetsPage() {
                   <div><p className="text-white/40">Book value</p><p className="font-mono font-bold text-white/90">{money(a.nbvCents)}</p></div>
                 </div>
                 <p className="text-[11px] text-white/45 mt-2">
-                  {[a.conceptName ?? 'Shared', a.locationName].filter(Boolean).join(' · ')}
+                  {a.conceptName ?? 'Shared'} · {a.locationName
+                    ? <>at {a.locationName}</>
+                    : <span style={{ color: a.conceptId ? undefined : 'var(--erp-warning)' }}>{a.conceptId ? 'no outlet' : 'location not set'}</span>}
                   {a.unchargedMonths > 0 && <span className="text-s-amber"> · {a.unchargedMonths} month{a.unchargedMonths === 1 ? '' : 's'} to charge</span>}
                   {a.pendingRequestCount > 0 && <span className="text-s-amber"> · request waiting</span>}
                 </p>
@@ -302,7 +304,7 @@ export default function FixedAssetsPage() {
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
                   {[
-                    { h: 'Asset' }, ...(multi ? [{ h: 'Company' }] : []), { h: 'Class' }, { h: 'Brand / outlet' }, { h: 'In service' },
+                    { h: 'Asset' }, ...(multi ? [{ h: 'Company' }] : []), { h: 'Class' }, { h: 'Brand' }, { h: 'Location' }, { h: 'In service' },
                     { h: 'Cost', r: true }, { h: 'Depreciated', r: true }, { h: 'Book value', r: true }, { h: 'Per month', r: true },
                     { h: 'Charged to' }, { h: 'Status' },
                   ].map((c) => (
@@ -319,7 +321,10 @@ export default function FixedAssetsPage() {
                     </td>
                     {multi && <td className="px-4 py-3 text-white/60">{a.companyName}</td>}
                     <td className="px-4 py-3 text-white/60">{a.classLabel}</td>
-                    <td className="px-4 py-3 text-white/60">{a.conceptName ?? 'Shared'}{a.locationName ? <span className="text-white/40"> · {a.locationName}</span> : null}</td>
+                    <td className="px-4 py-3 text-white/60">{a.conceptName ?? 'Shared'}</td>
+                    <td className="px-4 py-3 text-white/60">
+                      {a.locationName ?? (a.conceptId ? '—' : <span style={{ color: 'var(--erp-warning)' }} title="Shared equipment needs its location: move it to its outlet">Not set</span>)}
+                    </td>
                     <td className="px-4 py-3 text-white/60 whitespace-nowrap">{fmtDay(a.inServiceAt)}</td>
                     <td className="px-4 py-3 text-right text-white/80 whitespace-nowrap">{money(a.costCents)}</td>
                     <td className="px-4 py-3 text-right text-white/60 whitespace-nowrap">{money(a.accumulatedCents)}</td>

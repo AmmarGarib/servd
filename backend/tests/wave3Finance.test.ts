@@ -97,7 +97,7 @@ beforeAll(async () => {
   await prisma.giftCardRedemption.create({ data: { giftCardId: ids.gA, amountCents: 20_000, balanceAfter: 30_000 } })
 
   // Capital + OpEx.
-  ids.pA = (await prisma.capexProject.create({ data: { tenantId: tenantA, name: 'Clifton fit-out' } })).id
+  ids.pA = (await prisma.capexProject.create({ data: { tenantId: tenantA, name: 'Clifton fit-out', conceptId: cA } })).id
   ids.pB = (await prisma.capexProject.create({ data: { tenantId: tenantB, name: 'Saddar fit-out' } })).id
   ids.ocA = (await prisma.opexCategory.create({ data: { tenantId: tenantA, name: 'Utilities' } })).id
   ids.ocB = (await prisma.opexCategory.create({ data: { tenantId: tenantB, name: 'Utilities' } })).id

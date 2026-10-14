@@ -22,7 +22,8 @@ import { EXPENSE_PAYOUT_CATEGORIES } from '../accounting/expenseCategories.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { decodeEvidenceFile, sendEvidence } from '../../lib/evidenceFile.js'
 import { zInt4Cents } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, zPaymentRef } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { cashVoucherRoutes } from './cashVouchers.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { audit } from '../../lib/audit.js'
@@ -1046,6 +1047,13 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // but a posting the ledger refused (a closed period, a missing account)
   // raises a posting_failed flag in the drop's company for the re-poster —
   // it used to be fire-and-forget with only a log line.
+  //
+  // The bank's deposit slip # (`slipNumber`, owner 2026-10-14) is stored, put
+  // in the posting's description and memos, and checked against the
+  // company's other payment references: a slip # used before answers
+  // `referenceUsedBefore` — a warning, never a refusal (lib/paymentRefs.ts).
+  // A drop has no separate "banked" step, so the slip # is optional here; the
+  // list shows it next to the bag serial and flags a drop without one.
   fastify.post('/deposit-drops', { preHandler: CASH_GUARD }, async (req, reply) => {
     const body = z.object({
       shiftId:       z.string().uuid().nullable().optional(),
@@ -1053,6 +1061,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       bankAccountId: z.string().min(1).nullable().optional(),
       amountCents:   zInt4Cents('The deposit'),
       bagSerial:     z.string().max(80).nullable().optional(),
+      slipNumber:    zPaymentRef.nullable().optional(),
       receiptUrl:    z.string().url().nullable().optional(),
       witnessedById: z.string().uuid().nullable().optional(),
       notes:         z.string().max(500).nullable().optional(),
@@ -1079,6 +1088,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         conceptId: body.conceptId ?? null,
         bankAccountId: bank.bankAccountId,
         bagSerial: body.bagSerial ?? null,
+        slipNumber: body.slipNumber || null,
         receiptUrl: body.receiptUrl ?? null,
         witnessedById: body.witnessedById ?? null,
         notes: body.notes ?? null,
@@ -1150,7 +1160,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       })
     }
 
-    return reply.status(201).send({ ...drop, posted, postingError })
+    const referenceUsedBefore = await findPaymentReferenceUses(prisma, tenantId, drop.slipNumber, { exclude: { kind: 'deposit_drop', id: drop.id } })
+    return reply.status(201).send({ ...drop, posted, postingError, referenceUsedBefore })
   })
 
   // ════════════════════════════════════════════════════════════════════════

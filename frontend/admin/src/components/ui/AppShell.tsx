@@ -17,6 +17,7 @@ import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatal
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
 import { useApprovalCounts } from '../../app/ceo/approvalsData'
+import { SandboxBanner } from '../SandboxBanner'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -541,7 +542,13 @@ function NavLinkRow({
 
 // ─── AppShell ────────────────────────────────────────────────────────────────
 
+// The practice copy's stripe sits above every page, full-screen ones (login,
+// KDS, till) included; on the live ERP it renders nothing.
 export function AppShell({ children }: { children: React.ReactNode }) {
+  return <><SandboxBanner /><Shell>{children}</Shell></>
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)

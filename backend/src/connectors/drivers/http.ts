@@ -26,6 +26,7 @@ import type {
 } from '../types.js'
 import { isForbiddenLiteralHost, isPrivateAddress } from '../config.js'
 import { scrubMessage, signBody } from '../util.js'
+import { isSandbox } from '../../lib/sandbox.js'
 
 const MAX_BODY = 256 * 1024
 const AUTHORITIES: ReadonlySet<string> = new Set(['fbr', 'srb', 'pra', 'kpra', 'bra'])
@@ -71,6 +72,8 @@ function parseRetryAfter(v: string | string[] | undefined): number | undefined {
  */
 export function httpCall(ctx: ConnectorCtx, method: 'GET' | 'POST', path: string, body: unknown, idempotencyKey: string): Promise<HttpCallResult> {
   return new Promise((resolve) => {
+    // Practice copy backstop (the registry already swaps in the test driver): never a vendor call.
+    if (isSandbox()) return resolve({ kind: 'transient', code: 'SANDBOX_BLOCKED', message: 'Practice copy: the POS connector never calls a vendor' })
     if (!ctx.baseUrl) return resolve({ kind: 'transient', code: 'NOT_CONFIGURED', message: 'No base URL is set for this connector' })
     let url: URL
     try { url = new URL(`${ctx.baseUrl.replace(/\/+$/, '')}${path}`) } catch {

@@ -3,6 +3,8 @@
 // Tokens stored in Settings table: fb_page_token, fb_page_id, ig_user_id
 
 import { prisma } from './prisma.js'
+import { AppError } from './errors.js'
+import { practiceId, sandboxBlocks } from './sandbox.js'
 
 const GRAPH = 'https://graph.facebook.com/v19.0'
 
@@ -17,6 +19,7 @@ async function getSetting(key: string): Promise<string | null> {
 // Instagram page for the attacker's — every scheduled post would then publish
 // to their page.
 export async function getOAuthUrl(redirectUri: string, state: string): Promise<string> {
+  if (sandboxBlocks('social', { summary: 'connect' })) throw new AppError('SANDBOX', 'Practice copy: social pages cannot be connected here', 403)
   const appId = process.env['FACEBOOK_APP_ID']
   if (!appId) throw new Error('FACEBOOK_APP_ID not configured')
   const scope = [
@@ -30,6 +33,7 @@ export async function getOAuthUrl(redirectUri: string, state: string): Promise<s
 }
 
 export async function exchangeCodeForTokens(code: string, redirectUri: string) {
+  if (sandboxBlocks('social', { summary: 'oauth callback' })) throw new AppError('SANDBOX', 'Practice copy: social pages cannot be connected here', 403)
   const appId     = process.env['FACEBOOK_APP_ID']
   const appSecret = process.env['FACEBOOK_APP_SECRET']
   if (!appId || !appSecret) throw new Error('Facebook app credentials not configured')
@@ -82,6 +86,7 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string) {
 }
 
 export async function publishInstagramPost(caption: string, mediaUrls: string[]): Promise<string> {
+  if (sandboxBlocks('social', { summary: 'instagram post' })) return practiceId() // practice copy: the copied page token is live
   const igUserId = await getSetting('ig_user_id')
   const pageToken = await getSetting('fb_page_token')
   if (!igUserId || !pageToken) throw new Error('Instagram not connected — visit Settings > Integrations')
@@ -112,6 +117,7 @@ export async function publishInstagramPost(caption: string, mediaUrls: string[])
 }
 
 export async function publishFacebookPost(message: string, mediaUrls: string[]): Promise<string> {
+  if (sandboxBlocks('social', { summary: 'facebook post' })) return practiceId() // practice copy: the copied page token is live
   const pageId    = await getSetting('fb_page_id')
   const pageToken = await getSetting('fb_page_token')
   if (!pageId || !pageToken) throw new Error('Facebook not connected — visit Settings > Integrations')

@@ -645,7 +645,9 @@ describe('(5) group-scale receivables, fixed assets and a customer\'s lifetime s
     const { nextMonthlyCharge } = await import('../src/modules/fixedAssets/schedule.js')
     const { classOf } = await import('../src/modules/fixedAssets/classes.js')
     const ceo = { id: users['ceoA']!.id, role: 'admin' }
-    const project = await prisma.capexProject.create({ data: { tenantId: tenantA, name: `Central kitchen ${RUN}` } })
+    // Shared equipment must name its location (owner, 2026-10-14) — the project's outlet counts.
+    const kitchen = await prisma.location.create({ data: { tenantId: tenantA, name: `Central kitchen ${RUN}`, slug: `bigint-ck-${RUN}` } })
+    const project = await prisma.capexProject.create({ data: { tenantId: tenantA, name: `Central kitchen ${RUN}`, locationId: kitchen.id } })
     const line = await prisma.capexLine.create({ data: {
       projectId: project.id, scope: 'Equipment', item: `Central kitchen line ${RUN}`, unitCostCents: 6_000_000_000,
       status: 'delivered', actualDeliveryDate: new Date('2026-01-15T12:00:00+05:00'),

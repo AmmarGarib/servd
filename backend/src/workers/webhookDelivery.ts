@@ -12,6 +12,7 @@ import { createHmac } from 'crypto'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import type { WebhookDeliveryJob } from '../lib/queue.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 const TIMEOUT_MS = 10_000
 
@@ -26,6 +27,8 @@ export function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
       if (!sub || !sub.isActive || sub.deletedAt) {
         return { skipped: 'inactive' }
       }
+      // Practice copy backstop (emitDomainEvent never queues there): no POST, marked as such.
+      if (sandboxBlocks('webhook', { summary: event })) return { skipped: 'sandbox_suppressed' }
 
       const body = JSON.stringify({ event, emittedAt, payload })
       const signature = createHmac('sha256', sub.secret).update(body).digest('hex')

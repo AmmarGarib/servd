@@ -50,9 +50,11 @@ import { syncSourcePosting, liveRevision, type LiveRevision, type SyncOutcome } 
 import { inputTaxCodeFor, isAuthorityKey, INPUT_TAX_ACCOUNTS } from '../accounting/taxAuthorities.js'
 import { computeWithholding, defaultSectionForCapex, whtSectionOrNull, type WhtSection } from '../../lib/withholding.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
 import { classOf, SMALLWARE_TYPES } from '../fixedAssets/classes.js'
-import { createRequest, FA_WRITER_ROLES, PAYLOAD_SCHEMAS, type CapitalisePayload } from '../fixedAssets/events.js'
+import {
+  createRequest, assertSharedHasLocation, capitaliseTarget, FA_WRITER_ROLES, PAYLOAD_SCHEMAS, type CapitalisePayload,
+} from '../fixedAssets/events.js'
 
 export type Db = Prisma.TransactionClient | PrismaClient
 type Tx = Db
@@ -539,7 +541,10 @@ export interface CapitaliseInput {
   usefulLifeMonths?: number
   salvageCents?: number
   name?: string
+  /** Where the asset is (omitted = the project's outlet). */
   locationId?: string | null
+  /** An individual asset's brand (omitted = the project's brand; null = shared across brands). */
+  conceptId?: string | null
   pool?: { typeKey: string; conceptId?: string | null }
   costCents?: number
   inputTaxCents?: number
@@ -555,8 +560,10 @@ const MAX_SPLIT = 200
  * apply): 422 PROJECT_HAS_NO_COMPANY / NOT_CAPITAL / NOT_DELIVERED /
  * COST_BELOW_ADVANCES / SPLIT_TOO_LARGE / ASSET_CLASS / CLASS_INACTIVE /
  * POOL_TYPE_REQUIRED / POOL_NEEDS_LOCATION / LOCATION_NOT_IN_COMPANY /
- * CONCEPT_NOT_IN_COMPANY / INPUT_TAX_AUTHORITY_REQUIRED; 409
- * ALREADY_CAPITALISED / CAPITALISATION_PENDING. Returns the parsed payload.
+ * CONCEPT_NOT_IN_COMPANY / LOCATION_REQUIRED_FOR_SHARED (an asset shared
+ * across brands with no outlet — owner, 2026-10-14) /
+ * INPUT_TAX_AUTHORITY_REQUIRED; 409 ALREADY_CAPITALISED /
+ * CAPITALISATION_PENDING. Returns the parsed payload.
  */
 export async function checkCapitalisable(db: Db, input: CapitaliseInput): Promise<{ tenantId: string; payload: CapitalisePayload; cls: FixedAssetClass; line: { id: string; item: string; projectName: string } }> {
   const line = await db.capexLine.findUnique({
@@ -607,8 +614,17 @@ export async function checkCapitalisable(db: Db, input: CapitaliseInput): Promis
       const c = await db.concept.findFirst({ where: { id: input.pool.conceptId, tenantId, deletedAt: null }, select: { id: true } })
       if (!c) throw new AppError('CONCEPT_NOT_IN_COMPANY', 'That brand does not belong to this company', 422)
     }
-  } else if (line.quantity > MAX_SPLIT) {
-    throw new AppError('SPLIT_TOO_LARGE', `A line of more than ${MAX_SPLIT} units cannot be split into individual assets — split the line or use a pooled class`, 422)
+  } else {
+    if (line.quantity > MAX_SPLIT) {
+      throw new AppError('SPLIT_TOO_LARGE', `A line of more than ${MAX_SPLIT} units cannot be split into individual assets — split the line or use a pooled class`, 422)
+    }
+    if (input.conceptId) {
+      const c = await db.concept.findFirst({ where: { id: input.conceptId, tenantId, deletedAt: null }, select: { id: true } })
+      if (!c) throw new AppError('CONCEPT_NOT_IN_COMPANY', 'That brand does not belong to this company', 422)
+    }
+    // Shared equipment always says where it is (the project's outlet counts).
+    const target = capitaliseTarget({ locationId: input.locationId, conceptId: input.conceptId }, false, line.project)
+    assertSharedHasLocation(target.conceptId, target.locationId)
   }
 
   const advanced = (await capexAdvancesForLine(tenantId, line.id, db)).reduce((t, a) => t + a.advancedCents, 0)
@@ -631,6 +647,7 @@ export async function checkCapitalisable(db: Db, input: CapitaliseInput): Promis
     ...(input.salvageCents !== undefined ? { salvageCents: input.salvageCents } : {}),
     ...(input.name ? { name: input.name } : {}),
     ...(input.locationId !== undefined ? { locationId: input.locationId } : {}),
+    ...(!cls.pooled && input.conceptId !== undefined ? { conceptId: input.conceptId } : {}),
     ...(cls.pooled && input.pool ? { pool: input.pool } : {}),
     ...(input.costCents !== undefined ? { costCents: input.costCents } : {}),
     ...(input.inputTaxCents !== undefined ? { inputTaxCents: input.inputTaxCents } : {}),
@@ -727,11 +744,19 @@ export async function depositHeldCents(tenantId: string, paymentId: string, db: 
  * <paymentId>' Dr money (returned) + Dr 6010 (forfeited, the project's brand)
  * / Cr 1360. The totals are what the call says (a second call re-states them).
  * Dated `receivedAt` — a closed month is 422 PERIOD_LOCKED (user-entered money).
+ *
+ * Money returned names how it came back (`method`: a receipt method, lib/
+ * bankAccounts.ts — cash, bank transfer, bank deposit, cheque) and its
+ * payment reference # (422 PAYMENT_REFERENCE_REQUIRED without one, owner
+ * 2026-10-14); the money account is moneyAccountCode of the PROJECT's company
+ * (a bank of another company → 422). The description and the money line's
+ * memo carry "bank deposit, ref 4471"; the payment keeps depositReturnMethod /
+ * depositReturnRef. Nothing returned (all kept) needs no method or reference.
  */
 export async function recordDepositReturn(tx: Tx, a: {
   paymentId: string; returnedCents: number; forfeitedCents: number; reason?: string | null
-  receivedAt: Date; payFrom: 'bank' | 'cash'; bankAccountId?: string | null; postedBy: string
-}): Promise<{ entryId: string | null; heldCents: number }> {
+  receivedAt: Date; method: string; reference?: string | null; bankAccountId?: string | null; postedBy: string
+}): Promise<{ entryId: string | null; heldCents: number; reference: string | null }> {
   const p = await tx.capexPayment.findUnique({ where: { id: a.paymentId }, include: { line: { include: { project: true } } } })
   if (!p) throw new NotFoundError('CapexPayment', a.paymentId)
   const project = p.line.project
@@ -746,19 +771,36 @@ export async function recordDepositReturn(tx: Tx, a: {
   if (a.forfeitedCents > 0 && (a.reason ?? '').trim().length < 5) {
     throw new AppError('REASON_REQUIRED', 'Say why the landlord kept part of the deposit', 422)
   }
-  const money = a.returnedCents > 0
-    ? (await moneyAccountCode(tx, project.tenantId, a.payFrom === 'cash' ? { method: 'cash', bankAccountId: null } : { method: 'bank', bankAccountId: a.bankAccountId ?? null }))
+  const returned = a.returnedCents > 0
+  const reference = returned ? assertPaymentReference(a.method, a.reference) : null
+  const money = returned
+    ? await moneyAccountCode(tx, project.tenantId, { method: a.method, bankAccountId: a.bankAccountId ?? null })
     : { code: null, bankAccountId: null }
+  const paid = returned ? receiptText(a.method, reference) : null
   const memo = `${project.name}: ${p.line.item} — deposit ${a.forfeitedCents > 0 ? `returned / kept (${(a.reason ?? '').trim()})` : 'returned'}`.slice(0, 250)
+  const description = `Security deposit returned: ${project.name} — ${p.line.item}${paid ? ` (${paid})` : ''}`
+  // syncSourcePosting compares amounts, accounts and the date only: a re-statement that
+  // changes just the words (a corrected reference # or method on the same bank) reverses
+  // the live entry first, so the books say what the payment row says.
+  const { live } = await liveRevision(project.tenantId, DEPOSIT_RETURN_SOURCE, p.id, tx)
+  if (live) {
+    const was = await tx.journalEntry.findUnique({ where: { id: live.entryId }, select: { description: true } })
+    if (was && was.description !== description) {
+      await syncSourcePosting({
+        tenantId: project.tenantId, sourceType: DEPOSIT_RETURN_SOURCE, id: p.id, desired: null,
+        postedBy: a.postedBy, reason: 'Deposit return reference corrected', tx,
+      })
+    }
+  }
   const r = await syncSourcePosting({
     tenantId: project.tenantId,
     sourceType: DEPOSIT_RETURN_SOURCE,
     id: p.id,
     desired: {
-      description: `Security deposit returned: ${project.name} — ${p.line.item}`,
+      description,
       entryDate: a.receivedAt,
       lines: [
-        ...(a.returnedCents > 0 && money.code ? [{ accountCode: money.code, type: 'debit' as const, amountCents: a.returnedCents, memo }] : []),
+        ...(returned && money.code ? [{ accountCode: money.code, type: 'debit' as const, amountCents: a.returnedCents, memo: `Deposit returned (${paid}) — ${memo}` }] : []),
         ...(a.forfeitedCents > 0 ? [{ accountCode: RENT, type: 'debit' as const, amountCents: a.forfeitedCents, memo, conceptId: project.conceptId }] : []),
         { accountCode: SECURITY_DEPOSITS, type: 'credit', amountCents: total, memo },
       ],
@@ -771,11 +813,12 @@ export async function recordDepositReturn(tx: Tx, a: {
     where: { id: p.id },
     data: {
       depositReturnedCents: a.returnedCents, depositForfeitedCents: a.forfeitedCents, depositReturnedAt: a.receivedAt,
-      depositReturnMethod: a.returnedCents > 0 ? a.payFrom : null,
-      depositReturnBankAccountId: a.returnedCents > 0 ? money.bankAccountId : null,
+      depositReturnMethod: returned ? a.method : null,
+      depositReturnRef: reference,
+      depositReturnBankAccountId: returned ? money.bankAccountId : null,
     },
   })
-  return { entryId: r.entryId, heldCents: held }
+  return { entryId: r.entryId, heldCents: held, reference }
 }
 
 /**

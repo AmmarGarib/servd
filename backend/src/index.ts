@@ -64,6 +64,7 @@ import { supplierChatRoutes } from './modules/procurement/chat.js'
 import { startSocialPublishWorker } from './workers/socialPublish.js'
 import { randomBytes } from 'crypto'
 import { getOAuthUrl, exchangeCodeForTokens } from './lib/meta-social.js'
+import { assertSandboxBoot, sandboxHealthFields, sandboxMetaRoutes } from './lib/sandbox.js'
 import { requireAuth, MANAGERS, OTP_LOGIN_ROLES } from './modules/auth/middleware.js'
 
 // Modules
@@ -465,6 +466,7 @@ async function build() {
       await api.register(expoRoutes,              { prefix: '/expo' })
       await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
       await api.register(trackingRoutes,          { prefix: '/t' }) // public: campaign click/open tracking
+      await api.register(sandboxMetaRoutes,       { prefix: '/meta' }) // public: GET /meta/sandbox (practice copy?)
 
       // Meta OAuth.
       //   GET /api/v1/integrations/social/status    → { configured, connected, page, ig } (authed)
@@ -876,7 +878,7 @@ async function build() {
 
     const hasError = Object.values(checks).some((v) => v === 'error')
     const status = hasError ? 'degraded' : Object.values(checks).some((v) => v === 'warn') ? 'warn' : 'ok'
-    const body = { status, checks, details, ts: new Date().toISOString() }
+    const body = { status, checks, details, ts: new Date().toISOString(), ...sandboxHealthFields() } // practice copy adds sandbox + sandboxBlocked
 
     return hasError ? reply.status(503).send(body) : reply.send(body)
   })
@@ -1228,6 +1230,7 @@ function validateProductionEnv() {
 
 async function start() {
   validateProductionEnv()
+  assertSandboxBoot() // practice copy: refuses a malformed SERVD_SANDBOX or a live DB / Redis host
   const fastify = await build()
 
   try {

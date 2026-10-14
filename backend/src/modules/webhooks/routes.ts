@@ -13,6 +13,7 @@ import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { handleWaMessage, type WaIncomingMessage } from '../../adapters/whatsapp/conversation.js'
+import { sandboxBlocks } from '../../lib/sandbox.js'
 import { promises as dns } from 'dns'
 import {
   parseConversationIdFromAddress,
@@ -566,6 +567,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
       if (!sub) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
       }
+      if (sandboxBlocks('webhook', { summary: 'ping' })) return { success: true, statusCode: 0, responseMs: 0, practice: true }
 
       // Re-validate the URL at fetch time. The check at create/update protects
       // against simple cases, but DNS rebinding could otherwise flip the

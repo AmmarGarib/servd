@@ -18,6 +18,7 @@ import type { Supplier, SupplierConversation } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { sendEmail } from './notify.js'
 import { sendText as sendWhatsApp } from './whatsapp.js'
+import { sandboxBlocks } from './sandbox.js'
 
 // ─── Outbound fan-out ─────────────────────────────────────────────────────────
 
@@ -271,6 +272,7 @@ export async function findOrCreateInboundConversation(opts: {
  * once at module load there, not here).
  */
 async function sendEmailWithReplyTo(to: string, subject: string, html: string, replyTo: string | null): Promise<void> {
+  if (sandboxBlocks('email', { to, summary: 'supplier chat' })) return // practice copy: its own SMTP transport, so its own guard
   if (!process.env['SMTP_USER'] || !process.env['SMTP_PASS']) {
     // Mirror lib/notify.ts behaviour — silently skip in dev with a console hint.
     console.log(`[supplier-channels] EMAIL (no SMTP) to ${to}: ${subject}${replyTo ? ` (Reply-To: ${replyTo})` : ''}`)

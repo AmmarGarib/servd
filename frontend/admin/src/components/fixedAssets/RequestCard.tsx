@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { FA_BASE, RequestStatusBadge, ErrorLine, inp, btnPrimary, btnGhost, card, fmtDay, money, type FaRequest } from './shared'
+import { receiptMethodLabel } from '../finance/PaymentReceivedFields'
 
 function num(v: unknown): number | null { return typeof v === 'number' && Number.isFinite(v) ? v : null }
 function str(v: unknown): string | null { return typeof v === 'string' && v ? v : null }
@@ -25,7 +26,13 @@ export function describeRequest(r: FaRequest): string[] {
       const k = str(p['kind']) ?? 'sale'
       out.push(DISPOSAL_WORDS[k] ?? k)
       const proceeds = num(p['proceedsCents'])
-      if (proceeds) out.push(`for ${money(proceeds)}`)
+      if (proceeds) {
+        out.push(`for ${money(proceeds)}`)
+        // How the buyer paid and the payment reference # (older requests may have none).
+        const method = str(p['method'])
+        const ref = str(p['reference'])
+        out.push(`${receiptMethodLabel(method ?? 'bank')}${ref ? `, ref ${ref}` : ', no reference'}`)
+      }
       const gl = num(p['gainLossCents'])
       if (r.status === 'posted' && gl !== null) out.push(gl >= 0 ? `gain ${money(gl)}` : `loss ${money(-gl)}`)
       break
@@ -71,6 +78,7 @@ export function describeRequest(r: FaRequest): string[] {
       if (life) out.push(`life ${life} months`)
       const name = str(p['name'])
       if (name) out.push(name)
+      if (p['conceptId'] === null) out.push('shared across brands')
       break
     }
     default:

@@ -3,8 +3,16 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { STOREFRONT_URL } from '../../lib/content'
+import { PracticeCode } from '../../components/SandboxBanner'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
+
+/** The practice copy's API sends nothing out; where it would have sent a code
+ *  it returns it as `practiceCode`. The live API never does. */
+function practiceCodeOf(d: unknown): string {
+  const v = (d as { practiceCode?: unknown } | null)?.practiceCode
+  return typeof v === 'string' ? v : ''
+}
 
 type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot' | 'code'
 
@@ -49,6 +57,7 @@ export default function StaffLoginPage() {
   const [mfaChallenge, setMfaChallenge] = useState('')
   const [mfaHint,      setMfaHint]      = useState('')
   const [mfaCode,      setMfaCode]      = useState('')
+  const [mfaPractice,  setMfaPractice]  = useState('')
 
   // Change-password step.
   const [cpCurrent, setCpCurrent] = useState('')
@@ -59,12 +68,14 @@ export default function StaffLoginPage() {
   // Forgot-password step. `fgDone` is set whatever the API says, because the
   // API deliberately answers the same way for an address that has no account.
   const [fgDone, setFgDone] = useState(false)
+  const [fgPractice, setFgPractice] = useState('')
 
   // Code sign-in for floor staff (cashier, server, cook, expediter), who have
   // no password: phone → one code sent to WhatsApp AND email → session.
   const [codePhone, setCodePhone] = useState('')
   const [codeValue, setCodeValue] = useState('')
   const [codeSent,  setCodeSent]  = useState(false)
+  const [codePractice, setCodePractice] = useState('')
   // The code came from a manager (Workforce → "Sign-in code"), not from
   // WhatsApp/email — so skip asking for one to be sent. Asking would fail when
   // sending is down, and when it works it would replace the manager's code.
@@ -101,6 +112,7 @@ export default function StaffLoginPage() {
         setMfaChallenge(d.challengeToken)
         setMfaHint(d.phoneHint ?? '')
         setMfaCode('')
+        setMfaPractice(practiceCodeOf(d))
         setMode('twofactor')
         return
       }
@@ -160,6 +172,7 @@ export default function StaffLoginPage() {
       // Otherwise: shown whether or not the address has an account. The API
       // answers identically for both, and a UI that distinguished them here
       // would put back the enumeration oracle the API just avoided.
+      setFgPractice(practiceCodeOf(await res.json().catch(() => null)))
       setFgDone(true)
     } catch {
       setError('Could not reach the server. Check your connection and try again.')
@@ -198,9 +211,9 @@ export default function StaffLoginPage() {
   }
 
   function backToSignIn() {
-    setMode('password'); setError(''); setCpDone(false); setFgDone(false)
-    setMfaChallenge(''); setMfaCode('')
-    setCodeSent(false); setCodeValue(''); setCodeFromManager(false)
+    setMode('password'); setError(''); setCpDone(false); setFgDone(false); setFgPractice('')
+    setMfaChallenge(''); setMfaCode(''); setMfaPractice('')
+    setCodeSent(false); setCodeValue(''); setCodeFromManager(false); setCodePractice('')
   }
 
   async function requestStaffCode(e?: React.FormEvent) {
@@ -216,6 +229,7 @@ export default function StaffLoginPage() {
       if (!res.ok) throw new Error(d.error?.message ?? 'Could not send a code')
       // The API answers the same whether or not the number is a staff account,
       // so this screen does too.
+      setCodePractice(practiceCodeOf(d))
       setCodeSent(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send a code')
@@ -298,7 +312,7 @@ export default function StaffLoginPage() {
                 </button>
                 <button type="button"
                   disabled={loading || codePhone.replace(/\D/g, '').length < 10}
-                  onClick={() => { setError(''); setCodeFromManager(true); setCodeSent(true) }}
+                  onClick={() => { setError(''); setCodeFromManager(true); setCodePractice(''); setCodeSent(true) }}
                   className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors disabled:opacity-40">
                   I have a code from my manager
                 </button>
@@ -308,6 +322,7 @@ export default function StaffLoginPage() {
               </form>
             ) : (
               <form onSubmit={submitStaffCode}>
+                {codePractice && !codeFromManager && <PracticeCode code={codePractice} />}
                 <input type="text" inputMode="numeric" autoComplete="one-time-code" value={codeValue} autoFocus
                   onChange={(e) => setCodeValue(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"
                   aria-label="Sign-in code"
@@ -318,7 +333,7 @@ export default function StaffLoginPage() {
                   {loading ? 'Checking…' : 'Sign in'}
                 </button>
                 <div className="mt-3 flex items-center justify-between text-xs">
-                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError(''); setCodeFromManager(false) }} className="text-s-dim hover:text-s-muted">← Change number</button>
+                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError(''); setCodeFromManager(false); setCodePractice('') }} className="text-s-dim hover:text-s-muted">← Change number</button>
                   {!codeFromManager && (
                     <button type="button" disabled={loading} onClick={() => { void requestStaffCode() }} className="text-s-dim hover:text-s-muted">Send again</button>
                   )}
@@ -333,6 +348,7 @@ export default function StaffLoginPage() {
 
           ) : mode === 'twofactor' ? (
             <form onSubmit={submitTwoFactor}>
+              {mfaPractice && <PracticeCode code={mfaPractice} />}
               <input
                 type="text"
                 inputMode="numeric"
@@ -360,6 +376,14 @@ export default function StaffLoginPage() {
           ) : mode === 'forgot' ? (
             fgDone ? (
               <div className="text-center">
+                {fgPractice && (
+                  <PracticeCode code={fgPractice}>
+                    <a href={`/reset-password?token=${encodeURIComponent(fgPractice)}`}
+                      className="mt-2 inline-block font-bold underline underline-offset-2">
+                      Set a new password with it &rarr;
+                    </a>
+                  </PracticeCode>
+                )}
                 <p className="text-sm text-s-text mb-2">Check your email.</p>
                 <p className="text-xs text-s-dim mb-5 leading-relaxed">
                   If that address has an account, a reset link is on its way

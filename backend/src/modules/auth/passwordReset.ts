@@ -35,6 +35,7 @@ import { whatsappConfigured } from '../../lib/whatsapp.js'
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { normalisePhone } from './otp.js'
 import { ACTIVE_ACCOUNT_WHERE, isAccountActive } from './accountStatus.js'
+import { sandboxBlocks } from '../../lib/sandbox.js'
 
 // Long enough to walk to a laptop, short enough that a link left in an inbox
 // is not a standing key to the account.
@@ -87,6 +88,7 @@ export interface DeliveryOutcome {
  */
 export async function requestPasswordReset(email: string, ip: string | null): Promise<DeliveryOutcome> {
   const out: DeliveryOutcome = { email: 'skipped', whatsapp: 'skipped', errors: [] }
+  if (sandboxBlocks('password_reset', { to: email })) return out // practice copy: no link issued (admins reissue passwords)
 
   const user = await prisma.user.findUnique({
     where: { email: email.trim().toLowerCase() },

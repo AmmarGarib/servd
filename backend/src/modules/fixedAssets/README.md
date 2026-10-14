@@ -73,13 +73,39 @@ approvals inbox reads `GET /accounting/fixed-assets/requests?status=pending`
 engine. An approval runs in ONE transaction; a refusal rolls it back, keeps
 the reason on the request (`errorMessage`) and leaves it pending.
 
+### Money received and where shared equipment is (owner, 2026-10-14)
+
+- **Asset-sale proceeds** (a `disposal` with `proceedsCents > 0`, raised on
+  `POST /:id/requests` or `POST /:id/dispose`): `payload.method` is one of
+  `DISPOSAL_METHODS` — the receipt list of `lib/bankAccounts.ts`
+  (`cash`, `card`, `bank_transfer`, `bank_deposit`, `cheque`) plus the old
+  `bank` / `online` a request raised earlier may carry — and
+  `payload.reference`, the payment reference #, is **required on every
+  method, cash included** (422 `PAYMENT_REFERENCE_REQUIRED`). It is checked
+  when the request is RAISED, never when the CEO approves (a pending request
+  raised before the rule has none and still approves). The money account is
+  `moneyAccountCode` of the asset's company; the entry's description and the
+  money line's memo carry `receiptText` ("bank deposit, ref 4471"). A
+  reference this company used before answers `referenceUsedBefore`
+  (`lib/paymentRefs.ts`, kind `asset_disposal`) — a warning, never a block.
+- **Shared equipment needs its location.** An asset with no brand (shared
+  across brands) and no outlet is refused when the request is raised — 422
+  `LOCATION_REQUIRED_FOR_SHARED`: a `capitalise` (the payload's `conceptId`
+  for an individual asset — omitted = the project's brand, null = shared —
+  and `locationId`, omitted = the project's outlet, which counts) and a
+  `transfer` that would leave the asset shared with no outlet. A pending
+  capitalisation approves as before. Pooled smallwares always need an outlet
+  (`POOL_NEEDS_LOCATION`). The rule lives in `events.ts`
+  (`assertSharedHasLocation`, `capitaliseTarget`), used by
+  `financePlanning/capexPosting.ts checkCapitalisable` too.
+
 ## Postings and the late-dating rule
 
 | key | lines |
 |---|---|
 | `fixed_asset.acquire:<assetId>` | Dr class cost (+ Dr input tax 132x) / Cr 1340 advanced, Cr 2012 still owed |
 | `fixed_asset.depreciation:<assetId>:<YYYY-MM>` | Dr 6150 / Cr the class's accumulated code (1591–1599), both on the brand charged that month (revisions `@n`) |
-| `fixed_asset.dispose:<assetId>` | Dr accumulated (per code) + Dr money (`moneyAccountCode`) / Cr cost, gain Cr / loss Dr 8030 |
+| `fixed_asset.dispose:<assetId>` | Dr accumulated (per code) + Dr money (`moneyAccountCode`; memo "Disposal proceeds (bank deposit, ref …)") / Cr cost, gain Cr / loss Dr 8030 |
 | `fixed_asset.impairment:<eventId>` | Dr 6155 / Cr accumulated |
 | `fixed_asset.pool_write_off:<eventId>` | Dr accumulated + Dr 8030 (NBV lost) / Cr 1560 |
 | `fixed_asset.transfer:<eventId>` | cost and accumulated moved brand to brand (zero net per code) |

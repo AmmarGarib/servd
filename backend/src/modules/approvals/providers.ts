@@ -866,49 +866,46 @@ const grniWriteOffs: ApprovalProvider = {
 // only. Until that route exists it answers 404 and the type is simply not
 // listed (ctx.read → null).
 //
-// 'stock_difference' joins APPROVAL_TYPES in types.ts (orchestrator patch
-// note); until it does, the id is typed through string here.
-const STOCK_DIFFERENCE = 'stock_difference' as string as ApprovalType
 
 const stockDifferences: ApprovalProvider = {
-  type: STOCK_DIFFERENCE,
+  type: 'stock_difference',
   label: 'Stock differences',
   module: 'accounting',
-  link: '/accounting/stock-differences',
+  link: '/finance/stock-differences',
   approverRoles: ADMIN_ONLY,
   delegable: false,
   async load(ctx) {
+    // GET /accounting/stock-differences (stockDifferences/routes.ts): { rows: StockDifferenceRow[] }.
     type Row = {
-      id: string; tenantId: string; itemName: string | null; outletName: string | null; brandName: string | null
-      kind: 'waste' | 'count' | 'void_waste' | string; reason: string | null; valueCents: number; date: string; byName: string | null
+      lineId: string; tenantId: string; itemName: string | null; locationName: string | null; conceptName: string | null
+      kind: 'waste' | 'count' | 'void_waste' | string; reason: string | null; valueCents: number; entryDate: string; recordedByName: string | null
     }
-    const res = await ctx.read<Row[] | { items?: Row[]; rows?: Row[]; lines?: Row[] }>('/accounting/stock-differences?status=pending')
+    const res = await ctx.read<{ rows: Row[] }>('/accounting/stock-differences?status=pending&limit=500')
     if (res === null) return null
-    const rows = Array.isArray(res) ? res : (res.items ?? res.rows ?? res.lines ?? [])
     const KIND: Record<string, string> = { waste: 'Waste', count: 'Count difference', void_waste: 'Sold line wasted' }
-    return rows.map((r): ApprovalItem => ({
-      type: STOCK_DIFFERENCE,
-      id: r.id,
+    return (res.rows ?? []).map((r): ApprovalItem => ({
+      type: 'stock_difference',
+      id: r.lineId,
       tenantId: r.tenantId,
       title: `${KIND[r.kind] ?? human(r.kind)} — ${r.itemName ?? 'Item'} — ${pkr(Math.abs(r.valueCents))}${r.valueCents < 0 ? ' over' : ''}`,
       subtitle: r.reason,
       facts: facts([
         ['Kind', KIND[r.kind] ?? human(r.kind)],
         ['Item', r.itemName],
-        ['Outlet', r.outletName],
-        ['Brand', r.brandName],
+        ['Outlet', r.locationName],
+        ['Brand', r.conceptName],
         ['Value', pkr(Math.abs(r.valueCents))],
         ['Reason', r.reason],
-        ['Date', ymd(r.date)],
-        ['By', r.byName],
+        ['Date', ymd(r.entryDate)],
+        ['By', r.recordedByName],
       ]),
       amountCents: r.valueCents,
-      waitingSince: iso(r.date),
-      link: '/accounting/stock-differences',
+      waitingSince: iso(r.entryDate),
+      link: '/finance/stock-differences',
       actions: [
-        { kind: 'approve', label: 'Approve into cost of sales', method: 'POST', path: '/accounting/stock-differences/approve', body: { lineIds: [r.id] },
+        { kind: 'approve', label: 'Approve into cost of sales', method: 'POST', path: '/accounting/stock-differences/approve', body: { lineIds: [r.lineId] },
           confirm: 'Approve this difference? It moves out of 1290 suspense into cost of sales.' },
-        { kind: 'reject', label: 'Send back', method: 'POST', path: `/accounting/stock-differences/${encodeURIComponent(r.id)}/query`, body: {},
+        { kind: 'reject', label: 'Send back', method: 'POST', path: `/accounting/stock-differences/${encodeURIComponent(r.lineId)}/query`, body: {},
           input: { field: 'note', label: 'What needs checking', required: true } },
       ],
     }))

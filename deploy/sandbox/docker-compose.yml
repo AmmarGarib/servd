@@ -1,0 +1,197 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# servd PRACTICE COPY — https://sandbox.servd.pk (admin) + https://sandbox-api.servd.pk (API)
+#
+# A second, separate servd where staff try anything. Its database is a Neon
+# BRANCH of the live one (a copy of real data), so the API runs with
+# SERVD_SANDBOX=1: nothing it does reaches the outside world (no WhatsApp /
+# email / push, no fiscal filing, no card machine or payment gateway, no
+# webhooks, no Raast bank-SMS effects, no uploads, no Sentry).
+#
+# This is its OWN compose project ("servd-sandbox", folder C:\servd-sandbox on
+# the box). It shares NOTHING with the live stack in C:\servd\deploy: its own
+# network, its own Redis, its own secrets, its own Cloudflare tunnel. Setup and
+# day-to-day steps: SETUP.md next to this file.
+#
+# Tunnel routes (Cloudflare Zero Trust → tunnel "servd-practice", never the
+# live tunnel):
+#   sandbox.servd.pk      → http://sandbox-admin:3000
+#   sandbox-api.servd.pk  → http://sandbox-api:3001
+#
+# Every variable comes from .env in this folder (copy .env.example). Compose
+# refuses to start while a required one is empty.
+#
+# Only the variables listed under sandbox-api → environment reach the API.
+# There is deliberately no env_file: a WhatsApp / SMTP / R2 / Sentry / gateway
+# key pasted into .env by mistake still never reaches the practice API.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: servd-sandbox
+
+x-logs: &logs
+  # Log rotation so the practice copy can't fill the live box's disk.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ─────────── Practice Redis (queues, rate limits, sockets) ─────────────────
+  # Its own Redis, never the live Upstash one: sharing it would let LIVE
+  # workers pick up practice jobs. Nothing needs to survive a restart, so no
+  # persistence.
+  sandbox-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 256m }
+    logging: *logs
+    networks: [sandbox_net]
+
+  # ─────────── Practice API (Fastify + Prisma) ───────────────────────────────
+  # The image is the API with practice mode in it, tagged api-sandbox — NEVER
+  # the live :api / :api-<sha> tags. To hold a version, set SANDBOX_API_TAG in
+  # .env (e.g. api-sandbox-<sha>).
+  #
+  # On every start the image's entrypoint runs `prisma migrate deploy` against
+  # the practice BRANCH (fatal on failure). So pushing a new release here first
+  # is a free dry run of its migrations on real data; live is never touched.
+  sandbox-api:
+    image: ammargarib/servd:${SANDBOX_API_TAG:-api-sandbox}
+    restart: unless-stopped
+    environment:
+      # Practice mode: every outbound edge is blocked (lib/sandbox.ts). The API
+      # refuses to start if this holds anything but '1' / unset.
+      SERVD_SANDBOX: "1"
+      NODE_ENV: "production"
+      PORT: "3001"
+      # No background workers: nothing runs on a timer in the practice copy
+      # (reminders, scheduled reports, fiscal sweeps, auto-publish, …).
+      ENABLE_WORKERS: "false"
+      RLS_ENFORCE: "1"
+      API_URL: "https://sandbox-api.servd.pk"
+      WEB_URL: "https://sandbox.servd.pk"
+      # Where password-reset links would point (reset is switched off in the
+      # practice copy anyway). Never the live admin.
+      ADMIN_ORIGIN: "https://sandbox.servd.pk"
+      # The API requires STOREFRONT_URL in production. The practice copy has
+      # no storefront; any link it builds (table QR codes, tracking links)
+      # points at the practice address, never at the live servd.pk.
+      STOREFRONT_URL: "https://sandbox.servd.pk"
+      # The Neon BRANCH's connection string — never the live database.
+      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL in .env to the Neon practice BRANCH connection string (see SETUP.md step 1)}"
+      REDIS_URL: "${REDIS_URL:-redis://sandbox-redis:6379}"
+      # NEW random values, never the live ones: a live token never works here
+      # and a practice token never works on live.
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env (a NEW random value, see SETUP.md step 3)}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env (a NEW random value, different from JWT_SECRET)}"
+      # NEW random 32-byte key: the integration secrets copied from live
+      # (POS connector, WhatsApp gateway, SMTP) can't be decrypted here.
+      SERVD_SECRET_KEY: "${SERVD_SECRET_KEY:?Set SERVD_SECRET_KEY in .env (a NEW random 32-byte base64 key, see SETUP.md step 3)}"
+      # Required by the API's production start-up check. A NEW random value,
+      # so no card-gateway callback is ever accepted here.
+      KEENU_WEBHOOK_SECRET: "${KEENU_WEBHOOK_SECRET:?Set KEENU_WEBHOOK_SECRET in .env (a NEW random value, see SETUP.md step 3)}"
+      # The live database and Redis hostnames. The practice API refuses to
+      # start if DATABASE_URL or REDIS_URL points at one of them.
+      SERVD_PROD_HOSTS: "${SERVD_PROD_HOSTS:?Set SERVD_PROD_HOSTS in .env to the LIVE database and Redis hostnames (see SETUP.md step 3)}"
+    depends_on:
+      sandbox-redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        # Caps so practice use can never starve the live ERP on the same box.
+        # Raise the memory if the API restarts with exit code 137.
+        limits: { cpus: "1.0", memory: 1g }
+    logging: *logs
+    networks: [sandbox_net]
+
+  # ─────────── Practice admin (Next.js) ──────────────────────────────────────
+  # admin-sandbox is built with NEXT_PUBLIC_API_URL=https://sandbox-api.servd.pk,
+  # NEXT_PUBLIC_WS_URL=wss://sandbox-api.servd.pk and NEXT_PUBLIC_SANDBOX=1
+  # (deploy/sandbox/build-admin.sh). The live :admin image talks to the live
+  # API and must never be used here.
+  sandbox-admin:
+    image: ammargarib/servd:${SANDBOX_ADMIN_TAG:-admin-sandbox}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "production"
+      PORT: "3000"
+      # Server-side fetches go straight to the practice API on this network.
+      INTERNAL_API_URL: "http://sandbox-api:3001"
+    depends_on:
+      - sandbox-api
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512m }
+    logging: *logs
+    networks: [sandbox_net]
+
+  # ─────────── Tunnel token check (runs once, then exits) ────────────────────
+  # The one mistake that would hurt LIVE: pasting the live tunnel's token here.
+  # cloudflared would join the live tunnel as a second connector and part of
+  # live traffic (api.servd.pk, admin.servd.pk, servd.pk) would land on this
+  # network, where those services don't exist. So the token must belong to the
+  # tunnel whose ID is in CF_TUNNEL_ID (the "servd-practice" tunnel), or the
+  # practice cloudflared never starts. Prints tunnel IDs only, never the token.
+  sandbox-preflight:
+    image: alpine:3.20
+    restart: "no"
+    environment:
+      TOKEN: "${CF_TUNNEL_TOKEN:?Set CF_TUNNEL_TOKEN in .env to the servd-practice tunnel token (see SETUP.md step 2)}"
+      WANT_ID: "${CF_TUNNEL_ID:?Set CF_TUNNEL_ID in .env to the servd-practice tunnel ID (see SETUP.md step 2)}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        t=$$(printf '%s' "$$TOKEN" | tr -d ' \r\n' | tr '_-' '/+')
+        while [ $$(( $${#t} % 4 )) -ne 0 ]; do t="$$t="; done
+        got=$$(printf '%s' "$$t" | base64 -d 2>/dev/null | sed -n 's/.*"t":"\([^"]*\)".*/\1/p' | tr 'A-Z' 'a-z')
+        want=$$(printf '%s' "$$WANT_ID" | tr -d ' \r\n' | tr 'A-Z' 'a-z')
+        if [ -z "$$got" ]; then
+          echo "[practice] REFUSED: CF_TUNNEL_TOKEN is not a readable Cloudflare tunnel token. Copy it again from the servd-practice tunnel."
+          exit 1
+        fi
+        if [ "$$got" != "$$want" ]; then
+          echo "[practice] REFUSED: CF_TUNNEL_TOKEN belongs to tunnel $$got, not to the practice tunnel $$want (CF_TUNNEL_ID)."
+          echo "[practice] Never use the live tunnel's token here. Copy the token of the servd-practice tunnel."
+          exit 1
+        fi
+        echo "[practice] tunnel token matches the practice tunnel $$want"
+    # Needs no network at all.
+    network_mode: "none"
+    logging: *logs
+
+  # ─────────── Practice Cloudflare Tunnel ────────────────────────────────────
+  # Its OWN tunnel ("servd-practice"), its own token. The token goes in through
+  # the environment (TUNNEL_TOKEN), so it never shows in `docker ps`.
+  sandbox-cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CF_TUNNEL_TOKEN:?Set CF_TUNNEL_TOKEN in .env}"
+    depends_on:
+      sandbox-preflight:
+        condition: service_completed_successfully
+      sandbox-api:
+        condition: service_started
+      sandbox-admin:
+        condition: service_started
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128m }
+    logging: *logs
+    networks: [sandbox_net]
+
+networks:
+  sandbox_net:
+    # Explicit name so it can never be mistaken for (or merged with) the live
+    # stack's network.
+    name: servd_sandbox_net
+    driver: bridge

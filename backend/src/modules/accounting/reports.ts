@@ -705,7 +705,26 @@ export async function costOfSalesByConcept(db: Db, tenantIds: string[], a: { fro
     select: { journalEntryId: true, type: true, amountCents: true, conceptId: true, account: { select: { code: true } }, journalEntry: { select: { reference: true, tenantId: true } } },
   })
   if (classless.length === 0) return out
-  const entryIds = Array.from(new Set(classless.map((l) => l.journalEntryId)))
+  // H20: a waste / count difference the CEO approved ('stock_difference.clear:<1290 lineId>')
+  // has no stock line of its own — read the stock behind the entry its 1290 line came from.
+  const stockEntryOf = new Map<string, string>()   // clearing entry id → the waste / count entry id
+  const clearedLineIds = Array.from(new Set(classless
+    .map((l) => sourceIdOf(l.journalEntry.reference ?? '', 'stock_difference.clear'))
+    .filter((x): x is string => !!x)))
+  if (clearedLineIds.length > 0) {
+    const src = await db.journalLine.findMany({
+      where: { id: { in: clearedLineIds }, journalEntry: { tenantId: { in: tenantIds } } },
+      select: { id: true, journalEntryId: true },
+    })
+    const entryOfLine = new Map(src.map((x) => [x.id, x.journalEntryId]))
+    for (const l of classless) {
+      const id = sourceIdOf(l.journalEntry.reference ?? '', 'stock_difference.clear')
+      const e = id ? entryOfLine.get(id) : undefined
+      if (e) stockEntryOf.set(l.journalEntryId, e)
+    }
+  }
+  const stockEntry = (entryId: string) => stockEntryOf.get(entryId) ?? entryId
+  const entryIds = Array.from(new Set(classless.map((l) => stockEntry(l.journalEntryId))))
   const invLines = await db.journalLine.findMany({
     where: { journalEntryId: { in: entryIds }, account: { code: { in: Object.keys(INVENTORY_CLASS) } } },
     select: { journalEntryId: true, type: true, amountCents: true, conceptId: true, account: { select: { code: true } } },
@@ -756,7 +775,9 @@ export async function costOfSalesByConcept(db: Db, tenantIds: string[], a: { fro
     const signed = l.type === 'debit' ? amt : -amt
     // The stock side of the same entry: a debit to 5040/5050/5060 is paired
     // with inventory CREDITS (stock out), a credit with inventory DEBITS.
-    const opposite = (invByEntry.get(l.journalEntryId) ?? []).filter((x) => x.type !== l.type)
+    // (An approved stock difference: its waste / count entry's stock lines — Dr 1290 / Cr 12x0 there
+    // pairs the same way as the Dr 5040 / Cr 1290 here.)
+    const opposite = (invByEntry.get(stockEntry(l.journalEntryId)) ?? []).filter((x) => x.type !== l.type)
     const pick = (rows: typeof opposite) => {
       const w = new Map<CosKey, number>()
       for (const x of rows) {

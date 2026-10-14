@@ -13,6 +13,7 @@ import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { staffInCompaniesWhere } from '../auth/staffAccounts.js'
 import { requireModule } from './requireModule.js'
+import { sandboxBlocks } from '../../lib/sandbox.js'
 
 // Who runs staff push (broadcast + the device list): the managers, plus IT —
 // Notifications is a Dev workspace page (module `notifications`) and IT owns
@@ -141,6 +142,8 @@ export async function notificationRoutes(fastify: FastifyInstance) {
       if (validTokens.length === 0) {
         return reply.send({ sent: 0, failed: 0, tickets: [], ...audience })
       }
+      // Practice copy: the copied tokens are real staff phones and tablets.
+      if (sandboxBlocks('push', { summary: `${validTokens.length} device(s)` })) return reply.send({ sent: validTokens.length, failed: 0, tickets: [], practice: true, ...audience })
 
       // Build message objects
       const messages = validTokens.map((pushToken) => ({

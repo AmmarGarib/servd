@@ -103,6 +103,7 @@ const KIND_LABEL: Record<string, string> = {
   intercompany_mismatch:     'Inter-company balances do not agree',
   // Cash requests.
   cash_request_receipts_overdue: 'Cash request receipts overdue',
+  stock_difference_queried: 'Stock difference sent back by the CEO',
   cash_advance_overdue:      'Cash request receipts overdue (old)',
   cash_request_needs_review: 'Cash request needs review',
   // Delivery.

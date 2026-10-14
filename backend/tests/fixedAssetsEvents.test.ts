@@ -112,7 +112,7 @@ describe('who raises and who approves', () => {
 
     const req = await createRequest({
       kind: 'disposal', assetId: oven.id, tenantId: co.tenantId, reason: 'Sold to a second-hand dealer',
-      payload: { kind: 'sale', proceedsCents: 70_000 },
+      payload: { kind: 'sale', proceedsCents: 70_000, reference: 'IBFT-70000' },
     }, co.fin)
     expect(req.applied).toBe(false)
     expect(req.event.status).toBe('pending')
@@ -191,14 +191,14 @@ describe('disposals', () => {
       .rejects.toMatchObject({ code: 'PROCEEDS_NOT_ALLOWED' })
     const req = await createRequest({
       kind: 'disposal', assetId: d.id, reason: 'Sold, replaced by a bigger one',
-      payload: { kind: 'sale', proceedsCents: 20_000, method: 'bank', bankAccountId: mcb.id },
+      payload: { kind: 'sale', proceedsCents: 20_000, method: 'bank', reference: 'MCB-2041', bankAccountId: mcb.id },
     }, co.fin)
     await applyEvent(req.event.id, co.ceo.id)
     expect(await balance(co.tenantId, '1021')).toBe(20_000)
     expect(await balance(co.tenantId, '8030')).toBe(10_000) // NBV 30,000 − proceeds 20,000
 
     const e = await mkAsset(co, { name: 'Kettle', classKey: 'office_equipment', costCents: 6_000, inServiceAt: mid(m(-1)), life: 6 })
-    await createRequest({ kind: 'disposal', assetId: e.id, reason: 'Sold to staff for cash', payload: { kind: 'sale', proceedsCents: 5_000, method: 'cash' } }, co.ceo)
+    await createRequest({ kind: 'disposal', assetId: e.id, reason: 'Sold to staff for cash', payload: { kind: 'sale', proceedsCents: 5_000, method: 'cash', reference: 'CR-17' } }, co.ceo)
     expect(await balance(co.tenantId, '1010')).toBe(5_000)
     expect(await trialBalance(co.tenantId)).toBe(0)
   })

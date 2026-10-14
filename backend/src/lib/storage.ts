@@ -5,6 +5,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { nanoid } from 'nanoid'
 import path from 'path'
+import { sandboxUploadKey } from './sandbox.js'
 
 const client = new S3Client({
   region: 'auto',
@@ -34,7 +35,7 @@ export async function getSignedUploadUrl(filename: string, contentType: string, 
   }
 
   const ext = path.extname(filename)
-  const key = `${folder}/${nanoid()}${ext}`
+  const key = sandboxUploadKey(`${folder}/${nanoid()}${ext}`, BUCKET) // practice copy: 'sandbox/' prefix, never the live bucket
 
   const command = new PutObjectCommand({
     Bucket: BUCKET,

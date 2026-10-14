@@ -9,6 +9,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { sendText } from '../../lib/whatsapp.js'
 import { sendEmail } from '../../lib/mailer.js'
 import { AppError } from '../../lib/errors.js'
+import { practiceCodeField } from '../../lib/sandbox.js'
 
 const OTP_TTL_MS = 5 * 60_000
 const MAX_ATTEMPTS = 5
@@ -212,7 +213,7 @@ export async function requestOtp(opts: {
   phone: string
   purpose: OtpPurpose
   customerId?: string
-}): Promise<{ phone: string; expiresAt: Date }> {
+}): Promise<{ phone: string; expiresAt: Date; practiceCode?: string }> {
   const phone = normalisePhone(opts.phone)
   if (phone.length < 11) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
 
@@ -262,7 +263,8 @@ export async function requestOtp(opts: {
     }
   }
 
-  return { phone, expiresAt }
+  // Practice copy only (never live): the code, for callers who already proved who they are — lib/sandbox.ts.
+  return { phone, expiresAt, ...practiceCodeField(code) }
 }
 
 /**
@@ -474,7 +476,7 @@ export async function requestSharedCode(opts: {
   email?: string | null
   purpose: OtpPurpose & EmailOtpPurpose
   customerId?: string
-}): Promise<{ phone: ChannelStatus; email: ChannelStatus; expiresAt: Date }> {
+}): Promise<{ phone: ChannelStatus; email: ChannelStatus; expiresAt: Date; practiceCode?: string }> {
   const phone = opts.phone ? normalisePhone(opts.phone) : null
   const email = opts.email ? normaliseEmail(opts.email) : null
   if (!phone && !email) throw new AppError('NO_CONTACT', 'No phone or email to send a code to', 400)
@@ -551,7 +553,8 @@ export async function requestSharedCode(opts: {
   if (!anySent && process.env['OTP_DEV_ECHO'] === '1') {
     console.warn(`[otp] shared code delivery failed — dev echo: ${code}`)
   }
-  return { phone: phoneStatus, email: emailStatus, expiresAt }
+  // Practice copy only (never live): the code, for callers who already proved who they are — lib/sandbox.ts.
+  return { phone: phoneStatus, email: emailStatus, expiresAt, ...practiceCodeField(code) }
 }
 
 /**

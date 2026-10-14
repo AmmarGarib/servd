@@ -1,5 +1,6 @@
 import { serviceClient as prisma } from './prisma.js'
 import { decryptSecret, encryptSecret, isEncrypted, secretHint, secretKeyConfigured } from './secretBox.js'
+import { isSandbox, practiceId, sandboxBlocks } from './sandbox.js'
 
 // WhatsApp delivery via the garibsons.app gateway (Hasham's connector — admin
 // Dev → API → WhatsApp connector, /connectors/whatsapp).
@@ -131,6 +132,7 @@ async function config(): Promise<{ url: string; key: string }> {
 
 /** Is a gateway configured at all? Used by /health and by the admin screen. */
 export async function whatsappConfigured(): Promise<boolean> {
+  if (isSandbox()) return true // practice copy: send() answers a practice result
   const { url } = await config()
   return url.length > 0
 }
@@ -206,6 +208,8 @@ export async function whatsappSecretHealth(): Promise<{ check: 'ok' | 'warn' | '
 
 // Core send. `number` is digits-only E.164 without the + (e.g. 923001234567).
 async function send(number: string, message: string) {
+  // Practice copy: never the gateway (the copied settings hold the real URL).
+  if (sandboxBlocks('whatsapp', { to: number, summary: `${message.length} chars` })) return { id: practiceId(), practice: true }
   const { url, key } = await config()
   if (!url) throw new Error('WhatsApp gateway not configured (set it in admin → Dev → API → WhatsApp connector)')
   const res = await fetch(url, {

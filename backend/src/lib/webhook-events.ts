@@ -16,6 +16,7 @@
 
 import { serviceClient as prisma } from './prisma.js'
 import { getWebhookQueue } from './queue.js'
+import { sandboxBlocks } from './sandbox.js'
 
 export type DomainEvent =
   | 'order.placed'
@@ -49,6 +50,8 @@ export async function emitDomainEvent(event: DomainEvent, payload: unknown, tena
       select: { id: true },
     })
     if (subs.length === 0) return
+    // Practice copy: the copied subscriptions are real endpoints. Logged, never queued.
+    if (sandboxBlocks('webhook', { summary: `${event} → ${subs.length} endpoint(s)` })) return
     const queue = getWebhookQueue()
     if (!queue) return
     const emittedAt = new Date().toISOString()

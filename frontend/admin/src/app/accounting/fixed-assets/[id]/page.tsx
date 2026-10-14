@@ -158,7 +158,8 @@ export default function FixedAssetPage() {
                 ['Original cost', money(a.originalCostCents)],
                 ['Sales tax claimed', a.inputTaxCents ? money(a.inputTaxCents) : 'None'],
                 ['Brand', a.conceptName ?? 'Shared across brands'],
-                ['Outlet', a.locationName ?? '—'],
+                // Owner (2026-10-14): shared equipment always says where it physically is.
+                ['Asset location (outlet)', a.locationName ?? (a.conceptId ? '—' : 'Not set: shared equipment needs its location. Move it to its outlet.')],
                 ['Pool', a.poolLabel ? `${a.poolLabel} (${a.quantity} of ${a.originalQuantity} units)` : 'Individual item'],
                 ['Supplier', a.supplierName ?? '—'],
                 ['Serial number', a.serialNumber ?? '—'],

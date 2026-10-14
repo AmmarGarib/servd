@@ -27,11 +27,13 @@ import { sendEmail } from '../lib/notify.js'
 import { sendText as sendWhatsApp } from '../lib/whatsapp.js'
 import { getReservationPolicy } from '../lib/setup-config.js'
 import { formatBrandName } from '../lib/brandName.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 const QUEUE_NAME = 'reservation-reminders'
 const RUN_EVERY_MS = 5 * 60_000
 
 export function startReservationReminderWorker() {
+  if (sandboxBlocks('worker', { summary: 'reservationReminders' })) return // practice copy: reminds real guests
   try {
     const queue = new Queue(QUEUE_NAME, {
       connection: redis,

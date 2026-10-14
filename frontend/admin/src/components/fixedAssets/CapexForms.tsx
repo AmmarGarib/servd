@@ -16,6 +16,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
+import {
+  PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, isBankMethod, type PaymentRefUse,
+} from '../finance/PaymentReceivedFields'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { FA_BASE, L, Modal, ErrorLine, Notice, errorWords, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, todayIso, useFaCapabilities } from './shared'
@@ -210,6 +213,8 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
   const [salvage, setSalvage] = useState(0)
   const [inService, setInService] = useState((line.installedDate ?? line.actualDeliveryDate ?? '').slice(0, 10) || todayIso())
   const [locationId, setLocationId] = useState(project.locationId ?? '')
+  // An individual asset's brand: the project's by default; '' = shared across brands.
+  const [brandId, setBrandId] = useState(project.conceptId ?? '')
   const [typeKey, setTypeKey] = useState('')
   const [poolConcept, setPoolConcept] = useState(project.conceptId ?? '')
   const [inputTax, setInputTax] = useState(line.inputTaxCents)
@@ -231,6 +236,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
       ...(salvage > 0 ? { salvageCents: salvage } : {}),
       ...(name.trim() && name.trim() !== line.item ? { name: name.trim() } : {}),
       ...(locationId ? { locationId } : {}),
+      ...(cls && !cls.pooled ? { conceptId: brandId || null } : {}),
       ...(cls?.pooled ? { pool: { typeKey, conceptId: poolConcept || null } } : {}),
       inputTaxCents: inputTax,
       ...(leaseEnds && cls?.key === 'leasehold' ? { leaseEndsAt: leaseEnds } : {}),
@@ -289,7 +295,11 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
   const delivery = inService
   const closed = closedThrough !== null && new Date(`${delivery}T23:59:59+05:00`).getTime() <= closedThrough
   const taxMissingAuthority = inputTax > 0 && !line.inputTaxAuthority
-  const valid = !!cls && !!inService && (!cls.pooled || (!!typeKey && !!locationId)) && !taxMissingAuthority && (!life || Number(life) >= 1)
+  // Owner (2026-10-14): shared equipment always says where it is. The project's own outlet counts.
+  const shared = cls?.pooled ? !poolConcept : !brandId
+  const hasLocation = !!locationId || !!project.locationId
+  const sharedNeedsLocation = !!cls && !cls.pooled && shared && !hasLocation
+  const valid = !!cls && !!inService && (!cls.pooled || (!!typeKey && hasLocation)) && !sharedNeedsLocation && !taxMissingAuthority && (!life || Number(life) >= 1)
 
   return (
     <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
@@ -314,9 +324,20 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
         <L t="Sales tax claimed (PKR)" hint={line.inputTaxAuthority ? `Charged by ${line.inputTaxAuthority.toUpperCase()}.` : undefined}>
           <MoneyInput value={inputTax} onChange={setInputTax} className={inp} />
         </L>
-        <L t="Outlet">
+        {cls && !cls.pooled && (
+          <L t="Brand">
+            <select className={inp} value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+              <option value="">Shared across brands</option>
+              {project.conceptId && !brands.some((b) => b.id === project.conceptId) && <option value={project.conceptId}>The project&rsquo;s brand</option>}
+              {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </L>
+        )}
+        <L t="Asset location (outlet)" hint={sharedNeedsLocation ? 'Shared equipment needs its location' : undefined}>
           <select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">{outlets.length === 0 && project.locationId ? 'The project\'s outlet' : 'No outlet'}</option>
+            {project.locationId
+              ? <option value="">The project&rsquo;s outlet</option>
+              : <option value="" disabled={shared || !!cls?.pooled}>{shared || cls?.pooled ? 'Pick the outlet it is at' : 'No outlet'}</option>}
             {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         </L>
@@ -354,6 +375,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
         </p>
       )}
       {taxMissingAuthority && <p className="text-xs text-s-red mt-2">Set which authority charged the sales tax on the line before capitalising it.</p>}
+      {sharedNeedsLocation && <p className="text-xs mt-2" style={{ color: 'var(--erp-warning)' }}>Shared equipment needs its location. Pick the outlet it is at, or give it a brand.</p>}
 
       <ErrorLine error={send.error} />
       <button onClick={() => send.mutate()} disabled={send.isPending || !valid} className={`${btnPrimary} mt-3`}>
@@ -554,31 +576,41 @@ export function quickBuyMessage(r: QuickBuyResponse, isCeo: boolean): { tone: 'o
 
 // ─── Security deposits ──────────────────────────────────────────────────────
 
+/** How a landlord's deposit can come back (the server's list; card aside). */
+const DEPOSIT_RETURN_METHODS = ['cash', 'bank_transfer', 'bank_deposit', 'cheque'] as const
+
 export function DepositReturnModal({ payment, line, project, onClose, onDone }: {
   payment: Payment; line: Line; project: Project; onClose: () => void; onDone: () => void
 }) {
+  // The API sends every payment column; these two are read only here (2026-10-14).
+  const saved = payment as Payment & { depositReturnMethod?: string | null; depositReturnRef?: string | null }
   const held = payment.paidAmountCents ?? payment.amountCents
   const [returned, setReturned] = useState(payment.depositReturnedCents)
   const [kept, setKept] = useState(payment.depositForfeitedCents)
   const [reason, setReason] = useState('')
   const [receivedAt, setReceivedAt] = useState(payment.depositReturnedAt ? payment.depositReturnedAt.slice(0, 10) : todayIso())
-  const [payFrom, setPayFrom] = useState<'bank' | 'cash'>('bank')
+  const savedMethod = saved.depositReturnMethod === 'bank' ? 'bank_transfer' : saved.depositReturnMethod
+  const [method, setMethod] = useState<string>(savedMethod && (DEPOSIT_RETURN_METHODS as readonly string[]).includes(savedMethod) ? savedMethod : 'bank_transfer')
+  const [reference, setReference] = useState(saved.depositReturnRef ?? '')
   const [bankId, setBankId] = useState('')
+  // Saved with a reference used before: say so before closing.
+  const [reused, setReused] = useState<PaymentRefUse[] | null>(null)
 
   const send = useMutation({
-    mutationFn: () => api.post(`/finance/capex/payments/${payment.id}/deposit-return`, {
+    mutationFn: () => api.post<{ referenceUsedBefore?: PaymentRefUse[] }>(`/finance/capex/payments/${payment.id}/deposit-return`, {
       returnedCents: returned, forfeitedCents: kept,
       ...(kept > 0 ? { reason: reason.trim() } : {}),
-      receivedAt, payFrom,
-      ...(payFrom === 'bank' && bankId ? { bankAccountId: bankId } : {}),
+      receivedAt,
+      ...(returned > 0 ? { method, reference: reference.trim(), ...(isBankMethod(method) && bankId ? { bankAccountId: bankId } : {}) } : {}),
     }, project.tenantId ? { tenantId: project.tenantId } : undefined),
-    onSuccess: onDone,
+    onSuccess: (r) => { if (r?.referenceUsedBefore?.length) setReused(r.referenceUsedBefore); else onDone() },
   })
   const total = returned + kept
   const valid = total > 0 && total <= held && (kept === 0 || reason.trim().length >= 5)
+    && (returned === 0 || receiptFieldsValid({ method, reference }))
 
   return (
-    <Modal title={`Deposit back: ${line.item}`} onClose={onClose}>
+    <Modal title={`Deposit back: ${line.item}`} onClose={reused ? onDone : onClose}>
       <form onSubmit={(e) => { e.preventDefault(); send.mutate() }} className="space-y-3">
         <p className="text-sm text-white/65">The deposit held is <strong className="text-white/90">{money(held)}</strong>. Enter the totals; saving again corrects them.</p>
         <div className="grid grid-cols-2 gap-3">
@@ -586,21 +618,38 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
           <L t="Kept by the landlord (PKR)"><MoneyInput value={kept} onChange={setKept} className={inp} /></L>
         </div>
         {kept > 0 && <L t="Why the landlord kept it (at least 5 characters)"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Damage to the counter" /></L>}
-        <div className="grid grid-cols-2 gap-3">
-          <L t="Money came back on"><input type="date" className={inp} value={receivedAt} max={todayIso()} onChange={(e) => setReceivedAt(e.target.value)} /></L>
-          <L t="Received as">
-            <select className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value as 'bank' | 'cash')}>
-              <option value="bank">Bank</option><option value="cash">Cash</option>
-            </select>
-          </L>
-        </div>
-        {payFrom === 'bank' && returned > 0 && <BankAccountSelect tenantId={project.tenantId} value={bankId} onChange={setBankId} id="deposit-bank" label="Into bank account" className={inp} />}
+        <L t="Money came back on"><input type="date" className={inp} value={receivedAt} max={todayIso()} onChange={(e) => setReceivedAt(e.target.value)} /></L>
+        {returned > 0 && (
+          <PaymentReceivedFields
+            tenantId={project.tenantId}
+            methods={DEPOSIT_RETURN_METHODS}
+            methodLabel="Received as"
+            method={method}
+            onMethod={setMethod}
+            reference={reference}
+            onReference={setReference}
+            bankAccountId={bankId}
+            onBank={setBankId}
+            bankLabel="Into bank account"
+            idPrefix="deposit-return"
+            selectClassName={inp}
+            inputClassName={inp}
+            labelClassName="text-[11px] font-bold text-white/50"
+          />
+        )}
         {total > held && <p className="text-xs text-s-red">Returned plus kept cannot be more than the {money(held)} held.</p>}
         <ErrorLine error={send.error} />
-        <div className="flex gap-2 pt-1">
-          <button type="submit" disabled={send.isPending || !valid} className={btnPrimary}>{send.isPending ? 'Saving…' : 'Save'}</button>
-          <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
-        </div>
+        {reused ? (
+          <div className="space-y-3 pt-1">
+            <ReferenceUsedBeforeNotice uses={reused} />
+            <button type="button" onClick={onDone} className={btnPrimary}>Done</button>
+          </div>
+        ) : (
+          <div className="flex gap-2 pt-1">
+            <button type="submit" disabled={send.isPending || !valid} className={btnPrimary}>{send.isPending ? 'Saving…' : 'Save'}</button>
+            <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
+          </div>
+        )}
       </form>
     </Modal>
   )

@@ -43,6 +43,7 @@ import { chargeView } from '../../connectors/terminal/service.js'
 import { testApproval } from '../../connectors/drivers/test.js'
 import { handleInboundEvent } from '../../connectors/inbound.js'
 import { isoPkt, scrubMessage, withTimeout } from '../../connectors/util.js'
+import { practiceConnectorRow } from '../../lib/sandbox.js'
 
 const ADMINS = [...CONNECTOR_ADMINS] as UserRole[]
 const VIEWERS = [...CONNECTOR_ADMINS, 'management'] as UserRole[]
@@ -77,6 +78,7 @@ export interface ConnectorView {
 }
 
 function viewOf(row: PosConnector): ConnectorView {
+  row = practiceConnectorRow(row) // practice copy: the page shows the test driver it really runs on
   return {
     id: row.id,
     kind: row.kind,

@@ -77,7 +77,7 @@ export const STOCK_DIFFERENCE_QUERY_ACTION = 'stock_difference.query'
  * the kind is listed in lib/exceptions.ts ExceptionKind by wave Z — until then
  * the literal is widened through string (the column takes any string).
  */
-export const STOCK_DIFFERENCE_QUERIED_KIND = 'stock_difference_queried' as string as ExceptionKind
+export const STOCK_DIFFERENCE_QUERIED_KIND: ExceptionKind = 'stock_difference_queried'
 
 /** Who approves and sends back: the CEO. */
 export const STOCK_DIFFERENCE_APPROVERS = ['admin'] as const

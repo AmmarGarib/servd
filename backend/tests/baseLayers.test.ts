@@ -110,7 +110,7 @@ describe('fixed assets in the ledger', () => {
     // Sold on 5 March (the disposal month is not charged): book value 1,000,000; sold for 1,050,000 → 50,000 gain.
     const sold = await createRequest({
       kind: 'disposal', assetId: a.id, effectiveDate: new Date('2026-03-05T12:00:00+05:00'), reason: 'Sold to the franchisee',
-      payload: { kind: 'sale', proceedsCents: 1_050_000 },
+      payload: { kind: 'sale', proceedsCents: 1_050_000, reference: 'IBFT-1050' },
     }, { id: ceoId, role: 'admin' })
     expect(sold.applied).toBe(true)
     expect(sold.event.payload).toMatchObject({ nbvCents: 1_000_000, gainLossCents: 50_000 })

@@ -7,6 +7,9 @@
 // PKR 1,000). Amounts are typed in rupees; the bank is the one picker
 // (BankAccountSelect), showing only the active company's banks — the drop
 // belongs to the active company and its shift must be one of that company's.
+// The bank's deposit slip # (owner, 2026-10-14) sits next to the bag serial:
+// it goes into the posting so the statement line can be found by it, and a
+// slip # already used in the company is a warning, never a refusal.
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -14,6 +17,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
+import { ReferenceUsedBeforeNotice, type PaymentRefUse } from '../../../components/finance/PaymentReceivedFields'
 import { useActiveCompany } from '../../../lib/connectorsApi'
 
 interface Drop {
@@ -23,6 +27,7 @@ interface Drop {
   expectedCents: number
   varianceCents: number
   bagSerial: string | null
+  slipNumber: string | null
   receiptUrl: string | null
   droppedById: string
   droppedAt: string
@@ -84,7 +89,15 @@ export default function DepositDropsPage() {
                 <p className="text-xs text-white/45 mt-1">
                   Expected from shift (drops + count − float): {pkr(d.expectedCents)} · {new Date(d.droppedAt).toLocaleString()}
                 </p>
-                {d.bagSerial && <p className="text-xs text-white/55 font-mono mt-1">Bag: {d.bagSerial}</p>}
+                <p className="text-xs mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
+                  <span>
+                    <span className="text-white/45">Deposit slip #: </span>
+                    {d.slipNumber
+                      ? <span className="font-mono font-bold text-white/85">{d.slipNumber}</span>
+                      : <span style={{ color: 'var(--erp-warning)' }}>not recorded</span>}
+                  </span>
+                  {d.bagSerial && <span><span className="text-white/45">Bag: </span><span className="font-mono text-white/70">{d.bagSerial}</span></span>}
+                </p>
                 {d.notes && <p className="text-xs text-white/55 mt-1">{d.notes}</p>}
               </div>
               {d.receiptUrl && <a href={d.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-ink hover:underline">View receipt ↗</a>}
@@ -112,25 +125,34 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   const [amountCents, setAmountCents] = useState(0)
   const [bankAccountId, setBankAccountId] = useState('')
   const [bagSerial, setBagSerial] = useState('')
+  const [slipNumber, setSlipNumber] = useState('')
   const [receiptUrl, setReceiptUrl] = useState('')
   const [notes, setNotes] = useState('')
   // Saved but the ledger refused the posting (e.g. a closed period): the drop
   // stands and finance is flagged to re-post it — say so before closing.
   const [notBooked, setNotBooked] = useState<string | null>(null)
+  // Saved with a slip # used before in this company: a warning, shown before closing.
+  const [reused, setReused] = useState<PaymentRefUse[] | null>(null)
 
   const save = useMutation({
-    mutationFn: () => api.post<{ posted?: boolean; postingError?: string | null }>('/trustops/deposit-drops', {
+    mutationFn: () => api.post<{ posted?: boolean; postingError?: string | null; referenceUsedBefore?: PaymentRefUse[] }>('/trustops/deposit-drops', {
       shiftId: shiftId || null,
       bankAccountId: bankAccountId || null,
       amountCents,
       bagSerial: bagSerial || null,
+      slipNumber: slipNumber.trim() || null,
       receiptUrl: receiptUrl || null,
       notes: notes || null,
     }),
-    onSuccess: (r) => { if (r?.postingError) setNotBooked(r.postingError); else onSaved() },
+    onSuccess: (r) => {
+      const uses = r?.referenceUsedBefore?.length ? r.referenceUsedBefore : null
+      if (r?.postingError || uses) { setNotBooked(r?.postingError ?? null); setReused(uses) }
+      else onSaved()
+    },
   })
 
-  const close = notBooked ? onSaved : onClose
+  const done = !!notBooked || !!reused
+  const close = done ? onSaved : onClose
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={close}>
     <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
@@ -157,9 +179,10 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
         </Field>
         <BankAccountSelect tenantId={company?.id} value={bankAccountId} onChange={setBankAccountId} id="deposit-bank" label="Bank account" className={fieldCls} />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Deposit slip #"><input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>
           <Field label="Tamper-bag serial"><input value={bagSerial} onChange={(e) => setBagSerial(e.target.value)} className={fieldCls + ' font-mono'} /></Field>
-          <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
         </div>
+        <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
         <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         {save.error && <div className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-danger)', background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{(save.error as Error).message}</div>}
         {notBooked && (
@@ -167,9 +190,10 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
             The drop is saved, but it is not in the books yet ({notBooked}). Finance has been flagged to post it.
           </div>
         )}
+        <ReferenceUsedBeforeNotice uses={reused} />
       </div>
       <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-        {notBooked ? (
+        {done ? (
           <button onClick={onSaved} className="ml-auto rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90">Done</button>
         ) : (
           <>

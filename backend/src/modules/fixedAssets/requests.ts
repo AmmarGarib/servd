@@ -24,9 +24,10 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import {
   createRequest, applyEvent, rejectEvent, cancelEvent, needsApproval,
-  FA_WRITER_ROLES, FA_APPROVER_ROLE, ALLOC_KINDS, REQUEST_KINDS, DISPOSAL_KINDS, type RequestKind,
+  FA_WRITER_ROLES, FA_APPROVER_ROLE, ALLOC_KINDS, REQUEST_KINDS, DISPOSAL_KINDS, PAYLOAD_SCHEMAS, type RequestKind,
 } from './events.js'
 import type { Db } from './classes.js'
 
@@ -139,7 +140,9 @@ async function eventInScope(req: FastifyRequest, id: string): Promise<FixedAsset
 /**
  * Raise a request through the engine and answer the way the inbox expects:
  * 202 + status 'pending' while it waits for the CEO, 201 + 'posted' when it
- * was applied at once. Audited on the request's company.
+ * was applied at once. Audited on the request's company. A disposal whose
+ * payment reference # was used before in the same company also answers
+ * `referenceUsedBefore` — a warning, never a block (lib/paymentRefs.ts).
  */
 export async function raiseRequest(
   req: FastifyRequest,
@@ -155,7 +158,14 @@ export async function raiseRequest(
     after: { kind: event.kind, status: event.status, assetId: event.assetId, poolId: event.poolId, payload: event.payload, effectiveDate: event.effectiveDate },
   })
   const [shaped] = await shapeEvents(prisma, [event], actor)
-  return { statusCode: applied ? 201 : 202, body: { event: shaped, applied, status: applied ? 'posted' : 'pending' } }
+  const reference = event.kind === 'disposal' ? (event.payload as { reference?: unknown } | null)?.reference : null
+  const referenceUsedBefore = typeof reference === 'string' && reference
+    ? await findPaymentReferenceUses(prisma, event.tenantId, reference, { exclude: { kind: 'asset_disposal', id: event.id } })
+    : []
+  return {
+    statusCode: applied ? 201 : 202,
+    body: { event: shaped, applied, status: applied ? 'posted' : 'pending', ...(event.kind === 'disposal' ? { referenceUsedBefore } : {}) },
+  }
 }
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
@@ -187,13 +197,19 @@ export async function fixedAssetRequestRoutes(fastify: FastifyInstance) {
   })
 
   // POST /:id/dispose — the old direct disposal, now a disposal REQUEST
-  // (202 pending for finance, 201 applied for the CEO).
+  // (202 pending for finance, 201 applied for the CEO). A sale with proceeds
+  // names how the buyer paid (method) and its payment reference # (422
+  // PAYMENT_REFERENCE_REQUIRED without one); a reference used before answers
+  // `referenceUsedBefore`, never a refusal.
   fastify.post<{ Params: { id: string } }>('/:id/dispose', { preHandler: requireAuth(...FA_WRITERS) }, async (req, reply) => {
     const body = z.object({
       disposedAt: dateInput,
       kind: z.enum(DISPOSAL_KINDS).optional(),
       proceedsCents: zMoneyCents('The disposal proceeds').default(0),
-      method: z.enum(['bank', 'bank_transfer', 'cheque', 'online', 'cash']).optional(),
+      // The engine's own fields (one list: events.ts DISPOSAL_METHODS; the reference # is
+      // required when there are proceeds — owner, 2026-10-14).
+      method: PAYLOAD_SCHEMAS.disposal.shape.method,
+      reference: PAYLOAD_SCHEMAS.disposal.shape.reference,
       bankAccountId: z.string().min(1).max(64).nullable().optional(),
       reason: z.string().max(1000).optional(),
     }).parse(req.body)
@@ -210,6 +226,7 @@ export async function fixedAssetRequestRoutes(fastify: FastifyInstance) {
         kind: body.kind ?? (body.proceedsCents > 0 ? 'sale' : 'scrap'),
         proceedsCents: body.proceedsCents,
         ...(body.method ? { method: body.method } : {}),
+        ...(body.reference != null ? { reference: body.reference } : {}),
         ...(body.bankAccountId !== undefined ? { bankAccountId: body.bankAccountId } : {}),
       },
     })

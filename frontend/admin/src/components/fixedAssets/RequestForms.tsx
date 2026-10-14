@@ -12,13 +12,24 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
-import { BankAccountSelect } from '../finance/BankAccountSelect'
+import {
+  PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, isBankMethod, type PaymentRefUse,
+} from '../finance/PaymentReceivedFields'
 import {
   FA_BASE, L, Modal, ErrorLine, inp, btnPrimary, btnGhost, money, todayIso, fmtLife, forCompany,
   type FaAsset, type FaLookups, type FaRequest,
 } from './shared'
 
-export interface RequestResult { status: 'pending' | 'posted'; applied: boolean; event: FaRequest }
+export interface RequestResult {
+  status: 'pending' | 'posted'
+  applied: boolean
+  event: FaRequest
+  /** A disposal's payment reference # already used in this company: a warning only. */
+  referenceUsedBefore?: PaymentRefUse[]
+}
+
+/** How a buyer can pay for an asset sale (the server also reads the old 'bank' / 'online'). */
+const SALE_METHODS = ['cash', 'bank_transfer', 'bank_deposit', 'cheque'] as const
 
 export type AssetRequestKind = 'disposal' | 'impairment' | 'change_estimate' | 'void' | 'undispose' | 'transfer'
 
@@ -68,7 +79,10 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
   const [dKind, setDKind] = useState('sale')
   const [proceeds, setProceeds] = useState(0)
   const [method, setMethod] = useState('bank_transfer')
+  const [paymentRef, setPaymentRef] = useState('')
   const [bankId, setBankId] = useState('')
+  // A sale saved with a reference used before: shown here before the modal closes.
+  const [reused, setReused] = useState<RequestResult | null>(null)
   // impairment
   const [writeDown, setWriteDown] = useState(0)
   // change of estimate
@@ -88,7 +102,9 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
         return {
           kind: dKind,
           proceedsCents: dKind === 'sale' ? proceeds : 0,
-          ...(dKind === 'sale' && proceeds > 0 ? { method, ...(method !== 'cash' && bankId ? { bankAccountId: bankId } : {}) } : {}),
+          ...(dKind === 'sale' && proceeds > 0
+            ? { method, reference: paymentRef.trim(), ...(isBankMethod(method) && bankId ? { bankAccountId: bankId } : {}) }
+            : {}),
         }
       case 'impairment': return { amountCents: writeDown }
       case 'change_estimate':
@@ -112,15 +128,23 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
       ...(kind !== 'transfer' && kind !== 'void' && kind !== 'undispose' ? { effectiveDate: date } : {}),
       payload: payload(),
     }, { tenantId: asset.tenantId }),
-    onSuccess: (r) => onDone(r),
+    onSuccess: (r) => { if (r.referenceUsedBefore?.length) setReused(r); else onDone(r) },
   })
 
+  // Moving it to "shared across brands" must leave it at an outlet (owner, 2026-10-14).
+  const toConceptAfter = toConcept === '__keep' ? asset.conceptId : toConcept === '__shared' ? null : toConcept
+  const toLocationAfter = toLocation === '__keep' ? asset.locationId : toLocation
+  const sharedWithoutLocation = kind === 'transfer' && !toConceptAfter && !toLocationAfter
+
+  const sale = kind === 'disposal' && dKind === 'sale' && proceeds > 0
   const reasonOk = kind === 'transfer' || reason.trim().length >= MIN_REASON
   const valid = reasonOk && (
-    kind === 'disposal' ? (dKind !== 'sale' || proceeds >= 0) && !(dKind === 'sale' && proceeds > 0 && method !== 'cash' && lookups.bankAccounts.filter((b) => b.tenantId === asset.tenantId && b.accountCode).length > 1 && !bankId)
+    kind === 'disposal' ? (dKind !== 'sale' || proceeds >= 0)
+      && (!sale || receiptFieldsValid({ method, reference: paymentRef }))
+      && !(sale && isBankMethod(method) && lookups.bankAccounts.filter((b) => b.tenantId === asset.tenantId && b.accountCode).length > 1 && !bankId)
     : kind === 'impairment' ? writeDown > 0 && writeDown <= asset.nbvCents
     : kind === 'change_estimate' ? (!!life && Number(life) >= 1) || changeSalvage
-    : kind === 'transfer' ? toConcept !== '__keep' || toLocation !== '__keep'
+    : kind === 'transfer' ? (toConcept !== '__keep' || toLocation !== '__keep') && !sharedWithoutLocation
     : true
   )
   const gain = proceeds - asset.nbvCents
@@ -154,19 +178,23 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
               </div>
               {dKind === 'sale' && (
                 <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <L t="Sold for (PKR)"><MoneyInput value={proceeds} onChange={setProceeds} className={inp} /></L>
-                    <L t="Paid by">
-                      <select className={inp} value={method} onChange={(e) => setMethod(e.target.value)}>
-                        <option value="bank_transfer">Bank transfer</option>
-                        <option value="cheque">Cheque</option>
-                        <option value="online">Online payment</option>
-                        <option value="cash">Cash</option>
-                      </select>
-                    </L>
-                  </div>
-                  {proceeds > 0 && method !== 'cash' && (
-                    <BankAccountSelect tenantId={asset.tenantId} value={bankId} onChange={setBankId} id="fa-dispose-bank" label="Money lands in" className={inp} />
+                  <L t="Sold for (PKR)"><MoneyInput value={proceeds} onChange={setProceeds} className={inp} /></L>
+                  {proceeds > 0 && (
+                    <PaymentReceivedFields
+                      tenantId={asset.tenantId}
+                      methods={SALE_METHODS}
+                      method={method}
+                      onMethod={setMethod}
+                      reference={paymentRef}
+                      onReference={setPaymentRef}
+                      bankAccountId={bankId}
+                      onBank={setBankId}
+                      bankLabel="Money lands in"
+                      idPrefix="fa-dispose"
+                      selectClassName={inp}
+                      inputClassName={inp}
+                      labelClassName="text-[11px] font-bold text-white/50"
+                    />
                   )}
                 </>
               )}
@@ -229,6 +257,9 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
                   {brands.filter((b) => b.id !== asset.conceptId).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
               </L>
+              {sharedWithoutLocation && (
+                <p className="sm:col-span-2 text-xs" style={{ color: 'var(--erp-warning)' }}>Shared equipment needs its location. Pick the outlet it is at.</p>
+              )}
             </div>
           )}
 
@@ -239,7 +270,14 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
         </div>
 
         <ErrorLine error={send.error} />
-        <Footer onClose={onClose} pending={send.isPending} disabled={!valid} label={label} />
+        {reused ? (
+          <div className="mt-4 space-y-3">
+            <ReferenceUsedBeforeNotice uses={reused.referenceUsedBefore} />
+            <button type="button" onClick={() => onDone(reused)} className={btnPrimary}>Done</button>
+          </div>
+        ) : (
+          <Footer onClose={onClose} pending={send.isPending} disabled={!valid} label={label} />
+        )}
       </form>
     </Modal>
   )
