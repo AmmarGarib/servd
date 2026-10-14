@@ -181,10 +181,21 @@ describe('R2-UI-03 — Brand Editor for the marketing tier', () => {
 
   it('marketing saves the marketing fields; the change is audited with the company', async () => {
     const body = {
-      description: 'Scratch café and market', heroTagline: 'stack it up', primaryColor: '#7C2946',
+      description: 'Scratch café and market', heroTagline: 'stack it up',
       conceptStatement: 'A café', cuisine: 'Café', priceTier: 'mid', daypartFocus: ['breakfast'], competitors: ['X'],
-      brandVoice: 'Warm', wordmarkUrl: '/marketing/w.png', mascotUrl: '', logoUrl: 'https://media.example/l.png',
+      brandVoice: 'Warm',
     }
+    const kitBefore = await prisma.concept.findUniqueOrThrow({
+      where: { id: A.conceptId }, select: { primaryColor: true, logoUrl: true, wordmarkUrl: true, mascotUrl: true },
+    })
+    // The brand's look (colour, logo, wordmark, mascot) is the brand kit's:
+    // a PATCH carrying any of it is refused whole (review-back-admin-3).
+    const kitTry = await req(marketingA, 'PATCH', `/concepts/${A.conceptId}`, {
+      ...body, primaryColor: '#7C2946', wordmarkUrl: '/marketing/w.png', mascotUrl: '', logoUrl: 'https://media.example/l.png',
+    })
+    expect(kitTry.statusCode, kitTry.body).toBe(403)
+    expect(kitTry.json().error.code).toBe('KIT_FIELD_CEO_ONLY')
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).description).not.toBe('Scratch café and market')
     const r = await req(marketingA, 'PATCH', `/concepts/${A.conceptId}`, body)
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().brandEditorAccess).toBe('marketing')
@@ -192,9 +203,7 @@ describe('R2-UI-03 — Brand Editor for the marketing tier', () => {
     const row = await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })
     expect(row.description).toBe('Scratch café and market')
     expect(row.heroTagline).toBe('stack it up')
-    expect(row.primaryColor).toBe('#7C2946')
-    expect(row.mascotUrl).toBeNull()
-    expect(row.wordmarkUrl).toBe('/marketing/w.png')
+    expect({ primaryColor: row.primaryColor, logoUrl: row.logoUrl, wordmarkUrl: row.wordmarkUrl, mascotUrl: row.mascotUrl }).toEqual(kitBefore)
     // Untouched management fields.
     expect(row.taxRateCash).toBe(15)
     expect(row.isActive).toBe(true)
@@ -219,10 +228,11 @@ describe('R2-UI-03 — Brand Editor for the marketing tier', () => {
   })
 
   it('a bad value is a 400, not a partial save', async () => {
-    const r = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { primaryColor: 'javascript:alert(1)' })
+    const r = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { priceTier: 'javascript:alert(1)' })
     expect(r.statusCode).toBe(400)
+    // Kit fields are refused before validation for anyone but the CEO.
     const r2 = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'javascript:alert(1)' })
-    expect(r2.statusCode).toBe(400)
+    expect(r2.statusCode).toBe(403)
   })
 
   it('without the brands module (CEO untick / moduleDeny, or a role without it) the editor is closed', async () => {
@@ -304,18 +314,22 @@ describe('R2-UI-03 — Brand Editor for the marketing tier', () => {
   // RV-U-02: one logoUrl rule for both tiers. A root-relative logo (what the
   // uploader returns when R2_PUBLIC_URL is unset) saved by marketing must not
   // make management's next full save — which resends logoUrl — fail with 400.
-  it('a root-relative logo saved by marketing survives management\'s next full save', async () => {
-    const m = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: '/marketing/logo.png' })
+  // Since the brand kit (review-back-admin-3) only the CEO may PATCH logoUrl;
+  // management and marketing get 403 KIT_FIELD_CEO_ONLY.
+  it('a root-relative logo is accepted (CEO); management can no longer resend logoUrl', async () => {
+    const ceoA = await mkUser('rsui-ceoA', 'admin', A.tenantId)
+    const m = await req(ceoA, 'PATCH', `/concepts/${conceptA2}?view=brand`, { logoUrl: '/marketing/logo.png', taxRateCash: 15, phone: '0300' })
     expect(m.statusCode, m.body).toBe(200)
     const full = await req(managerA, 'PATCH', `/concepts/${conceptA2}?view=brand`, { logoUrl: '/marketing/logo.png', taxRateCash: 15, phone: '0300' })
-    expect(full.statusCode, full.body).toBe(200)
+    expect(full.statusCode, full.body).toBe(403)
+    expect((await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: '/marketing/logo.png' })).statusCode).toBe(403)
     const row = await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })
     expect(row.logoUrl).toBe('/marketing/logo.png')
     expect(row.taxRateCash).toBe(15)
     // The full schema still refuses script/data URLs and still clears on ''.
-    expect((await req(managerA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'javascript:alert(1)' })).statusCode).toBe(400)
-    expect((await req(managerA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'data:image/png;base64,AAAA' })).statusCode).toBe(400)
-    expect((await req(managerA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: '' })).statusCode).toBe(200)
+    expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'javascript:alert(1)' })).statusCode).toBe(400)
+    expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'data:image/png;base64,AAAA' })).statusCode).toBe(400)
+    expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: '' })).statusCode).toBe(200)
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })).logoUrl).toBeNull()
     // An absent logoUrl leaves the stored one alone.
     await prisma.concept.update({ where: { id: conceptA2 }, data: { logoUrl: '/marketing/keep.png' } })

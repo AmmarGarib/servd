@@ -8,6 +8,7 @@ import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
+import { KIT_CONCEPT_FIELDS } from '../siteLayouts/service.js'
 
 // What a till role (cashier, foh/waiter) may read about a brand: enough to
 // pick it at the till and see its tender GST split, nothing else. The brand
@@ -43,6 +44,8 @@ const STOREFRONT_CONCEPT_SELECT = {
   name: true,
   slug: true,
   logoUrl: true,
+  wordmarkUrl: true,
+  mascotUrl: true,
   primaryColor: true,
   isActive: true,
 } satisfies Prisma.ConceptSelect
@@ -70,7 +73,9 @@ const PICKER_CONCEPT_SELECT = {
 // admin → Marketing → Brands). R2-UI-03: the editor read the managers-only
 // list, so marketing saw no brands and could not save any.
 //
-// BRAND_MARKETING_FIELDS is the ONE allow-list of what that tier may WRITE:
+// BRAND_MARKETING_FIELDS is the ONE allow-list of what that tier may WRITE
+// (logoUrl / wordmarkUrl / mascotUrl / primaryColor stay listed for the
+// editor's READ, but a PATCH of them is CEO-only — assertKitFieldsCeoOnly):
 // the brand's public copy, artwork, colour and strategy brief. Everything
 // else stays with management — name, slug, type, isActive, tenant, the tax
 // rates and tender split, STRN/NTN/province/invoice details, FBR/SRB POS ids,
@@ -127,6 +132,26 @@ async function holdsBrandsModule(req: FastifyRequest): Promise<boolean> {
 
 /** The Brand Editor's access: management edits the whole brand, a 'brands'
  *  module holder only the marketing fields; anyone else 403. */
+/** The brand's look on the Concept — primaryColor, logoUrl, wordmarkUrl,
+ *  mascotUrl — is written by the brand kit's publish (CEO-approved, in
+ *  Storefront → Brand kit), never straight from a PATCH. Only the CEO (role
+ *  admin) may still PATCH them; anyone else sending one is refused whole
+ *  (403 KIT_FIELD_CEO_ONLY), never partly applied (review-back-admin-3).
+ *  POST /concepts keeps primaryColor as a new brand's starting colour. */
+function assertKitFieldsCeoOnly(req: FastifyRequest): void {
+  if (req.staffUser!.role === 'admin') return
+  const body = req.body
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return
+  const sent = KIT_CONCEPT_FIELDS.filter((k) => (body as Record<string, unknown>)[k] !== undefined)
+  if (sent.length > 0) {
+    throw new AppError(
+      'KIT_FIELD_CEO_ONLY',
+      `${sent.join(', ')} ${sent.length === 1 ? 'is' : 'are'} set by the brand kit. Change ${sent.length === 1 ? 'it' : 'them'} in Storefront → Brand kit; the CEO approves the change.`,
+      403,
+    )
+  }
+}
+
 async function brandEditorAccess(req: FastifyRequest): Promise<'full' | 'marketing'> {
   if (isManager(req.staffUser!.role)) return 'full'
   if (await holdsBrandsModule(req)) return 'marketing'
@@ -504,6 +529,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // and the change is audited.
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth() }, async (req, reply) => {
     const access = await brandEditorAccess(req)
+    assertKitFieldsCeoOnly(req)
     if (access === 'marketing') {
       const body = req.body
       if (!body || typeof body !== 'object' || Array.isArray(body)) {

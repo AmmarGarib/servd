@@ -18,6 +18,8 @@ const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
 const { siteLayoutRoutes } = await import('../src/modules/siteLayouts/routes.js')
 const { tenantRoutes } = await import('../src/modules/tenants/routes.js')
+const { conceptRoutes } = await import('../src/modules/concepts/routes.js')
+const { mediaRoutes } = await import('../src/modules/media/routes.js')
 const { ensureChartOfAccounts } = await import('../src/lib/chartOfAccounts.js')
 const { publishDueLayouts, parseSlug } = await import('../src/modules/siteLayouts/service.js')
 const { brandKitSchema } = await import('../src/modules/siteLayouts/schemas.js')
@@ -36,6 +38,7 @@ type U = { id: string; name: string; email: string; role: string }
 let ceo: U
 let marketer: U
 let marketerB: U
+let managerA: U
 const userIds: string[] = []
 const tenantIds: string[] = []
 const conceptSlugs: string[] = []
@@ -106,6 +109,7 @@ beforeAll(async () => {
   ceo = await makeUser('ceo', 'admin', tenantA, [tenantA, tenantB])
   marketer = await makeUser('mkt', 'marketing', tenantA, [tenantA])
   marketerB = await makeUser('mktb', 'marketing', tenantB, [tenantB])
+  managerA = await makeUser('mgr', 'owner', tenantA, [tenantA])
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -118,6 +122,8 @@ beforeAll(async () => {
   await app.register(async (api) => {
     await api.register(siteLayoutRoutes, { prefix: '/site-layouts' })
     await api.register(tenantRoutes, { prefix: '/tenants' })
+    await api.register(conceptRoutes, { prefix: '/concepts' })
+    await api.register(mediaRoutes, { prefix: '/media' })
   }, { prefix: '/api/v1' })
   await app.ready()
 }, 60_000)
@@ -257,16 +263,33 @@ describe('publish → Concept sync', () => {
     expect(pub.fonts).toEqual([{ id: `library:${fontA}`, family: 'BktDisplayA', url: expect.stringContaining('.woff2'), format: 'woff2' }])
   })
 
-  it('a later kit that leaves a field empty never nulls the Concept value', async () => {
+  it('a later kit that clears a field puts the brand\'s pre-kit value back (never keeps the old kit value)', async () => {
     await saveKit(marketer, slugA, { v: 1, roles: { ordering: '#654321' } })
     const r = await call('POST', `/${enc(kitSlug(slugA))}/approve`, auth(ceo), {})
     expect(r.json().liveVersion).toBe(2)
     expect(await concept(slugA)).toEqual({
       primaryColor: '#654321',
-      logoUrl: 'https://cdn.example.com/new-logo.png',
-      wordmarkUrl: '/brand/old-wordmark.png',
-      mascotUrl: '/brand/bkt-mascot.png',
+      logoUrl: 'https://cdn.example.com/old-logo.png', // v1 set it, v2 doesn't: pre-kit value
+      wordmarkUrl: '/brand/old-wordmark.png',          // no kit ever set it: untouched
+      mascotUrl: null,                                 // pre-kit it had none
     })
+  })
+
+  it('the pre-kit snapshot is server-only: never in a public, edit or version read, and a draft cannot set it', async () => {
+    const stored = await prisma.siteLayout.findUniqueOrThrow({ where: { slug: kitSlug(slugA) } })
+    expect((stored.settings as Record<string, unknown>)['conceptBefore']).toEqual({
+      primaryColor: '#111111', logoUrl: 'https://cdn.example.com/old-logo.png', wordmarkUrl: '/brand/old-wordmark.png', mascotUrl: null,
+    })
+    const pub = (await call('GET', `/${enc(kitSlug(slugA))}`)).json()
+    expect(pub.settings).toEqual({ kit: { v: 1, roles: { ordering: '#654321' } } })
+    const edit = (await call('GET', `/${enc(kitSlug(slugA))}/edit`, auth(marketer))).json()
+    expect(Object.keys(edit.settings)).toEqual(['kit'])
+    const versions = (await call('GET', `/${enc(kitSlug(slugA))}/versions`, auth(marketer))).json() as Array<{ settings: object }>
+    for (const v of versions) expect(Object.keys(v.settings)).toEqual(['kit'])
+    const forged = await call('PUT', `/${enc(kitSlug(slugA))}/draft`, auth(marketer), {
+      kind: 'kit', blocks: [], settings: { kit: { v: 1 }, conceptBefore: { primaryColor: '#000000', logoUrl: null, wordmarkUrl: null, mascotUrl: null } },
+    })
+    expect(forged.statusCode).toBe(400)
   })
 
   it('rollback republishes an old kit and syncs the Concept', async () => {
@@ -274,7 +297,12 @@ describe('publish → Concept sync', () => {
     const r = await call('POST', `/${enc(kitSlug(slugA))}/rollback`, auth(ceo), { version: 1 })
     expect(r.statusCode).toBe(200)
     expect(r.json().liveVersion).toBe(3)
-    expect((await concept(slugA)).primaryColor).toBe('#123456')
+    expect(await concept(slugA)).toEqual({
+      primaryColor: '#123456',
+      logoUrl: 'https://cdn.example.com/new-logo.png',
+      wordmarkUrl: '/brand/old-wordmark.png',
+      mascotUrl: '/brand/bkt-mascot.png',
+    })
   })
 
   it('a scheduled kit syncs when publishDueLayouts publishes it', async () => {
@@ -285,9 +313,13 @@ describe('publish → Concept sync', () => {
     expect((await concept(slugA)).primaryColor).toBe('#123456')
     await prisma.siteLayout.update({ where: { slug: kitSlug(slugA) }, data: { publishAt: new Date(Date.now() - 1000) } })
     expect(await publishDueLayouts({ kind: 'kit' })).toBe(1)
-    const c = await concept(slugA)
-    expect(c.primaryColor).toBe('#ABCDEF')
-    expect(c.wordmarkUrl).toBe('https://cdn.example.com/wm.png')
+    // v3 (= v1) set logo + mascot; v4 does not: both go back to pre-kit.
+    expect(await concept(slugA)).toEqual({
+      primaryColor: '#ABCDEF',
+      logoUrl: 'https://cdn.example.com/old-logo.png',
+      wordmarkUrl: 'https://cdn.example.com/wm.png',
+      mascotUrl: null,
+    })
     r = await call('GET', `/${enc(kitSlug(slugA))}/edit`, auth(marketer))
     expect(r.json().liveVersion).toBe(4)
   })
@@ -339,6 +371,94 @@ describe('public reads', () => {
   it('the kit slug is never in /pages/live (sitemap)', async () => {
     const pages = (await call('GET', '/pages/live')).json() as Array<{ slug: string }>
     expect(pages.some((p) => p.slug.endsWith(':kit'))).toBe(false)
+  })
+})
+
+describe('removing a kit', () => {
+  it('DELETE of a live kit puts every field it set back to the pre-kit values', async () => {
+    const b = await brand('brand-del', tenantA, { primaryColor: '#222222', logoUrl: null })
+    await saveKit(marketer, b, { v: 1, roles: { ordering: '#333333' }, images: { logo: 'https://cdn.example.com/del-logo.png' } })
+    expect((await call('POST', `/${enc(kitSlug(b))}/approve`, auth(ceo), {})).statusCode).toBe(200)
+    expect(await concept(b)).toMatchObject({ primaryColor: '#333333', logoUrl: 'https://cdn.example.com/del-logo.png' })
+    expect((await call('DELETE', `/${enc(kitSlug(b))}`, auth(marketer))).statusCode).toBe(403)
+    expect((await call('DELETE', `/${enc(kitSlug(b))}`, auth(ceo))).statusCode).toBe(204)
+    expect(await concept(b)).toEqual({ primaryColor: '#222222', logoUrl: null, wordmarkUrl: null, mascotUrl: null })
+    expect(await prisma.siteLayout.findUnique({ where: { slug: kitSlug(b) } })).toBeNull()
+  })
+})
+
+describe('public per-slug read', () => {
+  it('returns the empty shape for a brand that is hidden, retired or deleted; staff still read it via /edit', async () => {
+    // slugHidden has a live kit (published in "public reads" above, or here).
+    const row = await prisma.siteLayout.findUnique({ where: { slug: kitSlug(slugHidden) } })
+    if (!row || row.liveVersion === 0) {
+      await saveKit(marketer, slugHidden, { v: 1, roles: { accent: '#000000' } })
+      expect((await call('POST', `/${enc(kitSlug(slugHidden))}/approve`, auth(ceo), {})).statusCode).toBe(200)
+    }
+    const pub = (await call('GET', `/${enc(kitSlug(slugHidden))}`)).json()
+    expect(pub).toMatchObject({ version: 0, settings: null, blocks: null, fonts: [] })
+    const edit = await call('GET', `/${enc(kitSlug(slugHidden))}/edit`, auth(marketer))
+    expect(edit.statusCode).toBe(200)
+    expect(edit.json().settings.kit.roles.accent).toBe('#000000')
+
+    // A visible brand's kit reads normally; retiring the brand hides it.
+    expect((await call('GET', `/${enc(kitSlug(slugA))}`)).json().version).toBeGreaterThan(0)
+    await prisma.concept.update({ where: { slug: slugA }, data: { isActive: false } })
+    try {
+      expect((await call('GET', `/${enc(kitSlug(slugA))}`)).json()).toMatchObject({ version: 0, settings: null })
+    } finally {
+      await prisma.concept.update({ where: { slug: slugA }, data: { isActive: true } })
+    }
+  })
+})
+
+describe('Concept PATCH: the kit owns the brand\'s look', () => {
+  it('logoUrl / wordmarkUrl / mascotUrl / primaryColor are CEO-only; other fields still save', async () => {
+    const b = await brand('brand-patch', tenantA, { primaryColor: '#444444' })
+    const id = (await prisma.concept.findUniqueOrThrow({ where: { slug: b } })).id
+    const patch = (who: U, payload: object) =>
+      app.inject({ method: 'PATCH', url: `/api/v1/concepts/${id}`, headers: auth(who), payload })
+    for (const field of ['logoUrl', 'wordmarkUrl', 'mascotUrl']) {
+      const r = await patch(marketer, { [field]: 'https://cdn.example.com/x.png' })
+      expect(r.statusCode, field).toBe(403)
+      expect(r.json().error.code).toBe('KIT_FIELD_CEO_ONLY')
+      expect((await patch(managerA, { [field]: 'https://cdn.example.com/x.png' })).statusCode, field).toBe(403)
+    }
+    expect((await patch(marketer, { primaryColor: '#ff0000' })).statusCode).toBe(403)
+    expect((await patch(managerA, { primaryColor: '#ff0000', phone: '0300' })).statusCode).toBe(403)
+    expect((await concept(b)).primaryColor).toBe('#444444')
+    // Copy still saves for the marketing tier and management.
+    expect((await patch(marketer, { heroTagline: 'new line' })).statusCode).toBe(200)
+    expect((await patch(managerA, { phone: '0300' })).statusCode).toBe(200)
+    // The CEO may still set them.
+    expect((await patch(ceo, { primaryColor: '#555555' })).statusCode).toBe(200)
+    expect((await concept(b)).primaryColor).toBe('#555555')
+  })
+})
+
+describe('Library font family', () => {
+  it('PATCH /media/:id refuses a family that would break the storefront CSS (422 FONT_FAMILY_INVALID)', async () => {
+    const f = await font(tenantA, 'BktSafe')
+    const patch = (fontFamily: string) =>
+      app.inject({ method: 'PATCH', url: `/api/v1/media/${f}`, headers: auth(marketer), payload: { fontFamily } })
+    for (const bad of ['Foo\nBar', 'Foo"Bar', "Foo'Bar", 'Foo;}:root{', 'Foo\\Bar', 'Foo<x>', 'Foo\u0000']) {
+      const r = await patch(bad)
+      expect(r.statusCode, JSON.stringify(bad)).toBe(422)
+      expect(r.json().error.code).toBe('FONT_FAMILY_INVALID')
+    }
+    expect((await patch('Bricolage Grotesque 2.0_x-y')).statusCode).toBe(200)
+    expect((await prisma.mediaAsset.findUniqueOrThrow({ where: { id: f } })).fontFamily).toBe('Bricolage Grotesque 2.0_x-y')
+  })
+
+  it('a stored family with a newline (older row) is cleaned before /kits/live serves it', async () => {
+    const f = await font(tenantA, 'BktOld')
+    await prisma.mediaAsset.update({ where: { id: f }, data: { fontFamily: 'Bkt\nOld"};' } })
+    const b = await brand('brand-font', tenantA)
+    await prisma.siteLayout.create({
+      data: { slug: kitSlug(b), kind: 'kit', tenantId: tenantA, blocks: [], settings: { kit: { v: 1, fonts: { display: `library:${f}` } } }, liveVersion: 1 },
+    })
+    const { kits } = (await call('GET', '/kits/live')).json()
+    expect(kits[b].fonts).toEqual([expect.objectContaining({ id: `library:${f}`, family: 'Bkt Old' })])
   })
 })
 

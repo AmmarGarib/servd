@@ -23,7 +23,7 @@
 // with the same alpha string, the Flipd checker SVG with the two colours
 // substituted), so a kit edit reaches them too.
 
-import { fontFaceCss, type LibraryFont } from './blocks'
+import { fontFaceCss, safeFontFamily, type LibraryFont } from './blocks'
 
 // ── Wire types (the kit as stored in settings.kit) ──────────────────────────
 
@@ -111,7 +111,7 @@ export function normalizeKitFonts(v: unknown): KitFontFile[] {
   for (const f of v.slice(0, 10)) {
     if (!isObj(f)) continue
     const id = typeof f['id'] === 'string' ? f['id'].replace(/^library:/, '') : ''
-    const family = typeof f['family'] === 'string' ? f['family'].replace(/["'<>{};\\]/g, '').trim().slice(0, 120) : ''
+    const family = safeFontFamily(f['family'])
     const url = typeof f['url'] === 'string' ? f['url'].trim() : ''
     if (!LIBRARY_ID_RE.test(id) || !family || url.length > 2000 || !/^(https:\/\/|\/(?!\/))/i.test(url)) continue
     out.push({ id, family, url, format: typeof f['format'] === 'string' ? f['format'].slice(0, 20) : null })
@@ -194,6 +194,26 @@ export function rgbaOf(hex: Hex, alpha: string): string {
   const h = hex.replace('#', '')
   const n = (i: number) => parseInt(h.slice(i, i + 2), 16)
   return `rgba(${n(0)},${n(2)},${n(4)},${alpha})`
+}
+
+/** `r g b` channels of a 6-digit hex — the value of a `--x-rgb` token, read
+ *  as `rgb(var(--x-rgb) / <alpha>)` (the admin's channel-token pattern): the
+ *  same colour as rgbaOf() and it needs no color-mix(). */
+export function channelsOf(hex: Hex): string {
+  const h = hex.replace('#', '')
+  const n = (i: number) => parseInt(h.slice(i, i + 2), 16)
+  return `${n(0)} ${n(2)} ${n(4)}`
+}
+
+/** A variable colour (section field, primaryColor, a var()) at a two-digit
+ *  hex alpha (`'22'`, `'cc'`): a 6-digit hex gets the alpha appended, exactly
+ *  as the code did before the kit (same pixels, and no color-mix() needed);
+ *  anything else is tinted with color-mix(). For a kit palette colour use its
+ *  channel token instead: rgb(var(--<brand>-<key>-rgb) / <alpha>). */
+export function tintColor(color: string, hexAlpha: string): string {
+  if (isHex(color)) return `${color}${hexAlpha}`
+  const pct = Math.round((parseInt(hexAlpha, 16) / 255) * 1000) / 10
+  return `color-mix(in srgb, ${color} ${pct}%, transparent)`
 }
 
 /** The Flipd checker tile: navy and bone squares, 36px, as an SVG data URL. */
@@ -319,9 +339,10 @@ function fontStack(ref: FontRef | undefined, dflt: string, files: KitFontFile[],
   if (ref.startsWith('library:')) {
     const id = ref.slice('library:'.length)
     const file = files.find((f) => f.id === id)
-    if (file) {
-      faces.push({ family: file.family, url: file.url })
-      return { stack: `"${file.family}", ${base}`, set: true }
+    const family = file ? safeFontFamily(file.family) : null
+    if (file && family) {
+      faces.push({ family, url: file.url })
+      return { stack: `"${family}", ${base}`, set: true }
     }
   }
   return { stack: base, set: false }
@@ -399,6 +420,9 @@ export function kitDeclarations(k: ResolvedKit): string[] {
   const cat = k.bespoke ? KIT_CATALOGUE[k.slug]! : null
   if (cat) {
     for (const e of cat.palette) out.push(`--${k.slug}-${e.key}:${k.palette[e.key]}`)
+    // Channel tokens (`--<slug>-<key>-rgb: r g b`) for translucent uses:
+    // rgb(var(--simmer-bone-rgb) / 0.2) — never color-mix() of the colour.
+    for (const e of cat.palette) out.push(`--${k.slug}-${e.key}-rgb:${channelsOf(k.palette[e.key]!)}`)
     for (const d of cat.derived) out.push(`--${k.slug}-${d.name}:${d.value(k.palette)}`)
     out.push(`--${k.slug}-display:${k.fonts.display}`, `--${k.slug}-body:${k.fonts.body}`)
     for (const f of cat.fixed) out.push(`--${k.slug}-${f.name}:${f.value}`)
@@ -408,12 +432,15 @@ export function kitDeclarations(k: ResolvedKit): string[] {
   // emitted for a brand nobody has edited.
   if (cat || k.version !== null) {
     if (cat || isHex(k.accent)) out.push(`${kitVar(k.slug, 'accent')}:${k.accent}`)
+    if (isHex(k.accent)) out.push(`${kitVar(k.slug, 'accent')}-rgb:${channelsOf(k.accent)}`)
     out.push(
       `${kitVar(k.slug, 'surface-bg')}:${k.surface.bg}`,
       `${kitVar(k.slug, 'surface-text')}:${k.surface.text}`,
       `${kitVar(k.slug, 'surface-muted')}:${k.surface.muted}`,
       `${kitVar(k.slug, 'surface-border')}:${k.surface.border}`,
     )
+    if (isHex(k.surface.bg)) out.push(`${kitVar(k.slug, 'surface-bg')}-rgb:${channelsOf(k.surface.bg)}`)
+    if (isHex(k.surface.text)) out.push(`${kitVar(k.slug, 'surface-text')}-rgb:${channelsOf(k.surface.text)}`)
     if (!cat && k.fontSet.display) out.push(`${kitVar(k.slug, 'display')}:${k.fonts.display}`)
     if (!cat && k.fontSet.body) out.push(`${kitVar(k.slug, 'body')}:${k.fonts.body}`)
   }

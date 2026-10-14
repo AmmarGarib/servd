@@ -47,7 +47,7 @@ const SKINS: Record<string, CardSkin> = {
   },
 }
 
-export async function ReservePicker({ fields }: SectionProps) {
+export async function ReservePicker({ fields, ctx }: SectionProps) {
   // Its own read (not ctx.concepts): with the API down the page says nobody
   // is taking bookings rather than offering the bundled fallback brands.
   const concepts = await reservableConcepts()
@@ -71,7 +71,7 @@ export async function ReservePicker({ fields }: SectionProps) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
             {concepts.map((c) => {
               const story = brandStory(c.slug)
-              const accent = brandAccent(c.slug, c.primaryColor)
+              const accent = brandAccent(c.slug, c.primaryColor, ctx?.kits)
               const name = formatBrandName(c.name)
               const skin = SKINS[c.slug]
               const art = skin ? null : conceptHeroImage(c, 'card')

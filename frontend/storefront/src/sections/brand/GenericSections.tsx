@@ -3,6 +3,7 @@
 // (white, servd ink) since the brand shell behind it can be dark.
 
 import { brandStory } from '../../lib/concept'
+import { tintColor } from '../../lib/brandKit'
 import { CrossBrandStrip } from '../../components/brand/parts/CrossBrandStrip'
 import { BottomCTA } from '../../components/brand/parts/BottomCTA'
 import type { SectionProps } from '../types'
@@ -45,7 +46,7 @@ export function Signatures({ fields, ctx }: SectionProps) {
                   aspectRatio: '4/3',
                   background: img
                     ? (photo ? undefined : `url(${img}) center/cover`)
-                    : `linear-gradient(135deg, ${accent} 0%, color-mix(in srgb, ${accent} 80%, transparent) 100%)`,
+                    : `linear-gradient(135deg, ${accent} 0%, ${tintColor(accent, 'cc')} 100%)`,
                   display: 'grid', placeItems: 'center', fontSize: '4rem',
                   ...(photo && { position: 'relative', overflow: 'hidden' }),
                 }}>
@@ -127,7 +128,7 @@ export function Reviews({ fields, ctx }: SectionProps) {
                 <div style={{ color: stars, letterSpacing: '0.1em', fontSize: '0.95rem' }} aria-label="5 out of 5 stars">★★★★★</div>
                 <p style={{ fontSize: '0.97rem', lineHeight: 1.55 }}>{t(r.text)}</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.5rem' }}>
-                  <div style={{ width: '2.2rem', height: '2.2rem', borderRadius: '50%', background: `color-mix(in srgb, ${accent} 13.3%, transparent)`, color: accent, fontWeight: 800, display: 'grid', placeItems: 'center', fontSize: '0.85rem' }}>
+                  <div style={{ width: '2.2rem', height: '2.2rem', borderRadius: '50%', background: tintColor(accent, '22'), color: accent, fontWeight: 800, display: 'grid', placeItems: 'center', fontSize: '0.85rem' }}>
                     {who.charAt(0)}
                   </div>
                   <div>

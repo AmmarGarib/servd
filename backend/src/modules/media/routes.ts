@@ -5,6 +5,18 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, MARKETING_TEAM } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
+import { FONT_FAMILY_RE, cleanFontFamily } from '../siteLayouts/schemas.js'
+
+/** A font family is written inside a quoted CSS string on the storefront: a
+ *  newline or quote in it breaks every brand token (review-storefront-1).
+ *  Blank = "not given". */
+function assertFontFamily(v: string | null | undefined): void {
+  const t = v?.trim()
+  if (!t) return
+  if (!FONT_FAMILY_RE.test(t)) {
+    throw new AppError('FONT_FAMILY_INVALID', 'A font family name may use letters, numbers, spaces, _ . and - only (up to 120).', 422)
+  }
+}
 
 const CATEGORIES = ['menu', 'marketing', 'shoot', 'kds', 'general'] as const
 const KINDS = ['image', 'video', 'font', 'copy'] as const
@@ -98,6 +110,7 @@ export async function mediaRoutes(fastify: FastifyInstance) {
         conceptId:   z.string().min(1).optional(),
         fontFamily:  z.string().max(120).optional(),
       }).parse(req.query)
+      assertFontFamily(q.fontFamily)
       const tenantId = req.staffUser?.tenantId
       if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
 
@@ -137,7 +150,9 @@ export async function mediaRoutes(fastify: FastifyInstance) {
           name:         q.name?.trim() || baseName,
           tags:         q.tags ?? [],
           conceptId:    q.conceptId ?? null,
-          fontFamily:   kind === 'font' ? (q.fontFamily?.trim() || q.name?.trim() || baseName) : null,
+          // A family derived from the name / file name is cleaned to the safe
+          // charset (an explicit one was checked above).
+          fontFamily:   kind === 'font' ? (q.fontFamily?.trim() || cleanFontFamily(q.name) || cleanFontFamily(baseName) || 'Font') : null,
           uploadedById: req.staffUser!.id,
         },
       })
@@ -220,6 +235,7 @@ export async function mediaRoutes(fastify: FastifyInstance) {
         text:       z.string().max(20_000).nullish(),
         fontFamily: z.string().trim().max(120).nullish(),
       }).parse(req.body)
+      assertFontFamily(body.fontFamily)
       const asset = await prisma.mediaAsset.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
         select: { id: true, tenantId: true, kind: true },

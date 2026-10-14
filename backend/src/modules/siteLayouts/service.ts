@@ -11,7 +11,7 @@ import { serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
-import { fontFamiliesUsed, brandKitSchema, kitLibraryFontIds, type BrandKit } from './schemas.js'
+import { fontFamiliesUsed, brandKitSchema, kitLibraryFontIds, cleanFontFamily, type BrandKit } from './schemas.js'
 
 const db = serviceClient
 
@@ -155,6 +155,8 @@ export async function publishDraft(
     if (opts.dueOnly && (!row.publishAt || row.publishAt > now)) return null
 
     const version = row.liveVersion + 1
+    // A kit row keeps its pre-kit Concept snapshot on the live settings.
+    const live = await kitLiveSettingsTx(tx, row, row.draftSettings)
     const claimed = await tx.siteLayout.updateMany({
       where: {
         id: row.id,
@@ -165,7 +167,7 @@ export async function publishDraft(
       },
       data: {
         blocks:           row.draftBlocks as Prisma.InputJsonValue,
-        settings:         row.draftSettings === null ? Prisma.DbNull : (row.draftSettings as Prisma.InputJsonValue),
+        settings:         live.settings === null || live.settings === undefined ? Prisma.DbNull : (live.settings as Prisma.InputJsonValue),
         liveVersion:      version,
         publishedAt:      now,
         updatedById:      row.draftUpdatedById,
@@ -186,7 +188,9 @@ export async function publishDraft(
 
     // A brand kit goes live with the brand's Concept fields in the SAME
     // transaction (ordering pages, ERP chips and the mobile app read those).
-    await applyKitToConceptTx(tx, row, row.draftSettings)
+    // A field the old live kit set and this one doesn't goes back to the
+    // brand's pre-kit value.
+    await syncKitToConceptTx(tx, row, row.liveVersion > 0 ? row.settings : null, row.draftSettings, live.before)
 
     await tx.siteLayoutVersion.create({
       data: {
@@ -244,36 +248,132 @@ export function kitOf(settings: unknown): BrandKit | null {
   return r.success ? r.data : null
 }
 
+// The Concept fields a kit owns. The kit publish is their writer (the
+// Concept PATCH accepts them from the CEO only — review-back-admin-3).
+export const KIT_CONCEPT_FIELDS = ['primaryColor', 'logoUrl', 'wordmarkUrl', 'mascotUrl'] as const
+export type KitConceptField = (typeof KIT_CONCEPT_FIELDS)[number]
+export type ConceptLook = Record<KitConceptField, string | null>
+
 /**
- * When a published row is a brand kit, copy the fields it SETS onto the
- * brand's Concept — primaryColor ← roles.ordering, logoUrl ← images.logo,
- * wordmarkUrl ← images.wordmark, mascotUrl ← images.mascot. A field the kit
- * leaves empty is never written (no null over today's value). The brand is
- * found by slug inside the row's OWN company, never another's. The one sync
- * path: publishDraft (approve now + scheduled) and the rollback route call it
- * inside their publishing transaction. Returns the fields written.
+ * Server-only key on a kit row's LIVE settings: the brand's Concept values
+ * from before its first kit went live, so a field a kit stops setting (a
+ * cleared field, a rollback, removing the kit) goes back to the brand's own
+ * value instead of keeping the old kit value forever (review-back-admin-1).
+ *
+ * Why here and not a column or a table: it lives and dies with the kit row
+ * (a company merge moves it, deleting the kit drops it) and needs no schema
+ * change. It can never be set from outside: the draft schema is strict
+ * `{ kit }`, publish/rollback re-attach it from the row itself, versions
+ * never carry it, and every read shape strips it.
  */
-export async function applyKitToConceptTx(
+export const CONCEPT_BEFORE_KEY = 'conceptBefore'
+
+const nullableStr = (v: unknown): v is string | null => v === null || typeof v === 'string'
+
+function conceptBeforeOf(settings: unknown): ConceptLook | null {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return null
+  const v = (settings as Record<string, unknown>)[CONCEPT_BEFORE_KEY]
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const o = v as Record<string, unknown>
+  if (!KIT_CONCEPT_FIELDS.every((f) => nullableStr(o[f]))) return null
+  return Object.fromEntries(KIT_CONCEPT_FIELDS.map((f) => [f, o[f]])) as ConceptLook
+}
+
+/** Settings as anyone outside the publishing code may see them: without the
+ *  server-only snapshot. */
+export function stripServerSettings<T>(settings: T): T {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return settings
+  if (!(CONCEPT_BEFORE_KEY in (settings as Record<string, unknown>))) return settings
+  const { [CONCEPT_BEFORE_KEY]: _drop, ...rest } = settings as Record<string, unknown>
+  return rest as T
+}
+
+/** The Concept values a kit sets (only the ones it sets). */
+function kitConceptValues(kit: BrandKit | null): Partial<ConceptLook> {
+  const out: Partial<ConceptLook> = {}
+  if (kit?.roles?.ordering) out.primaryColor = kit.roles.ordering
+  if (kit?.images?.logo) out.logoUrl = kit.images.logo
+  if (kit?.images?.wordmark) out.wordmarkUrl = kit.images.wordmark
+  if (kit?.images?.mascot) out.mascotUrl = kit.images.mascot
+  return out
+}
+
+function kitRowBrand(row: Pick<SiteLayout, 'slug' | 'tenantId'>): string | null {
+  const parsed = parseSlug(row.slug)
+  if (!parsed || parsed.owner !== 'brand' || parsed.kind !== 'kit' || !row.tenantId) return null
+  return parsed.conceptSlug
+}
+
+/**
+ * The live settings to store when `next` goes live on a kit row: `next`
+ * (never trusting a snapshot inside it) plus the row's snapshot — taken from
+ * the brand's Concept now if the row has none yet (its first publish).
+ * Non-kit rows: `next` unchanged. Call inside the publishing transaction,
+ * BEFORE the Concept is synced.
+ */
+export async function kitLiveSettingsTx(
+  tx: Prisma.TransactionClient,
+  row: Pick<SiteLayout, 'slug' | 'tenantId' | 'settings'>,
+  next: unknown,
+): Promise<{ settings: unknown; before: ConceptLook | null }> {
+  const conceptSlug = kitRowBrand(row)
+  if (!conceptSlug) return { settings: next, before: null }
+  let before = conceptBeforeOf(row.settings)
+  if (!before) {
+    const c = await tx.concept.findFirst({
+      where: { slug: conceptSlug, tenantId: row.tenantId, deletedAt: null },
+      select: { primaryColor: true, logoUrl: true, wordmarkUrl: true, mascotUrl: true },
+    })
+    before = c ?? null
+  }
+  const clean = stripServerSettings(next)
+  if (!before || !clean || typeof clean !== 'object' || Array.isArray(clean)) return { settings: clean, before }
+  return { settings: { ...(clean as Record<string, unknown>), [CONCEPT_BEFORE_KEY]: before }, before }
+}
+
+/**
+ * Bring the brand's Concept in step with a kit going live (`next`) or going
+ * away (`next` null — the kit row is deleted). A field `next` sets is written;
+ * a field the previous live kit (`prev`) set and `next` does not is put back
+ * to the pre-kit snapshot `before`; anything else is left alone (a value no
+ * kit ever set is never touched). The brand is found by slug inside the row's
+ * OWN company, never another's. The one sync path: publishDraft (approve now
+ * + scheduled), rollback and the kit DELETE call it inside their transaction.
+ * Returns the fields written.
+ */
+export async function syncKitToConceptTx(
   tx: Prisma.TransactionClient,
   row: Pick<SiteLayout, 'slug' | 'tenantId'>,
-  settings: unknown,
+  prev: unknown,
+  next: unknown,
+  before: ConceptLook | null,
 ): Promise<string[]> {
-  const parsed = parseSlug(row.slug)
-  if (!parsed || parsed.owner !== 'brand' || parsed.kind !== 'kit' || !row.tenantId) return []
-  const kit = kitOf(settings)
-  if (!kit) return []
-  const data: Prisma.ConceptUpdateManyMutationInput = {}
-  if (kit.roles?.ordering) data.primaryColor = kit.roles.ordering
-  if (kit.images?.logo) data.logoUrl = kit.images.logo
-  if (kit.images?.wordmark) data.wordmarkUrl = kit.images.wordmark
-  if (kit.images?.mascot) data.mascotUrl = kit.images.mascot
+  const conceptSlug = kitRowBrand(row)
+  if (!conceptSlug) return []
+  const was = kitConceptValues(kitOf(prev))
+  const now = kitConceptValues(kitOf(next))
+  const data: Partial<ConceptLook> = {}
+  for (const f of KIT_CONCEPT_FIELDS) {
+    if (now[f] !== undefined) data[f] = now[f]
+    else if (was[f] !== undefined && before) data[f] = before[f]
+  }
   const fields = Object.keys(data)
   if (fields.length === 0) return []
   await tx.concept.updateMany({
-    where: { slug: parsed.conceptSlug, tenantId: row.tenantId, deletedAt: null },
+    where: { slug: conceptSlug, tenantId: row.tenantId, deletedAt: null },
     data,
   })
   return fields
+}
+
+/** A kit row being deleted: every Concept field its live kit set goes back to
+ *  the pre-kit snapshot (same transaction as the delete). */
+export async function unapplyKitTx(
+  tx: Prisma.TransactionClient,
+  row: Pick<SiteLayout, 'slug' | 'tenantId' | 'settings' | 'liveVersion'>,
+): Promise<string[]> {
+  if (row.liveVersion === 0) return []
+  return syncKitToConceptTx(tx, row, row.settings, null, conceptBeforeOf(row.settings))
 }
 
 /** A `library:` kit font must be a font of the layout's own company (422). */
@@ -308,12 +408,13 @@ export async function resolveKitFonts(kit: BrandKit | null, tenantId: string | n
     where: { id: { in: ids }, kind: 'font', tenantId, url: { not: '' } },
     select: { id: true, url: true, fontFamily: true, name: true, filename: true },
   })
-  return assets.map((a) => ({
-    id: `library:${a.id}`,
-    family: a.fontFamily || a.name || a.filename,
-    url: a.url,
-    format: fontFormat(a.filename) ?? fontFormat(a.url),
-  }))
+  // A family outside the safe charset is cleaned, and the font dropped when
+  // nothing usable is left (older rows predate the media check).
+  return assets.flatMap((a) => {
+    const family = cleanFontFamily(a.fontFamily) ?? cleanFontFamily(a.name) ?? cleanFontFamily(a.filename)
+    if (!family) return []
+    return [{ id: `library:${a.id}`, family, url: a.url, format: fontFormat(a.filename) ?? fontFormat(a.url) }]
+  })
 }
 
 // ── Read shapes ──────────────────────────────────────────────────────────────
@@ -363,7 +464,7 @@ export async function publicShape(slug: string, row: SiteLayout | null, draft = 
     title: row.title,
     version: row.liveVersion,
     blocks,
-    settings: settings ?? null,
+    settings: stripServerSettings(settings ?? null),
     fonts: !blocks ? []
       : parseSlug(row.slug)?.kind === 'kit' ? await resolveKitFonts(kitOf(settings), row.tenantId)
       : await resolveFonts(blocks, settings, row.tenantId),

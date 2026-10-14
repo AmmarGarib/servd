@@ -9,6 +9,7 @@
 import type { Metadata } from 'next'
 import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
 import { brandAccent, conceptHeroImage, formatBrandName } from '../../lib/concept'
+import { getLiveKits } from '../../lib/brandKitFetch'
 import { conceptsOrFallback, fetchLiveConcepts, fitSentences, inBrandOrder, joinNames } from '../../lib/liveConcepts'
 import { GroupOrderEntryClient } from './GroupOrderEntryClient'
 
@@ -31,7 +32,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function GroupOrderEntryPage() {
-  const concepts = await fetchLiveConcepts()
+  const [concepts, kits] = await Promise.all([fetchLiveConcepts(), getLiveKits()])
   // Pre-build the brand cards on the server so the client component
   // gets a small typed payload (id/name/slug/accent/image) instead of
   // re-fetching. The card art is the 640x480 card crop, not the full hero.
@@ -39,7 +40,7 @@ export default async function GroupOrderEntryPage() {
     id: c.id,
     name: formatBrandName(c.name),
     slug: c.slug,
-    accent: brandAccent(c.slug, c.primaryColor),
+    accent: brandAccent(c.slug, c.primaryColor, kits),
     heroImage: conceptHeroImage(c, 'card'),
   }))
 

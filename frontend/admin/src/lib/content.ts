@@ -190,6 +190,9 @@ export interface ConceptLite {
   /** The brand's ordering / ERP colour and logo (the kit's publish keeps them in step). */
   primaryColor?: string | null
   logoUrl?: string | null
+  /** Only present when the brand list carries them (the Brands page does). */
+  wordmarkUrl?: string | null
+  mascotUrl?: string | null
 }
 
 // The Storefront editor's brand list: GET /concepts?view=storefront, which

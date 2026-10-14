@@ -222,6 +222,21 @@ export const KIT_HEX = /^#[0-9a-fA-F]{6}$/
 export const KIT_BUILTIN_FONTS = [
   'amarante', 'playfair', 'inter', 'poppins', 'alfa-slab', 'bricolage', 'syne', 'jetbrains-mono', 'times', 'georgia',
 ] as const
+/** A font family name that is safe to write inside a quoted CSS string
+ *  (@font-face and the --<brand>-display/body tokens): letters, digits,
+ *  space, _ . - only. A newline or quote inside it would end the string and
+ *  swallow the rest of the stylesheet (review-storefront-1). The ONE rule —
+ *  media upload/PATCH and the kit font read both use it. */
+export const FONT_FAMILY_RE = /^[\p{L}\p{N} _.-]{1,120}$/u
+
+/** A derived family (from a file or asset name) made safe: anything outside
+ *  the charset becomes a space, runs collapse; null when nothing is left. */
+export function cleanFontFamily(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = raw.replace(/[^\p{L}\p{N} _.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim()
+  return FONT_FAMILY_RE.test(s) ? s : null
+}
+
 export const KIT_LIBRARY_FONT = /^library:([A-Za-z0-9_-]{1,64})$/
 export const KIT_PALETTE_KEY = /^[a-z][a-z0-9-]{0,30}$/
 export const KIT_MAX_PALETTE_KEYS = 24

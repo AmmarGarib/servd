@@ -108,7 +108,7 @@ summary:focus-visible {
 .simmer-page .amarante  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
 .simmer-page .utility   { font-family: var(--simmer-body); letter-spacing: 0.28em; text-transform: lowercase; }
 .simmer-page .signal    { color: var(--simmer-orange); }
-.simmer-page .rule      { height: 1px; background: color-mix(in srgb, var(--simmer-bone) 20%, transparent); border: 0; margin: 0; }
+.simmer-page .rule      { height: 1px; background: rgb(var(--simmer-bone-rgb) / 0.2); border: 0; margin: 0; }
 .simmer-page .wordmark  { font-family: var(--simmer-display); font-weight: 400; line-height: 1; }
 .simmer-page .action {
   display: inline-block; font-family: var(--simmer-body);
@@ -209,7 +209,7 @@ summary:focus-visible {
 /* The fixed bottom CTA bar uses rgba white — bump it to a bone wash
    so it doesn't read as a foreign chrome strip. */
 .simmer-ordering .fixed.bottom-0 {
-  background: color-mix(in srgb, var(--simmer-bone) 96%, transparent) !important;
+  background: rgb(var(--simmer-bone-rgb) / 0.96) !important;
   border-top-color: rgba(27,45,42,0.18) !important;
 }
 /* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
@@ -219,8 +219,8 @@ summary:focus-visible {
 .simmer-ordering div[style*="rgba(135,197,64,0.08)"],
 .simmer-ordering div[style*="rgba(135,197,64,0.25)"],
 .simmer-ordering div[style*="rgba(135,197,64,0.2)"] {
-  background: color-mix(in srgb, var(--simmer-orange) 6%, transparent) !important;
-  border-color: color-mix(in srgb, var(--simmer-orange) 20%, transparent) !important;
+  background: rgb(var(--simmer-orange-rgb) / 0.06) !important;
+  border-color: rgb(var(--simmer-orange-rgb) / 0.2) !important;
 }
 /* Menu page — the outer wrapper, the sticky category nav, the item
    modal + cart drawer all hardcode a white-ish surface inline. Repaint
@@ -362,7 +362,7 @@ summary:focus-visible {
 .flipd-ordering {
   --servd-ink:        var(--flipd-blue);
   --servd-mute:       var(--flipd-blue-dim);
-  --servd-line:       color-mix(in srgb, var(--flipd-blue) 16%, transparent);
+  --servd-line:       rgb(var(--flipd-blue-rgb) / 0.16);
   --servd-surface:    #FFFFFF;
   --servd-green:      var(--flipd-blue);
   --servd-green-dark: var(--flipd-blue-deep);
@@ -446,14 +446,14 @@ summary:focus-visible {
      theme — and fought the hand-drawn, sticker-and-seal feel of the brand.
      Just the plum field with a soft pool of light at the top. */
   background-image:
-    radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--stackd-cream) 10%, transparent), transparent 60%),
-    radial-gradient(90% 60% at 50% 110%, color-mix(in srgb, var(--stackd-plum-dark) 55%, transparent), transparent 65%);
+    radial-gradient(120% 80% at 50% -10%, rgb(var(--stackd-cream-rgb) / 0.1), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgb(var(--stackd-plum-dark-rgb) / 0.55), transparent 65%);
   background-size: 100% 100%, 100% 100%;
   background-position: center, center;
 }
 
 /* Panels that lift off the plum field — micro-cement, very slightly warmer. */
-.stackd-page .stackd-grid-live { background-color: color-mix(in srgb, var(--stackd-plum-dark) 45%, transparent); }
+.stackd-page .stackd-grid-live { background-color: rgb(var(--stackd-plum-dark-rgb) / 0.45); }
 
 .stackd-page .stackd-mono {
   font-family: var(--stackd-mono);
@@ -499,7 +499,7 @@ summary:focus-visible {
 }
 .stackd-page .stackd-btn-ghost:hover {
   border-color: var(--stackd-cream);
-  background: color-mix(in srgb, var(--stackd-cream) 7%, transparent);
+  background: rgb(var(--stackd-cream-rgb) / 0.07);
 }
 
 /* ── Stickers ───────────────────────────────────────────────────────────────
@@ -804,7 +804,7 @@ summary:focus-visible {
   background: var(--stackd-cream);
   color: var(--stackd-plum-dark);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--stackd-cream) 50%, transparent),
+    0 0 0 3px rgb(var(--stackd-cream-rgb) / 0.5),
     0 24px 50px -24px rgba(28,16,19,0.8);
   transform: rotate(-0.5deg);
 }
@@ -813,7 +813,7 @@ summary:focus-visible {
 .stackd-page .stackd-sticker .stackd-display,
 .stackd-page .stackd-sticker-lg .stackd-display { color: var(--stackd-plum-dark); }
 .stackd-page .stackd-sticker .stackd-spec,
-.stackd-page .stackd-sticker-lg .stackd-spec { color: color-mix(in srgb, var(--stackd-plum-dark) 55%, transparent); }
+.stackd-page .stackd-sticker-lg .stackd-spec { color: rgb(var(--stackd-plum-dark-rgb) / 0.55); }
 
 @media (prefers-reduced-motion: reduce) {
   .stackd-page .stackd-sticker,
@@ -855,7 +855,7 @@ summary:focus-visible {
   border-radius: clamp(2.25rem, 5vw, 4rem);
   padding: clamp(2rem, 5vw, 4rem) clamp(2.5rem, 6vw, 5rem);
   box-shadow:
-    0 0 0 5px color-mix(in srgb, var(--stackd-cream) 45%, transparent),
+    0 0 0 5px rgb(var(--stackd-cream-rgb) / 0.45),
     0 50px 90px -38px rgba(28,16,19,0.92);
   /* The bob lives on the seal; the tilt lives on the keyframes so the two
      don't fight over `transform`. */
@@ -889,7 +889,7 @@ summary:focus-visible {
   position: absolute;
   inset: -14% -10%;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--stackd-sky) 30%, transparent), color-mix(in srgb, var(--stackd-sky) 0%, transparent) 68%);
+  background: radial-gradient(circle at 50% 45%, rgb(var(--stackd-sky-rgb) / 0.3), rgb(var(--stackd-sky-rgb) / 0) 68%);
   pointer-events: none;
   animation: stackd-glow 9s ease-in-out infinite;
 }
@@ -1038,7 +1038,7 @@ summary:focus-visible {
 /* Menu rows. The book's voice rule is "names the ingredient, skips the
    adjective", so the build line is the hero and the name is just a label. */
 .flipd-page .flipd-item + .flipd-item {
-  border-top: 1px solid color-mix(in srgb, var(--flipd-blue) 16%, transparent);
+  border-top: 1px solid rgb(var(--flipd-blue-rgb) / 0.16);
 }
 .flipd-page .flipd-item-name {
   font-family: var(--flipd-display);
@@ -1062,7 +1062,7 @@ summary:focus-visible {
   text-transform: uppercase;
   padding: 0.26rem 0.6rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--flipd-blue) 30%, transparent);
+  border: 1px solid rgb(var(--flipd-blue-rgb) / 0.3);
   color: var(--flipd-blue-dim);
   white-space: nowrap;
 }
@@ -1372,7 +1372,7 @@ html:has(.simmer-page) {
   grid-template-columns: auto 1fr;
   gap: 0.15rem 0.6rem;
   padding: 0.5rem 0;
-  border-top: 1px solid color-mix(in srgb, var(--flipd-blue) 16%, transparent);
+  border-top: 1px solid rgb(var(--flipd-blue-rgb) / 0.16);
 }
 .flipd-page .flipd-spec-list .flipd-spec-no { grid-row: span 2; align-self: center; }
 

@@ -150,24 +150,22 @@ function PlateSketch() {
     <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice" aria-hidden="true"
          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
       <rect width="200" height="160" fill="var(--simmer-green)"/>
-      <g stroke="color-mix(in srgb, var(--simmer-bone) 60%, transparent)" strokeWidth="1.2" fill="none">
+      <g strokeWidth="1.2" fill="none" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.6)' }}>
         <circle cx="100" cy="80" r="58"/>
         <circle cx="100" cy="80" r="48" strokeWidth="0.5" opacity="0.55"/>
       </g>
-      <ellipse cx="100" cy="80" rx="54" ry="54" fill="color-mix(in srgb, var(--simmer-bone) 3%, transparent)"/>
+      <ellipse cx="100" cy="80" rx="54" ry="54" style={{ fill: 'rgb(var(--simmer-bone-rgb) / 0.03)' }} />
       <circle cx="78" cy="92" r="3.2" fill="var(--simmer-orange)"/>
       <circle cx="78" cy="92" r="6.5" fill="rgba(233,78,27,0.18)"/>
-      <g stroke="color-mix(in srgb, var(--simmer-bone) 75%, transparent)" strokeWidth="0.7" strokeLinecap="round" fill="none">
+      <g strokeWidth="0.7" strokeLinecap="round" fill="none" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.75)' }}>
         <line x1="106" y1="70" x2="112" y2="64"/>
         <line x1="113" y1="68" x2="118" y2="63"/>
         <line x1="110" y1="74" x2="116" y2="71"/>
       </g>
-      <ellipse cx="118" cy="92" rx="9" ry="4.5" transform="rotate(-22 118 92)"
-               fill="color-mix(in srgb, var(--simmer-bone) 18%, transparent)" stroke="color-mix(in srgb, var(--simmer-bone) 75%, transparent)" strokeWidth="0.7"/>
-      <path d="M86 100 Q102 106 124 100"
-            stroke="color-mix(in srgb, var(--simmer-bone) 35%, transparent)" strokeWidth="0.5" fill="none"/>
-      <circle cx="100" cy="62" r="1.4" fill="color-mix(in srgb, var(--simmer-bone) 85%, transparent)"/>
-      <circle cx="103" cy="60" r="1.1" fill="color-mix(in srgb, var(--simmer-bone) 65%, transparent)"/>
+      <ellipse cx="118" cy="92" rx="9" ry="4.5" transform="rotate(-22 118 92)" strokeWidth="0.7" style={{ fill: 'rgb(var(--simmer-bone-rgb) / 0.18)', stroke: 'rgb(var(--simmer-bone-rgb) / 0.75)' }} />
+      <path d="M86 100 Q102 106 124 100" strokeWidth="0.5" fill="none" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.35)' }} />
+      <circle cx="100" cy="62" r="1.4" style={{ fill: 'rgb(var(--simmer-bone-rgb) / 0.85)' }} />
+      <circle cx="103" cy="60" r="1.1" style={{ fill: 'rgb(var(--simmer-bone-rgb) / 0.65)' }} />
     </svg>
   )
 }
@@ -178,20 +176,19 @@ function CoupeSketch() {
     <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice" aria-hidden="true"
          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
       <rect width="200" height="160" fill="var(--simmer-green)"/>
-      <g stroke="color-mix(in srgb, var(--simmer-bone) 70%, transparent)" strokeWidth="1.2" fill="none" strokeLinecap="round">
+      <g strokeWidth="1.2" fill="none" strokeLinecap="round" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.7)' }}>
         <ellipse cx="100" cy="58" rx="50" ry="11"/>
         <path d="M50 58 Q52 94 100 102 Q148 94 150 58"/>
         <line x1="100" y1="102" x2="100" y2="138"/>
         <ellipse cx="100" cy="142" rx="30" ry="4"/>
       </g>
       <path d="M58 62 Q70 92 100 98 Q130 92 142 62 Z" fill="rgba(233,78,27,0.32)"/>
-      <ellipse cx="100" cy="62" rx="42" ry="6" fill="none" stroke="color-mix(in srgb, var(--simmer-bone) 50%, transparent)" strokeWidth="0.7"/>
-      <path d="M62 56 Q78 48 96 46" stroke="color-mix(in srgb, var(--simmer-bone) 75%, transparent)" strokeWidth="1" fill="none"/>
-      <ellipse cx="120" cy="56" rx="5" ry="2" fill="color-mix(in srgb, var(--simmer-bone) 85%, transparent)"
-               stroke="color-mix(in srgb, var(--simmer-bone) 85%, transparent)" strokeWidth="0.4"
-               transform="rotate(-20 120 56)"/>
-      <circle cx="86" cy="78" r="1.4" fill="none" stroke="color-mix(in srgb, var(--simmer-bone) 55%, transparent)" strokeWidth="0.5"/>
-      <circle cx="92" cy="86" r="0.9" fill="none" stroke="color-mix(in srgb, var(--simmer-bone) 40%, transparent)" strokeWidth="0.5"/>
+      <ellipse cx="100" cy="62" rx="42" ry="6" fill="none" strokeWidth="0.7" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.5)' }} />
+      <path d="M62 56 Q78 48 96 46" strokeWidth="1" fill="none" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.75)' }} />
+      <ellipse cx="120" cy="56" rx="5" ry="2" strokeWidth="0.4"
+               transform="rotate(-20 120 56)" style={{ fill: 'rgb(var(--simmer-bone-rgb) / 0.85)', stroke: 'rgb(var(--simmer-bone-rgb) / 0.85)' }} />
+      <circle cx="86" cy="78" r="1.4" fill="none" strokeWidth="0.5" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.55)' }} />
+      <circle cx="92" cy="86" r="0.9" fill="none" strokeWidth="0.5" style={{ stroke: 'rgb(var(--simmer-bone-rgb) / 0.4)' }} />
     </svg>
   )
 }

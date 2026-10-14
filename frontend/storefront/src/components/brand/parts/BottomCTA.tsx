@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import { tintColor } from '../../../lib/brandKit'
 
 interface Props {
   brandName: string
@@ -30,7 +31,7 @@ export function BottomCTA({
     <section style={{
       padding: 'clamp(3rem, 6vw, 5rem) 0',
       textAlign: 'center',
-      background: `linear-gradient(180deg, #fff 0%, ${accent}1f 100%)`,
+      background: `linear-gradient(180deg, #fff 0%, ${tintColor(accent, '1f')} 100%)`,
     }}>
       <div className="container">
         {eyebrow && (
@@ -43,7 +44,7 @@ export function BottomCTA({
         </h2>
         {hasBody && (
           <p style={{ color: 'var(--servd-mute)', marginBottom: '2rem', maxWidth: '34rem', marginInline: 'auto', fontSize: '1rem' }}>
-            {n(bodyBefore)}{bodyBefore && code ? ' ' : ''}{code && <code style={{ background: `${accent}25`, color: accent, padding: '0.1rem 0.45rem', borderRadius: '4px', fontWeight: 800 }}>{code}</code>}{(bodyBefore || code) && bodyAfter ? ' ' : ''}{n(bodyAfter)}
+            {n(bodyBefore)}{bodyBefore && code ? ' ' : ''}{code && <code style={{ background: tintColor(accent, '25'), color: accent, padding: '0.1rem 0.45rem', borderRadius: '4px', fontWeight: 800 }}>{code}</code>}{(bodyBefore || code) && bodyAfter ? ' ' : ''}{n(bodyAfter)}
           </p>
         )}
         {buttonText && <Link

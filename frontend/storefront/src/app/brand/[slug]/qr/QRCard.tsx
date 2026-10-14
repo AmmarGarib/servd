@@ -23,7 +23,7 @@ export function QRCard({ slug, brand, url }: Props) {
   // the QR's foreground stays dark + the surround stays light.
   const surface = isSimmer ? 'var(--simmer-bone)' : '#f5f5f5'
   const ink     = isSimmer ? 'var(--simmer-green)' : '#0e0e0e'
-  const muted   = isSimmer ? 'color-mix(in srgb, var(--simmer-green) 70%, transparent)' : 'rgba(14,14,14,0.6)'
+  const muted   = isSimmer ? 'rgb(var(--simmer-green-rgb) / 0.7)' : 'rgba(14,14,14,0.6)'
   const accent  = isSimmer ? 'var(--simmer-orange)' : '#0e0e0e'
 
   return (

@@ -28,7 +28,7 @@ import {
 } from '../../lib/content'
 import { ApproveDialog, RejectDialog } from './Builder'
 import { ColorInput, Field, FontFaces, MediaInput, Section, useLibraryFonts } from './fields'
-import { brandCatalog, storefrontAsset, useBrandKitCatalog, type KitCatalog } from './kitCatalog'
+import { brandCatalog, resolveKitImage, useBrandKitCatalog, type KitCatalog } from './kitCatalog'
 import { LiveCanvas, type FrameStatus, type LiveCanvasHandle } from './LiveCanvas'
 import { StatusBadge } from './panels'
 import { VersionsDrawer } from './VersionsDrawer'
@@ -122,20 +122,24 @@ export function KitEditor({ brand }: { brand: string }) {
     blocks: homeBlocks,
     settings: cleanSettings(homeRow?.settings ?? {}, false),
   }), [homeRow, homeBlocks, brandName])
-  const frameKit = useMemo(() => (kit ? { brand, kit: cleanKit(kit) } : undefined), [brand, kit])
-  const frameFonts = useMemo(() => {
-    const out = resolveLibraryFonts(fontFamiliesUsed(homeDoc.blocks, homeDoc.settings), library, layoutTenant)
-    // A kit font `library:<assetId>` is sent under its asset family AND under
-    // the reference itself, so the frame can resolve it either way.
-    for (const ref of [kit?.fonts?.display, kit?.fonts?.body]) {
+  // A kit font `library:<assetId>` travels in FrameKit.fonts (id, family, url),
+  // the only list the storefront's resolveKit reads for kit fonts.
+  const frameKit = useMemo(() => {
+    if (!kit) return undefined
+    const fonts: Array<{ id: string; family: string; url: string }> = []
+    for (const ref of [kit.fonts?.display, kit.fonts?.body]) {
       const id = ref?.startsWith('library:') ? ref.slice('library:'.length) : null
       const asset = id ? companyFonts.find((f) => f.id === id) : undefined
-      if (asset?.fontFamily && asset.url) {
-        out.push({ family: asset.fontFamily, url: asset.url }, { family: libraryRef(asset.id), url: asset.url })
+      if (asset?.fontFamily && asset.url && !fonts.some((f) => f.id === libraryRef(asset.id))) {
+        fonts.push({ id: libraryRef(asset.id), family: asset.fontFamily, url: asset.url })
       }
     }
-    return out
-  }, [homeDoc, library, layoutTenant, kit?.fonts?.display, kit?.fonts?.body, companyFonts])
+    return { brand, kit: cleanKit(kit), ...(fonts.length && { fonts }) }
+  }, [brand, kit, companyFonts])
+  const frameFonts = useMemo(
+    () => resolveLibraryFonts(fontFamiliesUsed(homeDoc.blocks, homeDoc.settings), library, layoutTenant),
+    [homeDoc, library, layoutTenant],
+  )
   const noLabels = useMemo(() => ({}) as Record<string, string>, [])
   const noop = () => {}
 
@@ -371,7 +375,8 @@ export function KitEditor({ brand }: { brand: string }) {
 
               <Section title="Pictures">
                 {IMAGES.map((im) => {
-                  const def = storefrontAsset(cat.images[im.key])
+                  const res = resolveKitImage(im.key, undefined, concept, cat)
+                  const def = res.src
                   return (
                     <Field key={im.key} label={im.label} hint={im.hint}>
                       <MediaInput kind="image" value={kit.images?.[im.key]} onChange={(v) => setIn('images', im.key, v)}
@@ -380,7 +385,7 @@ export function KitEditor({ brand }: { brand: string }) {
                         <div className="mt-2 flex items-center gap-2 text-[11px] text-s-muted">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={def} alt="" className="h-10 w-16 rounded border border-s-border bg-s-elevated object-contain" />
-                          <span>Built-in picture in use.</span>
+                          <span>{res.source === 'brand' ? 'From the brand record.' : 'Built-in picture in use.'}</span>
                         </div>
                       )}
                       {kit.images?.[im.key] && (

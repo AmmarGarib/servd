@@ -99,7 +99,7 @@ export interface KitLook {
  *  swatches, the four roles and the logo (kit logo, else the brand's own, else
  *  the bundled one). `fallbackOrdering` / `fallbackLogo` come from the brand
  *  itself (primaryColor / logoUrl). */
-export function kitLook(cat: KitCatalogBrand, kit: BrandKit | null | undefined, fallbackOrdering?: string | null, fallbackLogo?: string | null): KitLook {
+export function kitLook(cat: KitCatalogBrand, kit: BrandKit | null | undefined, fallbackOrdering?: string | null, fallbackLogo?: string | null, brand?: ConceptImages | null): KitLook {
   const pick = (v: string | undefined, d: string | undefined) => (isHex6(v) ? v : d)
   return {
     palette: cat.palette.map((p) => ({ ...p, value: pick(kit?.palette?.[p.key], p.default)! })),
@@ -109,6 +109,21 @@ export function kitLook(cat: KitCatalogBrand, kit: BrandKit | null | undefined, 
       surfaceText: pick(kit?.roles?.surfaceText, cat.roles.surfaceText),
       ordering: pick(kit?.roles?.ordering, cat.roles.ordering ?? (isHex6(fallbackOrdering) ? fallbackOrdering : undefined)),
     },
-    logo: storefrontAsset(kit?.images?.logo ?? fallbackLogo ?? cat.images.logo),
+    logo: resolveKitImage('logo', kit?.images?.logo, brand ?? { logoUrl: fallbackLogo }, cat).src,
   }
+}
+
+/** The brand record's own pictures (Concept), the storefront's middle fallback. */
+export interface ConceptImages { logoUrl?: string | null; wordmarkUrl?: string | null; mascotUrl?: string | null }
+
+export interface ResolvedKitImage { src: string | undefined; source: 'kit' | 'brand' | 'builtin' | 'none' }
+
+/** One picture the way the storefront's resolveKit picks it: the kit, else the
+ *  Concept field (the badge falls back to the wordmark), else the bundled one. */
+export function resolveKitImage(key: KitImageKey, kitSrc: string | undefined | null, brand: ConceptImages | null | undefined, cat: KitCatalogBrand): ResolvedKitImage {
+  const fromBrand = { logo: brand?.logoUrl, wordmark: brand?.wordmarkUrl, mascot: brand?.mascotUrl, badge: brand?.wordmarkUrl }[key]
+  if (kitSrc) return { src: storefrontAsset(kitSrc), source: 'kit' }
+  if (fromBrand) return { src: storefrontAsset(fromBrand), source: 'brand' }
+  const def = storefrontAsset(cat.images[key])
+  return def ? { src: def, source: 'builtin' } : { src: undefined, source: 'none' }
 }

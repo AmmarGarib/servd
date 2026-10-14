@@ -6,7 +6,7 @@
 import { useState, useEffect, type ElementType } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { brandSurface, brandWordmark } from '../../lib/concept'
+import { brandSurface, brandSurfaceTint, brandWordmark } from '../../lib/concept'
 import { sectionKitImage } from './kitImage'
 import { useBrandSlug } from '../../lib/host'
 import type { SectionProps } from '../types'
@@ -73,10 +73,10 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
     ? {
         backgroundColor: surface.bg,
         backgroundImage:
-          'linear-gradient(color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),' +
-          'linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),' +
-          'linear-gradient(color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px),' +
-          'linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px)',
+          'linear-gradient(rgb(var(--simmer-bone-rgb) / 0.06) 1px, transparent 1px),' +
+          'linear-gradient(90deg, rgb(var(--simmer-bone-rgb) / 0.06) 1px, transparent 1px),' +
+          'linear-gradient(rgb(var(--simmer-bone-rgb) / 0.1) 1px, transparent 1px),' +
+          'linear-gradient(90deg, rgb(var(--simmer-bone-rgb) / 0.1) 1px, transparent 1px)',
         backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
       }
     : diner
@@ -86,7 +86,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
         backgroundSize: '36px 36px',
         backgroundRepeat: 'repeat',
       }
-    : { background: `linear-gradient(to bottom, color-mix(in srgb, ${surface.bg} 94.9%, transparent) 0%, color-mix(in srgb, ${surface.bg} 0%, transparent) 100%)` }
+    : { background: `linear-gradient(to bottom, ${brandSurfaceTint(concept.slug, 'bg', 242 / 255)} 0%, ${brandSurfaceTint(concept.slug, 'bg', 0)} 100%)` }
   // The diner checker is high-contrast and shreds plain text, so flipd floats
   // its nav on a bone card outlined in Flipd Blue with a hard blue drop shadow.
   const dinerCard: React.CSSProperties = diner
@@ -104,7 +104,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
   const pillNav = pinnedNav
   // The pill's glass tint: simmer's surface text (bone), a neutral grey on the rest.
   const pillMix = (pct: number) => concept.slug === 'simmer'
-    ? `color-mix(in srgb, ${surface.text} ${pct}%, transparent)`
+    ? brandSurfaceTint(concept.slug, 'text', pct / 100)
     : `rgba(197,199,204,${pct / 100})`
   const navPill: React.CSSProperties = diner
     ? dinerCard

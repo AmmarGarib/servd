@@ -95,7 +95,7 @@ export function FlipdValues({ fields }: SectionProps) {
                   className="flipd-display"
                   style={{
                     fontSize: '1.6rem', display: 'block', lineHeight: 1,
-                    ...(fg ? { color: fg, opacity: 0.38 } : { color: 'color-mix(in srgb, var(--flipd-mustard) 38%, transparent)' }),
+                    ...(fg ? { color: fg, opacity: 0.38 } : { color: 'rgb(var(--flipd-mustard-rgb) / 0.38)' }),
                   }}
                 >
                   {String(i + 1).padStart(2, '0')}
@@ -106,7 +106,7 @@ export function FlipdValues({ fields }: SectionProps) {
                 <p
                   style={{
                     fontSize: '0.88rem', lineHeight: 1.65, margin: 0,
-                    ...(fg ? { color: fg, opacity: 0.74 } : { color: 'color-mix(in srgb, var(--flipd-mustard) 74%, transparent)' }),
+                    ...(fg ? { color: fg, opacity: 0.74 } : { color: 'rgb(var(--flipd-mustard-rgb) / 0.74)' }),
                   }}
                 >
                   {str(v.body)}
@@ -258,7 +258,7 @@ export function FlipdSignOff({ fields, ctx }: SectionProps) {
           }}
         />
         {caption && (
-          <p className="flipd-eyebrow" style={{ color: 'color-mix(in srgb, var(--flipd-mustard) 60%, transparent)' }}>
+          <p className="flipd-eyebrow" style={{ color: 'rgb(var(--flipd-mustard-rgb) / 0.6)' }}>
             {caption}
           </p>
         )}

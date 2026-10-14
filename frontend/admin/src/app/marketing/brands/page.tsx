@@ -444,7 +444,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           </Section>
 
           <Section title="Brand kit" subtitle="Colours, fonts and pictures. Read-only here: they are set in Storefront → Brand kit and go live after CEO approval.">
-            <BrandKitCard slug={concept.slug} primaryColor={concept.primaryColor} logoUrl={concept.logoUrl} />
+            <BrandKitCard slug={concept.slug} primaryColor={concept.primaryColor} logoUrl={concept.logoUrl} wordmarkUrl={concept.wordmarkUrl} mascotUrl={concept.mascotUrl} />
           </Section>
 
           <Section title="Primary service vessel" subtitle="How this brand serves its food: on plates, or in packaging.">

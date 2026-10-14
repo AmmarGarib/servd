@@ -402,11 +402,23 @@ export function cssFontFamily(name: string | undefined | null): string | undefin
 }
 
 /** @font-face rules for library fonts (font-display: swap). */
+/** A font family name that is safe inside a quoted CSS string: letters,
+ *  digits, space, `_`, `.` and `-` only (no quotes, braces, control
+ *  characters or newlines — a newline would turn the string into a
+ *  bad-string token and swallow the rest of the stylesheet). Null = drop
+ *  the font. The ONE sanitiser for @font-face and the brand-kit tokens. */
+export const FONT_FAMILY_RE = /^[\p{L}\p{N} _.-]{1,120}$/u
+export function safeFontFamily(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const family = v.trim()
+  return FONT_FAMILY_RE.test(family) ? family : null
+}
+
 export function fontFaceCss(fonts: LibraryFont[]): string {
   return fonts
     .map((f) => {
-      const family = f.family.replace(/["'<>{};\\]/g, '').trim()
-      const url = f.url.trim()
+      const family = safeFontFamily(f.family)
+      const url = typeof f.url === 'string' ? f.url.trim() : ''
       if (!family || !/^(https?:\/\/|\/)/.test(url)) return ''
       const ext = url.split('?')[0]!.split('.').pop()?.toLowerCase()
       const format = ext === 'woff2' ? 'woff2' : ext === 'woff' ? 'woff' : ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : null

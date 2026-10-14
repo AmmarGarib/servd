@@ -1,6 +1,6 @@
 // Concept-related shared utilities for storefront components.
 
-import { KIT_BRAND_SLUG_RE, kitVar, liveEntry, liveKitsSnapshot, resolveKit, type LiveKits } from './brandKit'
+import { KIT_BRAND_SLUG_RE, channelsOf, kitVar, liveEntry, liveKitsSnapshot, resolveKit, rgbaOf, type LiveKits } from './brandKit'
 
 export interface ServiceHourSlot {
   dayOfWeek: number   // 0 = Sun … 6 = Sat
@@ -85,7 +85,7 @@ export interface BrandSurface {
 
 /** The dark-section surface palette for a brand, as CSS values that follow
  *  the brand kit (`var(--kit-<slug>-surface-*, <default>)`). Never append hex
- *  alpha to these — tint with color-mix(in srgb, <value> N%, transparent). */
+ *  alpha to these — tint with brandSurfaceTint(). */
 export function brandSurface(slug: string): BrandSurface {
   const d = resolveKit(slug).surface
   if (!KIT_BRAND_SLUG_RE.test(slug)) return d
@@ -95,6 +95,17 @@ export function brandSurface(slug: string): BrandSurface {
     muted:  `var(${kitVar(slug, 'surface-muted')}, ${d.muted})`,
     border: `var(${kitVar(slug, 'surface-border')}, ${d.border})`,
   }
+}
+
+/** A brand surface colour (`bg` / `text`) at an alpha, via the kit's channel
+ *  token: `rgb(var(--kit-<slug>-surface-text-rgb, r g b) / <alpha>)` — the
+ *  same colour as rgba() of the hex, with no color-mix(). */
+export function brandSurfaceTint(slug: string, role: 'bg' | 'text', alpha: number): string {
+  const d = resolveKit(slug).surface
+  const hex = role === 'bg' ? d.bg : d.text
+  const a = String(alpha)
+  if (!KIT_BRAND_SLUG_RE.test(slug)) return rgbaOf(hex, a)
+  return `rgb(var(${kitVar(slug, role === 'bg' ? 'surface-bg' : 'surface-text')}-rgb, ${channelsOf(hex)}) / ${a})`
 }
 
 /** Per-brand wordmark styling for the nav brand-mark — the brand name renders

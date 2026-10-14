@@ -37,7 +37,8 @@ import {
 } from './schemas.js'
 import {
   parseSlug, parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
-  publicShape, resolveFonts, namesById, applyKitToConceptTx, assertKitFontsInCompany, kitOf, resolveKitFonts,
+  publicShape, resolveFonts, namesById, assertKitFontsInCompany, kitOf, resolveKitFonts,
+  kitLiveSettingsTx, syncKitToConceptTx, unapplyKitTx, stripServerSettings,
 } from './service.js'
 
 const PREVIEW_TOKEN_TYPE = 'site_preview'
@@ -96,7 +97,7 @@ function editShape(row: SiteLayout) {
     title: row.title,
     tenantId: row.tenantId,
     blocks: live ? row.blocks : null,
-    settings: live ? row.settings : null,
+    settings: live ? stripServerSettings(row.settings) : null,
     draftBlocks: row.draftBlocks,
     draftSettings: row.draftSettings,
     draftStatus: row.draftStatus,
@@ -271,6 +272,18 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     async (req) => {
       const slug = slugOf(req)
       let row = await prisma.siteLayout.findUnique({ where: { slug } })
+      // A brand's rows (its pages, chrome and kit) are public only while the
+      // brand is on the storefront — active, visible, not deleted, and the
+      // row's own company (as /kits/live and /pages/live). Otherwise the
+      // empty shape, as if nothing were live. Staff read through /:slug/edit.
+      const parsed = parseSlug(slug)
+      if (row && parsed?.owner === 'brand') {
+        const brand = await prisma.concept.findFirst({
+          where: { slug: parsed.conceptSlug, isActive: true, storefrontVisible: true, deletedAt: null },
+          select: { tenantId: true },
+        })
+        if (!brand || (row.tenantId !== null && row.tenantId !== brand.tenantId)) return publicShape(slug, null)
+      }
       if (row && row.draftStatus === 'scheduled' && row.publishAt && row.publishAt <= new Date()) {
         await publishDueLayouts({ slug })
         row = await prisma.siteLayout.findUnique({ where: { slug } })
@@ -583,7 +596,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       approvedBy: who(v.approvedById),
       note: v.note,
       blocks: v.blocks,
-      settings: v.settings,
+      settings: stripServerSettings(v.settings),
     }))
   })
 
@@ -601,17 +614,20 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     const now = new Date()
     const admin = req.staffUser!.id
     const ok = await prisma.$transaction(async (tx) => {
+      // A kit row keeps its pre-kit Concept snapshot on the live settings.
+      const live = await kitLiveSettingsTx(tx, row, target.settings)
       const claimed = await tx.siteLayout.updateMany({
         where: { id: row.id, liveVersion: row.liveVersion },
         data: {
           blocks: target.blocks as Prisma.InputJsonValue,
-          settings: jsonOrNull(target.settings),
+          settings: jsonOrNull(live.settings),
           liveVersion: version, publishedAt: now, updatedById: admin,
         },
       })
       if (claimed.count === 0) return false
       // A brand kit's rollback syncs the brand's Concept like any publish.
-      await applyKitToConceptTx(tx, row, target.settings)
+      // (fields the version leaves unset go back to the pre-kit values).
+      await syncKitToConceptTx(tx, row, row.liveVersion > 0 ? row.settings : null, target.settings, live.before)
       await tx.siteLayoutVersion.create({
         data: {
           layoutId: row.id, version, blocks: target.blocks as Prisma.InputJsonValue, settings: jsonOrNull(target.settings),
@@ -656,11 +672,20 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
   fastify.delete<SlugParams>('/:slug', CEO, async (req, reply) => {
     const slug = slugOf(req)
     const row = await loadRow(req, slug, 'write')
-    await prisma.siteLayout.delete({ where: { id: row.id } })
+    // Removing a brand kit puts the brand's Concept back to its pre-kit
+    // values in the same transaction (the conditional delete makes a
+    // concurrent publish lose cleanly).
+    const restored = await prisma.$transaction(async (tx) => {
+      const gone = await tx.siteLayout.deleteMany({ where: { id: row.id, liveVersion: row.liveVersion } })
+      if (gone.count === 0) return null
+      return unapplyKitTx(tx, row)
+    })
+    if (restored === null) throw new ConflictError('The page was published again while you were removing it. Reload and try again.')
     await audit({
       category: 'identity', ...actor(req),
       action: 'site_layout.delete', entity: 'SiteLayout', entityId: row.id,
       before: { slug, liveVersion: row.liveVersion, draftStatus: row.draftStatus },
+      ...(restored.length > 0 ? { metadata: { conceptRestored: restored } } : {}),
     })
     return reply.status(204).send()
   })

@@ -5,6 +5,7 @@
 
 import Link from 'next/link'
 import { brandStory, conceptHeroImage } from '../../lib/concept'
+import { tintColor } from '../../lib/brandKit'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../../components/brand/parts/OpenStatusBadge'
 import type { SectionProps } from '../types'
 import { color, link, list, safeSrc, str } from '../safe'
@@ -23,7 +24,7 @@ export function GenericHero({ fields, ctx }: SectionProps) {
   // Images, screen readers); without a description it stays a background.
   const imageAlt = t(fields.imageAlt).trim()
   const photo = !!heroImage && !!imageAlt
-  const wash = `linear-gradient(135deg, ${accent} 0%, color-mix(in srgb, ${accent} 86.7%, transparent) 60%, color-mix(in srgb, ${accent} 66.7%, transparent) 100%)`
+  const wash = `linear-gradient(135deg, ${accent} 0%, ${tintColor(accent, 'dd')} 60%, ${tintColor(accent, 'aa')} 100%)`
   const primary = link(fields.primary)
   const secondary = link(fields.secondary)
   const p = brandHref(primary.href, ctx)
