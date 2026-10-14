@@ -24,8 +24,16 @@ interface Quote {
   tender: 'cash' | 'card'
   taxRatePct: number
   itemTotalCents: number
+  /** GST on the food. */
+  itemTaxCents: number
+  /** ALL the GST on the bill: the food's (itemTaxCents) plus the delivery
+   *  fee's (deliveryFeeTaxCents). The GST row shows this one figure. */
   taxCents: number
+  /** The delivery fee BEFORE its GST — the GST is added on top (H9) and is
+   *  already inside taxCents. 0 for pickup, curbside and dine-in. */
   deliveryFeeCents: number
+  /** The delivery fee's own GST, at the order's tender rate. */
+  deliveryFeeTaxCents: number
   serviceChargeCents: number
   pricedTotalCents: number
   promo: { code: string; discountCents: number; description: string } | null
@@ -1006,7 +1014,16 @@ export default function CheckoutPage() {
           <div className="rounded-xl p-3.5 space-y-2"
             style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.06)' }}>
             <PriceLine label="Subtotal"    value={quote ? fmt(quote.itemTotalCents) : '…'} />
-            <PriceLine label={quote ? `GST (${quote.taxRatePct}%)` : 'GST'} value={quote ? fmt(quote.taxCents) : '…'} />
+            {/* One GST row: all the GST the server charged — the food's AND the
+                delivery fee's — with the delivery share named. The figures are
+                the server's; nothing is worked out here. */}
+            <PriceLine
+              label={quote ? `GST (${quote.taxRatePct}%)` : 'GST'}
+              value={quote ? fmt(quote.taxCents) : '…'}
+              note={quote && (quote.deliveryFeeTaxCents ?? 0) > 0
+                ? `incl. ${fmt(quote.deliveryFeeTaxCents)} on delivery`
+                : undefined}
+            />
             {quote && quote.deliveryFeeCents > 0 && (
               <PriceLine label="Delivery" value={fmt(quote.deliveryFeeCents)} />
             )}
@@ -1296,11 +1313,14 @@ function Panel({ icon, label, extra, children }: {
   )
 }
 
-function PriceLine({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function PriceLine({ label, value, accent, note }: { label: string; value: string; accent?: string; note?: string }) {
   return (
-    <div className="flex justify-between text-sm">
-      <span style={{ color: 'var(--servd-mute)' }}>{label}</span>
-      <span style={{ color: accent ?? 'var(--servd-mute)' }}>{value}</span>
+    <div className="flex justify-between items-start gap-3 text-sm">
+      <span style={{ color: 'var(--servd-mute)' }}>
+        {label}
+        {note && <span className="block text-xs">{note}</span>}
+      </span>
+      <span className="shrink-0" style={{ color: accent ?? 'var(--servd-mute)' }}>{value}</span>
     </div>
   )
 }

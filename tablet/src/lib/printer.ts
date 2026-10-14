@@ -116,6 +116,13 @@ export interface ReceiptOrder {
   items: Array<{ name: string; qty: number; price: number; modifiers?: string[] }>
   subtotalCents: number
   discountCents?: number
+  /**
+   * The delivery charge BEFORE GST (Order.deliveryFeeCents, H9) — present on a
+   * delivery order only. The GST on it is already inside `taxCents`, so the
+   * printed rows (Subtotal - Discount + Delivery + Tax + Service + Tip) add up
+   * to TOTAL. Absent on an older API and on pickup / dine-in / the till.
+   */
+  deliveryFeeCents?: number
   taxCents:      number
   serviceChargeCents?: number
   tipCents?:     number
@@ -343,6 +350,7 @@ export function buildReceipt(order: ReceiptOrder, opts: ReceiptOptions = {}): Ui
   }
   bytes.push(...totalLine('Subtotal', order.subtotalCents))
   if (order.discountCents)      bytes.push(...totalLine('Discount', -order.discountCents))
+  if (order.deliveryFeeCents && order.deliveryFeeCents > 0) bytes.push(...totalLine('Delivery', order.deliveryFeeCents))
   bytes.push(...totalLine('Tax',      order.taxCents))
   if (order.serviceChargeCents) bytes.push(...totalLine('Service', order.serviceChargeCents))
   if (order.tipCents)           bytes.push(...totalLine('Tip', order.tipCents))

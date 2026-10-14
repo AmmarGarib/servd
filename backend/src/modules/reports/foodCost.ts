@@ -73,6 +73,7 @@ import { ACCT } from '../accounting/journal.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { readCutover } from '../inventory/fifoCutover.js'
 import { ORDER_COGS_FIX_SOURCES } from '../orders/stock.js'
+import { grniLineOpenValues } from '../procurement/grniRoutes.js'
 import { FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import type { CloseCheck } from '../accounting/closeCheckTypes.js'
 
@@ -1207,31 +1208,14 @@ async function grniOpen(db: Db, tenantId: string, o: { receivedBefore?: Date; no
     select: { id: true, receivedQty: true, billedQty: true, lotUnitCostCents: true, poUnitCostCents: true, receipt: { select: { receivedAt: true } } },
   })
   const open = lines.filter((l) => l.receivedQty - l.billedQty > 1e-6)
-  const ids = open.map((l) => l.id)
-  const received = new Map<string, number>()
-  const matched = new Map<string, number>()
-  for (const part of chunk(ids)) {
-    const lots = await db.stockLot.findMany({ where: { receiptLineId: { in: part } }, select: { id: true, receiptLineId: true } })
-    const lineOf = new Map(lots.map((l) => [l.id, l.receiptLineId!]))
-    if (lots.length > 0) {
-      for (const r of await db.stockMovement.groupBy({ by: ['lotId'], where: { lotId: { in: lots.map((l) => l.id) }, kind: 'receipt' }, _sum: { valueCents: true } })) {
-        const line = r.lotId ? lineOf.get(r.lotId) : undefined
-        if (line) received.set(line, (received.get(line) ?? 0) + sumCents(r._sum.valueCents))
-      }
-    }
-    for (const m of await db.grniMatch.groupBy({ by: ['receiptLineId'], where: { receiptLineId: { in: part }, status: 'live' }, _sum: { grniCents: true } })) {
-      if (m.receiptLineId) matched.set(m.receiptLineId, sumCents(m._sum.grniCents))
-    }
-  }
+  // The one GRNI open-value rule (procurement/grniRoutes.ts).
+  const values = await grniLineOpenValues(db, open)
   const now = (o.now ?? new Date()).getTime()
   let openCents = 0
   let staleLines = 0
   let staleCents = 0
   for (const l of open) {
-    const rec = received.get(l.id)
-    const v = rec != null
-      ? Math.max(0, rec - (matched.get(l.id) ?? 0))
-      : Math.round(Math.max(0, l.receivedQty - l.billedQty) * (l.lotUnitCostCents ?? l.poUnitCostCents ?? 0))
+    const v = values.get(l.id) ?? 0
     openCents += v
     if (now - l.receipt.receivedAt.getTime() > GRNI_STALE_DAYS * DAY_MS) { staleLines += 1; staleCents += v }
   }

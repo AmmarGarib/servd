@@ -32,6 +32,14 @@ interface OrderStatus {
   /** The hand-over code for the rider at the door (docs/rider-app.md). The
    *  API sends it to the order's own customer, on delivery orders only. */
   deliveryOtp?: string | null
+  /** The order's own stored figures (H9) — the API sends them as columns.
+   *  taxCents is ALL the GST charged: the food's AND the delivery fee's.
+   *  Optional so an older API still renders. */
+  taxCents?: number
+  /** The delivery fee BEFORE its GST; 0 / absent on pickup, curbside, dine-in. */
+  deliveryFeeCents?: number
+  /** The GST on that fee (already inside taxCents). */
+  deliveryFeeTaxCents?: number
 }
 
 /** A tel: link for the rider. Rider numbers are stored normalised (92…
@@ -362,6 +370,32 @@ export default function OrderStatusPage() {
               </div>
             ))}
           </div>
+          {/* GST and the delivery fee — the order's stored figures, nothing
+              worked out here. One GST row (the food's AND the delivery's)
+              with the delivery share named; the Delivery row only when the
+              order had a fee. The fee is charged before its GST (H9). */}
+          {((order.taxCents ?? 0) > 0 || (order.deliveryFeeCents ?? 0) > 0) && (
+            <div className="px-4 py-2.5 space-y-1.5"
+              style={{ borderTop: '1px solid var(--servd-line)' }}>
+              {(order.taxCents ?? 0) > 0 && (
+                <div className="flex justify-between items-start gap-3 text-sm">
+                  <span style={{ color: 'var(--servd-mute)' }}>
+                    GST
+                    {(order.deliveryFeeTaxCents ?? 0) > 0 && (
+                      <span className="block text-xs">incl. {fmt(order.deliveryFeeTaxCents ?? 0)} on delivery</span>
+                    )}
+                  </span>
+                  <span className="font-bold shrink-0" style={{ color: 'var(--servd-mute)' }}>{fmt(order.taxCents ?? 0)}</span>
+                </div>
+              )}
+              {(order.deliveryFeeCents ?? 0) > 0 && (
+                <div className="flex justify-between items-start gap-3 text-sm">
+                  <span style={{ color: 'var(--servd-mute)' }}>Delivery</span>
+                  <span className="font-bold shrink-0" style={{ color: 'var(--servd-mute)' }}>{fmt(order.deliveryFeeCents ?? 0)}</span>
+                </div>
+              )}
+            </div>
+          )}
           <div className="px-4 py-3.5 flex justify-between items-center"
             style={{ background: 'var(--servd-surface)', borderTop: '1px solid var(--servd-line)' }}>
             <span className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Total</span>
