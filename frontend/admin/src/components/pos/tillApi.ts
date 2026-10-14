@@ -65,6 +65,10 @@ export interface TillOrderItem {
   quantity: number
   unitPriceCents: number
   status?: string
+  /** The vessel snapshotted on the line ('plate' | 'packaging'; null/absent = plate). */
+  serviceVessel?: string | null
+  /** Staff tapped "Box given" on this dine-in line (leftovers boxed). */
+  boxGiven?: boolean
   modifiers?: Array<{ name: string; priceDeltaCents: number }>
 }
 
@@ -81,6 +85,8 @@ export interface TillOrder {
   discountCents: number
   tipCents?: number
   placedAt: string
+  /** dine_in | takeout | delivery — "Box given" is for dine_in lines only. */
+  fulfilmentType?: string | null
   tableId?: string | null
   table?: { label: string } | null
   items: TillOrderItem[]
@@ -104,6 +110,9 @@ export interface TillQuote {
   dueCents: number
   /** Present only on an API whose payments take a tip (FOH-14). */
   tipCents?: number
+  /** Delivery fee on the order and the GST on it (already inside taxCents) — the server's figures. */
+  deliveryFeeCents?: number
+  deliveryFeeTaxCents?: number
 }
 
 /** The server's price for a cart that is not rung up yet (POST /pos/quote). */
@@ -795,6 +804,66 @@ export function fetchOrder(orderId: string): Promise<TillOrder> {
   return api.get<TillOrder>(`/orders/${orderId}`)
 }
 
+// ─── "Box given" (packaging rule, owner's FINAL rule 2026-10-13) ────────────
+//
+// A dine-in line at a PLATE brand counts its dish's packaging only when staff
+// tap "Box given" (the leftovers were boxed). Takeaway / delivery lines and a
+// packaging-vessel brand's lines (e.g. Stackd) already count it, so they never
+// show the button. The rule lives on the server (lib/recipeCost.ts
+// packagingApplies); this file only decides when to OFFER the tap and speaks
+// the answer in words. The server re-checks everything.
+//
+//   POST /pos/orders/:orderId/items/:itemId/box-given        {}  → box it
+//                                                       { undo: true } → take it back
+//     → { boxGiven, depleted }   (till, floor and pass staff of the order's company)
+//   409 BOX_NOT_NEEDED · ORDER_COMPLETED (undo after the sale completed) ·
+//   LINE_VOIDED · ORDER_ENDED;  404 outside the company or a line of another order.
+
+export interface BoxGivenResult { boxGiven: boolean; depleted: boolean }
+
+/** Tap "Box given" on a line, or take the tap back (`undo`) while the order is open. */
+export function boxGiven(orderId: string, itemId: string, undo = false): Promise<BoxGivenResult> {
+  return api.post<BoxGivenResult>(`/pos/orders/${orderId}/items/${itemId}/box-given`, undo ? { undo: true } : {})
+}
+
+/**
+ * What a line offers: nothing ('hidden'), the tap ('box'), or — once boxed —
+ * a chip with an Undo ('boxed_undo') while the order is still open, or the
+ * chip alone ('boxed') once the sale has completed.
+ */
+export type BoxGivenOffer = 'hidden' | 'box' | 'boxed_undo' | 'boxed'
+
+export function boxGivenOffer(
+  order: { fulfilmentType?: string | null; status: string },
+  item: { status?: string; serviceVessel?: string | null; boxGiven?: boolean },
+): BoxGivenOffer {
+  if (order.fulfilmentType !== 'dine_in') return 'hidden'             // takeaway / delivery already count their packaging
+  if ((item.serviceVessel ?? 'plate') !== 'plate') return 'hidden'     // a packaging-vessel brand's line already counts it
+  if (item.status === 'voided') return 'hidden'
+  if (['cancelled', 'rejected', 'refunded'].includes(order.status)) return 'hidden'
+  if (!item.boxGiven) return 'box'
+  return order.status === 'completed' ? 'boxed' : 'boxed_undo'
+}
+
+/** A "Box given" refusal in plain words. */
+export function boxGivenErrorMessage(e: unknown): string {
+  if (e instanceof ApiError) {
+    switch (e.code) {
+      case 'BOX_NOT_NEEDED':
+        return 'This line already counts its packaging (takeaway, delivery, or a brand that serves in packaging) — no "Box given" needed.'
+      case 'ORDER_COMPLETED':
+        return 'This order is complete — "Box given" can no longer be taken back.'
+      case 'LINE_VOIDED':
+        return 'This line was voided, so there is nothing to box.'
+      case 'ORDER_ENDED':
+        return 'This order has ended (cancelled, rejected or refunded) — nothing to box.'
+    }
+    if (e.status === 403) return 'Only till, floor and kitchen staff can tap "Box given".'
+    if (e.status === 404) return 'That line was not found on this order — reload the page.'
+  }
+  return tillErrorMessage(e, 'Could not save "Box given" — try again')
+}
+
 /**
  * POST /pos/payments — one tender for what is due. `amountCents` is what the
  * tender takes: the bill's due PLUS `tipCents` when there is a tip (FOH-14).
@@ -901,6 +970,8 @@ export interface ZReportExtras {
   /** Of raastSales: not on a bank statement yet / matched to one. */
   raastProvisionalCents?: number
   raastMatchedCents?: number
+  /** Raast takings on tickets the CEO voided ("never booked") — left out of the sales and the refund due. */
+  raastVoidedCents?: number
   /** Card / cash tips inside the takings — staff money (2095), not sales. */
   tipsCents?: number
   /** Takings (cash + card) less tips. */

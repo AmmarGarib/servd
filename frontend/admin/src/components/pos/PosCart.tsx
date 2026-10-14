@@ -1,7 +1,10 @@
 'use client'
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { usePosStore } from '../../store/pos'
 import { fmtPkrWhole } from '../../lib/money'
-import { useCartQuote } from './tillApi'
+import { orderRef } from '../../lib/orderRef'
+import { boxGiven, boxGivenErrorMessage, boxGivenOffer, useCartQuote, useOpenTickets, type TillOrder, type TillOrderItem } from './tillApi'
 
 interface PosCartProps {
   conceptId: string | null
@@ -12,6 +15,13 @@ interface PosCartProps {
 // server's bill for cash and for card / Raast QR (one digital tax group at
 // the card rate). It never works out GST itself (FOH-02):
 // the bill that is charged is the one the server returns at ring-up.
+//
+// Below the cart, "Box given" lists the brand's OPEN dine-in tickets (the same
+// tickets as "Open tickets") with a Box given toggle on each plate line: tap it
+// when a table takes leftovers home, so the dish's packaging is counted
+// (packaging rule, owner 2026-10-13). A line that already counts its packaging
+// (takeaway, delivery, a packaging-vessel brand like Stackd) shows nothing.
+// The cart itself has no order yet, so it has nothing to box.
 export function PosCart({ conceptId, onCheckout }: PosCartProps) {
   const { cart, removeItem, updateItemQty, updateItemNotes, discountCents, itemTotalCents, lines } = usePosStore()
   const items = itemTotalCents()
@@ -92,6 +102,8 @@ export function PosCart({ conceptId, onCheckout }: PosCartProps) {
         )}
       </div>
 
+      <BoxGivenTickets conceptId={conceptId} />
+
       {/* Totals — food value here; GST and service charge are the server's */}
       <div className="border-t border-kds-border px-4 py-3 space-y-1">
         <div className="flex justify-between text-sm text-kds-subtext">
@@ -154,5 +166,103 @@ export function PosCart({ conceptId, onCheckout }: PosCartProps) {
         </button>
       </div>
     </div>
+  )
+}
+
+// ─── Box given ───────────────────────────────────────────────────────────────
+
+function BoxGivenTickets({ conceptId }: { conceptId: string | null }) {
+  const qc = useQueryClient()
+  const tickets = useOpenTickets(conceptId)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<{ itemId: string; text: string } | null>(null)
+
+  const rows = (tickets.data ?? [])
+    .map((order) => ({
+      order,
+      lines: order.items
+        .map((item) => ({ item, offer: boxGivenOffer(order, item) }))
+        .filter((l) => l.offer !== 'hidden'),
+    }))
+    .filter((r) => r.lines.length > 0)
+  if (rows.length === 0) return null
+
+  async function tap(order: TillOrder, item: TillOrderItem, undo: boolean) {
+    setError(null)
+    setBusy(item.id)
+    try {
+      await boxGiven(order.id, item.id, undo)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] }),
+        qc.invalidateQueries({ queryKey: ['order-detail', order.id] }),
+      ])
+    } catch (e) {
+      setError({ itemId: item.id, text: boxGivenErrorMessage(e) })
+      // The ticket may have moved on (paid, voided): show what the server has now.
+      void qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <details className="shrink-0 border-t border-kds-border">
+      <summary className="flex min-h-[44px] cursor-pointer items-center justify-between px-4 py-2 text-sm font-semibold text-kds-text">
+        <span>Box given</span>
+        <span className="text-xs font-normal text-kds-subtext">{rows.length} open table{rows.length !== 1 ? 's' : ''}</span>
+      </summary>
+      <div className="max-h-56 overflow-y-auto px-4 pb-3">
+        <p className="pb-2 text-xs text-kds-subtext">
+          Tap when a table takes leftovers home. The box is then counted in the dish&apos;s cost.
+        </p>
+        <div className="space-y-3">
+          {rows.map(({ order, lines }) => (
+            <div key={order.id}>
+              <p className="text-xs font-bold text-kds-subtext">
+                {order.table?.label ? `Table ${order.table.label}` : 'Ticket'} · {orderRef(order.id)}
+              </p>
+              <ul className="mt-1 divide-y divide-kds-border">
+                {lines.map(({ item, offer }) => (
+                  <li key={item.id} className="py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 text-sm text-kds-text">
+                        <span className="font-semibold">{item.quantity}×</span> {item.name}
+                      </span>
+                      {offer === 'box' ? (
+                        <button
+                          onClick={() => void tap(order, item, false)}
+                          disabled={busy === item.id}
+                          aria-label={`Box given for ${item.name}`}
+                          className="h-10 shrink-0 rounded-lg border border-kds-border px-3 text-xs font-bold text-kds-text disabled:opacity-40 active:bg-kds-border/70"
+                        >
+                          {busy === item.id ? 'Saving…' : 'Box given'}
+                        </button>
+                      ) : (
+                        <span className="flex shrink-0 items-center gap-2">
+                          <span className="rounded-full bg-kds-green/15 px-2 py-0.5 text-[11px] font-bold text-kds-green">Boxed</span>
+                          {offer === 'boxed_undo' && (
+                            <button
+                              onClick={() => void tap(order, item, true)}
+                              disabled={busy === item.id}
+                              aria-label={`Take back Box given for ${item.name}`}
+                              className="h-10 rounded-lg px-2 text-xs font-bold text-kds-subtext underline disabled:opacity-40"
+                            >
+                              {busy === item.id ? 'Saving…' : 'Undo'}
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    {error?.itemId === item.id && (
+                      <p className="mt-1 text-xs font-semibold text-kds-red" role="alert">{error.text}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
   )
 }

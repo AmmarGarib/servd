@@ -30,6 +30,26 @@ driver inside servd (`backend/src/connectors/drivers/<vendor>.ts`) instead.
   Raast-only sale has `payment.mode` `card`. Keenu QR is retired: `keenu_qr`
   now appears only on sales made before this date and on their refunds. The
   FBR `PaymentMode` reference (§5) maps `raast` to 3. `version` stays `1`.
+- **2026-10-14 — delivery charge taxed (backward compatible).** The delivery
+  fee on an own-fleet delivery order now carries sales tax, added on top at
+  the order's tender rate (15 % cash, 8 % card, Raast QR and online). servd
+  sends the fee as a **line of its own** in `lines[]`:
+  `lineId` `delivery:<orderId>`, `itemCode` `DELIVERY-CHARGE`, `description`
+  `Delivery charge`, `quantity` 1, `unitPriceCents` = `grossCents` = the fee,
+  `taxRatePct` = the order's standard rate, `taxCents` = the GST on the fee.
+  `totals.saleValueCents`, `totals.discountCents` and `totals.taxCents` now
+  include that line, and `totals.deliveryChargeCents` is **0 for these
+  sales**. The identity in "How servd builds the figures" is unchanged, so an
+  integration that already adds up the lines keeps working. A discount covers
+  the food lines first, then the delivery-charge line, and only what is left
+  beyond both is `totals.billDiscountCents`. A refund spreads its taxable value
+  over the lines as before, so it returns its share of the delivery line.
+  **Legacy sales are unchanged:** a delivery order priced before this date
+  stored its fee without tax inside the bill, so it still reports that fee as
+  `totals.deliveryChargeCents` (untaxed) and has no `DELIVERY-CHARGE` line.
+  `version` stays `1`. Treat an unknown `itemCode` as an ordinary line; the FBR
+  mapping (§5) gives this line `ItemCode` `DELIVERY` (and `PCTCode`
+  `9963.1100` like the others).
 
 ---
 
@@ -140,9 +160,11 @@ How servd builds the figures:
   identity before it sends anything: a document whose figures do not add up
   is never sent (servd holds it as `fiscal_failed`, reason `totals_mismatch`,
   and alerts the company).
-- `totals.deliveryChargeCents` (optional) is the delivery fee on a delivery
-  order. It is **not taxed**, so it carries no line and no tax. Absent or 0
-  on every other order.
+- `totals.deliveryChargeCents` (optional) is the **legacy, untaxed** delivery
+  fee of a delivery order priced before 2026-10-14: it carries no line and no
+  tax. A delivery order priced since then sends its fee, with its GST, as a
+  `DELIVERY-CHARGE` line (see the 2026-10-14 note above) and this field is 0.
+  Absent or 0 on every other order.
 - `totals.billDiscountCents` (optional) is the part of a discount that is
   larger than the food — for example loyalty points that also cover the GST
   or the delivery fee, or a 100 % discount that leaves the customer paying
@@ -397,6 +419,7 @@ in `backend/src/connectors/fiscal/payload.ts` (`toSrbInvoiceFields`,
 | `Discount` | `(totals.discountCents + totals.billDiscountCents) ÷ 100` (a missing `billDiscountCents` is 0) |
 | `PaymentMode` | 2 when any tender is cash; otherwise 3 when any tender is `raast` (Raast QR) or `keenu_qr` (older sales); otherwise 1 (card — the servd wallet and a gift card included). Raast QR as 3 is servd's default reading of PRAL's modes — tell servd if your PRAL integration expects another value. |
 | `InvoiceType` | 1 for a sale, 3 for a credit note (`RefUSIN` = the original fiscal number) |
+| `Items[].ItemCode` | `POS-ITEM` for a menu line; `DELIVERY` for the `DELIVERY-CHARGE` line (since 2026-10-14) |
 | `Items[].PCTCode` | `9963.1100` (restaurant food service) |
 | `Items[].TaxCharged` | `lines[].taxCents ÷ 100` |
 

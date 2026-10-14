@@ -10,6 +10,7 @@ import { formatDistanceToNowStrict, format } from 'date-fns'
 import Link from 'next/link'
 import { fmtPkr, fmtPkrWhole } from '../../../lib/money'
 import {
+  boxGiven, boxGivenErrorMessage, boxGivenOffer,
   cancelledCardRefundOffer, fetchReceiptHtml, fetchTerminalConfig, isPreBillRequired, preBillErrorMessage, printHtml, printPreBill,
   terminalChargesFor, tillErrorMessage,
   type TerminalChargeView,
@@ -52,6 +53,11 @@ interface OrderDetail {
   cancelledAt: string | null
   cancellationReason: string | null
   deliveryNotes: string | null
+  /** dine_in | takeout | delivery — "Box given" is offered on dine_in lines only. */
+  fulfilmentType?: 'dine_in' | 'takeout' | 'delivery'
+  /** Delivery fee on top of the food, and the GST on that fee (inside taxCents) — the server's figures. */
+  deliveryFeeCents?: number
+  deliveryFeeTaxCents?: number
   curbsideVehicle: string | null
   curbsidePlate: string | null
   curbsideSpot: string | null
@@ -72,6 +78,10 @@ interface OrderDetail {
     status: string
     course: number | null
     notes: string | null
+    /** 'plate' | 'packaging' (null/absent on an old line = plate). */
+    serviceVessel?: 'plate' | 'packaging' | null
+    /** Staff boxed this dine-in line's leftovers — its packaging counts. */
+    boxGiven?: boolean
     modifiers: Array<{ id: string; name: string; priceDeltaCents: number }>
     station: { name: string } | null
     menuItem: { imageUrl: string | null; nameUrdu: string | null } | null
@@ -191,6 +201,11 @@ const STATUS_CTA: Record<string, string> = {
 // Raast QR money goes back by Raast: the manager sends it back from the bank
 // first and records the outgoing transfer's reference (required); the server
 // books it against the bank account that received it (never 1030).
+//
+// A Raast receipt the CEO VOIDED ("never booked", no ledger entry) was never
+// money in the drawer: it is left out of the refund due and the hand-back
+// tenders here, exactly as the server's refundDueOf leaves it out
+// (isDrawerReceipt).
 
 const HAND_BACK_TENDERS: readonly RefundTender[] = ['cash', 'card', 'raast', 'keenu_qr']
 const HAND_BACK_LABEL: Record<RefundTender, string> = { cash: 'Cash', card: 'Card – Keenu', raast: 'Raast QR', keenu_qr: 'Keenu QR (retired)' }
@@ -199,6 +214,8 @@ type OrderPayment = OrderDetail['payments'][number]
 
 function isDrawerReceipt(p: OrderPayment): boolean {
   if (p.amountCents <= 0 || !p.shiftId || p.method === 'comp') return false
+  // A Raast receipt the CEO voided ("never booked") is not money in the drawer.
+  if (p.method === 'raast' && p.raastReceipt?.status === 'voided') return false
   return p.status === 'paid' || (p.status === 'pending' && (p.method === 'card' || p.method === 'keenu_qr') && !!p.gatewayRef)
 }
 
@@ -560,6 +577,7 @@ const RAAST_CHIP: Record<string, string> = {
   unreceived:      'text-s-red bg-s-red/10',
   awaiting:        'text-s-muted bg-s-bg',
   cancelled:       'text-s-muted bg-s-bg',
+  voided:          'text-s-muted bg-s-bg',
 }
 
 function RaastPaymentNote({ payment }: { payment: OrderPayment }) {
@@ -735,6 +753,8 @@ export default function OrderDetailPage() {
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string; splitLink?: boolean } | null>(null)
   const [printNote, setPrintNote] = useState<{ text: string; offerPreBill: boolean } | null>(null)
   const [printCount, setPrintCount] = useState(0)
+  // "Box given" (packaging rule): the line being saved, so its button waits.
+  const [boxBusy, setBoxBusy] = useState<string | null>(null)
 
   const { data: order, isLoading, isError } = useQuery<OrderDetail>({
     queryKey: ['order-detail', id],
@@ -764,6 +784,21 @@ export default function OrderDetailPage() {
     if (r.refund) parts.push(`${fmtPkr(r.refund.amountCents)} refunded by ${paymentMethodLabel(r.refund.method)}.`)
     if (r.splitCleared) parts.push('The split was cleared because the bill changed. Re-split it.')
     setNotice({ tone: r.splitCleared ? 'warn' : 'ok', text: parts.join(' '), splitLink: r.splitCleared })
+  }
+
+  // Box given on a dine-in plate line (or taking the tap back while the order
+  // is open). The server decides whether it applies and answers in 409s; the
+  // order is re-read afterwards so the chip always shows what is stored.
+  function tapBoxGiven(itemId: string, undo: boolean) {
+    setNotice(null)
+    setBoxBusy(itemId)
+    boxGiven(id, itemId, undo)
+      .catch((e: unknown) => setNotice({ tone: 'bad', text: boxGivenErrorMessage(e) }))
+      .finally(() => {
+        setBoxBusy(null)
+        void qc.invalidateQueries({ queryKey: ['order-detail', id] })
+        void qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] })
+      })
   }
 
   // Printing: an order still open prints a PRE-BILL; a paid one its full &
@@ -1132,6 +1167,8 @@ export default function OrderDetailPage() {
                     const modifiersTotal = item.modifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
                     const effectivePrice = item.unitPriceCents + modifiersTotal
                     const lineTotal = effectivePrice * item.quantity
+                    // "Box given": dine-in plate lines only (hidden on takeaway, delivery and packaging-vessel lines).
+                    const offer = boxGivenOffer(order, item)
                     return (
                       <tr key={item.id} className="hover:bg-s-surface/40">
                         <td className="px-4 py-3">
@@ -1149,6 +1186,13 @@ export default function OrderDetailPage() {
                           {item.station && (
                             <p className="text-[10px] text-s-muted/60 mt-0.5">{item.station.name}</p>
                           )}
+                          {offer !== 'hidden' && item.boxGiven && (
+                            <span
+                              title="Leftovers were boxed — this dish's packaging is counted in its cost"
+                              className="mt-1 inline-block rounded-full bg-s-teal/15 px-2 py-0.5 text-[10px] font-bold text-success">
+                              Boxed
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-s-muted">{item.quantity}</td>
                         <td className="px-4 py-3 font-mono text-xs text-s-text">{fmtPkrWhole(effectivePrice)}</td>
@@ -1159,13 +1203,33 @@ export default function OrderDetailPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {item.status !== 'voided' && !['cancelled', 'rejected', 'refunded'].includes(order.status) && (
-                            <button
-                              onClick={() => setVoidTarget({ id: item.id, name: item.name, quantity: item.quantity, lineCents: lineTotal })}
-                              className="rounded-lg border border-s-red/40 text-s-red text-[11px] font-semibold px-2 py-1 hover:bg-s-red/10 transition-colors">
-                              Void
-                            </button>
-                          )}
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {offer === 'box' && (
+                              <button
+                                onClick={() => tapBoxGiven(item.id, false)}
+                                disabled={boxBusy === item.id}
+                                aria-label={`Box given for ${item.name}`}
+                                className="rounded-lg border border-s-border text-s-text text-[11px] font-semibold px-2 py-1 hover:border-primary hover:text-primary-ink transition-colors disabled:opacity-50">
+                                {boxBusy === item.id ? 'Saving…' : 'Box given'}
+                              </button>
+                            )}
+                            {offer === 'boxed_undo' && (
+                              <button
+                                onClick={() => tapBoxGiven(item.id, true)}
+                                disabled={boxBusy === item.id}
+                                aria-label={`Take back Box given for ${item.name}`}
+                                className="text-[11px] font-semibold text-s-muted underline hover:text-s-text disabled:opacity-50">
+                                {boxBusy === item.id ? 'Saving…' : 'Undo box'}
+                              </button>
+                            )}
+                            {item.status !== 'voided' && !['cancelled', 'rejected', 'refunded'].includes(order.status) && (
+                              <button
+                                onClick={() => setVoidTarget({ id: item.id, name: item.name, quantity: item.quantity, lineCents: lineTotal })}
+                                className="rounded-lg border border-s-red/40 text-s-red text-[11px] font-semibold px-2 py-1 hover:bg-s-red/10 transition-colors">
+                                Void
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
@@ -1190,9 +1254,20 @@ export default function OrderDetailPage() {
                   <span className="text-s-muted">Items subtotal</span>
                   <span className="font-mono text-s-text">{fmtPkrWhole(itemsSubtotal)}</span>
                 </div>
-                {order.taxCents > 0 && (
+                {(order.deliveryFeeCents ?? 0) > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-s-muted">Tax</span>
+                    <span className="text-s-muted">Delivery fee</span>
+                    <span className="font-mono text-s-text">{fmtPkrWhole(order.deliveryFeeCents)}</span>
+                  </div>
+                )}
+                {order.taxCents > 0 && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-s-muted">
+                      GST
+                      {(order.deliveryFeeTaxCents ?? 0) > 0 && (
+                        <span className="block text-[11px] text-s-muted/70">(incl. {fmtPkrWhole(order.deliveryFeeTaxCents)} on delivery)</span>
+                      )}
+                    </span>
                     <span className="font-mono text-s-text">{fmtPkrWhole(order.taxCents)}</span>
                   </div>
                 )}
@@ -1239,7 +1314,7 @@ export default function OrderDetailPage() {
                         {p.method === 'raast' && <RaastPaymentNote payment={p} />}
                       </div>
                       <div className="text-right">
-                        <span className="font-mono text-sm font-bold text-primary-ink">{fmtPkrWhole(p.amountCents)}</span>
+                        <span className={`font-mono text-sm font-bold ${p.raastReceipt?.status === 'voided' ? 'text-s-muted line-through' : 'text-primary-ink'}`}>{fmtPkrWhole(p.amountCents)}</span>
                         {p.changeCents != null && p.changeCents > 0 && (
                           <p className="text-xs text-s-muted">Change: {fmtPkrWhole(p.changeCents)}</p>
                         )}

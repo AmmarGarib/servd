@@ -291,10 +291,40 @@ describe('a settlement reclasses out of the account the pay booked', () => {
       tenantId: T.A, lineId: capex['A']!, spendLineId: line.id, amountCents: 6_000, paidAt: new Date(), creditCode: '1011', actorId: U['finA']!.id,
     }))
     expect(again.capexPaymentId).toBe(pay.id)
+    // The CapEx payment credits the paid 6140 itself (no 1011 bridge), so the
+    // settlement has nothing left to move: no settlement entry.
+    expect(await entry(`capex.payment:${pay.id}`)).toEqual([['1340', 'debit', 6_000], ['6140', 'credit', 6_000]])
+    expect(await entry(`cashvoucher.settle:${sid}`)).toBeNull()
     const replay = await prisma.$transaction((tx) => postCashVoucherSettlementTx(tx, sid))
-    expect(replay.entryId).toBeTruthy()
+    expect(replay.entryId).toBeNull()
     expect(await prisma.capexPayment.count({ where: { lineId: capex['A'] } })).toBe(1)
     expect(await gl()).toEqual(after)
+  })
+
+  it('a capex line out of a brand-tagged request credits the paid 6xxx with that brand (the brand\'s expense nets to zero)', async () => {
+    const conceptA = (await prisma.concept.create({ data: { name: `${P} brand A`, slug: `${P}-brand-a`, type: 'restaurant', tenantId: T.A } })).id
+    const r = await call('finA', 'POST', V, { purpose: 'Blender for brand A', categoryKey: 'transport', amountCents: 4_000, holderUserId: U['cookA']!.id, conceptId: conceptA })
+    expect(r.statusCode, r.body).toBe(201)
+    const id = (r.json() as Req).id
+    expect((await call('mgrA', 'POST', `${V}/${id}/sign-hod`)).statusCode).toBe(200)
+    expect((await call('ceoA', 'POST', `${V}/${id}/approve`)).statusCode).toBe(200)
+    expect((await call('cashA', 'POST', `${V}/${id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+    const r1 = await receipt('cookA', id)
+    const s = await call('finA', 'POST', `${V}/${id}/settlements`, {
+      lines: [{ kind: 'capex', capexLineId: capex['A'], amountCents: 4_000, description: 'Blender' }], receiptIds: [r1],
+    })
+    expect(s.statusCode, s.body).toBe(200)
+    const line = await prisma.pettyCashSpendLine.findFirstOrThrow({ where: { settlementId: s.json().settlementId as string } })
+    const brandNet = async (ref: string) => {
+      const rows = await prisma.journalLine.findMany({
+        where: { account: { tenantId: T.A, code: '6140' }, journalEntry: { tenantId: T.A, reference: { startsWith: ref } } },
+        select: { type: true, amountCents: true, conceptId: true },
+      })
+      return rows.map((x) => [x.type, Number(x.amountCents), x.conceptId])
+    }
+    expect(await brandNet(`capex.payment:${line.capexPaymentId}`)).toEqual([['credit', 4_000, conceptA]])
+    const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id }, select: { pettyCashMovementId: true } })
+    expect(await brandNet(`pettycash.spend:${v.pettyCashMovementId}`)).toEqual([['debit', 4_000, conceptA]])
   })
 
   it('change returned posts Dr 1011 / Cr the paid account, then the request is settled', async () => {

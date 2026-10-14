@@ -15,10 +15,14 @@ import Link from 'next/link'
 import { api, ApiError } from '../../../lib/api'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
+import { fmtPkrWhole } from '../../../lib/money'
+import { stockErrorText } from '../../../lib/stockUi'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftInput { inventoryItemId: string; qtyDrawn: number; unit: string }
-interface PrepBatch { id: string; itemName: string; actualYieldQty: number; expectedYieldQty: number | null; yieldVariancePct: number | null; createdAt: string; staffId: string; unit: string }
+interface PrepBatch { id: string; itemName: string; actualYieldQty: number; expectedYieldQty: number | null; yieldVariancePct: number | null; createdAt: string; staffId: string; unit: string; recipeId?: string | null; drawValueCents?: number | null; locationId?: string | null }
+interface OutletLite { id: string; name: string; isActive?: boolean }
+interface BatchResult { ledger?: { posted: boolean; reason?: string; error?: string } | null }
 interface PrepOption {
   id: string; name: string; yieldGrams: number | null
   inputs: Array<{ inventoryItemId: string | null; name: string; unit: string; qtyDrawn: number; missing: boolean }>
@@ -45,6 +49,13 @@ export default function PrepBatchPage() {
     meta: { background: true },
     retry: (count, err) => !(err instanceof ApiError && err.status === 403) && count < 1,
   })
+  // The outlet the batch was made at (one of the active company's). Stock is
+  // still one pool per company; the outlet is tagged now for per-outlet stock later.
+  const { data: outlets = [] } = useQuery<OutletLite[]>({
+    queryKey: ['locations'], queryFn: () => api.get('/locations'),
+    retry: false, meta: { background: true }, staleTime: 300_000,
+  })
+  const activeOutlets = outlets.filter((o) => o.isActive !== false)
   const { data: preps = [] } = useQuery<PrepOption[]>({ queryKey: ['par-sheet', 'preps'], queryFn: () => api.get('/par-sheet/preps') })
   const { data: batches = [] } = useQuery<PrepBatch[]>({ queryKey: ['prep-batches'], queryFn: () => api.get('/crosschecks/prep-batches'), refetchInterval: 30_000 })
 
@@ -56,7 +67,8 @@ export default function PrepBatchPage() {
   const [actualYieldQty, setActualYieldQty] = useState<number | ''>('')
   const [photoUrl, setPhotoUrl] = useState('')
   const [notes, setNotes] = useState('')
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const [locationId, setLocationId] = useState('')
+  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null)
 
   // Ingredient choices: the stock list when this login can read it, else the
   // ingredients of the company's sub-recipes (name + stock unit, no on-hand).
@@ -95,8 +107,9 @@ export default function PrepBatchPage() {
   }, [preps])
 
   const submit = useMutation({
-    mutationFn: () => api.post('/crosschecks/prep-batches', {
+    mutationFn: () => api.post<BatchResult>('/crosschecks/prep-batches', {
       recipeId: adHoc || !recipeId ? null : recipeId,
+      locationId: locationId || null,
       itemName, inputs,
       expectedYieldQty: expectedYieldQty === '' ? null : expectedYieldQty,
       actualYieldQty: actualYieldQty === '' ? 0 : actualYieldQty,
@@ -104,16 +117,21 @@ export default function PrepBatchPage() {
       photoUrl: photoUrl || null,
       notes: notes || null,
     }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['prep-batches'] })
       qc.invalidateQueries({ queryKey: ['inventory'] })
       qc.invalidateQueries({ queryKey: ['par-sheet'] })
       qc.invalidateQueries({ queryKey: ['exceptions'] })
       const yieldPct = expectedYieldQty && actualYieldQty ? +actualYieldQty / +expectedYieldQty : null
-      setFeedback(yieldPct != null && yieldPct < 0.85 ? '⚠️ Batch saved — low yield flagged.' : '✓ Batch logged, inventory deducted.')
+      const ledger = res?.ledger
+      setFeedback(ledger && !ledger.posted
+        ? { tone: 'bad', text: `Batch saved and stock drawn, but its books entry did not post: ${ledger.reason ?? ledger.error ?? 'the ledger refused it'}. Finance can re-post it from Reconciliation → Backfill unposted.` }
+        : yieldPct != null && yieldPct < 0.85
+          ? { tone: 'warn', text: 'Batch saved — low yield flagged.' }
+          : { tone: 'ok', text: adHoc ? 'Batch logged. The ingredients were drawn from stock at the price paid.' : 'Batch logged.' })
       setRecipeId(''); setMultiplier(1)
       setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotoUrl(''); setNotes('')
-      setTimeout(() => setFeedback(null), 5000)
+      if (!ledger || ledger.posted) setTimeout(() => setFeedback(null), 6000)
     },
   })
 
@@ -134,7 +152,7 @@ export default function PrepBatchPage() {
           {canOpen('/inventory') && <Link href="/inventory" className="text-white/40 hover:text-white/70">← Inventory</Link>}
           {canOpen('/par-sheet') && <Link href="/par-sheet" className="text-white/40 hover:text-white/70">Par sheet</Link>}
         </div>
-        <h1 className="text-2xl font-black text-white/90 mt-2">🥣 Prep batch log</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Prep batch log</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Record what you drew from inventory + what you made. This is the only place prep is recorded: it deducts the
           ingredients and shows on the par sheet. Low-yield batches (under 85%) auto-flag to the owner inbox.
@@ -143,16 +161,18 @@ export default function PrepBatchPage() {
 
       <div className="px-7 py-6 max-w-3xl mx-auto space-y-5">
         {feedback && (
-          <div className="rounded-xl px-4 py-3 text-sm font-bold"
-            style={{
-              background: feedback.startsWith('⚠') ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
-              color: feedback.startsWith('⚠') ? 'var(--erp-warning)' : 'var(--erp-success)',
-              border: `1px solid ${feedback.startsWith('⚠') ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
-            }}>{feedback}</div>
+          <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
+            style={feedback.tone === 'ok'
+              ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', color: 'var(--erp-success)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.45)' }
+              : feedback.tone === 'warn'
+                ? { background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', color: 'var(--erp-warning)', border: '1px solid color-mix(in srgb, var(--erp-warning) 35%, transparent)' }
+                : { background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 35%, transparent)' }}>
+            {feedback.text}
+          </div>
         )}
 
         <Section title="What did you make?">
-          <div className="grid grid-cols-[1fr_120px] gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-3">
             <Field label="Sub-recipe *">
               <select value={recipeId} className={fieldCls}
                 onChange={(e) => {
@@ -178,9 +198,23 @@ export default function PrepBatchPage() {
             )}
           </div>
           {adHoc && (
-            <div className="mt-3">
+            <div className="mt-3 space-y-2">
               <Field label="Prep name *">
                 <input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="Staff meal base" className={fieldCls} />
+              </Field>
+              <p className="text-xs text-s-muted">
+                A batch that is not in the recipe library draws its ingredients from stock at the price paid (oldest stock first), and books that cost to cost of sales.
+                A batch of a library sub-recipe only records the yield — the ingredients come off stock when the dishes using it sell.
+              </p>
+            </div>
+          )}
+          {activeOutlets.length > 0 && (
+            <div className="mt-3">
+              <Field label="Outlet (optional)">
+                <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls}>
+                  <option value="">No particular outlet</option>
+                  {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
               </Field>
             </div>
           )}
@@ -217,7 +251,7 @@ export default function PrepBatchPage() {
         <Section title="What did you use?">
           {inputs.length === 0 && <p className="text-xs text-white/35 italic">No ingredients yet. Add at least one.</p>}
           {inputs.map((inp, i) => (
-            <div key={i} className="grid grid-cols-[1fr_100px_60px_auto] gap-2 items-center mt-2">
+            <div key={i} className="grid grid-cols-[minmax(0,1fr)_84px_44px_auto] gap-2 items-center mt-2">
               <select value={inp.inventoryItemId}
                 onChange={(e) => patchInput(i, { inventoryItemId: e.target.value, unit: itemById.get(e.target.value)?.unit ?? '' })}
                 className={fieldCls}>
@@ -238,7 +272,7 @@ export default function PrepBatchPage() {
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         </Section>
 
-        {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
+        {submit.error && <div role="alert" className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 35%, transparent)' }}>Not saved. {stockErrorText(submit.error)}</div>}
 
         <div className="flex justify-end pt-2">
           <button onClick={() => submit.mutate()}
@@ -257,7 +291,10 @@ export default function PrepBatchPage() {
                   style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <div>
                     <p className="text-sm font-bold text-white/85">{b.itemName}</p>
-                    <p className="text-xs text-white/45">{b.actualYieldQty} {b.unit} yielded · {new Date(b.createdAt).toLocaleString()}</p>
+                    <p className="text-xs text-white/45">
+                      {b.actualYieldQty} {b.unit} yielded · {new Date(b.createdAt).toLocaleString()}
+                      {b.drawValueCents != null && b.drawValueCents > 0 && ` · drew ${fmtPkrWhole(b.drawValueCents)} of stock`}
+                    </p>
                   </div>
                   {b.yieldVariancePct != null && (
                     <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? 'var(--erp-warning)' : 'var(--erp-success)' }}>

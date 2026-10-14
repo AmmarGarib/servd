@@ -20,6 +20,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
+import { stockErrorText } from '../../../lib/stockUi'
 
 // The API's MANAGERS take a delivery in (owner decision 27) — the list comes
 // from the server (lib/roles.ts useManagerRoles).
@@ -32,6 +33,7 @@ const raisedByMe = (po: { createdBy?: string | null }, me: { id: string; role: s
   !!me && me.role !== 'admin' && !!po.createdBy && po.createdBy === me.id
 
 interface Supplier { id: string; name: string }
+interface OutletLite { id: string; name: string; isActive?: boolean }
 interface OpenPoLine {
   id: string; inventoryItemId: string; quantityOrdered: number; quantityReceived: number; unitCostCents: number
   inventoryItem: { id: string; name: string; unit: string }
@@ -74,6 +76,14 @@ export default function ReceivingPage() {
   const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory'), enabled: canReceive })
   const { data: receipts = [], error: receiptsError } = useQuery<Receipt[]>({ queryKey: ['receipts'], queryFn: () => api.get('/crosschecks/receiving'), refetchInterval: 30_000 })
 
+  // The outlet the delivery arrived at (one of the supplier's company's — the
+  // API refuses another company's with LOCATION_NOT_IN_COMPANY).
+  const { data: outlets = [] } = useQuery<OutletLite[]>({
+    queryKey: ['locations'], queryFn: () => api.get('/locations'),
+    enabled: canReceive, retry: false, meta: { background: true }, staleTime: 300_000,
+  })
+  const activeOutlets = outlets.filter((o) => o.isActive !== false)
+  const [locationId, setLocationId] = useState('')
   const [supplierId, setSupplierId] = useState('')
   const [poId, setPoId] = useState<string | null>(null)
   const [photoUrl, setPhotoUrl] = useState('')
@@ -148,6 +158,7 @@ export default function ReceivingPage() {
     mutationFn: () => api.post<{ varianceFlag?: boolean; poStatus?: string | null }>('/crosschecks/receiving', {
       poId,
       supplierId: poId ? null : supplierId,
+      locationId: locationId || null,
       photoUrl: photoUrl.trim() || null,
       notes: notes.trim() || null,
       lines: lines.map((l) => ({
@@ -167,7 +178,9 @@ export default function ReceivingPage() {
       setLines([]); setPoId(null); setPhotoUrl(''); setNotes(''); setSupplierId('')
       setFeedback(r.varianceFlag
         ? { tone: 'warn', text: 'Receipt saved. A variance over 5% was flagged in Exceptions.' }
-        : { tone: 'ok', text: r.poStatus === 'partial' ? 'Receipt saved. The PO stays open for the rest.' : 'Receipt saved, stock and cost updated.' })
+        : { tone: 'ok', text: r.poStatus === 'partial'
+          ? 'Receipt saved. The PO stays open for the rest — the goods are booked to Goods received not invoiced until the bill arrives.'
+          : 'Receipt saved, stock updated at the price paid. The goods are booked to Goods received not invoiced until the bill arrives.' })
       setTimeout(() => setFeedback(null), 6000)
     },
   })
@@ -187,6 +200,11 @@ export default function ReceivingPage() {
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Mark what physically arrived. Stock, the PO and the ingredient cost update together; short shipments and
           variances over 5% go to the Exceptions inbox. Whoever raised a PO can&apos;t receive it.
+        </p>
+        <p className="text-xs text-white/55 mt-2 max-w-2xl">
+          Goods are booked to <span className="font-semibold">Goods received not invoiced</span> until the bill arrives, then the bill clears
+          them. Track what is still unbilled on{' '}
+          <Link href="/procurement/grni" className="text-primary-ink hover:underline">Received, not billed</Link>.
         </p>
       </header>
 
@@ -300,7 +318,7 @@ export default function ReceivingPage() {
                   background: flag ? 'rgba(245,158,11,0.05)' : 'rgb(var(--fg-rgb) / 0.025)',
                   border: `1px solid ${flag ? 'rgba(245,158,11,0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
                 }}>
-                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-2 items-center">
                   {l.poLineId ? (
                     <p className="text-sm font-bold text-white/85">{l.description}</p>
                   ) : (
@@ -339,7 +357,17 @@ export default function ReceivingPage() {
           )}
         </Section>
 
-        <Section title="Step 3 — Evidence">
+        <Section title="Step 3 — Outlet and evidence">
+          {activeOutlets.length > 0 && (
+            <div className="mb-3">
+              <label htmlFor="recv-outlet" className="text-xs text-white/55">Outlet it arrived at (optional)</label>
+              <select id="recv-outlet" value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls + ' mt-1'}>
+                <option value="">No particular outlet</option>
+                {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+              <p className="text-[11px] text-white/35 mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
+            </div>
+          )}
           <div>
             <label className="text-xs text-white/55">Dock-door photo URL</label>
             <input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… (snap with phone, paste link)" className={fieldCls + ' mt-1'} />
@@ -352,6 +380,10 @@ export default function ReceivingPage() {
         </Section>
 
         {submit.error && <ErrorBanner label="Save failed:" error={submit.error} />}
+
+        <p className="text-xs text-white/50 text-right">
+          Booked to Goods received not invoiced until the bill arrives.
+        </p>
 
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={() => submit.mutate()}
@@ -389,7 +421,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 function ErrorBanner({ label, error }: { label: string; error: unknown }) {
-  const msg = error instanceof Error ? error.message : 'Something went wrong'
+  const msg = error instanceof Error ? stockErrorText(error, 'Something went wrong') : 'Something went wrong'
   return <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--erp-danger)' }}><strong>{label}</strong> {msg}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

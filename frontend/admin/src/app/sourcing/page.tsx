@@ -6,10 +6,15 @@
 // through POST /inventory, which binds the item to one company (owner
 // decision 30, 2026-09-27 — there are no "shared" items any more).
 //
-// Cost: an ingredient's cost is the moving average of what deliveries actually
-// cost, and only receiving moves it. The price typed here is the opening
-// estimate for an item nothing has been received for yet; once it has been
-// delivered the cell is read-only. (The negotiated list price gets its own
+// Cost: an ingredient's cost is the price actually paid (the oldest open stock
+// lot), and only receiving moves it. The price typed here is the opening
+// estimate for an item nothing has been received for yet; once it has stock or
+// has been delivered the cell is read-only (422 COST_FROM_DELIVERIES).
+//
+// Category: a fixed list. The category decides the stock account the item's
+// value sits in — Drinks in 1220, Packaging in 1230, everything else in 1210.
+// "Issue on receipt" (managers) is for oil, salt and other items no recipe
+// measures: each delivery goes straight to cost of sales. (The negotiated list price gets its own
 // reference column when InventoryItem.listPriceCents lands.)
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -18,11 +23,17 @@ import { api } from '../../lib/api'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { useKitchenView } from '../inventory/kitchenView'
+import { useManagerRoles } from '../../lib/roles'
+import { useAuthStore } from '../../store/auth'
+import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryValueOf, stockErrorText } from '../../lib/stockUi'
 
 interface Item {
   id: string; name: string; unit: string
   unitCostCents: number | null; category: string | null; notes: string | null
   costSource?: 'deliveries' | 'opening'
+  currentStock?: number
+  /** Oil, salt and other items no recipe measures: each receipt goes straight to cost of sales. */
+  issueOnReceipt?: boolean
   costsHidden?: boolean
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
@@ -48,6 +59,12 @@ export default function SourcingPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', unit: 'g', pricePkr: '', category: '', notes: '', tenantId: '' })
   const [err, setErr] = useState('')
+  const me = useAuthStore((s) => s.user)
+  const managerRoles = useManagerRoles()
+  const canSetIssueOnReceipt = managerRoles.has(me?.role ?? '')
+  // A company-less item that holds stock gets an opening count in its new
+  // company, at a unit cost typed here (finance, CEO or management).
+  const [assigning, setAssigning] = useState<{ item: Item; tenantId: string; costPkr: string } | null>(null)
 
   const { data: items = [], isLoading } = useQuery<Item[]>({
     queryKey: ['inventory'],
@@ -60,14 +77,14 @@ export default function SourcingPage() {
 
   const patch = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch(`/inventory/${id}`, body),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['inventory'] }),
+    onSuccess: () => { setAssigning(null); void qc.invalidateQueries({ queryKey: ['inventory'] }) },
   })
   const add = useMutation({
     mutationFn: () => api.post('/inventory', {
       name: addForm.name.trim(),
       unit: addForm.unit,
       unitCostCents: addForm.pricePkr.trim() ? Math.round(parseFloat(addForm.pricePkr) * 100) : null,
-      category: addForm.category.trim() || null,
+      category: addForm.category || null,
       notes: addForm.notes.trim() || null,
       ...(needsCompanyPick && addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
     }),
@@ -75,7 +92,7 @@ export default function SourcingPage() {
       setAddForm({ name: '', unit: 'g', pricePkr: '', category: '', notes: '', tenantId: '' }); setShowAdd(false); setErr('')
       void qc.invalidateQueries({ queryKey: ['inventory'] })
     },
-    onError: (e: Error) => setErr(e.message),
+    onError: (e: Error) => setErr(stockErrorText(e)),
   })
 
   // Patch a single field if it actually changed from the server value.
@@ -84,16 +101,28 @@ export default function SourcingPage() {
     if (next == null || Number.isNaN(next)) return
     if (next !== it.unitCostCents) patch.mutate({ id: it.id, body: { unitCostCents: next } })
   }
-  function saveField(it: Item, field: 'name' | 'unit' | 'category' | 'notes', raw: string) {
+  function saveField(it: Item, field: 'name' | 'unit' | 'notes', raw: string) {
     const v = raw.trim()
     const cur = (it[field] ?? '') as string
     if (v !== cur) patch.mutate({ id: it.id, body: { [field]: field === 'name' || field === 'unit' ? v : (v || null) } })
+  }
+  function saveCategory(it: Item, value: string) {
+    if (value !== categoryValueOf(it.category)) patch.mutate({ id: it.id, body: { category: value || null } })
+  }
+  function pickCompany(it: Item, tenantId: string) {
+    if (!tenantId) return
+    if ((it.currentStock ?? 0) > 0) {
+      setAssigning({ item: it, tenantId, costPkr: it.unitCostCents != null ? String(it.unitCostCents / 100) : '' })
+      return
+    }
+    patch.mutate({ id: it.id, body: { tenantId } })
   }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (items ?? [])
-      .filter((i) => !q || i.name.toLowerCase().includes(q) || (i.notes ?? '').toLowerCase().includes(q) || (i.category ?? '').toLowerCase().includes(q))
+      .filter((i) => !q || i.name.toLowerCase().includes(q) || (i.notes ?? '').toLowerCase().includes(q)
+        || (INVENTORY_CATEGORY_OPTIONS.find((o) => o.value === categoryValueOf(i.category))?.label ?? '').toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [items, search])
 
@@ -115,7 +144,7 @@ export default function SourcingPage() {
 
   return (
     <div className="min-h-screen bg-s-bg">
-      <header className="border-b border-s-border px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+      <header className="border-b border-s-border px-4 sm:px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-s-text mt-0.5">Sourcing Master Sheet</h1>
           <p className="text-sm text-s-muted">
@@ -124,7 +153,7 @@ export default function SourcingPage() {
             Stock on hand lives on <Link href="/inventory" className="text-primary-ink hover:underline">Inventory</Link>.
           </p>
           <p className="text-xs text-s-muted mt-1">
-            Cost is the average of what deliveries cost. You can type an opening cost for an item that has not been delivered yet.
+            Cost is the price actually paid for the stock. You can type an opening cost for an item that has no stock or deliveries yet.
           </p>
         </div>
         <button onClick={() => setShowAdd((s) => !s)}
@@ -134,14 +163,39 @@ export default function SourcingPage() {
       </header>
 
       {unassignedCount > 0 && (
-        <div className="mx-6 mt-4 rounded-xl border border-s-amber/40 bg-s-amber/5 px-4 py-3 text-sm text-s-text">
+        <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-s-amber/40 bg-s-amber/5 px-4 py-3 text-sm text-s-text">
           {unassignedCount} ingredient{unassignedCount === 1 ? ' has' : 's have'} no company. Their waste never reaches the books and
-          their cost can be moved by either company&rsquo;s deliveries. Assign each one in the Company column.
+          their cost can be moved by either company&rsquo;s deliveries. Assign each one in the Company column; an item that holds stock
+          is booked as an opening count at the unit cost you give (finance, the CEO or management).
+        </div>
+      )}
+
+      {assigning && (
+        <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+          <p className="font-bold text-s-text text-sm">
+            Assign {assigning.item.name} to {tenants.find((t) => t.id === assigning.tenantId)?.name ?? 'the company'}
+          </p>
+          <p className="text-xs text-s-muted">
+            It holds {assigning.item.currentStock} {assigning.item.unit} with no company. Giving it a company books that stock as an opening count
+            to the owner&rsquo;s capital, at this unit cost.
+          </p>
+          <label className="block max-w-xs text-xs text-s-muted">Opening unit cost (PKR per {assigning.item.unit})
+            <input type="number" step="any" min={0} value={assigning.costPkr} autoFocus
+              onChange={(e) => setAssigning({ ...assigning, costPkr: e.target.value })} className={fi + ' w-full mt-1'} />
+          </label>
+          <div className="flex gap-2">
+            <button disabled={patch.isPending || assigning.costPkr.trim() === ''}
+              onClick={() => patch.mutate({ id: assigning.item.id, body: { tenantId: assigning.tenantId, unitCostCents: Math.round(Number(assigning.costPkr) * 100) } })}
+              className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50">
+              {patch.isPending ? 'Assigning…' : 'Assign company'}
+            </button>
+            <button onClick={() => setAssigning(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+          </div>
         </div>
       )}
 
       {showAdd && (
-        <div className="mx-6 mt-4 rounded-xl border border-s-border bg-s-surface p-4">
+        <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-s-border bg-s-surface p-4">
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end">
             <label className="col-span-2 text-xs text-s-muted">Name
               <input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
@@ -156,9 +210,11 @@ export default function SourcingPage() {
               <input type="number" step="any" min={0} value={addForm.pricePkr} onChange={(e) => setAddForm({ ...addForm, pricePkr: e.target.value })}
                 placeholder="1.5" className={fi + ' w-full mt-1'} />
             </label>
-            <label className="text-xs text-s-muted">Category
-              <input value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })}
-                placeholder="protein, produce…" className={fi + ' w-full mt-1'} />
+            <label className="text-xs text-s-muted col-span-2 md:col-span-1">Category
+              <select value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className={fi + ' w-full mt-1'}>
+                <option value="">— pick a category —</option>
+                {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
+              </select>
             </label>
             <label className="text-xs text-s-muted">Source / notes
               <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
@@ -185,7 +241,7 @@ export default function SourcingPage() {
         </div>
       )}
 
-      <main className="px-6 py-4">
+      <main className="px-4 sm:px-6 py-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)}
           placeholder="Search ingredients, source, category…"
           className={fi + ' w-full max-w-md mb-3'} />
@@ -200,7 +256,8 @@ export default function SourcingPage() {
                   <th className="px-3 py-2 font-bold">Ingredient</th>
                   <th className="px-3 py-2 font-bold w-24">Unit</th>
                   <th className="px-3 py-2 font-bold w-36">Cost (PKR/unit)</th>
-                  <th className="px-3 py-2 font-bold w-32">Category</th>
+                  <th className="px-3 py-2 font-bold w-56">Category (stock account)</th>
+                  {canSetIssueOnReceipt && <th className="px-3 py-2 font-bold w-36" title="For oil, salt and other items no recipe measures">Issue on receipt</th>}
                   <th className="px-3 py-2 font-bold">Source / notes</th>
                   <th className="px-3 py-2 font-bold w-40">Company</th>
                 </tr>
@@ -220,9 +277,9 @@ export default function SourcingPage() {
                     </td>
                     <td className="px-3 py-1.5">
                       {it.costSource === 'deliveries' ? (
-                        <span className="block w-full text-right font-mono text-s-text" title="Average of what deliveries cost — moves when stock is received">
+                        <span className="block w-full text-right font-mono text-s-text" title="The price actually paid — moves when stock is received, not by typing">
                           {pkr(it.unitCostCents) || '—'}
-                          <span className="ml-1 text-[10px] font-sans text-s-muted">avg</span>
+                          <span className="ml-1 text-[10px] font-sans text-s-muted">paid</span>
                         </span>
                       ) : (
                         <input key={`p${it.id}${it.unitCostCents}`} type="number" step="any" min={0} defaultValue={pkr(it.unitCostCents)}
@@ -232,9 +289,23 @@ export default function SourcingPage() {
                       )}
                     </td>
                     <td className="px-3 py-1.5">
-                      <input key={`c${it.id}${it.category}`} defaultValue={it.category ?? ''}
-                        onBlur={(e) => saveField(it, 'category', e.target.value)} className={fi + ' w-full'} />
+                      <select key={`c${it.id}${it.category}`} defaultValue={categoryValueOf(it.category)}
+                        onChange={(e) => saveCategory(it, e.target.value)} className={fi + ' w-full'} aria-label={`${it.name} category`}>
+                        <option value="">— none —</option>
+                        {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
+                      </select>
                     </td>
+                    {canSetIssueOnReceipt && (
+                      <td className="px-3 py-1.5">
+                        {it.tenantId ? (
+                          <label className="flex items-center gap-2 text-xs text-s-muted cursor-pointer">
+                            <input type="checkbox" className="accent-accent" checked={!!it.issueOnReceipt}
+                              onChange={(e) => patch.mutate({ id: it.id, body: { issueOnReceipt: e.target.checked } })} />
+                            {it.issueOnReceipt ? 'On' : 'Off'}
+                          </label>
+                        ) : <span className="text-xs text-s-muted">—</span>}
+                      </td>
+                    )}
                     <td className="px-3 py-1.5">
                       <input key={`d${it.id}${it.notes}`} defaultValue={it.notes ?? ''}
                         onBlur={(e) => saveField(it, 'notes', e.target.value)} className={fi + ' w-full min-w-[200px]'} />
@@ -244,7 +315,7 @@ export default function SourcingPage() {
                         ? <TenantChip tenant={it.tenant} tenantId={it.tenantId} tenants={tenants} />
                         : (
                           <select defaultValue="" className={fi + ' w-full'}
-                            onChange={(e) => { if (e.target.value) patch.mutate({ id: it.id, body: { tenantId: e.target.value } }) }}>
+                            onChange={(e) => pickCompany(it, e.target.value)}>
                             <option value="">No company — assign…</option>
                             {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                           </select>
@@ -256,7 +327,12 @@ export default function SourcingPage() {
             </table>
           </div>
         )}
-        {patch.isError && <p className="mt-2 text-xs text-s-red">{(patch.error as Error)?.message}</p>}
+        {canSetIssueOnReceipt && (
+          <p className="mt-3 text-xs text-s-muted">
+            <span className="font-semibold text-s-text">Issue on receipt</span> is for oil, salt and other items no recipe measures: each delivery goes straight to cost of sales instead of sitting in stock.
+          </p>
+        )}
+        {patch.isError && <p role="alert" className="mt-2 text-xs text-s-red">{stockErrorText(patch.error)}</p>}
       </main>
     </div>
   )

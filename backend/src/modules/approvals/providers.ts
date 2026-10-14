@@ -16,7 +16,7 @@ import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ADMIN_ONLY, APPROVERS, MANAGERS } from '../auth/middleware.js'
 import { isSelfApprovalExempt } from '../../lib/separation-of-duties.js'
-import type { ApprovalItem, ApprovalProvider, ProviderContext } from './types.js'
+import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } from './types.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -211,25 +211,36 @@ const recipes: ApprovalProvider = {
     const [found, names] = await Promise.all([
       prisma.recipe.findMany({
         where: { id: { in: rows.map((r) => r.id) } },
-        select: { id: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } } },
+        select: {
+          id: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } },
+          // An add-on's recipe (kind 'modifier'): modifier → group → dish → brand.
+          modifier: { select: { group: { select: { menuItem: { select: { conceptId: true } } } } } },
+        },
       }),
       userNames(rows.map((r) => r.submittedById)),
     ])
-    const conceptOf = new Map(found.map((r) => [r.id, r.menuItem?.conceptId ?? (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId ?? null]))
+    const conceptOf = new Map(found.map((r) => [
+      r.id,
+      r.menuItem?.conceptId
+        ?? r.modifier?.group.menuItem.conceptId
+        ?? (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId
+        ?? null,
+    ]))
     const concepts = await conceptInfo([...conceptOf.values()])
     return rows.map((r): ApprovalItem => {
       const cid = conceptOf.get(r.id)
       return {
         type: 'recipe',
         id: r.id,
-        // A component recipe has no brand of its own; its company follows the
-        // plates that use it (the module scoped it already).
+        // A plate's company is its dish's brand's; an add-on's, its dish's (via
+        // the modifier group). A component recipe has no brand of its own; its
+        // company follows the plates that use it (the module scoped it already).
         tenantId: cid ? (concepts.get(cid)?.tenantId ?? null) : null,
         title: r.name,
         subtitle: r.brand,
         facts: facts([
           ['Brand', r.brand],
-          ['Kind', r.kind === 'component' ? 'Component (sub-recipe)' : 'Plate'],
+          ['Kind', r.kind === 'component' ? 'Component (sub-recipe)' : r.kind === 'modifier' ? 'Add-on' : 'Plate'],
           ['Submitted by', r.submittedById ? names.get(r.submittedById) : null],
         ]),
         waitingSince: iso(r.submittedAt),
@@ -457,26 +468,41 @@ const stockTransfers: ApprovalProvider = {
   },
 }
 
-// ── Cash vouchers waiting for the director ───────────────────────────────────
-// trustops/cashVouchers.ts: GET /trustops/cash-vouchers?status=hod_signed
-// (CASH_GUARD), POST /trustops/cash-vouchers/:id/approve|reject — ADMIN_ONLY
-// (the director). Never the login that signed as HOD (409 SAME_SIGNER): such
-// an item is listed with Approve disabled, Reject stays.
+// ── Cash requests ────────────────────────────────────────────────────────────
+// trustops/cashVouchers.ts (the cash_vouchers table IS the cash request; H3:
+// the pay is booked to the request's category). Two steps reach the inbox:
+//
+//  • waiting for the director: GET /trustops/cash-vouchers?status=hod_signed
+//    (ALL_STAFF; the module's own visibility), POST /:id/approve — ADMIN_ONLY,
+//    never the login that signed as HOD (409 SAME_SIGNER: listed with Approve
+//    disabled, Reject stays) — and /:id/reject (note).
+//  • waiting for the HOD: GET /trustops/cash-vouchers?view=hod (drafts this
+//    login may sign — the holder's reporting manager, or a cash keeper), POST
+//    /:id/sign-hod and /:id/reject (note). Per item: the route decides who
+//    signs (canSignHod), so there are no approver roles.
+
+type CashRequestRow = {
+  id: string; tenantId: string; number: string; voucherDate: string; payeeName: string; purpose: string
+  amountCents: number; category: string | null; categoryKey: string | null; categoryAccountCode: string | null
+  department: string | null; conceptName: string | null; boxName: string | null
+  holderName: string | null; preparedByName: string | null
+  hodSignedById: string | null; hodSignedByName: string | null; hodSignedAt: string | null; createdAt: string
+  canSignHod?: boolean; canApprove?: boolean
+}
+
+const cashRequestTitle = (r: CashRequestRow) => `${r.number} — ${r.holderName ?? r.payeeName} — ${pkr(r.amountCents)}`
+const cashRequestCategory = (r: CashRequestRow) =>
+  (r.categoryKey ? human(r.categoryKey) : null) ?? (r.categoryAccountCode ? `Account ${r.categoryAccountCode}` : null) ?? r.category
+
 const cashVouchers: ApprovalProvider = {
   type: 'cash_voucher',
-  label: 'Cash vouchers',
+  label: 'Cash requests',
   module: 'accounting',
   link: '/finance/cash-vouchers',
   approverRoles: ADMIN_ONLY,
   delegable: true,
   async load(ctx) {
-    type Row = {
-      id: string; tenantId: string; number: string; voucherDate: string; payeeName: string; purpose: string
-      amountCents: number; category: string | null; department: string | null; conceptName: string | null
-      boxName: string; preparedByName: string | null; hodSignedById: string | null; hodSignedByName: string | null
-      hodSignedAt: string | null; createdAt: string
-    }
-    const res = await ctx.read<{ items: Row[] }>('/trustops/cash-vouchers?status=hod_signed&limit=200')
+    const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?status=hod_signed&limit=200')
     if (res === null) return null
     return res.items.map((r): ApprovalItem => {
       const base = `/trustops/cash-vouchers/${r.id}`
@@ -484,26 +510,26 @@ const cashVouchers: ApprovalProvider = {
         type: 'cash_voucher',
         id: r.id,
         tenantId: r.tenantId,
-        title: `${r.number} — ${r.payeeName} — ${pkr(r.amountCents)}`,
+        title: cashRequestTitle(r),
         subtitle: r.purpose,
         facts: facts([
-          ['Voucher', r.number],
-          ['Pay to', r.payeeName],
+          ['Request', r.number],
+          ['Holder', r.holderName ?? r.payeeName],
           ['Amount', pkr(r.amountCents)],
-          ['Purpose', r.purpose],
-          ['Date', ymd(r.voucherDate)],
+          ['For', r.purpose],
+          ['Category', cashRequestCategory(r)],
           ['Brand', r.conceptName],
           ['Department', r.department],
           ['Paid from', r.boxName],
-          ['Prepared by', r.preparedByName],
+          ['Raised by', r.preparedByName],
           ['HOD signed by', r.hodSignedByName],
         ]),
         amountCents: r.amountCents,
         waitingSince: iso(r.hodSignedAt ?? r.createdAt),
         link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
         actions: [
-          { kind: 'approve', label: 'Sign as director', method: 'POST', path: `${base}/approve`, body: {},
-            confirm: 'Sign this voucher as director? The cashier pays it against the signed paper; nothing leaves the cash box until the photo of that paper is uploaded.',
+          { kind: 'approve', label: 'Approve as director', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Approve this cash request? The cashier may then pay it; it is booked to its category when paid.',
             ...(r.hodSignedById === ctx.user.id && { disabledReason: 'You signed this as HOD — a different person must sign as director' }) },
           { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
             input: { field: 'note', label: 'Reason', required: true } },
@@ -512,6 +538,388 @@ const cashVouchers: ApprovalProvider = {
     })
   },
 }
+
+const cashRequestsHod: ApprovalProvider = {
+  type: 'cash_request_hod',
+  label: 'Cash requests to sign (HOD)',
+  module: 'accounting',
+  link: '/finance/cash-vouchers?view=hod',
+  approverRoles: null,
+  delegable: false,
+  async load(ctx) {
+    const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?view=hod&limit=200')
+    if (res === null) return null
+    return res.items.filter((r) => r.canSignHod).map((r): ApprovalItem => {
+      const base = `/trustops/cash-vouchers/${r.id}`
+      return {
+        type: 'cash_request_hod',
+        id: r.id,
+        tenantId: r.tenantId,
+        title: cashRequestTitle(r),
+        subtitle: r.purpose,
+        facts: facts([
+          ['Request', r.number],
+          ['Holder', r.holderName ?? r.payeeName],
+          ['Amount', pkr(r.amountCents)],
+          ['For', r.purpose],
+          ['Category', cashRequestCategory(r)],
+          ['Brand', r.conceptName],
+          ['Department', r.department],
+          ['Raised by', r.preparedByName],
+        ]),
+        amountCents: r.amountCents,
+        waitingSince: iso(r.createdAt),
+        link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
+        actions: [
+          { kind: 'approve', label: 'Sign as HOD', method: 'POST', path: `${base}/sign-hod`, body: {},
+            confirm: 'Sign this cash request as HOD? It then goes to the director.' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Fixed-asset requests (disposal, scrap, write-down, capitalisation, …) ────
+// fixedAssets/requests.ts: GET /accounting/fixed-assets/requests?status=pending
+// (FINANCIALS_VIEWERS; finance raises them), POST /requests/:id/approve |
+// reject (note) — ADMIN_ONLY. Not delegable: events.applyEvent re-checks role
+// admin.
+const fixedAssetRequests: ApprovalProvider = {
+  type: 'fixed_asset_request',
+  label: 'Fixed assets',
+  module: 'accounting',
+  link: '/accounting/fixed-assets/requests',
+  approverRoles: ADMIN_ONLY,
+  delegable: false,
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; kind: string; kindLabel: string; effectiveDate: string; amountCents: number | null
+      reason: string; requestedByName: string | null; requestedAt: string; errorMessage: string | null; canDecide?: boolean
+      asset: { id: string; assetTag: string | null; name: string } | null
+      pool: { label: string } | null
+      capexLine: { item: string; projectName: string } | null
+    }
+    const res = await ctx.read<{ requests: Row[] }>('/accounting/fixed-assets/requests?status=pending&limit=200')
+    if (res === null) return null
+    return res.requests.map((r): ApprovalItem => {
+      const base = `/accounting/fixed-assets/requests/${r.id}`
+      const subject = r.asset
+        ? `${r.asset.assetTag ? `${r.asset.assetTag} ` : ''}${r.asset.name}`
+        : r.pool?.label ?? (r.capexLine ? `${r.capexLine.projectName}: ${r.capexLine.item}` : '')
+      return {
+        type: 'fixed_asset_request',
+        id: r.id,
+        tenantId: r.tenantId,
+        title: subject ? `${r.kindLabel} — ${subject}` : r.kindLabel,
+        subtitle: r.reason,
+        facts: facts([
+          ['Request', r.kindLabel],
+          ['Asset', subject],
+          ['Amount', r.amountCents ? pkr(r.amountCents) : null],
+          ['Effective', ymd(r.effectiveDate)],
+          ['Reason', r.reason],
+          ['Asked by', r.requestedByName],
+          ['Last error', r.errorMessage],
+        ]),
+        ...(r.amountCents ? { amountCents: r.amountCents } : {}),
+        waitingSince: iso(r.requestedAt),
+        link: r.asset ? `/accounting/fixed-assets/${r.asset.id}` : '/accounting/fixed-assets/requests',
+        actions: [
+          { kind: 'approve', label: 'Approve', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Approve this request? It posts now (a closed month posts into the open month with a note).' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Inter-company transfers ──────────────────────────────────────────────────
+// intercompany/routes.ts: GET /accounting/intercompany/transfers?status=
+// submitted (FINANCIALS_VIEWERS; rows where either company is in view), POST
+// /transfers/:id/approve | reject (note) — ADMIN_ONLY and a member of BOTH
+// companies (403 NOT_IN_BOTH_COMPANIES): listed with the buttons disabled.
+// The item sits in whichever of its two companies is in view (the debtor
+// when both are), so either company's view shows it.
+const intercompanyTransfers: ApprovalProvider = {
+  type: 'intercompany_transfer',
+  label: 'Inter-company transfers',
+  module: 'accounting',
+  link: '/accounting/intercompany?tab=transfers',
+  approverRoles: ADMIN_ONLY,
+  delegable: false,
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; counterpartyTenantId: string; debtorName: string | null; creditorName: string | null
+      kind: string; amountCents: number; entryDate: string; memo: string | null
+      preparedByName: string | null; preparedAt: string; memberOfBoth: boolean
+    }
+    const res = await ctx.read<{ items: Row[] }>('/accounting/intercompany/transfers?status=submitted&limit=200')
+    if (res === null) return null
+    const inView = new Set(ctx.tenantIds)
+    return res.items.map((r): ApprovalItem => {
+      const base = `/accounting/intercompany/transfers/${r.id}`
+      const notBoth = r.memberOfBoth ? {} : { disabledReason: 'You are not a member of both companies' }
+      return {
+        type: 'intercompany_transfer',
+        id: r.id,
+        tenantId: inView.has(r.tenantId) || !inView.has(r.counterpartyTenantId) ? r.tenantId : r.counterpartyTenantId,
+        title: `${human(r.kind)}: ${r.debtorName ?? 'Company'} owes ${r.creditorName ?? 'company'} — ${pkr(r.amountCents)}`,
+        subtitle: r.memo,
+        facts: facts([
+          ['Kind', human(r.kind)],
+          ['Owed by', r.debtorName],
+          ['Owed to', r.creditorName],
+          ['Amount', pkr(r.amountCents)],
+          ['Date', ymd(r.entryDate)],
+          ['Memo', r.memo],
+          ['Prepared by', r.preparedByName],
+        ]),
+        amountCents: r.amountCents,
+        waitingSince: iso(r.preparedAt),
+        link: '/accounting/intercompany?tab=transfers',
+        actions: [
+          { kind: 'approve', label: 'Approve and post', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Approve this transfer? It posts in both companies\' books now.', ...notBoth },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true }, ...notBoth },
+        ],
+      }
+    })
+  },
+}
+
+// ── Bad-debt write-offs (G12 / H15) ──────────────────────────────────────────
+// receivables/writeOffs.ts: GET /accounting/receivables/write-offs?status=
+// requested (FINANCIALS_VIEWERS), POST /write-offs/:id/approve | reject (note)
+// — ADMIN_ONLY: the CEO approves every one. No requester-based disabled
+// button: the CEO is exempt from self-approval (decision 27) and the route's
+// assertNotSelfApproval decides.
+const badDebts: ApprovalProvider = {
+  type: 'bad_debt',
+  label: 'Bad-debt write-offs',
+  module: 'accounting',
+  link: '/accounting/receivables',
+  approverRoles: ADMIN_ONLY,
+  delegable: false,
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; invoiceId: string; invoiceNumber: string | null; customerName: string | null
+      conceptName: string | null; amountCents: number; reason: string; requestedAt: string; requestedByName: string | null
+      attachments?: Array<{ id: string }>; invoice: { totalCents: number; balanceCents: number } | null
+    }
+    const res = await ctx.read<{ items: Row[] }>('/accounting/receivables/write-offs?status=requested&limit=200')
+    if (res === null) return null
+    return res.items.map((r): ApprovalItem => {
+      const base = `/accounting/receivables/write-offs/${r.id}`
+      const files = r.attachments?.length ?? 0
+      return {
+        type: 'bad_debt',
+        id: r.id,
+        tenantId: r.tenantId,
+        title: `${r.invoiceNumber ?? 'Invoice'}${r.customerName ? ` — ${r.customerName}` : ''} — write off ${pkr(r.amountCents)}`,
+        subtitle: r.reason,
+        facts: facts([
+          ['Invoice', r.invoiceNumber],
+          ['Customer', r.customerName],
+          ['Brand', r.conceptName],
+          ['Write off', pkr(r.amountCents)],
+          ['Still owed', r.invoice ? pkr(r.invoice.balanceCents) : null],
+          ['Reason', r.reason],
+          ['Evidence', `${files} file${files === 1 ? '' : 's'}`],
+          ['Asked by', r.requestedByName],
+        ]),
+        amountCents: r.amountCents,
+        waitingSince: iso(r.requestedAt),
+        link: `/accounting/receivables?writeOff=${encodeURIComponent(r.id)}`,
+        actions: [
+          { kind: 'approve', label: 'Write off', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Write this off as a bad debt? Dr 6160 Bad Debts / Cr 1110 today, tax included. Open the invoice to see the evidence first.' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Raast "void, never booked" (RV-MONEY-1) ──────────────────────────────────
+// reconciliation/raastRoutes.ts: GET /reconciliation/raast/receipts?
+// voidRequested=1 (FINANCE_TEAM — finance asked), POST /receipts/:id/void
+// {reason ≥ 10} and /receipts/:id/void-request/reject {note} — ADMIN_ONLY. A
+// receipt the CEO can no longer void (its bill moved on) is listed with the
+// route's own reason on a disabled button; send-back stays.
+const raastVoids: ApprovalProvider = {
+  type: 'raast_void',
+  label: 'Raast voids',
+  module: 'reconciliation',
+  link: '/reconciliation?tab=raast',
+  approverRoles: ADMIN_ONLY,
+  delegable: false,
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; orderRef: string; brand: string | null; amountCents: number; bankRef: string | null
+      orderStatus: string; createdAt: string; bankAccount: { name: string; bankName: string | null; last4: string | null } | null
+      voidRequest: { at: string; by: { name: string | null } | null; reason: string | null; pending: boolean } | null
+      canVoid?: boolean; canRejectVoidRequest?: boolean; voidBlockedReason: string | null
+    }
+    const res = await ctx.read<{ receipts: Row[] }>('/reconciliation/raast/receipts?voidRequested=1&limit=200')
+    if (res === null) return null
+    return res.receipts.filter((r) => r.voidRequest?.pending !== false).map((r): ApprovalItem => {
+      const base = `/reconciliation/raast/receipts/${r.id}`
+      return {
+        type: 'raast_void',
+        id: r.id,
+        tenantId: r.tenantId,
+        title: `Raast ${pkr(r.amountCents)} — order ${r.orderRef}${r.brand ? ` (${r.brand})` : ''}`,
+        subtitle: r.voidRequest?.reason ?? null,
+        facts: facts([
+          ['Order', r.orderRef],
+          ['Brand', r.brand],
+          ['Amount', pkr(r.amountCents)],
+          ['Bank reference', r.bankRef],
+          ['Account', r.bankAccount ? `${r.bankAccount.name}${r.bankAccount.last4 ? ` ••${r.bankAccount.last4}` : ''}` : null],
+          ['Bill', human(r.orderStatus)],
+          ['Why void it', r.voidRequest?.reason],
+          ['Asked by', r.voidRequest?.by?.name],
+        ]),
+        amountCents: r.amountCents,
+        waitingSince: iso(r.voidRequest?.at ?? r.createdAt),
+        link: '/reconciliation?tab=raast',
+        actions: [
+          { kind: 'approve', label: 'Void — never booked', method: 'POST', path: `${base}/void`, body: {},
+            input: { field: 'reason', label: 'Why void it (at least 10 characters)', required: true },
+            confirm: 'Void this receipt? No ledger entry is made and its bank reference stays used.',
+            ...(r.canVoid === false && { disabledReason: r.voidBlockedReason ?? 'This receipt can no longer be voided — open Raast reconciliation' }) },
+          { kind: 'reject', label: 'Send back', method: 'POST', path: `${base}/void-request/reject`, body: {},
+            input: { field: 'note', label: 'Why not', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Goods received, never billed — write-offs (H17) ──────────────────────────
+// procurement/grniRoutes.ts: GET /procurement/grni?writeOffRequested=1
+// (procurement + finance; module procurement or accounting), POST
+// /procurement/grni/:receiptLineId/write-off/approve | reject (note) —
+// ADMIN_ONLY.
+const grniWriteOffs: ApprovalProvider = {
+  type: 'grni_writeoff',
+  label: 'Received, never billed',
+  module: 'procurement',
+  link: '/procurement/grni',
+  approverRoles: ADMIN_ONLY,
+  delegable: false,
+  async load(ctx) {
+    type Row = {
+      receiptLineId: string; tenantId: string | null; supplierName: string | null; description: string
+      openQty: number; unit: string | null; openValueCents: number; receivedAt: string
+      writeOffRequest: { requestedAt: string; requestedById: string | null; reason: string | null } | null
+    }
+    const res = await ctx.read<{ lines: Row[] }>('/procurement/grni?writeOffRequested=1')
+    if (res === null) return null
+    const rows = res.lines.filter((l) => l.writeOffRequest)
+    if (rows.length === 0) return []
+    const names = await userNames(rows.map((r) => r.writeOffRequest?.requestedById))
+    return rows.map((r): ApprovalItem => {
+      const base = `/procurement/grni/${r.receiptLineId}/write-off`
+      const asker = r.writeOffRequest?.requestedById
+      return {
+        type: 'grni_writeoff',
+        id: r.receiptLineId,
+        tenantId: r.tenantId,
+        title: `${r.supplierName ?? 'Supplier'} — ${r.description} — ${pkr(r.openValueCents)}`,
+        subtitle: r.writeOffRequest?.reason ?? null,
+        facts: facts([
+          ['Supplier', r.supplierName],
+          ['Item', r.description],
+          ['Not billed', `${r.openQty}${r.unit ? ` ${r.unit}` : ''}`],
+          ['Value', pkr(r.openValueCents)],
+          ['Received', ymd(r.receivedAt)],
+          ['Reason', r.writeOffRequest?.reason],
+          ['Asked by', asker ? names.get(asker) : null],
+        ]),
+        amountCents: r.openValueCents,
+        waitingSince: iso(r.writeOffRequest?.requestedAt ?? r.receivedAt),
+        link: '/procurement/grni',
+        actions: [
+          { kind: 'approve', label: 'Write off', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Write this off? The supplier will never bill it: Dr 2015 GRNI / Cr 5060 today.' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Stock differences in suspense (H20, owner 2026-10-14) ────────────────────
+// Waste and count differences wait in 1290 Stock Differences Suspense until
+// the CEO approves them into cost of sales. accounting (w4-answers):
+// GET /accounting/stock-differences?status=pending (one row per suspense
+// journal line), POST /accounting/stock-differences/approve { lineIds },
+// POST /accounting/stock-differences/:id/query { note } (send back) — CEO
+// only. Until that route exists it answers 404 and the type is simply not
+// listed (ctx.read → null).
+//
+// 'stock_difference' joins APPROVAL_TYPES in types.ts (orchestrator patch
+// note); until it does, the id is typed through string here.
+const STOCK_DIFFERENCE = 'stock_difference' as string as ApprovalType
+
+const stockDifferences: ApprovalProvider = {
+  type: STOCK_DIFFERENCE,
+  label: 'Stock differences',
+  module: 'accounting',
+  link: '/accounting/stock-differences',
+  approverRoles: ADMIN_ONLY,
+  delegable: false,
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; itemName: string | null; outletName: string | null; brandName: string | null
+      kind: 'waste' | 'count' | 'void_waste' | string; reason: string | null; valueCents: number; date: string; byName: string | null
+    }
+    const res = await ctx.read<Row[] | { items?: Row[]; rows?: Row[]; lines?: Row[] }>('/accounting/stock-differences?status=pending')
+    if (res === null) return null
+    const rows = Array.isArray(res) ? res : (res.items ?? res.rows ?? res.lines ?? [])
+    const KIND: Record<string, string> = { waste: 'Waste', count: 'Count difference', void_waste: 'Sold line wasted' }
+    return rows.map((r): ApprovalItem => ({
+      type: STOCK_DIFFERENCE,
+      id: r.id,
+      tenantId: r.tenantId,
+      title: `${KIND[r.kind] ?? human(r.kind)} — ${r.itemName ?? 'Item'} — ${pkr(Math.abs(r.valueCents))}${r.valueCents < 0 ? ' over' : ''}`,
+      subtitle: r.reason,
+      facts: facts([
+        ['Kind', KIND[r.kind] ?? human(r.kind)],
+        ['Item', r.itemName],
+        ['Outlet', r.outletName],
+        ['Brand', r.brandName],
+        ['Value', pkr(Math.abs(r.valueCents))],
+        ['Reason', r.reason],
+        ['Date', ymd(r.date)],
+        ['By', r.byName],
+      ]),
+      amountCents: r.valueCents,
+      waitingSince: iso(r.date),
+      link: '/accounting/stock-differences',
+      actions: [
+        { kind: 'approve', label: 'Approve into cost of sales', method: 'POST', path: '/accounting/stock-differences/approve', body: { lineIds: [r.id] },
+          confirm: 'Approve this difference? It moves out of 1290 suspense into cost of sales.' },
+        { kind: 'reject', label: 'Send back', method: 'POST', path: `/accounting/stock-differences/${encodeURIComponent(r.id)}/query`, body: {},
+          input: { field: 'note', label: 'What needs checking', required: true } },
+      ],
+    }))
+  },
+}
+
+// ── On-account clients — PARKED (owner, 2026-10-13) ──────────────────────────
+// APPROVAL_TYPES still lists 'on_account_client' (w0), but the feature and its
+// route are parked: no provider calls /accounting/customer-accounts. Nothing
+// requires a provider per type (the inbox lists only registered providers), so
+// none is registered; the resume adds it here.
 
 /** Every approval type, in the order the inbox shows them. */
 export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
@@ -523,7 +931,14 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   payrollRuns,
   tipPools,
   stockTransfers,
+  cashRequestsHod,
   cashVouchers,
+  fixedAssetRequests,
+  intercompanyTransfers,
+  badDebts,
+  raastVoids,
+  grniWriteOffs,
+  stockDifferences,
 ]
 
 export type { ProviderContext }
