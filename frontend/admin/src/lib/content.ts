@@ -354,11 +354,12 @@ export function cleanKit(kit: BrandKit): BrandKit {
 }
 
 /** Plain-words problems that stop a kit being saved (the API would refuse it
- *  with a 422). Empty = fine. */
-export function kitProblems(kit: BrandKit): string[] {
+ *  with a 422), each naming the field's label. Empty = fine. */
+export function kitProblems(kit: BrandKit, paletteLabels: Record<string, string> = {}): string[] {
   const k = cleanKit(kit)
   const out: string[] = []
-  for (const [key, v] of Object.entries(k.palette ?? {})) if (!isHex6(v)) out.push(`The colour "${key}" must look like #1a2b3c (six digits).`)
+  // A palette colour is named by its form label ("Fiery orange (signal)"), never its key.
+  for (const [key, v] of Object.entries(k.palette ?? {})) if (!isHex6(v)) out.push(`${paletteLabels[key] ?? `The colour "${key}"`} must look like #1a2b3c (six digits).`)
   const roleName: Record<string, string> = { accent: 'Website signal colour', surfaceBg: 'Band / footer background', surfaceText: 'Band / footer text', ordering: 'Ordering & ERP colour' }
   for (const [key, v] of Object.entries(k.roles ?? {})) if (!isHex6(v)) out.push(`${roleName[key] ?? key} must look like #1a2b3c (six digits).`)
   const imgName: Record<string, string> = { logo: 'Logo', wordmark: 'Wordmark', mascot: 'Mascot', badge: 'Badge' }

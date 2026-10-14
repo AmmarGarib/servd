@@ -486,7 +486,10 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     const slug = slugOf(req)
     const row = await loadRow(req, slug, 'write')
     if (row.liveVersion === 0) {
-      await prisma.siteLayout.delete({ where: { id: row.id } })
+      // Conditional: a first publish landing between the read and the delete
+      // (it already synced a kit to the brand) must not lose its row.
+      const gone = await prisma.siteLayout.deleteMany({ where: { id: row.id, liveVersion: 0 } })
+      if (gone.count === 0) throw new ConflictError('This was published while you were discarding it. Reload and try again.')
     } else {
       await prisma.siteLayout.update({
         where: { id: row.id },

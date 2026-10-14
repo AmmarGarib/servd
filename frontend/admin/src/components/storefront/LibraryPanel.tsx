@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { fetchHealth } from '../../lib/connectorsApi'
 import { contentApi, STOREFRONT_BRANDS_KEY } from '../../lib/content'
+import { cleanFontFamily } from './kitCatalog'
 
 export type LibraryAsset = {
   id: string
@@ -95,7 +96,9 @@ function acceptFor(kinds: Kind[]): string {
 function familyFromFilename(filename: string): string {
   const base = filename.replace(/\.[^.]+$/, '')
   const trimmed = base.replace(/[-_ ]?(thin|hairline|extralight|ultralight|light|regular|book|normal|medium|semibold|demibold|bold|extrabold|ultrabold|black|heavy|italic|oblique|variable|vf|\d{3})+$/gi, '')
-  return (trimmed || base).replace(/[-_]+/g, ' ').trim()
+  // Cleaned with the one font-family rule, so the PATCH that follows the
+  // upload is not refused for a name like "Inter-VariableFont_opsz,wght".
+  return cleanFontFamily((trimmed || base).replace(/[-_]+/g, ' ')) ?? ''
 }
 
 function parseTags(input: string): string[] {

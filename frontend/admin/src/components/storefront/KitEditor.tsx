@@ -28,7 +28,7 @@ import {
 } from '../../lib/content'
 import { ApproveDialog, RejectDialog } from './Builder'
 import { ColorInput, Field, FontFaces, MediaInput, Section, useLibraryFonts } from './fields'
-import { brandCatalog, resolveKitImage, useBrandKitCatalog, type KitCatalog } from './kitCatalog'
+import { brandCatalog, cleanFontFamily, resolveKitImage, useBrandKitCatalog, type KitCatalog } from './kitCatalog'
 import { LiveCanvas, type FrameStatus, type LiveCanvasHandle } from './LiveCanvas'
 import { StatusBadge } from './panels'
 import { VersionsDrawer } from './VersionsDrawer'
@@ -106,7 +106,10 @@ export function KitEditor({ brand }: { brand: string }) {
       return { ...k, [group]: next } as BrandKit
     })
 
-  const problems = useMemo(() => (kit ? kitProblems(kit) : []), [kit])
+  const problems = useMemo(
+    () => (kit ? kitProblems(kit, Object.fromEntries(cat.palette.map((p) => [p.key, p.label]))) : []),
+    [kit, cat],
+  )
 
   // ─── What the live frame is sent: the brand's home page + the draft kit ──
 
@@ -130,8 +133,9 @@ export function KitEditor({ brand }: { brand: string }) {
     for (const ref of [kit.fonts?.display, kit.fonts?.body]) {
       const id = ref?.startsWith('library:') ? ref.slice('library:'.length) : null
       const asset = id ? companyFonts.find((f) => f.id === id) : undefined
-      if (asset?.fontFamily && asset.url && !fonts.some((f) => f.id === libraryRef(asset.id))) {
-        fonts.push({ id: libraryRef(asset.id), family: asset.fontFamily, url: asset.url })
+      const family = cleanFontFamily(asset?.fontFamily)
+      if (asset && family && asset.url && !fonts.some((f) => f.id === libraryRef(asset.id))) {
+        fonts.push({ id: libraryRef(asset.id), family, url: asset.url })
       }
     }
     return { brand, kit: cleanKit(kit), ...(fonts.length && { fonts }) }
@@ -447,6 +451,8 @@ function ColourRow({ label, hint, def, value, onChange }: {
   onChange: (v: string | undefined) => void
 }) {
   const shown = isHex6(value) ? value : def
+  // Six hex digits typed without the '#' ("1E90FF") get it added.
+  const set = (v: string | undefined) => onChange(v && /^[0-9a-fA-F]{6}$/.test(v.trim()) ? `#${v.trim()}` : v)
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -458,8 +464,8 @@ function ColourRow({ label, hint, def, value, onChange }: {
           ? <button type="button" onClick={() => onChange(undefined)} className="text-[11px] text-primary-ink hover:underline shrink-0">Default{def ? ` (${def})` : ''}</button>
           : <span className="text-[11px] text-s-dim shrink-0">Default{def ? ` · ${def}` : ''}</span>}
       </div>
-      <ColorInput value={value} onChange={onChange} placeholder={def ?? '#000000'} fallback={def} />
-      {value && !isHex6(value) && <p className="text-[11px] text-s-red mt-1">Use six digits, like #1a2b3c.</p>}
+      <ColorInput value={value} onChange={set} placeholder={def ?? '#000000'} fallback={def} />
+      {value && !isHex6(value) && <p className="text-[11px] text-s-red mt-1">{label}: use six digits, like #1a2b3c.</p>}
       {hint && <p className="text-[11px] text-s-dim mt-1">{hint}</p>}
     </div>
   )

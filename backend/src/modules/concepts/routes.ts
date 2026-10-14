@@ -8,7 +8,7 @@ import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
-import { KIT_CONCEPT_FIELDS } from '../siteLayouts/service.js'
+import { KIT_CONCEPT_FIELDS, refreshKitSnapshotTx } from '../siteLayouts/service.js'
 
 // What a till role (cashier, foh/waiter) may read about a brand: enough to
 // pick it at the till and see its tender GST split, nothing else. The brand
@@ -588,9 +588,17 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     if (storefrontLayout !== undefined) {
       data.storefrontLayout = storefrontLayout === null ? Prisma.JsonNull : (storefrontLayout as Prisma.InputJsonValue)
     }
-    const concept = await prisma.concept.update({
-      where: { id: req.params.id },
-      data,
+    // A kit-owned field (only the CEO gets here with one) refreshes the live
+    // kit's pre-kit snapshot in the same transaction, so a later kit change
+    // never restores the value from before the CEO's edit (rv-7).
+    const kitFieldsSent = KIT_CONCEPT_FIELDS.filter((f) => (rest as Record<string, unknown>)[f] !== undefined)
+    const concept = await prisma.$transaction(async (tx) => {
+      const c = await tx.concept.update({ where: { id: req.params.id }, data })
+      if (kitFieldsSent.length > 0) {
+        await refreshKitSnapshotTx(tx, { slug: owned.slug, tenantId: owned.tenantId },
+          Object.fromEntries(kitFieldsSent.map((f) => [f, c[f]])))
+      }
+      return c
     })
     if (rest.serviceVessel !== undefined && rest.serviceVessel !== owned.serviceVessel) {
       await audit({

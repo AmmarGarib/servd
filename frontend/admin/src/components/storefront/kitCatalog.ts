@@ -22,6 +22,19 @@ export interface KitCatalogBrand {
 }
 export interface KitCatalog { fonts: KitCatalogFont[]; brands: Record<string, KitCatalogBrand> }
 
+/** A font family made safe for a quoted CSS string — the ONE rule, ported
+ *  from the backend's cleanFontFamily (siteLayouts/schemas.ts) and the
+ *  storefront's (lib/blocks.ts): anything outside letters, digits, space,
+ *  `_ . -` becomes a space, runs collapse, trimmed, capped at 120; null when
+ *  nothing is left. The editor preview and the live page then name the same
+ *  family. */
+const FONT_FAMILY_RE = /^[\p{L}\p{N} _.-]{1,120}$/u
+export function cleanFontFamily(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = raw.replace(/[^\p{L}\p{N} _.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim()
+  return FONT_FAMILY_RE.test(s) ? s : null
+}
+
 const TIMEOUT_MS = 8_000
 
 export class KitCatalogError extends Error {

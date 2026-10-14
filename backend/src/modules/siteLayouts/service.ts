@@ -366,6 +366,39 @@ export async function syncKitToConceptTx(
   return fields
 }
 
+/**
+ * The CEO PATCHed a kit-owned Concept field directly (the guard allows it)
+ * while the brand has a live kit: that value becomes the brand's own value,
+ * so it replaces the field in the kit row's pre-kit snapshot. A later kit
+ * that stops setting the field (or removing the kit) then restores the CEO's
+ * value, not the one from before the first kit (review rv-7). Call inside the
+ * PATCH's transaction, with the Concept's values AFTER the update. The kit
+ * row is locked first so a concurrent publish/rollback serialises with it.
+ * Returns the fields refreshed ([] when there is no live kit or snapshot).
+ */
+export async function refreshKitSnapshotTx(
+  tx: Prisma.TransactionClient,
+  concept: { slug: string; tenantId: string | null },
+  values: Partial<ConceptLook>,
+): Promise<string[]> {
+  const fields = KIT_CONCEPT_FIELDS.filter((f) => values[f] !== undefined)
+  if (fields.length === 0 || !concept.tenantId) return []
+  const slug = `brand:${concept.slug}:kit`
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM site_layouts WHERE slug = ${slug} AND "tenantId" = ${concept.tenantId} AND "liveVersion" > 0 FOR UPDATE`
+  if (locked.length === 0) return []
+  const row = await tx.siteLayout.findUnique({ where: { id: locked[0]!.id }, select: { settings: true } })
+  const before = conceptBeforeOf(row?.settings)
+  if (!row || !before || !row.settings || typeof row.settings !== 'object' || Array.isArray(row.settings)) return []
+  const nextBefore: ConceptLook = { ...before }
+  for (const f of fields) nextBefore[f] = values[f] ?? null
+  await tx.siteLayout.update({
+    where: { id: locked[0]!.id },
+    data: { settings: { ...(row.settings as Record<string, unknown>), [CONCEPT_BEFORE_KEY]: nextBefore } as Prisma.InputJsonValue },
+  })
+  return fields
+}
+
 /** A kit row being deleted: every Concept field its live kit set goes back to
  *  the pre-kit snapshot (same transaction as the delete). */
 export async function unapplyKitTx(
@@ -437,8 +470,14 @@ export async function resolveFonts(blocks: unknown, settings: unknown, tenantId:
     orderBy: { createdAt: 'desc' },
     select: { fontFamily: true, url: true },
   })
+  // The family returned is CLEANED with the one rule (cleanFontFamily); the
+  // storefront cleans the block's fontFamily the same way, so an older
+  // library name ("Gotham Book (1)") still pairs its @font-face and its text.
   const seen = new Map<string, string>()
-  for (const a of assets) if (a.fontFamily && !seen.has(a.fontFamily)) seen.set(a.fontFamily, a.url)
+  for (const a of assets) {
+    const family = cleanFontFamily(a.fontFamily)
+    if (family && !seen.has(family)) seen.set(family, a.url)
+  }
   return [...seen].map(([family, url]) => ({ family, url }))
 }
 

@@ -1,8 +1,10 @@
 // The live brand kits (GET /site-layouts/kits/live), fetched on the server
 // with a small module-level cache:
-//   - a good answer is fresh for 60 s; after that the SAME value is served at
+//   - a good answer is fresh for 30 s; after that the SAME value is served at
 //     once while one background refresh runs (stale-while-revalidate), so no
-//     request ever waits on the API once a value exists;
+//     request ever waits on the API once a value exists. A publish or removal
+//     therefore shows within about 60 s at worst (30 s fresh + the stale
+//     request that starts the refresh);
 //   - a failure never replaces the last good kits: they keep being served and
 //     the next refresh is tried after 5 s (never cache a failure longer — the
 //     "fetch caching gotcha" in CLAUDE.md);
@@ -16,7 +18,7 @@
 import { normalizeLiveKits, setLiveKitsSnapshot, type LiveKits } from './brandKit'
 
 const API_URL = process.env['INTERNAL_API_URL'] ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
-const TTL_MS = 60_000
+const TTL_MS = 30_000
 const MISS_TTL_MS = 5_000
 const TIMEOUT_MS = 3_000
 

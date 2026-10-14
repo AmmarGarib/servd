@@ -393,27 +393,44 @@ export function blockHref(href: string | undefined): string | undefined {
 
 const GENERIC_FAMILIES = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'inherit'])
 
-/** A CSS font-family value for a library family name or a built-in stack. */
+/** A CSS font-family value for a library family name or a built-in stack.
+ *  A library family is CLEANED with the same rule as its @font-face
+ *  (`cleanFontFamily`), so a block naming an older library font
+ *  ("Gotham Book (1)") still matches the face the page emits. A value is a
+ *  stack only when it ends in a generic family ("Georgia, serif") — a
+ *  library name with a comma ("Inter VariableFont opsz,wght") is a name. */
 export function cssFontFamily(name: string | undefined | null): string | undefined {
   const n = (name ?? '').replace(/[<>{};\\]/g, '').trim()
   if (!n) return undefined
-  if (n.includes(',') || n.startsWith('var(') || GENERIC_FAMILIES.has(n)) return n
-  return `"${n.replace(/["']/g, '')}", system-ui, sans-serif`
+  if (n.startsWith('var(') || GENERIC_FAMILIES.has(n)) return n
+  if (n.includes(',')) {
+    const last = n.split(',').pop()!.trim().replace(/["']/g, '')
+    if (GENERIC_FAMILIES.has(last)) return n
+  }
+  const family = cleanFontFamily(n)
+  return family ? `"${family}", system-ui, sans-serif` : undefined
 }
 
-/** @font-face rules for library fonts (font-display: swap). */
 /** A font family name that is safe inside a quoted CSS string: letters,
  *  digits, space, `_`, `.` and `-` only (no quotes, braces, control
  *  characters or newlines — a newline would turn the string into a
- *  bad-string token and swallow the rest of the stylesheet). Null = drop
- *  the font. The ONE sanitiser for @font-face and the brand-kit tokens. */
+ *  bad-string token and swallow the rest of the stylesheet). The ONE
+ *  sanitiser for @font-face, block font values and the brand-kit tokens. */
 export const FONT_FAMILY_RE = /^[\p{L}\p{N} _.-]{1,120}$/u
+/** A family name made safe: anything outside the charset becomes a space,
+ *  runs collapse, trimmed, capped at 120; null when nothing is left. The
+ *  same rule as the backend's `cleanFontFamily` (siteLayouts/schemas.ts) —
+ *  a font is CLEANED, never dropped for its name. */
+export function cleanFontFamily(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = raw.replace(/[^\p{L}\p{N} _.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim()
+  return FONT_FAMILY_RE.test(s) ? s : null
+}
 export function safeFontFamily(v: unknown): string | null {
-  if (typeof v !== 'string') return null
-  const family = v.trim()
-  return FONT_FAMILY_RE.test(family) ? family : null
+  return typeof v === 'string' ? cleanFontFamily(v) : null
 }
 
+/** @font-face rules for library fonts (font-display: swap). */
 export function fontFaceCss(fonts: LibraryFont[]): string {
   return fonts
     .map((f) => {

@@ -9,7 +9,9 @@ import { FONT_FAMILY_RE, cleanFontFamily } from '../siteLayouts/schemas.js'
 
 /** A font family is written inside a quoted CSS string on the storefront: a
  *  newline or quote in it breaks every brand token (review-storefront-1).
- *  Blank = "not given". */
+ *  Blank = "not given". Only the manual rename (PATCH) is strict — an upload
+ *  CLEANS the family it is given (cleanFontFamily), because the admin builds
+ *  it from the file name ("Inter-VariableFont_opsz,wght.ttf"). */
 function assertFontFamily(v: string | null | undefined): void {
   const t = v?.trim()
   if (!t) return
@@ -110,7 +112,6 @@ export async function mediaRoutes(fastify: FastifyInstance) {
         conceptId:   z.string().min(1).optional(),
         fontFamily:  z.string().max(120).optional(),
       }).parse(req.query)
-      assertFontFamily(q.fontFamily)
       const tenantId = req.staffUser?.tenantId
       if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
 
@@ -150,9 +151,9 @@ export async function mediaRoutes(fastify: FastifyInstance) {
           name:         q.name?.trim() || baseName,
           tags:         q.tags ?? [],
           conceptId:    q.conceptId ?? null,
-          // A family derived from the name / file name is cleaned to the safe
-          // charset (an explicit one was checked above).
-          fontFamily:   kind === 'font' ? (q.fontFamily?.trim() || cleanFontFamily(q.name) || cleanFontFamily(baseName) || 'Font') : null,
+          // The family (given, else from the name / file name) is cleaned to
+          // the safe charset — never refused on upload.
+          fontFamily:   kind === 'font' ? (cleanFontFamily(q.fontFamily) || cleanFontFamily(q.name) || cleanFontFamily(baseName) || 'Font') : null,
           uploadedById: req.staffUser!.id,
         },
       })
