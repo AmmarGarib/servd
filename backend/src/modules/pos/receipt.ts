@@ -54,6 +54,7 @@ import { renderQrSvg } from '../../connectors/fiscal/qr.js'
 import { fiscalReportingRequired } from '../../connectors/config.js'
 import { tenderLabel, ON_ACCOUNT_TENDER } from '../../lib/tenders.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { isTestTenant } from '../../lib/testCompany.js'
 
 /** A string field of a JSON object, trimmed; null when absent or blank. */
 function metaStr(o: unknown, key: string): string | null {
@@ -93,6 +94,8 @@ export const CLIENT_SIGNATURE_LINE = 'Client signature ________________' as cons
 const FINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'refunded', 'cancelled', 'rejected'])
 
 export const FULL_AND_FINAL_HEADING = 'FULL & FINAL BILL' as const
+/** Printed at the top of every document of a test company (owner, 2026-10-14). */
+export const TEST_COMPANY_BANNER = 'TEST COMPANY — NOT A REAL SALE'
 export const TEST_FISCAL_BANNER = 'TEST — NOT A FISCAL INVOICE' as const
 export const NOT_TAX_INVOICE = 'Not a tax invoice' as const
 
@@ -229,6 +232,8 @@ export interface ReceiptData {
   fiscal: ReceiptFiscal | null
   /** The company does not report sales to a fiscal POS (§17.7): the bill says "Not a tax invoice". */
   notTaxInvoice: boolean
+  /** The order belongs to a test company (owner, 2026-10-14): printed "TEST COMPANY — NOT A REAL SALE". */
+  testCompany?: boolean
   /** A payment taken on the card machine: what the slip says. */
   card: { brand: string | null; last4: string | null; authCode: string | null } | null
   /** Legacy keys for installed tablets — a FILED (non-test) fiscal number, else the order's own columns. */
@@ -383,6 +388,7 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
     placedAt: order.placedAt.toISOString(),
     fiscal,
     notTaxInvoice,
+    testCompany: await isTestTenant(order.concept.tenantId),
     card,
     fbrInvoiceNo: fbr?.number ?? order.fbrInvoiceNumber ?? null,
     srbInvoiceNo: srb?.number ?? order.srbInvoiceNumber ?? null,
@@ -447,7 +453,7 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
     ? `<tr><td>Tip</td><td style="text-align:right">${fmtPkr(r.tipCents)}</td></tr>`
     : ''
   // FOH-23: a refunded / cancelled order never prints like a valid paid bill.
-  const banners = [r.banner, opts.duplicate ? 'DUPLICATE' : null].filter((b): b is string => !!b)
+  const banners = [r.testCompany ? TEST_COMPANY_BANNER : null, r.banner, opts.duplicate ? 'DUPLICATE' : null].filter((b): b is string => !!b)
   const bannerHtml = banners.length > 0
     ? `<div class="center bold" style="font-size:16px;border:2px solid #000;padding:4px;margin:6px 0">${banners.map(esc).join(' · ')}</div>`
     : ''

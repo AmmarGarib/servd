@@ -32,6 +32,7 @@ import { audit } from '../../lib/audit.js'
 import { AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { publicBrandWhere } from '../../lib/publicBrands.js'
 import {
   blocksSchema, pageSettingsSchema, popupRulesSchema, kitSettingsSchema, MAX_CONTENT_BYTES,
 } from './schemas.js'
@@ -195,7 +196,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       })
       const brandSlugs = [...new Set(pages.flatMap((p) => (p.brand ? [p.brand] : [])))]
       const visible = new Set(brandSlugs.length === 0 ? [] : (await prisma.concept.findMany({
-        where: { slug: { in: brandSlugs }, isActive: true, storefrontVisible: true, deletedAt: null },
+        where: { slug: { in: brandSlugs }, isActive: true, storefrontVisible: true, deletedAt: null, ...publicBrandWhere() },
         select: { slug: true },
       })).map((c) => c.slug))
       return pages
@@ -227,7 +228,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       const kits: Record<string, { kit: unknown; version: number; fonts: unknown[] }> = {}
       if (bySlug.size === 0) return { kits }
       const brands = await prisma.concept.findMany({
-        where: { slug: { in: [...bySlug.keys()] }, isActive: true, storefrontVisible: true, deletedAt: null },
+        where: { slug: { in: [...bySlug.keys()] }, isActive: true, storefrontVisible: true, deletedAt: null, ...publicBrandWhere() },
         select: { slug: true, tenantId: true },
       })
       for (const b of brands) {
@@ -279,7 +280,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       const parsed = parseSlug(slug)
       if (row && parsed?.owner === 'brand') {
         const brand = await prisma.concept.findFirst({
-          where: { slug: parsed.conceptSlug, isActive: true, storefrontVisible: true, deletedAt: null },
+          where: { slug: parsed.conceptSlug, isActive: true, storefrontVisible: true, deletedAt: null, ...publicBrandWhere() },
           select: { tenantId: true },
         })
         if (!brand || (row.tenantId !== null && row.tenantId !== brand.tenantId)) return publicShape(slug, null)

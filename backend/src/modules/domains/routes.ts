@@ -228,10 +228,12 @@ export async function activeDomainHosts(): Promise<Array<{ hostname: string; slu
   })
   const ids = Array.from(new Set(rows.map((r) => r.conceptId).filter((x): x is string => !!x)))
   const concepts = ids.length > 0
-    ? await serviceClient.concept.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, slug: true } })
+    ? await serviceClient.concept.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, slug: true, tenant: { select: { isTest: true } } } })
     : []
   const slugOf = new Map(concepts.map((c) => [c.id, c.slug]))
-  return rows.map((r) => ({
+  // A test company's brand hosts are not advertised (lib/publicBrands.ts).
+  const testIds = new Set(concepts.filter((c) => c.tenant?.isTest).map((c) => c.id))
+  return rows.filter((r) => !(r.conceptId && testIds.has(r.conceptId))).map((r) => ({
     hostname: r.hostname,
     slug: r.conceptId ? slugOf.get(r.conceptId) ?? null : null,
     purpose: r.purpose,

@@ -21,6 +21,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { brandCanonical, metaDescription } from '../../../lib/brandDomains'
+import { TestCompanyStripe } from '../../../components/TestCompanyStripe'
 import { BrandShell } from '../../../components/brand/BrandShell'
 import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
 import { fetchSiteLayout, pageSeo } from '../../../lib/blocks'
@@ -52,6 +53,7 @@ export default async function BrandLayout({
   // purple / white never reaches a brand (globals.css).
   return (
     <div className="servd-brand-scope" style={{ display: 'contents' }}>
+      <TestCompanyStripe concept={concept} />
       <BrandShell
         concept={themed}
         header={<ManagedPage slug={`brand:${slug}:header`} {...known} />}

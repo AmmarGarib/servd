@@ -15,7 +15,9 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 interface OrderStatus {
   id: string; status: string; totalCents: number; customerName: string | null
-  concept: { name: string; slug: string; primaryColor: string | null }
+  concept: { name: string; slug: string; primaryColor: string | null; isTestCompany?: boolean }
+  /** Present when the API marks the order's company as a test company. */
+  isTestCompany?: boolean
   items: Array<{ id: string; name: string; quantity: number; unitPriceCents: number; status: string }>
   rider?: {
     id: string; name: string; phone: string; vehicleType: string
@@ -96,6 +98,7 @@ const STEP_INDEX: Record<string, number> = {
 // Headline + sub copy moved to lib/orderStatus.ts so all three order
 // surfaces (/orders, /account, this tracker) share the same wording.
 import { statusFor } from '../../../../lib/orderStatus'
+import { TestCompanyStripe } from '../../../../components/TestCompanyStripe'
 import { formatBrandName } from '../../../../lib/concept'
 
 export default function OrderStatusPage() {
@@ -196,6 +199,7 @@ export default function OrderStatusPage() {
 
   return (
     <div className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
+      <TestCompanyStripe show={order.isTestCompany === true || order.concept.isTestCompany === true} />
 
       {flash && (
         <div className="fixed inset-0 z-50 pointer-events-none"

@@ -336,10 +336,13 @@ export function renderInvoiceHtml(invoice: {
   fbrTaxCents: number; provincialTaxCents: number; serviceChargeCents: number; tipCents: number; totalCents: number
   deliveryFeeCents?: number
   lines: Array<{ description: string; quantity: number; unitPriceCents: number; lineTotalCents: number }>
+  /** A test company's invoice (owner, 2026-10-14): stamped TEST, never a real tax invoice. */
+  testCompany?: boolean
 }): string {
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2 })}`
   const date = invoice.issuedAt.toISOString().slice(0, 10)
-  const title = invoice.type === 'credit_note' ? 'Credit Note' : 'Tax Invoice'
+  const baseTitle = invoice.type === 'credit_note' ? 'Credit Note' : 'Tax Invoice'
+  const title = invoice.testCompany ? `TEST ${baseTitle}` : baseTitle
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
@@ -363,6 +366,7 @@ export function renderInvoiceHtml(invoice: {
 </style>
 </head><body>
 
+${invoice.testCompany ? '<div class="stamp">TEST COMPANY — NOT A REAL INVOICE</div>' : ''}
 <h1>${title}</h1>
 <div class="muted">${invoice.invoiceNumber} · Issued ${date}</div>
 

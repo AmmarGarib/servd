@@ -25,6 +25,7 @@ import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { Skeleton } from '@/components/Status'
 import { useCart } from '../../../store/cart'
+import { TestCompanyStripe, isTestConcept } from '../../../components/TestCompanyStripe'
 import { conceptHeroImage, heroCover, formatBrandName } from '../../../lib/concept'
 import { tintColor } from '../../../lib/brandKit'
 import { useBrandSlug, getServdHost } from '../../../lib/host'
@@ -175,6 +176,8 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
 
   const [loadedConcept, setConcept] = useState<Concept | null>(initialConcept)
   const [categories, setCategories] = useState<Category[] | null>(null)
+  // The menu payload's concept carries isTestCompany (test brands order by URL only).
+  const [isTestBrand, setIsTestBrand] = useState(() => isTestConcept(initialConcept))
   const [error, setError] = useState<string | null>(null)
   // Whether the brand takes orders right now (menu.ordering, ONL-14): when it
   // is closed, checkout answers 409 BRAND_CLOSED, so the menu says so first.
@@ -235,6 +238,7 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
 
         if (cancelled) return
         setOrdering(Array.isArray(menuPayload) ? null : (menuPayload.ordering ?? null))
+        if (!Array.isArray(menuPayload) && isTestConcept(menuPayload.concept)) setIsTestBrand(true)
         setCategories(cats)
         setActiveCategory(cats[0]?.id ?? null)
         // The basket is left alone here, even when it holds another
@@ -379,6 +383,7 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   return (
     <div key="screen" className={brandSkinClass}
       style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
+      <TestCompanyStripe show={isTestBrand} />
       {/* Hero */}
       <section
         style={{

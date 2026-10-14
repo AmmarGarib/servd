@@ -15,6 +15,7 @@ import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
 import { formatBrandName } from '../../lib/brandName.js'
 import { assertPaymentMethodAvailable, availablePaymentMethods } from './paymentMethods.js'
 import { assertOpenForOrders, orderingState, orderTime, sectionVisibleAt } from './serviceHours.js'
+import { publicBrandWhere, isTestCompanyOf } from '../../lib/publicBrands.js'
 import { walletBalanceAt, holdWalletForCheckout, attachHoldToOrder, releaseWalletHold, spendWalletOnOrder } from '../wallet/service.js'
 
 
@@ -228,6 +229,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
             isActive: true,
             deletedAt: null,
             storefrontVisible: true,
+            ...publicBrandWhere(),
             OR: [
               { name:        { contains: q, mode: 'insensitive' } },
               { description: { contains: q, mode: 'insensitive' } },
@@ -241,7 +243,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           where: {
             deletedAt: null,
             isAvailable: true,
-            concept: { isActive: true, deletedAt: null, storefrontVisible: true },
+            concept: { isActive: true, deletedAt: null, storefrontVisible: true, ...publicBrandWhere() },
             OR: [
               { name:        { contains: q, mode: 'insensitive' } },
               { description: { contains: q, mode: 'insensitive' } },
@@ -409,6 +411,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           logoUrl: concept.logoUrl,
           primaryColor: concept.primaryColor,
           storefrontLayout: concept.storefrontLayout,
+          // A test company's brand still works by its direct URL; the
+          // storefront shows a TEST stripe (lib/publicBrands.ts).
+          isTestCompany: await isTestCompanyOf(concept.tenantId),
         },
         categories: enrichedCategories,
         ordering: {
@@ -508,7 +513,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const { lat, lng } = req.query as { lat?: string; lng?: string }
 
     const all = await prisma.concept.findMany({
-      where: { isActive: true, storefrontVisible: true, deletedAt: null },
+      where: { isActive: true, storefrontVisible: true, deletedAt: null, ...publicBrandWhere() },
       select: {
         id: true, name: true, slug: true, type: true, description: true,
         // tenantId identifies the operating company. The storefront is a
@@ -1273,11 +1278,14 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, customerId: req.customer!.id },
         include: {
           items: { include: { modifiers: true } },
-          concept: { select: { name: true, slug: true, primaryColor: true } },
+          concept: { select: { name: true, slug: true, primaryColor: true, tenantId: true } },
           rider: { select: { id: true, name: true, phone: true, vehicleType: true } },
         },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
+      // The tracker shows a TEST stripe for a test company's order.
+      const isTestCompany = await isTestCompanyOf(order.concept.tenantId)
+      const { tenantId: _ct, ...conceptPublic } = order.concept
       const review = await prisma.orderReview.findUnique({
         where: { orderId: order.id },
         select: { id: true },
@@ -1320,6 +1328,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       const handoverRerouted = order.handoverReroutedAt != null
       return {
         ...visible,
+        concept: { ...conceptPublic, isTestCompany },
+        isTestCompany,
         deliveryOtp: order.fulfilmentType === 'delivery' && !handoverRerouted ? order.deliveryOtp : null,
         handoverRerouted,
         rider: riderInfo,

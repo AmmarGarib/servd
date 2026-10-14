@@ -18,6 +18,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { ingestOrder } from '../orders/service.js'
 import { priceOrder } from '../../lib/pricing.js'
 import { assertOpenForOrders, assertItemsServedAt } from '../storefront/serviceHours.js'
+import { isTestCompanyOf } from '../../lib/publicBrands.js'
 import type { OrderDTO } from '@servd/types'
 
 function genShareCode(): string {
@@ -108,6 +109,8 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         : null
       return {
         ...go,
+        // Direct-by-code works for a test company; the page shows a TEST stripe.
+        concept: { ...go.concept, isTestCompany: await isTestCompanyOf(go.concept.tenantId) },
         quote: quote && {
           tender:             quote.tender,
           itemTotalCents:     quote.itemTotalCents,

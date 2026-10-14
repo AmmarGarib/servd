@@ -17,6 +17,18 @@ interface Tenant {
   industry: string | null
   role?: string
   isActive?: boolean
+  /** Test company (server field `isTest`). */
+  isTest?: boolean
+}
+
+// Chip shown beside a test company's name.
+export function TestChip() {
+  return (
+    <span className="shrink-0 rounded px-1 py-px text-[9px] font-black uppercase tracking-wider"
+      style={{ color: 'var(--erp-warning)', background: 'color-mix(in srgb, var(--erp-warning) 14%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 45%, transparent)' }}>
+      Test
+    </span>
+  )
 }
 
 // Virtual sentinel for the "All companies" portfolio view (no real tenant ID).
@@ -172,6 +184,7 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   }, [open])
 
   const active = tenants.find((t) => t.isActive) ?? tenants[0]
+  const activeIsTest = !viewAll && !!active?.isTest
   const companyLabel = viewAll ? 'All companies' : (active?.name ?? '—')
   const initial = viewAll ? '∞' : (active?.name ?? '?')[0]?.toUpperCase()
   const brandText = showBrands ? brandLabel(brand.current) : null
@@ -211,7 +224,7 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
       <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
-  const summary = [companyLabel, brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')
+  const summary = [activeIsTest ? `${companyLabel} (test)` : companyLabel, brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')
 
   // Collapsed sidebar — the badge alone; the panel opens to the right.
   if (placement === 'collapsed') {
@@ -235,7 +248,10 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
           className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 max-w-[78vw] text-left">
           {badge}
           <span className="min-w-0 flex flex-col">
-            <span className="text-[11px] font-bold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{companyLabel}</span>
+            <span className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[11px] font-bold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{companyLabel}</span>
+              {activeIsTest && <TestChip />}
+            </span>
             {(brandText || viewAsText) && (
               <span className="text-[10px] font-bold truncate" style={{ color: 'var(--erp-accent)' }}>
                 {[brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')}
@@ -261,8 +277,11 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
           <span className="block text-[10px] font-bold uppercase tracking-wider text-white/35 leading-none">
             {viewAll ? 'Portfolio' : 'Company'}
           </span>
-          <span className="block text-xs font-bold truncate mt-0.5" style={{ color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
-            {companyLabel}
+          <span className="flex items-center gap-1.5 mt-0.5 min-w-0">
+            <span className="block text-xs font-bold truncate" style={{ color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
+              {companyLabel}
+            </span>
+            {activeIsTest && <TestChip />}
           </span>
           {brandText && (
             <span className="block text-[10px] font-bold truncate mt-0.5" style={{ color: brand.current ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.55)' }}>
@@ -397,7 +416,7 @@ const SwitcherPopover = ({ panelRef, tenants, activeId, onSwitch, onActivateAll,
                 <p className="text-xs font-bold text-white/90 truncate">All companies</p>
                 {allActive && <span className="text-[9px] font-black uppercase tracking-wider text-primary-ink">Active</span>}
               </div>
-              <p className="text-[10px] text-white/40 truncate mt-0.5">Portfolio view · {tenants.length} compan{tenants.length === 1 ? 'y' : 'ies'}</p>
+              <p className="text-[10px] text-white/40 truncate mt-0.5">Portfolio view · {tenants.filter((t) => !t.isTest).length} compan{tenants.filter((t) => !t.isTest).length === 1 ? 'y' : 'ies'}{tenants.some((t) => t.isTest) ? ' · test left out' : ''}</p>
             </div>
           </button>
         )}
@@ -423,6 +442,7 @@ const SwitcherPopover = ({ panelRef, tenants, activeId, onSwitch, onActivateAll,
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-bold text-white/90 truncate">{t.name}</p>
+                  {t.isTest && <TestChip />}
                   {isActive && <span className="text-[9px] font-black uppercase tracking-wider text-primary-ink">Active</span>}
                 </div>
                 <p className="text-[10px] text-white/40 font-mono truncate mt-0.5">/{t.slug}</p>

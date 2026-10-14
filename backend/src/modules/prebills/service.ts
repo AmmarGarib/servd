@@ -32,6 +32,7 @@ import { fmtPkr as fmtPkrShared } from '../accounting/csv.js'
 import { tenderOfPayments } from '../../lib/pricing.js'
 import { quoteOrderForTender, lockOrderTx } from '../pos/service.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { isTestTenant } from '../../lib/testCompany.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -60,6 +61,8 @@ export type PreBillLine = {
 export interface PreBillReceipt {
   kind: 'pre_bill'
   banner: typeof PRE_BILL_BANNER
+  /** The order's company is a test company (owner, 2026-10-14): printed with a TEST banner. */
+  testCompany?: boolean
   /** "PB-<n>" — printed where a bill prints "Invoice #". */
   number: string
   preBillId: string
@@ -291,6 +294,7 @@ export async function createPreBill(input: CreatePreBillInput): Promise<{ preBil
             orderStatus: order.status,
             printedBy: printer?.name ?? null,
             paidCents: quote.paidCents,
+            testCompany: await isTestTenant(preBill.tenantId),
           }),
         }
       })
@@ -322,6 +326,7 @@ interface ReceiptContext {
   printedBy: string | null
   /** Paid on the order when this pre-bill was printed. */
   paidCents: number
+  testCompany?: boolean
 }
 
 function readLines(json: Prisma.JsonValue): PreBillLine[] {
@@ -335,6 +340,7 @@ function receiptOf(pb: PreBill, ctx: ReceiptContext): PreBillReceipt {
   return {
     kind: 'pre_bill',
     banner: PRE_BILL_BANNER,
+    testCompany: ctx.testCompany === true,
     number: preBillLabel(pb.number),
     preBillId: pb.id,
     orderId: pb.orderId,
@@ -466,6 +472,7 @@ export async function preBillReceiptFor(preBillId: string, req: FastifyRequest):
       orderStatus: order.status,
       printedBy: printer?.name ?? null,
       paidCents: await paidAtPrint(preBill),
+      testCompany: await isTestTenant(preBill.tenantId),
     }),
   }
 }
@@ -528,7 +535,7 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
   const widthMm = cfg.paperWidthMm === 58 ? 58 : 80
   const screenWidth = cfg.paperWidthMm === 58 ? 240 : 320
   const row = (label: string, value: string) => `<tr><td>${label}</td><td style="text-align:right">${value}</td></tr>`
-  const banners = [r.banner, priorRenders > 0 ? 'COPY' : null].filter((b): b is string => !!b)
+  const banners = [r.testCompany ? 'TEST COMPANY — NOT A REAL SALE' : null, r.banner, priorRenders > 0 ? 'COPY' : null].filter((b): b is string => !!b)
   // 'card' is the digital tax group: a card pre-bill's total is also what a
   // Raast QR transfer pays (both at Concept.taxRateCard).
   const tenderLabel = r.tender === 'card' ? 'card / Raast QR' : 'cash'

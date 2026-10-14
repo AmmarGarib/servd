@@ -16,6 +16,7 @@ import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatal
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
 import { useApprovalCounts } from '../../app/ceo/approvalsData'
+import { TestCompanyBanner } from './TestCompanyBanner'
 import { SandboxBanner } from '../SandboxBanner'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -821,6 +822,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </header>
 
         <PortfolioBanner />
+        <TestCompanyBanner />
         <ImpersonationBanner />
         <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in pb-20 md:pb-0">
           <PageGuard pathname={pathname}>{children}</PageGuard>
@@ -883,7 +885,7 @@ function PortfolioBanner() {
       }}>
       <span className="font-black">∞</span>
       <span className="font-bold">Portfolio view</span>
-      <span className="text-white/55">— viewing across all your companies. We&rsquo;ll ask which company to use when you make a change.</span>
+      <span className="text-white/55">— viewing across all your companies. We&rsquo;ll ask which company to use when you make a change. Test companies are left out.</span>
     </div>
   )
 }

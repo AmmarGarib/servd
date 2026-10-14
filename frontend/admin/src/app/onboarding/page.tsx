@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { api } from '../../lib/api'
 import { MapPin } from '../../components/ui/MapPin'
 import { MoneyInput } from '../../components/ui/MoneyInput'
+import { usePermissions } from '../../hooks/useCan'
 
 type StepKey = 'company' | 'brand' | 'location' | 'hours' | 'menu' | 'done'
 
@@ -31,6 +32,8 @@ interface Tenant {
   // Present on /tenants/mine response — flags the user's role + which is active
   role?: string
   isActive?: boolean
+  /** Test company (CEO-only switch): no FBR/SRB, left out of All companies, never messages customers. */
+  isTest?: boolean
 }
 interface Concept {
   id: string; slug: string; name: string
@@ -238,6 +241,12 @@ function CompanyStep({ tenants, onDone }: { tenants: Tenant[]; onDone: () => voi
                     Active
                   </span>
                 )}
+                {t.isTest && (
+                  <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
+                    style={{ color: 'var(--erp-warning)', background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 40%, transparent)' }}>
+                    Test
+                  </span>
+                )}
                 {t.role && (
                   <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">
                     {t.role}
@@ -302,10 +311,15 @@ function CompanyForm({ tenant, onSaved, onCancel }: {
   const [industry, setIndustry] = useState(tenant?.industry ?? 'qsr')
   const [timezone, setTimezone] = useState(tenant?.timezone ?? 'Asia/Karachi')
   const isEditing = !!tenant
+  // Test company: the CEO (role admin) alone sees and sets this.
+  const { data: me } = usePermissions()
+  const isCeo = me?.role === 'admin'
+  const [makeTest, setMakeTest] = useState(false)
 
   const save = useMutation({
     mutationFn: () => {
-      const payload = { name, ownerEmail: ownerEmail || null, industry, timezone }
+      const payload: Record<string, unknown> = { name, ownerEmail: ownerEmail || null, industry, timezone }
+      if (!isEditing && isCeo && makeTest) payload.isTest = true
       return isEditing
         ? api.patch(`/tenants/${tenant.id}`, payload)
         : api.post('/tenants', payload)
@@ -339,6 +353,18 @@ function CompanyForm({ tenant, onSaved, onCancel }: {
         </select>
       </Field>
 
+      {isCeo && !isEditing && (
+        <Field label="Test company">
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input type="checkbox" checked={makeTest} onChange={(e) => setMakeTest(e.target.checked)}
+              className="mt-0.5 h-4 w-4" style={{ accentColor: 'var(--erp-success)' }} />
+            <span className="text-sm text-white/80 font-bold">This is a test company</span>
+          </label>
+          <Hint>{TEST_COMPANY_WORDS}</Hint>
+        </Field>
+      )}
+      {isCeo && isEditing && tenant && <TestCompanySection tenant={tenant} />}
+
       {save.error && <ErrorBanner error={save.error} />}
 
       <Footer>
@@ -353,6 +379,58 @@ function CompanyForm({ tenant, onSaved, onCancel }: {
         )}
       </Footer>
     </Card>
+  )
+}
+
+const TEST_COMPANY_WORDS = 'For trying things out. Its sales are never sent to FBR/SRB, never counted in All companies totals, and it never messages customers. Its own books work normally.'
+
+// Edit mode: shows the current state and flips it with a reason (CEO only).
+function TestCompanySection({ tenant }: { tenant: Tenant }) {
+  const qc = useQueryClient()
+  const [isTest, setIsTest] = useState(!!tenant.isTest)
+  const [asking, setAsking] = useState(false)
+  const [reason, setReason] = useState('')
+  const next = !isTest
+  const toggle = useMutation({
+    mutationFn: () => api.patch(`/tenants/${tenant.id}/test-mode`, { isTest: next, reason: reason.trim() }),
+    onSuccess: () => {
+      setIsTest(next)
+      setAsking(false)
+      setReason('')
+      qc.invalidateQueries({ queryKey: ['wizard-tenants'] })
+      qc.invalidateQueries({ queryKey: ['my-tenants'] })
+    },
+  })
+  return (
+    <Field label="Test company">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-bold" style={{ color: isTest ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.8)' }}>
+          {isTest ? 'On — this is a test company' : 'Off — this is a real company'}
+        </span>
+        {!asking && (
+          <button type="button" onClick={() => setAsking(true)}
+            className="rounded-lg border border-white/10 px-3 py-1 text-xs text-white/65 hover:text-white">
+            {isTest ? 'Turn off…' : 'Turn on…'}
+          </button>
+        )}
+      </div>
+      <Hint>{TEST_COMPANY_WORDS}{isTest ? ' Turning it off makes the company file with FBR/SRB again from its next sale.' : ''}</Hint>
+      {asking && (
+        <div className="mt-2 space-y-2">
+          <input value={reason} onChange={(e) => setReason(e.target.value)} className={fieldCls}
+            placeholder="Why? (at least 10 characters, kept in the audit log)" />
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => toggle.mutate()}
+              disabled={toggle.isPending || reason.trim().length < 10} className={primaryBtn}>
+              {toggle.isPending ? 'Saving…' : next ? 'Make it a test company' : 'Make it a real company'}
+            </button>
+            <button type="button" onClick={() => { setAsking(false); setReason('') }}
+              className="text-xs text-white/45 hover:text-white/75 transition-colors">Cancel</button>
+          </div>
+        </div>
+      )}
+      {toggle.error && <ErrorBanner error={toggle.error} />}
+    </Field>
   )
 }
 

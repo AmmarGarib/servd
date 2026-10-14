@@ -4,6 +4,7 @@ import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
+import { publicBrandWhere } from '../../lib/publicBrands.js'
 
 function slugify(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
@@ -106,7 +107,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
     const slug = (req.query.brand ?? '').trim().toLowerCase()
     if (!slug) return reply.status(400).send({ error: { code: 'BRAND_REQUIRED', message: 'brand is required' } })
     const concept = await serviceClient.concept.findFirst({
-      where: { slug, deletedAt: null, isActive: true, storefrontVisible: true },
+      where: { slug, deletedAt: null, isActive: true, storefrontVisible: true, ...publicBrandWhere() },
       select: { id: true },
     })
     if (!concept) return []

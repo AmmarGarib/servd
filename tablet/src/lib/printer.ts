@@ -166,6 +166,8 @@ export interface ReceiptOrder {
    * company, a home kitchen): the bill says it is not a tax invoice.
    */
   notTaxInvoice?: boolean
+  /** The order belongs to a test company (owner, 2026-10-14): printed with a TEST COMPANY banner. */
+  testCompany?:   boolean
   /** A payment taken on the card machine. */
   card?:          { brand: string | null; last4: string | null; authCode: string | null } | null
   // Pre-bill only: the card-tender total under a cash headline, what was
@@ -216,6 +218,7 @@ function rs(cents: number): string {
 
 const PRE_BILL_BANNER = 'PRE-BILL - NOT A TAX INVOICE'
 const TEST_BANNER = 'TEST - NOT A FISCAL INVOICE'
+const TEST_COMPANY_BANNER = 'TEST COMPANY - NOT A REAL SALE'
 
 export function isPreBill(order: ReceiptOrder): boolean {
   return order.kind === 'pre_bill'
@@ -229,7 +232,8 @@ export function isPreBill(order: ReceiptOrder): boolean {
 export function receiptBanners(order: ReceiptOrder, opts: ReceiptOptions = {}): string[] {
   const banner = isPreBill(order) ? (order.banner ?? PRE_BILL_BANNER) : order.banner ?? null
   const test = !isPreBill(order) && order.fiscal?.status === 'test' ? TEST_BANNER : null
-  return [banner, test, opts.duplicate ? 'DUPLICATE' : null].filter((b): b is string => !!b)
+  const company = order.testCompany ? TEST_COMPANY_BANNER : null
+  return [company, banner, test, opts.duplicate ? 'DUPLICATE' : null].filter((b): b is string => !!b)
 }
 
 /** The fiscal lines of a full & final bill (spec §11), as plain text — the QR is added by buildReceipt. */

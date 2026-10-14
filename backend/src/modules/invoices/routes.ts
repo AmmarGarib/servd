@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
+import { isTestTenant } from '../../lib/testCompany.js'
 import { issueInvoiceForOrder, issueCreditNoteForOrder, renderInvoiceHtml } from './service.js'
 
 const issueSchema = z.object({
@@ -89,7 +90,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
         include: { lines: true },
       })
       if (!invoice) throw new NotFoundError('TaxInvoice', req.params.id)
-      const html = renderInvoiceHtml(invoice)
+      const html = renderInvoiceHtml({ ...invoice, testCompany: await isTestTenant(invoice.tenantId) })
       reply.header('Content-Type', 'text/html; charset=utf-8')
       return reply.send(html)
     },

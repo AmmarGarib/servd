@@ -12,6 +12,8 @@ export interface Concept {
   id: string
   name: string
   slug: string
+  /** A test company's brand (never listed publicly; reachable by direct link, shown with a TEST stripe). */
+  isTestCompany?: boolean
   type: string
   /** The operating company. Brands only cross-promote within one company. */
   tenantId?: string | null
