@@ -1107,22 +1107,3 @@ async function applyCapitalise(tx: Tx, event: FixedAssetEvent, payload: Record<s
     payload: { assetIds, advancedCents: advanced, owedCents: gross - advanced, inputTaxCents: inputTax, poolId: pool?.id ?? null },
   }
 }
-
-// ─── Deprecated direct disposal (service.disposeAsset) ──────────────────────
-
-/** @deprecated Backs service.ts disposeAsset (the old register route) — applies a disposal at once. Removed by w3-fa-api. */
-export async function applyDisposalNow(
-  assetId: string,
-  opts: { disposedAt: Date; proceedsCents: number; postedBy?: string },
-): Promise<{ bookValueCents: number; proceedsCents: number; gainLossCents: number }> {
-  const asset = await serviceClient.fixedAsset.findUnique({ where: { id: assetId }, select: { status: true } })
-  if (!asset) throw new NotFoundError('FixedAsset', assetId)
-  if (asset.status !== 'active') throw new AppError('ALREADY_DISPOSED', 'This asset has already been disposed of', 409)
-  const { event } = await createRequest({
-    kind: 'disposal', assetId, effectiveDate: opts.disposedAt, reason: 'Disposed through the register (legacy route)',
-    payload: { kind: opts.proceedsCents > 0 ? 'sale' : 'scrap', proceedsCents: opts.proceedsCents, method: 'bank' },
-  }, { id: opts.postedBy ?? 'system', role: FA_APPROVER_ROLE })
-  const p = payloadOf(event)
-  const nbv = typeof p['nbvCents'] === 'number' ? p['nbvCents'] : 0
-  return { bookValueCents: nbv, proceedsCents: opts.proceedsCents, gainLossCents: opts.proceedsCents - nbv }
-}

@@ -279,7 +279,7 @@ const COS_CODES = [ACCT.FOOD_COST, ACCT.BEVERAGE_COST, ACCT.PACKAGING_COST, ACCT
 const DOC_KINDS = ['waste', 'count_loss', 'count_gain', 'prep_draw', 'issue_on_receipt', 'shortfall_settle'] as const
 
 /** 1290 Stock differences (H20): waste / count differences waiting for the CEO before they reach cost of sales. */
-const STOCK_DIFF_SUSPENSE_CODE = '1290'
+const STOCK_DIFF_SUSPENSE_CODE = ACCT.STOCK_DIFF_SUSPENSE
 
 const OPEN_ORDER_STATUSES = ['received', 'confirmed', 'preparing', 'ready'] as const
 const SOLD_STATUSES = ['completed', 'refunded'] as const

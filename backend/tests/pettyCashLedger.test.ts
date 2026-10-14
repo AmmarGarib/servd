@@ -226,7 +226,7 @@ describe('a spend books its lines against 1011', () => {
     expect(flag.tenantId).toBe(A.tenantId)
   })
 
-  it('lines: several, each its own code; B\'s outlet or brand → 422; stock / capex → 422; must add up', async () => {
+  it('lines: several, each its own code; B\'s outlet or brand → 422; stock / capex of another company → 422; must add up', async () => {
     const r = await call(finA, 'POST', '/trustops/petty-cash/movements', {
       boxId: boxA, type: 'spend', amountCents: 3_000, reason: 'Sundries',
       lines: [
@@ -245,8 +245,8 @@ describe('a spend books its lines against 1011', () => {
     }
     await bad({ locationId: B.locationId }, 'LOCATION_NOT_IN_COMPANY')
     await bad({ conceptId: B.conceptId }, 'CONCEPT_NOT_IN_COMPANY')
-    await bad({ kind: 'stock', inventoryItemId: 'x', quantity: 1 }, 'STOCK_LINES_UNAVAILABLE')
-    await bad({ kind: 'capex', capexLineId: 'x' }, 'CAPEX_LINES_UNAVAILABLE')
+    await bad({ kind: 'stock', inventoryItemId: 'x', quantity: 1 }, 'ITEM_NOT_IN_COMPANY')
+    await bad({ kind: 'capex', capexLineId: 'x' }, 'CAPEX_LINE_NOT_IN_COMPANY')
     await bad({ amountCents: 900 }, 'LINES_DONT_ADD_UP')
     expect(await floatOf(boxA)).toBe(floatBefore)
   })

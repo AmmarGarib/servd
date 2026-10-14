@@ -5529,7 +5529,7 @@ model PhysicalCount {
   countedAt   DateTime @default(now())
   status      String   @default("pending") // pending | completed | reviewed
   notes       String?
-  // Food cost wave B: spot | opening (opening → 3020, H19; finance/CEO/management only). CHECK
+  // Food cost wave B: spot | opening (opening → 3010 owner's capital, H19; finance/CEO/management only). CHECK
   // physical_counts_kind_chk (SQL only).
   kind        String   @default("spot")
   locationId  String?

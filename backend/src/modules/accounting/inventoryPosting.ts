@@ -16,7 +16,7 @@
 //
 //   1  procurement.receipt:<receiptId>          Dr 12x0 per class / Cr 2015 GRNI            (in the receipt's tx; cash-settled receipts post nothing)
 //   2  inventory.waste:<wasteLogId>             Dr 5040 / Cr 12x0 at the FIFO value taken    (brand = the log's, else usage split)
-//   3  inventory.count:<countId>                spot: Dr/Cr 5050 vs 12x0; opening: Dr 12x0 / Cr 3020 (H19 — never 5050)
+//   3  inventory.count:<countId>                spot: Dr/Cr 5050 vs 12x0; opening: Dr 12x0 / Cr 3010 owner's capital (H19 — never 5050)
 //   4  inventory.prep_draw:<batchId>            Dr 50x0 / Cr 12x0 at the FIFO value drawn    (ad-hoc batches; usage split)
 //   5  procurement.grni_writeoff:<lineId>       Dr 2015 / Cr 5060 for the open unbilled value (usage split)
 //   6  inventory.item_reclass:<itemId>:<auditId> Dr new class inventory / Cr old class inventory
@@ -267,8 +267,8 @@ type CountAdjustment =
  * signed: negative short — the FIFO value of the count_loss — positive over —
  * the count_gain lot — or an opening lot). Spot: short Dr 5050 / Cr 12x0, over
  * Dr 12x0 / Cr 5050, brand split from the shares stored on the line's
- * movements (else usage now — stored when `store`). Opening (H19): Dr 12x0 /
- * Cr 3020, brand-less, never 5050. A pre-FIFO line with no stored value is
+ * movements (else usage now — stored when `store`). Opening (H19, accountant
+ * 2026-10-14): Dr 12x0 / Cr 3010 owner's capital, brand-less, never 5050. A pre-FIFO line with no stored value is
  * valued at the item's unit cost × the difference (the old rule). Lines of
  * another company's item are skipped.
  */
@@ -310,7 +310,7 @@ async function buildCountAdjustment(db: Db, countId: string, store: boolean): Pr
       const v = Math.abs(value)
       overCents += v
       lines.push({ accountCode: inv, type: 'debit', amountCents: v, memo: `Opening stock — ${memo}`.slice(0, 250) })
-      lines.push({ accountCode: ACCT.RETAINED_EARNINGS, type: 'credit', amountCents: v, memo: `Opening stock found by the first count (H19) — ${item.name}`.slice(0, 250) })
+      lines.push({ accountCode: ACCT.OWNERS_CAPITAL, type: 'credit', amountCents: v, memo: `Opening stock found by the first count (H19, owner's capital) — ${item.name}`.slice(0, 250) })
       continue
     }
     const shares = await sharesFor(db, tenantId, item.id, count.countedAt, rows, store)
@@ -343,7 +343,7 @@ export async function postStockCount(countId: string, opts: RepostOptions & { tx
     if (adj.lines.length === 0) return { posted: false, entryId: null, reason: 'no_variance' }
     assertBalanced(adj.lines, `inventory.count:${countId}`)
     const description = adj.kind === 'opening'
-      ? `Opening stock count — ${pkr(adj.overCents)} to retained earnings (H19)`
+      ? `Opening stock count — ${pkr(adj.overCents)} to owner's capital (H19)`
       : `Stock count adjustment — short ${pkr(adj.shortCents)}, over ${pkr(adj.overCents)}`
     const late = withLateNote(description, adj.lines, opts.memoNote)
     const r = await postJournalEntry({

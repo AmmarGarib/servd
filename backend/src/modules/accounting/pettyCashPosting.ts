@@ -297,17 +297,20 @@ export function spendLineData(tenantId: string, l: ResolvedSpendLine): Omit<Pris
 }
 
 /**
- * The account a CapEx cash payment may credit. recordCapexPaymentFromCashTx
- * takes 1011 (a box) or 1355 (a legacy advance) only. A settlement paid to a
- * 6xxx (H3: expense at payment) is credited to 1011 by the CapEx payment and
- * moved on by the settlement's own entry (Dr 1011 / Cr <paid 6xxx>) — the two
- * net to Dr 1340 / Cr <paid 6xxx> and 1011 is untouched. Once capexPosting
- * takes the paid account as its credit, the bridge goes: change THIS function
- * to return `paidCode` and the settlement entry drops its bridge lines.
+ * The account a CapEx cash payment credits. recordCapexPaymentFromCashTx
+ * takes 1011 (a box), a cash request's paid 6xxx (H3: expense at payment —
+ * the CapEx payment moves the equipment straight out of it: Dr 1340 /
+ * Cr <paid 6xxx>, tagged with the request's brand) or 1355 (a legacy
+ * advance). Anything else (a legacy request whose pay was booked somewhere
+ * unexpected) is bridged: the CapEx payment credits 1011 and the
+ * settlement's own entry moves it on (Dr 1011 / Cr <paid>), so the two net
+ * to Dr 1340 / Cr <paid> and 1011 is untouched.
  */
-export function capexCashCreditFor(paidCode: string): { creditCode: '1011' | '1355'; bridged: boolean } {
-  if (paidCode === ACCT.PETTY_CASH || paidCode === ACCT.CASH_ADVANCES) return { creditCode: paidCode, bridged: false }
-  return { creditCode: ACCT.PETTY_CASH as '1011', bridged: true }
+export function capexCashCreditFor(paidCode: string): { creditCode: string; bridged: boolean } {
+  if (paidCode === ACCT.PETTY_CASH || paidCode === ACCT.CASH_ADVANCES || /^6\d{3}$/.test(paidCode)) {
+    return { creditCode: paidCode, bridged: false }
+  }
+  return { creditCode: ACCT.PETTY_CASH, bridged: true }
 }
 
 /**
@@ -360,10 +363,18 @@ export async function bookCashLinesTx(tx: Tx, a: {
   if (capex.length > 0) {
     const { recordCapexPaymentFromCashTx } = await import('../financePlanning/capexPosting.js')
     const { creditCode } = capexCashCreditFor(a.creditCode)
+    // A credit out of the request's paid 6xxx carries the brand its pay was
+    // booked to (cashRequestPayLine: the request's conceptId), as the
+    // settlement's own Cr <paid> does — the brand's expense nets to zero.
+    let creditConceptId: string | null = null
+    if (/^6\d{3}$/.test(creditCode) && a.doc.kind === 'cash_voucher_settlement') {
+      const st = await tx.cashVoucherSettlement.findUnique({ where: { id: a.doc.id }, select: { voucher: { select: { conceptId: true } } } })
+      creditConceptId = st?.voucher.conceptId ?? null
+    }
     for (const r of capex) {
       const paid = await recordCapexPaymentFromCashTx(tx, {
         tenantId: a.tenantId, lineId: r.capexLineId!, spendLineId: r.id, amountCents: r.amountCents,
-        paidAt: a.occurredAt, creditCode, actorId: a.actorId,
+        paidAt: a.occurredAt, creditCode, creditConceptId, actorId: a.actorId,
       })
       await tx.pettyCashSpendLine.update({ where: { id: r.id }, data: { capexPaymentId: paid.capexPaymentId } })
     }
@@ -623,8 +634,9 @@ export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId
  *   an expense line in another account → Dr its 6xxx / Cr P;
  *   a stock line → Dr its class account (12x0) / Cr P (the settled receipt
  *     was written by bookCashLinesTx; it posts nothing itself);
- *   a capex line → its own CapEx payment; when that payment had to credit
- *     1011 (capexCashCreditFor), Dr 1011 / Cr P here;
+ *   a capex line → its own CapEx payment (Dr 1340 / Cr P); only when that
+ *     payment had to be bridged through 1011 (capexCashCreditFor), Dr 1011 /
+ *     Cr P here;
  *   an expense line in P itself → nothing (the pay already booked it).
  * No entry at all when every line stays in P (entryId null). Idempotent; a
  * reclassed line reverses the live entry and reposts it on its own date.

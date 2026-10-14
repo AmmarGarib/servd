@@ -202,7 +202,12 @@ export async function freezeTaxYear(tenantId: string, taxYear: number, frozenByI
     const already = await tx.fixedAssetTaxYear.count({ where: { tenantId, taxYear } })
     if (already > 0) throw new AppError('TAX_YEAR_FROZEN', `Tax year ${taxYear} is already frozen`, 409)
     const s = await taxSchedule(tenantId, taxYear, tx)
-    const rows = s.rows.filter((r) => !r.frozen)
+    // H23: the Third Schedule rates do not cover smallwares — pooled classes are
+    // never frozen into the tax register (the report lists them 'to confirm').
+    const pooled = new Set((await getAssetClasses(tenantId, tx)).filter((c) => c.pooled).map((c) => c.key))
+    const rows = s.rows.filter((r) => !r.frozen && !pooled.has(r.classKey))
+    const totals = zeroTotals()
+    for (const r of s.rows) if (!pooled.has(r.classKey)) addTo(totals, r)
     if (rows.length > 0) {
       await tx.fixedAssetTaxYear.createMany({
         data: rows.map((r) => ({
@@ -213,7 +218,7 @@ export async function freezeTaxYear(tenantId: string, taxYear: number, frozenByI
         })),
       })
     }
-    return { taxYear, assets: rows.length, totals: s.totals }
+    return { taxYear, assets: rows.length, totals }
   }, { timeout: 120_000, maxWait: 30_000 })
 }
 

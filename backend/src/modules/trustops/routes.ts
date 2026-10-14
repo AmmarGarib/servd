@@ -154,7 +154,7 @@ async function withNames<T, K extends string>(rows: T[], idOf: (r: T) => string,
 /** Where a top-up's cash came from, on the routes (cash_request / opening are writer-only). */
 const TOPUP_SOURCES = ['garibsons', 'safe', 'bank', 'till'] as const
 
-/** One expense line of a spend (stock / capex kinds are accepted here and refused 422 by the writer until W3). */
+/** One line of a spend: an expense, a stock item (a settled cash-purchase receipt on FIFO lots) or a CapEx line (the writer checks each against the box's company). */
 const SPEND_LINE = z.object({
   kind:          z.enum(['expense', 'stock', 'capex']).default('expense'),
   categoryKey:   z.string().trim().min(1).max(40).nullable().optional(),
@@ -630,6 +630,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // company's ledger (postSupplierPayment resolves it from the supplier).
     let bill: { id: string; supplierId: string; billNumber: string; supplierName: string } | null = null
     if (body.supplierBillId) {
+      if (body.lines?.some((l) => l.kind === 'stock')) {
+        throw new AppError('STOCK_ON_BILL_SPEND', 'A spend that pays a supplier bill brings no goods in — the bill\'s own delivery did', 422)
+      }
       if (body.lines || body.categoryKey || body.accountCode) {
         throw new AppError('LINES_ON_BILL', 'A spend that pays a supplier bill has no expense lines — the bill carries them', 400)
       }
@@ -704,6 +707,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // authoritative check is the conditional float update inside the
     // transaction (pettyCash.ts).
     if (box.floatCents + signedAmount < 0) throw insufficientFloatError(amount, box.floatCents)
+
+    // Stock lines land on FIFO lots: the company's cut-over runs BEFORE the
+    // spend's transaction (it opens its own); the writer re-checks as a fallback.
+    if (lines?.some((l) => l.kind === 'stock')) await (await import('../../lib/stockLedger.js')).ensureFifoReady(box.tenantId)
 
     const { movement, supplierPaymentId, newFloatCents, overrides } = await prisma.$transaction(async (tx) => {
       let supplierPaymentId: string | null = null
@@ -983,9 +990,11 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // ════════════════════════════════════════════════════════════════════════
   // 2b. CASH VOUCHERS — /trustops/cash-vouchers (cashVouchers.ts)
   // ════════════════════════════════════════════════════════════════════════
-  // GS Foods' internal cash payment voucher: HOD signs, director signs, the
-  // cashier signs the paper and pays; the photo of the signed paper turns it
-  // into ONE petty-cash spend through recordPettyCashSpendTx.
+  // Cash requests (H3): anyone raises, the HOD signs, the director approves,
+  // the box's custodian pays — ONE petty-cash spend through
+  // recordPettyCashSpendTx, booked to the request's category (Dr 6xxx /
+  // Cr 1011) at payment. Receipts book nothing; settlements reclass out of
+  // the paid account (cashRequestSettle.ts).
   await fastify.register(cashVoucherRoutes, { prefix: '/cash-vouchers' })
 
   // ════════════════════════════════════════════════════════════════════════

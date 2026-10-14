@@ -362,6 +362,10 @@ export async function syncCapexPaymentPosting(
   const fromCash = p.source === 'cash'
   const namesMoney = !fromCash && (opts.payFrom !== undefined || opts.bankAccountId !== undefined)
   const liveMoney = moneyCredit(live)
+  // A cash payment out of a cash request's paid 6xxx keeps the brand its credit was booked with.
+  const creditConceptId = fromCash
+    ? (live?.lines.find((l) => l.type === 'credit' && l.accountCode !== WHT_PAYABLE)?.conceptId ?? null)
+    : null
   let creditCode: string
   if (fromCash) {
     if (!liveMoney) throw new AppError('CASH_PAYMENT_UNPOSTED', 'This instalment was paid from petty cash but has no entry on the books — post it from the cash request', 422)
@@ -423,7 +427,7 @@ export async function syncCapexPaymentPosting(
   const lines: JournalLineInput[] = [
     { accountCode: debitCode, type: 'debit', amountCents: mainCents, memo, conceptId },
     ...(inputShare > 0 && inputCode ? [{ accountCode: inputCode, type: 'debit' as const, amountCents: inputShare, memo }] : []),
-    { accountCode: creditCode, type: 'credit', amountCents: amount - wht, memo },
+    { accountCode: creditCode, type: 'credit', amountCents: amount - wht, memo, conceptId: creditConceptId },
     ...(wht > 0 ? [{ accountCode: WHT_PAYABLE, type: 'credit' as const, amountCents: wht, memo: `Income tax withheld — ${memo}`.slice(0, 250) }] : []),
   ]
   const what = treatment === 'capital'
@@ -459,7 +463,8 @@ export async function recalcLinePaid(lineId: string, db: Db = prisma): Promise<v
  * Equipment bought with cash (owner: cash goes through the cash-request /
  * petty-cash flow, never a CapEx "pay from cash"). Called inside the spend's
  * own transaction by trustops (a box spend: credit 1011; a cash-request
- * settlement: credit 1355). Creates a paid CapexPayment (source 'cash') on
+ * settlement: credit the request's paid 6xxx (H3), or 1355 for a legacy
+ * advance). Creates a paid CapexPayment (source 'cash') on
  * the CapEx line and posts 'capex.payment:<id>' Dr 1340 (or the line's
  * payable once it is capitalised) / Cr `creditCode`; no withholding. The
  * line's project must belong to `tenantId` (422 CAPEX_LINE_NOT_IN_COMPANY /
@@ -469,10 +474,13 @@ export async function recalcLinePaid(lineId: string, db: Db = prisma): Promise<v
  */
 export async function recordCapexPaymentFromCashTx(tx: Tx, a: {
   tenantId: string; lineId: string; spendLineId: string; amountCents: number
-  paidAt: Date; creditCode: '1011' | '1355'; actorId: string
+  paidAt: Date; creditCode: string; actorId: string
+  /** The brand on the credit line — only for a cash request's paid 6xxx (the brand its pay was booked to). */
+  creditConceptId?: string | null
 }): Promise<{ capexPaymentId: string; entryId: string }> {
-  if (a.creditCode !== ACCT.PETTY_CASH && a.creditCode !== ACCT.CASH_ADVANCES) {
-    throw new AppError('BAD_CASH_ACCOUNT', 'Cash for equipment comes from a petty-cash box (1011) or a cash-request advance (1355)', 422)
+  const fromExpense = /^6\d{3}$/.test(a.creditCode)
+  if (a.creditCode !== ACCT.PETTY_CASH && a.creditCode !== ACCT.CASH_ADVANCES && !fromExpense) {
+    throw new AppError('BAD_CASH_ACCOUNT', 'Cash for equipment comes from a petty-cash box (1011), a cash request\'s paid expense account (6xxx) or a legacy advance (1355)', 422)
   }
   if (!Number.isInteger(a.amountCents) || a.amountCents <= 0) throw new AppError('BAD_AMOUNT', 'The amount must be a positive whole number of paisa', 422)
   assertMoneyFits(a.amountCents, 'The capex payment')
@@ -509,7 +517,7 @@ export async function recordCapexPaymentFromCashTx(tx: Tx, a: {
       entryDate: a.paidAt,
       lines: [
         { accountCode: debitCode, type: 'debit', amountCents: a.amountCents, memo },
-        { accountCode: a.creditCode, type: 'credit', amountCents: a.amountCents, memo },
+        { accountCode: a.creditCode, type: 'credit', amountCents: a.amountCents, memo, conceptId: fromExpense ? (a.creditConceptId ?? null) : null },
       ],
     },
     postedBy: a.actorId,

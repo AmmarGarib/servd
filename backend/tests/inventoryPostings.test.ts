@@ -7,7 +7,7 @@
 //     1230 / 5030.
 //   - A brand-less waste is split across the brands that used the item, and
 //     the split sums exactly and is stored on the movements.
-//   - A cash-settled receipt posts nothing; an opening count posts to 3020,
+//   - A cash-settled receipt posts nothing; an opening count posts to 3010 (H19),
 //     never 5050; the FIFO alignment posts to 3020, once, after a dry run.
 //   - A refused waste/count/prep posting in its document's transaction leaves
 //     the document standing and hands back the flag to raise.
@@ -217,7 +217,7 @@ describe('3. stock counts', () => {
     expect(await postStockCount(count.id)).toMatchObject({ posted: false, entryId: r.entryId })
   })
 
-  it('opening (H19): Dr 12x0 / Cr 3020 at the entered cost — never 5050', async () => {
+  it('opening (H19, accountant 2026-10-14): Dr 12x0 / Cr 3010 owner\'s capital at the entered cost — never 5050', async () => {
     const cups = await mkItem(A, 'packaging')
     const count = await prisma.physicalCount.create({
       data: { tenantId: A, countedById: 'finance', kind: 'opening', lines: { create: [{ inventoryItemId: cups.id, systemQty: 0, physicalQty: 50, unitCostCents: 20 }] } },
@@ -233,7 +233,7 @@ describe('3. stock counts', () => {
     })
     await postStockCount(count.id)
     const ls = (await lines(A, `inventory.count:${count.id}`))!
-    expect(ls.map((l) => [l.code, l.type, l.cents])).toEqual([['1230', 'debit', 1000], ['3020', 'credit', 1000]])
+    expect(ls.map((l) => [l.code, l.type, l.cents])).toEqual([['1230', 'debit', 1000], ['3010', 'credit', 1000]])
     expect(ls.some((l) => l.code === '5050')).toBe(false)
   })
 })
