@@ -89,7 +89,79 @@ export const BRAND_MARKETING_FIELDS = [
   'conceptStatement', 'cuisine', 'heroProduct', 'anchoringExperience',
   'targetCustomer', 'priceTier', 'daypartFocus', 'competitors',
   'differentiator', 'brandVoice',
+  // The brand's public profiles (SEO round 1, owner 2026-10-14): social
+  // profile links + the Google Maps / Business Profile link. Read by the
+  // storefront's Restaurant JSON-LD (sameAs / hasMap) and Elsewhere links.
+  'sameAs', 'googleMapsUrl',
 ] as const
+
+/** Most profile links a brand may list (sameAs). */
+export const MAX_PROFILE_LINKS = 12
+
+/** A public profile URL: https only, a real host, no credentials, no spaces.
+ *  Returns the trimmed URL, or null when it is not acceptable. */
+export function cleanProfileUrl(raw: string): string | null {
+  const v = raw.trim()
+  if (v.length === 0 || v.length > 500 || /\s/.test(v)) return null
+  let u: URL
+  try { u = new URL(v) } catch { return null }
+  if (u.protocol !== 'https:') return null
+  if (u.username || u.password) return null
+  if (!u.hostname.includes('.') || u.hostname.endsWith('.')) return null
+  return v
+}
+
+const profileUrlMessage = 'Must be a full https:// link (for example https://instagram.com/yourbrand)'
+
+// sameAs: https URLs only, blanks dropped, duplicates removed, ≤ 12.
+const sameAsSchema = z
+  .array(z.string().max(500))
+  .max(MAX_PROFILE_LINKS * 2) // blanks/duplicates are dropped below; the real cap is after cleaning
+  .transform((list, ctx) => {
+    const out: string[] = []
+    for (const raw of list) {
+      if (raw.trim() === '') continue
+      const v = cleanProfileUrl(raw)
+      if (!v) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${raw.slice(0, 80)}: ${profileUrlMessage}` }); return z.NEVER }
+      if (!out.includes(v)) out.push(v)
+    }
+    if (out.length > MAX_PROFILE_LINKS) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `At most ${MAX_PROFILE_LINKS} profile links` })
+      return z.NEVER
+    }
+    return out
+  })
+  .optional()
+
+// googleMapsUrl: an https URL, '' / null clears it, absent leaves it.
+const googleMapsUrlSchema = z
+  .string()
+  .max(500)
+  .nullable()
+  .optional()
+  .transform((v, ctx) => {
+    if (v === undefined) return undefined
+    if (v === null || v.trim() === '') return null
+    const clean = cleanProfileUrl(v)
+    if (!clean) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: profileUrlMessage }); return z.NEVER }
+    return clean
+  })
+
+const profileLinksSchema = z.object({ sameAs: sameAsSchema, googleMapsUrl: googleMapsUrlSchema })
+
+/** A bad profile link is a 422 naming the field, before any other parsing
+ *  (the rest of the brand form keeps its 400 shape). */
+function assertProfileLinks(body: unknown): void {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return
+  const b = body as Record<string, unknown>
+  if (b.sameAs === undefined && b.googleMapsUrl === undefined) return
+  const r = profileLinksSchema.safeParse({ sameAs: b.sameAs, googleMapsUrl: b.googleMapsUrl })
+  if (!r.success) {
+    const issue = r.error.issues[0]
+    const field = issue?.path[0] === 'googleMapsUrl' ? 'Google Maps / Business Profile link' : 'Social profiles'
+    throw new AppError('INVALID_PROFILE_LINK', `${field}: ${issue?.message ?? profileUrlMessage}`, 422)
+  }
+}
 
 // What the marketing tier READS in the Brand Editor: the fields it edits plus
 // the public, read-only context the form shows (name, slug, status, guest
@@ -175,6 +247,8 @@ const brandMarketingSchema = z.object({
   competitors:         z.array(z.string().max(80)).max(10).optional(),
   differentiator:      z.string().max(280).nullable().optional(),
   brandVoice:          z.string().max(500).nullable().optional(),
+  sameAs:              sameAsSchema,
+  googleMapsUrl:       googleMapsUrlSchema,
 }).strict()
 
 // Same rule as brandArtworkUrl below (http(s) or root-relative, '' clears),
@@ -287,6 +361,9 @@ const createConceptSchema = z.object({
   competitors:         z.array(z.string().max(80)).max(10).default([]),
   differentiator:      z.string().max(280).nullable().optional(),
   brandVoice:          z.string().max(500).nullable().optional(),
+  // The brand's public profiles (social links + Google Maps / Business Profile).
+  sameAs:              sameAsSchema,
+  googleMapsUrl:       googleMapsUrlSchema,
 })
 
 // Full brand-edit schema — the ONE brand writer (admin → Storefront → Brands,
@@ -515,6 +592,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // POST /concepts — created under the active tenant
   fastify.post('/', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     assertNoMovedFields(req.body)
+    assertProfileLinks(req.body)
     const body = createConceptSchema.parse(req.body)
     const concept = await prisma.concept.create({
       data: { ...body, tenantId: req.staffUser!.tenantId! },
@@ -530,6 +608,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth() }, async (req, reply) => {
     const access = await brandEditorAccess(req)
     assertKitFieldsCeoOnly(req)
+    assertProfileLinks(req.body)
     if (access === 'marketing') {
       const body = req.body
       if (!body || typeof body !== 'object' || Array.isArray(body)) {

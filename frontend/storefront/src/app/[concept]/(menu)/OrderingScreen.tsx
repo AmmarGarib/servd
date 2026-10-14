@@ -10,9 +10,13 @@
 //
 // Rendered by page.tsx (a server component), which resolves the brand first
 // and passes it in as `initialConcept`, so the hero and its h1 are in the
-// server HTML. The menu itself is fetched here, from the public storefront
-// API: /storefront/:slug/menu (and /storefront/concepts only when the server
-// couldn't vouch for the slug).
+// server HTML. page.tsx also reads the menu on the server and passes it as
+// `initialMenu`, so the dishes, prices and sections are in the first HTML
+// (search engines and AI tools read that). The screen still fetches the menu
+// here after mount, from the public storefront API: /storefront/:slug/menu
+// (and /storefront/concepts only when the server couldn't vouch for the
+// slug) — that refresh keeps availability current, and is the only source
+// when the server's read failed (initialMenu null → the skeleton, as before).
 //
 // The basket is one kitchen's at a time (store/cart.ts, localStorage
 // 'servd-cart'). Opening another kitchen's menu never touches it: only when
@@ -35,6 +39,8 @@ import { brandCanonical, SERVD_LINK_ORIGIN } from '../../../lib/brandDomains'
 // too). A brand whose only option is dine-in can't take an order from anyone
 // who isn't seated: checkout would ask for a table number and stop.
 import { takesTableOrdersOnly } from '../../../lib/fulfilment'
+// GA4 events (no-op without GA4 / consent) — the shared contract in lib/analytics.
+import { track } from '../../../lib/analytics'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -92,6 +98,14 @@ interface Concept    {
  *  serialisable. null when the API didn't answer and the slug isn't a bundled
  *  brand: the page then shows the slug as the name until the client lookup. */
 export type OrderingConcept = Pick<Concept, 'id' | 'slug' | 'name' | 'description' | 'primaryColor' | 'type' | 'logoUrl' | 'reservationsEnabled'> & { isTestCompany?: boolean }
+
+/** The menu as the server read it (orderingData.ts) — the same shape the
+ *  screen keeps after its own fetch. Serialisable. */
+export interface OrderingMenu {
+  categories:    Category[]
+  ordering:      { open: boolean; opensAt: string | null; message: string | null } | null
+  isTestCompany: boolean
+}
 
 // ─── Table (dine-in) context ────────────────────────────────────────────────
 // The customer is seated at this brand's table: the menu URL carried
@@ -166,8 +180,11 @@ function brandNameForSlug(slug: string): string {
   return formatBrandName(prettifySlug(slug))
 }
 
-export default function OrderingScreen({ initialConcept, verified = false }: {
+export default function OrderingScreen({ initialConcept, initialMenu = null, verified = false }: {
   initialConcept: OrderingConcept | null
+  /** The menu the server read, so it is in the first HTML. null = the
+   *  server's read failed: the skeleton shows until the client fetch. */
+  initialMenu?: OrderingMenu | null
   /** The server's record is the live one (not the bundled fallback). */
   verified?: boolean
 }) {
@@ -175,14 +192,14 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   const router = useRouter()
 
   const [loadedConcept, setConcept] = useState<Concept | null>(initialConcept)
-  const [categories, setCategories] = useState<Category[] | null>(null)
+  const [categories, setCategories] = useState<Category[] | null>(initialMenu?.categories ?? null)
   // The menu payload's concept carries isTestCompany (test brands order by URL only).
-  const [isTestBrand, setIsTestBrand] = useState(() => isTestConcept(initialConcept))
+  const [isTestBrand, setIsTestBrand] = useState(() => isTestConcept(initialConcept) || initialMenu?.isTestCompany === true)
   const [error, setError] = useState<string | null>(null)
   // Whether the brand takes orders right now (menu.ordering, ONL-14): when it
   // is closed, checkout answers 409 BRAND_CLOSED, so the menu says so first.
-  const [ordering, setOrdering] = useState<{ open: boolean; opensAt: string | null; message: string | null } | null>(null)
-  const [activeCategory, setActiveCategory] = useState<string | null>(null)
+  const [ordering, setOrdering] = useState<{ open: boolean; opensAt: string | null; message: string | null } | null>(initialMenu?.ordering ?? null)
+  const [activeCategory, setActiveCategory] = useState<string | null>(initialMenu?.categories[0]?.id ?? null)
   const [openItem, setOpenItem] = useState<MenuItem | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
   // Bumped by Retry on the error screen to fetch the menu again.
@@ -190,6 +207,15 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   // Seated at this brand's table (see readAtTable). Read after mount — the
   // server HTML has no URL query or session storage to go on.
   const [atTable, setAtTable] = useState(false)
+  // False on the server and the first client render. The basket (localStorage)
+  // and the table flag (sessionStorage) only exist in the browser, so anything
+  // drawn from them waits for this — the server-rendered menu must hydrate
+  // without a mismatch.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  // A menu is on screen (server-rendered or fetched): a failed refresh keeps
+  // it instead of swapping it for the error page.
+  const hasMenuRef = useRef(initialMenu !== null)
   // An add waiting on the customer: 'switch' = the basket holds another
   // kitchen's items; 'table' = this brand only takes orders at the table.
   const [pendingAdd, setPendingAdd] = useState<{ reason: 'switch' | 'table'; request: AddRequest } | null>(null)
@@ -240,11 +266,15 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
         setOrdering(Array.isArray(menuPayload) ? null : (menuPayload.ordering ?? null))
         if (!Array.isArray(menuPayload) && isTestConcept(menuPayload.concept)) setIsTestBrand(true)
         setCategories(cats)
-        setActiveCategory(cats[0]?.id ?? null)
+        hasMenuRef.current = true
+        // A refresh keeps the section the customer is reading.
+        setActiveCategory((prev) => (prev && cats.some((c) => c.id === prev) ? prev : cats[0]?.id ?? null))
         // The basket is left alone here, even when it holds another
         // kitchen's items — addToBasket asks before replacing it.
       } catch (e) {
-        if (!cancelled) setError((e as Error).message)
+        // Only when there is no menu to show: the server-rendered one stays
+        // usable (checkout re-checks availability and prices anyway).
+        if (!cancelled && !hasMenuRef.current) setError((e as Error).message)
       }
     }
     void load()
@@ -254,6 +284,7 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
 
   function retry() {
     setError(null)
+    hasMenuRef.current = false
     setCategories(null)
     setAttempt((n) => n + 1)
   }
@@ -293,9 +324,31 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
         ...(request.notes && { notes: request.notes }),
       })
     }
+    track('add_to_cart', {
+      currency:  'PKR',
+      value:     (request.unitPriceCents * request.qty) / 100,
+      item_id:   request.item.id,
+      item_name: request.item.name,
+      item_brand: slug,
+      price:     request.unitPriceCents / 100,
+      quantity:  request.qty,
+    })
     setPendingAdd(null)
     setOpenItem(null)
     setCartOpen(true)
+  }
+
+  // The customer opened a dish (its detail sheet).
+  function openDish(item: MenuItem) {
+    track('view_item', {
+      currency:  'PKR',
+      value:     item.priceCents / 100,
+      item_id:   item.id,
+      item_name: item.name,
+      item_brand: slug,
+      price:     item.priceCents / 100,
+    })
+    setOpenItem(item)
   }
 
   // The customer kept what they had (or backed out): drop the pending add.
@@ -354,9 +407,9 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
   const concept = loadedConcept ?? placeholderConcept(slug)
   const accent = concept.primaryColor ?? 'var(--servd-green-dark)'
   const itemTotal = cart.itemCount()
-  // Only once the menu is in: the cart lives in the browser, so the server
-  // HTML (the skeleton) must not depend on it.
-  const hasItems = categories !== null && itemTotal > 0
+  // Only once mounted and the menu is in: the cart lives in the browser, so
+  // the server HTML (the menu or the skeleton) must not depend on it.
+  const hasItems = mounted && categories !== null && itemTotal > 0
   const fmt = fmtFor(slug)
   const brandName = formatBrandName(concept.name)
   // The kitchen the basket belongs to — another one's when the customer kept
@@ -478,7 +531,7 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
           {/* A brand that only takes orders at the table says so up front,
               instead of letting a customer at home fill a basket checkout
               can't take. Seated customers say so and carry on. */}
-          {tableOnly && !atTable && categories.length > 0 && (
+          {tableOnly && mounted && !atTable && categories.length > 0 && (
             <section
               aria-labelledby="table-only-title"
               style={{
@@ -575,7 +628,7 @@ export default function OrderingScreen({ initialConcept, verified = false }: {
               <section key={cat.id} id={`cat-${cat.id}`} style={{ scrollMarginTop: '120px' }}>
                 <h2 style={{ fontSize: 'clamp(1.4rem, 3vw, 1.85rem)', marginBottom: '1.25rem' }}>{cat.name}</h2>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))', gap: '1rem' }}>
-                  {cat.items.map((item) => <ItemCard key={item.id} item={item} onClick={() => setOpenItem(item)} accent={accent} fmt={fmt} />)}
+                  {cat.items.map((item) => <ItemCard key={item.id} item={item} onClick={() => openDish(item)} accent={accent} fmt={fmt} />)}
                 </div>
               </section>
             ))}

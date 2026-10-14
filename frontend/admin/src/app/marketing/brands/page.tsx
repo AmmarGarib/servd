@@ -30,6 +30,11 @@ interface Concept {
   whatsapp: string | null
   email: string | null
   addressLocality: string | null
+  // The brand's public profiles: social profile links (https, up to 12) and
+  // the Google Maps / Business Profile link. Published as the brand's
+  // schema.org sameAs / hasMap and used by the brand pages' social buttons.
+  sameAs?: string[]
+  googleMapsUrl?: string | null
   // Read-only mirror of the brand's primary Location (decision 18). Edited
   // on Storefront → Locations, never here.
   address: string | null
@@ -78,7 +83,42 @@ const MARKETING_FIELDS = [
   'conceptStatement', 'cuisine', 'heroProduct', 'anchoringExperience',
   'targetCustomer', 'priceTier', 'daypartFocus', 'competitors',
   'differentiator', 'brandVoice',
+  'sameAs', 'googleMapsUrl',
 ] as const
+
+/** Most profile links a brand may list (the backend's MAX_PROFILE_LINKS). */
+const MAX_PROFILE_LINKS = 12
+
+/** A link the backend will accept: a full https:// address. */
+function isProfileUrl(v: string): boolean {
+  if (!v || v.length > 500 || /\s/.test(v)) return false
+  try {
+    const u = new URL(v)
+    return u.protocol === 'https:' && !u.username && !u.password && u.hostname.includes('.')
+  } catch {
+    return false
+  }
+}
+
+/** One link per line → the list the API stores (blanks and repeats dropped). */
+function profileLines(text: string): string[] {
+  const out: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const v = line.trim()
+    if (v && !out.includes(v)) out.push(v)
+  }
+  return out
+}
+
+/** A plain-words problem with the profile fields, or '' when they are fine. */
+function profileProblem(sameAsText: string, mapsUrl: string): string {
+  const links = profileLines(sameAsText)
+  const bad = links.find((l) => !isProfileUrl(l))
+  if (bad) return `Social profiles: "${bad.slice(0, 60)}" is not a full https:// link.`
+  if (links.length > MAX_PROFILE_LINKS) return `Social profiles: at most ${MAX_PROFILE_LINKS} links.`
+  if (mapsUrl.trim() && !isProfileUrl(mapsUrl.trim())) return 'Google Maps / Business Profile link: use the full https:// link.'
+  return ''
+}
 
 interface LocationRow {
   id: string
@@ -256,6 +296,9 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [whatsapp, setWhatsapp] = useState(concept.whatsapp ?? '')
   const [email, setEmail] = useState(concept.email ?? '')
   const [addressLocality, setAddressLocality] = useState(concept.addressLocality ?? '')
+  const [sameAsText, setSameAsText] = useState((concept.sameAs ?? []).join('\n'))
+  const [googleMapsUrl, setGoogleMapsUrl] = useState(concept.googleMapsUrl ?? '')
+  const profileError = profileProblem(sameAsText, googleMapsUrl)
 
   const [conceptStatement, setConceptStatement] = useState(concept.conceptStatement ?? '')
   const [cuisine, setCuisine] = useState(concept.cuisine ?? '')
@@ -305,6 +348,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       daypartFocus,
       competitors: competitors.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
       heroTagline: heroTagline || null,
+      sameAs: profileLines(sameAsText),
+      googleMapsUrl: googleMapsUrl.trim() || null,
     }
     // Belt and braces: never send a key outside the allow-list.
     return Object.fromEntries(Object.entries(body).filter(([k]) => (MARKETING_FIELDS as readonly string[]).includes(k)))
@@ -320,6 +365,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       whatsapp: whatsapp.replace(/[^\d]/g, '') || null,
       email: email.trim().toLowerCase() || null,
       addressLocality: addressLocality.trim() || null,
+      sameAs: profileLines(sameAsText),
+      googleMapsUrl: googleMapsUrl.trim() || null,
       conceptStatement: conceptStatement || null,
       cuisine: cuisine || null,
       priceTier: priceTier || null,
@@ -383,7 +430,11 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             Edit storefront layout →
           </Link>
           <button
-            onClick={() => save.mutate()}
+            onClick={() => {
+              // A bad profile link would be refused by the API; say which one here.
+              if (profileError) { setSaveError(profileError); setTab('contact'); return }
+              save.mutate()
+            }}
             disabled={save.isPending}
             className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-on hover:opacity-90 disabled:opacity-50"
           >
@@ -397,7 +448,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       {saveError && <p className="text-xs text-s-red">{saveError}</p>}
       {marketingOnly && (
         <p className="text-xs text-white/50">
-          You can edit the description, tagline and brand brief. Colours, pictures and fonts are in Storefront → Brand kit. The name, status, contact details,
+          You can edit the description, tagline, brand brief and the brand&apos;s social profiles and Google Maps link. Colours, pictures and fonts are in Storefront → Brand kit. The name, status, contact details,
           storefront switches and tax registration are changed by management.
         </p>
       )}
@@ -510,7 +561,25 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           </fieldset>
           <p className="text-[11px] text-white/40">
             Street address and map pin belong to the kitchen, not the brand — see the Kitchen &amp; delivery tab.
-            Social links (Instagram, TikTok, Facebook) are set on this brand&apos;s <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink hover:underline">footer page</Link> in the storefront hub.
+          </p>
+        </Section>
+      )}
+
+      {tab === 'contact' && (
+        <Section title="Profiles on the web" subtitle="Tells Google and AI search which Instagram, Facebook and Maps listing belong to this brand. Also used by the brand page's social buttons.">
+          <Field label="Social profiles" hint={`One link per line, up to ${MAX_PROFILE_LINKS} — Instagram, Facebook, TikTok, YouTube, LinkedIn, X. Use the full address starting https://.`}>
+            <textarea value={sameAsText} onChange={(e) => setSameAsText(e.target.value)} rows={4}
+              placeholder={'https://instagram.com/yourbrand\nhttps://facebook.com/yourbrand'}
+              aria-label="Social profiles" className="s-input w-full font-mono text-sm resize-y" />
+          </Field>
+          <Field label="Google Maps / Business Profile link" hint="Open the brand on Google Maps, tap Share, and paste the link here. Keep it the same listing your phone number is on.">
+            <input value={googleMapsUrl} onChange={(e) => setGoogleMapsUrl(e.target.value)}
+              placeholder="https://maps.app.goo.gl/…" aria-label="Google Maps / Business Profile link"
+              className="s-input w-full font-mono text-sm" />
+          </Field>
+          {profileError && <p className="text-xs text-s-red">{profileError}</p>}
+          <p className="text-[11px] text-white/40">
+            A social button on a brand page that was given its own link in <Link href="/storefront" className="text-primary-ink hover:underline">Storefront</Link> keeps that link; a button left empty uses these.
           </p>
         </Section>
       )}

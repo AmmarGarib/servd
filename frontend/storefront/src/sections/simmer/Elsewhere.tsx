@@ -3,12 +3,15 @@
 // WhatsApp, maps, email) under an "elsewhere" eyebrow, with the handle as the
 // section's one orange signal. Ported from SimmerLayout.
 //
-// Live data stays live: a button with no link uses Simmer's own accounts
-// (below) for socials, and the kitchen's WhatsApp / map pin / email from the
-// brand row through lib/brandLocations. Set a button's link to override.
+// Live data stays live: a button with no link uses the brand's own profile
+// links from its brand record (Concept.sameAs / googleMapsUrl, admin →
+// Marketing → Brands — the same links its Restaurant JSON-LD publishes), then
+// Simmer's accounts below if the record has none for that network; WhatsApp /
+// email come from the brand row through lib/brandLocations. Set a button's
+// link to override.
 
 import type { ReactNode } from 'react'
-import { locationFromConcept, whatsappLink } from '../../lib/brandLocations'
+import { locationFromConcept, mapLinkOf, whatsappLink } from '../../lib/brandLocations'
 import type { SectionProps } from '../types'
 import { list, safeHref, str } from '../safe'
 import type { ResolvedLink } from '../brand/util'
@@ -24,6 +27,20 @@ const FALLBACK_SOCIAL = {
 type IconName = 'instagram' | 'tiktok' | 'facebook' | 'whatsapp' | 'maps' | 'email'
 interface Button { icon?: unknown; href?: unknown; label?: unknown }
 
+// Which of the brand's profile links belongs to a social button.
+const PROFILE_HOST: Record<'instagram' | 'tiktok' | 'facebook', RegExp> = {
+  instagram: /(^|\.)instagram\.com$/i,
+  tiktok:    /(^|\.)tiktok\.com$/i,
+  facebook:  /(^|\.)(facebook\.com|fb\.com)$/i,
+}
+
+function profileFor(links: string[] | undefined, icon: keyof typeof PROFILE_HOST): string {
+  for (const href of links ?? []) {
+    try { if (PROFILE_HOST[icon].test(new URL(href).hostname)) return href } catch { /* skip */ }
+  }
+  return ''
+}
+
 export function Elsewhere({ fields: f, ctx }: SectionProps) {
   const concept = simmerConcept(ctx)
   const s = surface(f['surface'], 'green')
@@ -35,11 +52,12 @@ export function Elsewhere({ fields: f, ctx }: SectionProps) {
   // Restaurant schema on this page and the GBP listing.
   const loc = locationFromConcept(concept)
   const live: Record<IconName, string> = {
-    instagram: FALLBACK_SOCIAL.instagram,
-    tiktok:    FALLBACK_SOCIAL.tiktok,
-    facebook:  FALLBACK_SOCIAL.facebook,
+    instagram: profileFor(loc.sameAs, 'instagram') || FALLBACK_SOCIAL.instagram,
+    tiktok:    profileFor(loc.sameAs, 'tiktok') || FALLBACK_SOCIAL.tiktok,
+    facebook:  profileFor(loc.sameAs, 'facebook') || FALLBACK_SOCIAL.facebook,
     whatsapp:  loc.whatsapp ? whatsappLink(loc, str(f['whatsappText']).trim() || `hi ${concept.name}`) : '',
-    maps:      loc.mapsUrl ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`,
+    // The brand's Google Business Profile link first, then its pin.
+    maps:      mapLinkOf(loc) || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`,
     email:     `mailto:${loc.email || 'simmer@gsfoods.pk'}`,
   }
   const liveTo = (icon: IconName): ResolvedLink | null => {

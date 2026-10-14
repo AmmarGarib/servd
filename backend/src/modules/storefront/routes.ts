@@ -411,6 +411,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           logoUrl: concept.logoUrl,
           primaryColor: concept.primaryColor,
           storefrontLayout: concept.storefrontLayout,
+          // Public profiles (Marketing → Brands) for the ordering page's JSON-LD.
+          sameAs: concept.sameAs,
+          googleMapsUrl: concept.googleMapsUrl,
           // A test company's brand still works by its direct URL; the
           // storefront shows a TEST stripe (lib/publicBrands.ts).
           isTestCompany: await isTestCompanyOf(concept.tenantId),
@@ -531,6 +534,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         phone: true, whatsapp: true, email: true,
         address: true, addressLocality: true,
         cuisine: true, priceTier: true,
+        // The brand's public profiles (Marketing → Brands): Restaurant JSON-LD
+        // sameAs / hasMap and the brand pages' Elsewhere links.
+        sameAs: true, googleMapsUrl: true,
         serviceHours: {
           select: { dayOfWeek: true, openMin: true, closeMin: true },
           orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],

@@ -10,6 +10,7 @@ import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../lib/brandDomai
 import { fetchSiteLayout, pageSeo, type Block, type SiteLayoutRead } from '../../lib/blocks'
 import { formatBrandName } from '../../lib/concept'
 import { organizationSchema, websiteSchema, jsonLdScript } from '../../lib/jsonLd'
+import { profileUrl } from '../../lib/brandLocations'
 import { conceptsOrFallback, fetchLiveConcepts, inBrandOrder, joinNames } from '../../lib/liveConcepts'
 import { mergeFields } from '../../sections/catalog'
 import { ManagedPage } from '../../sections/ManagedPage'
@@ -49,19 +50,54 @@ function footerFields(layout: SiteLayoutRead | null): Record<string, unknown> {
 
 /** Legal name + email from the footer's Company lines: the mailto: line is the
  *  email, the line naming a company form (Pvt. Ltd., Limited…) the legal name. */
-function companyFacts(fields: Record<string, unknown>): { legalName?: string; email?: string } {
+function companyFacts(fields: Record<string, unknown>): { legalName?: string; email?: string; telephone?: string } {
   const lines = Array.isArray(fields['companyLines']) ? (fields['companyLines'] as unknown[]) : []
   let legalName: string | undefined
   let email: string | undefined
+  let telephone: string | undefined
   for (const raw of lines) {
     if (!raw || typeof raw !== 'object') continue
     const text = typeof (raw as { text?: unknown }).text === 'string' ? (raw as { text: string }).text.trim() : ''
     const href = typeof (raw as { href?: unknown }).href === 'string' ? (raw as { href: string }).href.trim() : ''
     if (!email && /^mailto:/i.test(href)) email = href.replace(/^mailto:/i, '').split('?')[0]?.trim() || undefined
+    else if (!telephone && /^tel:/i.test(href)) telephone = href.replace(/^tel:/i, '').trim() || undefined
     else if (!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) email = text
     else if (!legalName && /\b(pvt|private|ltd|limited|llc|inc|plc)\b/i.test(text)) legalName = text
   }
-  return { ...(legalName && { legalName }), ...(email && { email }) }
+  return { ...(legalName && { legalName }), ...(email && { email }), ...(telephone && { telephone }) }
+}
+
+// Hosts that are a profile OF servd (not a page about it): a footer link to one
+// of these is one of servd's own profiles.
+const PROFILE_HOSTS = /(^|\.)(instagram\.com|facebook\.com|fb\.com|tiktok\.com|youtube\.com|linkedin\.com|x\.com|twitter\.com|threads\.net|g\.page|business\.google\.com)$/i
+
+/**
+ * servd's OWN profiles for the Organization's sameAs. servd has no brand
+ * record (its brands do — Concept.sameAs), so they are edited where the
+ * company's other facts are: the servd footer (Admin → Storefront →
+ * servd:footer, CEO-approved). Read from its `socialProfiles` list when the
+ * section has one, and from any footer link (customer links, company lines)
+ * that points at a profile host — add "Instagram → https://instagram.com/…"
+ * as a company line and it is published here. A brand's profile linked from
+ * servd's footer would be read too, so keep those off the footer.
+ */
+function servdProfiles(fields: Record<string, unknown>): string[] {
+  const out: string[] = []
+  const add = (v: unknown) => {
+    const u = profileUrl(v)
+    if (u && !out.includes(u)) out.push(u)
+  }
+  const profiles = Array.isArray(fields['socialProfiles']) ? (fields['socialProfiles'] as unknown[]) : []
+  for (const p of profiles) add(typeof p === 'string' ? p : (p && typeof p === 'object' ? (p as { href?: unknown }).href : ''))
+  for (const key of ['customerLinks', 'companyLines']) {
+    const list = Array.isArray(fields[key]) ? (fields[key] as unknown[]) : []
+    for (const raw of list) {
+      const href = raw && typeof raw === 'object' ? profileUrl((raw as { href?: unknown }).href) : ''
+      if (!href) continue
+      try { if (PROFILE_HOSTS.test(new URL(href).hostname)) add(href) } catch { /* not a URL */ }
+    }
+  }
+  return out.slice(0, 12)
 }
 
 export default async function HomePage() {
@@ -81,10 +117,11 @@ export default async function HomePage() {
     organizationSchema({
       name:    'servd',
       url:     CANONICAL,
-      logoUrl: `${SERVD_ORIGIN}/icon-512.png`,
-      // servd has no social profiles of its own yet (the old entry was
-      // Simmer's Instagram — a different entity).
-      sameAs:  [],
+      // The logo shown top-left on every servd page (CLAUDE.md).
+      logoUrl: `${SERVD_ORIGIN}/brand/servd-logo.png`,
+      // servd's own profiles only, from the servd footer (servdProfiles) —
+      // never a brand's (those are on each brand's Restaurant node).
+      sameAs:  servdProfiles(footerFields(footer)),
       ...companyFacts(footerFields(footer)),
     }),
     websiteSchema(),

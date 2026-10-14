@@ -12,10 +12,12 @@
 //   each brand              `${brandCanonical(slug)}#restaurant`  (its own domain)
 //   each brand's menu       `${brandCanonical(slug, 'menu')}#menu`
 //   each site               `<origin>/#website`
+//   a brand's kitchen       `<location page URL>#restaurant`, linked to the
+//                           brand node by parentOrganization (locationRestaurantSchema)
 // NAP values pass through filled() so an unfilled placeholder never reaches
 // Google. Pages render via `jsonLdScript(graph)` (escaped for a <script>).
 
-import { filled, type BrandLocation } from './brandLocations'
+import { filled, profileLinksOf, profileUrl, type BrandLocation } from './brandLocations'
 import { SERVD_ORIGIN, brandCanonical } from './brandDomains'
 
 /** The servd / GS Foods organization node's @id. */
@@ -37,11 +39,14 @@ interface OrgGraphInput {
   sameAs?:     string[]              // social profiles that are servd's own
   legalName?:  string
   email?:      string
+  telephone?:  string
 }
 
 /** Organization schema for the operator brand (servd / GS Foods). */
 export function organizationSchema(o: OrgGraphInput): Record<string, unknown> {
   const email = filled(o.email)
+  const telephone = filled(o.telephone)
+  const sameAs = profileLinksOf(o.sameAs)
   return {
     '@context': 'https://schema.org',
     '@type':    'Organization',
@@ -50,11 +55,16 @@ export function organizationSchema(o: OrgGraphInput): Record<string, unknown> {
     url:        o.url,
     logo:       o.logoUrl,
     ...(o.legalName && { legalName: o.legalName }),
-    ...(email && {
-      email,
-      contactPoint: { '@type': 'ContactPoint', contactType: 'customer support', email, areaServed: 'PK' },
+    ...(email && { email }),
+    ...(telephone && { telephone }),
+    ...((email || telephone) && {
+      contactPoint: {
+        '@type': 'ContactPoint', contactType: 'customer support', areaServed: 'PK',
+        ...(email && { email }), ...(telephone && { telephone }),
+      },
     }),
-    sameAs:     o.sameAs ?? [],
+    // Only real profiles: an empty sameAs is left out rather than published.
+    ...(sameAs.length > 0 && { sameAs }),
   }
 }
 
@@ -163,7 +173,14 @@ export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknow
   // there is one. Flipd's bundled default and the Karachi-centroid default for
   // a new brand carry none, and must not reach Google as a real location.
   const mapsUrl = filled(r.loc.mapsUrl)
-  if (mapsUrl) node['hasMap'] = mapsUrl
+  // hasMap: the brand's Google Business Profile / Maps place link (admin →
+  // Marketing → Brands) when set, else the pin link.
+  const placeUrl = profileUrl(r.loc.googleMapsUrl)
+  if (placeUrl || mapsUrl) node['hasMap'] = placeUrl || mapsUrl
+  // The brand's own profiles (Instagram, Facebook, …) — the same record the
+  // Elsewhere links read, so Google ties this node to them.
+  const sameAs = profileLinksOf(r.loc.sameAs)
+  if (sameAs.length > 0) node['sameAs'] = sameAs
   if (mapsUrl && typeof r.loc.geo?.lat === 'number' && typeof r.loc.geo?.lng === 'number') {
     node['geo'] = { '@type': 'GeoCoordinates', latitude: r.loc.geo.lat, longitude: r.loc.geo.lng }
   }
@@ -184,6 +201,52 @@ export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknow
       worstRating:  '1',
     }
   }
+  return node
+}
+
+/**
+ * A Restaurant node for ONE of a brand's kitchens (a /locations page or the
+ * locations hub). Its @id is the location page's own URL + '#restaurant' and
+ * it points at the brand's node (restaurantSchema, on the brand's domain) by
+ * parentOrganization @id — the brand's profiles (sameAs), description and
+ * menu live on that node, not repeated here. The kitchen's address, pin,
+ * phone, hours and map link are this node's own.
+ */
+export function locationRestaurantSchema(r: {
+  loc:          BrandLocation
+  /** The location page's canonical URL (absolute). */
+  url:          string
+  /** Override the kitchen's street (a brand running several kitchens). */
+  street?:      string | null
+  geo?:         { lat: number; lng: number } | null
+}): Record<string, unknown> {
+  const brand = restaurantSchema({ loc: r.loc })
+  const node: Record<string, unknown> = {
+    '@context':  'https://schema.org',
+    '@type':     'Restaurant',
+    '@id':       `${r.url}#restaurant`,
+    name:        brand['name'],
+    url:         r.url,
+    parentOrganization: { '@id': restaurantId(r.loc.slug) },
+    image:       brand['image'],
+    servesCuisine: brand['servesCuisine'],
+    priceRange:  brand['priceRange'],
+    acceptsReservations: brand['acceptsReservations'],
+    menu:        brand['menu'],
+    address:     brand['address'],
+  }
+  if (r.street !== undefined) {
+    const street = [filled(r.street), filled(r.loc.area)].filter(Boolean).join(', ')
+    const addr = { ...(brand['address'] as Record<string, unknown>) }
+    if (street) addr['streetAddress'] = street
+    else delete addr['streetAddress']
+    node['address'] = addr
+  }
+  for (const k of ['telephone', 'email', 'hasMap', 'openingHoursSpecification'] as const) {
+    if (brand[k] !== undefined) node[k] = brand[k]
+  }
+  const geo = r.geo === undefined ? brand['geo'] : (r.geo ? { '@type': 'GeoCoordinates', latitude: r.geo.lat, longitude: r.geo.lng } : undefined)
+  if (geo) node['geo'] = geo
   return node
 }
 

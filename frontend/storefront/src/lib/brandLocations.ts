@@ -67,6 +67,47 @@ export interface BrandLocation {
   // /locations — describes the same entity identically.
   description?:        string
   hours?:              ServiceHourSlot[]
+  // The brand's public profiles (Concept.sameAs, admin → Marketing → Brands):
+  // https URLs only, for Restaurant JSON-LD sameAs and the Elsewhere links.
+  sameAs?:             string[]
+  // The brand's Google Maps / Business Profile place link (Concept.googleMapsUrl).
+  // Unlike mapsUrl (a link to the pin) it is the listing itself: JSON-LD
+  // hasMap prefers it. It says nothing about the pin, so geo still follows
+  // mapsUrl.
+  googleMapsUrl?:      string
+}
+
+/** A public profile URL the storefront will publish: https, a real host, no
+ *  credentials. The API already enforces this on save; this keeps a bad row
+ *  (or the fallback) out of JSON-LD and hrefs anyway. '' when unusable. */
+export function profileUrl(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  const s = v.trim()
+  if (!s || s.length > 500 || /\s/.test(s)) return ''
+  try {
+    const u = new URL(s)
+    if (u.protocol !== 'https:' || u.username || u.password || !u.hostname.includes('.')) return ''
+    return s
+  } catch {
+    return ''
+  }
+}
+
+/** The brand's profile links, cleaned and de-duplicated. */
+export function profileLinksOf(list: unknown): string[] {
+  if (!Array.isArray(list)) return []
+  const out: string[] = []
+  for (const v of list) {
+    const u = profileUrl(v)
+    if (u && !out.includes(u)) out.push(u)
+  }
+  return out
+}
+
+/** The best map link for a brand: its Google Business Profile / Maps place
+ *  link when set, else the pin link. '' when neither. */
+export function mapLinkOf(loc: BrandLocation): string {
+  return loc.googleMapsUrl || filled(loc.mapsUrl)
 }
 
 const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
@@ -205,6 +246,8 @@ export function locationFromConcept(c: Concept, kitchen?: BrandKitchen | null): 
     acceptsReservations: c.reservationsEnabled !== false,
     ...(c.description?.trim() && { description: c.description.trim() }),
     ...(c.serviceHours?.length && { hours: c.serviceHours }),
+    sameAs:              profileLinksOf(c.sameAs),
+    ...(profileUrl(c.googleMapsUrl) && { googleMapsUrl: profileUrl(c.googleMapsUrl) }),
   }
 }
 

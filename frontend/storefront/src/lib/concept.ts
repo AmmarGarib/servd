@@ -45,6 +45,11 @@ export interface Concept {
   priceTier?:       string | null
   latitude?:        number | null
   longitude?:       number | null
+  // The brand's public profiles (admin → Marketing → Brands): social profile
+  // URLs (https only) and the Google Maps / Business Profile link. Restaurant
+  // JSON-LD sameAs / hasMap and the Elsewhere links read them.
+  sameAs?:          string[]
+  googleMapsUrl?:   string | null
   // Service hours from DB
   serviceHours?: ServiceHourSlot[]
   // Per-brand reservations master toggle. Controlled from

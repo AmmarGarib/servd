@@ -274,6 +274,13 @@ model Concept {
   address         String? // street address line
   addressLocality String? // neighbourhood / area ("Bukhari Commercial, DHA Phase 6")
 
+  // The brand's public profiles (SEO round 1, owner 2026-10-14) — edited in
+  // Marketing → Brands by whoever edits the brand's marketing fields. Read by
+  // schema.org Restaurant JSON-LD (sameAs / hasMap) and the brand pages'
+  // "Elsewhere" links. https URLs only (zod in modules/concepts/routes.ts).
+  sameAs        String[] @default([]) // Instagram, Facebook, TikTok, YouTube, LinkedIn, X — max 12
+  googleMapsUrl String? // Google Business Profile / Maps place URL
+
   // Delivery geography — null = no restriction (global / dine-in / pickup)
   latitude         Float?
   longitude        Float?
