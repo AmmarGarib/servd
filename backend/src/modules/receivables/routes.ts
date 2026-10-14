@@ -21,7 +21,14 @@
 //                           (outputTaxCodeFor: 2032 SRB for a Sindh kitchen,
 //                           2031 PRA, …; 2030 FBR with no brand / province)
 //   receivable.payment      Dr the bank / cash / card account the money went
-//                           into (lib/bankAccounts.ts moneyAccountCode) / Cr 1110
+//                           into (lib/bankAccounts.ts moneyAccountCode) / Cr 1110.
+//                           Method: RECEIPT_METHODS (cash, card, bank transfer,
+//                           bank deposit, cheque — the old 'bank' reads as bank
+//                           transfer); the payment reference # is REQUIRED for
+//                           every method, cash included (owner, 2026-10-14) and
+//                           is written into the entry's description and the
+//                           money line's memo. A reference used before is a
+//                           warning (referenceUsedBefore), never a block.
 //   receivable.wht          Dr 1330 Income Tax (WHT) Receivable / Cr 1110 —
 //                           income tax the client withheld (s.153) and paid to
 //                           FBR for us
@@ -60,7 +67,8 @@ import { ACCT, postJournalEntry, reverseJournalEntry } from '../accounting/journ
 import { outputTaxCodeFor, OUTPUT_TAX_ACCOUNTS, refundTaxAccountFor } from '../accounting/orderPosting.js'
 import { authorityOfOutputCode, AUTHORITIES, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { assertMoneyFits, sumCents, toCents, zMoneyCents, type DbMoney } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
@@ -87,6 +95,21 @@ const CREDIT_NOTE_WARN_DAYS = 180
 
 const activeTenant = (req: { staffUser?: { tenantId: string | null } }): string => activeTenantId(req, 'the ledger is per company')
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}/)
+
+/**
+ * How money came IN on a receivables screen (a payment, a write-off recovery):
+ * lib/bankAccounts.ts RECEIPT_METHODS. The old spelling 'bank' (clients before
+ * 2026-10-14) is read as 'bank_transfer'; rows already stored keep their value.
+ * A function, not a constant: writeOffs.ts imports it across a module cycle.
+ */
+export function receiptMethodIn() {
+  return z.preprocess((v) => (v === 'bank' ? 'bank_transfer' : v), zReceiptMethod())
+}
+
+/** "AR-2026-0001: bank deposit, ref 4471" — the money line's memo (≤ 250 characters). */
+export function receiptMemo(invoiceNumber: string, method: string, reference: string): string {
+  return `${invoiceNumber}: ${receiptText(method, reference)}`.slice(0, 250)
+}
 
 const DAY = 86_400_000
 export function agingBucket(dueDate: Date, now = new Date()): 'current' | '1-30' | '31-60' | '61-90' | '90+' {
@@ -428,7 +451,6 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         description: `Invoice ${inv.number} — ${inv.customerName}`,
         entryDate: issueDate,
         postedBy: req.staffUser!.id,
-        reference: inv.number,
         lines: [
           { accountCode: RECEIVABLE, type: 'debit', amountCents: amount + tax, conceptId: inv.conceptId },
           { accountCode: inv.revenueAccountCode, type: 'credit', amountCents: amount, conceptId: inv.conceptId },
@@ -446,18 +468,27 @@ export async function receivableRoutes(fastify: FastifyInstance) {
 
   // POST /accounting/receivables/:id/payments — money received, into the bank
   // (or cash / card account) it actually went to.
+  //   {amountCents, receivedAt, method cash|card|bank_transfer|bank_deposit|
+  //    cheque (old 'bank' = bank_transfer), bankAccountId?, reference}
+  // The reference (payment reference #) is required for every method — 422
+  // PAYMENT_REFERENCE_REQUIRED. 201 → the payment row + referenceUsedBefore
+  // (other receipts of the INVOICE's company with the same reference; a
+  // warning only).
   fastify.post<{ Params: { id: string } }>('/:id/payments', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const body = z.object({
       amountCents: zMoneyCents('This payment', { sign: 'positive' }),
       receivedAt: dateStr,
-      method: z.enum(['bank', 'cash', 'cheque', 'card']),
-      // A bank account of the INVOICE's company. Omitted: its only bank;
-      // required (422 BANK_ACCOUNT_REQUIRED) when it has two or more.
+      method: receiptMethodIn(),
+      // A bank account of the INVOICE's company (bank transfer, bank deposit,
+      // cheque). Omitted: its only bank; required (422 BANK_ACCOUNT_REQUIRED)
+      // when it has two or more.
       bankAccountId: z.string().min(1).nullable().optional(),
-      reference: z.string().max(80).optional(),
+      reference: zPaymentRef.nullable().optional(),
     }).parse(req.body)
     const found = await findInScope(req, req.params.id)
     assertLiveInvoice(found)
+    const reference = assertPaymentReference(body.method, body.reference)
+    const how = receiptText(body.method, reference)
     const receivedAt = new Date(body.receivedAt)
 
     const payment = await prisma.$transaction(async (tx) => {
@@ -480,19 +511,20 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         data: {
           tenantId: inv.tenantId, invoiceId: inv.id, amountCents: body.amountCents,
           receivedAt, method: body.method, bankAccountId: money.bankAccountId,
-          reference: body.reference || null, createdById: req.staffUser!.id,
+          reference, createdById: req.staffUser!.id,
         },
       })
+      // journal_entries.reference stays the dedupe key (sourceType:sourceId);
+      // the payment reference # goes in the description and the money line.
       await postJournalEntry({
         tenantId: inv.tenantId,
         sourceType: 'receivable.payment',
         sourceId: p.id,
-        description: `Payment on ${inv.number} — ${inv.customerName}`,
+        description: `Payment on ${inv.number} — ${inv.customerName} (${how})`.slice(0, 500),
         entryDate: receivedAt,
         postedBy: req.staffUser!.id,
-        reference: body.reference ?? inv.number,
         lines: [
-          { accountCode: money.code, type: 'debit', amountCents: body.amountCents },
+          { accountCode: money.code, type: 'debit', amountCents: body.amountCents, memo: receiptMemo(inv.number, body.method, reference) },
           { accountCode: RECEIVABLE, type: 'credit', amountCents: body.amountCents, conceptId: inv.conceptId },
         ],
       }, { tx })
@@ -503,7 +535,11 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       category: 'accounting', action: 'receivable.payment', entity: 'ReceivablePayment', entityId: payment.id,
       ...staffOf(req), tenantId: found.tenantId, after: payment,
     })
-    return reply.status(201).send(payment)
+    // Same reference elsewhere in the invoice's company — a warning, never a block.
+    const referenceUsedBefore = await findPaymentReferenceUses(prisma, found.tenantId, reference, {
+      exclude: { kind: 'receivable_payment', id: payment.id },
+    })
+    return reply.status(201).send({ ...payment, referenceUsedBefore })
   })
 
   // POST /accounting/receivables/:id/withholding — tax the client withheld at
@@ -597,7 +633,6 @@ export async function receivableRoutes(fastify: FastifyInstance) {
           : `Income tax withheld by ${inv.customerName} on ${inv.number}${certificate}`,
         entryDate: date,
         postedBy: req.staffUser!.id,
-        reference: body.certificateNo || inv.number,
         lines: [
           { accountCode: salesTax ? ST_WITHHELD : WHT_RECEIVABLE, type: 'debit', amountCents: body.amountCents },
           { accountCode: RECEIVABLE, type: 'credit', amountCents: body.amountCents, conceptId: inv.conceptId },
@@ -699,7 +734,6 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         description: `Credit note ${cn.number} on ${inv.number} — ${inv.customerName}: ${body.reason}`.slice(0, 500),
         entryDate: date,
         postedBy: req.staffUser!.id,
-        reference: cn.number,
         lines: [
           { accountCode: inv.revenueAccountCode, type: 'debit', amountCents: body.amountCents, conceptId: inv.conceptId },
           ...(body.taxCents > 0 ? [{ accountCode: taxAccount!, type: 'debit' as const, amountCents: body.taxCents, conceptId: inv.conceptId }] : []),
@@ -757,14 +791,16 @@ export async function receivableRoutes(fastify: FastifyInstance) {
           reference: body.reference || null, createdById: req.staffUser!.id,
         },
       })
+      // Money OUT: its own rules (reference optional). Its reference, when
+      // given, is in the description — journal_entries.reference is the
+      // dedupe key.
       await postJournalEntry({
         tenantId: inv.tenantId,
         sourceType: 'receivable.refund',
         sourceId: r.id,
-        description: `Refund to ${inv.customerName} on ${inv.number}`,
+        description: `Refund to ${inv.customerName} on ${inv.number}${body.reference?.trim() ? ` (${receiptText(body.method, body.reference)})` : ''}`.slice(0, 500),
         entryDate: date,
         postedBy: req.staffUser!.id,
-        reference: body.reference || inv.number,
         lines: [
           { accountCode: RECEIVABLE, type: 'debit', amountCents: body.amountCents, conceptId: inv.conceptId },
           { accountCode: money.code, type: 'credit', amountCents: body.amountCents },

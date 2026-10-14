@@ -366,12 +366,13 @@ export async function bookCashLinesTx(tx: Tx, a: {
     const { recordCapexPaymentFromCashTx } = await import('../financePlanning/capexPosting.js')
     const { creditCode } = capexCashCreditFor(a.creditCode)
     // A credit out of the request's paid 6xxx carries the brand its pay was
-    // booked to (cashRequestPayLine: the request's conceptId), as the
-    // settlement's own Cr <paid> does — the brand's expense nets to zero.
+    // booked to (cashRequestBrandTx: the pay line's, else the pay movement's,
+    // else its box's), as the settlement's own Cr <paid> does — the brand's
+    // expense nets to zero.
     let creditConceptId: string | null = null
     if (/^6\d{3}$/.test(creditCode) && a.doc.kind === 'cash_voucher_settlement') {
-      const st = await tx.cashVoucherSettlement.findUnique({ where: { id: a.doc.id }, select: { voucher: { select: { conceptId: true } } } })
-      creditConceptId = st?.voucher.conceptId ?? null
+      const st = await tx.cashVoucherSettlement.findUnique({ where: { id: a.doc.id }, select: { voucherId: true } })
+      creditConceptId = st ? await cashRequestBrandTx(tx, st.voucherId) : null
     }
     for (const r of capex) {
       const paid = await recordCapexPaymentFromCashTx(tx, {
@@ -412,9 +413,9 @@ async function planEntry(tx: Tx, m: MovementForPosting): Promise<PlannedEntry | 
     ? await tx.cashVoucher.findUnique({ where: { id: m.cashVoucherId }, select: { number: true, payeeName: true } })
     : null
   const pc = ACCT.PETTY_CASH
-  const pair = (debit: string, credit: string, dMemo = memo, cMemo = memo): JournalLineInput[] => [
-    { accountCode: debit, type: 'debit', amountCents: amount, memo: dMemo, conceptId: concept },
-    { accountCode: credit, type: 'credit', amountCents: amount, memo: cMemo, conceptId: concept },
+  const pair = (debit: string, credit: string, dMemo = memo, cMemo = memo, brand: string | null = concept): JournalLineInput[] => [
+    { accountCode: debit, type: 'debit', amountCents: amount, memo: dMemo, conceptId: brand },
+    { accountCode: credit, type: 'credit', amountCents: amount, memo: cMemo, conceptId: brand },
   ]
   if (amount === 0) return null
 
@@ -430,10 +431,14 @@ async function planEntry(tx: Tx, m: MovementForPosting): Promise<PlannedEntry | 
           lines: pair(pc, m.accountCode, lineMemo, lineMemo),
         }
       }
+      // Change handed back on a cash request carries the brand its pay was
+      // booked under (cashRequestBrandTx) — not the brand of whichever box
+      // takes the change — so the brand's expense nets (cash-brand-mismatch).
+      const brand = m.source === 'cash_request' && m.cashVoucherId ? await cashRequestBrandTx(tx, m.cashVoucherId) : concept
       return {
         sourceType: 'pettycash.topup', sourceId: m.id,
         description: `Petty cash top-up — ${m.box.name}${m.source ? ` (from ${SOURCE_LABEL[m.source] ?? m.source})` : ''}`,
-        lines: pair(pc, m.accountCode, lineMemo, lineMemo),
+        lines: pair(pc, m.accountCode, lineMemo, lineMemo, brand),
       }
     }
     case 'return': {
@@ -630,6 +635,28 @@ export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId
 }
 
 /**
+ * THE brand a paid cash request's money was booked under — what its
+ * settlements, its CapEx moves and the change handed back credit the paid
+ * account with, so the brand's expense nets (cash-brand-mismatch): the pay's
+ * one expense line's brand, else the pay movement's, else its box's — the
+ * pay's own rule (planEntry: line ?? movement ?? box). Before the request is
+ * paid (or for a pay movement that is gone), the request's own brand. Null =
+ * no brand (head office).
+ */
+export async function cashRequestBrandTx(tx: Tx | typeof prisma, voucherId: string): Promise<string | null> {
+  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { conceptId: true, pettyCashMovementId: true } })
+  if (!v) throw new NotFoundError('CashVoucher', voucherId)
+  if (!v.pettyCashMovementId) return v.conceptId ?? null
+  const m = await tx.pettyCashMovement.findUnique({
+    where: { id: v.pettyCashMovementId },
+    select: { conceptId: true, box: { select: { conceptId: true } }, lines: { select: { kind: true, conceptId: true } } },
+  })
+  if (!m) return v.conceptId ?? null
+  const line = m.lines.length === 1 && m.lines[0]!.kind === 'expense' ? m.lines[0]! : null
+  return line?.conceptId ?? m.conceptId ?? m.box.conceptId ?? null
+}
+
+/**
  * Book cash-request settlement `settlementId` inside `tx`, in the request's
  * company: ONE entry 'cashvoucher.settle:<settlementId>' that moves what the
  * receipts show out of the account the request was paid to (P):
@@ -658,7 +685,9 @@ export async function postCashVoucherSettlementTx(
   if (!st) throw new NotFoundError('CashVoucherSettlement', settlementId)
   const tenantId = st.voucher.tenantId
   const paid = await cashRequestPaidAccountTx(tx, st.voucherId)
-  const concept = st.voucher.conceptId
+  // The brand the pay was booked under — the credit out of the paid account
+  // carries it, so the brand's expense nets (cash-brand-mismatch).
+  const concept = await cashRequestBrandTx(tx, st.voucherId)
   const memo = `${st.voucher.number} receipts (${st.voucher.payeeName})`.slice(0, 250)
   const lines: JournalLineInput[] = []
   let credit = 0
@@ -668,7 +697,9 @@ export async function postCashVoucherSettlementTx(
       if (capexCashCreditFor(paid).bridged) bridge += l.amountCents
       continue
     }
-    if (l.kind === 'expense' && l.accountCode === paid) continue
+    // The same account under the same brand: the pay already booked it. Under
+    // another brand it moves between brands (Dr paid · line brand / Cr paid · pay brand).
+    if (l.kind === 'expense' && l.accountCode === paid && (l.conceptId ?? concept) === concept) continue
     lines.push({
       accountCode: l.accountCode, type: 'debit', amountCents: l.amountCents,
       memo: `${st.voucher.number}: ${l.description}`.slice(0, 250), conceptId: l.conceptId ?? concept,

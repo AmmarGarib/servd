@@ -46,7 +46,7 @@ import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { ensureFifoReady, readFifoCutoverAt } from '../../lib/stockLedger.js'
 import { ACCT } from '../accounting/journal.js'
 import {
-  bookCashLinesTx, cashCounterAccountTx, cashRequestPaidAccountTx, postPettyCashMovementTx, resolveSpendLinesTx, spendLineData,
+  bookCashLinesTx, cashCounterAccountTx, cashRequestBrandTx, cashRequestPaidAccountTx, postPettyCashMovementTx, resolveSpendLinesTx, spendLineData,
   type ResolvedSpendLine, type SpendLineInput, type TopupSource, type ReturnDestination,
 } from '../accounting/pettyCashPosting.js'
 import { recordDrawerToBoxTx } from '../pos/drawerToBox.js'
@@ -369,6 +369,7 @@ export async function recordPettyCashTopupTx(
   let bankAccountId: string | null = null
   let cashMovementId: string | null = null
   let shiftId: string | null = null
+  let conceptId: string | null = null
   if (input.source === 'till') {
     if (!input.shiftId) throw new AppError('SHIFT_REQUIRED', 'Pick the open till drawer the cash comes from', 400)
     const drawer = await recordDrawerToBoxTx(tx, {
@@ -386,8 +387,11 @@ export async function recordPettyCashTopupTx(
       if (!input.cashVoucherId) throw new AppError('CASH_REQUEST_REQUIRED', 'Change returned must name its cash request', 400)
       const v = await tx.cashVoucher.findUnique({ where: { id: input.cashVoucherId }, select: { tenantId: true } })
       if (!v || v.tenantId !== box.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'Change goes back to a box of the cash request\'s own company', 422)
-      // Back to the account the request was paid to (H3).
+      // Back to the account the request was paid to (H3), under the brand
+      // the pay was booked to — Dr 1011 / Cr paid both carry it, so the
+      // brand's expense nets (cash-brand-mismatch), whatever box takes it.
       accountCode = await cashRequestPaidAccountTx(tx, input.cashVoucherId)
+      conceptId = await cashRequestBrandTx(tx, input.cashVoucherId)
     } else {
       const counter = await cashCounterAccountTx(tx, box.tenantId, input.source, input.bankAccountId)
       accountCode = counter.code
@@ -411,6 +415,7 @@ export async function recordPettyCashTopupTx(
     shiftId,
     cashMovementId,
     cashVoucherId: input.cashVoucherId ?? null,
+    conceptId,
   })
   return { movementId: movement.id, movement, newFloatCents }
 }

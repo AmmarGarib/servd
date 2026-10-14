@@ -9,8 +9,13 @@
 //     'cashvoucher.settle:<settlementId>'.
 //   - Change returned: Dr 1011 / Cr paid, then 'settled'.
 //   - Σ lines ≤ what is still open, also when two settlements race.
-//   - A legacy voucher the history booked as an advance on 1355 settles
-//     against 1355; nothing new ever touches 1355.
+//   - A legacy row already booked as an advance on 1355 settles against
+//     1355; nothing new ever touches 1355 (the history backfill expenses an
+//     old-flow voucher's spend in its category, H3).
+//   - One brand per request: settlements, CapEx moves and change credit the
+//     paid account under the brand the pay was booked to.
+//   - A pay reclass waits for the request's row, so it never races a
+//     settlement past CASH_REQUEST_PAID_FIXED.
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -325,6 +330,36 @@ describe('a settlement reclasses out of the account the pay booked', () => {
     expect(await brandNet(`capex.payment:${line.capexPaymentId}`)).toEqual([['credit', 4_000, conceptA]])
     const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id }, select: { pettyCashMovementId: true } })
     expect(await brandNet(`pettycash.spend:${v.pettyCashMovementId}`)).toEqual([['debit', 4_000, conceptA]])
+  })
+
+  it('a request with no brand paid from a branded box: stock and change credit the paid 6xxx under the box\'s brand; it nets to the spend (cash-brand-mismatch)', async () => {
+    const conceptK = (await prisma.concept.create({ data: { name: `${P} brand K`, slug: `${P}-brand-k`, type: 'restaurant', tenantId: T.A } })).id
+    const boxK = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Brand K box', custodianId: U['cashA']!.id, floatCents: 0, conceptId: conceptK, topUpLimitCents: 100_000_000 } })).id
+    expect((await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId: boxK, type: 'topup', amountCents: 50_000, reason: 'Float', source: 'garibsons' })).statusCode).toBe(201)
+    const r = await call('finA', 'POST', V, { purpose: 'Market run for K', categoryKey: 'transport', amountCents: 5_000, holderUserId: U['cookA']!.id })
+    expect(r.statusCode, r.body).toBe(201)
+    const id = (r.json() as Req).id
+    expect((await call('mgrA', 'POST', `${V}/${id}/sign-hod`)).statusCode).toBe(200)
+    expect((await call('ceoA', 'POST', `${V}/${id}/approve`)).statusCode).toBe(200)
+    expect((await call('cashA', 'POST', `${V}/${id}/pay`, { boxId: boxK })).statusCode).toBe(200)
+    const r1 = await receipt('cookA', id)
+    const s = await call('cookA', 'POST', `${V}/${id}/settlements`, {
+      lines: [{ kind: 'stock', inventoryItemId: item['tomato'], quantity: 1_000, unit: 'g', amountCents: 3_000 }], receiptIds: [r1],
+    })
+    expect(s.statusCode, s.body).toBe(200)
+    // The change goes back into ANOTHER box (no brand) — it still credits K.
+    const c = await call('cashA', 'POST', `${V}/${id}/return-change`, { amountCents: 2_000, boxId: box['A'] })
+    expect(c.statusCode, c.body).toBe(200)
+    const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id }, select: { pettyCashMovementId: true } })
+    const refs = [`pettycash.spend:${v.pettyCashMovementId}`, `cashvoucher.settle:${s.json().settlementId}`, `pettycash.topup:${c.json().movement.id}`]
+    const rows = await prisma.journalLine.findMany({
+      where: { account: { tenantId: T.A, code: '6140' }, journalEntry: { tenantId: T.A, reference: { in: refs } } },
+      select: { type: true, amountCents: true, conceptId: true },
+    })
+    // Every 6140 line of this request is under K, and K's 6140 nets to zero (all of it went to stock or back).
+    expect(rows.length).toBe(3)
+    expect(rows.every((x) => x.conceptId === conceptK)).toBe(true)
+    expect(rows.reduce((t, x) => t + (x.type === 'debit' ? 1 : -1) * Number(x.amountCents), 0)).toBe(0)
   })
 
   it('change returned posts Dr 1011 / Cr the paid account, then the request is settled', async () => {

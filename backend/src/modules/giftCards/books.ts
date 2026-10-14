@@ -49,7 +49,15 @@
 //          A card that expired before breakage existed (status expired,
 //          breakageAt null) is treated as held and booked on the next sweep.
 //
-// Money moved outside a till: a sold card is a back-office receipt. Cash is
+// Money moved outside a till: a sold card is a back-office receipt (owner,
+// 2026-10-14): paid by cash, card, bank transfer, bank deposit or cheque
+// (lib/bankAccounts.ts RECEIPT_METHODS), always with its payment reference #
+// (assertPaymentReference — every method, cash included), stored on
+// GiftCard.paymentRef and written into the issue entry's description and the
+// money line's memo (never journal_entries.reference — that is the
+// duplicate-posting key). A reference used before is a warning the route
+// returns (lib/paymentRefs.ts), never a block. A refund on void keeps its own
+// list (GIFT_CARD_REFUND_METHODS — no "bank deposit" paid OUT). Cash is
 // cash on hand / the safe (1010), never a till drawer (1015): lib/drawer.ts
 // counts only a shift's own payments and cash movements, so a card sold for
 // cash at a counter would leave that drawer "over" with 1010 debited for money
@@ -60,7 +68,9 @@ import type { Prisma, PrismaClient, GiftCard, GiftCardKind, GiftCardStatus } fro
 import { randomBytes } from 'crypto'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { moneyAccountCode, ledgerBalancesByCode } from '../../lib/bankAccounts.js'
+import {
+  moneyAccountCode, ledgerBalancesByCode, RECEIPT_METHODS, assertPaymentReference, receiptText, type ReceiptMethod,
+} from '../../lib/bankAccounts.js'
 import { toCents } from '../../lib/money.js'
 import { withSavepoint } from '../../lib/savepoint.js'
 import type { TenantIdWhere } from '../../lib/tenantScope.js'
@@ -82,8 +92,12 @@ const BREAKAGE_HELD_KIND = 'gift_card_breakage_held' as const
 /** Why breakage is held (GiftCard.breakagePendingReason). */
 export const BREAKAGE_HELD = { ISSUE_NOT_BOOKED: 'ISSUE_NOT_BOOKED', POSTING_REFUSED: 'POSTING_REFUSED' } as const
 
-export const GIFT_CARD_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer'] as const
-export type GiftCardPaymentMethod = typeof GIFT_CARD_PAYMENT_METHODS[number]
+/** How a SOLD card was paid: the one back-office receipt list (lib/bankAccounts.ts). */
+export const GIFT_CARD_PAYMENT_METHODS = RECEIPT_METHODS
+export type GiftCardPaymentMethod = ReceiptMethod
+/** How a void REFUND pays the balance back — money out, so no "bank deposit" (owner, 2026-10-14). */
+export const GIFT_CARD_REFUND_METHODS = ['cash', 'card', 'bank_transfer'] as const
+export type GiftCardRefundMethod = typeof GIFT_CARD_REFUND_METHODS[number]
 export const VOID_DISPOSITIONS = ['refund', 'payment_not_received', 'forfeit'] as const
 export type VoidDisposition = typeof VOID_DISPOSITIONS[number]
 
@@ -117,6 +131,8 @@ export interface IssueGiftCardInput {
   issuedAmountCents: number
   paymentMethod?: GiftCardPaymentMethod | null
   bankAccountId?: string | null
+  /** The payment reference # (receipt / slip / transfer / cheque no.) — required on a sold card, refused on a promotional one. */
+  paymentRef?: string | null
   /** Why a promotional card was given (required for one). Kept on the entry and the audit row. */
   reason?: string | null
   conceptId?: string | null
@@ -135,15 +151,18 @@ export interface IssueGiftCardInput {
  * whole thing: no card without its liability.
  */
 export async function issueGiftCard(input: IssueGiftCardInput): Promise<GiftCard> {
+  let paymentRef: string | null = null
   if (input.kind === 'promotional') {
-    if (input.paymentMethod || input.bankAccountId) {
-      throw new AppError('PROMO_CARD_NOT_PAID', 'A promotional card is given away — it takes no payment method or bank account', 422)
+    if (input.paymentMethod || input.bankAccountId || input.paymentRef?.trim()) {
+      throw new AppError('PROMO_CARD_NOT_PAID', 'A promotional card is given away — it takes no payment method, reference or bank account', 422)
     }
     if (!input.reason?.trim()) {
       throw new AppError('REASON_REQUIRED', 'Say why this promotional card is being given', 422)
     }
   } else if (!input.paymentMethod) {
     throw new AppError('PAYMENT_METHOD_REQUIRED', 'Say how the customer paid for the card', 422)
+  } else {
+    paymentRef = assertPaymentReference(input.paymentMethod, input.paymentRef)
   }
 
   return prisma.$transaction(async (tx) => {
@@ -169,6 +188,7 @@ export async function issueGiftCard(input: IssueGiftCardInput): Promise<GiftCard
         balanceCents: input.issuedAmountCents,
         paymentMethod: input.kind === 'promotional' ? null : input.paymentMethod!,
         bankAccountId: debit.bankAccountId,
+        paymentRef,
         buyerCustomerId: input.buyerCustomerId ?? null,
         buyerEmail: input.buyerEmail ?? null,
         recipientName: input.recipientName ?? null,
@@ -181,6 +201,10 @@ export async function issueGiftCard(input: IssueGiftCardInput): Promise<GiftCard
     })
 
     const promo = input.kind === 'promotional'
+    // "bank deposit, ref 4471" — the reference reaches the books in the
+    // description and the money line's memo (the entry's `reference` stays
+    // the duplicate-posting key 'giftcard.issue:<card>').
+    const paid = promo ? '' : receiptText(input.paymentMethod, paymentRef)
     await postJournalEntry({
       tenantId: input.tenantId,
       sourceType: ISSUE_SOURCE,
@@ -188,11 +212,11 @@ export async function issueGiftCard(input: IssueGiftCardInput): Promise<GiftCard
       entryDate: card.createdAt,
       description: promo
         ? `Promotional gift card ${card.code} — ${input.reason!.trim().slice(0, 200)}`
-        : `Gift card sold · ${card.code} (${input.paymentMethod})`,
+        : `Gift card sold · ${card.code} (${paid})`,
       postedBy: input.issuedById ?? 'system',
       lines: [
         { accountCode: debit.code, type: 'debit', amountCents: card.issuedAmountCents,
-          memo: promo ? `Promotional gift card ${card.code}` : `Gift card ${card.code} paid by ${input.paymentMethod}`, conceptId: card.conceptId },
+          memo: promo ? `Promotional gift card ${card.code}` : `Gift card ${card.code} paid by ${paid}`, conceptId: card.conceptId },
         { accountCode: GIFT_CARD_LIABILITY_CODE, type: 'credit', amountCents: card.issuedAmountCents,
           memo: `Gift card liability ${card.code}`, conceptId: card.conceptId },
       ],
@@ -206,15 +230,19 @@ export async function issueGiftCard(input: IssueGiftCardInput): Promise<GiftCard
  * Book the sale of a card whose 'giftcard.issue' entry never posted (before
  * 2026-10-13 the entry was .catch(log)'d after the card was created). Dated on
  * the card's own day; if that period is closed, today. 409 when it is already
- * booked; promotional cards are always booked at issue.
+ * booked; promotional cards are always booked at issue. The payment reference
+ * # is required (every method); it goes into the entry and onto the card when
+ * the card has none yet.
  */
 export async function bookMissingIssue(input: {
   cardId: string
   scope: TenantIdWhere
   paymentMethod: GiftCardPaymentMethod
   bankAccountId?: string | null
+  paymentRef?: string | null
   postedBy: string
 }): Promise<{ card: GiftCard; entryId: string; debitCode: string }> {
+  const paymentRef = assertPaymentReference(input.paymentMethod, input.paymentRef)
   return prisma.$transaction(async (tx) => {
     await lockGiftCardTx(tx, input.cardId)
     const card = await tx.giftCard.findFirst({ where: { id: input.cardId, ...input.scope } })
@@ -225,13 +253,14 @@ export async function bookMissingIssue(input: {
     if (existing) throw new AppError('ISSUE_ALREADY_BOOKED', `The sale of ${card.code} is already in the books`, 409)
 
     const debit = await moneyAccountCode(tx, tenantId, { method: input.paymentMethod, bankAccountId: input.bankAccountId ?? null })
+    const paid = receiptText(input.paymentMethod, paymentRef)
     const lines = [
-      { accountCode: debit.code, type: 'debit' as const, amountCents: card.issuedAmountCents, memo: `Gift card ${card.code} paid by ${input.paymentMethod}`, conceptId: card.conceptId },
+      { accountCode: debit.code, type: 'debit' as const, amountCents: card.issuedAmountCents, memo: `Gift card ${card.code} paid by ${paid}`, conceptId: card.conceptId },
       { accountCode: GIFT_CARD_LIABILITY_CODE, type: 'credit' as const, amountCents: card.issuedAmountCents, memo: `Gift card liability ${card.code}`, conceptId: card.conceptId },
     ]
     const entry = (entryDate: Date) => ({
       tenantId, sourceType: ISSUE_SOURCE, sourceId: card.id, entryDate, postedBy: input.postedBy, lines,
-      description: `Gift card sold · ${card.code} (${input.paymentMethod}) — booked late`,
+      description: `Gift card sold · ${card.code} (${paid}) — booked late`,
     })
     // The period lock is read before anything is written, so a refusal leaves
     // the transaction clean for the second try.
@@ -241,7 +270,11 @@ export async function bookMissingIssue(input: {
     })
     const updated = await tx.giftCard.update({
       where: { id: card.id },
-      data: { paymentMethod: card.paymentMethod ?? input.paymentMethod, bankAccountId: card.bankAccountId ?? debit.bankAccountId },
+      data: {
+        paymentMethod: card.paymentMethod ?? input.paymentMethod,
+        bankAccountId: card.bankAccountId ?? debit.bankAccountId,
+        paymentRef: card.paymentRef ?? paymentRef,
+      },
     })
     return { card: updated, entryId: posted.entryId, debitCode: debit.code }
   })
@@ -255,7 +288,7 @@ export interface VoidGiftCardInput {
   scope: TenantIdWhere
   reason: string
   disposition: VoidDisposition
-  refundMethod?: GiftCardPaymentMethod | null
+  refundMethod?: GiftCardRefundMethod | null
   bankAccountId?: string | null
   postedBy: string
   /**

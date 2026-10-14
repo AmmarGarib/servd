@@ -15,7 +15,13 @@
 //                      went into (a paid top-up: 1010 cash / 1030 card / the
 //                      company's bank account it was received into —
 //                      lib/bankAccounts.ts moneyAccountCode) / Cr 2050. Never
-//                      a top-up without its entry.
+//                      a top-up without its entry. A paid top-up is a
+//                      back-office receipt (owner, 2026-10-14): cash, card,
+//                      bank transfer, bank deposit or cheque (RECEIPT_METHODS)
+//                      with its payment reference # — required on every
+//                      method, stored on the WalletTransaction (method +
+//                      paymentRef) and written into the entry's description
+//                      and the money line's memo. Goodwill takes none.
 //   - holdWalletForCheckout / attachHoldToOrder / releaseWalletHold: a wallet
 //                      that IS the payment method is taken before the order
 //                      is written (storefront ONLINE-R5), from the wallet of
@@ -36,7 +42,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry } from '../accounting/journal.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, RECEIPT_METHODS, assertPaymentReference, receiptText, type ReceiptMethod } from '../../lib/bankAccounts.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -44,14 +50,16 @@ type Tx = Prisma.TransactionClient
 export const WALLET_GOODWILL_EXPENSE = '6060'
 
 /**
- * How the customer paid for a PAID top-up. The debit side is the account the
+ * How the customer paid for a PAID top-up — the one back-office receipt list
+ * (lib/bankAccounts.ts RECEIPT_METHODS). The debit side is the account the
  * money went into (moneyAccountCode): cash → 1010, card → 1030 (awaiting
- * settlement), bank → the wallet company's bank account it was received into
- * (the named one; else the company's only bank; 1020 with none; 422
- * BANK_ACCOUNT_REQUIRED when it has two or more and none is named).
+ * settlement), bank transfer / bank deposit / cheque → the wallet company's
+ * bank account it was received into (the named one; else the company's only
+ * bank; 1020 with none; 422 BANK_ACCOUNT_REQUIRED when it has two or more
+ * and none is named). The route still reads the old 'bank' as bank_transfer.
  */
-export const TOPUP_TENDERS = ['cash', 'card', 'bank'] as const
-export type TopUpTender = typeof TOPUP_TENDERS[number]
+export const TOPUP_TENDERS = RECEIPT_METHODS
+export type TopUpTender = ReceiptMethod
 
 /** The balance of the customer's wallet at one company (0 when none). */
 export async function walletBalanceAt(tenantId: string | null | undefined, customerId: string, db: Tx | typeof prisma = prisma): Promise<number> {
@@ -124,6 +132,9 @@ interface MoveInput {
   orderId?: string | null
   /** A paid top-up received into a company bank account (same company). */
   bankAccountId?: string | null
+  /** A paid top-up: how it was paid (RECEIPT_METHODS) and its payment reference #. */
+  method?: string | null
+  paymentRef?: string | null
 }
 
 /** Credit inside `tx` (wallet row locked). Returns the WalletTransaction and the balance after. */
@@ -147,6 +158,8 @@ export async function creditWalletTx(tx: Tx, input: MoveInput): Promise<{ transa
       description: input.description,
       orderId: input.orderId ?? null,
       bankAccountId: input.bankAccountId ?? null,
+      method: input.method ?? null,
+      paymentRef: input.paymentRef ?? null,
     },
     select: { id: true },
   })
@@ -187,8 +200,10 @@ export interface TopUpInput {
   /** goodwill = a manager's credit (Dr 6060); paid = the customer paid for it (Dr the tender). */
   kind: 'goodwill' | 'paid'
   tender?: TopUpTender
-  /** tender 'bank': the bank account of `tenantId` it was received into. */
+  /** A bank-type tender: the bank account of `tenantId` it was received into. */
   bankAccountId?: string | null
+  /** A paid top-up's payment reference # (required, every tender); refused on goodwill. */
+  paymentRef?: string | null
   description: string
   postedBy: string
 }
@@ -203,11 +218,16 @@ export interface TopUpInput {
  */
 export async function topUpWallet(input: TopUpInput): Promise<{ transactionId: string; balanceAfter: number; entryId: string | null }> {
   if (input.kind === 'paid' && !input.tender) {
-    throw new AppError('TENDER_REQUIRED', 'Say how the customer paid for the top-up (cash, card or bank)', 422)
+    throw new AppError('TENDER_REQUIRED', 'Say how the customer paid for the top-up (cash, card, bank transfer, bank deposit or cheque)', 422)
   }
   if (input.kind === 'goodwill' && input.bankAccountId) {
     throw new AppError('BANK_ACCOUNT_ON_GOODWILL', 'A goodwill credit is our own cost — no money came in, so it has no bank account', 422)
   }
+  if (input.kind === 'goodwill' && input.paymentRef?.trim()) {
+    throw new AppError('REFERENCE_ON_GOODWILL', 'A goodwill credit is our own cost — no money came in, so it has no payment reference', 422)
+  }
+  // Every paid top-up carries its payment reference # (owner, 2026-10-14).
+  const paymentRef = input.kind === 'paid' ? assertPaymentReference(input.tender, input.paymentRef) : null
   return prisma.$transaction(async (tx) => {
     const money = input.kind === 'goodwill'
       ? { code: WALLET_GOODWILL_EXPENSE, bankAccountId: null }
@@ -219,9 +239,13 @@ export async function topUpWallet(input: TopUpInput): Promise<{ transactionId: s
       type: 'topup',
       description: input.description,
       bankAccountId: money.bankAccountId,
+      method: input.kind === 'paid' ? input.tender! : null,
+      paymentRef,
     })
     const debitAccount = money.code
-    const memo = `Wallet top-up (${input.kind === 'goodwill' ? 'goodwill' : `paid — ${input.tender}`}) #${moved.transactionId.slice(0, 8)}`
+    // "paid — bank deposit, ref 4471": the reference reaches the books in the
+    // description and the memo (the entry's `reference` stays the dedupe key).
+    const memo = `Wallet top-up (${input.kind === 'goodwill' ? 'goodwill' : `paid — ${receiptText(input.tender, paymentRef)}`}) #${moved.transactionId.slice(0, 8)}`
     const je = await postJournalEntry({
       tenantId: input.tenantId,
       sourceType: 'wallet.topup',
