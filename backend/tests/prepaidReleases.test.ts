@@ -207,6 +207,9 @@ describe('a closed month, a refusal, the close check', () => {
     const blocked = await prepaidCloseChecks[0]!.run(ctx)
     expect(blocked).toMatchObject({ key: 'prepaid_release', severity: 'block', count: 1, cents: 30_000, months: [m(-1)] })
     expect(blocked!.fix).toMatchObject({ method: 'POST', path: '/finance/prepaid-releases' })
+    // A lock part-way through m(-1) leaves that month's release (dated its last day) outside the close.
+    const midMonth = await prepaidCloseChecks[0]!.run({ ...ctx, newLock: new Date(lastDayPkt(m(-1)).getTime() - 10 * 86_400_000) })
+    expect((midMonth as { months?: string[] } | null)?.months ?? []).not.toContain(m(-1))
 
     await releasePrepaidThrough(tenantA, lastCompletedPeriodPkt())
     const flag = await prisma.exceptionFlag.findFirstOrThrow({ where: { kind: 'posting_failed', entityType: 'OpexPayment', entityId: odd } })

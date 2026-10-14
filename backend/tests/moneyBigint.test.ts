@@ -15,13 +15,16 @@
 //   (2) a PKR 25m manual journal: posts, flags exactly, reports and CSVs exact,
 //       reverses; above the cap 422; engine totals past 2^53 refused; company B
 //       sees none of it
-//   (3) a PKR 30m supplier bill and its payment (a stock purchase, posted to
-//       1210; non-stock lines stay at the INT4 cap — capital spend is CapEx),
+//   (3) a PKR 30m supplier bill and its payment (a stock purchase received at
+//       the dock — Dr 1210 / Cr 2015 — then billed against its receipt,
+//       clearing 2015; non-stock lines name their 6xxx account and stay at the
+//       INT4 cap — capital spend is CapEx),
 //       AP aging, the supplier opening balance; company B 404s
 //   (4) a PKR 25m bank statement line and its adjustment; company B 404s
 //   (5) group-scale AR, a fixed asset, a customer's lifetime spend
-//   (6) the re-averaged item cost stays INT4: a bill, a receipt or a void that
-//       would push it past PKR 21,474,836.47 is 422 and writes nothing
+//   (6) a lot's per-unit cost stays INT4: a bill whose price on a tiny
+//       quantity would re-price its lot past PKR 21,474,836.47 is 422 and
+//       writes nothing (FIFO lots, wave B — the moving average is gone)
 //   (7) source guard: no bigint literals, BigInt() or typeof 'bigint' in src/
 //   (8) an INT4 money column left INT4 keeps its guard: a head-office
 //       contribution above PKR 21,474,836.47 a month is 422, not a raw 500
@@ -431,10 +434,15 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
     expect(total.json().error.code).toBe('AMOUNT_TOO_LARGE')
   })
 
-  it('bill: a PKR 30m stock purchase (2 × PKR 15m of an item) + PKR 5.4m tax → 201, exact numbers, Dr 1210 / GST input, balanced', async () => {
+  it('bill: a PKR 30m stock purchase (2 × PKR 15m of an item, received first) + PKR 5.4m tax → 201, exact numbers, Dr 2015 / GST input, balanced', async () => {
+    const rcv = await receiveGoods({
+      actor: { id: users.mgrA!.id, role: 'manager' }, supplierId: supA, photoUrl: 'https://cdn.example/grn.jpg',
+      lines: [{ inventoryItemId: itemA, quantityReceived: 2, unitCostCents: 1_500_000_000 }],
+    })
+    expect(await netDebit(tenantA, '1210', [`procurement.receipt:${rcv.receipt.id}`])).toBe(3_000_000_000)
     const r = await call('mgrA', 'POST', '/procurement/bills', {
       supplierId: supA, billNumber: `BULK-${RUN}`, billDate: new Date().toISOString(), taxCents: 540_000_000,
-      lines: [{ description: 'Bulk rice', inventoryItemId: itemA, quantity: 2, unitCostCents: 1_500_000_000 }],
+      lines: [{ description: 'Bulk rice', inventoryItemId: itemA, receiptLineId: rcv.receipt.lines[0]!.id, quantity: 2, unitCostCents: 1_500_000_000 }],
     })
     expect(r.statusCode, r.body).toBe(201)
     const b = r.json()
@@ -443,9 +451,10 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
     billId = b.id
     billDue = b.totalCents - b.whtCents
     const ref = `supplier.bill:${billId}`
-    // Where it lands, not just that it balances: the stock to 1210, the tax
-    // to GST input, the supplier (net of WHT) to AP 2010.
-    expect(await netDebit(tenantA, '1210', [ref])).toBe(3_000_000_000)
+    // Where it lands, not just that it balances: the goods clear 2015 (the
+    // receipt booked them to 1210), the tax to GST input, the supplier (net
+    // of WHT) to AP 2010.
+    expect(await netDebit(tenantA, '2015', [ref])).toBe(3_000_000_000)
     expect(await netDebit(tenantA, '1320', [ref])).toBe(540_000_000)
     expect(await netDebit(tenantA, '2010', [ref])).toBe(-billDue)
     const entry = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: tenantA, reference: ref }, include: { lines: true } })
@@ -455,12 +464,12 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
     expect(dr).toBe(3_540_000_000)
   })
 
-  it('bill: non-stock lines stay at the INT4 cap (they would book to 1210 Inventory – Food) — a PKR 30m "Kitchen fit-out" is 422 pointing at CapEx, and so are two PKR 15m ones; nothing is saved or posted', async () => {
+  it('bill: non-stock lines stay at the INT4 cap (capital spend is CapEx) — a PKR 30m "Kitchen fit-out" is 422 pointing at CapEx, and so are two PKR 15m ones; nothing is saved or posted', async () => {
     const before = await prisma.supplierBill.count({ where: { supplierId: supA } })
     const entriesBefore = await prisma.journalEntry.count({ where: { tenantId: tenantA } })
     const one = await call('mgrA', 'POST', '/procurement/bills', {
       supplierId: supA, billNumber: `FIT-${RUN}`, billDate: new Date().toISOString(),
-      lines: [{ description: 'Kitchen fit-out', quantity: 1, unitCostCents: 3_000_000_000 }],
+      lines: [{ description: 'Kitchen fit-out', quantity: 1, unitCostCents: 3_000_000_000, expenseAccountCode: '6050' }],
     })
     expect(one.statusCode).toBe(422)
     expect(one.json().error.code).toBe('AMOUNT_TOO_LARGE')
@@ -468,14 +477,14 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
     expect(one.json().error.message).toMatch(/PKR 21,474,836\.47/)
     const qty = await call('mgrA', 'POST', '/procurement/bills', {
       supplierId: supA, billNumber: `FITQ-${RUN}`, billDate: new Date().toISOString(),
-      lines: [{ description: 'Chairs', quantity: 200, unitCostCents: 15_000_000 }],
+      lines: [{ description: 'Chairs', quantity: 200, unitCostCents: 15_000_000, expenseAccountCode: '6050' }],
     })
     expect(qty.statusCode).toBe(422)
     const two = await call('mgrA', 'POST', '/procurement/bills', {
       supplierId: supA, billNumber: `FIT2-${RUN}`, billDate: new Date().toISOString(),
       lines: [
-        { description: 'Fit-out phase 1', quantity: 1, unitCostCents: 1_500_000_000 },
-        { description: 'Fit-out phase 2', quantity: 1, unitCostCents: 1_500_000_000 },
+        { description: 'Fit-out phase 1', quantity: 1, unitCostCents: 1_500_000_000, expenseAccountCode: '6050' },
+        { description: 'Fit-out phase 2', quantity: 1, unitCostCents: 1_500_000_000, expenseAccountCode: '6050' },
       ],
     })
     expect(two.statusCode).toBe(422)
@@ -487,7 +496,7 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
   it('bill: a non-stock line at exactly the INT4 cap still records (the existing rule, unchanged)', async () => {
     const r = await call('mgrA', 'POST', '/procurement/bills', {
       supplierId: supA, billNumber: `SVC-${RUN}`, billDate: new Date().toISOString(),
-      lines: [{ description: 'Deep clean', quantity: 1, unitCostCents: INT4_MAX_CENTS }],
+      lines: [{ description: 'Deep clean', quantity: 1, unitCostCents: INT4_MAX_CENTS, expenseAccountCode: '6040' }],
     })
     expect(r.statusCode, r.body).toBe(201)
     expect(r.json().subtotalCents).toBe(INT4_MAX_CENTS)
@@ -504,7 +513,7 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
     expect(stock.json().error.message).toMatch(/stock item/)
     const tax = await call('mgrA', 'POST', '/procurement/bills', {
       supplierId: supA, billNumber: `TAX-${RUN}`, billDate: new Date().toISOString(), taxCents: MAX_MONEY_CENTS + 1,
-      lines: [{ description: 'x', quantity: 1, unitCostCents: 100 }],
+      lines: [{ description: 'x', quantity: 1, unitCostCents: 100, expenseAccountCode: '6040' }],
     })
     expect(tax.statusCode).toBe(422)
     expect(await prisma.supplierBill.count({ where: { supplierId: supA, status: { not: 'void' } } })).toBe(1)
@@ -674,73 +683,30 @@ describe('(5) group-scale receivables, fixed assets and a customer\'s lifetime s
   })
 })
 
-// ─── (6) The re-averaged item cost stays INT4 ───────────────────────────────
+// ─── (6) A lot's per-unit cost stays INT4 ───────────────────────────────────
 
-describe('(6) a bill, receipt or void that would re-average an item past PKR 21,474,836.47 is 422 and writes nothing', () => {
+describe('(6) a lot\'s per-unit cost stays INT4: a bill that would re-price it past PKR 21,474,836.47 is 422 and writes nothing', () => {
   let supA: string
   beforeAll(async () => {
     supA = (await prisma.supplier.create({ data: { name: `Revalue Co ${RUN}`, tenantId: tenantA } })).id
   })
-  async function sentPo(inventoryItemId: string, qty: number, cost: number) {
-    const po = await prisma.purchaseOrder.create({
-      data: { supplierId: supA, status: 'sent', totalCents: Math.round(qty * cost), lines: { create: [{ inventoryItemId, quantityOrdered: qty, unitCostCents: cost }] } },
-      include: { lines: true },
-    })
-    return { poId: po.id, poLineId: po.lines[0]!.id }
-  }
-  const receive = (poId: string, poLineId: string, qty: number) =>
-    receiveGoods({ actor: { id: users.mgrA!.id, role: 'manager' }, poId, photoUrl: 'https://cdn.example/grn.jpg', lines: [{ poLineId, quantityReceived: qty }] })
-  const billFor = (n: string, poId: string, poLineId: string, inventoryItemId: string, qty: number, cost: number) =>
-    createBill({
-      supplierId: supA, poId, billNumber: `${n}-${RUN}`, billDate: new Date().toISOString(),
-      lines: [{ inventoryItemId, poLineId, description: n, quantity: qty, unitCostCents: cost }], createdBy: users.ceoA!.id,
-    })
 
-  it('bill: an item whose cost was set near INT4 and a variance on top → 422 naming the item; no bill, cost unchanged', async () => {
+  it('bill: billed at the INT4 limit on a tiny quantity, the rounded lot cost would pass it → 422; no bill, the lot unchanged', async () => {
     const item = (await prisma.inventoryItem.create({ data: { name: `Saffron ${RUN}`, unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 100 } })).id
-    const { poId, poLineId } = await sentPo(item, 10, 100)
-    await receive(poId, poLineId, 10)
-    // The operator re-costs the item by hand (the cost no longer tracks the PO price).
-    await prisma.inventoryItem.update({ where: { id: item }, data: { unitCostCents: 2_100_000_000 } })
-    await expect(billFor('SAF', poId, poLineId, item, 10, 500_000_100))
-      .rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422, message: expect.stringMatching(new RegExp(`Saffron ${RUN}'s unit cost after this bill`)) })
+    const rcv = await receiveGoods({
+      actor: { id: users.mgrA!.id, role: 'manager' }, supplierId: supA, photoUrl: 'https://cdn.example/grn.jpg',
+      lines: [{ inventoryItemId: item, quantityReceived: 0.0007, unitCostCents: 100 }],
+    })
+    // 0.0007 × 2,147,483,647 rounds to 1,503,239 paisa — 2,147,484,286 a kg.
+    await expect(createBill({
+      supplierId: supA, billNumber: `SAF-${RUN}`, billDate: new Date().toISOString(),
+      lines: [{ inventoryItemId: item, receiptLineId: rcv.receipt.lines[0]!.id, description: 'saffron', quantity: 0.0007, unitCostCents: INT4_MAX_CENTS }],
+      createdBy: users.ceoA!.id,
+    })).rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422 })
     expect(await prisma.supplierBill.count({ where: { billNumber: `SAF-${RUN}` } })).toBe(0)
-    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).unitCostCents).toBe(2_100_000_000)
-  })
-
-  it('receiving: a carried variance that would re-average past INT4 → 422 naming the item; no receipt, cost unchanged', async () => {
-    const item = (await prisma.inventoryItem.create({ data: { name: `Truffle ${RUN}`, unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 100 } })).id
-    const { poId, poLineId } = await sentPo(item, 10, 100)
-    // Billed before any goods: the whole variance is carried in 1210.
-    const bill = await billFor('TRF', poId, poLineId, item, 10, 1_000_000_100)
-    // With consistent figures the re-average is a weighted mean of costs that
-    // each fit INT4, so it cannot pass it; force it through the bill's
-    // recorded carried variance (as a record written before stock lines were
-    // INT4-capped could be).
-    const rec = await prisma.auditLog.findFirstOrThrow({ where: { entity: 'SupplierBill', entityId: bill.id, action: 'supplier.bill.variance' } })
-    const meta = rec.metadata as { lines: Array<Record<string, unknown>> }
-    meta.lines[0]!.carriedCents = 50_000_000_000
-    await prisma.auditLog.update({ where: { id: rec.id }, data: { metadata: meta as Prisma.InputJsonValue } })
-    const receiptsBefore = await prisma.goodsReceipt.count({ where: { poId } })
-    await expect(receive(poId, poLineId, 10))
-      .rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422, message: expect.stringMatching(new RegExp(`Truffle ${RUN}'s unit cost after this receipt`)) })
-    expect(await prisma.goodsReceipt.count({ where: { poId } })).toBe(receiptsBefore)
-    expect(await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).toMatchObject({ currentStock: 0, unitCostCents: 100 })
-  })
-
-  it('void: a bill that lowered the cost, then a hand re-cost near INT4 and little stock → void is 422 with a hint; the bill stays open', async () => {
-    const item = (await prisma.inventoryItem.create({ data: { name: `Vanilla ${RUN}`, unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 100_000 } })).id
-    const { poId, poLineId } = await sentPo(item, 10, 100_000)
-    await receive(poId, poLineId, 10)
-    const bill = await billFor('VAN', poId, poLineId, item, 10, 50_000)    // billed below the PO price
-    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).unitCostCents).toBe(50_000)
-    // Almost all of it used, and the item re-costed by hand near the INT4 limit.
-    await prisma.inventoryItem.update({ where: { id: item }, data: { currentStock: 0.0001, unitCostCents: 2_147_450_000 } })
-    await expect(voidBill(bill.id, users.ceoA!.id, 'duplicate bill'))
-      .rejects.toMatchObject({ code: 'AMOUNT_TOO_LARGE', statusCode: 422, message: expect.stringMatching(/after voiding this bill.*adjust/) })
-    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: bill.id } })).status).not.toBe('void')
-    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).unitCostCents).toBe(2_147_450_000)
-    expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: { startsWith: `supplier.bill.void` }, OR: [{ reference: { contains: bill.id } }] } })).toBe(0)
+    const lot = await prisma.stockLot.findFirstOrThrow({ where: { inventoryItemId: item } })
+    expect(lot.unitCostCents).toBe(100)
+    expect((await prisma.goodsReceiptLine.findFirstOrThrow({ where: { receiptId: rcv.receipt.id } })).billedQty).toBe(0)
     expect(await imbalance(tenantA)).toBe(0)
   })
 })

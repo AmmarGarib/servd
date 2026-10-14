@@ -241,6 +241,31 @@ describe('locks', () => {
   })
 })
 
+describe('a capitalised line is capital, whatever its text or treatment says', () => {
+  it('bought on credit and capitalised with nothing paid: its treatment (or the text it is read from) cannot change, and a later payment settles 2012', async () => {
+    const p = await project(tenantA, 'Credit buy', { conceptId: conceptA })
+    const l = await line(p, 'Combi oven', { negotiatedCents: 1_000_000, status: 'delivered', actualDeliveryDate: new Date('2026-09-12T12:00:00Z') })
+    const cap = await call('ceoA', 'POST', `/finance/capex/lines/${l}/capitalise`, { classKey: 'kitchen_equipment' })
+    expect(cap.statusCode, cap.body).toBe(201)
+    expect(amt((await entry(`fixed_asset.acquire:${cap.json().assetIds[0]}`))!.rows, '2012', 'credit')).toBe(1_000_000)
+    for (const change of [{ treatment: 'expense' }, { treatment: 'prepaid' }, { treatment: 'deposit' }, { item: 'Broker fee on the combi oven', scope: 'SoftCosts' }]) {
+      const r = await call('finA', 'PATCH', `/finance/capex/lines/${l}`, change)
+      expect(r.statusCode, JSON.stringify(change)).toBe(409)
+      expect(r.json().error.code).toBe('LINE_CAPITALISED')
+    }
+    // Saying what it already is, or a note, is fine.
+    expect((await call('finA', 'PATCH', `/finance/capex/lines/${l}`, { treatment: 'capital', notes: 'on the register' })).statusCode).toBe(200)
+    // Even a line whose stored treatment was changed behind the route: the asset decides.
+    await prisma.capexLine.update({ where: { id: l }, data: { treatment: 'expense' } })
+    const pay = await call('finA', 'POST', `/finance/capex/lines/${l}/payments`, { label: 'balance', amountCents: 1_000_000, paidAt: PAID })
+    expect(pay.statusCode, pay.body).toBe(201)
+    const je = (await entry(`capex.payment:${pay.json().id}`))!
+    expect(amt(je.rows, '2012', 'debit')).toBe(1_000_000)
+    expect(amt(je.rows, '6110', 'debit')).toBe(0)
+    expect(je.rows.some((r) => /^132/.test(r.code))).toBe(false)
+  })
+})
+
 describe('withholding on CapEx (lib/withholding.ts — the one resolver)', () => {
   it('gross / net / 2040 at the vendor\'s rate, fixed when first paid; the exemption → 0; the override with a reason', async () => {
     await withholdingOn(tenantA, true)
@@ -370,6 +395,39 @@ describe('deposits (H25: 1360)', () => {
     // …and it can now be returned from 1360.
     const ret = await call('finA', 'POST', `/finance/capex/payments/${pay.id}/deposit-return`, { returnedCents: 250_000, receivedAt: '2026-10-01' })
     expect(ret.statusCode, ret.body).toBe(201)
+  })
+})
+
+describe('a legacy deposit reclass is per payment', () => {
+  it('reclassing one deposit never re-books a sibling rent advance on the same line (it keeps 1310 and its 2040 line)', async () => {
+    const p = await project(tenantA, 'Lease line', { conceptId: conceptA })
+    const l = await line(p, 'Shop lease — security deposit + advance rent', { scope: 'SoftCosts', unitCostCents: 1_800_000 })
+    const at = new Date('2026-08-05T12:00:00+05:00')
+    const p1 = await prisma.capexPayment.create({ data: { lineId: l, label: 'deposit', amountCents: 600_000, paidAmountCents: 600_000, paidAt: at } })
+    const p2 = await prisma.capexPayment.create({ data: {
+      lineId: l, label: 'deposit', amountCents: 1_200_000, paidAmountCents: 1_200_000, paidAt: at,
+      whtCents: 60_000, whtSection: '155', whtRateBps: 500, filerStatus: 'filer',
+    } })
+    await postJournalEntry({ tenantId: tenantA, sourceType: 'capex.payment', sourceId: p1.id, description: 'Legacy deposit as prepayment', entryDate: at, postedBy: 'test', lines: [
+      { accountCode: '1310', type: 'debit', amountCents: 600_000 }, { accountCode: '1020', type: 'credit', amountCents: 600_000 },
+    ] })
+    await postJournalEntry({ tenantId: tenantA, sourceType: 'capex.payment', sourceId: p2.id, description: 'Legacy rent advance', entryDate: at, postedBy: 'test', lines: [
+      { accountCode: '1310', type: 'debit', amountCents: 1_200_000 }, { accountCode: '1020', type: 'credit', amountCents: 1_140_000 }, { accountCode: '2040', type: 'credit', amountCents: 60_000 },
+    ] })
+    const done = await call('ceoA', 'POST', `/finance/capex/payments/${p1.id}/reclass-deposit`, { dryRun: false })
+    expect(done.statusCode, done.body).toBe(201)
+    // The line keeps no 'deposit' treatment while a sibling is on the books as a rent advance.
+    expect((await prisma.capexLine.findUniqueOrThrow({ where: { id: l } })).treatment).toBeNull()
+    // Finance gives the advance its months: it re-syncs as what it is.
+    const edit = await call('finA', 'PATCH', `/finance/capex/payments/${p2.id}`, { coversFrom: '2026-08', coversMonths: 12 })
+    expect(edit.statusCode, edit.body).toBe(200)
+    const live = await prisma.journalEntry.findMany({ where: { tenantId: tenantA, reference: { startsWith: `capex.payment:${p2.id}` } }, include: { lines: { include: { account: true } } }, orderBy: { createdAt: 'desc' } })
+    const rows = live[0]!.lines.map((x) => ({ code: x.account.code, type: x.type, amount: x.amountCents }))
+    expect(amt(rows, '1310', 'debit')).toBe(1_200_000)
+    expect(amt(rows, '1360', 'debit')).toBe(0)
+    expect(amt(rows, '2040', 'credit')).toBe(60_000)
+    expect(amt(rows, '1020', 'credit')).toBe(1_140_000)
+    expect(Number((await prisma.capexPayment.findUniqueOrThrow({ where: { id: p2.id } })).whtCents)).toBe(60_000)
   })
 })
 

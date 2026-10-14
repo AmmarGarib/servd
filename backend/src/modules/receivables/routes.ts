@@ -61,6 +61,7 @@ import { outputTaxCodeFor, OUTPUT_TAX_ACCOUNTS, refundTaxAccountFor } from '../a
 import { authorityOfOutputCode, AUTHORITIES, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { assertMoneyFits, sumCents, toCents, zMoneyCents, type DbMoney } from '../../lib/money.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
 
@@ -645,7 +646,22 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       })
       const leftAmount = toCents(inv.amountCents) - sumCents(prior._sum.amountCents)
       const leftTax = toCents(inv.taxCents) - sumCents(prior._sum.taxCents)
-      if (body.amountCents > leftAmount || body.taxCents > leftTax || toCents(inv.creditedCents) + credit > totalOf(inv)) {
+      // What the CEO wrote off as a bad debt (net of recoveries) was already
+      // booked out of 1110 — tax included — so a credit note can never credit
+      // it again: that would lower revenue and output tax a second time and
+      // leave a credit balance /refunds could pay out. Recover or reverse the
+      // write-off first.
+      const writtenOff = toCents(inv.writtenOffCents)
+      const creditable = totalOf(inv) - writtenOff
+      if (writtenOff > 0 && toCents(inv.creditedCents) + credit > creditable) {
+        throw new AppError(
+          'WRITTEN_OFF_FIRST',
+          `Part of ${inv.number} was written off as a bad debt — a credit note can only credit what was not written off (PKR ${(Math.max(0, creditable - toCents(inv.creditedCents)) / 100).toLocaleString('en-PK')} left). Recover or reverse the write-off first.`,
+          409,
+          { leftCents: Math.max(0, creditable - toCents(inv.creditedCents)), writtenOffCents: writtenOff },
+        )
+      }
+      if (body.amountCents > leftAmount || body.taxCents > leftTax || toCents(inv.creditedCents) + credit > creditable) {
         throw new AppError(
           'OVER_CREDIT',
           `That is more than is left to credit on ${inv.number} (PKR ${(leftAmount / 100).toLocaleString('en-PK')} before tax, PKR ${(leftTax / 100).toLocaleString('en-PK')} tax)`,
@@ -796,6 +812,13 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         // A voided invoice is closed: its receipts are settled by the void's
         // own reversals, never one by one afterwards.
         if (inv.status === 'void') throw new AppError('INVOICE_VOID', 'This invoice is void — nothing on it can be reversed', 409)
+        // Sales tax a client withheld (1335) that a tax payment already set
+        // off cannot be reversed: 1335 would go into credit and the set-off
+        // would have nothing behind it (409 WITHHELD_ALREADY_SET_OFF — void or
+        // correct the tax payment first). Under the authority's withheld lock.
+        if (pay.method === ST_WITHHELD_METHOD && pay.taxAuthority) {
+          await assertWithheldNotSetOff(tx, inv.tenantId, pay.taxAuthority as AuthorityKey, amount)
+        }
         const claimed = await tx.receivablePayment.updateMany({
           where: { id: pay.id, reversedAt: null },
           data: { reversedAt: new Date(), reversedReason: body.reason },

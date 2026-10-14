@@ -12,7 +12,7 @@ import { requireAuth, ADMIN_ONLY, FINANCE_TEAM } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope } from '../../lib/tenantScope.js'
-import { assertConceptOfCompany, assertCapexProjectOfCompany, assertBankAccountOfCompany } from '../financePlanning/companyRefs.js'
+import { assertConceptOfCompany, assertCapexProjectOfCompany, assertBankAccountOfCompany, assertSupplierOfCompany } from '../financePlanning/companyRefs.js'
 import { syncOpexPaymentPosting, OPEX_SOURCE, opexAmountsOf, liveOpexReleases } from './posting.js'
 import { assertCategoryAccount, suggestedCategoryAccount } from './categoryAccounts.js'
 import { liveRevisionsFor } from '../accounting/sourcePosting.js'
@@ -117,17 +117,14 @@ const lineSchema = z.object({
 /**
  * The supplier a line names, when it is a live, ordinary supplier of the
  * line's company; else 422 SUPPLIER_NOT_IN_COMPANY (another company's, a
- * deleted one, a system row, or none at all).
+ * deleted one, a system row, or none at all). The rule itself is
+ * financePlanning/companyRefs.assertSupplierOfCompany (one definition, shared
+ * with CapEx); this only adds the name that fills the line's `vendor`.
  */
 async function supplierOfCompany(tenantId: string | null, supplierId: string): Promise<{ id: string; name: string }> {
-  const s = tenantId
-    ? await prisma.supplier.findFirst({
-      where: { id: supplierId, tenantId, deletedAt: null, systemKind: null },
-      select: { id: true, name: true },
-    })
-    : null
-  if (!s) throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'That vendor is not a supplier of this company — add it under Procurement → Suppliers first', 422)
-  return s
+  if (!tenantId) throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'That vendor is not a supplier of this company — add it under Procurement → Suppliers first', 422)
+  await assertSupplierOfCompany(tenantId, supplierId)
+  return prisma.supplier.findUniqueOrThrow({ where: { id: supplierId }, select: { id: true, name: true } })
 }
 
 function vendorRequired(): AppError {
@@ -172,7 +169,11 @@ interface StoredMoney {
   inputTaxCents: number | bigint
   inputTaxAuthority: string | null
   whtSection: string | null
+  whtRateBps: number | null
   filerStatus: string | null
+  whtOverrideReason: string | null
+  /** It was already paid before this edit: its cash and withholding are facts. */
+  paidAt: Date | null
 }
 
 const MONEY_KEYS = ['invoiceCents', 'actualCents', 'inputTaxCents', 'inputTaxAuthority', 'whtSection', 'whtOverrideCents'] as const
@@ -198,6 +199,17 @@ const MONEY_KEYS = ['invoiceCents', 'actualCents', 'inputTaxCents', 'inputTaxAut
  *              line's usual one, else the supplier's — 422
  *              INPUT_TAX_AUTHORITY_REQUIRED) and must be below the invoice
  *              (422 INPUT_TAX_TOO_LARGE).
+ *
+ * An ALREADY-PAID payment's cash and withholding are facts (the vendor was
+ * paid that cash; that WHT was withheld): an edit that restates none of the
+ * withholding's inputs (invoiceCents, actualCents, inputTaxCents, whtSection,
+ * whtOverrideCents) — a paid-date fix, the input-tax authority alone — keeps
+ * the stored cash, WHT, section, rate, filer snapshot and override as they
+ * are. When they are restated, a stated override is kept unless the body
+ * clears it (whtOverrideCents: null), the vendor's filer status is the
+ * payment's snapshot (not today's), and a row paid before withholding existed
+ * (no snapshot) never has WHT invented after the fact unless a section is
+ * sent.
  */
 async function workOutPaymentMoney(a: {
   tenantId: string
@@ -225,14 +237,42 @@ async function workOutPaymentMoney(a: {
     }
   }
 
+  // Already paid, and nothing the withholding is worked out from restated:
+  // the cash and the WHT stay exactly as paid (see the header).
+  const paidBefore = !!stored?.paidAt && stored.actualCents != null
+  const whtRestated = body.invoiceCents !== undefined || body.actualCents !== undefined || body.inputTaxCents !== undefined
+    || body.whtSection !== undefined || body.whtOverrideCents !== undefined
+  if (paidBefore && !whtRestated) {
+    const whtCents = toCents(stored!.whtCents)
+    const invoice = toCents(stored!.actualCents!) + whtCents
+    if (inputTaxCents >= invoice && inputTaxCents > 0) {
+      throw new AppError('INPUT_TAX_TOO_LARGE', 'The input sales tax must be less than the invoice amount', 422)
+    }
+    const section = whtSectionOrNull(stored!.whtSection)
+    const filer = stored!.filerStatus ?? 'unknown'
+    return {
+      data: {
+        actualCents: toCents(stored!.actualCents!), whtCents, whtSection: section, whtRateBps: stored!.whtRateBps,
+        filerStatus: filer, whtOverrideReason: stored!.whtOverrideReason, inputTaxCents, inputTaxAuthority: authority,
+      },
+      withholding: { whtCents, rateBps: stored!.whtRateBps ?? 0, section, filerStatus: filer, exempt: filer === 'exempt', needsAtlCheck: false },
+    }
+  }
+  // A row paid before withholding existed (no snapshot): never invent WHT after the fact.
+  const legacyPaid = paidBefore && stored!.filerStatus == null
+
   const section: WhtSection | null = body.whtSection !== undefined
     ? whtSectionOrNull(body.whtSection)
-    : stored?.filerStatus != null
-      ? whtSectionOrNull(stored.whtSection)
-      : (whtSectionOrNull(line.whtSection) ?? whtSectionOrNull(supplier?.defaultWhtSection))
+    : legacyPaid
+      ? null
+      : stored?.filerStatus != null
+        ? whtSectionOrNull(stored.whtSection)
+        : (whtSectionOrNull(line.whtSection) ?? whtSectionOrNull(supplier?.defaultWhtSection))
 
-  const override = body.whtOverrideCents ?? null
-  const reason = body.whtOverrideReason?.trim() || null
+  // A stated override stays stated until the body clears it (whtOverrideCents: null).
+  const keptOverride = body.whtOverrideCents === undefined && stored?.whtOverrideReason != null
+  const override = body.whtOverrideCents !== undefined ? body.whtOverrideCents : keptOverride ? toCents(stored!.whtCents) : null
+  const reason = body.whtOverrideReason !== undefined ? (body.whtOverrideReason?.trim() || null) : keptOverride ? stored!.whtOverrideReason : null
   if (override != null && (reason?.length ?? 0) < 10) {
     throw new AppError('WHT_OVERRIDE_REASON_REQUIRED', 'Say why the withholding differs from the rate (at least 10 characters) — the CA reads it on the withholding register', 422)
   }
@@ -260,6 +300,8 @@ async function workOutPaymentMoney(a: {
   const withholding = await computeWithholding(prisma, {
     tenantId: a.tenantId,
     supplier: supplier ? { filerStatus: supplier.filerStatus, whtExemptUntil: supplier.whtExemptUntil } : null,
+    // An already-paid payment keeps the filer status it was paid under.
+    ...(paidBefore && stored!.filerStatus ? { filerStatus: stored!.filerStatus } : {}),
     section,
     baseCents,
     at: a.paidAt,
@@ -742,8 +784,10 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // (opex.payment:<id>@n), a note / reference / receipt alone changes nothing
   // on the books, and un-marking it reverses it. A date in a closed month is
   // 422 PERIOD_LOCKED with nothing saved. The withholding is worked out again
-  // only when the money changes or the payment becomes paid (a paid date move
-  // re-checks it too once it has been worked out — the exemption is per day).
+  // only when the payment becomes paid or what it is worked out from is
+  // restated (invoice, cash, input tax, section, override): a paid payment's
+  // cash and WHT are facts — a paid-date fix or the input-tax authority alone
+  // keeps them (workOutPaymentMoney).
   fastify.patch<{ Params: { id: string } }>('/payments/:id', { preHandler: OPEX_GUARD }, async (req, reply) => {
     const body = z.object({
       ...paymentBody,

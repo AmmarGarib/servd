@@ -95,6 +95,33 @@ describe('register-controlled accounts need the CEO\'s reason', () => {
     expect(Number(flag!.amountCents)).toBe(1_000_000)
   })
 
+  it('a register-override JE can be reversed (its reason carried as the override): 201, audited, its mismatch flag closed', async () => {
+    const lines = [
+      { accountId: await acct(A, '1510'), type: 'debit' as const, amountCents: 200_000 },
+      { accountId: await acct(A, '1020'), type: 'credit' as const, amountCents: 200_000 },
+    ]
+    const res = await journal('ceo', lines, { registerOverride: { reason: 'Legacy opening balance, CA said so' } })
+    expect(res.statusCode).toBe(201)
+    const entry = res.json() as { id: string }
+    const short = await app.inject({
+      method: 'POST', url: `/accounting/journal/${entry.id}/reverse`, payload: { reason: 'wrong' },
+      headers: { authorization: `Bearer ${users.ceo!.token}`, 'x-servd-active-tenant': A },
+    })
+    expect(short.statusCode).toBe(422)
+    expect(short.json().error.code).toBe('REGISTER_CONTROLLED_ACCOUNT')
+    const rev = await app.inject({
+      method: 'POST', url: `/accounting/journal/${entry.id}/reverse`, payload: { reason: 'Wrong amount entered — redo it' },
+      headers: { authorization: `Bearer ${users.ceo!.token}`, 'x-servd-active-tenant': A },
+    })
+    expect(rev.statusCode, rev.body).toBe(201)
+    const reversal = rev.json() as { id: string; tenantId: string; lines: Array<{ account: { code: string }; type: string; amountCents: number }> }
+    expect(reversal.tenantId).toBe(A)
+    expect(reversal.lines.find((l) => l.account.code === '1510')).toMatchObject({ type: 'credit' })
+    expect(await prisma.auditLog.count({ where: { action: 'journal.register_override', entityId: reversal.id, tenantId: A } })).toBe(1)
+    const flag = await prisma.exceptionFlag.findFirstOrThrow({ where: { kind: 'fixed_asset_gl_mismatch', entityId: entry.id } })
+    expect(flag.status).toBe('resolved')
+  })
+
   it('an ordinary JE with a stray override reason raises no register flag', async () => {
     const res = await journal('ceo', [
       { accountId: await acct(A, '6010'), type: 'debit', amountCents: 50_000 },

@@ -19,7 +19,7 @@ import { createBill, voidBill } from '../src/modules/procurement/service.js'
 import { createCreditNote } from '../src/modules/procurement/creditNotes.js'
 import { receiveGoods } from '../src/modules/procurement/receiving.js'
 import { postSupplierBill } from '../src/modules/accounting/supplierPosting.js'
-import { postWasteLog } from '../src/modules/accounting/inventoryPosting.js'
+import { postWasteLog, postGrniWriteOffTx, postFifoAlign } from '../src/modules/accounting/inventoryPosting.js'
 import { addLotTx, consumeFifoTx, ensureFifoReady, STOCK_SOURCE } from '../src/lib/stockLedger.js'
 import { ensureFifoCutover, readCutover } from '../src/modules/inventory/fifoCutover.js'
 
@@ -185,5 +185,129 @@ describe('a bill recorded before the FIFO cut-over', () => {
     expect((await prisma.goodsReceiptLine.findFirstOrThrow({ where: { poLineId } })).billedQty).toBe(0)
     // 1210 − lots is still exactly the stored pre-FIFO difference.
     expect(await balance(tenantId, '1210') - await lotsValue(tenantId)).toBe(1_000)
+  })
+})
+
+describe('a written-off delivery is never re-opened by a bill void', () => {
+  it('receive 10, bill 4, write off 6, void the bill → 409 RECEIPT_WRITTEN_OFF; 2015 stays 0', async () => {
+    const { tenantId, supplierId } = await company('wo')
+    const item = await mkItem(tenantId, 'Lentils')
+    const { poId, poLineId } = await sentPo(supplierId, item, 10, 100)
+    const r = await receive(poId, poLineId, 10)
+    const rl = r.lines[0]!.id
+    const b = await bill(supplierId, poId, { item, poLineId, qty: 4, cost: 100 })
+    expect(await balance(tenantId, '2015')).toBe(-600)
+    // The CEO's approval (grniRoutes): the posting plus the line stamped written off.
+    await prisma.$transaction(async (tx) => {
+      const posted = await postGrniWriteOffTx(tx, rl, { id: userId })
+      await tx.goodsReceiptLine.update({ where: { id: rl }, data: { writtenOffAt: new Date(), writtenOffById: userId, writeOffEntryId: posted.entryId } })
+    })
+    expect(await balance(tenantId, '2015')).toBe(0)
+    await expect(voidBill(b.id, userId, 'to re-enter it')).rejects.toMatchObject({ code: 'RECEIPT_WRITTEN_OFF', statusCode: 409 })
+    expect(await balance(tenantId, '2015')).toBe(0)
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: b.id } })).status).not.toBe('void')
+    expect((await prisma.goodsReceiptLine.findUniqueOrThrow({ where: { id: rl } })).billedQty).toBe(4)
+  })
+})
+
+describe('legacy bills the admin form wrote (no PO line, no item)', () => {
+  it('the cut-over ties a bill to its PO\'s deliveries (no phantom GRNI); a bill naming no PO is listed and its supplier\'s deliveries count billed; voids never book 5060 for an untied bill', async () => {
+    const tenantId = (await prisma.tenant.create({ data: { name: 'GRNI unlinked', slug: `grni-unl-${RUN}` } })).id
+    await ensureChartOfAccounts(tenantId)
+    const s1 = (await prisma.supplier.create({ data: { name: `Rice Co ${RUN}`, tenantId } })).id
+    const s2 = (await prisma.supplier.create({ data: { name: `Sugar Co ${RUN}`, tenantId } })).id
+    const rice = (await prisma.inventoryItem.create({ data: { name: `Rice u ${RUN}`, unit: 'kg', tenantId, currentStock: 10, unitCostCents: 200 } })).id
+    const sugar = (await prisma.inventoryItem.create({ data: { name: `Sugar u ${RUN}`, unit: 'kg', tenantId, currentStock: 10, unitCostCents: 200 } })).id
+    const flour = (await prisma.inventoryItem.create({ data: { name: `Flour u ${RUN}`, unit: 'kg', tenantId, currentStock: 5, unitCostCents: 100 } })).id
+    const old = new Date(Date.now() - 2 * 86_400_000)
+    // Rice: PO received before FIFO; the admin form's bill names the PO, not its line.
+    const ricePo = await sentPo(s1, rice, 10, 200)
+    const riceRl = (await prisma.goodsReceipt.create({
+      data: { poId: ricePo.poId, supplierId: s1, receivedById: userId, status: 'accepted', tenantId, receivedAt: old,
+        lines: { create: [{ inventoryItemId: rice, poLineId: ricePo.poLineId, description: 'rice', receivedQty: 10, poUnitCostCents: 200, unit: 'kg' }] } },
+      include: { lines: true },
+    })).lines[0]!.id
+    const mkLegacy = async (supplierId: string, poId: string | null, number: string, description: string) => {
+      const b = await prisma.supplierBill.create({
+        data: {
+          supplierId, poId, billNumber: `${number}-${RUN}`, billDate: new Date(), dueDate: new Date(), subtotalCents: 2_000, totalCents: 2_000, status: 'open',
+          createdAt: new Date(Date.now() - 86_400_000),
+          lines: { create: [{ description, quantity: 10, unitCostCents: 200, lineTotalCents: 2_000 }] },
+        },
+      })
+      expect((await postSupplierBill(b.id)).posted).toBe(true)
+      return b.id
+    }
+    const b1 = await mkLegacy(s1, ricePo.poId, 'UNL-RICE', 'Rice 10kg')
+    // Sugar Co: a flour PO received before FIFO, and two description-only bills naming no PO (one a duplicate).
+    const flourPo = await sentPo(s2, flour, 5, 100)
+    const flourRl = (await prisma.goodsReceipt.create({
+      data: { poId: flourPo.poId, supplierId: s2, receivedById: userId, status: 'accepted', tenantId, receivedAt: old,
+        lines: { create: [{ inventoryItemId: flour, poLineId: flourPo.poLineId, description: 'flour', receivedQty: 5, poUnitCostCents: 100, unit: 'kg' }] } },
+      include: { lines: true },
+    })).lines[0]!.id
+    const b2 = await mkLegacy(s2, null, 'UNL-SUGAR', 'Sugar 10kg')
+    const b3 = await mkLegacy(s2, null, 'UNL-SUGAR-DUP', 'Sugar 10kg')
+    void sugar
+
+    await ensureFifoCutover(tenantId)
+    // No phantom GRNI: every pre-cut-over delivery counts billed.
+    expect(await balance(tenantId, '2015')).toBe(0)
+    expect((await prisma.goodsReceiptLine.findUniqueOrThrow({ where: { id: riceRl } })).billedQty).toBe(10)
+    expect((await prisma.goodsReceiptLine.findUniqueOrThrow({ where: { id: flourRl } })).billedQty).toBe(5)
+    const cut = await readCutover(tenantId)
+    expect(cut.untied?.bills.map((b) => b.billId).sort()).toEqual([b2, b3].sort())
+    expect(cut.untied?.receiptLines.map((r) => r.receiptLineId)).toEqual([flourRl])
+    expect(await prisma.exceptionFlag.count({ where: { tenantId, kind: 'fifo_cutover_review' } })).toBe(1)
+
+    // The tied bill's void re-opens exactly its delivery: GRNI back at the receipt cost, no 5060.
+    await voidBill(b1, userId, 'wrong supplier')
+    const v1 = [`supplier.bill.void:${b1}`, `supplier.bill.void.legacy:${b1}`]
+    expect(await balance(tenantId, '1210', v1)).toBe(0)
+    expect(await balance(tenantId, '2015', v1)).toBe(-2_000)
+    expect(await balance(tenantId, '5060', v1)).toBe(0)
+    expect((await prisma.goodsReceiptLine.findUniqueOrThrow({ where: { id: riceRl } })).billedQty).toBe(0)
+
+    // The duplicate (untied) before the alignment: the reversal's Cr 1210 stands, never a 5060 gain.
+    await voidBill(b3, userId, 'duplicate')
+    expect(await balance(tenantId, '1210', [`supplier.bill.void:${b3}`, `supplier.bill.void.legacy:${b3}`])).toBe(-2_000)
+    expect(await balance(tenantId, '5060')).toBe(0)
+
+    // After the alignment an untied void goes back where the alignment put the difference (3020).
+    await postFifoAlign(tenantId, { dryRun: false, actor: { id: userId } })
+    await voidBill(b2, userId, 'entered twice')
+    const v2 = [`supplier.bill.void.legacy:${b2}`]
+    expect(await balance(tenantId, '1210', v2)).toBe(2_000)
+    expect(await balance(tenantId, '3020', v2)).toBe(-2_000)
+    expect(await balance(tenantId, '5060')).toBe(0)
+  })
+
+  it('a price credit on an item-less legacy bill line books 5060, never 1210; the lots do not move', async () => {
+    const tenantId = (await prisma.tenant.create({ data: { name: 'GRNI legacy CN', slug: `grni-lcn-${RUN}` } })).id
+    await ensureChartOfAccounts(tenantId)
+    await prisma.tenantMember.create({ data: { tenantId, userId } })
+    const s = (await prisma.supplier.create({ data: { name: `Flour Co ${RUN}`, tenantId } })).id
+    await prisma.inventoryItem.create({ data: { name: `Flour cn ${RUN}`, unit: 'kg', tenantId, currentStock: 10, unitCostCents: 200 } })
+    const b = await prisma.supplierBill.create({
+      data: {
+        supplierId: s, billNumber: `LCN-${RUN}`, billDate: new Date(), dueDate: new Date(), subtotalCents: 2_000, totalCents: 2_000, status: 'open',
+        createdAt: new Date(Date.now() - 86_400_000),
+        lines: { create: [{ description: 'Flour 10kg', quantity: 10, unitCostCents: 200, lineTotalCents: 2_000 }] },
+      },
+      include: { lines: true },
+    })
+    expect((await postSupplierBill(b.id)).posted).toBe(true)
+    await ensureFifoCutover(tenantId)
+    const before1210 = await balance(tenantId, '1210')
+    const lotsBefore = await lotsValue(tenantId)
+    const cn = await createCreditNote({
+      billId: b.id, number: `LCN-CN-${RUN}`, date: new Date().toISOString(), reason: 'price',
+      lines: [{ billLineId: b.lines[0]!.id, qty: 10, unitCostCents: 20 }], createdBy: userId,
+    })
+    const ref = [`supplier.credit_note:${cn.creditNote.id}`]
+    expect(await balance(tenantId, '1210')).toBe(before1210)
+    expect(await lotsValue(tenantId)).toBe(lotsBefore)
+    expect(await balance(tenantId, '5060', ref)).toBe(-200)
+    expect(await balance(tenantId, '2010', ref)).toBe(200)
   })
 })

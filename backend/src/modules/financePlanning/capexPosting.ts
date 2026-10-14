@@ -302,6 +302,12 @@ export async function syncCapexPaymentPosting(
     },
   })
   if (!p) throw new NotFoundError('CapexPayment', paymentId)
+  // One writer per line against a capitalisation: the CEO's approval
+  // (fixedAssets/events.ts applyCapitalise) reads the line's advances under
+  // this lock, so a payment marked paid at the same moment either lands
+  // before it (and is applied) or after it (and settles the payable) — never
+  // stranded on 1340. Taken before anything about the line is read.
+  if (opts.tx) await opts.tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'capex_capitalise:' + p.lineId}))`
   const line = p.line
   const project = line.project
   const amount = toCents(p.paidAmountCents ?? p.amountCents)
@@ -323,11 +329,21 @@ export async function syncCapexPaymentPosting(
     return { status: 'not_paid', treatment: null, outcome: r.outcome, entryId: null, whtCents: 0 }
   }
 
-  // The line's treatment is the only override; a posted instalment keeps
-  // what it was booked as (TREATMENT_LOCKED stops the line changing under it).
-  const treatment: CapexTreatment = isCapexTreatment(line.treatment)
-    ? line.treatment
-    : (liveMain ? TREATMENT_OF_CODE[liveMain.accountCode] : undefined) ?? capexTreatmentOf(line, project.projectType)
+  // What the instalment is booked as:
+  //   - one already on the books keeps what it was booked as (its live main
+  //     debit) — a reclass of a sibling payment, or a line edit, never
+  //     re-books it as something else;
+  //   - else, the line is on the register or its capitalisation waits for
+  //     the CEO: capital, whatever the line's text or treatment says (it
+  //     settles the supplier's payable, or advances on 1340 while pending) —
+  //     the asset decides;
+  //   - else the line's treatment, else what the line reads as.
+  const liveTreatment = liveMain ? TREATMENT_OF_CODE[liveMain.accountCode] : undefined
+  const onRegister = !liveTreatment && (
+    (await db.fixedAsset.count({ where: { tenantId, capexLineId: line.id, status: { not: 'voided' } } })) > 0
+    || !!(await pendingCapitalisation(tenantId, line.id, db)))
+  const treatment: CapexTreatment = liveTreatment
+    ?? (onRegister ? 'capital' : (isCapexTreatment(line.treatment) ? line.treatment : capexTreatmentOf(line, project.projectType)))
 
   if (treatment === 'prepaid' && !live && (!p.coversFrom || !p.coversMonths)) {
     throw new AppError('PREPAID_TERM_REQUIRED', 'Say which months this rent advance covers (from which month, for how many months) — it is released to rent month by month', 422)
@@ -464,6 +480,8 @@ export async function recordCapexPaymentFromCashTx(tx: Tx, a: {
   if (!line || line.project.deletedAt) throw new AppError('CAPEX_LINE_NOT_IN_COMPANY', 'That CapEx line does not belong to this company', 422)
   if (!line.project.tenantId) throw new AppError('PROJECT_HAS_NO_COMPANY', 'This capex project is not bound to a company', 422)
   if (line.project.tenantId !== a.tenantId) throw new AppError('CAPEX_LINE_NOT_IN_COMPANY', 'That CapEx line does not belong to this company', 422)
+  // The capitalisation lock (see syncCapexPaymentPosting) before the line's assets are read.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'capex_capitalise:' + line.id}))`
   if (capexTreatmentOf(line, line.project.projectType) !== 'capital') {
     throw new AppError('NOT_CAPITAL', 'Only equipment / capital items are bought through a CapEx cash line', 422)
   }
@@ -785,7 +803,21 @@ export async function reclassLegacyDeposit(tx: Tx, paymentId: string, opts: { dr
     desired: { description: body.description, entryDate: d.entryDate, lines: body.lines },
     postedBy: opts.postedBy, reason: 'Deposit reclass', tx,
   })
-  await tx.capexLine.update({ where: { id: p.lineId }, data: { treatment: 'deposit' } })
+  // The reclass is per PAYMENT (its DEPOSIT_RECLASS entry, and the
+  // DEPOSIT_RECLASSED lock). The line becomes 'deposit' only when no OTHER
+  // instalment of it is on the books as something else — a sibling rent
+  // advance on 1310 must stay a rent advance (with its WHT and input tax), not
+  // be re-booked as a deposit on its next edit.
+  const siblings = await tx.capexPayment.findMany({ where: { lineId: p.lineId, id: { not: p.id } }, select: { id: true } })
+  let othersElsewhere = false
+  for (const s of siblings) {
+    const m = mainDebit((await liveRevision(tenantId, CAPEX_SOURCE, s.id, tx)).live)
+    if (!m || m.accountCode === SECURITY_DEPOSITS) continue
+    if ((await liveRevision(tenantId, DEPOSIT_RECLASS_SOURCE, s.id, tx)).live) continue   // itself reclassed to 1360
+    othersElsewhere = true
+    break
+  }
+  if (!othersElsewhere) await tx.capexLine.update({ where: { id: p.lineId }, data: { treatment: 'deposit' } })
   return { amountCents: main.amountCents, entryId: r.entryId, dryRun: false }
 }
 

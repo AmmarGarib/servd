@@ -5,6 +5,10 @@
 // manager's call, with a reason), and the managers-only void that says what
 // happens to the money. Every rule is the server's (backend
 // modules/giftCards/books.ts); this page only hides buttons that would 403.
+// Breakage (H11): a sold card's unused value at expiry — or a CEO's "keep the
+// money" void — is other income (4200, no sales tax); a promotional card's goes
+// back to Marketing & Promo (6060). The figures are the server's, never worked
+// out here.
 
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useState, type ReactNode } from 'react'
@@ -29,6 +33,12 @@ interface GiftCard {
   buyerEmail: string | null; recipientName: string | null
   expiresAt: string | null; expiredAt: string | null; createdAt: string
   voidedAt: string | null; voidDisposition: Disposition | null
+  /** H11: value taken at expiry or by a CEO forfeit (4200 sold / 6060 promotional). */
+  breakageCents?: number
+  breakageAt?: string | null
+  /** Expired but breakage not booked yet (the sale is not in the books, or the posting was refused). */
+  breakagePendingAt?: string | null
+  breakagePendingReason?: string | null
 }
 interface Page { items: GiftCard[]; nextCursor: string | null; total: number }
 
@@ -44,7 +54,20 @@ interface BooksCheck {
   spentWithoutOrder: { count: number; cents: number }
   issueNotBooked: { count: number; cents: number; items: Array<{ id: string; code: string; issuedAmountCents: number; createdAt: string; status: Status }> }
   voidedHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; kind?: 'sold' | 'promotional'; balanceCents: number; voidedAt: string | null }> }
+  /** Expired cards holding value a refund put back after their breakage was booked: a manager settles them. */
+  expiredHoldingValue?: { count: number; cents: number; items: Array<{ id: string; code: string; kind: 'sold' | 'promotional'; balanceCents: number; expiredAt: string | null }> }
+  /** Breakage booked (H11): count of cards and the value taken. */
+  breakage?: { count: number; cents: number }
+  /** Expired cards whose breakage is held — still owed in 2080 until the daily sweep books it. */
+  breakageHeld?: { count: number; cents: number; items: Array<{ id: string; code: string; kind: 'sold' | 'promotional'; balanceCents: number; reason: string | null; since: string | null }> }
 }
+
+/** Why breakage is held (GiftCard.breakagePendingReason), in words. */
+const BREAKAGE_HELD_LABEL: Record<string, string> = {
+  ISSUE_NOT_BOOKED: 'held — the card\'s sale is not in the books yet; book the sale and the next daily run books the breakage',
+  POSTING_REFUSED: 'held — the books refused the entry (see Reconciliation → Exceptions); the next daily run tries again',
+}
+const heldLabel = (reason: string | null | undefined) => (reason && BREAKAGE_HELD_LABEL[reason]) || 'held — the next daily run books it'
 
 const STATUS_BADGE: Record<Status, string> = {
   active:        's-badge-green',
@@ -59,7 +82,26 @@ const DISPOSITION_LABEL: Record<Disposition, string> = {
 }
 const PAGE_SIZE = 100
 const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-const errText = (e: unknown) => (e as { message?: string } | null)?.message ?? 'Something went wrong'
+// The server's codes, in words (its own message is the fallback).
+const ERROR_TEXT: Record<string, string> = {
+  FORFEIT_NEEDS_CEO: 'Only the CEO can keep the money on a sold gift card. Refund it, or void it as "payment never received".',
+  PROMO_CARD_FORFEIT_ONLY: 'A promotional card was never paid for — void it as "forfeit" (its value goes back to Marketing & Promo).',
+  REFUND_METHOD_REQUIRED: 'Say how the money goes back: cash, card or bank transfer.',
+  NO_REFUND_ON_THIS_VOID: 'Only a refund pays money out — leave the refund method and bank empty.',
+  ISSUE_NOT_BOOKED: 'This card\'s sale is not in the books yet — book it first (Books check → Book the sale), then void the card.',
+  GIFTCARD_CHANGED: 'The card changed while you were working on it — close this and try again.',
+  GIFTCARD_ALREADY_VOIDED: 'This card is already voided and holds nothing.',
+  ISSUE_ALREADY_BOOKED: 'The sale of this card is already in the books.',
+  BANK_ACCOUNT_REQUIRED: 'This company has more than one bank — pick the bank account.',
+  PAYMENT_METHOD_REQUIRED: 'Say how the customer paid for the card.',
+  PROMO_CARD_NOT_PAID: 'A promotional card is given away — it takes no payment method or bank account.',
+  REASON_REQUIRED: 'Say why this promotional card is being given.',
+  EXPIRY_IN_PAST: 'The expiry date must be in the future.',
+}
+const errText = (e: unknown) => {
+  const x = e as { code?: string; message?: string } | null
+  return (x?.code && ERROR_TEXT[x.code]) || x?.message || 'Something went wrong'
+}
 /** A voided card can be settled again only when a refund put value back on it. */
 const canVoid = (c: { status: Status; balanceCents: number }) => c.status !== 'voided' || c.balanceCents > 0
 
@@ -73,6 +115,9 @@ export default function GiftCardsPage() {
   // The books' audit trail is the CEO's and management's (accounting_audit);
   // everyone else reads a card's history in the row below instead.
   const canReadBooksTrail = useAuthStore((s) => s.isRole('admin', 'management'))
+  // Keeping the money on a SOLD card (breakage, H11) is the CEO's call: the
+  // API refuses anyone else (403 FORFEIT_NEEDS_CEO), so only the CEO is offered it.
+  const isCeo = useAuthStore((s) => s.isRole('admin'))
 
   const [status, setStatus] = useState<Status | ''>('')
   const [showNew, setShowNew] = useState(false)
@@ -206,13 +251,17 @@ export default function GiftCardsPage() {
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-xs">{fmtPkr(c.balanceCents)}</td>
                       <td className="px-4 py-2 text-right text-xs text-s-muted">{fmtPkr(c.issuedAmountCents)}</td>
-                      <td className="px-4 py-2"><span className={`${STATUS_BADGE[c.status]} text-[10px]`}>{STATUS_LABEL[c.status]}</span></td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <span className={`${STATUS_BADGE[c.status]} text-[10px]`}>{STATUS_LABEL[c.status]}</span>
+                        {(c.breakageCents ?? 0) > 0 && <span className="ml-1 s-badge-muted text-[10px]">Breakage</span>}
+                        {c.status === 'expired' && !c.breakageAt && c.balanceCents > 0 && <span className="ml-1 s-badge-amber text-[10px]">Held</span>}
+                      </td>
                       <td className="px-4 py-2 text-xs text-s-muted whitespace-nowrap">{fmtDate(c.createdAt)}</td>
                     </tr>
                     {openId === c.id && (
                       <tr className="border-t border-s-border/50">
                         <td colSpan={6} className="p-0">
-                          <CardHistoryPanel id={c.id} canVoid={isManager} onVoid={(t) => setVoiding(t)} />
+                          <CardHistoryPanel id={c.id} row={c} canVoid={isManager} onVoid={(t) => setVoiding(t)} />
                         </td>
                       </tr>
                     )}
@@ -246,6 +295,7 @@ export default function GiftCardsPage() {
       {voiding && (
         <VoidModal
           target={voiding}
+          canForfeitSold={isCeo}
           onClose={() => setVoiding(null)}
           onDone={() => { setVoiding(null); refresh(); void qc.invalidateQueries({ queryKey: ['gift-card-history'] }) }}
         />
@@ -271,7 +321,8 @@ function BooksCheckPanel({ canBook, canSettle, onSettle, onChanged }: {
     queryFn: () => api.get<{ companies: BooksCheck[] }>('/gift-cards/reconcile'),
   })
   const companies = q.data?.companies ?? []
-  const off = companies.filter((c) => c.differenceCents !== 0 || c.voidedHoldingValue.count > 0)
+  const off = companies.filter((c) => c.differenceCents !== 0 || c.voidedHoldingValue.count > 0
+    || (c.expiredHoldingValue?.count ?? 0) > 0 || (c.breakageHeld?.count ?? 0) > 0)
 
   return (
     <div className="s-card p-4">
@@ -313,7 +364,18 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
         {c.spentWithoutOrder.count > 0 && <Row label={`Spent with no order (${c.spentWithoutOrder.count}, old redeem)`} value={fmtPkr(c.spentWithoutOrder.cents)} />}
         <Row label="2080 should hold" value={fmtPkr(c.expectedCents)} />
         <Row label="Difference" value={<span className={agrees ? 'text-success font-bold' : 'text-s-red font-bold'}>{agrees ? 'None' : fmtPkr(c.differenceCents)}</span>} />
+        {c.breakage && (
+          <Row label={`Breakage booked (${c.breakage.count} card${c.breakage.count === 1 ? '' : 's'})`} value={fmtPkr(c.breakage.cents)} />
+        )}
+        {c.breakageHeld && c.breakageHeld.count > 0 && (
+          <Row label={`Breakage held (${c.breakageHeld.count})`} value={fmtPkr(c.breakageHeld.cents)} />
+        )}
       </div>
+      {c.breakage && c.breakage.count > 0 && (
+        <p className="text-s-muted">
+          Breakage is the unused value of expired cards (and of sold cards the CEO kept): a sold card&apos;s goes to other income (4200), with no sales tax; a promotional card&apos;s goes back to Marketing &amp; Promo (6060).
+        </p>
+      )}
       {!agrees && (
         <p className="text-s-muted">
           {c.issueNotBooked.count > 0 && <>Cards whose sale never reached the books explain {fmtPkr(-c.issueNotBooked.cents)}. </>}
@@ -354,6 +416,40 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
                   Settle
                 </button>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {c.expiredHoldingValue && c.expiredHoldingValue.count > 0 && (
+        <div>
+          <p className="font-bold text-s-text mt-2">Expired cards holding money ({c.expiredHoldingValue.count} · {fmtPkr(c.expiredHoldingValue.cents)})</p>
+          <p className="text-s-muted mb-1">A refund put value back on a card after its breakage was booked. Breakage is taken once, so nobody can spend this — a manager settles it.</p>
+          {c.expiredHoldingValue.items.map((i) => (
+            <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 border-t border-s-border/50">
+              <span className="font-mono">{i.code}</span>
+              <span>{fmtPkr(i.balanceCents)}</span>
+              {i.expiredAt && <span className="text-s-muted">expired {fmtDate(i.expiredAt)}</span>}
+              {canSettle && (
+                <button onClick={() => onSettle({ id: i.id, tenantId: c.tenantId, code: i.code, kind: i.kind, balanceCents: i.balanceCents, settling: true })} className="s-btn-ghost text-xs">
+                  Settle
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {c.breakageHeld && c.breakageHeld.count > 0 && (
+        <div>
+          <p className="font-bold text-s-text mt-2">Breakage held ({c.breakageHeld.count} · {fmtPkr(c.breakageHeld.cents)})</p>
+          <p className="text-s-muted mb-1">These cards expired, but their unused value is still owed in 2080 until the breakage is booked.</p>
+          {c.breakageHeld.items.map((i) => (
+            <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 border-t border-s-border/50">
+              <span className="font-mono">{i.code}</span>
+              <span>{fmtPkr(i.balanceCents)}</span>
+              {i.kind === 'promotional' && <span className="s-badge-purple text-[10px]">Promo</span>}
+              <span className="text-s-muted">{heldLabel(i.reason)}{i.since ? ` (since ${fmtDate(i.since)})` : ''}</span>
             </div>
           ))}
         </div>
@@ -404,7 +500,7 @@ function BookIssueForm({ cardId, tenantId, onCancel, onDone }: { cardId: string;
 // ── One card ─────────────────────────────────────────────────────────────────
 // GET /gift-cards/:id/redemptions (the card's company only). A reversed line
 // is a redemption a refund put back on the card.
-function CardHistoryPanel({ id, canVoid: mayVoid, onVoid }: { id: string; canVoid: boolean; onVoid: (t: VoidTarget) => void }) {
+function CardHistoryPanel({ id, row, canVoid: mayVoid, onVoid }: { id: string; row: GiftCard; canVoid: boolean; onVoid: (t: VoidTarget) => void }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['gift-card-history', id],
     queryFn: () => api.get<CardHistory>(`/gift-cards/${id}/redemptions`),
@@ -423,15 +519,27 @@ function CardHistoryPanel({ id, canVoid: mayVoid, onVoid }: { id: string; canVoi
         </p>
         {mayVoid && canVoid(c) && c.tenantId && (
           <button
-            onClick={() => onVoid({ id: c.id, tenantId: c.tenantId!, code: c.code, kind: c.kind, balanceCents: c.balanceCents, settling: c.status === 'voided' })}
+            onClick={() => onVoid({ id: c.id, tenantId: c.tenantId!, code: c.code, kind: c.kind, balanceCents: c.balanceCents, settling: c.status === 'voided' || c.status === 'expired' })}
             className="s-btn-danger text-xs"
           >
-            {c.status === 'voided' ? 'Settle' : 'Void card'}
+            {c.status === 'voided' || c.status === 'expired' ? 'Settle' : 'Void card'}
           </button>
         )}
       </div>
       {c.status === 'voided' && c.balanceCents > 0 && (
         <p className="text-s-red">A refund put {fmtPkr(c.balanceCents)} back on this voided card. Nobody can spend it — settle it to pay the customer.</p>
+      )}
+      {(row.breakageCents ?? 0) > 0 && (
+        <p className="text-s-text">
+          Breakage {fmtPkr(row.breakageCents ?? 0)}{row.breakageAt ? ` on ${fmtDate(row.breakageAt)}` : ''} —{' '}
+          {c.kind === 'promotional' ? 'back to Marketing & Promo (6060).' : 'other income (4200), no sales tax.'}
+        </p>
+      )}
+      {c.status === 'expired' && !row.breakageAt && c.balanceCents > 0 && (
+        <p className="text-s-amber">Breakage of {fmtPkr(c.balanceCents)} {heldLabel(row.breakagePendingReason)}.</p>
+      )}
+      {c.status === 'expired' && row.breakageAt && c.balanceCents > 0 && (
+        <p className="text-s-red">A refund put {fmtPkr(c.balanceCents)} back on this card after it expired. Nobody can spend it — settle it.</p>
       )}
       {data.redemptions.length === 0 && <p className="text-s-muted">Not spent yet.</p>}
       {data.redemptions.map((r) => (
@@ -457,7 +565,7 @@ interface VoidTarget {
   settling: boolean
 }
 
-function VoidModal({ target, onClose, onDone }: { target: VoidTarget; onClose: () => void; onDone: () => void }) {
+function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTarget; canForfeitSold: boolean; onClose: () => void; onDone: () => void }) {
   const promo = target.kind === 'promotional'
   const [disposition, setDisposition] = useState<Disposition>(promo ? 'forfeit' : 'refund')
   const [refundMethod, setRefundMethod] = useState<Method>('cash')
@@ -478,7 +586,10 @@ function VoidModal({ target, onClose, onDone }: { target: VoidTarget; onClose: (
     : [
         { value: 'refund', label: 'Refund the customer', hint: 'Pay the balance back in cash, by card or by bank transfer.' },
         { value: 'payment_not_received', label: 'Payment never received', hint: 'Take the balance back off the account the sale was booked to (a bounced transfer, a reversed card payment).' },
-        { value: 'forfeit', label: 'Keep the money', hint: 'Not available yet — waiting for the owner and the accountant to decide how unused card money is booked and taxed.', disabled: true },
+        // H11: the CEO only (the API answers 403 FORFEIT_NEEDS_CEO to anyone else).
+        ...(canForfeitSold
+          ? [{ value: 'forfeit' as const, label: 'Keep the money (breakage — other income, no sales tax)', hint: 'The unused balance is booked as other income (4200). No sales tax: the card\'s sale was not a supply. The customer gets nothing back.' }]
+          : []),
       ]
 
   return (
@@ -492,6 +603,9 @@ function VoidModal({ target, onClose, onDone }: { target: VoidTarget; onClose: (
           <button onClick={onClose} aria-label="Close" className="text-2xl leading-none text-s-muted">×</button>
         </div>
         <div className="p-5 space-y-3 text-sm">
+          {!promo && !canForfeitSold && (
+            <p className="text-xs text-s-muted">Keeping the money on a sold card (breakage) is the CEO&apos;s call.</p>
+          )}
           <fieldset className="space-y-2">
             <legend className="text-xs text-s-muted mb-1">What happens to the {fmtPkr(target.balanceCents)}</legend>
             {options.map((o) => (

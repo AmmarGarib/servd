@@ -240,6 +240,40 @@ describe('OpEx payments: input tax by authority + withholding', () => {
     expect(unk.json()).toMatchObject({ whtCents: 900, filerStatus: 'unknown', needsAtlCheck: true })
   })
 
+  it('a paid payment\'s cash and WHT are facts: a paid-date fix or the input-tax authority alone keeps them, the override and its reason included', async () => {
+    const ov = await call('adminA', 'POST', '/opex/payments', { lineId, ...period(), invoiceCents: 110_000, inputTaxCents: 10_000, whtOverrideCents: 4_000, whtOverrideReason: 'Reduced-rate certificate 2026-15', paidAt: '2026-09-10' })
+    expect(ov.statusCode, ov.body).toBe(201)
+    const id = ov.json().id as string
+    const kept = { whtCents: 4_000, actualCents: 106_000, whtOverrideReason: 'Reduced-rate certificate 2026-15' }
+
+    const moved = await call('adminA', 'PATCH', `/opex/payments/${id}`, { paidAt: '2026-09-11' })
+    expect(moved.statusCode, moved.body).toBe(200)
+    expect(moved.json()).toMatchObject(kept)
+    const je = (await entry(`opex.payment:${id}@2`))!
+    expect(amt(je.rows, '1020', 'credit')).toBe(106_000)
+    expect(amt(je.rows, '2040', 'credit')).toBe(4_000)
+
+    const auth = await call('adminA', 'PATCH', `/opex/payments/${id}`, { inputTaxAuthority: 'pra' })
+    expect(auth.statusCode, auth.body).toBe(200)
+    expect(auth.json()).toMatchObject({ ...kept, inputTaxAuthority: 'pra' })
+
+    // The vendor turns non-filer later: an already-paid payment keeps what was withheld.
+    const vendor = await prisma.opexLine.findUniqueOrThrow({ where: { id: lineId }, select: { supplierId: true } })
+    const was = await prisma.supplier.findUniqueOrThrow({ where: { id: vendor.supplierId! }, select: { filerStatus: true } })
+    await prisma.supplier.update({ where: { id: vendor.supplierId! }, data: { filerStatus: 'non_filer' } })
+    try {
+      expect((await call('adminA', 'PATCH', `/opex/payments/${id}`, { paidAt: '2026-09-12' })).json()).toMatchObject(kept)
+      // Restating the invoice re-works the WHT — the stated override stays, and the filer status is the payment's snapshot.
+      const restated = await call('adminA', 'PATCH', `/opex/payments/${id}`, { invoiceCents: 120_000 })
+      expect(restated.json()).toMatchObject({ whtCents: 4_000, actualCents: 116_000, whtOverrideReason: 'Reduced-rate certificate 2026-15' })
+      // Clearing the override: the rate on the snapshot status (filer 9%), not today's non-filer rate.
+      const cleared = await call('adminA', 'PATCH', `/opex/payments/${id}`, { whtOverrideCents: null })
+      expect(cleared.json()).toMatchObject({ whtCents: 9_900, actualCents: 110_100, whtOverrideReason: null })
+    } finally {
+      await prisma.supplier.update({ where: { id: vendor.supplierId! }, data: { filerStatus: was.filerStatus } })
+    }
+  })
+
   it('a payroll category is still skipped (no posting, no withholding)', async () => {
     const payroll = await prisma.opexCategory.create({ data: { tenantId: tenantA, name: 'Payroll' } })
     const l = (await line(payroll.id, 'Contract staff', { supplierId: guardsA, whtSection: '153_1_b' })).json().id

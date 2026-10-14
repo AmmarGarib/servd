@@ -23,6 +23,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError, errorResponse } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { receivableRoutes } from '../src/modules/receivables/routes.js'
+import { recordTaxPayment, voidTaxPayment } from '../src/modules/accounting/taxPayments.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 // The PKT calendar day — the date a person in Karachi types (5 h ahead of UTC).
@@ -32,6 +33,7 @@ let app: FastifyInstance
 let tenantA: string, tenantB: string
 let conceptSD: string, conceptPB: string, conceptB: string
 const staff: Record<string, string> = {}
+const userId: Record<string, string> = {}
 
 async function mkStaff(key: string, role: UserRole, tenantId: string) {
   const u = await prisma.user.create({
@@ -39,6 +41,7 @@ async function mkStaff(key: string, role: UserRole, tenantId: string) {
   })
   await prisma.tenantMember.create({ data: { tenantId, userId: u.id } })
   staff[key] = (issueStaffSession(u) as { accessToken: string }).accessToken
+  userId[key] = u.id
 }
 const call = (who: string, method: 'GET' | 'POST', url: string, payload?: unknown) =>
   app.inject({ method, url, payload: payload as never, headers: { authorization: `Bearer ${staff[who]}` } })
@@ -203,6 +206,32 @@ describe('sales tax the client withheld (H13)', () => {
     // Reversed rows no longer count against the cap.
     expect((await withhold('finA', i.id, { kind: 'sales_tax', amountCents: 16_000 })).statusCode).toBe(201)
     expect((await call('finA', 'POST', `${AR}/${i.id}/payments/${w.id}/reverse`, { reason: 'certificate withdrawn' })).json().alreadyReversed).toBe(true)
+  })
+
+  it('withholding already set off in a sales-tax payment cannot be reversed (409) until that payment is voided', async () => {
+    const i = await raise('finA')
+    const w = (await withhold('finA', i.id, { kind: 'sales_tax', amountCents: 3_200 })).json() as { id: string }
+    const before1335 = await netDebit(tenantA, '1335')
+    // Every other live SRB withholding of A is set off too, so this one is certainly used.
+    const live = await prisma.receivablePayment.aggregate({ where: { tenantId: tenantA, method: 'st_withheld', taxAuthority: 'srb', reversedAt: null }, _sum: { amountCents: true } })
+    const used = await prisma.salesTaxPayment.aggregate({ where: { tenantId: tenantA, authority: 'srb' }, _sum: { customerWithheldSetOffCents: true } })
+    const setOff = Number(live._sum.amountCents ?? 0) - Number(used._sum.customerWithheldSetOffCents ?? 0)
+    const pay = await recordTaxPayment({
+      tenantId: tenantA, authority: 'srb', periodFrom: '2024-01-01', periodTo: '2024-01-31', paidCents: 0, inputSetOffCents: 0,
+      customerWithheldSetOffCents: setOff, paidAt: today(), method: 'bank_transfer', bankAccountId: null, cprNumber: null, notes: null, userId: userId.finA!,
+    })
+    const rev = await call('finA', 'POST', `${AR}/${i.id}/payments/${w.id}/reverse`, { reason: 'certificate withdrawn' })
+    expect(rev.statusCode, rev.body).toBe(409)
+    expect(rev.json().error.code).toBe('WITHHELD_ALREADY_SET_OFF')
+    const row = await prisma.receivablePayment.findUniqueOrThrow({ where: { id: w.id } })
+    expect(row.reversedAt).toBeNull()
+    expect(Number((await inv(i.id)).whtCents)).toBe(3_200)
+    expect(await netDebit(tenantA, '1335')).toBe(before1335 - setOff)        // never driven into credit by the reversal
+
+    await voidTaxPayment({ scope: { tenantId: tenantA }, id: pay.id, reason: 'set off in error', userId: userId.finA! })
+    const ok = await call('finA', 'POST', `${AR}/${i.id}/payments/${w.id}/reverse`, { reason: 'certificate withdrawn' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(await netDebit(tenantA, '1335')).toBe(before1335 - 3_200)
   })
 
   it('company B gets 404 on A\'s invoice', async () => {

@@ -3,6 +3,13 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { canOpenPath } from '../../../lib/moduleCatalog'
+import { usePermissions } from '../../../hooks/useCan'
+
+// Withholding RATES live on Accounting → Sales tax return → Withholding rates
+// (PUT /accounting/withholding/rates is their one writer); only the on/off
+// switch stays here, so this page never sends withholdingTaxPct.
+const WHT_RATES_HREF = '/accounting/sales-tax-return?tab=withholding-rates'
 
 interface Cfg {
   id: string
@@ -14,8 +21,9 @@ interface Cfg {
   invoiceSequenceReset: 'yearly' | 'monthly' | 'never'
   invoiceCreditNotePrefix: string | null
   withholdingTaxEnabled: boolean
-  withholdingTaxPct: number
   withholdingTaxRecoverable: boolean
+  /** Cash requests (H3): receipts are due within this many days of the payout (1–365). */
+  cashAdvanceSettleDays: number
   geofenceEnforced: boolean
   geofenceRadiusMetres: number
   selfieRequiredAtClockIn: boolean
@@ -40,13 +48,23 @@ const CHANNELS = ['pos', 'storefront', 'whatsapp']
 export default function OperationsPage() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery<Cfg>({ queryKey: ['operations-config'], queryFn: () => api.get('/setup/operations-config') })
+  const { data: me } = usePermissions()
+  const canOpenRates = !!me && canOpenPath('/accounting/sales-tax-return', me.role, me.modules ?? [])
   const [form, setForm] = useState<Partial<Cfg>>({})
   useEffect(() => { if (data) setForm(data) }, [data])
   const save = useMutation({
-    mutationFn: () => api.patch('/setup/operations-config', form),
+    // Only the keys PATCH /setup/operations-config takes (never the id, never
+    // the old withholdingTaxPct).
+    mutationFn: () => {
+      const body: Partial<Cfg> = {}
+      for (const k of EDITABLE) if (form[k] !== undefined) (body as Record<string, unknown>)[k] = form[k]
+      return api.patch('/setup/operations-config', body)
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['operations-config'] }),
   })
   const saveError = save.error as Error | null
+  const settleDays = form.cashAdvanceSettleDays
+  const settleDaysBad = settleDays !== undefined && (!Number.isInteger(settleDays) || settleDays < 1 || settleDays > 365)
 
   if (isLoading) return <div className="p-8 text-white/60">Loading…</div>
   function patch<K extends keyof Cfg>(k: K, v: Cfg[K]) { setForm((p) => ({ ...p, [k]: v })) }
@@ -59,15 +77,15 @@ export default function OperationsPage() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
-      <header className="px-7 py-6 border-b border-white/[0.05]">
+      <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <h1 className="text-2xl font-black text-white/90 mt-2">⚙️ Operations rules</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Operations rules</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
-          Service charge, tip pool distribution, invoice numbering, withholding tax — the rules the platform enforces in the background.
+          Service charge, tip pool distribution, invoice numbering, withholding tax, cash requests — the rules the platform enforces in the background.
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
+      <div className="px-4 sm:px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Service charge" desc="Auto-added to subtotal for selected channels">
           <Field label="Rate (0.05 = 5%)">
             <input type="number" step="0.005" min={0} max={1} value={form.serviceChargePct ?? 0} onChange={(e) => patch('serviceChargePct', parseFloat(e.target.value) || 0)} className={fieldCls} />
@@ -102,7 +120,7 @@ export default function OperationsPage() {
           <div>
             <label className="text-xs text-white/55">Who is in the pool, and their weight</label>
             <p className="text-[10px] text-white/30 mt-0.5">0 = not in the pool. Weights multiply hours when the split is by role; with the other splits they only decide who is in.</p>
-            <div className="grid grid-cols-2 gap-2 mt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
               {TIP_ROLES.map((r) => (
                 <label key={r.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-1.5" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <span className="text-xs text-white/70">{r.label}</span>
@@ -141,16 +159,36 @@ export default function OperationsPage() {
 
         <Section title="Withholding tax (Section 153, etc.)">
           <Toggle label="Enable withholding" checked={!!form.withholdingTaxEnabled} onChange={(v) => patch('withholdingTaxEnabled', v)} />
-          <Field label="Rate (0.045 = 4.5%)">
-            <input type="number" step="0.001" min={0} max={1} value={form.withholdingTaxPct ?? 0} onChange={(e) => patch('withholdingTaxPct', parseFloat(e.target.value) || 0)} className={fieldCls} />
-            <p className="text-[10px] text-white/30 mt-1">{((form.withholdingTaxPct ?? 0) * 100).toFixed(2)}%</p>
-          </Field>
+          <div>
+            <p className="text-xs text-white/55">Rates</p>
+            <p className="text-xs text-white/45 mt-1">
+              Each section&apos;s filer and non-filer rate (goods, services, rent and the rest) is set per company on{' '}
+              {canOpenRates
+                ? <Link href={WHT_RATES_HREF} className="font-semibold underline" style={{ color: 'var(--erp-primary)' }}>Accounting → Sales tax return → Withholding rates</Link>
+                : <span className="font-semibold">Accounting → Sales tax return → Withholding rates</span>}.
+              Bills, OpEx and CapEx payments take the rate from there.
+            </p>
+          </div>
           <Toggle label="Recoverable (asset, not expense)" checked={!!form.withholdingTaxRecoverable} onChange={(v) => patch('withholdingTaxRecoverable', v)} />
         </Section>
 
+        <Section title="Cash requests" desc="Money paid out of a petty-cash box against a cash request is an advance until its receipts are uploaded.">
+          <Field label="Receipts due within (days)">
+            <input type="number" min={1} max={365} step={1} inputMode="numeric"
+              value={settleDays === undefined ? 30 : Number.isNaN(settleDays) ? '' : settleDays}
+              onChange={(e) => patch('cashAdvanceSettleDays', e.target.value === '' ? Number.NaN : Number(e.target.value))}
+              className={fieldCls} />
+            <p className="text-[10px] text-white/40 mt-1">
+              1 to 365 days after the money is paid out. Whatever is still open after that becomes a staff advance or the director&apos;s current account.
+            </p>
+            {settleDaysBad && <p className="text-xs text-red-700 mt-1">Give a whole number of days from 1 to 365.</p>}
+          </Field>
+        </Section>
+
         <div className="flex justify-end items-center gap-3 pt-4 border-t border-white/[0.05]">
-          {saveError && <p className="text-xs text-red-700 mr-auto">{saveError.message}</p>}
-          <button onClick={() => save.mutate()} disabled={save.isPending}
+          {saveError && <p className="text-xs text-red-700 mr-auto">{errorText(saveError)}</p>}
+          {save.isSuccess && !save.isPending && !saveError && <p className="text-xs text-success mr-auto">Saved.</p>}
+          <button onClick={() => save.mutate()} disabled={save.isPending || settleDaysBad}
             className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save changes'}
           </button>
@@ -158,6 +196,20 @@ export default function OperationsPage() {
       </div>
     </div>
   )
+}
+
+const EDITABLE: Array<keyof Cfg> = [
+  'serviceChargePct', 'serviceChargeAppliesToChannels', 'tipPoolEnabled', 'tipPoolDistribution', 'tipPoolRoleWeights',
+  'invoiceSequenceReset', 'invoiceCreditNotePrefix', 'withholdingTaxEnabled', 'withholdingTaxRecoverable',
+  'geofenceEnforced', 'geofenceRadiusMetres', 'selfieRequiredAtClockIn', 'cashAdvanceSettleDays',
+]
+
+function errorText(e: Error): string {
+  const code = (e as Error & { code?: string }).code
+  if (code === 'NO_LOCATED_BRANCH') return 'Set the map pin on at least one of this company\'s locations (Configuration → Locations) before switching the clock-in fence on.'
+  if (code === 'FORBIDDEN') return 'Only the CEO or the owner can change these rules.'
+  if (code === 'VALIDATION_ERROR') return 'One of the values is out of range — check the numbers and try again.'
+  return e.message
 }
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {

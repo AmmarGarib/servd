@@ -45,6 +45,16 @@
 // cancel never collide. A company not cut over yet (the cut-over module not
 // installed) keeps the old path end to end.
 //
+// COST OF SALES ALREADY BOOKED — an order's cost of sales is booked ONCE, from
+// its lot movements, by its 'order.complete' entry or (a till order) its home
+// drawer's 'shift.close' (accounting/cogs.ts orderCostBookedAt). A stock event
+// after that is not in that entry, so it moves cost of sales itself (see
+// "Cost of sales moved after the order's cost was booked" below): a give-back
+// Dr 12x0 / Cr 50x0, a late draw Dr 50x0 / Cr 12x0, and a fired line wasted
+// Dr 5040 / Cr 50x0 instead of Cr 12x0 (voidWaste.ts). A cancelled order that
+// was never booked takes the late-receipt settles of its shortfalls (already
+// Dr 50x0 / Cr 12x0 by their own posting) back out of cost of sales.
+//
 // Failures never block a sale or a cancel: they are flagged
 // 'stock_restore_failed' in the order's company (never only logged).
 
@@ -53,11 +63,17 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { flagException } from '../../lib/exceptions.js'
+import { orderRefOf } from '../../lib/orderRef.js'
+import { sumCents, toCents } from '../../lib/money.js'
+import { withSavepoint } from '../../lib/savepoint.js'
+import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { consumptionPerLine, type ExcludedItem, type NeedRow, type SoldLine } from '../../lib/recipeCost.js'
 import {
   addLotTx, consumeFifoTx, ensureFifoReady, lockItemsTx, readFifoCutoverAt, returnToLotsTx, STOCK_EPS, STOCK_SOURCE,
 } from '../../lib/stockLedger.js'
 import { lineNetOutRowsTx, wasteSoldLineTx, VOID_WASTE_SOURCE, type SoldLineWasteResult } from '../inventory/voidWaste.js'
+import { orderCostBookedAt } from '../accounting/cogs.js'
+import { postJournalEntry, withLateNote, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -125,21 +141,36 @@ function soldLine(l: OrderLine, o: { boxGiven?: boolean } = {}): SoldLine {
 
 /**
  * A stock step for an order failed after (or outside) its transaction: flag it
- * 'stock_restore_failed' in the order's company — once per (order, phase)
- * while open. Never throws.
+ * 'stock_restore_failed' in the order's company. A whole-order step
+ * ('deplete', 'restore') is flagged on the Order, once per (order, phase)
+ * while open. A line step ('remake', 'box_given' — pass `orderItemId`) is
+ * flagged on the OrderItem, once per (line, phase) while open, with
+ * metadata { phase, orderId, orderItemId, failures } — `failures` counts every
+ * failed attempt on that line while the flag is open (two failed recalls of
+ * one line = two remakes owed). Never throws.
  */
 export async function flagOrderStockFailure(
-  orderId: string, phase: 'deplete' | 'restore' | 'remake' | 'box_given', err: unknown, actorId?: string | null,
+  orderId: string, phase: 'deplete' | 'restore' | 'remake' | 'box_given', err: unknown, actorId?: string | null, orderItemId?: string | null,
 ): Promise<void> {
   try {
     const message = (err as Error)?.message ?? String(err)
-    console.error(`[inventory] ${phase} failed for order ${orderId}:`, message)
+    console.error(`[inventory] ${phase} failed for order ${orderId}${orderItemId ? ` line ${orderItemId}` : ''}:`, message)
     const o = await prisma.order.findUnique({ where: { id: orderId }, select: { conceptId: true, concept: { select: { tenantId: true } } } })
+    const onLine = !!orderItemId && (phase === 'remake' || phase === 'box_given')
+    const entityType = onLine ? 'OrderItem' : 'Order'
+    const entityId = onLine ? orderItemId! : orderId
     const open = await prisma.exceptionFlag.findFirst({
-      where: { kind: 'stock_restore_failed', entityType: 'Order', entityId: orderId, status: { in: ['open', 'acknowledged'] }, metadata: { path: ['phase'], equals: phase } },
-      select: { id: true },
+      where: { kind: 'stock_restore_failed', entityType, entityId, status: { in: ['open', 'acknowledged'] }, metadata: { path: ['phase'], equals: phase } },
+      select: { id: true, metadata: true },
     })
-    if (open) return
+    if (open) {
+      if (onLine) {
+        const meta = (open.metadata && typeof open.metadata === 'object' && !Array.isArray(open.metadata) ? open.metadata : {}) as Record<string, unknown>
+        const failures = (typeof meta.failures === 'number' ? meta.failures : 1) + 1
+        await prisma.exceptionFlag.update({ where: { id: open.id }, data: { metadata: { ...meta, failures, error: message.slice(0, 500) } as Prisma.InputJsonValue } })
+      }
+      return
+    }
     const what: Record<typeof phase, string> = {
       deplete: 'Stock was not taken out for an order',
       restore: 'A cancelled order\'s stock was not returned or wasted',
@@ -151,13 +182,15 @@ export async function flagOrderStockFailure(
       kind: 'stock_restore_failed',
       severity: 'high',
       title: what[phase],
-      description: `Order ${orderId.slice(-8).toUpperCase()}: ${message.slice(0, 400)}. The lots and the food-cost report are off by this order until it is fixed — `
+      description: `Order ${orderRefOf(orderId)}${onLine ? ` (line ${orderItemId!.slice(-8).toUpperCase()})` : ''}: ${message.slice(0, 400)}. The lots and the food-cost report are off by this order until it is fixed — `
         + 'fix the cause (for example the item\'s company, or the FIFO cut-over), then re-run it from Reconciliation.',
-      entityType: 'Order',
-      entityId: orderId,
+      entityType,
+      entityId,
       conceptId: o?.conceptId ?? null,
       actorId: actorId ?? null,
-      metadata: { phase, error: message.slice(0, 500) },
+      metadata: onLine
+        ? { phase, orderId, orderItemId: orderItemId!, failures: 1, error: message.slice(0, 500) }
+        : { phase, error: message.slice(0, 500) },
     })
   } catch (e) {
     console.error(`[inventory] could not flag the ${phase} failure of order ${orderId}:`, (e as Error).message)
@@ -234,7 +267,7 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
     const order = await tx.order.findUniqueOrThrow({
       where: { id: orderId },
       select: {
-        id: true, conceptId: true, locationId: true, fulfilmentType: true, concept: { select: { serviceVessel: true } },
+        id: true, conceptId: true, locationId: true, fulfilmentType: true, placedAt: true, concept: { select: { serviceVessel: true } },
         items: { select: ORDER_LINE_SELECT, orderBy: { id: 'asc' } },
       },
     })
@@ -255,6 +288,7 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
     const takenByLine: Record<string, Record<string, number>> = {}
     const shortfall: Record<string, number> = {}
     const touched = new Set<string>()
+    const drawnByClass = zeroByClass()
     for (const p of plans) {
       const draws: Array<[string, NeedRow, string, string]> = [
         ...[...p.sale].map(([id, r]) => [id, r, ORDER_STOCK_SOURCE.sale, p.line.id] as [string, NeedRow, string, string]),
@@ -271,6 +305,7 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
           const byItem = (takenByLine[p.line.id] ??= {})
           byItem[itemId] = (byItem[itemId] ?? 0) + r.takenQty
         }
+        for (const row of r.rows) drawnByClass[row.costClass] += -row.valueCents
         if (r.shortfallQty > 0) {
           shortfall[itemId] = (shortfall[itemId] ?? 0) + r.shortfallQty
           console.warn(`[inventory] item ${itemId} short on order ${orderId}: needed ${need.qty.toFixed(4)}, ${r.shortfallQty.toFixed(4)} not on the books (recorded)`)
@@ -282,6 +317,15 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
     // "this sale ran out".
     const after = touched.size === 0 ? [] : await tx.inventoryItem.findMany({ where: { id: { in: [...touched] } }, select: { id: true, currentStock: true } })
     const ranOut = after.filter((i) => i.currentStock <= STOCK_EPS).map((i) => i.id)
+    // A depletion that runs AFTER the order's cost was booked (a failed one
+    // re-run once fixed, a staff meal on a booked ticket): the booked entry
+    // read no movements, so this draw books its own cost of sales
+    // ('order.cogs_late:<order>', the amount kept on the claim row). An order
+    // placed before the cut-over was booked at its old plate cost instead —
+    // that already is its cost.
+    const cutoverAt = await readFifoCutoverAt(tx, tenantId)
+    const late = COST_CLASSES.some((c) => drawnByClass[c] !== 0) && !!cutoverAt && order.placedAt >= cutoverAt
+      && !!(await orderCostBookedAt(tx, tenantId, orderId))
     await tx.auditLog.create({
       data: {
         category: 'stock',
@@ -289,12 +333,17 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
         action: STOCK_DEPLETE,
         entity: 'Order',
         entityId: orderId,
-        metadata: { mode: 'fifo', taken: takenByLine, shortfall, excluded: excluded.map((e) => ({ itemId: e.itemId, reason: e.reason })) } as Prisma.InputJsonValue,
+        metadata: {
+          mode: 'fifo', taken: takenByLine, shortfall, excluded: excluded.map((e) => ({ itemId: e.itemId, reason: e.reason })),
+          ...(late ? { lateCogs: drawnByClass } : {}),
+        } as Prisma.InputJsonValue,
       },
     })
-    return { ranOut, excluded, conceptId: order.conceptId }
+    const fix = late ? await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.late, orderId, null) : null
+    return { ranOut, excluded, conceptId: order.conceptId, fix }
   }, TX_OPTS)
   if (!result) return
+  await flagOrderCogsFixFailures([result.fix])
   if (result.excluded.length > 0) await flagForeignStock(tenantId, result.conceptId, result.excluded)
   // Auto-86: a sale that took an ingredient to zero switches off every dish
   // that depends on it (cross-channel: storefront + KDS read isAvailable).
@@ -370,6 +419,238 @@ export async function ensureOrderDepleted(orderId: string): Promise<void> {
   }
 }
 
+// ─── Cost of sales moved after the order's cost was booked ───────────────────
+//
+// Each stock event below books itself once, keyed '<sourceType>:<sourceId>',
+// in the ORDER's company, both lines tagged with the order's brand, inside the
+// event's own transaction behind a savepoint (a refusal is flagged
+// posting_failed after commit; orderCogsFixDoc re-posts the SAME entry):
+//
+//   order_item.return:<line>          an unfired line given back       Dr 12x0 / Cr 50x0
+//   order_item.box_given:<line@ms>    "Box given" packaging drawn      Dr 50x0 / Cr 12x0
+//   order_item.box_given_undo:<tap>   that packaging given back        Dr 12x0 / Cr 50x0
+//   order.legacy_return:<key>         a pre-cut-over give-back lot     Dr 12x0 / Cr 50x0
+//   order.cogs_late:<order>           a depletion that ran late        Dr 50x0 / Cr 12x0
+//
+// — each ONLY when the order's cost was booked before the event
+// (orderCostBookedAt ≤ the event's movements; a late depletion records its
+// amount on its claim row). Otherwise the event's movements are read by the
+// order's own booking when it comes (cogsLinesForOrders nets sale_return /
+// sale_void), or the order never sells and its rows simply stay out of the GL.
+//
+//   order.cancel_settle:<order>       a cancelled order that was NEVER booked:
+//                                     the late-receipt settles of its
+//                                     shortfalls were each posted Dr 50x0 /
+//                                     Cr 12x0 at the receipt; the cancel gave
+//                                     that stock back (or wasted it), so it
+//                                     comes back out of cost of sales
+//                                                                      Dr 12x0 / Cr 50x0
+//
+// Amounts come from the movements themselves, so a re-post books exactly what
+// the live path did.
+
+export const ORDER_COGS_FIX = {
+  ret:          ORDER_STOCK_SOURCE.ret,
+  boxGiven:     ORDER_STOCK_SOURCE.boxGiven,
+  boxUndo:      ORDER_STOCK_SOURCE.boxUndo,
+  legacy:       ORDER_STOCK_SOURCE.legacy,
+  late:         'order.cogs_late',
+  cancelSettle: 'order.cancel_settle',
+} as const
+export type OrderCogsFixSource = typeof ORDER_COGS_FIX[keyof typeof ORDER_COGS_FIX]
+export const ORDER_COGS_FIX_SOURCES: readonly OrderCogsFixSource[] = Object.values(ORDER_COGS_FIX)
+
+/** The flag entity of each fix (its entityId is the fix's sourceId) — the Backfill re-poster's key. */
+export const ORDER_COGS_FIX_ENTITY: Readonly<Record<OrderCogsFixSource, string>> = {
+  [ORDER_COGS_FIX.ret]: 'OrderItem',
+  [ORDER_COGS_FIX.boxGiven]: 'OrderItemBox',
+  [ORDER_COGS_FIX.boxUndo]: 'OrderItemBox',
+  [ORDER_COGS_FIX.legacy]: 'OrderLegacyReturn',
+  [ORDER_COGS_FIX.late]: 'Order',
+  [ORDER_COGS_FIX.cancelSettle]: 'Order',
+}
+
+/** Poster reasons that mean there is nothing to post (a re-poster closes the flag). */
+export const ORDER_COGS_FIX_NOTHING: ReadonlySet<string> = new Set(['order_not_found', 'not_booked', 'booked', 'not_late', 'not_dead', 'not_restored', 'zero_cost'])
+
+const FIX_WHAT: Record<OrderCogsFixSource, string> = {
+  [ORDER_COGS_FIX.ret]: 'an unfired line given back after its cost was booked',
+  [ORDER_COGS_FIX.boxGiven]: '"Box given" packaging taken after the cost was booked',
+  [ORDER_COGS_FIX.boxUndo]: '"Box given" packaging given back after the cost was booked',
+  [ORDER_COGS_FIX.legacy]: 'stock given back after the cost was booked',
+  [ORDER_COGS_FIX.late]: 'stock taken out after the cost was booked',
+  [ORDER_COGS_FIX.cancelSettle]: 'late-receipt settles of a cancelled order back out of cost of sales',
+}
+
+const asCostClass = (v: string): CostClass => ((COST_CLASSES as readonly string[]).includes(v) ? (v as CostClass) : 'food')
+
+/** The order a fix belongs to. */
+async function fixOrderIdOf(db: Tx | typeof prisma, sourceType: OrderCogsFixSource, sourceId: string): Promise<string | null> {
+  const lineOrder = async (lineId: string) => (await db.orderItem.findUnique({ where: { id: lineId }, select: { orderId: true } }))?.orderId ?? null
+  switch (sourceType) {
+    case ORDER_COGS_FIX.late:
+    case ORDER_COGS_FIX.cancelSettle: return sourceId
+    case ORDER_COGS_FIX.ret: return lineOrder(sourceId)
+    case ORDER_COGS_FIX.boxGiven:
+    case ORDER_COGS_FIX.boxUndo: return lineOrder(sourceId.split('@')[0] ?? '')
+    case ORDER_COGS_FIX.legacy:
+      if (sourceId.endsWith(':cancel')) return sourceId.slice(0, -':cancel'.length)
+      if (sourceId.endsWith(':void')) return lineOrder(sourceId.slice(0, -':void'.length))
+      return null
+    default: return null
+  }
+}
+
+interface DerivedFix {
+  /** Set when nothing is owed (ORDER_COGS_FIX_NOTHING). */
+  reason?: string
+  orderId: string | null
+  conceptId: string | null
+  /** When the event happened (its movements / claim row). */
+  eventAt: Date | null
+  lines: JournalLineInput[]
+  amountCents: number
+  description: string
+}
+
+/** Whether a fix is owed and its lines — re-derived from the movements (a late depletion: its claim row). */
+async function deriveOrderCogsFix(db: Tx | typeof prisma, tenantId: string, sourceType: OrderCogsFixSource, sourceId: string): Promise<DerivedFix> {
+  const none = (reason: string, orderId: string | null = null, conceptId: string | null = null, eventAt: Date | null = null): DerivedFix =>
+    ({ reason, orderId, conceptId, eventAt, lines: [], amountCents: 0, description: '' })
+  const orderId = await fixOrderIdOf(db, sourceType, sourceId)
+  const order = orderId ? await db.order.findUnique({
+    where: { id: orderId }, select: { id: true, conceptId: true, status: true, concept: { select: { tenantId: true, slug: true } } },
+  }) : null
+  if (!order || order.concept.tenantId !== tenantId) return none('order_not_found')
+  const bookedAt = await orderCostBookedAt(db, tenantId, order.id)
+  // + = taken out (Dr 50x0 / Cr 12x0); − = given back (Dr 12x0 / Cr 50x0).
+  const byClass = zeroByClass()
+  let eventAt: Date | null = null
+  if (sourceType === ORDER_COGS_FIX.late) {
+    const claim = await db.auditLog.findFirst({ where: { entity: 'Order', entityId: order.id, action: STOCK_DEPLETE }, select: { metadata: true, createdAt: true } })
+    const late = (claim?.metadata && typeof claim.metadata === 'object' && !Array.isArray(claim.metadata)
+      ? (claim.metadata as { lateCogs?: Record<string, unknown> }).lateCogs : undefined)
+    if (!claim || !late) return none('not_late', order.id, order.conceptId)
+    eventAt = claim.createdAt
+    for (const c of COST_CLASSES) byClass[c] = Math.round(Number(late[c] ?? 0)) || 0
+  } else if (sourceType === ORDER_COGS_FIX.cancelSettle) {
+    if (!NO_SALE.includes(order.status)) return none('not_dead', order.id, order.conceptId)
+    const restore = await db.auditLog.findFirst({ where: { entity: 'Order', entityId: order.id, action: STOCK_RESTORE }, select: { metadata: true, createdAt: true } })
+    if (!restore || !isFifoClaim(restore.metadata)) return none('not_restored', order.id, order.conceptId)
+    eventAt = restore.createdAt
+    if (bookedAt && bookedAt <= restore.createdAt) return none('booked', order.id, order.conceptId, eventAt)
+    const sums = await db.stockMovement.groupBy({ by: ['costClass'], where: { tenantId, orderId: order.id, kind: 'shortfall_settle' }, _sum: { valueCents: true } })
+    for (const s of sums) byClass[asCostClass(s.costClass)] += sumCents(s._sum.valueCents)   // settles are negative: given back
+  } else {
+    const rows = await db.stockMovement.findMany({
+      where: { tenantId, sourceType, sourceId, kind: { in: ['sale', 'sale_return', 'legacy_return'] } },
+      select: { costClass: true, valueCents: true, createdAt: true },
+    })
+    if (rows.length === 0) return none('zero_cost', order.id, order.conceptId)
+    eventAt = rows.reduce((m, r) => (r.createdAt < m ? r.createdAt : m), rows[0]!.createdAt)
+    if (!bookedAt || bookedAt > eventAt) return none('not_booked', order.id, order.conceptId, eventAt)
+    for (const r of rows) byClass[asCostClass(r.costClass)] += -toCents(r.valueCents)
+  }
+
+  const ref = `${order.concept.slug} #${orderRefOf(order.id)}`
+  const lines: JournalLineInput[] = []
+  let amountCents = 0
+  for (const c of COST_CLASSES) {
+    const v = byClass[c]
+    if (v === 0) continue
+    const { inv, cogs } = CLASS_ACCOUNTS[c]
+    const label = CLASS_LABEL[c]
+    amountCents += Math.abs(v)
+    if (v > 0) {
+      lines.push({ accountCode: cogs, type: 'debit', amountCents: v, memo: `COGS (${label}) ${ref} — ${FIX_WHAT[sourceType]}`.slice(0, 250), conceptId: order.conceptId })
+      lines.push({ accountCode: inv, type: 'credit', amountCents: v, memo: `Inventory used (${label}) ${ref}`.slice(0, 250), conceptId: order.conceptId })
+    } else {
+      lines.push({ accountCode: inv, type: 'debit', amountCents: -v, memo: `Inventory back (${label}) ${ref}`.slice(0, 250), conceptId: order.conceptId })
+      lines.push({ accountCode: cogs, type: 'credit', amountCents: -v, memo: `COGS returned (${label}) ${ref} — ${FIX_WHAT[sourceType]}`.slice(0, 250), conceptId: order.conceptId })
+    }
+  }
+  if (lines.length === 0) return none('zero_cost', order.id, order.conceptId, eventAt)
+  return { orderId: order.id, conceptId: order.conceptId, eventAt, lines, amountCents, description: `Cost of sales — order ${ref}: ${FIX_WHAT[sourceType]}` }
+}
+
+/**
+ * THE poster of the entries above: re-derives whether the event is owed and
+ * its amount by class (deriveOrderCogsFix), and posts it once under
+ * '<sourceType>:<sourceId>' in `tenantId` (the order's company). Dated now
+ * unless `entryDate` is given (a re-post into the open month names the
+ * original date via `memoNote`). Throws what postJournalEntry throws.
+ */
+export async function postOrderCogsFix(
+  tenantId: string, sourceType: OrderCogsFixSource, sourceId: string, opts: RepostOptions & { tx?: Tx } = {},
+): Promise<{ posted: boolean; entryId: string | null; reason?: string; amountCents: number }> {
+  const d = await deriveOrderCogsFix(opts.tx ?? prisma, tenantId, sourceType, sourceId)
+  if (d.reason) return { posted: false, entryId: null, reason: d.reason, amountCents: 0 }
+  const late = withLateNote(d.description, d.lines, opts.memoNote)
+  const r = await postJournalEntry({
+    tenantId, sourceType, sourceId, description: late.description,
+    entryDate: opts.entryDate ?? new Date(), postedBy: opts.postedBy ?? 'system', lines: late.lines,
+  }, { tx: opts.tx })
+  return { posted: r.posted, entryId: r.entryId, amountCents: d.amountCents }
+}
+
+/** A cost-of-sales fix the ledger refused inside an event's transaction — flag it after commit (flagOrderCogsFixFailures). */
+export interface OrderCogsFixFailure { tenantId: string; sourceType: OrderCogsFixSource; sourceId: string; error: AppError }
+
+/** Post one fix inside the event's transaction, behind a savepoint. Returns the refusal, if any. */
+async function bookCogsFixTx(tx: Tx, tenantId: string, sourceType: OrderCogsFixSource, sourceId: string, actorId: string | null): Promise<OrderCogsFixFailure | null> {
+  const r = await withSavepoint(tx, 'order_cogs_fix', () => postOrderCogsFix(tenantId, sourceType, sourceId, { tx, postedBy: actorId ?? 'system' }))
+  if (r.ok) return null
+  return { tenantId, sourceType, sourceId, error: r.error instanceof AppError ? r.error : new AppError('POSTING_FAILED', r.error.message, 500) }
+}
+
+/** Flag refused cost-of-sales fixes (posting_failed, once per event) so Backfill unposted re-posts the SAME entry. Never throws. */
+export async function flagOrderCogsFixFailures(failures: Array<OrderCogsFixFailure | null | undefined>, actorId?: string | null): Promise<void> {
+  const list = failures.filter((f): f is OrderCogsFixFailure => !!f)
+  if (list.length === 0) return
+  const { flagPostingFailed } = await import('../accounting/journal.js')
+  for (const f of list) {
+    const orderId = await fixOrderIdOf(prisma, f.sourceType, f.sourceId).catch(() => null)
+    const o = orderId ? await prisma.order.findUnique({ where: { id: orderId }, select: { conceptId: true } }).catch(() => null) : null
+    await flagPostingFailed({
+      tenantId: f.tenantId,
+      sourceType: f.sourceType,
+      sourceId: f.sourceId,
+      entityType: ORDER_COGS_FIX_ENTITY[f.sourceType],
+      entityId: f.sourceId,
+      reason: `${f.error.code}: ${f.error.message}`,
+      title: `Cost of sales not moved for ${FIX_WHAT[f.sourceType]} (${f.error.code})`,
+      conceptId: o?.conceptId ?? null,
+      actorId: actorId ?? null,
+      metadata: { orderId, code: f.error.code },
+    })
+  }
+}
+
+/**
+ * The Backfill re-poster's view of one fix (reconciliation/backfillOrders.ts
+ * REPOSTERS — w4-integration wires it): the order's company, the event's date,
+ * and a post that re-derives and posts the same entry.
+ */
+export async function orderCogsFixDoc(sourceType: OrderCogsFixSource, sourceId: string): Promise<{
+  tenantId: string | null; date: Date | null; orderId: string | null; what: string; amountCents: number | null; nothingOwed?: string
+  post: (opts: RepostOptions) => Promise<{ posted: boolean; entryId: string | null; reason?: string }>
+} | null> {
+  const orderId = await fixOrderIdOf(prisma, sourceType, sourceId)
+  const order = orderId ? await prisma.order.findUnique({ where: { id: orderId }, select: { id: true, concept: { select: { tenantId: true } } } }) : null
+  if (!order) return null
+  const tenantId = order.concept.tenantId
+  const d = tenantId ? await deriveOrderCogsFix(prisma, tenantId, sourceType, sourceId) : null
+  return {
+    tenantId,
+    date: d?.eventAt ?? null,
+    orderId: order.id,
+    what: `Order ${orderRefOf(order.id)}: ${FIX_WHAT[sourceType]}`,
+    amountCents: d ? d.amountCents : null,
+    ...(d?.reason ? { nothingOwed: `Nothing to move (${d.reason}).` } : {}),
+    post: (opts) => (tenantId ? postOrderCogsFix(tenantId, sourceType, sourceId, opts) : Promise.resolve({ posted: false, entryId: null, reason: 'order_not_found' })),
+  }
+}
+
 // ─── Giving back: cancel, unfired void ───────────────────────────────────────
 
 export interface RestoreOptions {
@@ -395,12 +676,16 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     const { depleted, restored } = await claimsTx(tx, orderId)
     if (!depleted || restored) return null
     if (!isFifoClaim(depleted.metadata)) {
-      await legacyRestoreTx(tx, orderId, order, depleted, o)
-      return null
+      const fix = await legacyRestoreTx(tx, orderId, order, depleted, o)
+      return { tenantId: order.tenantId, conceptId: null, failures: [], fixFailures: [fix] }
     }
     const tenantId = order.tenantId
     if (!tenantId) return null
     const ord = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { conceptId: true } })
+    // Was the order's cost of sales already booked (a drawer close that took
+    // this ticket as a live sale)? Then what comes back is booked against cost
+    // of sales, not inventory (see the header).
+    const booked = !!(await orderCostBookedAt(tx, tenantId, orderId))
     const lines = await tx.orderItem.findMany({
       where: { orderId, status: { not: 'voided' }, voidedAt: null },
       select: { id: true, status: true, name: true, quantity: true },
@@ -414,6 +699,7 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     let returnedCents = 0
     let wastedCents = 0
     const failures: Array<{ line: (typeof lines)[number]; waste: SoldLineWasteResult }> = []
+    const fixFailures: Array<OrderCogsFixFailure | null> = []
     for (const l of lines) {
       const rows = outByLine.get(l.id) ?? []
       if (rows.length === 0) continue
@@ -422,7 +708,9 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
           rows, kind: 'sale_return', sourceType: ORDER_STOCK_SOURCE.ret, sourceId: l.id, occurredAt: at, tenantId, createdById: o.actorId ?? null,
         })
         returnedCents += r.valueCents
+        if (booked) fixFailures.push(await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.ret, l.id, o.actorId ?? null))
       } else {
+        // postVoidWaste credits cost of sales instead of inventory when the order was booked before the waste.
         const w = await wasteSoldLineTx(tx, {
           orderId, tenantId, line: { id: l.id }, wasteReason: o.cookedFood?.wasteReason ?? 'cancelled_after_fire',
           actorId: o.actorId ?? null, conceptId: ord.conceptId, approverId: o.approverId ?? null, photoUrl: o.cookedFood?.photoUrl ?? null,
@@ -434,13 +722,20 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     await tx.auditLog.create({
       data: {
         category: 'stock', tenantId, action: STOCK_RESTORE, entity: 'Order', entityId: orderId,
-        metadata: { mode: 'fifo', status: order.status, returnedCents, wastedCents } as Prisma.InputJsonValue,
+        metadata: { mode: 'fifo', status: order.status, returnedCents, wastedCents, costBooked: booked } as Prisma.InputJsonValue,
       },
     })
-    return { tenantId, conceptId: ord.conceptId, failures }
+    // Never booked: the late-receipt settles of its shortfalls (each already
+    // Dr 50x0 / Cr 12x0) come back out of cost of sales — the stock they drew
+    // was given back or wasted above, or at an earlier void.
+    if (!booked && NO_SALE.includes(order.status)) {
+      fixFailures.push(await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.cancelSettle, orderId, o.actorId ?? null))
+    }
+    return { tenantId, conceptId: ord.conceptId, failures, fixFailures }
   }, TX_OPTS)
   if (!res) return
   for (const f of res.failures) await flagSoldLineWastePosting(res.tenantId, orderId, res.conceptId, f.line, f.waste, o.actorId ?? null)
+  await flagOrderCogsFixFailures(res.fixFailures, o.actorId ?? null)
 }
 
 /** A sold line's waste posting was refused: flag it so Backfill unposted re-posts 'pos.void_waste:<line>'. */
@@ -471,24 +766,33 @@ export async function flagSoldLineWastePosting(
  * same lots ('sale_return', 'order_item.return' + line id — once). Nothing
  * when the depletion has not run (it skips a voided line) or the order's stock
  * was already given back. A pre-cut-over order returns through its `taken`
- * JSON (see the header).
+ * JSON (see the header). When the order's cost was already booked (a drawer
+ * close took the open ticket as a live sale), the return also moves cost of
+ * sales back to inventory ('order_item.return:<line>', Dr 12x0 / Cr 50x0) —
+ * a refusal comes back as `cogsFixFailure`: flag it after commit
+ * (flagOrderCogsFixFailures).
  */
 export async function returnVoidedLineStockTx(tx: Tx, a: {
   orderId: string; tenantId: string | null; line: { id: string; quantity: number }; actorId?: string | null
-}): Promise<{ valueCents: number; restored: Record<string, number>; skipped: 'not_depleted' | 'nothing_taken' | 'no_company' | null }> {
+}): Promise<{
+  valueCents: number; restored: Record<string, number>; skipped: 'not_depleted' | 'nothing_taken' | 'no_company' | null
+  cogsFixFailure?: OrderCogsFixFailure | null
+}> {
   if (!a.tenantId) return { valueCents: 0, restored: {}, skipped: 'no_company' }
   const tenantId = a.tenantId
   const { depleted, restored } = await claimsTx(tx, a.orderId)
   if (!depleted || restored) return { valueCents: 0, restored: {}, skipped: 'not_depleted' }
-  if (!isFifoClaim(depleted.metadata)) return legacyVoidReturnTx(tx, a.orderId, tenantId, a.line.id, depleted)
+  if (!isFifoClaim(depleted.metadata)) return legacyVoidReturnTx(tx, a.orderId, tenantId, a.line.id, depleted, a.actorId ?? null)
   const rows = await lineNetOutRowsTx(tx, { tenantId, orderItemId: a.line.id })
   if (rows.length === 0) return { valueCents: 0, restored: {}, skipped: 'nothing_taken' }
   const r = await returnToLotsTx(tx, {
     rows, kind: 'sale_return', sourceType: ORDER_STOCK_SOURCE.ret, sourceId: a.line.id, occurredAt: new Date(), tenantId, createdById: a.actorId ?? null,
   })
+  // Posts only when the order's cost was booked before this return (the poster re-checks).
+  const cogsFixFailure = await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.ret, a.line.id, a.actorId ?? null)
   const back: Record<string, number> = {}
   for (const row of rows) back[row.inventoryItemId] = (back[row.inventoryItemId] ?? 0) + Math.abs(row.qty)
-  return { valueCents: r.valueCents, restored: back, skipped: null }
+  return { valueCents: r.valueCents, restored: back, skipped: null, cogsFixFailure }
 }
 
 // ─── Legacy (pre-cut-over) give-backs ────────────────────────────────────────
@@ -512,14 +816,18 @@ async function legacyGiveBackTx(tx: Tx, tenantId: string, cutOver: boolean, item
 async function legacyRestoreTx(
   tx: Tx, orderId: string, order: { status: string; tenantId: string | null },
   depleted: { id: string; metadata: Prisma.JsonValue | null }, o: RestoreOptions,
-): Promise<void> {
+): Promise<OrderCogsFixFailure | null> {
   const taken = ((depleted.metadata ?? {}) as { taken?: Record<string, number> }).taken ?? {}
   const tenantId = order.tenantId
+  let fix: OrderCogsFixFailure | null = null
   if (tenantId) {
     const cutOver = !!(await readFifoCutoverAt(tx, tenantId))
     const ids = Object.keys(taken).filter((id) => (taken[id] ?? 0) > 0).sort()
     await lockItemsTx(tx, ids)
-    for (const id of ids) await legacyGiveBackTx(tx, tenantId, cutOver, id, taken[id]!, `${orderId}:cancel`, o.actorId ?? null)
+    const key = `${orderId}:cancel`
+    for (const id of ids) await legacyGiveBackTx(tx, tenantId, cutOver, id, taken[id]!, key, o.actorId ?? null)
+    // Its cost already booked (the old plate cost): the lots it gets back come out of cost of sales.
+    if (cutOver && ids.length > 0) fix = await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.legacy, key, o.actorId ?? null)
   }
   await tx.auditLog.create({
     data: {
@@ -527,11 +835,12 @@ async function legacyRestoreTx(
       metadata: { restored: taken, status: order.status } as Prisma.InputJsonValue,
     },
   })
+  return fix
 }
 
 async function legacyVoidReturnTx(
-  tx: Tx, orderId: string, tenantId: string, lineId: string, depleted: { id: string; metadata: Prisma.JsonValue | null },
-): Promise<{ valueCents: number; restored: Record<string, number>; skipped: 'nothing_taken' | null }> {
+  tx: Tx, orderId: string, tenantId: string, lineId: string, depleted: { id: string; metadata: Prisma.JsonValue | null }, actorId: string | null,
+): Promise<{ valueCents: number; restored: Record<string, number>; skipped: 'nothing_taken' | null; cogsFixFailure?: OrderCogsFixFailure | null }> {
   const meta = (depleted.metadata ?? {}) as { taken?: Record<string, number>; takenAtSale?: Record<string, number>; voidRestored?: Record<string, Record<string, number>> } & Record<string, unknown>
   if (meta.voidRestored?.[lineId]) return { valueCents: 0, restored: {}, skipped: 'nothing_taken' }
   const line = await tx.orderItem.findUniqueOrThrow({
@@ -554,7 +863,10 @@ async function legacyVoidReturnTx(
   if (Object.keys(give).length === 0) return { valueCents: 0, restored: {}, skipped: 'nothing_taken' }
   const cutOver = !!(await readFifoCutoverAt(tx, tenantId))
   await lockItemsTx(tx, Object.keys(give))
-  for (const id of Object.keys(give).sort()) await legacyGiveBackTx(tx, tenantId, cutOver, id, give[id]!, `${lineId}:void`, null)
+  const key = `${lineId}:void`
+  for (const id of Object.keys(give).sort()) await legacyGiveBackTx(tx, tenantId, cutOver, id, give[id]!, key, actorId)
+  // Its cost already booked (the old plate cost): the lots it gets back come out of cost of sales.
+  const cogsFixFailure = cutOver ? await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.legacy, key, actorId) : null
   await tx.auditLog.update({
     where: { id: depleted.id },
     data: { metadata: { ...meta, takenAtSale: meta.takenAtSale ?? meta.taken ?? {}, taken, voidRestored: { ...(meta.voidRestored ?? {}), [lineId]: give } } as Prisma.InputJsonValue },
@@ -562,7 +874,7 @@ async function legacyVoidReturnTx(
   await tx.auditLog.create({
     data: { category: 'stock', tenantId, action: STOCK_VOID_RESTORE, entity: 'OrderItem', entityId: lineId, metadata: { orderId, restored: give } as Prisma.InputJsonValue },
   })
-  return { valueCents: 0, restored: give, skipped: null }
+  return { valueCents: 0, restored: give, skipped: null, cogsFixFailure }
 }
 
 // ─── "Box given" ─────────────────────────────────────────────────────────────
@@ -586,6 +898,11 @@ async function writeScopeOf(userId: string): Promise<string[]> {
  * dish's packaging out of its lots (FIFO, kind 'sale', 'order_item.box_given');
  * a second tap or a replay writes nothing. An undo (only until the order
  * completes — then 409 BOX_GIVEN_FINAL) puts it back into the same lots.
+ * When the order's cost of sales is already booked (an online order completes
+ * at the hand-off, before leftovers are boxed; a till ticket whose drawer has
+ * closed), the tap books its own packaging cost ('order_item.box_given:<tap>',
+ * Dr 50x0 / Cr 12x0) and an undo its reverse ('order_item.box_given_undo') —
+ * see "Cost of sales moved after the order's cost was booked".
  * Audited 'order.box_given' / 'order.box_given_undo' in the ORDER's company.
  */
 export async function markBoxGiven(
@@ -624,31 +941,35 @@ export async function markBoxGiven(
     })
 
     if (opts.undo) {
-      if (!cur.boxGiven) return { changed: false, boxGiven: false, depleted: false }
+      if (!cur.boxGiven) return { changed: false, boxGiven: false, depleted: false, fix: null }
       if (locked.status === 'completed') {
         throw new AppError('BOX_GIVEN_FINAL', 'The order is complete — "Box given" can no longer be undone.', 409)
       }
+      let fix: OrderCogsFixFailure | null = null
       if (fifo) {
         const rows = await boxRows()
         if (rows.length > 0) {
+          const key = boxKey(cur.id, cur.boxGivenAt)
           await returnToLotsTx(tx, {
-            rows, kind: 'sale_return', sourceType: ORDER_STOCK_SOURCE.boxUndo, sourceId: boxKey(cur.id, cur.boxGivenAt),
+            rows, kind: 'sale_return', sourceType: ORDER_STOCK_SOURCE.boxUndo, sourceId: key,
             occurredAt: new Date(), tenantId, createdById: actor.id,
           })
+          // An open ticket whose drawer close already booked the box (or the tap's own entry): back out of cost of sales.
+          fix = await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.boxUndo, key, actor.id)
         }
       }
       await tx.orderItem.updateMany({ where: { id: orderItemId, boxGiven: true }, data: { boxGiven: false, boxGivenAt: null, boxGivenById: null } })
-      return { changed: true, boxGiven: false, depleted: false }
+      return { changed: true, boxGiven: false, depleted: false, fix }
     }
 
-    if (cur.boxGiven) return { changed: false, boxGiven: true, depleted: fifo && (await boxRows()).length > 0 }
+    if (cur.boxGiven) return { changed: false, boxGiven: true, depleted: fifo && (await boxRows()).length > 0, fix: null }
     const at = new Date()
     const claimed = await tx.orderItem.updateMany({
       where: { id: orderItemId, boxGiven: false },
       data: { boxGiven: true, boxGivenAt: at, boxGivenById: actor.id },
     })
-    if (claimed.count === 0) return { changed: false, boxGiven: true, depleted: false }
-    if (!fifo) return { changed: true, boxGiven: true, depleted: false }   // not taken yet: the depletion takes it (or a legacy order)
+    if (claimed.count === 0) return { changed: false, boxGiven: true, depleted: false, fix: null }
+    if (!fifo) return { changed: true, boxGiven: true, depleted: false, fix: null }   // not taken yet: the depletion takes it (or a legacy order)
 
     const order = await tx.order.findUniqueOrThrow({
       where: { id: line.orderId },
@@ -669,9 +990,14 @@ export async function markBoxGiven(
       if (r.rows.length > 0) took = true
     }
     if (per && per.excluded.length > 0) await flagForeignStock(tenantId, order.conceptId, per.excluded)
-    return { changed: true, boxGiven: true, depleted: took }
+    // A tap after the order's cost was booked (an online order completes at
+    // the hand-off, before leftovers are boxed; a till ticket whose drawer has
+    // closed) is in no booked entry: it books its own Dr 50x0 / Cr 12x0.
+    const fix = took ? await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.boxGiven, boxKey(cur.id, at), actor.id) : null
+    return { changed: true, boxGiven: true, depleted: took, fix }
   }, TX_OPTS)
 
+  await flagOrderCogsFixFailures([res.fix], actor.id)
   if (res.changed) {
     const { audit } = await import('../../lib/audit.js')
     await audit({

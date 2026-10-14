@@ -8,7 +8,7 @@
 //     books the legacy plate cost to 5010 / 1210 ('pre-FIFO order'); one placed
 //     after it with no movements costs nothing.
 //   - orderStockCostCents = the order's net lot value; unbooked cost counts
-//     open orders and till orders on an open drawer only.
+//     open orders and till orders whose home drawer close is not posted.
 //   - Company: another company's orders never cost in this company's books.
 import { describe, it, expect, beforeAll } from 'vitest'
 import type { Prisma } from '@prisma/client'
@@ -16,6 +16,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { addLotTx, consumeFifoTx, relabelToWasteTx, fifoCutoverKey, STOCK_SOURCE } from '../src/lib/stockLedger.js'
 import { cogsLinesForOrders, orderStockCostCents, unbookedSalesCostByClass, PRE_FIFO_MEMO } from '../src/modules/accounting/cogs.js'
+import { postShiftClose } from '../src/modules/accounting/shiftPosting.js'
 
 const DAY = 86_400_000
 let A: string
@@ -138,7 +139,7 @@ describe('cogsLinesForOrders', () => {
 })
 
 describe('unbookedSalesCostByClass', () => {
-  it('counts open orders and till orders on an open drawer, nothing already booked', async () => {
+  it('counts open orders and till orders whose home drawer close is not posted, nothing already booked', async () => {
     const T = (await prisma.tenant.create({ data: { name: 'Cogs C', slug: 'cogs-class-c' } })).id
     await prisma.setting.create({ data: { key: fifoCutoverKey(T), value: new Date(Date.now() - 3_600_000).toISOString() } })
     const concept = (await prisma.concept.create({ data: { name: 'Cogs Cafe', slug: 'cogs-class-c1', type: 'restaurant', tenantId: T } })).id
@@ -156,7 +157,12 @@ describe('unbookedSalesCostByClass', () => {
     await sell(T, done, food.id, 5)                       // booked at completion — not counted
 
     expect(await unbookedSalesCostByClass(prisma, T)).toEqual({ food: 200, beverage: 100, packaging: 0 })
-    await prisma.shift.update({ where: { id: shift.id }, data: { status: 'closed', closedAt: new Date() } })
+    // Closed but its close not posted (refused, or not yet): the cost is out of the lots and not in the GL — still counted.
+    await prisma.shift.update({ where: { id: shift.id }, data: { status: 'closed', closedAt: new Date(), closingFloatCents: 5000 } })
+    expect(await unbookedSalesCostByClass(prisma, T)).toEqual({ food: 200, beverage: 100, packaging: 0 })
+    // Its close posted: booked — no longer a reconciling item.
+    await ensureChartOfAccounts(T)
+    expect((await postShiftClose(shift.id)).posted).toBe(true)
     expect(await unbookedSalesCostByClass(prisma, T)).toEqual({ food: 200, beverage: 0, packaging: 0 })
   })
 })

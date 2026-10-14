@@ -216,6 +216,33 @@ async function lockWithheld(tx: Prisma.TransactionClient, tenantId: string, auth
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext(${`tax-stwh:${authority}`}::text))`
 }
 
+/**
+ * A client's sales-tax withholding (H13, 1335) of `cents` for `authority` is
+ * being reversed (its certificate withdrawn): refuse with 409
+ * WITHHELD_ALREADY_SET_OFF when that much is no longer unused — a sales-tax
+ * payment already set it off against the authority's output, so reversing it
+ * would leave 1335 in credit and the set-off with nothing behind it. Void or
+ * correct that payment first. Takes the authority's withheld lock (the one
+ * recordTaxPayment / linkTaxPayment take), so a set-off cannot race the
+ * reversal. Call inside the reversal's transaction, before anything is written.
+ */
+export async function assertWithheldNotSetOff(tx: Prisma.TransactionClient, tenantId: string, authority: AuthorityKey, cents: number): Promise<void> {
+  if (cents <= 0) return
+  await lockWithheld(tx, tenantId, authority)
+  const unused = Math.min(
+    await customerWithheldAvailable(tx, tenantId, authority, END_OF_TIME),
+    await debitBalanceAt(tx, tenantId, ACCT.ST_WITHHELD_BY_CUSTOMERS, END_OF_TIME),
+  )
+  if (cents > unused) {
+    throw new AppError(
+      'WITHHELD_ALREADY_SET_OFF',
+      `This sales tax withheld (PKR ${(cents / 100).toFixed(2)}) has already been set off in a sales-tax payment — only PKR ${(Math.max(0, unused) / 100).toFixed(2)} of what clients withheld is unused. Void or correct that payment first.`,
+      409,
+      { unusedCents: Math.max(0, unused) },
+    )
+  }
+}
+
 function withheldTooLarge(cents: number, available: number, label: string, at: Date): AppError {
   return new AppError(
     'WITHHELD_SET_OFF_TOO_LARGE',

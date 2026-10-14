@@ -44,6 +44,7 @@ import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, type CostClass 
 import { relabelToWasteTx, STOCK_EPS, STOCK_SOURCE, type MovementRow } from '../../lib/stockLedger.js'
 import { consumptionPerLine } from '../../lib/recipeCost.js'
 import { postJournalEntry, withLateNote, ACCT, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
+import { orderCostBookedAt } from '../accounting/cogs.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -68,8 +69,14 @@ const REASON_LABEL: Record<VoidWasteReason, string> = {
 /**
  * The movement kinds that make up a sold line's draw on the lots: its sale
  * rows, a late receipt's settle of its shortfall (drawn for the line from the
- * new lot; giving it back credits the order's cost of sales, which nets the
- * settle's own posting), and what was already given back or relabelled.
+ * new lot — already in cost of sales by the settle's own posting), and what
+ * was already given back or relabelled. Giving a settled draw back (or
+ * wasting it) nets that posting only when the order's own booking reads the
+ * sale_return / sale_void later (cogsLinesForOrders); when the order was
+ * booked before, the give-back books itself against cost of sales, and when
+ * it is cancelled without ever being booked, the cancel takes every settle of
+ * the order back out of cost of sales ('order.cancel_settle' —
+ * orders/stock.ts).
  */
 const LINE_KINDS = ['sale', 'shortfall_settle', 'sale_return', 'sale_void'] as const
 const DRAW_KINDS: ReadonlySet<string> = new Set(['sale', 'shortfall_settle'])
@@ -287,6 +294,13 @@ export async function wasteVoidedFiredLineTx(tx: Tx, input: {
  * void / cancel and a re-post by Reconciliation → Backfill unposted can never
  * both book it.
  *
+ * When the order's cost of sales was booked BEFORE the waste (a drawer close
+ * took the open ticket as a live sale — accounting/cogs.ts orderCostBookedAt
+ * at or before the log's recordedAt), that close already credited the
+ * inventory: the log's credit goes to the class COST OF SALES instead
+ * (5010 / 5020 / 5030 — a reclass Dr 5040 / Cr 50x0). Re-derived the same way
+ * on a re-post, so both book the same lines.
+ *
  * Only this line's sold-line waste logs count (a reason in VOID_WASTE_REASONS,
  * the line on WasteLog.orderItemId — or, for logs written before wave B, in
  * the note), restricted to `wasteLogIds` when any are given, and never
@@ -303,7 +317,7 @@ export async function postVoidWaste(
   opts: RepostOptions & { tx?: Tx } = {},
 ): Promise<{ posted: boolean; entryId: string | null; reason?: string; costCents: number }> {
   const db = opts.tx ?? prisma
-  const line = await db.orderItem.findUnique({ where: { id: orderItemId }, select: { name: true, quantity: true } })
+  const line = await db.orderItem.findUnique({ where: { id: orderItemId }, select: { name: true, quantity: true, orderId: true } })
   if (!line) return { posted: false, entryId: null, reason: 'order_item_not_found', costCents: 0 }
   const logs = await db.wasteLog.findMany({
     where: {
@@ -311,7 +325,7 @@ export async function postVoidWaste(
       OR: [{ orderItemId }, { orderItemId: null, notes: { contains: orderItemId } }],
       ...(wasteLogIds.length > 0 ? { id: { in: wasteLogIds } } : {}),
     },
-    select: { id: true, reason: true, estimatedCostCents: true, inventoryItem: { select: { name: true, tenantId: true, category: true } } },
+    select: { id: true, reason: true, estimatedCostCents: true, recordedAt: true, inventoryItem: { select: { name: true, tenantId: true, category: true } } },
     orderBy: { id: 'asc' },
   })
   if (logs.length === 0) return { posted: false, entryId: null, reason: 'zero_cost', costCents: 0 }
@@ -320,8 +334,10 @@ export async function postVoidWaste(
     select: { sourceId: true, costClass: true },
   })
   const classOfLog = new Map(moves.map((m) => [m.sourceId, asClass(m.costClass)]))
+  const bookedAt = await orderCostBookedAt(db, tenantId, line.orderId)
   const debits: JournalLineInput[] = []
   const credits = new Map<CostClass, number>()
+  const cogsCredits = new Map<CostClass, number>()
   let costCents = 0
   const reasons = new Set<string>()
   for (const log of logs) {
@@ -332,7 +348,8 @@ export async function postVoidWaste(
     const why = REASON_LABEL[log.reason as VoidWasteReason] ?? log.reason
     reasons.add(why)
     costCents += cost
-    credits.set(cls, (credits.get(cls) ?? 0) + cost)
+    const into = bookedAt && bookedAt <= log.recordedAt ? cogsCredits : credits
+    into.set(cls, (into.get(cls) ?? 0) + cost)
     debits.push({ accountCode: ACCT.WASTE, type: 'debit', amountCents: cost, memo: `Waste (${why}): ${log.inventoryItem.name}`.slice(0, 250), conceptId })
   }
   if (costCents <= 0) return { posted: false, entryId: null, reason: 'zero_cost', costCents: 0 }
@@ -340,6 +357,8 @@ export async function postVoidWaste(
   for (const c of COST_CLASSES) {
     const v = credits.get(c) ?? 0
     if (v > 0) lines.push({ accountCode: CLASS_ACCOUNTS[c].inv, type: 'credit', amountCents: v, memo: `Inventory derecognised (${CLASS_LABEL[c]}, sold-line waste)`, conceptId })
+    const b = cogsCredits.get(c) ?? 0
+    if (b > 0) lines.push({ accountCode: CLASS_ACCOUNTS[c].cogs, type: 'credit', amountCents: b, memo: `Cost of sales already booked — now waste (${CLASS_LABEL[c]}, sold-line waste)`, conceptId })
   }
   const dr = lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
   const cr = lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)

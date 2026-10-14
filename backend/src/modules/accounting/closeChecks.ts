@@ -39,6 +39,7 @@ import { statutoryCloseChecks } from './statutory.js'
 import { intercompanyCloseChecks } from '../intercompany/closeChecks.js'
 import { fixedAssetCloseChecks } from '../fixedAssets/closeCheck.js'
 import { cardPayoutCloseChecks } from '../reconciliation/cardPayouts.js'
+import { prepaidCloseChecks } from './prepaidReleases.js'
 
 /** A close never looks further back than this many months (the oldest are dropped). */
 export const MAX_CLOSE_MONTHS = 24
@@ -366,7 +367,8 @@ export const CLOSE_CHECKS: CloseCheck[] = [
   ...intercompanyCloseChecks,
   ...fixedAssetCloseChecks,
   ...cardPayoutCloseChecks,
-  // WAVE Z (orchestrator): ...prepaidCloseChecks (w2-fa-capex), ...inventoryCloseChecks (w3-fc-report)
+  ...prepaidCloseChecks,
+  // WAVE Z (orchestrator): ...inventoryCloseChecks (w3-fc-report)
 ]
 
 /** The key of the block a throwing check becomes. */

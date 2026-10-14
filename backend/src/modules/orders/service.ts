@@ -1411,7 +1411,10 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
 
   // No sale → what the kitchen had not started goes back into its lots, and
   // what it had fired is wasted 'cancelled_after_fire' (Dr 5040 / Cr class
-  // inventory in the order's company) — it never books COGS. Only on the
+  // inventory in the order's company). When a drawer close already booked the
+  // ticket's cost of sales, both go against cost of sales instead (Dr 12x0 /
+  // Cr 50x0 for what comes back, Dr 5040 / Cr 50x0 for the waste) — see
+  // orders/stock.ts. Only on the
   // call that actually made the change; the restore is itself once-only, so
   // a retry after a failure is safe. A failure is flagged, never only logged.
   if (changed) {
@@ -1563,16 +1566,20 @@ export async function updateItemStatus(itemId: string, status: Exclude<ItemStatu
 
   // A recalled item reopens a 'ready' order: it leaves expo's ready column
   // and the hand-off (which only takes 'ready') is refused until the remake
-  // is bumped, which moves it back to 'ready' below (BOH-04).
-  if (status === 'recalled') {
+  // is bumped, which moves it back to 'ready' below (BOH-04). Only a real move
+  // INTO 'recalled' is a recall: a repeated tap (or a resend) on a line that
+  // is already recalled matches the conditional update above but is not a
+  // second remake — it books nothing.
+  if (status === 'recalled' && item.status !== 'recalled') {
     await reopenOrderForRemake(item.orderId)
     // The remake cooks the dish again: its recipe is booked as waste 'remake'
     // (its own WasteLog per recall, FIFO value, Dr 5040 / Cr inventory) —
-    // never silently left as unexplained variance. A failure is flagged.
+    // never silently left as unexplained variance. A failure is flagged on
+    // the LINE (the re-run needs to know which line to re-book).
     try {
       await bookRemakeWaste(itemId, staffId ?? null)
     } catch (err) {
-      await flagOrderStockFailure(item.orderId, 'remake', err, staffId ?? null)
+      await flagOrderStockFailure(item.orderId, 'remake', err, staffId ?? null, itemId)
     }
   }
 

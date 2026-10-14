@@ -446,6 +446,35 @@ describe('company B never touches company A\'s write-offs', () => {
   })
 })
 
+// ─── A credit note after a write-off ────────────────────────────────────────
+
+describe('a credit note after a write-off', () => {
+  it('can never credit the written-off part (409 WRITTEN_OFF_FIRST); the rest still credits and a refund stays capped at what is owed back', async () => {
+    const i = await raise('finA')                                          // 100,000 + 15,000
+    expect((await call('finA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 57_500, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
+    const w = await request('ceoA', i.id, 57_500)                           // the CEO's own request applies at once
+    expect(w.statusCode, w.body).toBe(201)
+    expect(Number((await inv(i.id)).writtenOffCents)).toBe(57_500)
+
+    // Only the part not written off (57,500 — here the paid half) can be credited; the old cap allowed the whole 115,000.
+    const over = await call('finA', 'POST', `${AR}/${i.id}/credit-notes`, { amountCents: 50_000, taxCents: 10_000, reason: 'disputed half', date: today() })
+    expect(over.statusCode, over.body).toBe(409)
+    expect(over.json().error.code).toBe('WRITTEN_OFF_FIRST')
+    expect(over.json().error.details.leftCents).toBe(57_500)
+    expect(Number((await inv(i.id)).creditedCents)).toBe(0)
+    expect(await prisma.receivableInvoice.count({ where: { originalInvoiceId: i.id, kind: 'credit_note' } })).toBe(0)
+
+    // The part that was not written off (it was paid) still credits; the customer is then in credit by that much only.
+    const ok = await call('finA', 'POST', `${AR}/${i.id}/credit-notes`, { amountCents: 10_000, taxCents: 1_500, reason: 'late delivery discount', date: today() })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const tooMuch = await call('finA', 'POST', `${AR}/${i.id}/credit-notes`, { amountCents: 40_000, taxCents: 7_000, reason: 'more', date: today() })
+    expect(tooMuch.json().error.code).toBe('WRITTEN_OFF_FIRST')
+    const refund = await call('finA', 'POST', `${AR}/${i.id}/refunds`, { amountCents: 11_501, date: today(), method: 'cash' })
+    expect(refund.statusCode).toBe(409)
+    expect((await call('finA', 'POST', `${AR}/${i.id}/refunds`, { amountCents: 11_500, date: today(), method: 'cash' })).statusCode).toBe(201)
+  })
+})
+
 // ─── The subledger still ties to 1110 ───────────────────────────────────────
 
 describe('the AR subledger ties to the 1110 balance', () => {

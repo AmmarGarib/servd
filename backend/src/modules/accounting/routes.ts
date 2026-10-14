@@ -11,7 +11,7 @@ import { closeChecklist, isOverridableKey } from './closeChecks.js'
 import type { CloseProblem } from './closeCheckTypes.js'
 import { fiscalYearsFor, fiscalYearOf, fiscalYearEndMonthOf, closedAcrossYearEnd } from './fiscalYear.js'
 import { chargeForClose } from '../fixedAssets/closeCheck.js'
-import { salesTaxReturn, taxPaymentsFor } from './salesTaxReturn.js'
+import { salesTaxReturn, taxPaymentsFor, SUPPLY_LABEL } from './salesTaxReturn.js'
 import {
   TAX_PAYMENT_AUTHORITIES, TAX_PAYMENT_METHODS, TAX_PAYER_ROLES, monthPeriod,
   recordTaxPayment, linkTaxPayment, linkCandidates, voidTaxPayment, postTaxReclass,
@@ -314,7 +314,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
     const original = await prisma.journalEntry.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      include: { lines: { include: { account: { select: { code: true, name: true, isActive: true } } } } },
+      include: { lines: { include: { account: { select: { code: true, name: true, isActive: true, controlledBy: true } } } } },
     })
     if (!original || !original.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
     const tenantId = original.tenantId
@@ -343,6 +343,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     }
     const sourceId = original.reference.slice(MANUAL_PREFIX.length)
     const reversalRef = `${MANUAL_REVERSAL_PREFIX}${sourceId}`
+    // A manual entry the CEO posted to the fixed-asset register's accounts
+    // (registerOverride) is undone the same way: its reversal touches those
+    // accounts too, so it carries the reason as its override (the journal's
+    // controlled-account rule — a reason too short is refused there, 422).
+    const registerLines = original.lines.filter((l) => l.account.controlledBy === 'fixed_asset')
 
     const result = await prisma.$transaction(async (tx) => {
       // One reversal per entry, even under a double click.
@@ -355,6 +360,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         tx,
         postedBy: req.staffUser!.id,
         entryDate: body.entryDate ? new Date(body.entryDate) : new Date(),
+        ...(registerLines.length > 0 ? { controlledOverride: { reason: body.reason } } : {}),
       })
     })
     if (!result.posted) {
@@ -378,6 +384,25 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       after: reversal,
       metadata: { ip: req.ip, reason: body.reason, reversedEntryId: original.id, amountCents },
     })
+    if (registerLines.length > 0) {
+      const codes = Array.from(new Set(registerLines.map((l) => l.account.code))).sort()
+      const registerCents = registerLines.reduce((t, l) => t + toCents(l.amountCents), 0)
+      await audit({ category: 'accounting',
+        action: 'journal.register_override',
+        entity: 'JournalEntry',
+        entityId: reversal.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        after: { codes, amountCents: registerCents, reverses: original.id },
+        metadata: { ip: req.ip, reason: body.reason },
+      })
+      // The hand entry the register did not know about is gone: its open
+      // fixed_asset_gl_mismatch flag is closed by the reversal.
+      await prisma.exceptionFlag.updateMany({
+        where: { tenantId, kind: 'fixed_asset_gl_mismatch', entityType: 'JournalEntry', entityId: original.id, status: { in: ['open', 'acknowledged'] } },
+        data: { status: 'resolved', resolvedAt: new Date(), resolution: `Reversed by entry ${reversal.id.slice(0, 8)}: ${body.reason}`.slice(0, 500) },
+      })
+    }
     const { flagException } = await import('../../lib/exceptions.js')
     await flagException({
       tenantId,
@@ -731,6 +756,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         flat.push({ section: 'Sales',      code: '',                          name: 'Total taxable sales', value: fmtPkr(report.taxableSalesCents) })
         for (const c of report.taxableValueByConceptCents) {
           flat.push({ section: 'Sales',    code: c.conceptSlug,                name: c.conceptName,         value: fmtPkr(c.revenueCents) })
+          if (c.deliveryFeeCents) flat.push({ section: 'Sales', code: c.conceptSlug, name: `${c.conceptName} — delivery fees (4110)`, value: fmtPkr(c.deliveryFeeCents) })
         }
         // Per authority (F3 / BOOKS-10): each files its own return — its own
         // output less its own input, never one authority's input against
@@ -740,6 +766,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           flat.push({ section: sec, code: a.output.code, name: `Output tax (${a.output.name})`, value: fmtPkr(a.output.totalCents) })
           flat.push({ section: sec, code: a.input.code,  name: `Input tax (${a.input.name})`,   value: fmtPkr(a.input.totalCents) })
           flat.push({ section: sec, code: '', name: a.netPayableCents >= 0 ? 'Net payable' : 'Excess input carried forward', value: fmtPkr(Math.abs(a.netPayableCents)) })
+          if (a.withheldByCustomersCents) flat.push({ section: sec, code: '1335', name: 'Sales tax withheld by customers (H13)', value: fmtPkr(a.withheldByCustomersCents) })
+          flat.push({ section: sec, code: '', name: a.netAfterWithheldCents >= 0 ? 'Net payable after withheld' : 'Carried forward after withheld', value: fmtPkr(Math.abs(a.netAfterWithheldCents)) })
           if (a.otherOutputCents !== 0) {
             flat.push({ section: sec, code: '', name: 'Output tax not from order sales (manual journals, B2B invoices, older entries)', value: fmtPkr(a.otherOutputCents) })
           }
@@ -748,7 +776,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         // Per rate: the brand's cash (15%) and card (8%) rates, refunds netted.
         for (const r of report.byRate) {
           const rate = r.ratePct == null ? 'rate not stored' : `${r.ratePct}%`
-          const label = `${r.authority} ${r.tender} ${rate}`
+          const label = `${r.authority} ${SUPPLY_LABEL[r.supply]} ${r.tender} ${rate}`
           flat.push({ section: 'By rate', code: r.authority, name: `${label} — orders`,                    value: r.orders })
           flat.push({ section: 'By rate', code: r.authority, name: `${label} — sales value / tax`,         value: `${fmtPkr(r.salesValueCents)} / ${fmtPkr(r.salesTaxCents)}` })
           flat.push({ section: 'By rate', code: r.authority, name: `${label} — refunds value / tax`,       value: `${fmtPkr(r.refundValueCents)} / ${fmtPkr(r.refundTaxCents)}` })
@@ -773,6 +801,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           const sec = `Paid — ${a.authority}`
           flat.push({ section: sec, code: a.output.code, name: 'Paid for this period', value: fmtPkr(a.paidForPeriodCents) })
           if (a.inputSetOffForPeriodCents !== 0) flat.push({ section: sec, code: a.input.code, name: 'Input set off in those payments', value: fmtPkr(a.inputSetOffForPeriodCents) })
+          if (a.customerWithheldSetOffForPeriodCents) flat.push({ section: sec, code: '1335', name: 'Withheld tax set off in those payments', value: fmtPkr(a.customerWithheldSetOffForPeriodCents) })
+          if (a.customerWithheldAvailableCents) flat.push({ section: sec, code: '1335', name: 'Withheld by customers still available', value: fmtPkr(a.customerWithheldAvailableCents) })
           flat.push({ section: sec, code: a.output.code, name: 'Ledger balance at period end', value: fmtPkr(a.ledgerBalanceAtEndCents) })
         }
         for (const w of report.withholding) {
@@ -784,11 +814,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const p of report.payments) {
           flat.push({
             section: 'Payments', code: p.authority.toUpperCase(),
-            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}`,
+            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}${p.customerWithheldSetOffCents ? `, withheld set off ${fmtPkr(p.customerWithheldSetOffCents)}` : ''}`,
             value: fmtPkr(p.paidCents),
           })
         }
-        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (sum of each authority\'s own net)', value: fmtPkr(report.netPayableCents) })
+        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (each authority\'s own net after withheld)', value: fmtPkr(report.netPayableCents) })
         flat.push({ section: 'Result',     code: '',                          name: 'EXCESS INPUT CARRIED FORWARD (per authority)',   value: fmtPkr(report.carryForwardCents) })
         for (const n of report.notes) flat.push({ section: 'Notes', code: '', name: n, value: '' })
         return sendCsv(reply, `sales-tax-return-${report.period.from}-${report.period.to}.csv`, toCsv(flat))
@@ -814,7 +844,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   const authority = z.enum(TAX_PAYMENT_AUTHORITIES)
   const optText = (max: number) => z.string().trim().max(max).optional().nullable().transform((v) => v || null)
 
-  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string } }>(
+  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; statutory?: string } }>(
     '/sales-tax-return/payments',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
@@ -822,7 +852,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const { from, to } = req.query.dateFrom || req.query.dateTo
         ? resolveDateRange(req.query.dateFrom, req.query.dateTo)
         : { from: new Date(0), to: new Date(8.64e15) }
-      return { payments: await taxPaymentsFor(tenantId, from, to) }
+      return { payments: await taxPaymentsFor(tenantId, from, to, { statutory: req.query.statutory === '1' }) }
     },
   )
 

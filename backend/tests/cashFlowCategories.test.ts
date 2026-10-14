@@ -103,6 +103,20 @@ describe('capex and register entries are categorised by their non-cash lines', (
     expect(cat(r, 'investing').inflowCents - cat(before, 'investing').inflowCents).toBe(5_000_000)
     expect(cat(r, 'operating').inflowCents).toBe(cat(before, 'operating').inflowCents)
   })
+
+  it('a disposal with a GAIN (Cr 8030) is still all investing inflow', async () => {
+    const before = await cashFlow([A], from, to)
+    // Cost 100,000, accumulated 60,000, sold for 50,000: Dr 1020 50,000 / Dr 1591 60,000 / Cr 1510 100,000 / Cr 8030 10,000.
+    await post(A, 'fixed_asset.dispose', [
+      { accountCode: '1020', type: 'debit', amountCents: 5_000_000 },
+      { accountCode: '1591', type: 'debit', amountCents: 6_000_000 },
+      { accountCode: '1510', type: 'credit', amountCents: 10_000_000 },
+      { accountCode: '8030', type: 'credit', amountCents: 1_000_000 },
+    ])
+    const r = await cashFlow([A], from, to)
+    expect(cat(r, 'investing').inflowCents - cat(before, 'investing').inflowCents).toBe(5_000_000)
+    expect(cat(r, 'operating').inflowCents).toBe(cat(before, 'operating').inflowCents)
+  })
 })
 
 describe('petty cash is cash', () => {

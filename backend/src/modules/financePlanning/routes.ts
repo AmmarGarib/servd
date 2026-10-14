@@ -527,11 +527,23 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const body = lineSchema.partial().parse(req.body)
       const owned = await prisma.capexLine.findFirst({
         where: { id: req.params.lineId, project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-        include: { project: { select: { tenantId: true } } },
+        include: { project: { select: { tenantId: true, projectType: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
       const tenantId = owned.project.tenantId
       assertMoneyFits((body.unitCostCents ?? toCents(owned.unitCostCents)) * (body.quantity ?? owned.quantity), 'This line (quantity × unit cost)')
+      // On the register (or waiting for the CEO) the line IS capital: a change
+      // of its treatment — stated, or through the scope / category / item text
+      // the treatment is read from when none is stated — would send its later
+      // instalments to an expense / prepaid / deposit instead of settling the
+      // supplier, and claim its input tax a second time (409 LINE_CAPITALISED).
+      const nextTreatment = capexTreatmentOf({
+        scope: body.scope ?? owned.scope,
+        category: body.category !== undefined ? body.category : owned.category,
+        item: body.item ?? owned.item,
+        treatment: body.treatment !== undefined ? body.treatment : owned.treatment,
+      }, owned.project.projectType)
+      if (nextTreatment !== capexTreatmentOf(owned, owned.project.projectType)) await assertLineNotCapitalised(tenantId, owned.id)
       if (body.assignedToId) await assertMemberOfCompany(tenantId, body.assignedToId)
       if (body.supplierId) await assertSupplierOfCompany(tenantId, body.supplierId)
 

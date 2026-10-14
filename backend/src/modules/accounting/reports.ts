@@ -1069,13 +1069,17 @@ const isRegisterOrCapex = (reference: string | null | undefined) => !!reference 
 
 /**
  * A capex.* / fixed_asset.* entry's non-cash line: supplier advances (1340),
- * fixed assets (15xx), refundable deposits (1360) and capital payables (2012)
- * are investing; prepaid rent (1310), any expense (6xxx, e.g. broker / legal
- * fees, H26) and withholding (2040) are operating. 'prepaid.release' moves no
+ * fixed assets (15xx), refundable deposits (1360) and capital payables (2012,
+ * or 2010 for a line capitalised before the register link) are investing;
+ * prepaid rent (1310), any expense (6xxx, e.g. broker / legal fees, H26), input
+ * tax (132x) and withholding (2040) are operating. 'prepaid.release' moves no
  * cash, so it never reaches this report.
  */
 function categoriseCapexLine(code: string): CashCategory {
-  if (code === ACCT.SUPPLIER_ADVANCES || code === ACCT.SECURITY_DEPOSITS || code === ACCT.CAPITAL_PAYABLES || code.startsWith('15')) return 'investing'
+  // 8030 on a register / CapEx entry is a disposal's gain or loss: the sale
+  // proceeds it shares in are investing, never operating.
+  if (code === ACCT.SUPPLIER_ADVANCES || code === ACCT.SECURITY_DEPOSITS || code === ACCT.CAPITAL_PAYABLES || code === ACCT.AP_SUPPLIERS
+    || code === ACCT.ASSET_DISPOSAL || code.startsWith('15')) return 'investing'
   if (code === ACCT.PREPAID || code === ACCT.WHT_PAYABLE || code.startsWith('6')) return 'operating'
   return categorise(code)
 }

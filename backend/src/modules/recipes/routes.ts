@@ -8,13 +8,13 @@ import { costsHiddenFor } from '../inventory/routes.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import {
-  buildRecipeGraph, loadRecipeGraph, menuItemPlateCosts, recipeCost,
-  type CostRecipe, type RecipeCost, type RecipeLineCost,
+  buildRecipeGraph, loadRecipeGraph, recipeCost,
+  type CostRecipe, type RecipeCost, type RecipeGraph, type RecipeLineCost,
 } from '../../lib/recipeCost.js'
-import { scopeTenantWhere, resolveTenantScope, assertConceptOwned, type ScopeMode } from '../../lib/tenantScope.js'
-import { pnlByConcept } from '../accounting/reports.js'
-import { ACCT } from '../accounting/journal.js'
-import { sumCents, toCents } from '../../lib/money.js'
+import { costClassOf } from '../../lib/inventoryClass.js'
+import { scopeTenantWhere, assertConceptOwned, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { audit } from '../../lib/audit.js'
+import { toCents } from '../../lib/money.js'
 
 // Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
 // ledger books as COGS and the stock depletion explodes. That is: each
@@ -35,35 +35,53 @@ function linesById(cost: RecipeCost): Map<string, RecipeLineCost> {
 const SEASON_KEYS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan', 'year-round'] as const
 const SEASON_DATE_RE = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
-// Single schema for both kinds. The kind-specific requirements (plate
-// must have menuItemId, component must have name + yieldGrams) are enforced
-// via .superRefine below — that lets us produce per-field error messages
-// instead of a generic "invalid payload".
+// Single schema for every kind. The kind-specific requirements (plate must
+// have a menu item, component must have name + yieldGrams, modifier must name
+// its modifier) are enforced via .superRefine below — that lets us produce
+// per-field error messages instead of a generic "invalid payload".
 //
 // Ingredient rows are also disjoint: either inventoryItemId (raw stock)
 // or prepRecipeId (a component sub-recipe). The mutual exclusion
 // is checked client-side via the picker, server-side via the schema, and
 // at the DB layer via the CHECK constraint in the migration.
+//
+// `section` (wave B, owner's FINAL packaging rule): a PLATE recipe's lines are
+// 'ingredients' or 'packaging'. Packaging-class stock goes ONLY in the
+// Packaging section and nothing else does; components and modifier recipes
+// have no Packaging section. Whether a sale uses the packaging is decided at
+// the sale (lib/recipeCost.ts packagingApplies), never per line here.
+//
+// `quantity` may be negative ("removes", e.g. "no cheese") ONLY on a modifier
+// recipe — checked in validateRecipeLines (422 NEGATIVE_QTY_NOT_ALLOWED); the
+// sale clamps each ingredient at zero per line.
 const ingredientSchema = z.object({
   inventoryItemId: z.string().uuid().optional(),
   prepRecipeId:    z.string().uuid().optional(),
-  quantity:        z.number().positive(),
+  quantity:        z.number().finite().refine((q) => q !== 0, { message: 'Quantity cannot be zero' }),
   yieldPct:        z.number().min(0.01).max(1).default(1),
   unit:            z.string().min(1),
   notes:           z.string().optional(),
+  section:         z.enum(['ingredients', 'packaging']).default('ingredients'),
 }).refine(
   (i) => Boolean(i.inventoryItemId) !== Boolean(i.prepRecipeId),
   { message: 'Each ingredient must reference exactly one of inventoryItem or prepRecipe' },
 )
+type IngredientInput = z.infer<typeof ingredientSchema>
 
 // Split the schema into a plain object + a refined wrapper so PUT (full-replace
 // update) can use .partial() — zod's .superRefine wraps the schema in
 // ZodEffects, which doesn't expose .partial. We keep the refinement on POST
 // (where every required field is enforced) and skip it on PUT (where partial
 // edits are allowed by design).
+//
+// `packagingPct` is RETIRED (wave B): packaging is the recipe's Packaging
+// section. A client that still sends it is ignored (zod strips the key) and
+// the column is never written.
 const recipeShape = {
-  kind:         z.enum(['plate', 'component']).default('plate'),
+  kind:         z.enum(['plate', 'component', 'modifier']).default('plate'),
   menuItemId:   z.string().uuid().optional(),
+  // kind 'modifier': the add-on this recipe costs (one recipe per modifier).
+  modifierId:   z.string().uuid().optional(),
   name:         z.string().min(1).optional(),
   yieldGrams:   z.number().positive().nullable().optional(),  // component batch yield OR plate total yield (g)
   servings:     z.number().int().min(1).default(1),
@@ -77,11 +95,12 @@ const recipeShape = {
   seasonEnd:    z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
   isActive:     z.boolean().default(true),
   // Pricing-spec fields. All have schema defaults so callers can omit them
-  // and inherit the operator-level defaults (10/25/8) — see spec.
+  // and inherit the operator-level defaults (10/25/30) — see spec.
+  // qFactorPct is THE one pricing allowance (H18: plate wear, garnish, oil) —
+  // pricing only, never a stock quantity, never posted.
   qFactorPct:              z.number().min(0).max(100).default(10),
   targetProfitPct:         z.number().min(0).max(100).default(25),
   targetFoodCostPct:       z.number().min(1).max(100).default(30),
-  packagingPct:            z.number().min(0).max(100).default(8),
   actualSellingPriceCents: z.number().int().min(0).nullable().optional(),
   category:                z.enum(['main', 'side', 'sauce', 'sub_recipe']).nullable().optional(),
   // ── Inline menu-item creation for plate recipes ──────────────────────
@@ -112,6 +131,9 @@ const recipeSchema = recipeBase.superRefine((r, ctx) => {
   if (r.kind === 'plate' && !r.menuItemId && !r.newMenuItem) {
     ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Plate recipes must link to an existing menu item or supply a new one' })
   }
+  if (r.kind !== 'modifier' && r.modifierId) {
+    ctx.addIssue({ code: 'custom', path: ['modifierId'], message: 'Only modifier recipes link to a modifier' })
+  }
   if (r.kind === 'component') {
     if (!r.name || !r.name.trim()) {
       ctx.addIssue({ code: 'custom', path: ['name'], message: 'Component recipes need a name' })
@@ -119,13 +141,19 @@ const recipeSchema = recipeBase.superRefine((r, ctx) => {
     if (!r.yieldGrams || r.yieldGrams <= 0) {
       ctx.addIssue({ code: 'custom', path: ['yieldGrams'], message: 'Component recipes need a batch yield in grams (drives cost-per-gram)' })
     }
-    if (r.menuItemId) {
-      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Component recipes do not link to a menu item' })
+  }
+  if (r.kind === 'component' || r.kind === 'modifier') {
+    if (r.menuItemId || r.newMenuItem) {
+      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: `${r.kind === 'component' ? 'Component' : 'Modifier'} recipes do not link to a menu item` })
     }
+  }
+  if (r.kind === 'modifier' && !r.modifierId) {
+    ctx.addIssue({ code: 'custom', path: ['modifierId'], message: 'Pick the modifier (add-on) this recipe is for' })
   }
 })
 // PUT-time schema — same fields, but every one optional so partial updates
 // (e.g. just tweaking servings) don't require resending the whole recipe.
+// kind / menuItemId / modifierId are immutable here (never written by PUT).
 const recipeUpdateSchema = recipeBase.partial()
 
 // Map a calendar month → the seasons that month belongs to. Pakistan-leaning
@@ -150,6 +178,7 @@ function currentSeasonsForDate(d: Date): string[] {
 //     sub-recipe no plate uses and made only from shared (company-less) stock
 //     has no derivable owner and stays visible to everyone until
 //     Recipe.tenantId exists (reported as a schema follow-up).
+//   • MODIFIER (wave B) → its modifier → group → menu item → brand.
 // Components used to pass unconditionally, so any company could read, edit,
 // approve or delete another company's sub-recipes — and editing one re-costs
 // the other company's plates.
@@ -182,10 +211,21 @@ type ComponentCompanies = (recipeId: string) => Set<string>
 // A plate whose brand has no company belongs to nobody — never in any scope.
 const NO_COMPANY = '\u0000none'
 
+/** The brand of a modifier recipe: modifier → group → menu item → brand. */
+const MODIFIER_BRAND = {
+  select: {
+    group: { select: { menuItem: { select: { conceptId: true, concept: { select: { tenantId: true, serviceVessel: true } } } } } },
+  },
+} satisfies Prisma.ModifierDefaultArgs
+
 async function loadComponentCompanies(): Promise<ComponentCompanies> {
   const [recipes, links] = await Promise.all([
     prisma.recipe.findMany({
-      select: { id: true, kind: true, pendingMenuItem: true, menuItem: { select: { concept: { select: { tenantId: true } } } } },
+      select: {
+        id: true, kind: true, pendingMenuItem: true,
+        menuItem: { select: { concept: { select: { tenantId: true } } } },
+        modifier: MODIFIER_BRAND,
+      },
     }),
     prisma.recipeIngredient.findMany({
       select: { recipeId: true, prepRecipeId: true, inventoryItem: { select: { tenantId: true } } },
@@ -236,6 +276,7 @@ async function loadComponentCompanies(): Promise<ComponentCompanies> {
       const parent = byId.get(pid)
       if (!parent) continue
       if (parent.kind === 'plate') out.add(plateCompany(parent))
+      else if (parent.kind === 'modifier') out.add(parent.modifier?.group.menuItem.concept.tenantId ?? NO_COMPANY)
       else stack.push(...(parents.get(pid) ?? []))
     }
     memo.set(recipeId, out)
@@ -262,7 +303,21 @@ async function recipeScope(req: FastifyRequest, mode: ScopeMode = 'read'): Promi
   }
 }
 
-type ScopableRecipe = { id: string; kind: string; menuItem?: { conceptId: string } | null; pendingMenuItem?: unknown }
+type ScopableRecipe = {
+  id: string
+  kind: string
+  menuItem?: { conceptId: string } | null
+  pendingMenuItem?: unknown
+  /** kind 'modifier': the chain to its brand. Undefined = not loaded (looked up). */
+  modifier?: { group: { menuItem: { conceptId: string } } } | null
+}
+
+/** The brand (concept id) of a modifier recipe, or null. */
+async function modifierConceptOf(r: ScopableRecipe): Promise<string | null> {
+  if (r.modifier !== undefined) return r.modifier?.group.menuItem.conceptId ?? null
+  const row = await prisma.recipe.findUnique({ where: { id: r.id }, select: { modifier: MODIFIER_BRAND } })
+  return row?.modifier?.group.menuItem.conceptId ?? null
+}
 
 async function recipeInScope(r: ScopableRecipe, scope: RecipeScope): Promise<boolean> {
   if (r.kind === 'component') {
@@ -270,6 +325,10 @@ async function recipeInScope(r: ScopableRecipe, scope: RecipeScope): Promise<boo
     if (companies.size === 0) return true   // no derivable owner — see header
     const inScope = [...companies].map((t) => scope.tenantIds.has(t))
     return scope.mode === 'read' ? inScope.some(Boolean) : inScope.every(Boolean)
+  }
+  if (r.kind === 'modifier') {
+    const cid = await modifierConceptOf(r)
+    return cid != null && scope.conceptIds.has(cid)
   }
   const pending = r.pendingMenuItem as { conceptId?: string } | null
   const cid = r.menuItem?.conceptId ?? pending?.conceptId ?? null
@@ -281,61 +340,163 @@ async function filterInScope<T extends ScopableRecipe>(rows: T[], scope: RecipeS
   return rows.filter((_, i) => keep[i])
 }
 
+/** What a write route knows about the recipe it acts on. */
+interface OwnedRecipe {
+  id: string
+  kind: string
+  status: string
+  /** A plate's brand company, or a modifier recipe's (modifier → … → brand); null for a component. */
+  ownerTenantId: string | null
+  /** A plate's brand vessel ('plate' | 'packaging'); null for components and modifier recipes. */
+  serviceVessel: string | null
+  /** The recipe's current lines — an untouched one is never re-validated (legacy rows). */
+  lines: ExistingLine[]
+}
+
 /**
  * Resolve a recipe the operator may act on, or 404. Returns the recipe's
- * kind and — for a plate — the company of its brand (null for a component),
- * so callers can check that stations and ingredients belong to it. Reads were
- * already scoped; the write handlers looked recipes up by bare id, so a
- * manager at one company could edit, approve, reject or delete another
- * company's recipes — and approving one overwrites the live menu price of
- * that company's item.
+ * kind and — for a plate or modifier recipe — the company of its brand (null
+ * for a component), so callers can check that stations and ingredients
+ * belong to it. Reads were already scoped; the write handlers looked recipes
+ * up by bare id, so a manager at one company could edit, approve, reject or
+ * delete another company's recipes — and approving one overwrites the live
+ * menu price of that company's item.
  */
 async function assertRecipeInScope(
   req: FastifyRequest,
   recipeId: string,
   notFound: () => Error = () => new NotFoundError('Recipe', recipeId),
-): Promise<{ id: string; kind: string; plateTenantId: string | null }> {
+): Promise<OwnedRecipe> {
   const r = await prisma.recipe.findUnique({
     where: { id: recipeId },
     select: {
-      id: true, kind: true, pendingMenuItem: true,
-      menuItem: { select: { conceptId: true, concept: { select: { tenantId: true } } } },
+      id: true, kind: true, status: true, pendingMenuItem: true,
+      menuItem: { select: { conceptId: true, concept: { select: { tenantId: true, serviceVessel: true } } } },
+      modifier: MODIFIER_BRAND,
+      ingredients: { select: { inventoryItemId: true, prepRecipeId: true, section: true } },
     },
   })
   if (!r) throw notFound()
   // 'write': editing an existing row is allowed for any company the operator
   // belongs to, independent of which one the portfolio header is viewing.
   if (!(await recipeInScope(r, await recipeScope(req, 'write')))) throw notFound()
-  let plateTenantId: string | null = null
+  let ownerTenantId: string | null = null
+  let serviceVessel: string | null = null
   if (r.kind === 'plate') {
     const pendingCid = (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId
-    plateTenantId = r.menuItem?.concept.tenantId
-      ?? (pendingCid ? (await prisma.concept.findUnique({ where: { id: pendingCid }, select: { tenantId: true } }))?.tenantId ?? null : null)
+    const concept = r.menuItem?.concept
+      ?? (pendingCid ? await prisma.concept.findUnique({ where: { id: pendingCid }, select: { tenantId: true, serviceVessel: true } }) : null)
+    ownerTenantId = concept?.tenantId ?? null
+    serviceVessel = concept?.serviceVessel ?? null
+  } else if (r.kind === 'modifier') {
+    ownerTenantId = r.modifier?.group.menuItem.concept.tenantId ?? null
   }
-  return { id: r.id, kind: r.kind, plateTenantId }
+  return { id: r.id, kind: r.kind, status: r.status, ownerTenantId, serviceVessel, lines: r.ingredients }
+}
+
+/** True when `tenantId` is inside a scopeTenantWhere result. */
+function whereHas(where: TenantIdWhere, tenantId: string): boolean {
+  return typeof where.tenantId === 'string' ? where.tenantId === tenantId : where.tenantId.in.includes(tenantId)
 }
 
 /**
- * 422 unless every ingredient is usable by a recipe of these companies: raw
- * items must be the company's own stock (or shared, company-less stock), and
- * sub-recipes must be component recipes in the operator's read scope. Stops a
- * recipe (and its cost) being built from another company's stock or IP.
+ * The modifier a new modifier recipe attaches to, resolved to its company
+ * through modifier → group → menu item → brand. A modifier of a company the
+ * operator does not belong to is 404; one of another of their companies than
+ * the ACTIVE one ('create' binds to the active company) is 422
+ * MODIFIER_NOT_IN_COMPANY.
  */
-async function assertIngredientsUsable(
+async function resolveModifierForCreate(req: FastifyRequest, modifierId: string): Promise<{ id: string; name: string; tenantId: string }> {
+  const m = await prisma.modifier.findFirst({
+    where: { id: modifierId, deletedAt: null, group: { deletedAt: null, menuItem: { deletedAt: null, concept: { deletedAt: null } } } },
+    select: { id: true, name: true, group: { select: { name: true, menuItem: { select: { name: true, concept: { select: { tenantId: true } } } } } } },
+  })
+  const tenantId = m?.group.menuItem.concept.tenantId ?? null
+  if (!m || !tenantId || !whereHas(await scopeTenantWhere(req, 'write'), tenantId)) throw new NotFoundError('Modifier', modifierId)
+  if (!whereHas(await scopeTenantWhere(req, 'create'), tenantId)) {
+    throw new AppError('MODIFIER_NOT_IN_COMPANY', 'That add-on belongs to another of your companies — switch to it first', 422)
+  }
+  return { id: m.id, name: `${m.group.menuItem.name} — ${m.name}`, tenantId }
+}
+
+/** One of a recipe's lines as stored (for "is this line new or changed?"). */
+interface ExistingLine { inventoryItemId: string | null; prepRecipeId: string | null; section: string }
+
+/** Who a recipe's lines must belong to (validateRecipeLines). */
+interface LineOwner {
+  kind: string
+  /** Companies its stock may come from: a plate / modifier → its brand's company; a component → the companies allowed. */
+  tenantIds: string[]
+}
+
+const lineKey = (l: { inventoryItemId?: string | null; prepRecipeId?: string | null; section?: string | null }) =>
+  `${l.inventoryItemId ?? ''}|${l.prepRecipeId ?? ''}|${l.section ?? 'ingredients'}`
+
+/**
+ * THE line rules of a recipe (create, PUT and costing-preview call it):
+ *   • a negative quantity ('removes') only on a modifier recipe → else 422 NEGATIVE_QTY_NOT_ALLOWED;
+ *   • a Packaging section only on a plate → else 422 PACKAGING_ON_PLATES_ONLY
+ *     (also a packaging-class item anywhere in a sub-recipe or modifier recipe);
+ *   • a plate's packaging-class item only in Packaging → else 422 PACKAGING_SECTION_ONLY;
+ *   • nothing else in Packaging (no food, drinks or sub-recipes) → else 422 NOT_PACKAGING;
+ *   • a stock item of the recipe's company → else 422 ITEM_NOT_IN_COMPANY, or
+ *     422 ITEM_HAS_NO_COMPANY for company-less stock (a sale never consumes it);
+ *   • a sub-recipe the operator can see → else 422 INGREDIENT_NOT_IN_COMPANY.
+ * Only NEW or CHANGED lines are refused: a line already on the recipe (same
+ * item or sub-recipe, same section — e.g. a packaging item the wave-B
+ * backfill left in a sub-recipe's ingredients) passes with a warning, so a
+ * save is never refused because of a line the user did not touch. Returns
+ * those warnings (codes).
+ */
+async function validateRecipeLines(
   req: FastifyRequest,
-  ingredients: Array<{ inventoryItemId?: string; prepRecipeId?: string }>,
-  allowedTenantIds: string[],
-): Promise<void> {
-  const itemIds = [...new Set(ingredients.map((i) => i.inventoryItemId).filter((x): x is string => !!x))]
-  const subIds  = [...new Set(ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x))]
-  if (itemIds.length) {
-    const ok = await prisma.inventoryItem.count({
-      where: { id: { in: itemIds }, OR: [{ tenantId: { in: allowedTenantIds } }, { tenantId: null }] },
-    })
-    if (ok !== itemIds.length) {
-      throw new AppError('INGREDIENT_NOT_IN_COMPANY', 'One or more ingredients are not stock of this company', 422)
+  owner: LineOwner,
+  lines: Array<Pick<IngredientInput, 'inventoryItemId' | 'prepRecipeId' | 'quantity' | 'section'>>,
+  existing: ExistingLine[] = [],
+): Promise<string[]> {
+  const warnings = new Set<string>()
+  const untouched = new Set(existing.map(lineKey))
+  const isPlate = owner.kind === 'plate'
+  const itemIds = [...new Set(lines.map((l) => l.inventoryItemId).filter((x): x is string => !!x))]
+  const items = new Map((itemIds.length
+    ? await prisma.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, tenantId: true, category: true } })
+    : []).map((i) => [i.id, i]))
+  const allowed = new Set(owner.tenantIds)
+  for (const l of lines) {
+    const section = l.section ?? 'ingredients'
+    if (l.quantity < 0 && owner.kind !== 'modifier') {
+      throw new AppError('NEGATIVE_QTY_NOT_ALLOWED', 'Only an add-on (modifier) recipe can remove an ingredient — use a positive quantity', 422)
+    }
+    const legacy = untouched.has(lineKey(l))
+    const refuse = (code: string, message: string) => {
+      if (legacy) { warnings.add(code); return }
+      throw new AppError(code, message, 422)
+    }
+    if (section === 'packaging' && !isPlate) {
+      refuse('PACKAGING_ON_PLATES_ONLY', 'Only a dish (plate recipe) has a Packaging section — sub-recipes and add-ons do not')
+      continue
+    }
+    if (l.prepRecipeId) {
+      if (section === 'packaging') refuse('NOT_PACKAGING', 'A sub-recipe is not packaging — put it under Ingredients')
+      continue
+    }
+    const item = l.inventoryItemId ? items.get(l.inventoryItemId) : undefined
+    if (!item) throw new AppError('ITEM_NOT_IN_COMPANY', 'That stock item is not part of this recipe\'s company', 422)
+    if (item.tenantId == null) {
+      refuse('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company — a sale never uses it. Pick this company's own stock item.`)
+    } else if (!allowed.has(item.tenantId)) {
+      refuse('ITEM_NOT_IN_COMPANY', `${item.name} is another company's stock — pick this company's own item`)
+    }
+    const isPackagingItem = costClassOf(item.category) === 'packaging'
+    if (isPackagingItem && !isPlate) {
+      refuse('PACKAGING_ON_PLATES_ONLY', `${item.name} is packaging — packaging goes only in a dish's Packaging section, never in a ${owner.kind === 'modifier' ? 'add-on' : 'sub-recipe'}`)
+    } else if (isPackagingItem && section !== 'packaging') {
+      refuse('PACKAGING_SECTION_ONLY', `${item.name} is packaging — move it to the Packaging section`)
+    } else if (!isPackagingItem && section === 'packaging') {
+      refuse('NOT_PACKAGING', `${item.name} is not a packaging item — put it under Ingredients`)
     }
   }
+  const subIds = [...new Set(lines.filter((l) => !untouched.has(lineKey(l))).map((l) => l.prepRecipeId).filter((x): x is string => !!x))]
   if (subIds.length) {
     const subs = await prisma.recipe.findMany({
       where: { id: { in: subIds }, kind: 'component' },
@@ -346,6 +507,17 @@ async function assertIngredientsUsable(
       throw new AppError('INGREDIENT_NOT_IN_COMPANY', 'One or more sub-recipes are not available to this company', 422)
     }
   }
+  return [...warnings]
+}
+
+/** Save-time warning codes: the line warnings plus PACKAGING_MISSING (never a block). */
+function saveWarnings(
+  lineWarnings: string[], kind: string, serviceVessel: string | null | undefined,
+  lines: Array<{ section?: string | null }>,
+): string[] {
+  const out = [...lineWarnings]
+  if (kind === 'plate' && serviceVessel === 'packaging' && !lines.some((l) => l.section === 'packaging')) out.push('PACKAGING_MISSING')
+  return out
 }
 
 /** 422 unless `stationId` is a live station of one of `tenantIds`. */
@@ -360,10 +532,111 @@ async function assertStationIn(stationId: string, tenantIds: string[]): Promise<
 }
 
 /** Companies a recipe's stations/ingredients may come from. */
-async function recipeCompanies(req: FastifyRequest, plateTenantId: string | null): Promise<string[]> {
-  if (plateTenantId) return [plateTenantId]
+async function recipeCompanies(req: FastifyRequest, ownerTenantId: string | null): Promise<string[]> {
+  if (ownerTenantId) return [ownerTenantId]
   const where = await scopeTenantWhere(req, 'write')
   return typeof where.tenantId === 'string' ? [where.tenantId] : where.tenantId.in
+}
+
+// ─── Material cost readout (wave B) ───────────────────────────────────────────
+//
+// Every number comes from lib/recipeCost.ts (RecipeCost) — PER PORTION, in
+// whole paisa:
+//   stockByClass   food / drinks (beverage) / packaging the dish can consume, ex-Q
+//   packagingCents the dish's Packaging section alone
+//   standardCents  the plate MC = food + drinks (what every sale of it uses)
+//   targetMcCents  plate MC + packaging where it applies to that order type for
+//                  the brand's vessel (takeaway / delivery always; dine-in only
+//                  at a 'packaging' brand — a dine-in "Box given" is an actual)
+//   qCents         the Q factor allowance (this recipe's and its sub-recipes'):
+//                  pricing only, never stock, never posted, never inside MC
+
+interface McReadout {
+  stockByClass:   { food: number; beverage: number; packaging: number }
+  packagingCents: number
+  standardCents:  number
+  qCents:         number
+  targetMcCents:  { dine_in: number; takeout: number; delivery: number }
+}
+
+function mcReadout(cost: RecipeCost): McReadout {
+  const standardCents = Math.round(cost.standardCents)
+  const packagingCents = Math.round(cost.packagingCents)
+  // Whether the packaging applies to an order type is the library's rule
+  // (targetMcCents) — read it, never restate it.
+  const applies = (t: number) => t - cost.standardCents > 1e-9
+  return {
+    stockByClass: {
+      food:      Math.round(cost.stockByClass.food),
+      beverage:  Math.round(cost.stockByClass.beverage),
+      packaging: Math.round(cost.stockByClass.packaging),
+    },
+    packagingCents,
+    standardCents,
+    qCents: Math.max(0, Math.round(cost.perPortionCents - cost.standardCents - cost.packagingCents)),
+    targetMcCents: {
+      dine_in:  standardCents + (applies(cost.targetMcCents.dine_in) ? packagingCents : 0),
+      takeout:  standardCents + (applies(cost.targetMcCents.takeout) ? packagingCents : 0),
+      delivery: standardCents + (applies(cost.targetMcCents.delivery) ? packagingCents : 0),
+    },
+  }
+}
+
+export interface RecipeCostWarnings {
+  /** Stock lines (any depth) of another company, or of none — a sale never consumes them. */
+  outsideCompany: Array<{ lineId: string; itemName: string; recipeId: string; reason: 'foreign' | 'company_less' }>
+  /** Not approved (status ≠ production) yet a live dish / add-on is costed and depleted from it. */
+  costedWhileUnapproved: boolean
+  /** A plate of a PACKAGING-vessel brand with no Packaging line (never for plate brands). */
+  noPackaging: boolean
+}
+
+/** Stock lines (any depth below `rootId`) whose item is not of `owners`. */
+function linesOutside(graph: RecipeGraph, rootId: string, owners: Set<string>): Array<{ lineId: string; itemId: string; recipeId: string; reason: 'foreign' | 'company_less' }> {
+  const out: Array<{ lineId: string; itemId: string; recipeId: string; reason: 'foreign' | 'company_less' }> = []
+  const seen = new Set<string>()
+  const walk = (id: string) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    const r = graph.get(id)
+    if (!r) return
+    for (const l of r.ingredients) {
+      if (l.prepRecipeId) { walk(l.prepRecipeId); continue }
+      const t = l.inventoryItem?.tenantId
+      if (!l.inventoryItemId || !l.inventoryItem || t === undefined) continue
+      if (t == null) out.push({ lineId: l.id ?? '', itemId: l.inventoryItemId, recipeId: r.id, reason: 'company_less' })
+      else if (!owners.has(t)) out.push({ lineId: l.id ?? '', itemId: l.inventoryItemId, recipeId: r.id, reason: 'foreign' })
+    }
+  }
+  walk(rootId)
+  return out
+}
+
+/** Item names for the outsideCompany warnings, one query. */
+async function itemNames(ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map()
+  const rows = await prisma.inventoryItem.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true } })
+  return new Map(rows.map((r) => [r.id, r.name]))
+}
+
+/**
+ * The costing warnings of one recipe. `owners` = the companies its stock
+ * must be (null = no derivable owner: a sub-recipe nothing uses yet — no
+ * outsideCompany check); `live` = it costs a live dish / add-on today.
+ */
+function costWarnings(
+  graph: RecipeGraph, rootId: string,
+  o: { owners: Set<string> | null; kind: string; status: string; live: boolean; serviceVessel: string | null | undefined },
+  names: Map<string, string>,
+): RecipeCostWarnings {
+  const root = graph.get(rootId)
+  return {
+    outsideCompany: o.owners
+      ? linesOutside(graph, rootId, o.owners).map((x) => ({ lineId: x.lineId, itemName: names.get(x.itemId) ?? '—', recipeId: x.recipeId, reason: x.reason }))
+      : [],
+    costedWhileUnapproved: o.live && o.status !== 'production',
+    noPackaging: o.kind === 'plate' && o.serviceVessel === 'packaging' && !(root?.ingredients ?? []).some((l) => l.section === 'packaging'),
+  }
 }
 
 // ─── Who reads what here (wave 3, audit UI-10 / UI-07) ───────────────────────
@@ -1353,146 +1626,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ── Food Cost Analysis ─────────────────────────────────────────────────────
-
-  // GET /recipes/food-cost?conceptId&dateFrom&dateTo
-  fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
-    '/food-cost',
-    // Finance → Food cost (audit UI-07): finance reads it, scoped per company
-    // exactly as managers are (scopedConceptIdSet / resolveTenantScope below).
-    { preHandler: requireAuth(...FINANCE_TEAM) },
-    async (req) => {
-      const { conceptId, dateFrom, dateTo } = req.query
-      const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 86_400_000)
-      const to   = dateTo   ? new Date(dateTo)   : new Date()
-
-      // Company scoping: restrict everything to the concepts visible to this
-      // request. An out-of-scope conceptId behaves like an unknown one.
-      const visibleConceptIds = await scopedConceptIdSet(req)
-      if (conceptId && !visibleConceptIds.has(conceptId)) {
-        return {
-          period: { from: from.toISOString(), to: to.toISOString() },
-          revenue: { grossCents: 0, netCents: 0 },
-          cost: { theoreticalCents: 0, actualCents: 0, actualFoodCostPct: 0, actualPurchasesCents: 0, theoreticalFoodCostPct: 0, targetFoodCostPct: 30, variance: -30, actualVsTheoreticalPct: 0, status: 'good' },
-          byItem: [], itemsWithoutRecipe: [],
-        }
-      }
-      const conceptScope = conceptId ? [conceptId] : Array.from(visibleConceptIds)
-      const conceptSet = new Set(conceptScope)
-      const { tenantIds } = await resolveTenantScope(req)
-
-      // ── Revenue: the LEDGER (owner decision 20), ex-GST. gross = item
-      // revenue before discounts; net = after discounts / promos. The old
-      // FinancialEntry sum was GST-inclusive and missed till sales.
-      const buckets = await pnlByConcept(tenantIds, from, to)
-      const inScope = buckets.filter((b) => b.conceptId && conceptSet.has(b.conceptId))
-      const grossRevenue = inScope.reduce((s, b) => s + b.revenueCents, 0)
-      const netRevenue   = grossRevenue - inScope.reduce((s, b) => s + b.contraRevenueCents, 0)
-
-      // ── Actual cost: what the ledger booked to cost of sales (5xxx: COGS
-      // at sale, waste, inventory variance) for the brands in scope. Waste is
-      // posted without a brand, so the company-wide view (no conceptId) adds
-      // the unattributed bucket; a single brand can't claim it.
-      const ledgerCostCents = inScope.reduce((s, b) => s + b.cogsCents, 0)
-        + (conceptId ? 0 : buckets.filter((b) => !b.conceptId).reduce((s, b) => s + b.cogsCents, 0))
-      // Purchases = supplier bills booked to INVENTORY_FOOD (quantity × price,
-      // net of GST) — company-level, it can't be split by brand.
-      const purchasesAgg = await prisma.journalLine.aggregate({
-        where: {
-          type: 'debit',
-          account: { code: ACCT.INVENTORY_FOOD },
-          journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: from, lte: to } },
-        },
-        _sum: { amountCents: true },
-      })
-      const actualPurchasesCents = sumCents(purchasesAgg._sum.amountCents)
-
-      // ── Theoretical: THE plate cost × what was sold (completed, not voided),
-      // at the price actually charged.
-      const soldRows = await prisma.orderItem.findMany({
-        where: {
-          status: { not: 'voided' },
-          menuItemId: { not: null },
-          order: { conceptId: { in: conceptScope }, status: 'completed', completedAt: { gte: from, lte: to } },
-        },
-        select: { menuItemId: true, name: true, quantity: true, unitPriceCents: true },
-      })
-      const sold = new Map<string, { name: string; qty: number; revenue: number }>()
-      for (const r of soldRows) {
-        const s = sold.get(r.menuItemId!) ?? { name: r.name, qty: 0, revenue: 0 }
-        s.qty += r.quantity
-        s.revenue += r.unitPriceCents * r.quantity
-        sold.set(r.menuItemId!, s)
-      }
-      const plateCosts = await menuItemPlateCosts([...sold.keys()])
-      const targets = new Map((await prisma.recipe.findMany({
-        where: { menuItemId: { in: [...sold.keys()] } },
-        select: { menuItemId: true, targetFoodCostPct: true },
-      })).map((r) => [r.menuItemId, r.targetFoodCostPct]))
-
-      let theoreticalCostCents = 0
-      let targetWeight = 0
-      let targetRevenue = 0
-      const byItem: Array<{
-        menuItemId: string; name: string; qtySold: number
-        costPerPortion: number; totalCost: number
-        revenue: number; foodCostPct: number; marginPct: number
-      }> = []
-      for (const [menuItemId, s] of sold) {
-        const cost = plateCosts.get(menuItemId)
-        if (!cost) continue
-        const costPerPortion = Math.round(cost.perPortionCents)
-        const totalCost = Math.round(cost.perPortionCents * s.qty)
-        theoreticalCostCents += totalCost
-        targetWeight  += (targets.get(menuItemId) ?? 30) * s.revenue
-        targetRevenue += s.revenue
-        byItem.push({
-          menuItemId,
-          name:         s.name,
-          qtySold:      s.qty,
-          costPerPortion,
-          totalCost,
-          revenue:      s.revenue,
-          foodCostPct:  s.revenue > 0 ? Math.round((totalCost / s.revenue) * 100) : 0,
-          marginPct:    s.revenue > 0 ? Math.round(((s.revenue - totalCost) / s.revenue) * 100) : 0,
-        })
-      }
-      byItem.sort((a, b) => b.totalCost - a.totalCost)
-
-      const pct = (n: number, d: number) => (d > 0 ? parseFloat(((n / d) * 100).toFixed(1)) : 0)
-      const theoreticalFoodCostPct = pct(theoreticalCostCents, grossRevenue)
-      const actualFoodCostPct      = pct(ledgerCostCents, grossRevenue)
-      // Target = the recipes' own targetFoodCostPct, weighted by what sold.
-      const targetFoodCostPct = targetRevenue > 0 ? parseFloat((targetWeight / targetRevenue).toFixed(1)) : 30
-
-      return {
-        period:     { from: from.toISOString(), to: to.toISOString() },
-        revenue:    { grossCents: grossRevenue, netCents: netRevenue, basis: 'ledger_ex_gst' as const },
-        cost: {
-          theoreticalCents:       theoreticalCostCents,
-          // Ledger cost of sales (5xxx) — theoretical COGS booked at sale plus
-          // waste and variance. Till sales reach it only once the shift close
-          // posts COGS.
-          actualCents:            ledgerCostCents,
-          actualFoodCostPct,
-          actualPurchasesCents,
-          theoreticalFoodCostPct,
-          targetFoodCostPct,
-          // Theoretical against the recipes' own target.
-          variance:               parseFloat((theoreticalFoodCostPct - targetFoodCostPct).toFixed(1)),
-          // Actual against theoretical: waste, over-portioning, shrinkage.
-          actualVsTheoreticalPct: parseFloat((actualFoodCostPct - theoreticalFoodCostPct).toFixed(1)),
-          status:                 theoreticalFoodCostPct <= targetFoodCostPct ? 'good' : theoreticalFoodCostPct <= targetFoodCostPct + 5 ? 'warning' : 'critical',
-        },
-        byItem,
-        itemsWithoutRecipe: [...sold].filter(([id]) => !plateCosts.has(id)).map(([menuItemId, s]) => ({
-          menuItemId,
-          name: s.name,
-          qtySold: s.qty,
-        })),
-      }
-    },
-  )
+  // GET /recipes/food-cost is gone (wave B): the food-cost report is ONE
+  // engine at /reports/food-cost (reports/foodCost.ts). This path answers 404;
+  // the admin's old /accounting/food-cost link forwards to the report.
 
   // ─── Recipe steps (per-station service sequence) ────────────────────────
   //

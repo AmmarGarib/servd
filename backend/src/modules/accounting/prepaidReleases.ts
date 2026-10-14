@@ -52,6 +52,7 @@ const PREPAID = ACCT.PREPAID // 1310
 const CAPEX_PAYMENT_SOURCE = 'capex.payment'
 const OPEX_PAYMENT_SOURCE = 'opex.payment'
 const TX_OPTS = { timeout: 60_000, maxWait: 15_000 } as const
+const DAY_MS = 86_400_000
 
 const ENTITY_OF: Record<PrepaidSourceType, 'CapexPayment' | 'OpexPayment'> = {
   capex_payment: 'CapexPayment',
@@ -290,7 +291,12 @@ export const prepaidCloseChecks: CloseCheck[] = [
     severity: 'block',
     overridable: true,
     async run(ctx) {
-      const through = periodOfPkt(ctx.newLock)
+      // Only months whose release date (their last day) falls inside the
+      // close: a lock part-way through a month leaves that month's release
+      // outside it (and the release only runs for completed months). By PKT
+      // DAY, so a lock at any time on a month's last day covers that month.
+      const lockPeriod = periodOfPkt(ctx.newLock)
+      const through = periodOfPkt(new Date(ctx.newLock.getTime() + DAY_MS)) === lockPeriod ? addMonths(lockPeriod, -1) : lockPeriod
       const rows = await unreleasedPrepaid(ctx.db, ctx.tenantId, through)
       if (rows.length === 0) return null
       const months = [...new Set(rows.flatMap((r) => r.periods))].sort()

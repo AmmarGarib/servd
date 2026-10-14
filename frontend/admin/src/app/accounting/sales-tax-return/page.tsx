@@ -8,13 +8,23 @@
 //   • Post reclass — a provincial brand's output tax still in 2030 for the
 //     month moves to its authority's account, dated in that month.
 // Paying tax never lowers the period's output: payments are left out of it.
+//
+// Wave B (H8–H13): delivery charges and kept no-show deposits are supplies of
+// their own (SUPPLY_LABEL rows); sales tax our clients withheld (1335) is shown
+// per authority and set off only against that authority's payment; statutory
+// payroll challans (salary tax / EOBI / SESSI) are NOT this return's payments —
+// they live on Accounting → Statutory payments. Tabs: the return, Withholding
+// rates (WithholdingRates.tsx) and the Withholding register
+// (WithholdingRegister.tsx). Every figure is the server's.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import Link from 'next/link'
+import WithholdingRates from './WithholdingRates'
+import WithholdingRegister from './WithholdingRegister'
 
 interface AccountTotal { code: string; name: string; totalCents: number }
 type AuthorityKey = 'fbr' | 'pra' | 'srb' | 'kpra' | 'bra'
@@ -33,6 +43,14 @@ interface AuthorityReturn {
   otherOutputCents: number
   paidForPeriodCents: number
   inputSetOffForPeriodCents: number
+  /** H13: sales tax our clients withheld for this authority in the period (1335). */
+  withheldByCustomersCents: number
+  /** Customer-withheld tax set off in this period's payments to this authority. */
+  customerWithheldSetOffForPeriodCents: number
+  /** Customer-withheld tax still available to set off against this authority at the period's end. */
+  customerWithheldAvailableCents: number
+  /** output − input − withheld by customers; negative = carried forward with this authority. */
+  netAfterWithheldCents: number
   ledgerBalanceAtEndCents: number
   inputLedgerBalanceAtEndCents: number
 }
@@ -44,7 +62,7 @@ interface WithholdingReturn {
   paidForPeriodCents: number
   ledgerBalanceAtEndCents: number
 }
-type Supply = 'standard' | 'zero_rated' | 'exempt' | 'custom'
+type Supply = 'standard' | 'zero_rated' | 'exempt' | 'custom' | 'delivery_charge' | 'deposit_forfeit'
 interface RateLine {
   authority: string
   supply: Supply
@@ -62,12 +80,16 @@ interface Reclass { conceptId: string; conceptSlug: string; conceptName: string;
 interface ReclassPosted { conceptId: string; conceptName: string; month: string; reference: string; entryDate: string; fromAccount: string; toAccount: string; amountCents: number }
 interface TaxPayment {
   id: string
-  authority: PayKey
+  authority: PayKey | 'salary_tax' | 'eobi' | 'sessi'
+  /** Statutory challans are listed only on request (they belong to Statutory payments). */
+  kind?: 'sales_tax' | 'withholding' | 'statutory'
   periodFrom: string
   periodTo: string
   paidAt: string
   paidCents: number
   inputSetOffCents: number
+  /** H13: sales tax our clients withheld (1335) set off in this payment. */
+  customerWithheldSetOffCents?: number
   outputSetOffCents: number
   cprNumber: string | null
   bankAccountId: string | null
@@ -82,7 +104,9 @@ interface STR {
   outputTax: { fbr: AccountTotal; pra: AccountTotal; srb: AccountTotal; kpra: AccountTotal; bra: AccountTotal; totalCents: number }
   inputTax:  { fbr: AccountTotal; pra: AccountTotal; srb: AccountTotal; kpra: AccountTotal; bra: AccountTotal; totalCents: number }
   taxableSalesCents: number
-  taxableValueByConceptCents: Array<{ conceptSlug: string; conceptName: string; revenueCents: number }>
+  /** Delivery fees (4110) booked in the period — a taxable supply of their own (H9). */
+  deliveryFeesCents?: number
+  taxableValueByConceptCents: Array<{ conceptSlug: string; conceptName: string; revenueCents: number; deliveryFeeCents?: number }>
   byAuthority: AuthorityReturn[]
   byRate: RateLine[]
   reclassification: Reclass[]
@@ -98,10 +122,42 @@ interface Candidate { id: string; reference: string | null; description: string;
 // 'card' is the digital tax group: Card – Keenu, Raast QR and online card
 // (backend lib/pricing.ts CARD_TENDERS → the brand's card rate).
 const TENDER_LABEL: Record<RateLine['tender'], string> = { cash: 'Cash', card: 'Card / Raast (digital rate)', other: 'Other' }
-const SUPPLY_LABEL: Record<Supply, string> = { standard: 'Standard', custom: 'Own rate', zero_rated: 'Zero-rated', exempt: 'Exempt' }
+// The API's SUPPLY_LABEL (backend accounting/salesTaxReturn.ts).
+const SUPPLY_LABEL: Record<Supply, string> = {
+  standard: 'Standard-rated', custom: 'Own rate', zero_rated: 'Zero-rated', exempt: 'Exempt',
+  delivery_charge: 'Delivery charges', deposit_forfeit: 'No-show deposits kept',
+}
 const PAY_LABEL: Record<PayKey, string> = {
   fbr: 'FBR sales tax', pra: 'PRA', srb: 'SRB', kpra: 'KPRA', bra: 'BRA',
   wht: 'Income tax withheld', stwh: 'Sales tax withheld',
+}
+const TABS = [
+  { key: 'return', label: 'Return' },
+  { key: 'withholding-rates', label: 'Withholding rates' },
+  { key: 'withholding-register', label: 'Withholding register' },
+] as const
+type Tab = (typeof TABS)[number]['key']
+
+// The settlement routes' codes, in words (the API's own message is the fallback).
+const ERROR_TEXT: Record<string, string> = {
+  NO_WITHHELD_SET_OFF: 'Withheld tax can be set off only against a sales tax authority\'s payment (FBR, PRA, SRB, KPRA, BRA) — never against income tax or sales tax withheld by us. Leave "Withheld by customers set off" at 0.',
+  WITHHELD_SET_OFF_TOO_LARGE: 'That is more withheld tax than our clients withheld for this authority and is still unused. Lower "Withheld by customers set off".',
+  NO_INPUT_SET_OFF: 'This tax is paid in full — there is no input tax to set off against it.',
+  NOTHING_PAID: 'Enter the amount paid (or the tax set off).',
+  BAD_AMOUNT: 'Amounts cannot be negative.',
+  PAID_IN_FUTURE: 'The payment date is in the future.',
+  INVALID_DATE: 'Check the dates.',
+  BAD_PERIOD: 'The period ends before it starts.',
+  BANK_ACCOUNT_REQUIRED: 'This company has more than one bank — pick the bank the payment left from.',
+  ALREADY_LINKED: 'That entry is already recorded as a tax payment.',
+  ENTRY_REVERSED: 'That entry has been reversed — it no longer pays anything.',
+  NO_ACTIVE_COMPANY: 'Pick a company first — a return is filed by one company.',
+  RECLASS_ONE_MONTH: 'A reclass is for one month — pick dates inside the same month.',
+  RECLASS_FUTURE_MONTH: 'That month has not started yet.',
+}
+const errText = (e: unknown) => {
+  const x = e as { code?: string; message?: string } | null
+  return (x?.code && ERROR_TEXT[x.code]) || x?.message || 'Something went wrong'
 }
 // Who may record payments, link entries and post reclasses (backend TAX_PAYERS).
 const TAX_PAYERS = ['admin', 'finance']
@@ -135,10 +191,18 @@ export default function SalesTaxReturnPage() {
   const [to,   setTo]   = useState(todayPktIso())
   const canPay = useAuthStore((s) => s.isRole(...TAX_PAYERS))
   const qc = useQueryClient()
+  const [tab, setTab] = useState<Tab>('return')
+  // ?tab=withholding-rates (Configuration → Operations links here). Read once
+  // on mount from window, so the page needs no Suspense boundary.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    if (t && TABS.some((x) => x.key === t)) setTab(t as Tab)
+  }, [])
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['sales-tax-return', from, to],
     queryFn: () => api.get<STR>(`/accounting/sales-tax-return?dateFrom=${from}&dateTo=${to}`),
+    enabled: tab === 'return',
   })
 
   // Through api.download so the request carries the session (a plain link
@@ -160,8 +224,12 @@ export default function SalesTaxReturnPage() {
       setReclassMsg((m) => ({ ...m, [r.conceptId]: res.posted ? `Posted ${fmtPkr(Math.abs(res.amountCents))} for ${res.month}` : `Nothing left to move for ${res.month}` }))
       void qc.invalidateQueries({ queryKey: ['sales-tax-return'] })
     },
-    onError: (e: Error, r) => setReclassMsg((m) => ({ ...m, [r.conceptId]: e.message })),
+    onError: (e: Error, r) => setReclassMsg((m) => ({ ...m, [r.conceptId]: errText(e) })),
   })
+
+  // Statutory payroll challans belong to Statutory payments — never listed here
+  // (the API leaves them out; this keeps it so if it ever sends one).
+  const returnPayments = (data?.payments ?? []).filter((p) => p.kind !== 'statutory')
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -171,18 +239,39 @@ export default function SalesTaxReturnPage() {
           <h1 className="text-xl font-bold text-s-text">Sales Tax Return Helper</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
-          <span className="text-s-muted text-xs">→</span>
-          <input type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
-          <button type="button" onClick={exportCsv} className="s-btn-secondary text-sm">Export CSV</button>
+          {tab !== 'withholding-rates' && (
+            <>
+              <input type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+              <span className="text-s-muted text-xs">→</span>
+              <input type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+            </>
+          )}
+          {tab === 'return' && <button type="button" onClick={exportCsv} className="s-btn-secondary text-sm">Export CSV</button>}
         </div>
+        <nav className="w-full flex gap-1 overflow-x-auto -mb-4" role="tablist" aria-label="Sales tax return sections">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.key}
+              onClick={() => setTab(t.key)}
+              className={`shrink-0 px-3 py-2 text-xs font-semibold border-b-2 ${tab === t.key ? 'text-s-text' : 'border-transparent text-s-muted hover:text-s-text'}`}
+              style={tab === t.key ? { borderColor: 'var(--erp-accent)' } : undefined}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
       </header>
 
       <div className="px-4 sm:px-6 py-6 max-w-4xl mx-auto space-y-4">
-        {csvError && <p className="text-s-red text-sm">CSV export failed: {csvError}</p>}
-        {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
-        {error && <p className="text-s-red text-sm">{(error as Error).message}</p>}
-        {data && (
+        {tab === 'withholding-rates' && <WithholdingRates />}
+        {tab === 'withholding-register' && <WithholdingRegister from={from} to={to} />}
+        {tab === 'return' && csvError && <p className="text-s-red text-sm">CSV export failed: {csvError}</p>}
+        {tab === 'return' && isLoading && <p className="text-s-muted text-sm">Loading…</p>}
+        {tab === 'return' && error && <p className="text-s-red text-sm">{errText(error)}</p>}
+        {tab === 'return' && data && (
           <>
             <p className="text-xs text-s-muted">
               Period: {data.period.from} → {data.period.to}. This is reference data — file via FBR IRIS / provincial portal yourself.
@@ -244,6 +333,8 @@ export default function SalesTaxReturnPage() {
                     <th className="px-4 py-2 text-right font-medium">Output</th>
                     <th className="px-4 py-2 text-right font-medium">Input</th>
                     <th className="px-4 py-2 text-right font-medium">Net payable</th>
+                    <th className="px-4 py-2 text-right font-medium">Withheld by customers (1335)</th>
+                    <th className="px-4 py-2 text-right font-medium">Net after withholding</th>
                     <th className="px-4 py-2 text-right font-medium">Carried forward</th>
                     <th className="px-4 py-2 text-right font-medium">Paid for this period</th>
                     <th className="px-4 py-2 text-right font-medium">Ledger balance at period end</th>
@@ -267,11 +358,17 @@ export default function SalesTaxReturnPage() {
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">
                         {fmtPkr(a.input.totalCents)}<div className="text-s-muted">{a.input.code}</div>
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs font-semibold text-s-text">{fmtPkr(Math.max(0, a.netPayableCents))}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkr(Math.max(0, -a.netPayableCents))}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(Math.max(0, a.netPayableCents))}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">
+                        {fmtPkr(a.withheldByCustomersCents ?? 0)}
+                        {(a.customerWithheldAvailableCents ?? 0) !== 0 && <div className="text-s-muted">{fmtPkr(a.customerWithheldAvailableCents)} still to set off</div>}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono text-xs font-semibold text-s-text">{fmtPkr(Math.max(0, a.netAfterWithheldCents ?? a.netPayableCents))}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkr(Math.max(0, -(a.netAfterWithheldCents ?? a.netPayableCents)))}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">
                         {fmtPkr(a.paidForPeriodCents)}
                         {a.inputSetOffForPeriodCents !== 0 && <div className="text-s-muted">+ input set off {fmtPkr(a.inputSetOffForPeriodCents)}</div>}
+                        {(a.customerWithheldSetOffForPeriodCents ?? 0) !== 0 && <div className="text-s-muted">+ withheld set off {fmtPkr(a.customerWithheldSetOffForPeriodCents)}</div>}
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">
                         {fmtPkr(a.ledgerBalanceAtEndCents)}<div className="text-s-muted">owed ({a.output.code})</div>
@@ -286,6 +383,7 @@ export default function SalesTaxReturnPage() {
                               key: a.key,
                               inputSetOffCents: Math.max(0, Math.min(a.input.totalCents, a.output.totalCents)),
                               paidCents: Math.max(0, a.netPayableCents),
+                              withheldAvailableCents: Math.max(0, a.customerWithheldAvailableCents ?? 0),
                             })}
                           >
                             Record payment
@@ -295,7 +393,7 @@ export default function SalesTaxReturnPage() {
                     </tr>
                   ))}
                   {data.byAuthority.length === 0 && (
-                    <tr><td colSpan={canPay ? 8 : 7} className="px-4 py-3 text-xs text-s-muted">No sales tax in this period</td></tr>
+                    <tr><td colSpan={canPay ? 10 : 9} className="px-4 py-3 text-xs text-s-muted">No sales tax in this period</td></tr>
                   )}
                 </tbody>
               </table>
@@ -305,7 +403,7 @@ export default function SalesTaxReturnPage() {
             {/* Tax withheld from others — paid over like sales tax */}
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">
-                Tax withheld — income tax deducted from suppliers and salaries (2040), sales tax withheld as an agent (2041)
+                Tax withheld — income tax deducted from vendors (2040), sales tax withheld as an agent (2041)
               </div>
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -333,7 +431,7 @@ export default function SalesTaxReturnPage() {
                           <button
                             type="button"
                             className="text-xs font-bold text-primary-ink hover:underline"
-                            onClick={() => setPaying({ key: w.key, inputSetOffCents: 0, paidCents: Math.max(0, w.account.totalCents) })}
+                            onClick={() => setPaying({ key: w.key, inputSetOffCents: 0, paidCents: Math.max(0, w.account.totalCents), withheldAvailableCents: 0 })}
                           >
                             Record payment
                           </button>
@@ -349,7 +447,13 @@ export default function SalesTaxReturnPage() {
             {/* Payments for this period */}
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-s-text">Payments for this period</span>
+                <span className="text-xs font-semibold text-s-text">
+                  Payments for this period
+                  <span className="block font-normal text-s-muted">
+                    Salary tax, EOBI and SESSI challans are on{' '}
+                    <Link href="/accounting/statutory" className="underline">Accounting → Statutory payments</Link>, not here.
+                  </span>
+                </span>
                 {canPay && (
                   <button type="button" className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setLinking(true)}>
                     Link existing entry
@@ -365,15 +469,16 @@ export default function SalesTaxReturnPage() {
                     <th className="px-4 py-2 text-left font-medium">Paid on</th>
                     <th className="px-4 py-2 text-right font-medium">Paid</th>
                     <th className="px-4 py-2 text-right font-medium">Input set off</th>
+                    <th className="px-4 py-2 text-right font-medium">Withheld set off</th>
                     <th className="px-4 py-2 text-left font-medium">CPR · from</th>
                     {canPay && <th className="px-4 py-2" />}
                   </tr>
                 </thead>
                 <tbody>
-                  {data.payments.map((p) => (
+                  {returnPayments.map((p) => (
                     <tr key={p.id} className="border-t border-s-border align-top">
                       <td className="px-4 py-2 text-s-text">
-                        <div className="font-semibold">{PAY_LABEL[p.authority] ?? p.authority}</div>
+                        <div className="font-semibold">{PAY_LABEL[p.authority as PayKey] ?? p.authority}</div>
                         <div className="text-xs text-s-muted">
                           {p.linked ? 'Linked entry' : 'Posted here'}
                           {p.journalEntryId && <> · <Link href={`/accounting/ledger?id=${p.journalEntryId}`} className="hover:underline">entry</Link></>}
@@ -383,6 +488,7 @@ export default function SalesTaxReturnPage() {
                       <td className="px-4 py-2 text-xs text-s-text whitespace-nowrap">{p.paidAt}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(p.paidCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkr(p.inputSetOffCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkr(p.customerWithheldSetOffCents ?? 0)}</td>
                       <td className="px-4 py-2 text-xs text-s-muted">
                         {p.cprNumber ?? '—'}{p.bankAccountName ? ` · ${p.bankAccountName}` : ''}
                         {p.notes && <div>{p.notes}</div>}
@@ -396,8 +502,8 @@ export default function SalesTaxReturnPage() {
                       )}
                     </tr>
                   ))}
-                  {data.payments.length === 0 && (
-                    <tr><td colSpan={canPay ? 7 : 6} className="px-4 py-3 text-xs text-s-muted">No tax payment recorded for a period overlapping this one</td></tr>
+                  {returnPayments.length === 0 && (
+                    <tr><td colSpan={canPay ? 8 : 7} className="px-4 py-3 text-xs text-s-muted">No tax payment recorded for a period overlapping this one</td></tr>
                   )}
                 </tbody>
               </table>
@@ -406,7 +512,7 @@ export default function SalesTaxReturnPage() {
 
             {/* Per rate — the brand's cash and card rates, refunds netted */}
             <div className="s-card overflow-hidden">
-              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By rate (cash 15% / card and Raast QR 8%; zero-rated and exempt lines on their own rows) — refunds netted</div>
+              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By rate (cash 15% / card and Raast QR 8%; zero-rated, exempt, delivery charges and kept no-show deposits on their own rows) — refunds netted</div>
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-s-muted">
@@ -502,26 +608,32 @@ export default function SalesTaxReturnPage() {
             {/* Net */}
             <div className="s-card p-4 space-y-1">
               <div className="flex justify-between gap-3 text-base font-bold">
-                <span className="text-s-text">Net payable (each authority&apos;s own net)</span>
+                <span className="text-s-text">Net payable (each authority&apos;s own net, after tax our clients withheld)</span>
                 <span className={data.netPayableCents > 0 ? 'text-s-red' : 'text-s-text'}>{fmtPkr(data.netPayableCents)}</span>
               </div>
               <div className="flex justify-between gap-3 text-sm">
-                <span className="text-s-muted">Excess input carried forward (with its own authority)</span>
+                <span className="text-s-muted">Excess input and withheld tax carried forward (with its own authority)</span>
                 <span className="font-mono text-s-text">{fmtPkr(data.carryForwardCents)}</span>
               </div>
-              <p className="text-xs text-s-muted">Total taxable sales: {fmtPkr(data.taxableSalesCents)}</p>
+              <p className="text-xs text-s-muted">
+                Total taxable sales: {fmtPkr(data.taxableSalesCents)}
+                {(data.deliveryFeesCents ?? 0) !== 0 && <> · of which delivery charges (4110): {fmtPkr(data.deliveryFeesCents ?? 0)}</>}
+              </p>
             </div>
 
             <div className="s-card overflow-hidden">
-              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Taxable Sales by Concept</div>
+              <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Taxable sales by brand — revenue and delivery charges</div>
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {data.taxableValueByConceptCents.map((c) => (
-                    <tr key={c.conceptSlug} className="border-t border-s-border">
+                    <tr key={c.conceptSlug || c.conceptName} className="border-t border-s-border align-top">
                       <td className="px-4 py-2 text-xs font-mono text-s-muted w-32">{c.conceptSlug}</td>
                       <td className="px-4 py-2 text-s-text">{c.conceptName}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(c.revenueCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">
+                        {fmtPkr(c.revenueCents)}
+                        {(c.deliveryFeeCents ?? 0) !== 0 && <div className="text-s-muted">+ delivery charges {fmtPkr(c.deliveryFeeCents ?? 0)}</div>}
+                      </td>
                     </tr>
                   ))}
                   {data.taxableValueByConceptCents.length === 0 && (
@@ -551,12 +663,14 @@ export default function SalesTaxReturnPage() {
   )
 }
 
-function PayModal({ report, target, onClose }: { report: STR; target: { key: PayKey; paidCents: number; inputSetOffCents: number }; onClose: () => void }) {
+interface PayTarget { key: PayKey; paidCents: number; inputSetOffCents: number; withheldAvailableCents: number }
+
+function PayModal({ report, target, onClose }: { report: STR; target: PayTarget; onClose: () => void }) {
   const qc = useQueryClient()
   const salesTax = target.key !== 'wht' && target.key !== 'stwh'
   const [f, setF] = useState({
     periodFrom: report.period.from, periodTo: report.period.to,
-    paid: rupees(target.paidCents), input: rupees(target.inputSetOffCents),
+    paid: rupees(target.paidCents), input: rupees(target.inputSetOffCents), withheld: '0',
     paidAt: todayPktIso(), method: 'bank_transfer', bankAccountId: '', cprNumber: '', notes: '',
   })
   const [err, setErr] = useState('')
@@ -567,6 +681,8 @@ function PayModal({ report, target, onClose }: { report: STR; target: { key: Pay
       periodFrom: f.periodFrom, periodTo: f.periodTo,
       paidCents: toPaisa(f.paid),
       inputSetOffCents: salesTax ? toPaisa(f.input) : 0,
+      // H13: only a sales-tax authority takes it (422 NO_WITHHELD_SET_OFF otherwise).
+      customerWithheldSetOffCents: salesTax ? toPaisa(f.withheld) : 0,
       paidAt: f.paidAt,
       method: f.method,
       bankAccountId: f.method === 'cash' ? null : (f.bankAccountId || null),
@@ -574,9 +690,9 @@ function PayModal({ report, target, onClose }: { report: STR; target: { key: Pay
       notes: f.notes || null,
     }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['sales-tax-return'] }); onClose() },
-    onError: (e: Error) => setErr(e.message),
+    onError: (e: Error) => setErr(errText(e)),
   })
-  const settled = toPaisa(f.paid) + (salesTax ? toPaisa(f.input) : 0)
+  const settled = toPaisa(f.paid) + (salesTax ? toPaisa(f.input) + toPaisa(f.withheld) : 0)
   return (
     <Modal title={`Record payment — ${PAY_LABEL[target.key]}`} onClose={onClose}>
       <p className="text-xs text-s-muted mb-3">
@@ -589,6 +705,23 @@ function PayModal({ report, target, onClose }: { report: STR; target: { key: Pay
         {salesTax && (
           <Field label="Input tax set off (PKR)" hint="Recoverable input of the same authority, used against this output.">
             <input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.input} onChange={set('input')} />
+          </Field>
+        )}
+        {salesTax && (
+          <Field
+            label="Withheld by customers set off (PKR)"
+            hint={target.withheldAvailableCents > 0
+              ? `Sales tax our clients withheld for ${PAY_LABEL[target.key]} (1335) and not yet used: ${fmtPkr(target.withheldAvailableCents)} at the period's end.`
+              : `No tax our clients withheld for ${PAY_LABEL[target.key]} is waiting to be set off.`}
+          >
+            <div className="flex gap-2">
+              <input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.withheld} onChange={set('withheld')} />
+              {target.withheldAvailableCents > 0 && (
+                <button type="button" className="s-btn-secondary text-xs shrink-0" onClick={() => setF((p) => ({ ...p, withheld: rupees(target.withheldAvailableCents) }))}>
+                  Use all
+                </button>
+              )}
+            </div>
           </Field>
         )}
         <Field label="Paid on"><input type="date" className="s-input" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} /></Field>
@@ -637,7 +770,7 @@ function LinkModal({ report, onClose }: { report: STR; onClose: () => void }) {
       journalEntryId: entryId.trim(), authority, periodFrom, periodTo, cprNumber: cprNumber || null,
     }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['sales-tax-return'] }); onClose() },
-    onError: (e: Error) => setErr(e.message),
+    onError: (e: Error) => setErr(errText(e)),
   })
   return (
     <Modal title="Link an entry already posted" onClose={onClose}>

@@ -312,8 +312,8 @@ describe('the sales-tax-return CSV carries what the return files', () => {
     const csv = res.body
     expect(csv).toContain('By authority — SRB')
     expect(csv).toContain('Net payable')
-    expect(csv).toMatch(/By rate,SRB,SRB cash 15% — output tax to declare/)
-    expect(csv).toMatch(/By rate,SRB,SRB cash 15% — taxable value to declare/)
+    expect(csv).toMatch(/By rate,SRB,SRB Standard-rated cash 15% — output tax to declare/)
+    expect(csv).toMatch(/By rate,SRB,SRB Standard-rated cash 15% — taxable value to declare/)
     expect(csv).toContain(`Reclassify,${slugSD},Karachi kitchen: Dr 2030 / Cr 2032`)
     expect(csv).toContain('EXCESS INPUT CARRIED FORWARD')
     // Company B's return never shows A's brand.

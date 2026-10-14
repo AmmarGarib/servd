@@ -547,17 +547,29 @@ export async function postSupplierBillVoid(
 
     // Lock the bill's POs and receipt lines (as posting and receiving do)
     // BEFORE reading its matches: a receipt settling one of its pending
-    // matches either commits first (and is read as live here) or waits.
+    // matches either commits first (and is read as live here) or waits. A
+    // legacy bill the cut-over tied through its PO locks those lines too.
     const preMatches = await tx.grniMatch.findMany({ where: { billId, status: { not: 'void' } }, select: { receiptLineId: true } })
+    const { readCutoverTies } = await import('../inventory/fifoCutover.js')
+    const ties = (await readCutoverTies(tx, tenantId))[billId] ?? []
     await lockBillDocsTx(
       tx,
       bill.lines.map((l) => l.poLineId ?? ''),
-      [...bill.lines.map((l) => l.receiptLineId ?? ''), ...preMatches.map((m) => m.receiptLineId ?? '')],
+      [...bill.lines.map((l) => l.receiptLineId ?? ''), ...preMatches.map((m) => m.receiptLineId ?? ''), ...ties.map((t) => t.receiptLineId)],
     )
     const matches = await tx.grniMatch.findMany({
       where: { billId, status: { not: 'void' } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     })
+    // A void re-opens GRNI on the receipt lines the bill matched. One since
+    // written off (the CEO's "never to be billed") would be re-opened with no
+    // document able to clear it — no list, no bill, no second write-off — so
+    // the void is refused: correct the bill with a credit note instead.
+    const reopened = [...new Set(matches.filter((m) => m.status === 'live' && m.receiptLineId).map((m) => m.receiptLineId!))]
+    if (reopened.length > 0) {
+      const off = await tx.goodsReceiptLine.findFirst({ where: { id: { in: reopened }, writtenOffAt: { not: null } }, select: { id: true } })
+      if (off) throw receiptWrittenOff()
+    }
 
     const postedBy = opts.postedBy ?? 'system'
     const result = await reverseJournalEntry(tenantId, 'supplier.bill', billId, reason, { tx, suffix: 'void', postedBy })
@@ -570,7 +582,7 @@ export async function postSupplierBillVoid(
       return { posted: result.posted, entryId: result.entryId }
     }
     if (bill.createdAt.getTime() < cutoverAt.getTime()) {
-      await voidLegacyBillTx(tx, { bill, tenantId, originalEntryId: original.id, matches, postedBy })
+      await voidLegacyBillTx(tx, { bill, tenantId, originalEntryId: original.id, matches, postedBy, ties })
       return { posted: result.posted, entryId: result.entryId }
     }
 
@@ -615,20 +627,41 @@ export async function postSupplierBillVoid(
   })
 }
 
+/** 409: the void would re-open a delivery line the CEO wrote off. */
+function receiptWrittenOff(): AppError {
+  return new AppError(
+    'RECEIPT_WRITTEN_OFF',
+    'A delivery this bill was matched to has since been written off as never to be billed — correct the bill with a credit note instead of voiding it',
+    409,
+  )
+}
+
 /**
- * Void of a bill recorded before the FIFO cut-over (header): its 1210 debit D
- * goes back to 1210 (the reversal took it out, the lots never had it
- * removed), GRNI re-opens for the received quantity it had matched (R, at the
- * receipt cost — billedQty falls back, newest receipt first) and for its
- * cut-over billed-ahead quantity still pending (P, undoing the cut-over's Dr
- * 2015); 5060 takes D − R − P. Pending matches the cut-over opened for it are
- * voided; one a receipt has since settled re-opens that receipt's GRNI at its
- * lot value.
+ * Void of a bill recorded before the FIFO cut-over (header). Its 1210 debit D
+ * splits into the part TIED to receipt lines — lines naming a PO line, and a
+ * description-only bill the cut-over tied through its PO (fifoCutover.ts
+ * 'foodcost.cutoverTies') — and the untied rest:
+ *   - tied: 1210 keeps it (the reversal took it out, the lots never had it
+ *     removed), GRNI re-opens for the received quantity it had matched (R, at
+ *     the receipt cost — billedQty falls back: its matches, its PO lines
+ *     newest receipt first, its cut-over ties) and for its cut-over
+ *     billed-ahead quantity still pending (P, undoing the cut-over's Dr 2015);
+ *     5060 takes D_tied − R − P;
+ *   - untied (a duplicate or mis-keyed description-only bill naming no PO):
+ *     the lots never held that value, so it never lands in 5060 — the
+ *     reversal's Cr 1210 stands while the company has not aligned its
+ *     inventory (the alignment's fresh lots-vs-GL difference absorbs it);
+ *     after 'inventory.fifo_align' it goes back where the alignment put the
+ *     difference: Dr 1210 / Cr 3020.
+ * Pending matches the cut-over opened for it are voided; one a receipt has
+ * since settled re-opens that receipt's GRNI at its lot value. A receipt line
+ * written off since is never re-opened: 409 RECEIPT_WRITTEN_OFF.
  */
 async function voidLegacyBillTx(tx: Tx, a: {
   bill: Prisma.SupplierBillGetPayload<{ include: { supplier: { select: { tenantId: true; name: true } }; lines: { include: { poLine: { select: { inventoryItemId: true } } } } } }>
   tenantId: string; originalEntryId: string; postedBy: string
   matches: Array<{ id: string; billLineId: string; receiptLineId: string | null; qty: number; grniCents: DbMoney; status: string }>
+  ties: Array<{ receiptLineId: string; qty: number }>
 }): Promise<void> {
   const { bill, tenantId } = a
   const D = await entryNetDebit(tx, a.originalEntryId, ACCT.INVENTORY_FOOD)
@@ -638,7 +671,8 @@ async function voidLegacyBillTx(tx: Tx, a: {
     if (m.status === 'pending') P += toCents(m.grniCents)
     else if (m.receiptLineId) {
       R += toCents(m.grniCents)
-      const rl = await tx.goodsReceiptLine.findUnique({ where: { id: m.receiptLineId }, select: { billedQty: true } })
+      const rl = await tx.goodsReceiptLine.findUnique({ where: { id: m.receiptLineId }, select: { billedQty: true, writtenOffAt: true } })
+      if (rl?.writtenOffAt) throw receiptWrittenOff()
       if (rl) await tx.goodsReceiptLine.update({ where: { id: m.receiptLineId }, data: { billedQty: Math.max(0, rl.billedQty - m.qty) } })
     }
     await tx.grniMatch.update({ where: { id: m.id }, data: { status: 'void' } })
@@ -654,23 +688,50 @@ async function voidLegacyBillTx(tx: Tx, a: {
     const rls = await tx.goodsReceiptLine.findMany({
       where: { poLineId: line.poLineId },
       orderBy: [{ receipt: { receivedAt: 'desc' } }, { id: 'desc' }],
-      select: { id: true, billedQty: true, lotUnitCostCents: true, poUnitCostCents: true },
+      select: { id: true, billedQty: true, lotUnitCostCents: true, poUnitCostCents: true, writtenOffAt: true },
     })
     for (const rl of rls) {
       if (left < EPS) break
       const live = await tx.grniMatch.aggregate({ where: { receiptLineId: rl.id, status: 'live' }, _sum: { qty: true } })
       const legacyBilled = rl.billedQty - (live._sum.qty ?? 0)
       if (legacyBilled < EPS) continue
+      if (rl.writtenOffAt) throw receiptWrittenOff()
       const dec = Math.min(legacyBilled, left)
       await tx.goodsReceiptLine.update({ where: { id: rl.id }, data: { billedQty: Math.max(0, rl.billedQty - dec) } })
       R += Math.round(dec * receiptCostOf(rl))
       left -= dec
     }
   }
+  // The receipt lines the cut-over tied a description-only bill to (its PO).
+  for (const t of a.ties) {
+    const rl = await tx.goodsReceiptLine.findUnique({
+      where: { id: t.receiptLineId }, select: { id: true, billedQty: true, lotUnitCostCents: true, poUnitCostCents: true, writtenOffAt: true },
+    })
+    if (!rl) continue
+    const live = await tx.grniMatch.aggregate({ where: { receiptLineId: rl.id, status: 'live' }, _sum: { qty: true } })
+    const legacyBilled = rl.billedQty - (live._sum.qty ?? 0)
+    const dec = Math.min(Math.max(0, legacyBilled), t.qty)
+    if (dec < EPS) continue
+    if (rl.writtenOffAt) throw receiptWrittenOff()
+    await tx.goodsReceiptLine.update({ where: { id: rl.id }, data: { billedQty: Math.max(0, rl.billedQty - dec) } })
+    R += Math.round(dec * receiptCostOf(rl))
+  }
+  // D split by line value: what is tied to receipts vs what is not.
+  const valueOf = (l: { lineTotalCents: DbMoney }) => Math.max(0, toCents(l.lineTotalCents))
+  const total = bill.lines.reduce((t, l) => t + valueOf(l), 0)
+  const tiedValue = bill.lines.filter((l) => !!l.poLineId || a.ties.length > 0).reduce((t, l) => t + valueOf(l), 0)
+  const Dtied = total > 0 ? Math.round((D * tiedValue) / total) : D
+  const Duntied = D - Dtied
+  const aligned = Duntied !== 0
+    && !!(await tx.journalEntry.findFirst({ where: { tenantId, reference: `inventory.fifo_align:${tenantId}` }, select: { id: true } }))
   const lines: JournalLineInput[] = [
-    ...signed(ACCT.INVENTORY_FOOD, D, `Bill ${bill.billNumber} voided — the stock it billed stays in the lots`),
+    ...signed(ACCT.INVENTORY_FOOD, Dtied, `Bill ${bill.billNumber} voided — the stock it billed stays in the lots`),
     ...signed(ACCT.GRNI, -(R + P), `Bill ${bill.billNumber} voided — goods received not invoiced re-opened`),
-    ...signed(ACCT.COST_ADJUSTMENT, R + P - D, `Bill ${bill.billNumber} voided — its price over the receipt cost`),
+    ...signed(ACCT.COST_ADJUSTMENT, R + P - Dtied, `Bill ${bill.billNumber} voided — its price over the receipt cost`),
+    ...(aligned ? [
+      ...signed(ACCT.INVENTORY_FOOD, Duntied, `Bill ${bill.billNumber} voided — a bill no delivery backs; inventory was aligned with the lots`),
+      ...signed(ACCT.RETAINED_EARNINGS, -Duntied, `Bill ${bill.billNumber} voided — back to the FIFO alignment's prior-period difference`),
+    ] : []),
   ]
   if (lines.length === 0) return
   assertBalanced(lines, `supplier.bill.void.legacy:${bill.id}`)
@@ -771,7 +832,8 @@ export async function postSupplierPaymentVoid(
 //   Cr 2015             a short delivery (or a price credit) on quantity the
 //                       bill billed AHEAD of receipt: the pending match shrinks
 //   Cr 6xxx             a line that is not stock, to the bill line's own code
-//                       (1210 on a bill from before the FIFO cut-over)
+//                       (5060 on an item-less line of a bill from before the
+//                       FIFO cut-over — 1210 moves only with the lots)
 //   Cr 132x             the CN's tax, on the input code the original bill's
 //                       entry debited (inputTaxCodeOfBill)
 //
@@ -910,7 +972,10 @@ export async function postSupplierCreditNote(
       const itemId = line.inventoryItemId
       if (!itemId) {
         const billLine = original.lines.find((l) => !l.inventoryItemId && l.description === line.description) ?? original.lines.find((l) => !l.inventoryItemId)
-        const code = billLine?.expenseAccountCode ?? (legacyBill ? ACCT.INVENTORY_FOOD : null)
+        // A pre-cut-over bill line with no item (the admin form's): 1210 now
+        // moves only with the lots, so its credit is a cost adjustment
+        // (5060, brand-less) — as the credit note's void already treats it.
+        const code = billLine?.expenseAccountCode ?? (legacyBill ? ACCT.COST_ADJUSTMENT : null)
         if (!code) throw new AppError('EXPENSE_ACCOUNT_REQUIRED', `"${line.description}" — the bill line it credits has no expense account`, 422)
         addTo(creditByCode, code, cents)
         continue
@@ -993,8 +1058,10 @@ export async function postSupplierCreditNote(
           record.reprices.push({ lotId: lot.id, itemId, deltaCents: -part, qtyBasis: basis, onHandCents: r.onHandCents, costClass: lot.costClass })
         }
       } else if (legacyBill && g.short) {
-        // A legacy bill's goods that never arrived: the old bill booked them to 1210.
-        addTo(creditByCode, ACCT.INVENTORY_FOOD, centsLeft)
+        // A legacy bill's goods that never arrived: the old bill booked them
+        // to 1210, but no lot ever held them — 5060 by brand use, never 1210
+        // (which moves only with the lots after the cut-over).
+        addTo(adjByItem, itemId, centsLeft)
       } else {
         // Nothing of the bill's on lots (a legacy bill, or stock no longer
         // traceable): the item's cut-over lot takes the share still on hand,
