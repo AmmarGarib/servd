@@ -68,6 +68,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1210', name: 'Inventory — Food',                   type: 'asset' },
   { code: '1220', name: 'Inventory — Beverage',               type: 'asset' },
   { code: '1230', name: 'Inventory — Packaging',              type: 'asset' },
+  { code: '1290', name: 'Stock Differences Suspense',         type: 'asset',     description: 'Waste and count differences awaiting the CEO\'s approval into cost of sales, with their reasons (H20)' },
   { code: '1310', name: 'Prepaid Expenses',                   type: 'asset' },
   { code: '1320', name: 'GST Input (Recoverable)',            type: 'asset',     description: 'Federal sales tax (FBR) recoverable on supplier purchases — offsets 2030' },
   { code: '1321', name: 'PRA Sales Tax Input',                type: 'asset',     description: 'Punjab Revenue Authority sales tax on services — recoverable, Punjab outlets only' },
@@ -155,6 +156,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   // 42xx = OTHER income: shown below operating revenue, never in brand sales,
   // sales KPIs, the food-cost denominator or the labour % base.
   { code: '4200', name: 'Gift Card Breakage (Other Income)',  type: 'revenue',   description: 'Unused value of SOLD gift cards at expiry or forfeit, no sales tax (H11)' },
+  { code: '4210', name: 'No-show Deposits Kept (Other Income)', type: 'revenue', description: 'Booking deposits kept on a no-show: compensation, not a supply, no sales tax (H10)' },
 
   // ── COGS ──────────────────────────────────────────────────────────────
   { code: '5010', name: 'Food Cost',                          type: 'expense' },
@@ -219,15 +221,15 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
 export const REQUIRED_ACCOUNT_CODES = [
   // Money, receivables, stock, prepaid / advances, deposits
   '1010', '1011', '1015', '1020', '1030', '1110', '1115',
-  '1210', '1220', '1230', '1310', '1320', '1340', '1355', '1360',
+  '1210', '1220', '1230', '1290', '1310', '1320', '1340', '1355', '1360',
   // Fixed assets: class cost codes + accumulated depreciation per class
   '1500', '1505', '1510', '1515', '1520', '1525', '1530', '1540', '1550', '1560',
   '1591', '1592', '1593', '1594', '1595', '1596', '1597', '1598', '1599',
   // Payables, GRNI, tax and statutory payables, customer liabilities, related party
   '2010', '2012', '2015', '2020', '2030', '2040', '2042', '2043', '2044',
   '2050', '2060', '2080', '2095', '2210',
-  '3020',
-  '4001', '4090', '4100', '4110', '4200',
+  '3010', '3020',
+  '4001', '4090', '4100', '4110', '4200', '4210',
   // 5050: stock counts post their variance here (crosschecks/countPosting.ts).
   '5010', '5020', '5030', '5040', '5050', '5060',
   '6010', '6030', '6036', '6080', '6110', '6150', '6155',

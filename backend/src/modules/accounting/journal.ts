@@ -90,6 +90,7 @@ export const ACCT = {
   INVENTORY_FOOD:      '1210',
   INVENTORY_BEVERAGE:  '1220',
   INVENTORY_PACKAGING: '1230',
+  STOCK_DIFF_SUSPENSE: '1290',   // waste / count differences awaiting the CEO (H20)
   GST_INPUT:           '1320',
 
   AP_SUPPLIERS:        '2010',
@@ -174,6 +175,7 @@ export const ACCT = {
   RETAINED_EARNINGS:        '3020',
   DELIVERY_FEE_REVENUE:     '4110',
   GIFT_CARD_BREAKAGE:       '4200',
+  NO_SHOW_DEPOSITS_KEPT:    '4210',   // kept no-show deposits: other income, no sales tax (H10)
   COST_ADJUSTMENT:          '5060',
   RENT:                     '6010',
   GRATUITY:                 '6036',
