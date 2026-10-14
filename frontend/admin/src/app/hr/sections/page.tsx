@@ -26,6 +26,11 @@ export default function HrSectionsPage() {
                     <p className="text-sm font-bold text-white/85">{s.title}</p>
                     <span className="text-[10px] font-black text-white/30">§{s.specNo}</span>
                   </div>
+                  {s.movedTo && (
+                    <span className="s-badge-purple mt-1 text-[10px]" title={s.movedTo.message}>
+                      Moved to {s.movedTo.label}
+                    </span>
+                  )}
                   <p className="text-[11px] text-white/40 mt-0.5">
                     {s.kind === 'page' ? 'Screen' : s.config ? 'Setup list' : 'Records'}
                     {s.format && !s.format.isDefault && <span className="text-primary-ink"> · HR format v{s.format.version}</span>}

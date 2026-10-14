@@ -1,4 +1,5 @@
-// Inter-tenant contributions — JV / shared-service monthly transfers.
+// Inter-tenant contributions — JV / shared-service monthly figures (planning
+// only: nothing here posts to the ledger; see the note above assertBothSidesOwned).
 //
 // Endpoints (registered under /positions/contributions/*):
 //   GET    /positions/contributions          — list (both directions for active tenant)
@@ -15,8 +16,9 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import type { UserRole } from '@prisma/client'
-import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
+import { ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { assertBothSidesOwned as assertPairOwned } from '../../lib/companyPairs.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { zInt4Cents } from '../../lib/money.js'
 
@@ -26,23 +28,22 @@ async function readableTenantIds(req: FastifyRequest): Promise<string[]> {
   return (await resolveTenantScope(req)).tenantIds
 }
 
-// A contribution is a capital movement between two companies. Recording or
-// changing one moves money on BOTH sides' books, so the operator must belong
-// to both companies, and one of them must be the active company (the one the
-// operator is acting as). Membership on only one side let GS x Viva finance
-// book a transfer into or out of GS Foods.
-function assertBothSidesOwned(req: FastifyRequest, sourceTenantId: string, destinationTenantId: string): void {
-  const su = req.staffUser!
-  const members = su.memberTenantIds
-  if (sourceTenantId === destinationTenantId) {
-    throw new AppError('SAME_COMPANY', 'A contribution must be between two different companies', 422)
-  }
-  if (!members.includes(sourceTenantId) || !members.includes(destinationTenantId)) {
-    throw new AppError('CONTRIBUTION_NOT_YOURS', 'You must be a member of both the paying and the receiving company', 422)
-  }
-  if (!su.tenantId || (su.tenantId !== sourceTenantId && su.tenantId !== destinationTenantId)) {
-    throw new AppError('CONTRIBUTION_NOT_ACTIVE', 'One side of the contribution must be your active company', 422)
-  }
+// A contribution is a PLANNING figure: the monthly amount one company bears
+// for another (head office, commissary, shared services). It nets into the
+// budgeted payroll on the Positions page and posts NOTHING to either company's
+// books. Money that really moves between two companies' books is an
+// inter-company transfer (Accounting → Inter-company, modules/intercompany —
+// H30); whether contributions should also post monthly as inter-company
+// charges is an open owner question (Q5), so they do not.
+//
+// The record still speaks for both companies, so the operator must belong to
+// both, and one of them must be the active company (the one the operator is
+// acting as) — the ONE pair check in lib/companyPairs.ts (403
+// NOT_IN_BOTH_COMPANIES / 422 ACTIVE_COMPANY_NOT_A_PARTY / 422 SAME_COMPANY).
+// Membership on only one side let GS x Viva finance record a contribution
+// into or out of GS Foods.
+function assertBothSidesOwned(req: FastifyRequest, sourceTenantId: string, destinationTenantId: string): Promise<void> {
+  return assertPairOwned(req, sourceTenantId, destinationTenantId, { what: 'contribution' })
 }
 
 // An existing contribution the operator may edit: 404 when neither side is
@@ -84,8 +85,9 @@ const contributionSchema = z.object({
 
 // Reading the contributions follows the Positions page (wave 3): the manager
 // tiers, HR and finance — the figures net into the budgeted payroll they all
-// read. Recording or changing one moves money between two companies' books,
-// so writes stay with MANAGERS (and assertBothSidesOwned below).
+// read. Recording or changing one speaks for two companies (a planning
+// figure, never posted), so writes stay with MANAGERS (and
+// assertBothSidesOwned below).
 const CONTRIBUTION_READERS = Array.from(new Set([...MANAGERS, 'hr', 'finance'])) as UserRole[]
 // Same module rule as the Positions reads (HR 'staff_directory', finance
 // 'capital'); manager tiers unchanged (W3B-RV-1).
@@ -127,7 +129,7 @@ export async function contributionRoutes(fastify: FastifyInstance) {
 
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = contributionSchema.parse(req.body)
-    assertBothSidesOwned(req, body.sourceTenantId, body.destinationTenantId)
+    await assertBothSidesOwned(req, body.sourceTenantId, body.destinationTenantId)
     const created = await prisma.tenantContribution.create({
       data: {
         sourceTenantId: body.sourceTenantId,
@@ -152,7 +154,7 @@ export async function contributionRoutes(fastify: FastifyInstance) {
       // Re-pointing either side: the resulting pair must still be two of the
       // operator's companies, one of them active.
       if (body.sourceTenantId !== undefined || body.destinationTenantId !== undefined) {
-        assertBothSidesOwned(
+        await assertBothSidesOwned(
           req,
           body.sourceTenantId ?? existing.sourceTenantId,
           body.destinationTenantId ?? existing.destinationTenantId,

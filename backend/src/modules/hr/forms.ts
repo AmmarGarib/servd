@@ -77,6 +77,12 @@ export interface HrSection {
   requires?: RecordSlot[]
   /** What happens on final approval, in words — shown in the UI. */
   effect?: string
+  /**
+   * The section's work moved elsewhere: no new records (createRecord → 409
+   * SECTION_MOVED with `message`), existing ones stay readable. `path` is the
+   * admin page that does it now.
+   */
+  movedTo?: { path: string; label: string; message: string }
 }
 
 /**
@@ -601,13 +607,16 @@ export const HR_SECTIONS: HrSection[] = [
 
   { key: 'final_settlement', specNo: 25, title: 'Full & final settlement', group: 'Separation', kind: 'record',
     workflow: [HR, MGMT], requires: ['employeeId', 'endDate'],
-    effect: 'Use "Calculate" to fill the figures from salary, OT, leave balance, open loans, income tax and EOBI / SESSI; adjust, then approve. Approval books it; "Mark paid" records the payment.',
+    effect: 'Use "Calculate" to fill the figures from salary, OT, leave balance, gratuity, open loans, income tax and EOBI / SESSI; adjust, then approve. Approval books it; "Mark paid" records the payment.',
     fields: [
       emp(),
       f('lastWorkingDay', 'Last working day', 'date', { required: true, bind: 'endDate' }),
       f('salaryPayable', 'Salary payable', 'money', { system: true }),
       f('otPayable', 'OT payable', 'money', { system: true }),
       f('leaveEncashment', 'Leave encashment', 'money', { system: true }),
+      // Gratuity at exit (H6; logic.ts gratuityFor): 30 days of the last gross
+      // per counted year, permanent staff with a year or more. Booked to 6036.
+      f('gratuity', 'Gratuity', 'money', { system: true, help: '30 days of the last gross salary for each year of service (more than 6 months counts as a year) — permanent staff with at least a year. "Calculate" works it out.' }),
       f('deductions', 'Deductions', 'money', { system: true }),
       f('loanRecovery', 'Advance / loan recovery', 'money', { system: true }),
       // The statutory lines a payslip carries for the same days (logic.ts
@@ -624,7 +633,16 @@ export const HR_SECTIONS: HrSection[] = [
 
   { key: 'letters', specNo: 26, title: 'HR letters', group: 'Documents', kind: 'page' },
 
-  { key: 'eobi_challan', specNo: 27, title: 'EOBI / SESSI payments', group: 'Compliance', kind: 'record',
+  // Retired (owner Q1 default, 2026-10-13): EOBI, SESSI and salary tax are
+  // paid over in Accounting → Statutory payments, which books them against
+  // 2042 / 2043 / 2044. Rows recorded here stay readable (and are listed there
+  // as "recorded in HR, not on the books"); no new ones.
+  { key: 'eobi_challan', specNo: 27, title: 'EOBI / SESSI payments (moved)', group: 'Compliance', kind: 'record',
+    effect: 'EOBI, SESSI and salary tax challans are recorded in Accounting → Statutory payments, which books them. The payments recorded here before are kept for reference.',
+    movedTo: {
+      path: '/accounting/statutory', label: 'Accounting → Statutory payments',
+      message: 'EOBI, SESSI and salary tax challans are recorded in Accounting → Statutory payments',
+    },
     fields: [
       sel('scheme', 'Scheme', ['EOBI', 'SESSI'], { required: true }),
       f('month', 'Contribution month', 'date', { required: true, bind: 'effectiveDate' }),
@@ -888,6 +906,41 @@ function fieldProblems(fl: HrField): string[] {
 function bindTypes(bind: string): { types: FieldType[]; ref?: string } {
   if (bind.startsWith('employee.')) return EMPLOYEE_COLUMN_TYPES[bind.slice('employee.'.length)] ?? { types: TEXT_COLUMN_TYPES }
   return { types: SLOT_TYPES[bind as RecordSlot] ?? [] }
+}
+
+/**
+ * A saved format with the section's default SYSTEM fields it is missing put
+ * back: the ones logic reads that were added to the default after a company
+ * saved its own (a full & final's 'gratuity', finance wave B). Without them
+ * validateAgainst would drop the value on save, and checkFormat would refuse
+ * the format's next edit. Each goes in after the default field it follows,
+ * when the saved format has that one, else at the end; a binding the saved
+ * format already gives another field is left off. checkFormat forbids
+ * removing a system field, so this only ever restores newer ones.
+ */
+export function withSystemFields(section: HrSection, fields: HrField[]): HrField[] {
+  const defaults = section.fields ?? []
+  const missing = defaults.filter((d) => d.system && !fields.some((x) => x.key === d.key))
+  if (missing.length === 0) return fields
+  const out = [...fields]
+  const bound = new Set(out.map((x) => x.bind).filter((b): b is NonNullable<HrField['bind']> => !!b))
+  for (const sys of missing) {
+    let field: HrField = { ...sys }
+    if (sys.bind && bound.has(sys.bind)) {
+      const { bind: _unused, ...rest } = sys
+      void _unused
+      field = rest
+    }
+    if (field.bind) bound.add(field.bind)
+    const di = defaults.indexOf(sys)
+    let at = out.length
+    for (let i = di - 1; i >= 0; i--) {
+      const j = out.findIndex((x) => x.key === defaults[i]!.key)
+      if (j >= 0) { at = j + 1; break }
+    }
+    out.splice(at, 0, field)
+  }
+  return out
 }
 
 /**

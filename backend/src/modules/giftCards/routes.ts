@@ -12,7 +12,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId, resolveTenantScope } from '../../lib/tenantScope.js'
@@ -110,7 +110,9 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
   // The 2080 books check, per company in view: the ledger's Gift Card
   // Liability against what the cards say is owed (live balances + value spent
   // on orders whose sale is not booked yet), the difference, cards whose sale
-  // never reached the books, and voided cards still holding value.
+  // never reached the books, voided and expired cards still holding value
+  // (a manager settles them), the breakage booked (H11: count + cents, per
+  // company) and breakage held for the sweep.
   fastify.get(
     '/reconcile',
     { preHandler: requireAuth(...GIFT_CARD_READERS) },
@@ -129,6 +131,8 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         if (!full) {
           check.issueNotBooked.items = check.issueNotBooked.items.map((i) => ({ ...i, code: maskGiftCardCode(i.code) }))
           check.voidedHoldingValue.items = check.voidedHoldingValue.items.map((i) => ({ ...i, code: maskGiftCardCode(i.code) }))
+          check.expiredHoldingValue.items = check.expiredHoldingValue.items.map((i) => ({ ...i, code: maskGiftCardCode(i.code) }))
+          check.breakageHeld.items = check.breakageHeld.items.map((i) => ({ ...i, code: maskGiftCardCode(i.code) }))
         }
         out.push(check)
       }
@@ -316,8 +320,12 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
 
   // Void (manager-only — fraud, a refund of an unused card, a payment that
   // never arrived, or an unused promotional card). The balance leaves 2080 in
-  // the same transaction (books.ts voidGiftCard). A voided card that a refund
-  // later put value back on is settled the same way.
+  // the same transaction (books.ts voidGiftCard). A voided or expired card
+  // that a refund later put value back on is settled the same way.
+  // Forfeiting a SOLD card keeps the customer's money as breakage income
+  // (Dr 2080 / Cr 4200, H11): the CEO (role admin) only — any other manager
+  // gets 403 FORFEIT_NEEDS_CEO (after the card is found in their companies, so
+  // another company's card is still 404).
   fastify.post<{ Params: { id: string } }>(
     '/:id/void',
     { preHandler: requireAuth(...MANAGERS) },
@@ -336,6 +344,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         refundMethod: body.refundMethod ?? null,
         bankAccountId: body.bankAccountId ?? null,
         postedBy: req.staffUser?.id ?? 'system',
+        canForfeitSold: (ADMIN_ONLY as string[]).includes(req.staffUser!.role),
       })
       await audit({ category: 'identity',
         action: 'giftcard.void', entity: 'GiftCard', entityId: r.card.id,

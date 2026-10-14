@@ -79,7 +79,7 @@ afterAll(async () => {
 })
 
 describe('ONL-R2-02 — the sale payload is the bill, from stored components', () => {
-  it('(a) COD delivery: the fee is an explicit delivery charge, the pending cash is the tender, everything adds up', async () => {
+  it('(a) a LEGACY COD delivery (no fee columns): the fee is the untaxed remainder delivery charge, the pending cash is the tender, everything adds up', async () => {
     // 5 × Kheer 275,000 + GST 15 % 41,250 + delivery 15,000 + tip 10,000 = 341,250
     const id = await order(A, {
       items: [KHEER(A, 5)], taxCents: 41_250, taxRatePct: 15, tipCents: 10_000, totalCents: 341_250,
@@ -103,6 +103,26 @@ describe('ONL-R2-02 — the sale payload is the bill, from stored components', (
     expect(rt).toMatchObject({ saleValueCents: 275_000, taxCents: 41_250, tipCents: 10_000, deliveryChargeCents: 15_000, totalCents: 341_250 })
     expect(totalsCheck(r).ok).toBe(true)
     expect(toSrbInvoiceFields(r).taxAmount).toBe(toSrbInvoiceFields(b.payload).taxAmount)
+  })
+
+  it('(a2) a delivery priced with the fee columns (H9): the fee is a DELIVERY-CHARGE line with its GST, deliveryChargeCents 0', async () => {
+    // 5 × Kheer 275,000 + GST 15 % 41,250 + delivery 15,000 + its GST 2,250 + tip 10,000 = 343,500
+    const id = await order(A, {
+      items: [KHEER(A, 5)], taxCents: 43_500, taxRatePct: 15, tipCents: 10_000, totalCents: 343_500,
+      payments: [{ method: 'cash', amountCents: 343_500, status: 'pending' }],
+    }, { source: 'servd', fulfilmentType: 'delivery' })
+    await prisma.order.update({ where: { id }, data: { deliveryFeeCents: 15_000, deliveryFeeTaxCents: 2_250 } })
+    const b = await build(id)
+    expect(b.check.ok, b.check.problems.join('; ')).toBe(true)
+    expect(totalsOf(b.payload)).toMatchObject({ saleValueCents: 290_000, taxCents: 43_500, tipCents: 10_000, deliveryChargeCents: 0, totalCents: 343_500 })
+    expect(b.payload.lines.find((l) => l.itemCode === 'DELIVERY-CHARGE')).toMatchObject({
+      lineId: `delivery:${id}`, description: 'Delivery charge', quantity: 1, grossCents: 15_000, taxableCents: 15_000, taxRatePct: 15, taxCents: 2_250,
+    })
+    expect(sumOf(b.payload)).toBe(343_500)
+    expect(toFbrInvoiceFields(b.payload).Items.map((i) => i.ItemCode)).toEqual(['POS-ITEM', 'DELIVERY'])
+    const r = buildRefundPayload(b.payload, { documentId: 'r1b', refundAmountCents: 343_500, issuedAt: new Date(), original: null })
+    expect(totalsCheck(r).ok).toBe(true)
+    expect(totalsOf(r)).toMatchObject({ saleValueCents: 290_000, taxCents: 43_500, deliveryChargeCents: 0, totalCents: 343_500 })
   })
 
   it('(b) PKR 1,000 by gift card: the bill is unchanged, the card is a tender, a full refund returns all of the tax', async () => {

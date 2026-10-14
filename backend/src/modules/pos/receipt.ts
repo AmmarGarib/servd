@@ -33,6 +33,12 @@
 //   GET /pos/receipt/:orderId         → buildReceiptHtml(), the same data as
 //                                       printable HTML (admin / web POS)
 //
+// A delivery order prints its delivery charge (Order.deliveryFeeCents) as its
+// own row, and the GST row is ALL the GST charged with the delivery's share
+// named — "GST (incl. PKR x on delivery)" — so the printed rows add up to the
+// total (H9). A bill charged to an on-account client names the client and
+// carries the client's signature line.
+//
 // There used to be two builders that disagreed: the HTML one recomputed GST at
 // the legacy concept.taxRate (17%) on the post-discount base, so its printed
 // total did not match what the customer was charged, and the JSON one left
@@ -46,18 +52,42 @@ import { formatBrandName } from '../../lib/brandName.js'
 import { fiscalViewForOrder, type FiscalView } from '../../connectors/fiscal/view.js'
 import { renderQrSvg } from '../../connectors/fiscal/qr.js'
 import { fiscalReportingRequired } from '../../connectors/config.js'
-import { tenderLabel } from '../../lib/tenders.js'
+import { tenderLabel, ON_ACCOUNT_TENDER } from '../../lib/tenders.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+
+/** A string field of a JSON object, trimmed; null when absent or blank. */
+function metaStr(o: unknown, key: string): string | null {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null
+  const v = (o as Record<string, unknown>)[key]
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
 
 /**
  * How a tender prints (lib/tenders TENDER_LABEL): "Cash", "Card – Keenu",
- * "Keenu QR (retired)" — and a Raast QR transfer with its bank reference,
- * "Raast QR — Ref <bankRef>", so the customer and the till can trace it.
+ * "Keenu QR (retired)" — a Raast QR transfer with its bank reference,
+ * "Raast QR — Ref <bankRef>", so the customer and the till can trace it — and
+ * an on-account bill with the client it was charged to, "On account — Acme
+ * Ltd (OA-0003) · PO 4471" (Payment.gatewayMeta.onAccount {name, number,
+ * reference}; the account number is also the row's gatewayRef). `reference`
+ * is the Raast bank reference or the on-account client's reference (their
+ * PO / who signed); null for the other tenders.
  */
-export function paymentLabelOf(p: { method: string; gatewayRef: string | null }): { label: string; reference: string | null } {
+export function paymentLabelOf(p: { method: string; gatewayRef: string | null; gatewayMeta?: unknown }): { label: string; reference: string | null } {
+  if (p.method === ON_ACCOUNT_TENDER) {
+    const oa = p.gatewayMeta && typeof p.gatewayMeta === 'object' ? (p.gatewayMeta as Record<string, unknown>)['onAccount'] : null
+    const name = metaStr(oa, 'name')
+    const number = metaStr(oa, 'number') ?? (p.gatewayRef?.trim() || null)
+    const reference = metaStr(oa, 'reference')
+    const who = [name, number ? `(${number})` : null].filter((x): x is string => !!x).join(' ')
+    const label = `${tenderLabel(p.method)}${who ? ` — ${who}` : ''}${reference ? ` · ${reference}` : ''}`
+    return { label, reference }
+  }
   const reference = p.method === 'raast' && p.gatewayRef ? p.gatewayRef : null
   return { label: reference ? `${tenderLabel(p.method)} — Ref ${reference}` : tenderLabel(p.method), reference }
 }
+
+/** The line a client signs on a bill charged to their account. */
+export const CLIENT_SIGNATURE_LINE = 'Client signature ________________' as const
 
 /** Statuses that have had their full & final bill (or ended, bannered CANCELLED). */
 const FINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'refunded', 'cancelled', 'rejected'])
@@ -158,6 +188,11 @@ export interface ReceiptData {
   /** Sum of the lines (modifiers included, voided lines excluded). */
   subtotalCents: number
   discountCents: number
+  /** The delivery charge BEFORE GST (Order.deliveryFeeCents; 0 for pickup, dine-in, the till and legacy orders). */
+  deliveryFeeCents: number
+  /** The GST on the delivery charge — already inside taxCents (Order.deliveryFeeTaxCents). */
+  deliveryFeeTaxCents: number
+  /** All the GST charged: on the food AND on the delivery (Order.taxCents). */
   taxCents: number
   serviceChargeCents: number
   tipCents: number
@@ -167,10 +202,13 @@ export interface ReceiptData {
   tenderType: string | null
   /**
    * The tenders. `label` is how the tender prints ("Cash", "Card – Keenu",
-   * "Raast QR — Ref <bankRef>"); `reference` is a Raast transfer's bank
-   * reference (null for the others).
+   * "Raast QR — Ref <bankRef>", "On account — <client> (<OA-number>)");
+   * `reference` is a Raast transfer's bank reference or an on-account
+   * client's reference (null for the others).
    */
   payments: Array<{ method: string; amountCents: number; tenderedCents: number | null; label: string; reference: string | null }>
+  /** A paid on-account row exists: the bill carries the client's signature line. */
+  clientSignature: boolean
   /** The order's status — a receipt for a refunded / cancelled order is not a valid bill. */
   status: string
   /**
@@ -328,6 +366,8 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
     items,
     subtotalCents: items.reduce((s, i) => s + i.lineTotalCents, 0),
     discountCents: order.discountCents + order.promoDiscountCents,
+    deliveryFeeCents: order.deliveryFeeCents,
+    deliveryFeeTaxCents: order.deliveryFeeTaxCents,
     taxCents: order.taxCents,
     serviceChargeCents: order.serviceChargeCents,
     tipCents: order.tipCents,
@@ -335,6 +375,7 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
     paidCents: paid.reduce((s, p) => s + p.amountCents, 0),
     tenderType: paid[0]?.method ?? null,
     payments: paid.map((p) => ({ method: p.method, amountCents: p.amountCents, tenderedCents: p.tenderedCents ?? null, ...paymentLabelOf(p) })),
+    clientSignature: paid.some((p) => p.method === ON_ACCOUNT_TENDER && p.amountCents > 0),
     status: order.status,
     banner,
     refunds,
@@ -389,10 +430,15 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
 
   // Tax breakdown — only render if showTaxBreakdown is enabled (some operators
   // prefer a single VAT-inclusive total to avoid customer confusion). The
-  // amount is the GST the order was charged; no rate is printed, because the
-  // order does not store which rate (cash or card) was applied.
+  // amount is ALL the GST the order was charged — on the food and on the
+  // delivery (H9) — with the delivery's share named, so the rows (subtotal −
+  // discount + delivery charge + GST + service + tip) add up to the total.
+  const feeTaxNote = r.deliveryFeeTaxCents > 0 ? ` (incl. ${fmtPkr(r.deliveryFeeTaxCents)} on delivery)` : ''
   const taxRow = cfg.showTaxBreakdown && r.taxCents > 0
-    ? `<tr><td>GST</td><td style="text-align:right">${fmtPkr(r.taxCents)}</td></tr>`
+    ? `<tr><td>GST${feeTaxNote}</td><td style="text-align:right">${fmtPkr(r.taxCents)}</td></tr>`
+    : ''
+  const deliveryRow = r.deliveryFeeCents > 0
+    ? `<tr><td>Delivery charge</td><td style="text-align:right">${fmtPkr(r.deliveryFeeCents)}</td></tr>`
     : ''
   const serviceRow = r.serviceChargeCents > 0
     ? `<tr><td>Service charge</td><td style="text-align:right">${fmtPkr(r.serviceChargeCents)}</td></tr>`
@@ -405,10 +451,11 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   const bannerHtml = banners.length > 0
     ? `<div class="center bold" style="font-size:16px;border:2px solid #000;padding:4px;margin:6px 0">${banners.map(esc).join(' · ')}</div>`
     : ''
-  // A Raast refund prints with its outgoing transfer's reference; the other
-  // tenders keep their established refund line.
+  // A Raast refund prints with its outgoing transfer's reference, an
+  // on-account refund with the client it went back to; the other tenders keep
+  // their established refund line.
   const refundRows = r.refunds.length > 0
-    ? `<div class="divider"></div>${r.refunds.map((x) => `<div>REFUND ${esc(x.method === 'raast' ? x.label : x.method.replace(/_/g, ' '))} -${fmtPkr(x.amountCents)} (${fmtDate(x.at)})</div>`).join('')}<div class="bold">Refunded: -${fmtPkr(r.refundedCents)}</div>`
+    ? `<div class="divider"></div>${r.refunds.map((x) => `<div>REFUND ${esc(x.method === 'raast' || x.method === ON_ACCOUNT_TENDER ? x.label : x.method.replace(/_/g, ' '))} -${fmtPkr(x.amountCents)} (${fmtDate(x.at)})</div>`).join('')}<div class="bold">Refunded: -${fmtPkr(r.refundedCents)}</div>`
     : ''
   const authorityRows = await fiscalBlockHtml(r, cfg.showFbrInvoice)
   const cardRow = r.card && (r.card.last4 || r.card.authCode)
@@ -457,6 +504,7 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   <table>
     <tr><td>Subtotal</td><td style="text-align:right">${fmtPkr(r.subtotalCents)}</td></tr>
     ${r.discountCents > 0 ? `<tr><td>Discount</td><td style="text-align:right">-${fmtPkr(r.discountCents)}</td></tr>` : ''}
+    ${deliveryRow}
     ${taxRow}
     ${serviceRow}
     ${tipRow}
@@ -466,6 +514,7 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   <div class="divider"></div>
   ${r.payments.map((p) => `<div>${esc(p.label)} ${fmtPkr(p.amountCents)}${p.tenderedCents && p.tenderedCents > p.amountCents ? ` / Change: ${fmtPkr(p.tenderedCents - p.amountCents)}` : ''}</div>`).join('')}
   ` : ''}
+  ${r.clientSignature ? `<div style="margin-top:18px">${esc(CLIENT_SIGNATURE_LINE)}</div>` : ''}
   ${cardRow}
   ${refundRows}
   ${authorityRows ? `<div class="divider"></div>${authorityRows}` : ''}

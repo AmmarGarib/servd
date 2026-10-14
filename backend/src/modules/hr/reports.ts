@@ -44,6 +44,7 @@ export const REPORTS: ReportDef[] = [
   { key: 'salary', title: 'Salary report', group: 'Pay', description: 'Current salary structure and payment details of every active employee.', params: [] },
   { key: 'eobi', title: 'EOBI report', group: 'Pay', description: 'Employee and employer EOBI contributions for a month.', params: ['period'] },
   { key: 'sessi', title: 'SESSI report', group: 'Pay', description: 'Employer SESSI contributions for a month.', params: ['period'] },
+  { key: 'statutory', title: 'Statutory: accrued vs paid', group: 'Pay', description: 'EOBI, SESSI and salary tax owed, paid and still due each month — kept by Accounting → Statutory payments.', params: [] },
   { key: 'final_settlement', title: 'F&F report', group: 'Pay', description: 'Full and final settlements within the dates.', params: ['range'] },
 
   { key: 'probation_due', title: 'Probation due report', group: 'Due dates', description: 'Probation ending within the next N days (and already ended, unconfirmed).', params: ['days'] },
@@ -56,7 +57,11 @@ export const REPORTS: ReportDef[] = [
 ]
 
 export interface ReportQuery { from?: string; to?: string; asOf?: string; days?: string; period?: string }
-export interface ReportTable { title: string; header: string[]; rows: unknown[][]; note?: string }
+export interface ReportTable { title: string; header: string[]; rows: unknown[][]; note?: string; link?: { path: string; label: string } }
+
+/** Where EOBI / SESSI / salary tax accrued vs paid is worked out — ONE
+ *  computation, from the books (accounting/statutory.ts statutorySummary). */
+export const STATUTORY_PAGE = { path: '/accounting/statutory', label: 'Accounting → Statutory payments' }
 
 export const rupees = (c: number | null | undefined) => (c == null ? null : (c / 100).toFixed(2))
 const d10 = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null)
@@ -357,6 +362,23 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
 
     case 'final_settlement':
       return recordReport(def.title, ['final_settlement'], tenantIds, activeTenantId, q)
+
+    case 'statutory':
+      // Not worked out here: accrued vs paid is ONE computation, from the
+      // ledger's 2042 / 2043 / 2044 and the payments recorded against them
+      // (accounting/statutory.ts) — a second one from payslips would disagree
+      // after a reclass, an F&F reversal or a payslip edited after posting.
+      return {
+        title: def.title,
+        header: ['What', 'Where'],
+        rows: [
+          ['EOBI, SESSI and salary tax: accrued, paid and owed per month', `${STATUTORY_PAGE.label} (${STATUTORY_PAGE.path})`],
+          ['Record or link a challan payment', `${STATUTORY_PAGE.label} (${STATUTORY_PAGE.path})`],
+          ['Per-employee contributions for a month', 'HR reports → EOBI report / SESSI report'],
+        ],
+        note: 'EOBI, SESSI and salary tax are booked to 2043, 2044 and 2042 when payroll is locked and a full & final is approved, and paid over in Accounting → Statutory payments.',
+        link: STATUTORY_PAGE,
+      }
 
     case 'probation_due': case 'confirmation_due': case 'contract_expiry': {
       const n = days(q)

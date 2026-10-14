@@ -24,7 +24,10 @@ export default function HrSectionPage() {
   const [backfillMsg, setBackfillMsg] = useState('')
   const { isPayrollApprover } = useHrAccess()
   const { data: sections } = useHrSections()
+  // GET /hr/sections: a section whose work moved elsewhere (eobi_challan →
+  // Accounting → Statutory payments) says where; its rows stay readable.
   const info = sections?.find((s) => s.key === section)
+  const moved = info?.movedTo ?? null
   const { data: lookups } = useHrLookups()
   const { data: org } = useHrOrg()
   const { data, error } = useQuery({
@@ -61,10 +64,17 @@ export default function HrSectionPage() {
             {backfill.isPending ? 'Booking…' : 'Post approved settlements'}
           </button>
         )}
-        <Link href={`/hr/formats/${section}`} className={btnGhost}>Edit format</Link>
-        <button className={btn} onClick={() => setCreating(true)}>+ New</button>
+        {!moved && <Link href={`/hr/formats/${section}`} className={btnGhost}>Edit format</Link>}
+        {!moved && <button className={btn} onClick={() => setCreating(true)}>+ New</button>}
       </>}
     >
+      {moved && (
+        <div className="rounded-2xl p-4 mb-4 text-sm" style={{ background: 'rgb(var(--erp-primary-dim-rgb))' }}>
+          <p className="font-bold text-primary-ink">{moved.message}.</p>
+          <p className="text-white/70 mt-1">The payments recorded here before are kept below for reference; they were never on the books. New ones are recorded, and booked, there.</p>
+          <Link href={moved.path} className={`${btn} inline-block mt-3`}>Open {moved.label}</Link>
+        </div>
+      )}
       {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       {csvErr && <p className="text-sm text-red-700 mb-4">Export failed: {csvErr}</p>}
       {backfillMsg && <p className="text-sm text-white/70 mb-4">{backfillMsg}</p>}
@@ -87,7 +97,7 @@ export default function HrSectionPage() {
       {data && data.records.length === 0 && (
         <div className="rounded-2xl p-10 text-center" style={card}>
           <p className="font-bold text-white/85">Nothing here yet</p>
-          <p className="text-sm text-white/45 mt-1">Add the first one with “+ New”.</p>
+          <p className="text-sm text-white/45 mt-1">{moved ? `Nothing was recorded here before. Use ${moved.label}.` : 'Add the first one with “+ New”.'}</p>
         </div>
       )}
       {data && data.records.length > 0 && (
@@ -120,7 +130,7 @@ export default function HrSectionPage() {
       )}
       {open && data && (
         <Modal title={open.label ?? info?.title ?? 'Record'} wide onClose={() => setOpenId(null)}>
-          <OpenRecord record={open} listFormat={data.format} listTenantId={data.formatTenantId}
+          <OpenRecord record={open} listFormat={data.format} listTenantId={data.formatTenantId} readOnly={!!moved}
             onChanged={() => { void qc.invalidateQueries({ queryKey: ['hr-records', section] }) }} />
         </Modal>
       )}
@@ -131,7 +141,7 @@ export default function HrSectionPage() {
 /** A record shown, edited and approved against the format it was saved under
  *  — its own version, and its own company's in portfolio view — with that
  *  company's pickers. The list's format is used only when it is that one. */
-function OpenRecord({ record, listFormat, listTenantId, onChanged }: { record: HrRecord; listFormat: HrFormat; listTenantId: string; onChanged: () => void }) {
+function OpenRecord({ record, listFormat, listTenantId, readOnly, onChanged }: { record: HrRecord; listFormat: HrFormat; listTenantId: string; readOnly?: boolean; onChanged: () => void }) {
   const same = record.tenantId === listTenantId && record.formVersion === listFormat.version
   const { data: own, error } = useQuery({
     queryKey: ['hr-record', record.section, record.id],
@@ -146,7 +156,7 @@ function OpenRecord({ record, listFormat, listTenantId, onChanged }: { record: H
   return (
     <>
       {!same && <p className="text-[11px] text-white/40 mb-3">Saved under format v{format.version}{record.tenantId !== listTenantId ? ' of its own company' : ''} — shown and checked against that.</p>}
-      <RecordDetail key={format.version} record={record} format={format} lookups={lookups} org={org} admin onChanged={onChanged} />
+      <RecordDetail key={format.version} record={record} format={format} lookups={lookups} org={org} admin={!readOnly} onChanged={onChanged} />
     </>
   )
 }

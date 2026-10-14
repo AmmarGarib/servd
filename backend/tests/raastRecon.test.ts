@@ -9,7 +9,9 @@
 //   - company separation: B's statement never matches A's receipts; B gets
 //     404 on A's receipts / lines; a line of another account is 422
 //   - manual match / unmatch / reference fix (APPROVERS, M4) / not received
-//     (+ the write-off reversed when the statement later shows it)
+//     (+ the write-off reversed when the statement later shows it; the
+//     'customer owes' contra is 1110 — the 1115 till-clearing split is PARKED
+//     with on-account clients, so 1115 is refused as a contra)
 //   - POST /bank/lines/:id/unmatch (S3), /rematch, /alerts, /summary
 //   - the daily raast_unmatched flag (one per bank account, resolved at 0)
 //   - period close: 409 RAAST_UNMATCHED unless the CEO closes anyway (S6)
@@ -423,6 +425,8 @@ describe('the Raast tab — manual actions', () => {
 
     expect((await call(financeA, 'POST', url, { reason: 'bank says no such transfer' })).statusCode).toBe(403)
     expect((await call(adminA, 'POST', url, { reason: 'x', contraAccountCode: '4100' })).statusCode).toBe(400)
+    // Till clearing stays on 1110 while the 1115 split is PARKED (owner 2026-10-13): 1115 is not a write-off contra.
+    expect((await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1115' })).statusCode).toBe(400)
     const w = await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1350' })
     expect(w.statusCode, w.body).toBe(200)
     expect(w.json().status).toBe('unreceived')
@@ -610,9 +614,20 @@ describe('review fixes', () => {
     const ok = await call(adminD, 'POST', url, { reason: 'never arrived', contraAccountCode: '1110' })
     expect(ok.statusCode, ok.body).toBe(200)
     expect(await bankNet(D.tenantId, bankD.ledgerCode)).toBe(0)
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `raast.unreceived:${r.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(je.lines.map((l) => [l.account.code, l.type, toCents(l.amountCents)]).sort()).toEqual([['1110', 'debit', 108_000], [bankD.ledgerCode, 'credit', 108_000]].sort())
   })
 
-  it('RV-MONEY-1: a cancelled non-till ticket — only a close that held it as a refund due lets it be written off', async () => {
+  it('the default "customer owes" contra is 1110 (till clearing — the 1115 split is parked)', async () => {
+    const r = await receiptOf(D, bankD, adminD, { amountCents: 21_500 })
+    await bookSale(D, { orderId: r.orderId, amountCents: r.amountCents, ledgerCode: r.ledgerCode })
+    const ok = await call(adminD, 'POST', `/reconciliation/raast/receipts/${r.id}/unreceived`, { reason: 'customer reversed it' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `raast.unreceived:${r.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(je.lines.find((l) => l.type === 'debit')!.account.code).toBe('1110')
+  })
+
+  it('RV-MONEY-1: a cancelled non-till ticket — only a close that held it as a refund due (1110 till clearing) lets it be written off', async () => {
     const shift = await prisma.shift.create({ data: { userId: adminD.id, tenantId: D.tenantId, status: 'closed', openingFloatCents: 0, closedAt: new Date(), closingFloatCents: 0 } })
     const held = await receiptOf(D, bankD, adminD, { amountCents: 33_300, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
     const bare = await receiptOf(D, bankD, adminD, { amountCents: 44_400, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
@@ -628,6 +643,22 @@ describe('review fixes', () => {
     expect(bareRes.json().error.code).toBe('RAAST_SALE_NOT_BOOKED')
     const heldRes = await call(adminD, 'POST', `/reconciliation/raast/receipts/${held.id}/unreceived`, { reason: 'never arrived' })
     expect(heldRes.statusCode, heldRes.body).toBe(200)
+  })
+
+  it('RV-MONEY-1: a refund due held on 1115 (TILL_CLEARING_CODES — the parked split\'s code) counts as booked too', async () => {
+    const shift = await prisma.shift.create({ data: { userId: adminD.id, tenantId: D.tenantId, status: 'closed', openingFloatCents: 0, closedAt: new Date(), closingFloatCents: 0 } })
+    const held = await receiptOf(D, bankD, adminD, { amountCents: 36_600, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
+    await postJournalEntry({
+      tenantId: D.tenantId, sourceType: 'shift.close', sourceId: shift.id, description: 'test close',
+      lines: [
+        { accountCode: bankD.ledgerCode, type: 'debit', amountCents: 36_600, memo: `${RAAST_RECEIPTS_MEMO} — REFUND DUE — test` },
+        { accountCode: '1115', type: 'credit', amountCents: 36_600, memo: refundDueMemo(held.orderId, 'test') },
+      ],
+    })
+    const res = await call(adminD, 'POST', `/reconciliation/raast/receipts/${held.id}/unreceived`, { reason: 'never arrived' })
+    expect(res.statusCode, res.body).toBe(200)
+    // …and is therefore never a "void, never booked".
+    expect((await call(adminD, 'POST', `/reconciliation/raast/receipts/${held.id}/void`, { reason: 'trying a void after a write-off' })).json().error.code).toBe('RAAST_NOT_PROVISIONAL')
   })
 
   it('RV-FRAUD-1: a statement credit dated before the bill existed never matches it (a borrowed reference stays provisional)', async () => {

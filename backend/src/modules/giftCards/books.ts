@@ -19,11 +19,35 @@
 //          the balance claimed in the same transaction:
 //            refund               Dr 2080 / Cr 1010 | 1030 | the bank's code
 //            payment_not_received Dr 2080 / Cr the account the issue debited
-//            forfeit              promotional only: Dr 2080 / Cr 6060
-//          Forfeiting a SOLD card is breakage income (and maybe sales tax) —
-//          pending owner decision G10, refused until then.
-//   expiry status only (workers/giftCardExpiry.ts). The value stays owed in
-//          2080 — pending owner decision G10 (breakage).
+//            forfeit  promotional: Dr 2080 / Cr 6060 (any manager)
+//                     sold:        Dr 2080 / Cr 4200 Gift Card Breakage — the
+//                                  CEO (role admin) only (403 FORFEIT_NEEDS_CEO
+//                                  for anyone else; H11), breakageCents += B.
+//   expiry 'giftcard.expire:<card>' — breakage (owner + accountant, H11), in
+//          the nightly sweep (workers/giftCardExpiry.ts → expireDueGiftCards →
+//          expireOneGiftCard), ONE row-locked transaction per card:
+//            status expired / expiredAt, the balance B claimed to 0,
+//            GiftCard.breakageCents += B / breakageAt, and
+//            sold        Dr 2080 / Cr 4200 Gift Card Breakage (other income,
+//                        no sales tax)
+//            promotional Dr 2080 / Cr 6060 Marketing & Promo (its cost back)
+//          tagged with the card's brand, dated the sweep (today, open month).
+//          Breakage is taken ONCE, at the card's FIRST expiry. Value a refund
+//          later puts back on an expired card is never swept: it waits on the
+//          card (books check → expiredHoldingValue) for a manager to settle
+//          through Void (refund, or forfeit by the CEO).
+//          HELD breakage — the card still expires, its balance stays in 2080,
+//          GiftCard.breakagePendingAt / breakagePendingReason are set and the
+//          next sweep (and the 'giftcard.expire' re-poster) retries it:
+//            • ISSUE_NOT_BOOKED — the card's own 'giftcard.issue' entry never
+//              posted (taking 2080 down for value that never went in would
+//              leave 2080 short for good): flag 'gift_card_breakage_held';
+//              book the sale first (Books check → Book the sale).
+//            • the posting was refused (e.g. 4200 missing / inactive): the
+//              balance claim rolls back, flag 'posting_failed' (sourceType
+//              'giftcard.expire', entity GiftCard, sourceId = the card id).
+//          A card that expired before breakage existed (status expired,
+//          breakageAt null) is treated as held and booked on the next sweep.
 //
 // Money moved outside a till: a sold card is a back-office receipt. Cash is
 // cash on hand / the safe (1010), never a till drawer (1015): lib/drawer.ts
@@ -32,20 +56,31 @@
 // nobody put in the safe. Hence only the back office (managers + finance)
 // sells cards, and only managers give promotional ones (routes.ts).
 
-import type { Prisma, GiftCard, GiftCardKind, GiftCardStatus } from '@prisma/client'
+import type { Prisma, PrismaClient, GiftCard, GiftCardKind, GiftCardStatus } from '@prisma/client'
 import { randomBytes } from 'crypto'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { moneyAccountCode, ledgerBalancesByCode } from '../../lib/bankAccounts.js'
 import { toCents } from '../../lib/money.js'
+import { withSavepoint } from '../../lib/savepoint.js'
 import type { TenantIdWhere } from '../../lib/tenantScope.js'
-import { postJournalEntry } from '../accounting/journal.js'
+import { postJournalEntry, flagPostingFailed, resolvePostingFailed, ACCT } from '../accounting/journal.js'
 
 type Tx = Prisma.TransactionClient
+/** The client a sweep runs on (the worker passes serviceClient — no RLS context). */
+export type GiftCardDb = PrismaClient
 
 export const GIFT_CARD_LIABILITY_CODE = '2080'
 /** Marketing & Promo — a promotional card's cost, and its unspent value back. */
 export const PROMO_EXPENSE_CODE = '6060'
+/** Gift Card Breakage (other income, no sales tax — H11): a SOLD card's value kept at expiry or a CEO forfeit. */
+export const BREAKAGE_INCOME_CODE: string = ACCT.GIFT_CARD_BREAKAGE
+/** The breakage posting's sourceType ('giftcard.expire:<cardId>', once per card). */
+export const EXPIRE_SOURCE = 'giftcard.expire'
+/** The exception kind of breakage held back because the card's sale is not in the books. */
+const BREAKAGE_HELD_KIND = 'gift_card_breakage_held' as const
+/** Why breakage is held (GiftCard.breakagePendingReason). */
+export const BREAKAGE_HELD = { ISSUE_NOT_BOOKED: 'ISSUE_NOT_BOOKED', POSTING_REFUSED: 'POSTING_REFUSED' } as const
 
 export const GIFT_CARD_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer'] as const
 export type GiftCardPaymentMethod = typeof GIFT_CARD_PAYMENT_METHODS[number]
@@ -223,6 +258,12 @@ export interface VoidGiftCardInput {
   refundMethod?: GiftCardPaymentMethod | null
   bankAccountId?: string | null
   postedBy: string
+  /**
+   * The caller is the CEO (role admin): only they may FORFEIT a SOLD card —
+   * keeping a customer's money as income (H11; the owner's pattern for every
+   * customer-money-to-income decision). Anyone else gets 403 FORFEIT_NEEDS_CEO.
+   */
+  canForfeitSold?: boolean
 }
 
 export interface VoidGiftCardResult {
@@ -244,10 +285,11 @@ export interface VoidGiftCardResult {
  * Void a card: row-locked, its balance claimed atomically, and its value
  * taken out of 2080 the way the disposition says — in one transaction.
  *
- * A card can be voided when it is active, expired (no breakage is ever
- * booked yet — G10) or fully spent; a voided card only when value came back
- * onto it (a refund of an order it paid, or a void from before 2026-10-13
- * that left the balance in 2080) — settling it again.
+ * A card can be voided when it is active, fully spent, or expired (its
+ * breakage was booked at expiry, so what an expired card still holds is value
+ * a refund put back afterwards — or breakage still held); a voided card only
+ * when value came back onto it (a refund of an order it paid, or a void from
+ * before 2026-10-13 that left the balance in 2080) — settling it again.
  */
 export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCardResult> {
   return prisma.$transaction(async (tx) => {
@@ -264,11 +306,12 @@ export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCa
     if (card.kind === 'promotional' && input.disposition !== 'forfeit') {
       throw new AppError('PROMO_CARD_FORFEIT_ONLY', 'A promotional card was never paid for — void it as "forfeit" (its value goes back to Marketing & Promo)', 422)
     }
-    if (card.kind === 'sold' && input.disposition === 'forfeit') {
-      // Pending owner decision G10: breakage income on a sold card, and
-      // whether SRB / PRA is due on it. Until the owner and the accountant
-      // decide, a sold card's value is either refunded or reversed.
-      throw new AppError('FORFEIT_PENDING_DECISION', 'Keeping the money on a sold card is not set up yet (pending owner decision G10). Refund it, or void it as "payment not received".', 422)
+    const soldForfeit = card.kind === 'sold' && input.disposition === 'forfeit'
+    if (soldForfeit && !input.canForfeitSold) {
+      // H11: keeping a customer's money as income (breakage, 4200) is the
+      // CEO's call — like a bad-debt write-off. Managers refund it, or void it
+      // as "payment not received".
+      throw new AppError('FORFEIT_NEEDS_CEO', 'Only the CEO can keep the money on a sold gift card. Refund it, or void it as "payment not received".', 403)
     }
     if (input.disposition === 'refund' && !input.refundMethod) {
       throw new AppError('REFUND_METHOD_REQUIRED', 'Say how the money goes back: cash, card or bank transfer', 422)
@@ -299,15 +342,23 @@ export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCa
         // Only meaningful on a first void: a settle of refunded value is not "spent".
         if (card.status !== 'voided') unpaidSpentCents = Math.max(0, toCents(line.amountCents) - B)
       } else {
-        creditCode = PROMO_EXPENSE_CODE
+        // Forfeit: a promotional card's value goes back to Marketing & Promo;
+        // a sold card's (the CEO's call, above) is breakage income (H11).
+        creditCode = soldForfeit ? BREAKAGE_INCOME_CODE : PROMO_EXPENSE_CODE
       }
     }
 
-    // Claim the balance: only the B we read leaves the card.
+    // Claim the balance: only the B we read leaves the card. A forfeit is
+    // breakage (breakageCents += B); any void settles held breakage too.
     const now = new Date()
+    const forfeited = input.disposition === 'forfeit' && B > 0
     const claimed = await tx.giftCard.updateMany({
       where: { id: card.id, status: card.status, balanceCents: B },
-      data: { status: 'voided', balanceCents: 0, voidedAt: now, voidReason: input.reason, voidDisposition: input.disposition },
+      data: {
+        status: 'voided', balanceCents: 0, voidedAt: now, voidReason: input.reason, voidDisposition: input.disposition,
+        breakagePendingAt: null, breakagePendingReason: null,
+        ...(forfeited && { breakageCents: { increment: B }, breakageAt: now }),
+      },
     })
     if (claimed.count === 0) throw new AppError('GIFTCARD_CHANGED', 'The card changed while it was being voided — try again', 409)
 
@@ -320,6 +371,7 @@ export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCa
       })
       const what = input.disposition === 'refund' ? `refunded by ${input.refundMethod}`
         : input.disposition === 'payment_not_received' ? 'payment never received'
+        : soldForfeit ? 'unused value kept as breakage'
         : 'promotional value unused'
       const r = await postJournalEntry({
         tenantId,
@@ -348,48 +400,260 @@ export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCa
   })
 }
 
-// ── Expiry ───────────────────────────────────────────────────────────────────
+// ── Expiry (breakage, H11) ───────────────────────────────────────────────────
+
+export interface ExpireGiftCardResult {
+  /** This call moved the card from active to expired (its first expiry). */
+  expired: boolean
+  /** Value taken to breakage by this call (0 when held or nothing was owed). */
+  breakageCents: number
+  /** Breakage is held (ISSUE_NOT_BOOKED or a refused posting) — retried by the next sweep / the re-poster. */
+  held: boolean
+}
+
+const NOTHING: ExpireGiftCardResult = { expired: false, breakageCents: 0, held: false }
 
 /**
- * Mark a company's active cards whose expiry has passed as expired (with
- * expiredAt), each under its row lock. The redeem engine already refuses them
- * from the instant expiresAt passes; this records it. Returns how many.
- *
- * Pending owner decision G10: when breakage is decided, its posting goes in
- * the marked spot below ('giftcard.expire:<card>' — Dr 2080 / Cr breakage
- * income for a sold card, Cr 6060 for a promotional one), inside the same
- * transaction as the status change.
+ * Value a refund put back on the card AFTER it expired (re-credited
+ * redemptions claimed after `expiredAt`): never breakage — it waits for a
+ * manager (books check → expiredHoldingValue).
  */
-export async function expireDueGiftCards(tenantId: string, now: Date = new Date(), db = serviceClient): Promise<number> {
-  let expired = 0
-  for (;;) {
-    const due = await db.giftCard.findMany({
-      where: { tenantId, status: 'active', expiresAt: { lt: now } },
-      select: { id: true },
-      orderBy: { expiresAt: 'asc' },
-      take: 200,
+async function creditedAfter(tx: Tx, cardId: string, expiredAt: Date): Promise<number> {
+  const r = await tx.giftCardRedemption.aggregate({
+    where: { giftCardId: cardId, reversedAt: { gt: expiredAt } },
+    _sum: { amountCents: true },
+  })
+  return Math.max(0, r._sum.amountCents ?? 0)
+}
+
+const maskCode = (code: string) => `••••${code.slice(-4)}`
+
+/**
+ * Expire ONE card and book its breakage, in one row-locked transaction (see
+ * the header): the card's first expiry (status active, expiresAt passed), or
+ * a retry of breakage held at its expiry (status expired, breakageAt null —
+ * which also covers a card expired before breakage existed). Anything else is
+ * a no-op. Breakage is dated `now` (the sweep's day, an open month).
+ *
+ * Held breakage leaves the card expired with its balance (still owed in
+ * 2080) and breakagePendingAt set: ISSUE_NOT_BOOKED raises
+ * 'gift_card_breakage_held'; a refused posting raises 'posting_failed'
+ * (sourceType 'giftcard.expire', entity GiftCard, sourceId = cardId). When it
+ * books, both flags of the card are resolved. Idempotent: a second call finds
+ * breakageAt set and does nothing. The REPOSTER calls this.
+ */
+export async function expireOneGiftCard(cardId: string, now: Date = new Date(), db: GiftCardDb = serviceClient): Promise<ExpireGiftCardResult> {
+  type Outcome = ExpireGiftCardResult & {
+    card?: { id: string; tenantId: string; code: string; conceptId: string | null; kind: GiftCardKind }
+    heldReason?: string
+    refusal?: string
+    amountCents?: number
+  }
+  const out: Outcome = await db.$transaction(async (tx): Promise<Outcome> => {
+    await lockGiftCardTx(tx, cardId)
+    const card = await tx.giftCard.findUnique({ where: { id: cardId } })
+    if (!card || !card.tenantId) return NOTHING
+    const firstExpiry = card.status === 'active' && card.expiresAt != null && card.expiresAt < now
+    const owed = card.status === 'expired' && card.breakageAt == null
+    if (!firstExpiry && !owed) return NOTHING
+    const tenantId = card.tenantId
+    const ref = { id: card.id, tenantId, code: card.code, conceptId: card.conceptId, kind: card.kind }
+
+    let expiredAt = card.expiredAt ?? now
+    if (firstExpiry) {
+      const r = await tx.giftCard.updateMany({
+        where: { id: card.id, status: 'active', expiresAt: { lt: now } },
+        data: { status: 'expired', expiredAt: now },
+      })
+      if (r.count === 0) return NOTHING
+      expiredAt = now
+    }
+
+    // Breakage is the value the card held at its FIRST expiry: what a refund
+    // put back afterwards stays on the card for a manager.
+    const B = Math.max(0, card.balanceCents - (firstExpiry ? 0 : await creditedAfter(tx, card.id, expiredAt)))
+    if (B <= 0) {
+      await tx.giftCard.update({
+        where: { id: card.id },
+        data: { breakageAt: now, breakagePendingAt: null, breakagePendingReason: null },
+      })
+      return { expired: firstExpiry, breakageCents: 0, held: false, card: ref }
+    }
+
+    // The card's sale must be in the books before 2080 comes down for it
+    // (the same check as voidGiftCard): else the card expires, breakage held.
+    const issue = await tx.journalEntry.findFirst({ where: { tenantId, reference: issueRef(card.id) }, select: { id: true } })
+    if (!issue) {
+      await tx.giftCard.update({
+        where: { id: card.id },
+        data: { breakagePendingAt: card.breakagePendingAt ?? now, breakagePendingReason: BREAKAGE_HELD.ISSUE_NOT_BOOKED },
+      })
+      return { expired: firstExpiry, breakageCents: 0, held: true, card: ref, heldReason: BREAKAGE_HELD.ISSUE_NOT_BOOKED, amountCents: B }
+    }
+
+    const sold = card.kind === 'sold'
+    const booked = await withSavepoint(tx, 'giftcard_breakage', async () => {
+      const claimed = await tx.giftCard.updateMany({
+        where: { id: card.id, status: 'expired', balanceCents: card.balanceCents, breakageAt: null },
+        data: {
+          balanceCents: card.balanceCents - B,
+          breakageCents: { increment: B },
+          breakageAt: now,
+          breakagePendingAt: null,
+          breakagePendingReason: null,
+        },
+      })
+      if (claimed.count === 0) throw new AppError('GIFTCARD_CHANGED', 'The card changed while its breakage was being booked', 409)
+      const what = sold ? 'breakage (unused value of a sold card)' : 'unused promotional value back to Marketing & Promo'
+      const r = await postJournalEntry({
+        tenantId,
+        sourceType: EXPIRE_SOURCE,
+        sourceId: card.id,
+        entryDate: now,
+        description: `Gift card ${maskCode(card.code)} expired — ${what}`,
+        postedBy: 'system',
+        lines: [
+          { accountCode: GIFT_CARD_LIABILITY_CODE, type: 'debit', amountCents: B, memo: `Gift card ${maskCode(card.code)} expired`, conceptId: card.conceptId },
+          { accountCode: sold ? BREAKAGE_INCOME_CODE : PROMO_EXPENSE_CODE, type: 'credit', amountCents: B, memo: `Gift card ${maskCode(card.code)} — ${what}`, conceptId: card.conceptId },
+        ],
+      }, { tx })
+      // Under the card lock with breakageAt still null, an entry already
+      // there means the books and the card disagree — a person decides.
+      if (!r.posted) throw new AppError('BREAKAGE_ALREADY_BOOKED', `'${EXPIRE_SOURCE}:${card.id}' is already in the books but the card shows no breakage`, 409)
     })
-    if (due.length === 0) break
-    let progressed = false
-    for (const { id } of due) {
+    if (!booked.ok) {
+      await tx.giftCard.update({
+        where: { id: card.id },
+        data: { breakagePendingAt: card.breakagePendingAt ?? now, breakagePendingReason: `${BREAKAGE_HELD.POSTING_REFUSED}: ${booked.error.message}`.slice(0, 300) },
+      })
+      return { expired: firstExpiry, breakageCents: 0, held: true, card: ref, refusal: booked.error.message || 'posting failed', amountCents: B }
+    }
+    return { expired: firstExpiry, breakageCents: B, held: false, card: ref }
+  })
+
+  // Flags after the commit (they never undo the card's state).
+  const c = out.card
+  if (c && out.refusal) {
+    await flagPostingFailed({
+      tenantId: c.tenantId,
+      sourceType: EXPIRE_SOURCE,
+      sourceId: c.id,
+      entityType: 'GiftCard',
+      entityId: c.id,
+      reason: out.refusal,
+      title: `Gift card ${maskCode(c.code)} expired but its breakage did not reach the ledger`,
+      conceptId: c.conceptId,
+      amountCents: out.amountCents ?? null,
+    })
+  } else if (c && out.heldReason) {
+    await flagBreakageHeld(c, out.amountCents ?? 0)
+  } else if (c && out.breakageCents > 0) {
+    await resolvePostingFailed('GiftCard', c.id, EXPIRE_SOURCE, 'Breakage booked by the expiry sweep', { tenantIds: [c.tenantId] })
+    await resolveBreakageHeld(c.id, c.tenantId, 'Breakage booked by the expiry sweep')
+  }
+  return { expired: out.expired, breakageCents: out.breakageCents, held: out.held }
+}
+
+/** Raise (once per card) the 'gift_card_breakage_held' flag. Never throws. */
+async function flagBreakageHeld(c: { id: string; tenantId: string; code: string; conceptId: string | null }, amountCents: number): Promise<void> {
+  try {
+    const open = await serviceClient.exceptionFlag.findFirst({
+      where: { kind: BREAKAGE_HELD_KIND, entityType: 'GiftCard', entityId: c.id, status: { in: ['open', 'acknowledged'] } },
+      select: { id: true },
+    })
+    if (open) return
+    const { flagException } = await import('../../lib/exceptions.js')
+    await flagException({
+      tenantId: c.tenantId,
+      kind: BREAKAGE_HELD_KIND,
+      severity: 'medium',
+      title: `Gift card ${maskCode(c.code)} expired — breakage held, its sale is not in the books`,
+      description: `The card expired holding PKR ${(amountCents / 100).toFixed(2)}, but its sale ('giftcard.issue') never reached the books, `
+        + 'so its unused value cannot come out of Gift Card Liability (2080) yet. Book the sale in Gift cards → Books check → Book the sale; '
+        + 'the next nightly sweep then books the breakage.',
+      entityType: 'GiftCard',
+      entityId: c.id,
+      conceptId: c.conceptId,
+      amountCents,
+      metadata: { reason: BREAKAGE_HELD.ISSUE_NOT_BOOKED, sourceType: EXPIRE_SOURCE, sourceId: c.id },
+    })
+  } catch (err) {
+    console.error(`[giftCardExpiry] could not flag held breakage on ${c.id}:`, (err as Error).message)
+  }
+}
+
+/** Close the card's open 'gift_card_breakage_held' flags. Never throws. */
+async function resolveBreakageHeld(cardId: string, tenantId: string, resolution: string): Promise<void> {
+  await serviceClient.exceptionFlag.updateMany({
+    where: { kind: BREAKAGE_HELD_KIND, entityType: 'GiftCard', entityId: cardId, tenantId, status: { in: ['open', 'acknowledged'] } },
+    data: { status: 'resolved', resolvedAt: new Date(), resolution },
+  }).catch((err) => console.error(`[giftCardExpiry] could not resolve held breakage on ${cardId}:`, (err as Error).message))
+}
+
+export interface ExpirySweepResult {
+  /** Cards moved from active to expired. */
+  expired: number
+  /** Cards whose breakage was booked, and how much. */
+  breakageCount: number
+  breakageCents: number
+  /** Cards whose breakage is held (flagged; retried next run). */
+  held: number
+  /** Cards the sweep could not process (logged). */
+  failed: number
+}
+
+const SWEEP_PAGE = 200
+
+/**
+ * The nightly sweep for one company: every active card whose expiry has
+ * passed is expired with its breakage booked, and every expired card whose
+ * breakage is still owed (held, or expired before breakage existed) is
+ * retried — each through expireOneGiftCard, each card ONCE per run: the
+ * candidates are walked with an (expiresAt, id) cursor, so a card that keeps
+ * failing never starves the rest. (Every expired card got there from a passed
+ * expiresAt, so the cursor's expiresAt is never null.)
+ */
+export async function expireDueGiftCards(tenantId: string, now: Date = new Date(), db: GiftCardDb = serviceClient): Promise<ExpirySweepResult> {
+  const res: ExpirySweepResult = { expired: 0, breakageCount: 0, breakageCents: 0, held: 0, failed: 0 }
+  let cursor: { expiresAt: Date; id: string } | null = null
+  for (;;) {
+    const page: Array<{ id: string; expiresAt: Date | null }> = await db.giftCard.findMany({
+      where: {
+        tenantId,
+        expiresAt: { not: null },
+        AND: [
+          {
+            OR: [
+              { status: 'active', expiresAt: { lt: now } },
+              { status: 'expired', breakageAt: null, balanceCents: { gt: 0 } },
+            ],
+          },
+          ...(cursor
+            ? [{ OR: [{ expiresAt: { gt: cursor.expiresAt } }, { expiresAt: cursor.expiresAt, id: { gt: cursor.id } }] }]
+            : []),
+        ],
+      },
+      select: { id: true, expiresAt: true },
+      orderBy: [{ expiresAt: 'asc' }, { id: 'asc' }],
+      take: SWEEP_PAGE,
+    })
+    if (page.length === 0) break
+    for (const { id } of page) {
       try {
-        const done = await db.$transaction(async (tx) => {
-          await lockGiftCardTx(tx, id)
-          const r = await tx.giftCard.updateMany({
-            where: { id, tenantId, status: 'active', expiresAt: { lt: now } },
-            data: { status: 'expired', expiredAt: now },
-          })
-          // Pending owner decision G10 — breakage posting goes here.
-          return r.count > 0
-        })
-        if (done) { expired += 1; progressed = true }
+        const r = await expireOneGiftCard(id, now, db)
+        if (r.expired) res.expired += 1
+        if (r.breakageCents > 0) { res.breakageCount += 1; res.breakageCents += r.breakageCents }
+        if (r.held) res.held += 1
       } catch (err) {
+        res.failed += 1
         console.error(`[giftCardExpiry] card ${id} failed:`, (err as Error).message)
       }
     }
-    if (!progressed) break   // every card in the batch failed — don't spin
+    const last = page[page.length - 1]!
+    cursor = { expiresAt: last.expiresAt!, id: last.id }
+    if (page.length < SWEEP_PAGE) break
   }
-  return expired
+  return res
 }
 
 // ── The 2080 check ───────────────────────────────────────────────────────────
@@ -419,6 +683,16 @@ export interface GiftCardBooksCheck {
   unexplainedCents: number
   /** Voided cards holding value (a refund of an order the card paid, or a void before 2026-10-13): owed, unspendable — settle them. */
   voidedHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; kind: GiftCardKind; balanceCents: number; voidedAt: Date | null }> }
+  /**
+   * Expired cards holding value a refund put back AFTER their breakage was
+   * booked (breakage is taken once, at the first expiry): owed, unspendable —
+   * a manager settles it with Void (refund, or forfeit by the CEO).
+   */
+  expiredHoldingValue: { count: number; cents: number; items: Array<{ id: string; code: string; kind: GiftCardKind; balanceCents: number; expiredAt: Date | null }> }
+  /** Breakage booked (H11): cards with value taken at expiry or a CEO forfeit, and how much (4200 sold / 6060 promotional). */
+  breakage: { count: number; cents: number }
+  /** Expired cards whose breakage is held (sale not in the books, or a refused posting): still owed in 2080 until the sweep books it. */
+  breakageHeld: { count: number; cents: number; items: Array<{ id: string; code: string; kind: GiftCardKind; balanceCents: number; reason: string | null; since: Date | null }> }
 }
 
 /** The 2080 check for one company. Codes are returned in full — the route masks them. */
@@ -427,7 +701,10 @@ export async function giftCardBooksCheck(tenantId: string, companyName: string):
     ledgerBalancesByCode(tenantId, [GIFT_CARD_LIABILITY_CODE]),
     prisma.giftCard.findMany({
       where: { tenantId },
-      select: { id: true, code: true, kind: true, status: true, balanceCents: true, issuedAmountCents: true, createdAt: true, voidedAt: true },
+      select: {
+        id: true, code: true, kind: true, status: true, balanceCents: true, issuedAmountCents: true, createdAt: true, voidedAt: true,
+        expiredAt: true, breakageCents: true, breakageAt: true, breakagePendingAt: true, breakagePendingReason: true,
+      },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.journalEntry.findMany({
@@ -476,7 +753,30 @@ export async function giftCardBooksCheck(tenantId: string, companyName: string):
   const booked = new Set(issueEntries.map((e) => e.reference))
   const issueNotBooked: GiftCardBooksCheck['issueNotBooked'] = { count: 0, cents: 0, items: [] }
   const voidedHoldingValue: GiftCardBooksCheck['voidedHoldingValue'] = { count: 0, cents: 0, items: [] }
+  const expiredHoldingValue: GiftCardBooksCheck['expiredHoldingValue'] = { count: 0, cents: 0, items: [] }
+  const breakage: GiftCardBooksCheck['breakage'] = { count: 0, cents: 0 }
+  const breakageHeld: GiftCardBooksCheck['breakageHeld'] = { count: 0, cents: 0, items: [] }
   for (const c of cards) {
+    if (c.breakageCents > 0) {
+      breakage.count += 1
+      breakage.cents += c.breakageCents
+    }
+    if (c.status === 'expired' && c.balanceCents > 0) {
+      if (c.breakageAt) {
+        expiredHoldingValue.count += 1
+        expiredHoldingValue.cents += c.balanceCents
+        if (expiredHoldingValue.items.length < LIST_CAP) {
+          expiredHoldingValue.items.push({ id: c.id, code: c.code, kind: c.kind, balanceCents: c.balanceCents, expiredAt: c.expiredAt })
+        }
+      } else {
+        // Held at expiry, or expired before breakage existed: the sweep books it.
+        breakageHeld.count += 1
+        breakageHeld.cents += c.balanceCents
+        if (breakageHeld.items.length < LIST_CAP) {
+          breakageHeld.items.push({ id: c.id, code: c.code, kind: c.kind, balanceCents: c.balanceCents, reason: c.breakagePendingReason, since: c.breakagePendingAt ?? c.expiredAt })
+        }
+      }
+    }
     if (!booked.has(issueRef(c.id))) {
       issueNotBooked.count += 1
       issueNotBooked.cents += c.issuedAmountCents
@@ -499,6 +799,6 @@ export async function giftCardBooksCheck(tenantId: string, companyName: string):
     tenantId, companyName, ledgerCents, cardBalancesCents, byStatus,
     awaitingSale, spentWithoutOrder, expectedCents, differenceCents,
     issueNotBooked, unexplainedCents: differenceCents + issueNotBooked.cents,
-    voidedHoldingValue,
+    voidedHoldingValue, expiredHoldingValue, breakage, breakageHeld,
   }
 }

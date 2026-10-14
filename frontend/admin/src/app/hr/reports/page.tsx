@@ -3,6 +3,7 @@
 // Record-based reports take their columns from the section's current format,
 // so they follow whatever the HR team has set up.
 
+import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
@@ -11,7 +12,7 @@ import { HrShell } from '../../../components/hr/HrShell'
 
 type Param = 'range' | 'asOf' | 'days' | 'period'
 interface ReportDef { key: string; title: string; group: string; description: string; params: Param[] }
-interface ReportTable { title: string; header: string[]; rows: unknown[][]; total: number; note?: string }
+interface ReportTable { title: string; header: string[]; rows: unknown[][]; total: number; note?: string; link?: { path: string; label: string } }
 
 // Defaults in the local calendar — the UTC date is still yesterday (or last
 // month) in Karachi until 05:00.
@@ -119,6 +120,11 @@ function ReportView({ t }: { t: ReportTable }) {
         <p className="text-xs text-white/40">{t.total} row{t.total === 1 ? '' : 's'}{t.total > t.rows.length ? ` · showing ${t.rows.length}, download for all` : ''}</p>
       </div>
       {t.note && <p className="px-4 py-2 text-xs text-amber-700/90 border-b border-white/[0.06]">{t.note}</p>}
+      {t.link && (
+        <p className="px-4 py-2 text-xs border-b border-white/[0.06]">
+          <Link href={t.link.path} className="font-semibold" style={{ color: 'var(--erp-primary)' }}>{t.link.label} →</Link>
+        </p>
+      )}
       {t.rows.length === 0
         ? <p className="p-8 text-center text-sm text-white/40">Nothing for these dates.</p>
         : (

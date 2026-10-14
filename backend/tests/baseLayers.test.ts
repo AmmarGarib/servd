@@ -1,8 +1,11 @@
 // Base layers: fixed assets, receivables, food safety.
 //
 // What is tested is the part that touches money or safety, not the CRUD:
-//   - depreciation charges exactly cost − salvage over the asset's life, never
-//     a cent more or less, and a rerun never double-charges;
+//   - depreciation (fixed assets v2: chargeThrough, the one path) charges
+//     exactly cost − salvage over the asset's life, never a cent more or less,
+//     on the class's own accumulated account (1591…), and a rerun never
+//     double-charges — not even after the old engine charged a month out of
+//     order (M-01);
 //   - disposal clears the asset out of the books and books the gain or loss;
 //   - a receivable cannot be overpaid, and cannot be voided once paid into;
 //   - every ledger entry balances per company;
@@ -10,11 +13,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
-import { chargeFor, runDepreciation, disposeAsset, postAcquisition } from '../src/modules/fixedAssets/service.js'
+import { postJournalEntry } from '../src/modules/accounting/journal.js'
+import { chargeThrough, postAcquisition, nextAssetTag } from '../src/modules/fixedAssets/service.js'
+import { createRequest } from '../src/modules/fixedAssets/events.js'
+import { planCharges, lastDayPkt, type ScheduleAsset } from '../src/modules/fixedAssets/schedule.js'
 import { agingBucket } from '../src/modules/receivables/routes.js'
 import { withinRange } from '../src/modules/foodSafety/routes.js'
 
 let tenantId: string
+let ceoId: string
 
 async function balance(code: string): Promise<number> {
   const lines = await prisma.journalLine.findMany({
@@ -29,77 +36,116 @@ async function trialBalance(): Promise<number> {
   return lines.reduce((s, l) => s + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
 }
 
+/** An asset on the register through postAcquisition (Dr class cost / Cr 2012), as CapEx capitalises it. */
+async function capitalise(name: string, costCents: number, inServiceAt: Date, life: number) {
+  return prisma.$transaction(async (tx) => {
+    const a = await tx.fixedAsset.create({
+      data: {
+        tenantId, name, category: 'kitchen_equipment', assetTag: await nextAssetTag(tx, tenantId), acquisitionCreditCode: '2012',
+        acquiredAt: inServiceAt, inServiceAt, costCents, originalCostCents: costCents, salvageCents: 0, usefulLifeMonths: life,
+      },
+    })
+    await postAcquisition(tx, a, { advancedCents: 0, owedCents: costCents, inputTaxCents: 0, inputTaxCode: null, natural: inServiceAt })
+    return a
+  })
+}
+
 beforeAll(async () => {
   tenantId = (await prisma.tenant.create({ data: { name: 'Base Layer Co', slug: 'base-layer-co' } })).id
   await ensureChartOfAccounts(tenantId)
+  ceoId = (await prisma.user.create({ data: { name: 'FA CEO', email: 'fa.ceo@base-layer.test', password: 'x', role: 'admin', tenantId } })).id
 })
 
 afterAll(async () => {
   await prisma.journalLine.deleteMany({ where: { journalEntry: { tenantId } } })
   await prisma.journalEntry.deleteMany({ where: { tenantId } })
+  await prisma.fixedAssetEvent.deleteMany({ where: { tenantId } })
+  await prisma.fixedAssetRun.deleteMany({ where: { tenantId } })
   await prisma.fixedAsset.deleteMany({ where: { tenantId } })
+  await prisma.fixedAssetClass.deleteMany({ where: { tenantId } })
+  await prisma.exceptionFlag.deleteMany({ where: { tenantId } })
+  await prisma.operationsConfig.deleteMany({ where: { tenantId } })
+  await prisma.user.deleteMany({ where: { id: ceoId } })
   await prisma.account.deleteMany({ where: { tenantId } })
   await prisma.tenant.deleteMany({ where: { id: tenantId } })
 })
 
 describe('depreciation arithmetic', () => {
-  const asset = { acquiredAt: new Date('2025-01-15'), costCents: 100_001, salvageCents: 1, usefulLifeMonths: 36, disposedAt: null }
+  const asset: ScheduleAsset = {
+    inServiceAt: new Date('2025-01-15T12:00:00+05:00'), costCents: 100_001, salvageCents: 1, usefulLifeMonths: 36, method: 'straight_line',
+  }
+  const total = (xs: Array<{ amountCents: number }>) => xs.reduce((t, x) => t + x.amountCents, 0)
 
   it('charges exactly cost − salvage over the life, no more, no less', () => {
-    let charged = 0
-    for (let i = 0; i < 48; i++) {
-      const y = 2025 + Math.floor(i / 12), m = (i % 12) + 1
-      charged += chargeFor(asset, `${y}-${String(m).padStart(2, '0')}`, charged)
-    }
-    expect(charged).toBe(100_000)
+    expect(total(planCharges(asset, new Map(), [], '2028-12'))).toBe(100_000)
   })
 
-  it('charges nothing before the month of acquisition', () => {
-    expect(chargeFor(asset, '2024-12', 0)).toBe(0)
-    expect(chargeFor(asset, '2025-01', 0)).toBeGreaterThan(0)
+  it('charges nothing before the month it went into service', () => {
+    expect(planCharges(asset, new Map(), [], '2024-12')).toEqual([])
+    expect(planCharges(asset, new Map(), [], '2025-01')[0]!.amountCents).toBeGreaterThan(0)
   })
 
   it('charges nothing once fully depreciated', () => {
-    expect(chargeFor(asset, '2028-06', 100_000)).toBe(0)
+    const all = new Map(planCharges(asset, new Map(), [], '2028-12').map((p) => [p.period, p.amountCents]))
+    expect(planCharges(asset, all, [], '2028-12')).toEqual([])
   })
 })
 
 describe('fixed assets in the ledger', () => {
-  it('capitalises, depreciates idempotently, and disposes with a gain', async () => {
-    const a = await prisma.fixedAsset.create({
-      data: {
-        tenantId, name: 'Combi oven', category: 'kitchen_equipment', acquisitionCreditCode: '1020',
-        acquiredAt: new Date('2026-01-10'), costCents: 1_200_000, salvageCents: 0, usefulLifeMonths: 12,
-      },
-    })
-    await postAcquisition(a.id)
+  it('capitalises, depreciates idempotently on 1591, and disposes with a gain', async () => {
+    const a = await capitalise('Combi oven', 1_200_000, new Date('2026-01-10T12:00:00+05:00'), 12)
     expect(await balance('1510')).toBe(1_200_000)
+    expect(await balance('2012')).toBe(-1_200_000)
 
-    const first = await runDepreciation(tenantId, '2026-01')
+    const first = await chargeThrough(tenantId, '2026-01', { postedBy: 'system' })
     expect(first.chargedCents).toBe(100_000)
-    const again = await runDepreciation(tenantId, '2026-01')
+    const again = await chargeThrough(tenantId, '2026-01', { postedBy: 'system' })
     expect(again.chargedCents).toBe(0)
     expect(again.results.find((r) => r.assetId === a.id)!.status).toBe('already')
     expect(await balance('6150')).toBe(100_000)
-    expect(await balance('1590')).toBe(-100_000)
-
-    await runDepreciation(tenantId, '2026-02')
-    // Book value 1,000,000; sold for 1,050,000 → 50,000 gain.
-    const d = await disposeAsset(a.id, { disposedAt: new Date('2026-02-28'), proceedsCents: 1_050_000 })
-    expect(d.bookValueCents).toBe(1_000_000)
-    expect(d.gainLossCents).toBe(50_000)
-    expect(await balance('1510')).toBe(0)
+    expect(await balance('1591')).toBe(-100_000)
     expect(await balance('1590')).toBe(0)
+
+    await chargeThrough(tenantId, '2026-02', { postedBy: 'system' })
+    // Sold on 5 March (the disposal month is not charged): book value 1,000,000; sold for 1,050,000 → 50,000 gain.
+    const sold = await createRequest({
+      kind: 'disposal', assetId: a.id, effectiveDate: new Date('2026-03-05T12:00:00+05:00'), reason: 'Sold to the franchisee',
+      payload: { kind: 'sale', proceedsCents: 1_050_000 },
+    }, { id: ceoId, role: 'admin' })
+    expect(sold.applied).toBe(true)
+    expect(sold.event.payload).toMatchObject({ nbvCents: 1_000_000, gainLossCents: 50_000 })
+    expect(await balance('1510')).toBe(0)
+    expect(await balance('1591')).toBe(0)
+    expect(await balance('1020')).toBe(1_050_000)
     expect(await balance('8030')).toBe(-50_000)
     // Disposed assets are never charged again.
-    const after = await runDepreciation(tenantId, '2026-03')
+    const after = await chargeThrough(tenantId, '2026-03', { postedBy: 'system' })
     expect(after.results.find((r) => r.assetId === a.id)).toBeUndefined()
-    await expect(disposeAsset(a.id, { disposedAt: new Date(), proceedsCents: 0 })).rejects.toThrow(/already/)
+    await expect(createRequest({ kind: 'disposal', assetId: a.id, reason: 'Sold to the franchisee', payload: { kind: 'scrap' } }, { id: ceoId, role: 'admin' }))
+      .rejects.toThrow(/already/)
     expect(await trialBalance()).toBe(0)
   })
 
-  it('refuses to charge a month that has not started', async () => {
-    await expect(runDepreciation(tenantId, '2099-01')).rejects.toThrow(/not started/)
+  it('M-01: a month the old engine charged out of order never takes the total past cost − salvage', async () => {
+    const a = await capitalise('Old range', 120_000, new Date('2025-01-10T12:00:00+05:00'), 12)
+    // The old engine charged the LAST month first and gave it "the remainder" — the whole cost.
+    await prisma.fixedAssetDepreciation.create({ data: { tenantId, assetId: a.id, period: '2025-12', amountCents: 120_000 } })
+    await postJournalEntry({
+      tenantId, sourceType: 'fixed_asset.depreciation', sourceId: `${a.id}:2025-12`, description: 'Depreciation 2025-12',
+      entryDate: lastDayPkt('2025-12'), lines: [
+        { accountCode: '6150', type: 'debit', amountCents: 120_000 },
+        { accountCode: '1590', type: 'credit', amountCents: 120_000 },
+      ],
+    })
+    const r = await chargeThrough(tenantId, '2025-12', { postedBy: 'system', assetIds: [a.id] })
+    expect(r.chargedCents).toBe(0) // the old engine would have charged 11 × 10,000 more
+    const charged = await prisma.fixedAssetDepreciation.findMany({ where: { assetId: a.id } })
+    expect(charged.reduce((t, d) => t + Number(d.amountCents), 0)).toBe(120_000)
+    expect(await trialBalance()).toBe(0)
+  })
+
+  it('refuses to charge a month that has not ended', async () => {
+    await expect(chargeThrough(tenantId, '2099-01', { postedBy: 'system' })).rejects.toMatchObject({ code: 'MONTH_NOT_ENDED' })
   })
 })
 

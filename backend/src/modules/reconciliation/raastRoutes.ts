@@ -9,23 +9,37 @@
 //   POST  /receipts/:id/match        match to a statement line (FINANCE_TEAM)
 //   POST  /receipts/:id/unmatch      undo a match (APPROVERS)
 //   PATCH /receipts/:id/reference    fix a typed reference (APPROVERS — M4)
-//   POST  /receipts/:id/unreceived   write off as never received (APPROVERS)
+//   POST  /receipts/:id/unreceived   write off as never received (APPROVERS;
+//                                    contra 1110 customer owes by default)
 //   POST  /receipts/:id/resolve      clear a needs-attention receipt whose
 //                                    bill is closed (APPROVERS — RV-FIN-1)
+//   POST  /receipts/:id/void-request ask the CEO to void a receipt whose sale
+//                                    was never booked (admin, owner,
+//                                    management, finance — RV-MONEY-1)
+//   POST  /receipts/:id/void         the CEO voids it — no ledger entry
+//                                    (ADMIN_ONLY; with or without a request)
+//   POST  /receipts/:id/void-request/reject  the CEO turns the ask down
+//                                    (ADMIN_ONLY)
 //   POST  /rematch                   re-run the reference pass (FINANCE_TEAM)
 //   GET   /alerts                    the bank SMS log, incl. unparsed bodies
+//
+// Each receipt row carries the CALLER's capability flags (canMatch,
+// canUnmatch, canFixReference, canWriteOff, canResolve, canVoid,
+// canRequestVoid, canRejectVoidRequest) — the admin page shows buttons from
+// them, never from a role list of its own.
 //
 // Company scope: reads are view-aware (resolveTenantScope / scopeTenantWhere
 // 'read'); acting on a receipt needs it in the operator's write scope (a
 // foreign id is 404); a statement line of another company or bank account
 // never matches (422). Every write is on the books' audit trail
-// ('raast.receipt.*').
+// ('raast.receipt.*'); the void's three actions are stamped with the
+// RECEIPT's company.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import type { Prisma, RaastReceiptStatus, BankSmsAlertStatus } from '@prisma/client'
+import type { Prisma, RaastReceiptStatus, BankSmsAlertStatus, UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, FINANCE_TEAM, APPROVERS } from '../auth/middleware.js'
+import { requireAuth, FINANCE_TEAM, APPROVERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
@@ -36,11 +50,15 @@ import { reportDateRange } from '../reports/service.js'
 import {
   matchReceiptToLine, unmatchReceipt, writeOffUnreceived, fixReceiptReference, rematchRaast, resolveAttentionReceipt,
   raastFinanceSettings, receiptAt, pktDay, earliestLineDay, WRITE_OFF_CONTRAS, ATTENTION_OUTCOMES,
+  raastVoidEligibilityTx, requestRaastVoid, rejectRaastVoidRequest, voidNeverBooked, RAAST_VOID_REQUESTERS,
+  type RaastVoidRefusal,
 } from './raast.js'
 
-const RECEIPT_STATUSES = ['awaiting', 'provisional', 'matched', 'cancelled', 'unreceived', 'needs_attention'] as const
+const RECEIPT_STATUSES = ['awaiting', 'provisional', 'matched', 'cancelled', 'unreceived', 'needs_attention', 'voided'] as const
 /** What the Raast tab lists by default: everything that took (or may have taken) money. */
-const FINANCE_DEFAULT: RaastReceiptStatus[] = ['provisional', 'needs_attention', 'matched', 'unreceived']
+const FINANCE_DEFAULT: RaastReceiptStatus[] = ['provisional', 'needs_attention', 'matched', 'unreceived', 'voided']
+/** Bills a receipt can be voided on (RV-MONEY-1). */
+const VOIDABLE_ORDER_STATUSES = new Set(['cancelled', 'rejected'])
 const ALERT_STATUSES = ['received', 'processing', 'unparsed', 'off', 'debit', 'duplicate', 'matched', 'confirmed', 'unmatched', 'ambiguous', 'needs_attention', 'attached', 'dismissed'] as const
 
 const DAY_MS = 86_400_000
@@ -53,13 +71,55 @@ const last4 = (b: { accountNumber: string | null; iban: string | null }) => {
 const RECEIPT_INCLUDE = {
   bankAccount: { select: { id: true, name: true, bankName: true, accountNumber: true, iban: true } },
   statementLine: { select: { id: true, importId: true, postedDate: true, description: true, reference: true, amountCents: true } },
-  order: { select: { concept: { select: { id: true, name: true } } } },
+  order: { select: { status: true, concept: { select: { id: true, name: true } } } },
 } satisfies Prisma.RaastReceiptInclude
 
 type ReceiptRow = Prisma.RaastReceiptGetPayload<{ include: typeof RECEIPT_INCLUDE }>
 
-function receiptView(r: ReceiptRow, now: Date) {
+/** What the caller's view of the rows needs: their role, the void checks of the rows that could be voided, user names. */
+interface ViewContext {
+  role: string
+  /** Receipt id → why it cannot be voided (null = it can). Absent = not a void candidate. */
+  voidChecks: Map<string, RaastVoidRefusal | null>
+  names: Map<string, string>
+}
+
+const pendingVoidRequest = (r: Pick<ReceiptRow, 'voidRequestedAt' | 'status'>) => !!r.voidRequestedAt && r.status === 'provisional'
+
+/** A receipt the CEO could void: provisional, and on a cancelled / rejected bill or already asked for. */
+const isVoidCandidate = (r: ReceiptRow) => r.status === 'provisional' && (VOIDABLE_ORDER_STATUSES.has(r.order.status) || !!r.voidRequestedAt)
+
+async function viewContext(req: FastifyRequest, rows: ReceiptRow[]): Promise<ViewContext> {
+  const voidChecks = new Map<string, RaastVoidRefusal | null>()
+  for (const r of rows) if (isVoidCandidate(r)) voidChecks.set(r.id, await raastVoidEligibilityTx(prisma, r))
+  const ids = [...new Set(rows.flatMap((r) => [r.voidRequestedById, r.voidedById]).filter((x): x is string => !!x))]
+  const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : []
+  return { role: req.staffUser?.role ?? '', voidChecks, names: new Map(users.map((u) => [u.id, u.name])) }
+}
+
+/** The caller's buttons for a row — the same rules the routes enforce. */
+function capabilitiesOf(r: ReceiptRow, ctx: ViewContext) {
+  const approver = (APPROVERS as string[]).includes(ctx.role)
+  const ceo = ctx.role === 'admin'
+  const requester = RAAST_VOID_REQUESTERS.includes(ctx.role)
+  const voidable = ctx.voidChecks.get(r.id) === null
+  const pending = pendingVoidRequest(r)
+  return {
+    canMatch: r.status === 'provisional' || r.status === 'unreceived',
+    canUnmatch: approver && r.status === 'matched',
+    canFixReference: approver && r.status === 'provisional' && !r.smsConfirmedAt,
+    canWriteOff: approver && r.status === 'provisional',
+    canResolve: approver && r.status === 'needs_attention',
+    canVoid: ceo && voidable,
+    canRequestVoid: requester && !ceo && voidable && !pending,
+    canRejectVoidRequest: ceo && pending,
+  }
+}
+
+function receiptView(r: ReceiptRow, now: Date, ctx: ViewContext) {
   const at = receiptAt(r)
+  const by = (id: string | null) => (id ? { id, name: ctx.names.get(id) ?? null } : null)
+  const check = ctx.voidChecks.get(r.id)
   return {
     id: r.id,
     tenantId: r.tenantId,
@@ -88,6 +148,14 @@ function receiptView(r: ReceiptRow, now: Date) {
     statementLine: r.statementLine
       ? { ...r.statementLine, amountCents: toCents(r.statementLine.amountCents) }
       : null,
+    orderStatus: r.order.status,
+    // RV-MONEY-1: a pending ask for the CEO's void, and the void itself.
+    voidRequest: r.voidRequestedAt ? { at: r.voidRequestedAt, by: by(r.voidRequestedById), reason: r.voidRequestReason, pending: pendingVoidRequest(r) } : null,
+    voided: r.voidedAt ? { at: r.voidedAt, by: by(r.voidedById), reason: r.voidReason } : null,
+    /** Why the CEO cannot void it (a provisional receipt on a cancelled bill, or one asked for); null otherwise. */
+    voidBlockedReason: check ? check.message : null,
+    voidBlockedCode: check ? check.code : null,
+    ...capabilitiesOf(r, ctx),
   }
 }
 
@@ -98,7 +166,15 @@ async function receiptForWrite(req: FastifyRequest, id: string) {
   return r
 }
 
+/** One receipt as the caller sees it, after an action (fresh row, the caller's flags). */
+async function viewOne(req: FastifyRequest, id: string) {
+  const r = await receiptForWrite(req, id)
+  return receiptView(r, new Date(), await viewContext(req, [r]))
+}
+
 const reasonSchema = z.string().trim().min(3).max(500)
+/** A void (or the ask for one) says why in a sentence. */
+const voidReasonSchema = z.string().trim().min(10, 'Say why in at least 10 characters').max(500)
 
 export async function raastReconciliationRoutes(fastify: FastifyInstance) {
   // ── GET /receipts ────────────────────────────────────────────────────────
@@ -109,6 +185,9 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       from: z.string().optional(),
       to: z.string().optional(),
       q: z.string().trim().max(64).optional(),
+      // RV-MONEY-1: only the receipts whose void is waiting for the CEO (the
+      // approvals inbox reads this).
+      voidRequested: z.enum(['1', 'true']).optional(),
       cursor: z.string().min(1).optional(),
       limit: z.coerce.number().int().min(1).max(200).default(50),
     }).parse(req.query)
@@ -131,7 +210,10 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       })
     }
     const base: Prisma.RaastReceiptWhereInput = { AND: and }
-    const where: Prisma.RaastReceiptWhereInput = { AND: [...and, { status: q.status ? q.status : { in: FINANCE_DEFAULT } }] }
+    const statusWhere: Prisma.RaastReceiptWhereInput = q.voidRequested
+      ? { voidRequestedAt: { not: null }, status: q.status ?? 'provisional' }
+      : { status: q.status ? q.status : { in: FINANCE_DEFAULT } }
+    const where: Prisma.RaastReceiptWhereInput = { AND: [...and, statusWhere] }
 
     const rows = await prisma.raastReceipt.findMany({
       where,
@@ -158,10 +240,15 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
     const unmatchedAlerts = await prisma.bankSmsAlert.count({
       where: { ...company, kind: 'credit', status: { in: ['unmatched', 'ambiguous', 'needs_attention'] } },
     })
+    const voidRequested = await prisma.raastReceipt.aggregate({
+      where: { AND: [...and, { status: 'provisional', voidRequestedAt: { not: null } }] },
+      _count: true, _sum: { amountCents: true },
+    })
 
     const page = rows.slice(0, q.limit)
+    const ctx = await viewContext(req, page)
     return {
-      receipts: page.map((r) => receiptView(r, now)),
+      receipts: page.map((r) => receiptView(r, now, ctx)),
       nextCursor: rows.length > q.limit ? page[page.length - 1]!.id : null,
       totals,
       kpis: {
@@ -170,6 +257,8 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
         matched: totals['matched'],
         needsAttention: totals['needs_attention'],
         unreceived: totals['unreceived'],
+        voided: totals['voided'],
+        voidRequested: { count: voidRequested._count, cents: voidRequested._sum.amountCents ?? 0 },
         unmatchedBankAlerts: unmatchedAlerts,
       },
     }
@@ -227,7 +316,7 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       }
     }
     return {
-      receipt: receiptView(r, new Date()),
+      receipt: receiptView(r, new Date(), await viewContext(req, [r])),
       statementMatchDays: n,
       candidates: withRef.map((l) => ({ ...l, suggested: l.id === suggestedId })),
     }
@@ -245,7 +334,7 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { status: updated.status, statementLineId: updated.statementLineId },
       metadata: { receiptTenantId: r.tenantId, orderId: r.orderId, bankRef: r.bankRef, amountCents: r.amountCents, wasWrittenOff: r.status === 'unreceived' },
     })
-    return receiptView(await receiptForWrite(req, r.id), new Date())
+    return viewOne(req, r.id)
   })
 
   // ── POST /receipts/:id/unmatch (APPROVERS) ───────────────────────────────
@@ -260,7 +349,7 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { status: receipt.status, statementLineId: null },
       metadata: { receiptTenantId: r.tenantId, orderId: r.orderId, reason: body.reason ?? null },
     })
-    return receiptView(await receiptForWrite(req, r.id), new Date())
+    return viewOne(req, r.id)
   })
 
   // ── PATCH /receipts/:id/reference (APPROVERS — M4) ───────────────────────
@@ -280,13 +369,15 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { bankRef: res.receipt.bankRef, bankRefRaw: res.receipt.bankRefRaw, status: res.receipt.status },
       metadata: { receiptTenantId: r.tenantId, orderId: r.orderId, paymentId: r.paymentId, reason: body.reason, smsConfirmed: res.smsConfirmed, statementMatched: res.statementMatched },
     })
-    return { ...receiptView(await receiptForWrite(req, r.id), new Date()), smsConfirmedNow: res.smsConfirmed, statementMatchedNow: res.statementMatched }
+    return { ...(await viewOne(req, r.id)), smsConfirmedNow: res.smsConfirmed, statementMatchedNow: res.statementMatched }
   })
 
   // ── POST /receipts/:id/unreceived (APPROVERS) ────────────────────────────
   fastify.post<{ Params: { id: string } }>('/receipts/:id/unreceived', { preHandler: requireAuth(...APPROVERS) }, async (req) => {
     const body = z.object({
       reason: reasonSchema,
+      // 1110 the customer still owes it (till clearing lives on 1110 while the
+      // 1115 split is PARKED with on-account clients) / 8010 a loss / 1350 staff owes.
       contraAccountCode: z.enum(WRITE_OFF_CONTRAS).default('1110'),
     }).parse(req.body)
     const r = await receiptForWrite(req, req.params.id)
@@ -298,7 +389,7 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { status: res.receipt.status, writeOffEntryId: res.entryId },
       metadata: { receiptTenantId: r.tenantId, orderId: r.orderId, bankRef: r.bankRef, amountCents: r.amountCents, contraAccountCode: body.contraAccountCode, ledgerCode: r.ledgerCode, reason: body.reason },
     })
-    return receiptView(await receiptForWrite(req, r.id), new Date())
+    return viewOne(req, r.id)
   })
 
   // ── POST /receipts/:id/resolve (APPROVERS — RV-FIN-1) ───────────────────
@@ -324,7 +415,61 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
         refundReference: res.refundReference, alertId: res.alertId,
       },
     })
-    return receiptView(await receiptForWrite(req, r.id), new Date())
+    return viewOne(req, r.id)
+  })
+
+  // ── POST /receipts/:id/void-request (RV-MONEY-1) ─────────────────────────
+  // Finance (or management / an owner) asks the CEO to void a receipt whose
+  // sale was never booked. The same checks as the void (raast.ts
+  // raastVoidEligibilityTx) — a request the CEO could never act on is refused
+  // here. Audited in the receipt's company.
+  fastify.post<{ Params: { id: string } }>('/receipts/:id/void-request', { preHandler: requireAuth(...(RAAST_VOID_REQUESTERS as UserRole[])) }, async (req) => {
+    const body = z.object({ reason: voidReasonSchema }).parse(req.body)
+    const r = await receiptForWrite(req, req.params.id)
+    const res = await requestRaastVoid(r.id, { actorId: req.staffUser!.id, reason: body.reason })
+    await audit({
+      category: 'accounting', action: 'raast.receipt.void_request', entity: 'RaastReceipt', entityId: r.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: r.tenantId,
+      before: { voidRequestedAt: null },
+      after: { voidRequestedAt: res.receipt.voidRequestedAt, reason: body.reason },
+      metadata: { orderId: r.orderId, bankRef: r.bankRef, amountCents: r.amountCents, actorTenantId: req.staffUser!.tenantId ?? null },
+    })
+    return viewOne(req, r.id)
+  })
+
+  // ── POST /receipts/:id/void (ADMIN_ONLY — the CEO, RV-MONEY-1) ───────────
+  // With or without a request. NO ledger posting; the bank reference stays
+  // claimed. Audited in the receipt's company.
+  fastify.post<{ Params: { id: string } }>('/receipts/:id/void', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ reason: voidReasonSchema }).parse(req.body)
+    const r = await receiptForWrite(req, req.params.id)
+    const voided = await voidNeverBooked(r.id, { actorId: req.staffUser!.id, reason: body.reason })
+    await audit({
+      category: 'accounting', action: 'raast.receipt.void', entity: 'RaastReceipt', entityId: r.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: r.tenantId,
+      before: { status: r.status, voidRequestedAt: r.voidRequestedAt, voidRequestedById: r.voidRequestedById },
+      after: { status: voided.status, voidedAt: voided.voidedAt },
+      metadata: {
+        orderId: r.orderId, orderStatus: r.order.status, bankRef: r.bankRef, amountCents: r.amountCents, ledgerCode: r.ledgerCode,
+        reason: body.reason, requestReason: r.voidRequestReason, noLedgerEntry: true, actorTenantId: req.staffUser!.tenantId ?? null,
+      },
+    })
+    return viewOne(req, r.id)
+  })
+
+  // ── POST /receipts/:id/void-request/reject (ADMIN_ONLY) ──────────────────
+  fastify.post<{ Params: { id: string } }>('/receipts/:id/void-request/reject', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ note: reasonSchema }).parse(req.body)
+    const r = await receiptForWrite(req, req.params.id)
+    const res = await rejectRaastVoidRequest(r.id, { actorId: req.staffUser!.id, note: body.note })
+    await audit({
+      category: 'accounting', action: 'raast.receipt.void_request_reject', entity: 'RaastReceipt', entityId: r.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: r.tenantId,
+      before: { voidRequestedAt: res.before.voidRequestedAt, voidRequestedById: res.before.voidRequestedById, reason: res.before.voidRequestReason },
+      after: { voidRequestedAt: null },
+      metadata: { orderId: r.orderId, note: body.note, actorTenantId: req.staffUser!.tenantId ?? null },
+    })
+    return viewOne(req, r.id)
   })
 
   // ── POST /rematch ────────────────────────────────────────────────────────

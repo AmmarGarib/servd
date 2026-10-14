@@ -29,10 +29,20 @@
 //     tender rate. Tax is rounded once per rate group, so an all-standard
 //     order's tax is exactly round(itemTotal × rate).
 //   - Service charge (when the company's ops config enables it for the
-//     channel) sits on food + GST − discount. Never on the delivery fee or tip.
-//   - Total = food + GST − discount + delivery fee + service charge. Customer
-//     credits (promo, points, wallet, gift card) and the tip are applied by
-//     the caller on top of this figure.
+//     channel) sits on food + GST − discount. Never on the delivery fee, its
+//     GST or the tip.
+//   - Delivery fee: GST added on top at the tender rate (owner 2026-10-13,
+//     H9); never in the service-charge or tip base. The zone fee is the fee
+//     BEFORE GST; its GST is the order's STANDARD tender rate (15 % cash, 8 %
+//     card / Raast / online / wallet) — never an item tax class, so a
+//     zero-rated basket still pays GST on the delivery — rounded on its own:
+//     deliveryFeeTaxCents = round(fee × rate / 100). Order.taxCents = GST on
+//     the food (itemTaxCents) + GST on the fee (deliveryFeeTaxCents); both
+//     parts are stored on the order (Order.deliveryFeeCents /
+//     deliveryFeeTaxCents, written by ingestOrder from this price).
+//   - Total = food + food GST − discount + delivery fee + delivery GST +
+//     service charge. Customer credits (promo, points, wallet, gift card) and
+//     the tip are applied by the caller on top of this figure.
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
@@ -75,6 +85,11 @@ const CARD_TENDERS = new Set(['card', 'raast', 'keenu_qr', 'keenu', 'jazzcash', 
  * cash on delivery) is cash; card, Raast QR and online gateways are the
  * digital group ('card'); anything else — 'split', 'comp', a tender not
  * chosen yet — takes the cash rate.
+ *
+ * 'on_account' (a named corporate client's bill, lib/tenders
+ * ON_ACCOUNT_TENDER) is the CASH class by the owner / accountant default
+ * (2026-10-13): tenderOf('on_account') === 'cash'. Never add it to
+ * CARD_TENDERS without the CA's answer.
  */
 export function tenderOf(method: string | null | undefined): Tender {
   if (method && CARD_TENDERS.has(method)) return 'card'
@@ -140,10 +155,16 @@ export interface OrderPrice {
   /** Food: Σ (unit + modifiers) × qty, pre-discount. */
   itemTotalCents: number
   discountCents: number
-  taxCents: number
+  /** GST on the food lines (item tax classes, one rounding per rate group). */
+  itemTaxCents: number
+  /** The delivery fee BEFORE GST (the zone's fee; 0 for pickup / dine-in / the till). */
   deliveryFeeCents: number
+  /** GST on the delivery fee at the tender's standard rate: fee > 0 ? round(fee × taxRatePct / 100) : 0. */
+  deliveryFeeTaxCents: number
+  /** itemTaxCents + deliveryFeeTaxCents — what Order.taxCents stores. */
+  taxCents: number
   serviceChargeCents: number
-  /** food + GST − discount + delivery + service charge. */
+  /** food + food GST − discount + delivery fee + delivery GST + service charge. */
   totalCents: number
   lines: PricedLine[]
 }
@@ -151,6 +172,7 @@ export interface OrderPrice {
 export interface PriceOptions {
   /** Staff discount at the till (not a promo — promos are applied by the caller). */
   discountCents?: number
+  /** The delivery fee BEFORE GST (the zone's fee). Its GST is added on top (H9). */
   deliveryFeeCents?: number
   /** Read item tax classes inside the caller's transaction. */
   db?: Prisma.TransactionClient
@@ -197,10 +219,15 @@ export async function priceOrder(
     taxRatePct: lineTaxRatePct(l.menuItemId ? classOf.get(l.menuItemId) : null, standard),
   }))
   const itemTotalCents = priced.reduce((s, l) => s + l.lineCents, 0)
-  const taxCents = taxOnLines(priced)
-  const discountCents = Math.max(0, Math.min(opts.discountCents ?? 0, itemTotalCents + taxCents))
+  const itemTaxCents = taxOnLines(priced)
+  // A staff discount comes off the food and its GST — never the delivery.
+  const discountCents = Math.max(0, Math.min(opts.discountCents ?? 0, itemTotalCents + itemTaxCents))
   const deliveryFeeCents = Math.max(0, opts.deliveryFeeCents ?? 0)
-  const netCents = itemTotalCents + taxCents - discountCents
+  // GST on the delivery, at the tender's STANDARD rate (H9) — never an item
+  // class — and rounded on its own.
+  const deliveryFeeTaxCents = deliveryFeeCents > 0 ? Math.round((deliveryFeeCents * standard) / 100) : 0
+  // The service-charge base: food + food GST − discount (never the fee or its GST).
+  const netCents = itemTotalCents + itemTaxCents - discountCents
   const serviceChargeCents = await computeServiceCharge(netCents, SERVICE_CHARGE_CHANNEL[channel], concept.tenantId)
 
   return {
@@ -209,10 +236,12 @@ export async function priceOrder(
     taxRatePct: standard,
     itemTotalCents,
     discountCents,
-    taxCents,
+    itemTaxCents,
     deliveryFeeCents,
+    deliveryFeeTaxCents,
+    taxCents: itemTaxCents + deliveryFeeTaxCents,
     serviceChargeCents,
-    totalCents: netCents + deliveryFeeCents + serviceChargeCents,
+    totalCents: netCents + deliveryFeeCents + deliveryFeeTaxCents + serviceChargeCents,
     lines: priced,
   }
 }

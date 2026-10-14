@@ -28,19 +28,26 @@
 // (its creation minus matchWindowMin, by PKT day) never matches it — the
 // reference was borrowed from an older credit.
 //   flagUnmatchedReceipts   the daily raast_unmatched flag (one per bank account).
+//   requestRaastVoid / rejectRaastVoidRequest / voidNeverBooked
+//                       the CEO's "void, never booked" (RV-MONEY-1, owner
+//                       2026-10-13: finance may ask, ONLY the CEO voids) —
+//                       see raastVoidEligibilityTx.
 //
 // Every write path takes lockRaastTx (connectors/raast/lock.ts) FIRST, in its
 // own short transaction — the till's Raast payments and the SMS matcher take
 // the same lock, so a receipt's state is never overwritten by a race.
 //
 // Ledger. A write-off ('not received') posts 'raast.unreceived:<receiptId>'
-// in the receipt's company: Dr contra (1110 customer owes / 8010 loss / 1350
-// staff owes) / Cr the receiving bank's code — both memos start with
-// RAAST_RECEIPTS_MEMO, so the generic matcher never pairs them. A receipt
-// written off and later found on a statement reverses that entry first
+// in the receipt's company: Dr contra (1110 customer owes — till clearing
+// lives on 1110 today / 8010 loss / 1350 staff owes) / Cr the receiving bank's
+// code — both memos start with RAAST_RECEIPTS_MEMO, so the generic matcher
+// never pairs them. (The 1110 → 1115 till-clearing split is PARKED with
+// on-account clients, owner 2026-10-13; reversals always mirror their own
+// entry's lines.) A receipt written off and later found on a statement
+// reverses that entry first
 // ('raast.unreceived.reversal:<…>'). A second write-off after a reversal gets
 // its own sourceId (`<receiptId>:2`, …) — a posting is idempotent per
-// reference.
+// reference. A void posts NOTHING: nothing ever debited the bank for it.
 
 import type { Prisma, RaastReceipt, RaastReceiptStatus } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
@@ -48,7 +55,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { toCents } from '../../lib/money.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { fmtPktDate } from '../accounting/dates.js'
-import { postJournalEntry, reverseJournalEntry } from '../accounting/journal.js'
+import { postJournalEntry, reverseJournalEntry, TILL_CLEARING_CODES } from '../accounting/journal.js'
 import { RAAST_RECEIPTS_MEMO, REFUND_DUE_PREFIX } from '../accounting/orderPosting.js'
 import { lockRaastTx } from '../../connectors/raast/lock.js'
 import { cleanBankRef, normalizeBankRef, refInText } from '../../connectors/raast/reference.js'
@@ -69,9 +76,16 @@ const TX_OPTS = { maxWait: 10_000, timeout: 30_000 } as const
 export const MATCHABLE_STATUSES: RaastReceiptStatus[] = ['provisional', 'unreceived']
 /** Receipts finance still has to clear before a period closes (S6). */
 export const OPEN_FINANCE_STATUSES: RaastReceiptStatus[] = ['provisional', 'needs_attention']
-/** The contra accounts a write-off may use. */
+/**
+ * The contra accounts a write-off may use: 1110 (the customer still owes it —
+ * till clearing lives on 1110 while the 1115 split is PARKED with on-account
+ * clients, owner 2026-10-13), 8010 a loss, 1350 recovered from staff. The
+ * first is the default.
+ */
 export const WRITE_OFF_CONTRAS = ['1110', '8010', '1350'] as const
 export type WriteOffContra = (typeof WRITE_OFF_CONTRAS)[number]
+/** Who may ask the CEO to void a receipt (the void itself is the CEO's — role admin). */
+export const RAAST_VOID_REQUESTERS: readonly string[] = ['admin', 'owner', 'management', 'finance']
 
 const WRITE_OFF_SOURCE = 'raast.unreceived'
 
@@ -254,7 +268,7 @@ export async function matchRaastLinesTx(tx: Tx, input: { tenantId: string; impor
  * Raast tab: equal to a provisional (or written-off, RV-FIN-2) receipt's
  * amount on `bankAccountId` within ±statementMatchDays.
  */
-export async function raastSkipLinesTx(tx: Tx, input: { tenantId: string; bankAccountId: string; lines: PassLine[] }): Promise<Set<string>> {
+export async function raastSkipLinesTx(tx: Db, input: { tenantId: string; bankAccountId: string; lines: PassLine[] }): Promise<Set<string>> {
   const skip = new Set<string>()
   const lines = input.lines.filter((l) => l.amountCents > 0)
   if (lines.length === 0) return skip
@@ -276,6 +290,34 @@ export async function raastSkipLinesTx(tx: Tx, input: { tenantId: string; bankAc
     if (receipts.some((r) => r.amountCents === l.amountCents && Math.abs(pktDay(receiptAt(r)) - day) <= n)) skip.add(l.id)
   }
   return skip
+}
+
+/**
+ * Every positive line another matcher (the card-payout pass's re-run) must
+ * leave for the Raast tab, read only: lines naming a matchable receipt's
+ * reference on `bankAccountId` (RV-FIN-2) and S3's equal-amount lines.
+ */
+export async function raastLinesToLeaveTx(db: Db, input: { tenantId: string; bankAccountId: string; lines: PassLine[] }): Promise<Set<string>> {
+  const lines = input.lines.filter((l) => l.amountCents > 0)
+  const out = new Set<string>()
+  if (lines.length === 0) return out
+  const { statementMatchDays: n } = await raastFinanceSettings(db, input.tenantId)
+  const minT = Math.min(...lines.map((l) => l.postedDate.getTime())) - (n + 1) * DAY_MS
+  const maxT = Math.max(...lines.map((l) => l.postedDate.getTime())) + (n + 1) * DAY_MS
+  const window = { gte: new Date(minT), lte: new Date(maxT) }
+  const receipts = await db.raastReceipt.findMany({
+    where: {
+      tenantId: input.tenantId, bankAccountId: input.bankAccountId, status: { in: MATCHABLE_STATUSES }, statementLineId: null, bankRef: { not: null },
+      OR: [{ confirmedAt: window }, { confirmedAt: null, createdAt: window }],
+    },
+    select: { bankRef: true },
+  })
+  for (const l of lines) {
+    const text = `${l.description} ${l.reference ?? ''}`
+    if (receipts.some((r) => refInText(r.bankRef!, text))) out.add(l.id)
+  }
+  for (const id of await raastSkipLinesTx(db, input)) out.add(id)
+  return out
 }
 
 /**
@@ -437,9 +479,11 @@ export async function unmatchReceipt(input: { receiptId: string; actorId: string
  *   - any other order, live: only its completion debits the bank
  *     ('order.complete:<orderId>') — a drawer close books non-till CASH only;
  *   - any other order, cancelled / rejected: only a drawer close that held
- *     its money as a refund due (Cr 1110 'REFUND DUE …' naming the order).
+ *     its money as a refund due (Cr till clearing — 1110 today;
+ *     TILL_CLEARING_CODES also holds 1115 for the parked split —
+ *     'REFUND DUE …' naming the order).
  */
-async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
+export async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
   const o = await db.order.findUnique({ where: { id: r.orderId }, select: { source: true, status: true } })
   if (!o) return false
   const closeOf = async () => r.shiftId
@@ -459,7 +503,7 @@ async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
   if (!close) return false
   const held = await db.journalLine.findFirst({
     where: {
-      journalEntryId: close.id, type: 'credit', account: { tenantId: r.tenantId, code: '1110' },
+      journalEntryId: close.id, type: 'credit', account: { tenantId: r.tenantId, code: { in: TILL_CLEARING_CODES } },
       AND: [{ memo: { startsWith: REFUND_DUE_PREFIX } }, { memo: { contains: r.orderId } }],
     },
     select: { id: true },
@@ -505,6 +549,141 @@ export async function writeOffUnreceived(input: {
     await resolveRaastFlagsTx(tx, r.tenantId, ['raast_statement_mismatch', 'raast_unconfirmed', 'raast_needs_attention'], 'RaastReceipt', r.id, `Written off as not received: ${input.reason}`)
     return { receipt: await tx.raastReceipt.findUniqueOrThrow({ where: { id: r.id } }), entryId: posted.entryId }
   }, TX_OPTS)
+}
+
+// ─── Void, never booked (RV-MONEY-1 — the CEO only) ─────────────────────────
+//
+// A PROVISIONAL receipt on a CANCELLED / REJECTED bill whose money no entry
+// ever debited to the bank (not the drawer close, not order.complete, not a
+// refund-due hold) — so "not received" (which credits the bank) would book a
+// bank credit nothing debited. Finance may ASK (requestRaastVoid); only the
+// CEO voids (voidNeverBooked) or rejects the ask. The receipt becomes
+// 'voided' with the reason, who and when; NO ledger posting (finance books
+// the statement credit, if the money did arrive, with the bank line's own
+// adjustment, as for a resolved needs-attention receipt). The bank reference
+// stays on the receipt, so the same transfer can never pay another bill
+// (RAAST_REF_USED). A voided receipt stops counting for the period close
+// (raastOpenThrough) and the daily flag. Refused (409) unless:
+//   RAAST_NOT_PROVISIONAL      the receipt is provisional;
+//   RAAST_SALE_BOOKED          no entry debited the bank for it (saleBookedTx —
+//                              when one did, use "not received");
+//   RAAST_ORDER_NOT_CANCELLED  the bill is cancelled or rejected;
+//   RAAST_CLOSE_PENDING        every till drawer holding the bill's payments
+//                              or the receipt is closed, with no open
+//                              posting_failed flag on it or on the bill (the
+//                              close might still book it);
+//   RAAST_REFUND_EXISTS        no refund row on the bill was paid back against
+//                              this receipt (gatewayMeta.raast.receiptId) —
+//                              that money already left the bank on the books.
+
+export interface RaastVoidRefusal { code: string; message: string }
+
+/** Why `r` cannot be voided, or null when it can (read only; see above). */
+export async function raastVoidEligibilityTx(db: Db, r: RaastReceipt): Promise<RaastVoidRefusal | null> {
+  const ref = orderRefOf(r.orderId)
+  if (r.status !== 'provisional') {
+    return { code: 'RAAST_NOT_PROVISIONAL', message: `This Raast receipt is ${r.status} — only a provisional receipt can be voided` }
+  }
+  if (await saleBookedTx(db, r)) {
+    return { code: 'RAAST_SALE_BOOKED', message: `Bill #${ref}'s Raast money is on the books (an entry debited the bank for it) — mark it not received instead` }
+  }
+  const o = await db.order.findUnique({ where: { id: r.orderId }, select: { status: true, payments: { select: { shiftId: true } } } })
+  if (!o || (o.status !== 'cancelled' && o.status !== 'rejected')) {
+    return { code: 'RAAST_ORDER_NOT_CANCELLED', message: `Bill #${ref} is ${o?.status ?? 'missing'} — only a receipt on a cancelled or rejected bill can be voided` }
+  }
+  const shiftIds = [...new Set([r.shiftId, ...o.payments.map((p) => p.shiftId)].filter((x): x is string => !!x))]
+  if (shiftIds.length > 0) {
+    const open = await db.shift.count({ where: { id: { in: shiftIds }, status: { not: 'closed' } } })
+    if (open > 0) {
+      return { code: 'RAAST_CLOSE_PENDING', message: `A till drawer that took bill #${ref}'s money is still open — its close may book it; close the drawer first` }
+    }
+  }
+  const failed = await db.exceptionFlag.count({
+    where: {
+      kind: 'posting_failed', status: { in: ['open', 'acknowledged'] },
+      OR: [{ entityType: 'Order', entityId: r.orderId }, ...(shiftIds.length > 0 ? [{ entityType: 'Shift', entityId: { in: shiftIds } }] : [])],
+    },
+  })
+  if (failed > 0) {
+    return { code: 'RAAST_CLOSE_PENDING', message: `A drawer close or posting for bill #${ref} was refused and is waiting to be re-posted (Reconciliation → Backfill unposted) — it may book this money` }
+  }
+  const refund = await db.payment.findFirst({
+    where: { orderId: r.orderId, status: 'refunded', gatewayMeta: { path: ['raast', 'receiptId'], equals: r.id } },
+    select: { id: true },
+  })
+  if (refund) {
+    return { code: 'RAAST_REFUND_EXISTS', message: `Money was already paid back against this Raast receipt (refund on bill #${ref}) — it cannot be voided` }
+  }
+  return null
+}
+
+async function lockedReceiptTx(tx: Tx, receiptId: string): Promise<RaastReceipt> {
+  const head = await tx.raastReceipt.findUnique({ where: { id: receiptId }, select: { tenantId: true } })
+  if (!head) throw new NotFoundError('RaastReceipt', receiptId)
+  await lockRaastTx(tx, head.tenantId)
+  return tx.raastReceipt.findUniqueOrThrow({ where: { id: receiptId } })
+}
+
+async function assertVoidableTx(tx: Tx, r: RaastReceipt): Promise<void> {
+  const no = await raastVoidEligibilityTx(tx, r)
+  if (no) throw new AppError(no.code, no.message, 409)
+}
+
+/** Finance asks the CEO to void a receipt (the same checks as the void). */
+export async function requestRaastVoid(receiptId: string, a: { actorId: string; reason: string; db?: typeof defaultPrisma }): Promise<{ before: RaastReceipt; receipt: RaastReceipt }> {
+  const db = a.db ?? defaultPrisma
+  return db.$transaction(async (tx) => {
+    const r = await lockedReceiptTx(tx, receiptId)
+    await assertVoidableTx(tx, r)
+    if (r.voidRequestedAt) throw new AppError('RAAST_VOID_ALREADY_REQUESTED', 'A void of this receipt is already waiting for the CEO', 409)
+    const done = await tx.raastReceipt.updateMany({
+      where: { id: r.id, status: 'provisional', voidRequestedAt: null },
+      data: { voidRequestedAt: new Date(), voidRequestedById: a.actorId, voidRequestReason: a.reason.trim().slice(0, 500) },
+    })
+    if (done.count === 0) throw new AppError('RAAST_RECEIPT_CHANGED', 'The receipt changed meanwhile — refresh and try again', 409)
+    return { before: r, receipt: await tx.raastReceipt.findUniqueOrThrow({ where: { id: r.id } }) }
+  }, TX_OPTS)
+}
+
+/** The CEO turns down a void request: it is cleared (the receipt stays provisional). */
+export async function rejectRaastVoidRequest(receiptId: string, a: { actorId: string; note: string; db?: typeof defaultPrisma }): Promise<{ before: RaastReceipt; receipt: RaastReceipt }> {
+  const db = a.db ?? defaultPrisma
+  return db.$transaction(async (tx) => {
+    const r = await lockedReceiptTx(tx, receiptId)
+    if (!r.voidRequestedAt || r.status !== 'provisional') {
+      throw new AppError('RAAST_NO_VOID_REQUEST', 'No void of this receipt is waiting for the CEO', 409)
+    }
+    const done = await tx.raastReceipt.updateMany({
+      where: { id: r.id, status: 'provisional', voidRequestedAt: { not: null } },
+      data: { voidRequestedAt: null, voidRequestedById: null, voidRequestReason: null },
+    })
+    if (done.count === 0) throw new AppError('RAAST_RECEIPT_CHANGED', 'The receipt changed meanwhile — refresh and try again', 409)
+    return { before: r, receipt: await tx.raastReceipt.findUniqueOrThrow({ where: { id: r.id } }) }
+  }, TX_OPTS)
+}
+
+/**
+ * The CEO voids a provisional receipt whose sale was never booked (see
+ * above): provisional → voided, conditionally, under the Raast lock. NO
+ * ledger posting; the bank reference stays claimed; the receipt's raast_*
+ * flags are resolved and the company's daily raast_unmatched flag refreshed.
+ */
+export async function voidNeverBooked(receiptId: string, a: { actorId: string; reason: string; db?: typeof defaultPrisma }): Promise<RaastReceipt> {
+  const db = a.db ?? defaultPrisma
+  const reason = a.reason.trim().slice(0, 500)
+  const receipt = await db.$transaction(async (tx) => {
+    const r = await lockedReceiptTx(tx, receiptId)
+    await assertVoidableTx(tx, r)
+    const done = await tx.raastReceipt.updateMany({
+      where: { id: r.id, status: 'provisional', statementLineId: null },
+      data: { status: 'voided', voidedAt: new Date(), voidedById: a.actorId, voidReason: reason },
+    })
+    if (done.count === 0) throw new AppError('RAAST_RECEIPT_CHANGED', 'The receipt changed meanwhile — refresh and try again', 409)
+    await resolveRaastFlagsTx(tx, r.tenantId, ['raast_statement_mismatch', 'raast_unconfirmed', 'raast_needs_attention'], 'RaastReceipt', r.id, `Voided by the CEO (never booked): ${reason}`)
+    return tx.raastReceipt.findUniqueOrThrow({ where: { id: r.id } })
+  }, TX_OPTS)
+  await flagUnmatchedReceipts(receipt.tenantId, { db }).catch((err) => console.warn('[raast] flag refresh after a void failed:', (err as Error).message))
+  return receipt
 }
 
 // ─── Resolve a needs-attention receipt (RV-FIN-1) ───────────────────────────

@@ -34,8 +34,11 @@ import { useManagerRoles } from '../../../lib/roles'
 //   - hr holding 'staff_directory' (POSITION_EDITORS + its module gate): add,
 //     edit and archive seats; reads the inter-company contributions;
 //   - finance (staff_directory or capital): reads the budget, changes nothing.
-// Contributions move money between two companies' books, so only managers
-// record or change one. Until /permissions/me answers, nothing is writable.
+// Contributions are a planning figure (what one company bears for another,
+// netted into the budget) — they post nothing to either company's books; the
+// ledger side is an inter-company transfer (Accounting → Inter-company). They
+// still speak for two companies, so only managers who belong to both record
+// or change one. Until /permissions/me answers, nothing is writable.
 function usePositionAccess(): { isManager: boolean; canEditSeats: boolean } {
   const { data: me } = usePermissions()
   const managerRoles = useManagerRoles()

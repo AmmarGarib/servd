@@ -25,6 +25,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { linkBankLedgerAccount } from '../src/lib/bankAccounts.js'
+import { postJournalEntry } from '../src/modules/accounting/journal.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
 import {
   finalSettlement, computePayslip, settlementNet, settledFromPeriod, mergeSettings, EMPTY_INPUTS, DEFAULT_HR_SETTINGS, pktToday,
@@ -109,7 +110,7 @@ async function mkBank(tenantId: string, name: string) {
 const call = (who: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url: `/hr${url}`, payload: payload as never, headers: { authorization: `Bearer ${users[who]!.token}` } })
 
-type Ln = { type: string; amountCents: number; account: { code: string } }
+type Ln = { type: string; amountCents: number | bigint; account: { code: string } }
 async function entry(tenantId: string, reference: string) {
   return prisma.journalEntry.findFirst({ where: { tenantId, reference }, include: { lines: { include: { account: { select: { code: true } } } } } })
 }
@@ -325,8 +326,13 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const salary = calc['salaryPayable'] as number
     const sessi = calc['sessiEmployer'] as number
     expect(amt(e!.lines, '6030', 'debit')).toBe(salary + RS(2000) + sessi) // Kitchen wages + employer EOBI / SESSI
-    expect(amt(e!.lines, '2090', 'credit')).toBe(RS(400) + RS(2000) + sessi)
-    expect(amt(e!.lines, '2040', 'credit')).toBe(RS(1000))
+    // Statutory payables (H7): EOBI employee + employer to 2043, SESSI to
+    // 2044, salary tax to 2042 — nothing to the old 2090 / 2040 stand-ins.
+    expect(amt(e!.lines, '2043', 'credit')).toBe(RS(400) + RS(2000))
+    expect(amt(e!.lines, '2044', 'credit')).toBe(sessi)
+    expect(amt(e!.lines, '2042', 'credit')).toBe(RS(1000))
+    expect(amt(e!.lines, '2090', 'credit') + amt(e!.lines, '2040', 'credit')).toBe(0)
+    expect(amt(e!.lines, '6036', 'debit')).toBe(0) // under a year of service: no gratuity
     expect(amt(e!.lines, '1350', 'credit')).toBe(RS(5000))
     expect(amt(e!.lines, '2020', 'credit')).toBe(net)
     expect(net).toBe(salary - RS(5000) - RS(1000) - RS(400))
@@ -466,5 +472,57 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const again = (await call('ceo', 'POST', '/final-settlement/post-unposted')).json()
     expect(again.posted).toEqual([])
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: `hr.final_settlement.accrual:${legacy.id}` } })).toBe(1)
+  })
+
+  it('cancelling a settlement booked before H7 reverses its 2090 / 2040 lines, and a replacement then books (2043 / 2044 / 2042)', async () => {
+    const who = await mkEmp('Era Leaver', tenantA, { departmentId: kitchen, status: 'resigned', lastWorkingDay: D('2026-10-15') })
+    // Approved and booked by the old code: EOBI / SESSI to 2090, tax to 2040.
+    const old = await prisma.hrRecord.create({
+      data: {
+        tenantId: tenantA, section: 'final_settlement', formVersion: 0, employeeId: who, status: 'approved', endDate: D('2026-10-15'), amountCents: RS(20000),
+        data: { salaryPayable: RS(22000), incomeTax: RS(1000), eobiEmployee: RS(1000), eobiEmployer: RS(2000), sessiEmployer: RS(500), netAmount: RS(20000), _salaryFrom: '2026-10-01T00:00:00.000Z' },
+      },
+    })
+    await postJournalEntry({
+      tenantId: tenantA, sourceType: 'hr.final_settlement.accrual', sourceId: old.id, description: 'Full & final (old)', postedBy: users['ceo']!.id,
+      lines: [
+        { accountCode: '6030', type: 'debit', amountCents: RS(24500) },
+        { accountCode: '2090', type: 'credit', amountCents: RS(3500) },
+        { accountCode: '2040', type: 'credit', amountCents: RS(1000) },
+        { accountCode: '2020', type: 'credit', amountCents: RS(20000) },
+      ],
+    })
+    expect((await call('hr', 'POST', `/records/final_settlement/${old.id}/cancel`)).statusCode).toBe(200)
+    const rev = await entry(tenantA, `hr.final_settlement.accrual.reversal:${old.id}`)
+    expect(rev).not.toBeNull()
+    expect(amt(rev!.lines, '2090', 'debit')).toBe(RS(3500))
+    expect(amt(rev!.lines, '2040', 'debit')).toBe(RS(1000))
+    expect(amt(rev!.lines, '2020', 'debit')).toBe(RS(20000))
+    expect(amt(rev!.lines, '2043', 'debit') + amt(rev!.lines, '2044', 'debit') + amt(rev!.lines, '2042', 'debit')).toBe(0)
+
+    // The replacement books: the cancelled sibling's reversal is found under
+    // its real reference ('…accrual.reversal:<id>'), so no FNF_ALREADY_APPROVED.
+    const id = (await raise('final_settlement', { employee: who, lastWorkingDay: '2026-10-15' })).id
+    const c = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: who, lastWorkingDay: '2026-10-15', recordId: id })).json()
+    await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c.salaryPayable, incomeTax: c.incomeTax, eobiEmployee: c.eobiEmployee, eobiEmployer: c.eobiEmployer, sessiEmployer: c.sessiEmployer } })
+    await decide('ceo', 'final_settlement', id)
+    const ok = await decide('mgmt', 'final_settlement', id)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().status).toBe('approved')
+    const booked = await entry(tenantA, `hr.final_settlement.accrual:${id}`)
+    expect(balanced(booked!.lines)).toBe(true)
+    expect(amt(booked!.lines, '2043', 'credit')).toBe(c.eobiEmployee + c.eobiEmployer)
+    expect(amt(booked!.lines, '2044', 'credit')).toBe(c.sessiEmployer)
+    expect(amt(booked!.lines, '2042', 'credit')).toBe(c.incomeTax)
+    expect(amt(booked!.lines, '2090', 'credit') + amt(booked!.lines, '2040', 'credit')).toBe(0)
+
+    // Cancel and replace once more: still one live settlement at a time.
+    expect((await call('hr', 'POST', `/records/final_settlement/${id}/cancel`)).statusCode).toBe(200)
+    const third = (await raise('final_settlement', { employee: who, lastWorkingDay: '2026-10-15' })).id
+    const c3 = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: who, lastWorkingDay: '2026-10-15', recordId: third })).json()
+    await call('hr', 'PATCH', `/records/final_settlement/${third}`, { data: { salaryPayable: c3.salaryPayable, incomeTax: c3.incomeTax, eobiEmployee: c3.eobiEmployee, eobiEmployer: c3.eobiEmployer, sessiEmployer: c3.sessiEmployer } })
+    await decide('ceo', 'final_settlement', third)
+    expect((await decide('mgmt', 'final_settlement', third)).json().status).toBe('approved')
+    expect(await entry(tenantA, `hr.final_settlement.accrual:${third}`)).not.toBeNull()
   })
 })

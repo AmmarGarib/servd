@@ -158,8 +158,10 @@ describe('priceOrder — the one GST rule', () => {
     expect(cash.totalCents).toBe(210_000 + 31_500 - 20_000)
     const card = await priceOrder(lines, 'card', 'storefront', c, { deliveryFeeCents: 15_000 })
     expect(card.taxRatePct).toBe(8)
-    expect(card.taxCents).toBe(16_800)
-    expect(card.totalCents).toBe(210_000 + 16_800 + 15_000)
+    expect(card.itemTaxCents).toBe(16_800)
+    expect(card.deliveryFeeTaxCents).toBe(1_200)   // H9: 8 % GST on the fee, on top
+    expect(card.taxCents).toBe(18_000)
+    expect(card.totalCents).toBe(210_000 + 16_800 + 15_000 + 1_200)
     expect(gstRatePct(c, 'cash')).toBe(15)
   })
 

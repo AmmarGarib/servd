@@ -6,15 +6,22 @@
 //   1. claim the deposit — depositCents → 0 only while it is still held, so a
 //      later release can never "release" forfeited money, and two sweeps (or a
 //      release racing the capture) capture at most once;
-//   2. post Dr 1030 Card / Gateway Receivable (the hold is gateway money, not
-//      money already in the bank) / Cr 4100, dated the no-show, tagged with
-//      the brand. A refusal (a closed period) rolls the claim back, so the
-//      deposit stays held and is flagged posting_failed in that company.
+//   2. post 'reservation.deposit_capture:<reservationId>', dated the no-show,
+//      every line tagged with the brand. A refusal (a closed period, a missing
+//      account) rolls the claim back, so the deposit stays held and is flagged
+//      posting_failed in that company (re-posted from Backfill unposted).
 //
-// TODO(G9): the TAX treatment of a kept deposit is pending owner/accountant
-// decision G9 (taxable restaurant revenue with the output tax inside it, or
-// untaxed compensation). Until then the credit stays as it was: the whole
-// forfeit to 4100, no output-tax line.
+// Tax (owner + accountant H10, 2026-10-13): a kept no-show deposit is TAXABLE
+// brand revenue with the tax INSIDE it. The hold is card-gateway money, so the
+// brand's CARD rate (Concept.taxRateCard) applies:
+//   T = round(D × taxRateCard / (100 + taxRateCard))
+//   Dr 1030 Card / Gateway Receivable   D      (the hold sits with the gateway
+//                                               until it settles to the bank)
+//   Cr the brand's revenue account      D − T  (revenueCodeForConcept(slug))
+//   Cr the brand's output-tax account   T      (outputTaxCodeFor — 2032 SRB
+//                                               for a Sindh brand, …)
+// No fiscal document is created: a kept deposit is not an order, and the POS
+// contract has no non-order document — the sales-tax return declares it.
 //
 // Idempotency: no deposit held (depositCents <= 0 — released, captured or
 // never held) is a no-op, and the posting is keyed on the reservation id.
@@ -41,7 +48,7 @@ interface CaptureArgs {
 export async function captureReservationDeposit(args: CaptureArgs): Promise<DepositCaptureResult> {
   const r = await prisma.reservation.findUnique({
     where: { id: args.reservationId },
-    include: { concept: { select: { name: true, tenantId: true } } },
+    include: { concept: { select: { name: true, slug: true, tenantId: true, province: true, srbPosId: true, taxRateCard: true } } },
   })
   if (!r) return { captured: false, reason: 'no-deposit' }
   if (r.depositCents <= 0) return { captured: false, reason: 'no-deposit' }
@@ -49,7 +56,11 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
   const tenantId = r.concept.tenantId
   const noShowAt = args.noShowAt ?? new Date()
 
-  const { postJournalEntry, flagPostingFailed, withLateNote, ACCT } = await import('../accounting/journal.js')
+  const { postJournalEntry, flagPostingFailed, withLateNote, revenueCodeForConcept, ACCT } = await import('../accounting/journal.js')
+  const { outputTaxCodeFor } = await import('../accounting/orderPosting.js')
+  const revenueCode = revenueCodeForConcept(r.concept.slug)
+  const outputTaxCode = outputTaxCodeFor(r.concept)
+  const rate = Math.max(0, r.concept.taxRateCard)
   let amountCents: number
   try {
     const claimed = await prisma.$transaction(async (tx) => {
@@ -61,11 +72,14 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
         data: { depositCents: 0, status: 'no_show', cancelReason: args.reason ?? 'No-show — deposit captured' },
       })
       if (won.count === 0) return 0
+      // H10: the tax is inside the kept deposit, at the brand's card rate.
+      const D = held.depositCents
+      const T = Math.round((D * rate) / (100 + rate))
       const noted = withLateNote(`No-show fee · ${formatBrandName(r.concept.name)} · ${r.guestName}`, [
         // The hold sits with the card gateway until it settles to the bank.
-        { accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: held.depositCents, conceptId: r.conceptId, memo: r.depositRef ? `Deposit hold ${r.depositRef}` : 'Deposit hold' },
-        // TODO(G9): taxable or not — see the header. Unchanged until decided.
-        { accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'credit', amountCents: held.depositCents, conceptId: r.conceptId, memo: 'No-show forfeit' },
+        { accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: D, conceptId: r.conceptId, memo: r.depositRef ? `Deposit hold ${r.depositRef}` : 'Deposit hold' },
+        { accountCode: revenueCode, type: 'credit', amountCents: D - T, conceptId: r.conceptId, memo: 'No-show deposit kept' },
+        { accountCode: outputTaxCode, type: 'credit', amountCents: T, conceptId: r.conceptId, memo: `Sales tax in no-show deposit (${rate}%)` },
       ], args.memoNote)
       await postJournalEntry({
         tenantId,
