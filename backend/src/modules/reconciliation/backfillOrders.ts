@@ -1157,8 +1157,10 @@ async function rerunStockFailures(opts: {
   }
 
   // ── The sweep: a cancelled order whose stock is still out, never flagged ──
-  const missing = await prisma.$queryRaw<Array<{ id: string; tenantId: string }>>`
-    SELECT o.id, c."tenantId"
+  const missing = await prisma.$queryRaw<Array<{ id: string; tenantId: string; depletedAt: Date }>>`
+    SELECT o.id, c."tenantId",
+           (SELECT max(a."createdAt") FROM audit_logs a
+             WHERE a.entity = 'Order' AND a."entityId" = o.id AND a.action = ${STOCK_DEPLETE}) AS "depletedAt"
       FROM orders o
       JOIN concepts c ON c.id = o."conceptId"
      WHERE c."tenantId" = ANY(${tenantIds}::text[])
@@ -1171,7 +1173,8 @@ async function rerunStockFailures(opts: {
                           AND f.metadata->>'phase' = 'restore')
      ORDER BY o."updatedAt" ASC`
   for (const o of missing) {
-    const base = { kind: 'stock.restore' as const, id: o.id, orderId: o.id, tenantId: o.tenantId, date: null }
+    // Dated when its stock came out (the period close reads the date).
+    const base = { kind: 'stock.restore' as const, id: o.id, orderId: o.id, tenantId: o.tenantId, date: o.depletedAt ? new Date(o.depletedAt).toISOString() : null }
     const what = 'Cancelled, but its stock was never given back or wasted'
     if (opts.dryRun) {
       rows.push({ ...base, outcome: 'unflagged', detail: `${what} — nothing flagged it. Post flags it for review; the next run gives it back unless the flag is closed.` })

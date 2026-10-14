@@ -460,8 +460,9 @@ describe('reservation deposits', () => {
       where: { tenantId: A.tenantId, reference: `reservation.deposit_capture:${r.id}` },
       include: { lines: { include: { account: { select: { code: true } } } } },
     })
+    // H10: untaxed compensation — the whole deposit to 4210 other income.
     expect(je.lines.map((l) => [l.account.code, l.type, l.amountCents, l.conceptId]).sort()).toEqual([
-      ['1030', 'debit', 80_000, A.conceptId], ['2032', 'credit', 5_926, A.conceptId], ['4090', 'credit', 74_074, A.conceptId],
+      ['1030', 'debit', 80_000, A.conceptId], ['4210', 'credit', 80_000, A.conceptId],
     ])
     expect(je.entryDate.getTime()).toBeGreaterThanOrEqual(t0 - 1_000)
     const after = await prisma.reservation.findUniqueOrThrow({ where: { id: r.id } })

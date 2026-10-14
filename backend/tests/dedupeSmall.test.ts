@@ -236,9 +236,8 @@ describe('one no-show path (markNoShow)', () => {
     expect(je.tenantId).toBe(tenantId)
     const byCode = Object.fromEntries(je.lines.map((l) => [`${l.account.code}:${l.type}`, l.amountCents]))
     // The hold is gateway money (1030), not money already in the bank; a kept
-    // deposit is a taxable supply (H10): the brand's revenue net of the card
-    // GST, plus output tax.
-    expect(byCode).toEqual({ '1030:debit': 250_000, '4090:credit': 231_481, '2030:credit': 18_519 })
+    // deposit is untaxed compensation (H10): all of it to 4210 other income.
+    expect(byCode).toEqual({ '1030:debit': 250_000, '4210:credit': 250_000 })
     expect(je.lines.every((l) => l.conceptId === r.conceptId)).toBe(true)
     // Captured money is no longer "held": a release cannot release it.
     expect((await prisma.reservation.findUniqueOrThrow({ where: { id: r.id } })).depositCents).toBe(0)

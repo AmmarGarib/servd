@@ -15,8 +15,8 @@
 //   • never changes stock (lots change only through lib/stockLedger.ts).
 //
 //   1  procurement.receipt:<receiptId>          Dr 12x0 per class / Cr 2015 GRNI            (in the receipt's tx; cash-settled receipts post nothing)
-//   2  inventory.waste:<wasteLogId>             Dr 5040 / Cr 12x0 at the FIFO value taken    (brand = the log's, else usage split)
-//   3  inventory.count:<countId>                spot: Dr/Cr 5050 vs 12x0; opening: Dr 12x0 / Cr 3010 owner's capital (H19 — never 5050)
+//   2  inventory.waste:<wasteLogId>             Dr 1290 / Cr 12x0 at the FIFO value taken    (brand = the log's, else usage split)
+//   3  inventory.count:<countId>                spot: Dr/Cr 1290 vs 12x0; opening: Dr 12x0 / Cr 3010 owner's capital (H19 — never 1290 / 5050)
 //   4  inventory.prep_draw:<batchId>            Dr 50x0 / Cr 12x0 at the FIFO value drawn    (ad-hoc batches; usage split)
 //   5  procurement.grni_writeoff:<lineId>       Dr 2015 / Cr 5060 for the open unbilled value (usage split)
 //   6  inventory.item_reclass:<itemId>:<auditId> Dr new class inventory / Cr old class inventory
@@ -25,6 +25,13 @@
 //   9  inventory.fifo_align:<tenantId>          Dr/Cr 12x0 vs 3020, prior-period difference  (CEO, once, dry run first)
 //  10  inventory.shortfall_settle:<lotId>       Dr 50x0 per brand / Cr 12x0                  (a late receipt settling earlier sales)
 //  11  inventory.issue_on_receipt:<lotId>       Dr 50x0 (usage split) / Cr 12x0              (unmeasured consumables)
+//
+// H20 (owner, 2026-10-14 — "suspense, CEO clears"): waste and count
+// differences (2, 3 and inventory/voidWaste.ts postVoidWaste) wait in 1290
+// Stock Differences Suspense with their reason; the CEO approves them into
+// 5040 / 5050 from Finance → Stock differences (modules/stockDifferences:
+// 'stock_difference.clear:<journalLineId>', dated the approval day).
+// stockDifferenceAccount() below is THE switch point.
 //
 // Waste, counts and prep draws are posted inside their document's
 // transaction behind a savepoint (postInventoryDocInSavepoint): a refused
@@ -71,6 +78,31 @@ const SOLD_LINE_WASTE_REASONS: ReadonlySet<string> = new Set(['void_after_fire',
 const asClass = (v: string): CostClass => ((COST_CLASSES as readonly string[]).includes(v) ? (v as CostClass) : 'food')
 const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtQty = (q: number) => String(Math.round(q * 1000) / 1000)
+
+// ─── H20: suspense or straight to cost ──────────────────────────────────────
+
+/**
+ * Companies whose waste and count differences go STRAIGHT to cost of sales
+ * (5040 / 5050) instead of waiting for the CEO in 1290. Empty: the owner's
+ * decision (2026-10-14) is suspense for every company.
+ */
+const STRAIGHT_TO_COST: ReadonlySet<string> = new Set<string>()
+
+/**
+ * THE switch point (H20): the account a waste ('waste' — waste logs and
+ * sold-line waste) or a count difference ('count') is booked to on the
+ * cost side — 1290 Stock Differences Suspense (default, every company) until
+ * the CEO approves it (modules/stockDifferences), else 5040 Waste / 5050
+ * Inventory Variance directly. The other side (12x0, or 50x0 when the order's
+ * cost was already booked) never changes.
+ */
+export function stockDifferenceAccount(tenantId: string, kind: 'waste' | 'count'): string {
+  if (!STRAIGHT_TO_COST.has(tenantId)) return ACCT.STOCK_DIFF_SUSPENSE
+  return kind === 'waste' ? ACCT.WASTE : ACCT.INVENTORY_VARIANCE
+}
+
+/** The description's tail when a difference waits for the CEO. */
+const awaitingCeo = (code: string) => (code === ACCT.STOCK_DIFF_SUSPENSE ? ' — in stock differences (1290) until the CEO approves it' : '')
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -203,7 +235,9 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
 // ─── 2. Waste ────────────────────────────────────────────────────────────────
 
 /**
- * 'inventory.waste:<wasteLogId>': Dr 5040 / Cr the class inventory at
+ * 'inventory.waste:<wasteLogId>': Dr 1290 Stock Differences Suspense (H20 —
+ * stockDifferenceAccount; 5040 only for a company set straight to cost) / Cr
+ * the class inventory at
  * WasteLog.estimatedCostCents (the FIFO value taken; a pre-FIFO log without it
  * is valued at the item's cost × quantity), in the log's company (= the
  * item's), dated recordedAt. Brand = the log's conceptId, else the usage split
@@ -240,11 +274,12 @@ export async function postWasteLog(wasteLogId: string, opts: RepostOptions & { t
       ? [{ conceptId: log.conceptId, cents: cost }]
       : splitCents(cost, await sharesFor(tx, tenantId, log.inventoryItemId, log.recordedAt, rows, true))
     const what = `${fmtQty(log.quantity)} ${log.unit} ${log.inventoryItem.name} (${log.reason})`
-    const lines = brandPairs(ACCT.WASTE, CLASS_ACCOUNTS[cls].inv, split, {
-      dr: `Waste: ${what}`, cr: `Inventory derecognised (waste, ${CLASS_LABEL[cls]}) — ${log.inventoryItem.name}`,
+    const costSide = stockDifferenceAccount(tenantId, 'waste')
+    const lines = brandPairs(costSide, CLASS_ACCOUNTS[cls].inv, split, {
+      dr: `Waste: ${what}`, cr: `Inventory derecognised (waste, ${CLASS_LABEL[cls]}, ${log.reason}) — ${log.inventoryItem.name}`,
     })
     assertBalanced(lines, `inventory.waste:${log.id}`)
-    const late = withLateNote(`Waste — ${log.inventoryItem.name} (${log.reason}), ${pkr(cost)}`, lines, opts.memoNote)
+    const late = withLateNote(`Waste — ${log.inventoryItem.name} (${log.reason}), ${pkr(cost)}${awaitingCeo(costSide)}`, lines, opts.memoNote)
     const r = await postJournalEntry({
       tenantId, sourceType: WASTE_SOURCE_TYPE, sourceId: log.id, description: late.description,
       entryDate: opts.entryDate ?? log.recordedAt, postedBy: opts.postedBy ?? log.recordedById ?? 'system', lines: late.lines,
@@ -265,8 +300,10 @@ type CountAdjustment =
 /**
  * A count's ledger lines from its STORED values (PhysicalCountLine.valueCents,
  * signed: negative short — the FIFO value of the count_loss — positive over —
- * the count_gain lot — or an opening lot). Spot: short Dr 5050 / Cr 12x0, over
- * Dr 12x0 / Cr 5050, brand split from the shares stored on the line's
+ * the count_gain lot — or an opening lot). Spot (H20 — stockDifferenceAccount,
+ * 1290 until the CEO approves it; 5050 only for a company set straight to
+ * cost): short Dr 1290 / Cr 12x0, over Dr 12x0 / Cr 1290, brand split from
+ * the shares stored on the line's
  * movements (else usage now — stored when `store`). Opening (H19, accountant
  * 2026-10-14): Dr 12x0 / Cr 3010 owner's capital, brand-less, never 5050. A pre-FIFO line with no stored value is
  * valued at the item's unit cost × the difference (the old rule). Lines of
@@ -296,6 +333,7 @@ async function buildCountAdjustment(db: Db, countId: string, store: boolean): Pr
   const lines: JournalLineInput[] = []
   let shortCents = 0
   let overCents = 0
+  const diffSide = stockDifferenceAccount(tenantId, 'count')
   for (const l of count.lines) {
     const item = itemById.get(l.inventoryItemId)
     if (!item || item.tenantId !== tenantId) continue   // never value another company's item into this company's books
@@ -316,10 +354,10 @@ async function buildCountAdjustment(db: Db, countId: string, store: boolean): Pr
     const shares = await sharesFor(db, tenantId, item.id, count.countedAt, rows, store)
     if (value < 0) {
       shortCents += -value
-      lines.push(...brandPairs(ACCT.INVENTORY_VARIANCE, inv, splitCents(-value, shares), { dr: `Count short — ${memo}`, cr: `Count short — ${memo}` }))
+      lines.push(...brandPairs(diffSide, inv, splitCents(-value, shares), { dr: `Count short — ${memo}`, cr: `Count short — ${memo}` }))
     } else {
       overCents += value
-      lines.push(...brandPairs(inv, ACCT.INVENTORY_VARIANCE, splitCents(value, shares), { dr: `Count over — ${memo}`, cr: `Count over — ${memo}` }))
+      lines.push(...brandPairs(inv, diffSide, splitCents(value, shares), { dr: `Count over — ${memo}`, cr: `Count over — ${memo}` }))
     }
   }
   return { ok: true, tenantId, kind: count.kind, countedAt: count.countedAt, countedById: count.countedById, lines, shortCents, overCents }
@@ -344,7 +382,7 @@ export async function postStockCount(countId: string, opts: RepostOptions & { tx
     assertBalanced(adj.lines, `inventory.count:${countId}`)
     const description = adj.kind === 'opening'
       ? `Opening stock count — ${pkr(adj.overCents)} to owner's capital (H19)`
-      : `Stock count adjustment — short ${pkr(adj.shortCents)}, over ${pkr(adj.overCents)}`
+      : `Stock count adjustment — short ${pkr(adj.shortCents)}, over ${pkr(adj.overCents)}${awaitingCeo(stockDifferenceAccount(adj.tenantId, 'count'))}`
     const late = withLateNote(description, adj.lines, opts.memoNote)
     const r = await postJournalEntry({
       tenantId: adj.tenantId, sourceType: COUNT_SOURCE_TYPE, sourceId: countId, description: late.description,

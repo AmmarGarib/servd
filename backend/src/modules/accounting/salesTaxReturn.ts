@@ -207,10 +207,13 @@ const authorityOfOutput = (code: string) => AUTHORITIES[authorityOfOutputCode(co
  */
 export const CROSS_SETOFF_ELIGIBLE_CLASSES: readonly CostClass[] = ['food', 'beverage']
 
-/** The authorities eligible federal input may be set off against: every provincial one (never FBR — 1320 is FBR's own). */
-export const CROSS_SETOFF_AUTHORITIES: readonly AuthorityKey[] = TAX_AUTHORITY_KEYS.filter((k) => k !== 'fbr')
+/** A provincial sales-tax authority (every one but FBR). */
+export type ProvincialAuthorityKey = Exclude<AuthorityKey, 'fbr'>
 
-export function crossSetOffAllowed(authority: string): authority is AuthorityKey {
+/** The authorities eligible federal input may be set off against: every provincial one (never FBR — 1320 is FBR's own). */
+export const CROSS_SETOFF_AUTHORITIES: readonly ProvincialAuthorityKey[] = TAX_AUTHORITY_KEYS.filter((k): k is ProvincialAuthorityKey => k !== 'fbr')
+
+export function crossSetOffAllowed(authority: string): authority is ProvincialAuthorityKey {
   return (CROSS_SETOFF_AUTHORITIES as readonly string[]).includes(authority)
 }
 

@@ -1,10 +1,11 @@
-// A kept no-show deposit is taxable (owner + accountant H10, wave B).
+// A kept no-show deposit (H10 — accountant Hasnain, 2026-10-14: untaxed
+// compensation, other income).
 //
 // 'reservation.deposit_capture:<reservationId>' (same sourceType, claim and
-// re-poster as before) now books, in the reservation's brand's company, every
+// re-poster as before) books, in the reservation's brand's company, every
 // line tagged with the brand:
-//   Dr 1030 D / Cr revenueCodeForConcept(slug) D − T / Cr outputTaxCodeFor(brand) T
-//   T = round(D × taxRateCard / (100 + taxRateCard))   — the tax is inside
+//   Dr 1030 D / Cr 4210 No-show Deposits Kept D   — no output tax, whatever
+//   the brand's province or card rate.
 // No fiscal document is created. A second capture is a no-op; a release after
 // the capture is 409; company B cannot mark A's booking a no-show (404).
 // Requires a disposable database (DATABASE_URL must contain "test").
@@ -84,15 +85,14 @@ afterAll(async () => {
   await app?.close()
 })
 
-describe('a kept no-show deposit is brand revenue with the tax inside', () => {
-  it('8 % on 5,000: tax 370 to SRB 2032, revenue 4,630 to Stackd 4002, Dr 1030 5,000 — all tagged with the brand', async () => {
+describe('a kept no-show deposit is other income (4210), untaxed', () => {
+  it('5,000 kept: Dr 1030 / Cr 4210 5,000 — tagged with the brand, no SRB tax', async () => {
     const r = await booking(sindhBrand, 5_000)
     const res = await call('mgrA', 'POST', `/reservations/${r.id}/no-show`)
     expect(res.statusCode, res.body).toBe(200)
     expect(await captureLines(tenantA, r.id)).toEqual([
       ['1030', 'debit', 5_000, sindhBrand],
-      ['2032', 'credit', 370, sindhBrand],
-      ['4002', 'credit', 4_630, sindhBrand],
+      ['4210', 'credit', 5_000, sindhBrand],
     ].sort())
     expect(await prisma.reservation.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ status: 'no_show', depositCents: 0 })
     // No fiscal document: a kept deposit is not an order.
@@ -110,15 +110,13 @@ describe('a kept no-show deposit is brand revenue with the tax inside', () => {
     expect(rel.json().error.code).toBe('NO_DEPOSIT_HELD')
   })
 
-  it('a Punjab brand at its own 5 % card rate: PRA 2031, the fallback revenue account', async () => {
+  it('a Punjab brand: the same — 4210, no PRA tax, no brand revenue', async () => {
     const r = await booking(punjabBrand, 10_000)
     const out = await captureReservationDeposit({ reservationId: r.id, postedBy: userIds['mgrA']! })
     expect(out).toEqual({ captured: true, amountCents: 10_000, reservationId: r.id })
-    // T = round(10,000 × 5 / 105) = 476
     expect(await captureLines(tenantA, r.id)).toEqual([
       ['1030', 'debit', 10_000, punjabBrand],
-      ['2031', 'credit', 476, punjabBrand],
-      ['4090', 'credit', 9_524, punjabBrand],
+      ['4210', 'credit', 10_000, punjabBrand],
     ].sort())
   })
 
@@ -134,8 +132,7 @@ describe('a kept no-show deposit is brand revenue with the tax inside', () => {
     expect((await call('mgrB', 'POST', `/reservations/${rb.id}/no-show`)).statusCode).toBe(200)
     expect(await captureLines(tenantB, rb.id)).toEqual([
       ['1030', 'debit', 5_000, brandB],
-      ['2032', 'credit', 370, brandB],
-      ['4090', 'credit', 4_630, brandB],
+      ['4210', 'credit', 5_000, brandB],
     ].sort())
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: `reservation.deposit_capture:${rb.id}` } })).toBe(0)
   })

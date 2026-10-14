@@ -746,9 +746,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (PKR 900bn) via `zMoneyCents`/`assertMoneyFits`; INT4 columns ≤
   `INT4_MAX_CENTS` via `zInt4Cents`/`assertInt4Fits` or the till's
   `assertAmountsFit`; above either is 422 `AMOUNT_TOO_LARGE`. A supplier
-  bill's NON-stock lines stay ≤ INT4 (each and in total): `postSupplierBill`
-  books every bill to 1210 Inventory – Food, so fit-out/equipment goes
-  through CapEx (→ 1340 → fixed-asset register), never a bill.
+  bill's NON-stock lines stay ≤ INT4 (each and in total). Stock is received
+  at the dock (Dr 12x0 / Cr 2015 GRNI) and billed against that receipt; a
+  non-stock bill line names its 6xxx account; fit-out/equipment goes through
+  CapEx (→ 1340 → fixed-asset register), never a bill.
   `TenantContribution.monthlyCents` stays INT4 behind `zInt4Cents`. A new
   company-level money column is BIGINT from its first commit. If the
   migration ever fails on deploy, run `prisma migrate resolve --rolled-back
@@ -798,24 +799,31 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   under `reconciliation`, receiving accounts on `/setup` (finance).
   Runbooks: `docs/raast.md` (finance + cashier), `docs/raast-sms-forwarder.md` (IT).
 
-### Cash vouchers (owner, 2026-10-13; format v1, owner will revise)
+### Cash requests (H3, 2026-10-14; replaces the cash-voucher flow)
 
-- **Flow:** HOD prepares + signs → director (role `admin`, never the HOD's
-  login: 409 `SAME_SIGNER`) approves → printed → the box's custodian (the
-  cashier, Jamil sb) pays and signs the paper → the PHOTO of the signed paper
-  is uploaded. **Only that upload puts it in cash** — one petty-cash spend on
-  the voucher's box, once (claim `approved → disbursed` in the same
-  transaction). Making, signing, approving or printing never touches cash.
+- **Flow:** anyone raises a request → their HOD signs → the director (role
+  `admin`, never the HOD's login: 409 `SAME_SIGNER`) approves → the box's
+  custodian (the cashier) pays → the holder uploads receipts (kept for the
+  file). **The PAY is the expense:** Dr the category's 6xxx / Cr 1011 through
+  `recordPettyCashSpendTx`; `pettyCashPosting.ts` `cashRequestPayLine` /
+  `cashRequestPaidAccountTx` are the one switch. Receipts book nothing;
+  settlement lines reclass out of the paid account (equipment: Dr 1340 / Cr
+  the paid 6xxx, with the request's brand); change handed back is Dr 1011 /
+  Cr the paid account. No 1355 in new code (legacy advances settle against
+  1355). Daily flag `cash_request_receipts_overdue` (09:10 PKT worker).
 - `CashVoucher` / `CashVoucherAttachment` (tenantId; number `CV-00001` per
-  company under an advisory lock; the photo is stored as bytes, ≤3 MB, magic
-  bytes checked). API `/trustops/cash-vouchers` (`trustops/cashVouchers.ts`);
-  admin `/finance/cash-vouchers` (always open: a custodian without the
-  accounting module lists only approved/paid vouchers on boxes they hold).
-  Approvals inbox type `cash_voucher` (CEO).
-- **`recordPettyCashSpendTx` (`trustops/pettyCash.ts`) is THE one way money
-  leaves a petty-cash box** (manual spend and voucher). Float changes are
-  always relative + conditional (`floatCents >= amount`), never "set to what
-  we read".
+  company under an advisory lock; files stored as bytes, ≤3 MB, magic bytes
+  checked, PDF allowed). API `/trustops/cash-vouchers`; admin
+  `/finance/cash-vouchers` is a personal page (open to every login; the API
+  scopes the list). Approvals inbox types `cash_voucher` (CEO) and
+  `cash_request_hod`.
+- **Petty cash is on 1011** (H2): a top-up needs a source (Garibsons → 2210,
+  H1; the safe 1010; a bank); a till top-up is a drawer payout keyed
+  `pettycash.till_topup:<cashMovementId>`. **`recordPettyCashSpendTx`
+  (`trustops/pettyCash.ts`) is THE one way money leaves a box.** The 'cogs'
+  payout keys are history picks only; the CEO's history run is
+  `/reconciliation/backfill-petty-cash`. Float changes are always relative +
+  conditional (`floatCents >= amount`), never "set to what we read".
 
 ### Finance gaps, wave A (2026-10-13; owner: "no known gaps in finance")
 
@@ -837,15 +845,106 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   output excludes payments, so paying never lowers the tax shown.
 - **A refused posting is never only logged:** `flagPostingFailed` with the
   document's sourceType, and a re-poster in `reconciliation/backfillOrders.ts`
-  REPOSTERS. A new posting that can be refused adds both.
+  REPOSTERS. A new posting that can be refused adds both (and puts
+  `metadata.documentDate` on its flag, so the period close dates it).
 - **Pending owner/CA decisions** (decisions page
-  https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): petty cash in the
-  ledger (C1/C2/C5), COD never paid (G1), gratuity (G2), statutory payables
-  (G3), inter-company (G4), year-end (G5), GRNI (G6), input tax by authority
-  (G7), delivery-fee / no-show tax (G8/G9), gift-card breakage (G10), card
-  MDR (G11), bad debt (G12), customer sales-tax withholding (G13), on-account
-  tender (G14), fixed assets v2 (F*), food cost variance (K*). Their seams are
-  marked `TODO(<id>)` in code — build only on the owner's answer.
+  https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): COD never paid (G1)
+  and on-account tender (G14) — both PARKED with delivery / on-account, as
+  are H5 (rider COD on 1351) and H14 (on-account tax invoice). Everything
+  else (C*, G2–G13, F*, K*, H1–H31) is answered and built — see "Finance
+  wave B" below. Seams still marked `TODO(<id>)` in code — build only on the
+  owner's answer.
+
+### Finance wave B (2026-10-14; Hasnain's answers H1–H31 + the owner's)
+
+- **Stock is FIFO lots, costed at the price paid.** `lib/stockLedger.ts` is
+  the only writer (every change is a stock movement); counts, waste, prep
+  and transfers go through it, and every count difference or transfer
+  shortfall carries a reason (≥3 characters). Cost classes come ONLY from
+  `lib/inventoryClass.ts`: food 1210 / 5010, drinks 1220 / 5020, packaging
+  1230 / 5030. Each company is cut over once (`inventory/fifoCutover.ts`
+  `ensureFifoCutover`: at boot, else on its first stock write via
+  `ensureFifoReady`, which is called BEFORE opening a transaction).
+- **GRNI (H17):** a dock receipt opens a lot — Dr 12x0 / Cr 2015. A bill's
+  stock line must link its receipt (or PO) line and clears 2015; "Received,
+  not billed" (`/procurement/grni`) lists what is open; a write-off needs
+  the CEO.
+- **Cost of sales is booked ONCE per order** (its order.complete, or a till
+  ticket's home drawer shift.close — `accounting/cogs.ts orderCostBookedAt`).
+  A later stock event on the order (return, waste, box, late depletion)
+  books its own entry through `orders/stock.ts ORDER_COGS_FIX` /
+  `inventory/voidWaste.ts postVoidWaste` — never a bare lot write.
+- **Packaging (owner, FINAL):** takeaway and delivery always take the
+  recipe's Packaging section; a packaging-vessel brand (Stackd) on every
+  order; dine-in at a plate brand only when staff tap "Box given"
+  (`POST /pos/orders/:id/items/:itemId/box-given`). `Concept.serviceVessel`
+  ('plate' | 'packaging') is required at brand create and snapshotted per
+  order line.
+- **Opening stock** from a company's first count → 3010 owner's capital
+  (H19). **Waste and count differences wait for the CEO (H20):** stock
+  leaves at once, the COST waits in 1290 Stock Differences Suspense with its
+  reason until the CEO approves it into 5040 / 5050 on Finance → Stock
+  differences (`modules/stockDifferences/`, `/accounting/stock-differences`;
+  the one switch is `stockDifferenceAccount` in
+  `accounting/inventoryPosting.ts`). The close warns while any waits.
+- **Food cost is ONE report:** `reports/foodCost.ts` at `/reports/food-cost`
+  (module `food_cost`). `brandSalesRevenueCents` / `costOfSalesSplit`
+  (`accounting/reports.ts`) are the one cost-of-sales denominator and class
+  split. 42xx is other income — never brand sales, a sales KPI or a ratio base.
+- **Period close:** `accounting/closeChecks.ts` `CLOSE_CHECKS` is the ONE
+  checklist; a module adds a CloseCheck, never its own 409 on
+  `POST /accounting/period-close`. The CEO closes over overridable blocks with
+  `acknowledge {keys, reason ≥10}`; `trial_balance` never. The fiscal year is
+  per company (`Tenant.fiscalYearEndMonth`, 30 June — H29) with a virtual
+  roll-forward: nothing posts at year end.
+- **Fixed assets v2:** classes per company; 1500–1599 and 2012 are
+  `controlledBy 'fixed_asset'` (only `fixed_asset.*` / `capex.*` sources post
+  there). Assets come in through CapEx capitalisation — the CEO approves every
+  one, Quick buys included. Depreciation is AUTOMATIC (worker 03:20 PKT,
+  `chargeThrough` the one path, no switch); smallwares are pooled (H21);
+  prepayments sit on 1310 and release monthly (`accounting/prepaidReleases.ts`);
+  refundable deposits (1360) only through CapEx. No deferred tax anywhere
+  (H24). Sales tax on disposal proceeds: `TODO(asset-sale-tax)`.
+- **Tax:** `accounting/taxAuthorities.ts` is the one authority table; input
+  tax is booked by authority (1320 FBR, 1321–1324 provincial). Federal input
+  on food / drink stock may be set off against SRB / PRA output (H8:
+  `salesTaxReturn.ts CROSS_SETOFF_ELIGIBLE_CLASSES`; a payment's
+  `crossSetOffCents`, never above what is claimable). Delivery fee = 4110 +
+  GST on top at the brand's rate for the tender (H9; `Order.deliveryFeeCents`
+  / `deliveryFeeTaxCents` from `lib/pricing.ts` only). A kept no-show deposit
+  is 4210 other income, no output tax (H10). Gift-card breakage → 4200, no tax
+  (H11). Keenu card payouts are matched to card days (H12, BOOKS-11 reuse, no
+  reposter; unsettled days block the close unless the CEO overrides). Sales
+  tax a client withholds → 1335, netted in that authority's return (H13).
+- **Withholding and statutory payables:** `lib/withholding.ts` is the one WHT
+  resolver; `PUT /accounting/withholding/rates` the only writer of a
+  company's rates (CA placeholders; withholding stays OFF per company until
+  finance switches it on). Salary tax 2042, EOBI 2043, SESSI / PESSI 2044
+  (H7): challans go through the tax-payments register; `/accounting/statutory`
+  is the one accrued-vs-paid view. OpEx posts the expense with input tax by
+  authority and WHT to 2040; budgets compare the expense.
+- **Receivables:** every bad-debt write-off (6160) needs the CEO (G12); no
+  doubtful-debt provision. **Raast void:** CEO only, posts nothing, the bank
+  reference stays claimed. **Inter-company (H30):** company pairs now
+  (1450–1499 / 2150–2199, only `ic.*` sources), head office later; the
+  shared fleet is recharged nightly (03:40 PKT) at the CEO's rate (6990).
+- **/health** warns, never errors, on `fixedAssets` (register vs ledger, last
+  depreciation run), `pettyCash` (boxes vs 1011), `fifoCutover`,
+  `chartTemplateTypes`, `statutoryReclass` and `cardPayouts`.
+- **Rollback caveat:** once a voided Raast receipt (or any row carrying a
+  wave-B enum value) exists, never roll the API image back below this
+  release — an older Prisma client throws on the new values.
+
+### Parked (owner, 2026-10-13)
+
+Delivery and customers (customer-code-only completion, emergency overrides,
+strikes / bans / appeals, COD custody on 1351) and corporate clients on
+account (clients, QR cards, the till's on-account tender, statements, till
+clearing 1115) are PARKED until finance is sorted. Their schema and wave-0
+libs stay in the tree unused; no parked route, worker or admin link is
+registered; staff "Delivered" works as before. The plan, original briefs and
+generator are in `.handoff/parked/2026-10-14/` (start with `PARKED.md`).
+Remind the owner to resume both once finance is deployed.
 
 ## Claude Code operating policy — model routing & parallel agents
 
