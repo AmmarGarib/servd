@@ -20,6 +20,8 @@ interface Concept {
   isActive: boolean
   storefrontVisible: boolean
   reservationsEnabled: boolean
+  /** The brand's primary service vessel: 'plate' or 'packaging' (the packaging IS the serving vessel). Read-only for the marketing tier. */
+  serviceVessel?: 'plate' | 'packaging'
   heroTagline: string | null
   // Brand microsite artwork. Null = the storefront falls back to the file
   // bundled in its build, which is how every brand behaved before these
@@ -255,6 +257,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [logoUrl, setLogoUrl] = useState(concept.logoUrl ?? '')
   const [primaryColor, setPrimaryColor] = useState(concept.primaryColor ?? '#87c540')
   const [isActive, setIsActive] = useState(concept.isActive)
+  const [serviceVessel, setServiceVessel] = useState<'plate' | 'packaging' | ''>(concept.serviceVessel ?? '')
 
   const [phone, setPhone] = useState(concept.phone ?? '')
   const [whatsapp, setWhatsapp] = useState(concept.whatsapp ?? '')
@@ -324,6 +327,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
     mutationFn: () => marketingOnly ? api.patch(`/concepts/${concept.id}`, marketingBody()) : api.patch(`/concepts/${concept.id}`, {
       name, description: description || null, logoUrl: logoUrl || null,
       primaryColor: primaryColor || null, isActive,
+      // Management form only (the marketing tier's body never carries it).
+      ...(serviceVessel ? { serviceVessel } : {}),
       phone: phone.trim() || null,
       // wa.me wants digits only — strip what people paste (+, spaces, dashes).
       whatsapp: whatsapp.replace(/[^\d]/g, '') || null,
@@ -536,6 +541,24 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 </div>
               </div>
             </div>
+          </Section>
+
+          <Section title="Primary service vessel" subtitle="How this brand serves its food: on plates, or in packaging.">
+            <Field label="Primary service vessel *"
+              hint="Packaging counts on takeaway and delivery always. With Plate, dine-in counts packaging only when staff tap Box given. With Packaging (the packaging is the serving vessel, e.g. Stackd), it counts on every order.">
+              <select value={serviceVessel} onChange={(e) => setServiceVessel(e.target.value as 'plate' | 'packaging')} disabled={marketingOnly}
+                className="s-input w-full max-w-md disabled:opacity-60" aria-label="Primary service vessel">
+                {serviceVessel === '' && <option value="" disabled>— choose —</option>}
+                <option value="plate">Plate</option>
+                <option value="packaging">Packaging (the packaging is the serving vessel)</option>
+              </select>
+            </Field>
+            {!marketingOnly && concept.serviceVessel && serviceVessel !== concept.serviceVessel && (
+              <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>
+                Applies to orders from now on. Orders already rung up keep the vessel they were sold with, so past food cost is not restated.
+              </p>
+            )}
+            {marketingOnly && <p className="text-xs text-white/50">The service vessel is changed by management.</p>}
           </Section>
 
           {!marketingOnly && <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">

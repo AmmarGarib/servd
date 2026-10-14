@@ -295,6 +295,9 @@ describe('tax (H23) — smallwares to confirm; the CEO\'s freeze', () => {
     const f = await call('ceoA', 'POST', `/reports/tax/${Y}/freeze`, {})
     expect(f.statusCode).toBe(201)
     expect(f.json()).toMatchObject({ tenantId: A.tenantId, taxYear: Y })
+    // H23: smallwares (pooled) are never frozen into the tax register.
+    expect(await prisma.fixedAssetTaxYear.count({ where: { tenantId: A.tenantId, taxYear: Y, assetId: plates.layer.id } })).toBe(0)
+    expect(await prisma.fixedAssetTaxYear.count({ where: { tenantId: A.tenantId, taxYear: Y } })).toBe(2)
     const again = await call('ceoA', 'POST', `/reports/tax/${Y}/freeze`, {})
     expect(again.statusCode).toBe(409)
     expect(again.json().error.code).toBe('TAX_YEAR_FROZEN')

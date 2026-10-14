@@ -5,121 +5,24 @@
 // the same project, giving full TCO. Schema: CapexProject is the parent;
 // CapexLine for one-off items, OpexLine.projectId for recurring items.
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PositionsView } from '../../workforce/positions/view'
-import { useAuthStore } from '../../../store/auth'
 import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
+import { errorWords, useFaCapabilities, FA_BASE } from '../../../components/fixedAssets/shared'
+import type { Phase, Status, Payment, Line, ScopeDef, Project, Treatment } from '../../../components/fixedAssets/capexTypes'
+import {
+  CapitalisePanel, QuickBuyModal, DepositReturnModal, ReclassDepositModal, OrphanBanner, ExemptionLine, WhtPreview,
+  useAdvanceFlags, useCapexLookups, useWithholdingPreview, quickBuyMessage,
+  TREATMENT_OPTIONS, TREATMENT_LABEL, WHT_SECTION_LABEL, AUTHORITY_LABEL,
+} from '../../../components/fixedAssets/CapexForms'
 
 // ─── Types ────────────────────────────────────────────────────────────────
-
-type Phase = 'planning' | 'quoting' | 'executing' | 'snagging' | 'live'
-type Status =
-  | 'not_quoted' | 'quoted' | 'ordered' | 'partial_paid'
-  | 'delivered' | 'installed' | 'commissioned' | 'snag' | 'done'
-
-interface Quote {
-  id: string
-  vendor: string
-  contactName: string | null
-  contactPhone: string | null
-  totalCents: number
-  leadTimeDays: number | null
-  validUntil: string | null
-  fileUrl: string | null
-  notes: string | null
-  isWinner: boolean
-}
-interface Payment {
-  id: string
-  label: 'deposit' | 'midpoint' | 'balance' | 'extra'
-  amountCents: number
-  dueDate: string | null
-  paidAt: string | null
-  paidAmountCents: number | null
-  paymentRef: string | null
-  // The company bank account it is paid from (the project's company's).
-  bankAccountId: string | null
-}
-interface Line {
-  id: string
-  scope: string
-  category: string | null
-  item: string
-  quantity: number
-  unitCostCents: number
-  vendor: string | null
-  vendorContact: string | null
-  quotedCents: number | null
-  negotiatedCents: number | null
-  paidCents: number
-  status: Status
-  priority: 'must_have' | 'nice_to_have' | 'future'
-  leadTimeDays: number | null
-  expectedDeliveryDate: string | null
-  actualDeliveryDate: string | null
-  installedDate: string | null
-  documentUrls: { label: string; url: string }[] | null
-  photoUrls: string[] | null
-  warrantyMonths: number | null
-  notes: string | null
-  quotes: Quote[]
-  payments: Payment[]
-  // The books' view (owner decision 24): posted instalments by kind, and the
-  // fixed asset the line was capitalised as.
-  ledger?: {
-    advancedCents: number
-    prepaidCents: number
-    expensedCents: number
-    settledPayableCents: number
-    asset: { id: string; costCents: number; status: string } | null
-    payments: Record<string, { status: 'posted' | 'unposted'; accountCode: string | null }>
-  } | null
-}
-interface ScopeDef { key: string; label: string; emoji?: string | null; hint?: string | null }
-
-interface Project {
-  id: string
-  tenantId: string | null
-  name: string
-  conceptId: string | null
-  locationId: string | null
-  projectType: string
-  phase: Phase
-  budgetEnvelopeCents: number
-  contingencyPct: number
-  consultantFeesCents: number
-  taxCents: number
-  targetOpeningDate: string | null
-  actualOpeningDate: string | null
-  address: string | null
-  floorAreaSqft: number | null
-  notes: string | null
-  scopeConfig: ScopeDef[] | null
-  isJointVenture?: boolean
-  jvPartners?: Array<{ label: string; pct: number }> | null
-  lines: Line[]
-  rollups: {
-    budgetedCents: number
-    quotedCents: number
-    committedCents: number
-    paidCents: number
-    remainingCents: number
-    contingencyCents: number
-    totalAskCents: number
-    varianceVsEnvelopeCents: number
-  }
-  books?: {
-    capitalisedCents: number
-    advancedCents: number
-    notYetCapitalisedCents: number
-    prepaidCents: number
-    expensedCents: number
-  }
-}
+// The shapes of GET /finance/capex live in components/fixedAssets/capexTypes.ts.
 
 // Scope catalog — keeps the UI legible. Operator can add lines under any
 // scope; this just orders + emojis them so the page reads naturally.
@@ -162,7 +65,18 @@ const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFra
 // ─── Page ─────────────────────────────────────────────────────────────────
 
 export default function CapexTrackerPage() {
+  // useSearchParams needs a Suspense boundary above it for the static build.
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-white/40">Loading…</div>}>
+      <CapexTracker />
+    </Suspense>
+  )
+}
+
+function CapexTracker() {
   const qc = useQueryClient()
+  const search = useSearchParams()
+  const caps = useFaCapabilities()
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['capex-projects'],
     queryFn: () => api.get('/finance/capex'),
@@ -173,10 +87,16 @@ export default function CapexTrackerPage() {
   // place they review projects. Otherwise selectedId is a real project id.
   const [selectedId, setSelectedId] = useState<string | 'workforce' | null>(null)
   const [creating, setCreating] = useState(false)
+  // ?quickBuy=1 (the register's "Buy equipment" and OpEx's refusal link here) opens Quick buy.
+  const [quickBuy, setQuickBuy] = useState(search?.get('quickBuy') === '1')
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'wait' | 'bad'; text: string } | null>(null)
 
   useEffect(() => {
+    // ?project=<id> (the Investment dashboard and the register link here) wins over "the first project".
+    const wanted = search?.get('project')
+    if (!selectedId && wanted && projects.some((p) => p.id === wanted)) { setSelectedId(wanted); return }
     if (!selectedId && projects.length > 0) setSelectedId(projects[0]!.id)
-  }, [projects, selectedId])
+  }, [projects, selectedId, search])
 
   const project = projects.find((p) => p.id === selectedId) ?? null
 
@@ -201,7 +121,10 @@ export default function CapexTrackerPage() {
               </Link>
             </p>
           </div>
-          <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New project</button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => { setNotice(null); setQuickBuy(true) }} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-black text-white/80 hover:text-white">Buy equipment</button>
+            <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New project</button>
+          </div>
         </div>
       </header>
 
@@ -278,7 +201,19 @@ export default function CapexTrackerPage() {
         </aside>
 
         {/* Detail */}
-        <main className="p-6 max-w-[1100px] mx-auto">
+        <main className="p-4 sm:p-6 max-w-[1100px] mx-auto min-w-0">
+          {notice && (
+            <div className="rounded-xl px-4 py-3 text-sm mb-4 flex items-start justify-between gap-3" role="status"
+              style={{
+                background: `color-mix(in srgb, ${notice.tone === 'ok' ? 'var(--erp-success)' : notice.tone === 'bad' ? 'var(--erp-danger)' : 'var(--erp-warning)'} 10%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${notice.tone === 'ok' ? 'var(--erp-success)' : notice.tone === 'bad' ? 'var(--erp-danger)' : 'var(--erp-warning)'} 30%, transparent)`,
+                color: notice.tone === 'ok' ? 'var(--erp-success)' : notice.tone === 'bad' ? 'var(--erp-danger)' : 'var(--erp-warning)',
+              }}>
+              <span>{notice.text}</span>
+              <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 opacity-70 hover:opacity-100">&times;</button>
+            </div>
+          )}
+          <OrphanBanner />
           {selectedId === 'workforce' ? (
             <PositionsView embedded />
           ) : project ? (
@@ -296,6 +231,17 @@ export default function CapexTrackerPage() {
       {creating && <CreateProjectModal
         onClose={() => setCreating(false)}
         onSaved={(id) => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setSelectedId(id); setCreating(false) }} />}
+
+      {quickBuy && <QuickBuyModal
+        onClose={() => setQuickBuy(false)}
+        onDone={(r) => {
+          setQuickBuy(false)
+          setNotice(quickBuyMessage(r, caps.canApprove))
+          void qc.invalidateQueries({ queryKey: ['capex-projects'] })
+          void qc.invalidateQueries({ queryKey: ['fa-register'] })
+          void qc.invalidateQueries({ queryKey: ['fa-pending-count'] })
+          setSelectedId(r.projectId)
+        }} />}
     </div>
   )
 }
@@ -404,11 +350,11 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
         onClose={() => setEditingProject(false)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingProject(false) }} />}
 
-      {addingLineScope && <LineModal projectId={project.id} tenantId={project.tenantId} scope={addingLineScope}
+      {addingLineScope && <LineModal project={project} projectId={project.id} tenantId={project.tenantId} scope={addingLineScope}
         onClose={() => setAddingLineScope(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setAddingLineScope(null) }} />}
 
-      {editingLine && <LineModal projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine}
+      {editingLine && <LineModal project={project} projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine}
         onClose={() => setEditingLine(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingLine(null) }} />}
     </div>
@@ -423,6 +369,8 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
   onAddLineScope: (s: string) => void
   onCustomizeScopes: () => void
 }) {
+  // Overdue advances and delivered-but-not-capitalised items, from the register's own rules.
+  const flags = useAdvanceFlags()
   return (
     <div className="space-y-5">
       {/* Roll-up cards */}
@@ -448,13 +396,17 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
       </div>
 
       {/* The books: capex instalments post as supplier advances and delivered
-          items are capitalised onto the fixed-asset register. */}
+          items are capitalised onto the fixed-asset register (disposed and
+          voided assets are not counted as assets). */}
       {project.books && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <Stat label="On the books as assets"     value={PKR(project.books.capitalisedCents)} accent="var(--erp-success)" />
           <Stat label="Advanced, not capitalised"  value={PKR(project.books.notYetCapitalisedCents)} accent="var(--erp-warning)" />
-          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents)} accent="var(--erp-primary-ink)" />
+          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents - project.books.releasedCents)} accent="var(--erp-primary-ink)" />
           <Stat label="Fees expensed"              value={PKR(project.books.expensedCents)} accent="var(--muted)" />
+          {project.books.depositHeldCents > 0 && <Stat label="Deposits held" value={PKR(project.books.depositHeldCents)} accent="var(--erp-primary-ink)" />}
+          {project.books.disposedCents > 0 && <Stat label="Sold or scrapped" value={PKR(project.books.disposedCents)} accent="var(--muted)" />}
+          {project.books.whtCents > 0 && <Stat label="Income tax withheld" value={PKR(project.books.whtCents)} accent="var(--muted)" />}
         </div>
       )}
 
@@ -495,7 +447,7 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
                 <p className="px-5 py-6 text-xs text-white/30 italic">No items in this scope.</p>
               ) : (
                 <div className="divide-y divide-white/[0.04]">
-                  {s.lines.map((l) => <LineRow key={l.id} line={l} onEdit={() => onEditLine(l)} />)}
+                  {s.lines.map((l) => <LineRow key={l.id} line={l} flags={flags.get(l.id) ?? []} onEdit={() => onEditLine(l)} />)}
                 </div>
               )}
             </section>
@@ -901,51 +853,68 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
   )
 }
 
-function LineRow({ line, onEdit }: { line: Line; onEdit: () => void }) {
+function LineRow({ line, flags, onEdit }: { line: Line; flags: string[]; onEdit: () => void }) {
   const status = STATUS_META[line.status]
   const totalDue = line.negotiatedCents ?? line.unitCostCents * line.quantity
   const paidPct = totalDue > 0 ? Math.min(100, (line.paidCents / totalDue) * 100) : 0
+  const assets = (line.ledger?.assets ?? []).filter((a) => a.status !== 'voided')
+  const awaiting = !!(line.capitalisation?.pendingEventId ?? line.ledger?.capitalisation.pendingEventId)
+  const treat = line.treatment && line.treatment !== 'capital' ? TREATMENT_LABEL[line.treatment] : null
 
   return (
-    <button onClick={onEdit} className="w-full text-left px-5 py-3 hover:bg-white/[0.015] transition-colors">
-      <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 items-center">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-bold text-white/90 truncate">{line.item}</p>
-            {line.priority === 'must_have' ? null : (
-              <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">{line.priority.replace('_', ' ')}</span>
-            )}
-            {line.quotes.length > 0 && (
-              <span className="text-[10px] text-white/40">📋 {line.quotes.length}q</span>
-            )}
+    <div className="px-4 sm:px-5 py-3 hover:bg-white/[0.015] transition-colors">
+      <button onClick={onEdit} className="w-full text-left" aria-label={`Open ${line.item}`}>
+        <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-2 items-center">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-bold text-white/90 break-words">{line.item}</p>
+              {line.priority === 'must_have' ? null : (
+                <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">{line.priority.replace('_', ' ')}</span>
+              )}
+              {line.quotes.length > 0 && (
+                <span className="text-[10px] text-white/40">{line.quotes.length} quote{line.quotes.length === 1 ? '' : 's'}</span>
+              )}
+            </div>
+            <p className="text-[11px] text-white/45 mt-0.5">
+              {line.vendor ?? <em>no vendor</em>}
+              {line.leadTimeDays ? ` · ${line.leadTimeDays}d lead` : ''}
+              {line.expectedDeliveryDate ? ` · ETA ${new Date(line.expectedDeliveryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}
+            </p>
           </div>
-          <p className="text-[11px] text-white/45 mt-0.5">
-            {line.vendor ?? <em>no vendor</em>}
-            {line.leadTimeDays ? ` · ${line.leadTimeDays}d lead` : ''}
-            {line.expectedDeliveryDate ? ` · ETA ${new Date(line.expectedDeliveryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}
-          </p>
-        </div>
 
-        <div className="text-right whitespace-nowrap">
-          <p className="text-xs text-white/45">qty {line.quantity}</p>
-          <p className="text-sm font-mono text-white/85">{PKR(totalDue)}</p>
-        </div>
-
-        <div className="w-24">
-          <div className="h-1 rounded-full bg-white/5 overflow-hidden">
-            <div className="h-full bg-accent" style={{ width: `${paidPct}%` }} />
+          <div className="text-right whitespace-nowrap">
+            <p className="text-xs text-white/45">qty {line.quantity}</p>
+            <p className="text-sm font-mono text-white/85">{PKR(totalDue)}</p>
           </div>
-          <p className="text-[10px] text-white/40 mt-0.5">{Math.round(paidPct)}% paid</p>
+
+          <div className="w-24 hidden sm:block">
+            <div className="h-1 rounded-full bg-white/5 overflow-hidden">
+              <div className="h-full bg-accent" style={{ width: `${paidPct}%` }} />
+            </div>
+            <p className="text-[10px] text-white/40 mt-0.5">{Math.round(paidPct)}% paid</p>
+          </div>
+
+          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full justify-self-start sm:justify-self-auto"
+            style={{ color: status.fg, background: `color-mix(in srgb, ${status.fg} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${status.fg} 25%, transparent)` }}>
+            {status.label}
+          </span>
+
+          <span className="text-white/30 text-xs hidden sm:inline">›</span>
         </div>
+      </button>
 
-        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-          style={{ color: status.fg, background: `color-mix(in srgb, ${status.fg} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${status.fg} 25%, transparent)` }}>
-          {status.label}
-        </span>
-
-        <span className="text-white/30 text-xs">›</span>
-      </div>
-    </button>
+      {(assets.length > 0 || awaiting || treat || flags.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          {treat && <span className="s-badge-purple">{treat}</span>}
+          {awaiting && <Link href={`${FA_BASE}/requests`} className="s-badge-amber">Awaiting capitalisation</Link>}
+          {flags.includes('overdue_delivery') && <span className="s-badge-red">Advance overdue</span>}
+          {flags.includes('delivered_uncapitalised') && !awaiting && <span className="s-badge-amber">Delivered, not capitalised</span>}
+          {assets.map((a) => (
+            <Link key={a.id} href={`${FA_BASE}/${a.id}`} className="s-badge-green">On the register{a.assetTag ? `: ${a.assetTag}` : ''}</Link>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1160,34 +1129,66 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   </ModalShell>
 }
 
-function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
-  projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void
+function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved }: {
+  project: Project; projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void
 }) {
   const qc = useQueryClient()
+  const lookups = useCapexLookups()
   const [item, setItem] = useState(line?.item ?? '')
   const [category, setCategory] = useState(line?.category ?? '')
   const [quantity, setQuantity] = useState(line?.quantity ?? 1)
   const [unitCostCents, setUnitCostCents] = useState(line?.unitCostCents ?? 0)
   const [vendor, setVendor] = useState(line?.vendor ?? '')
   const [vendorContact, setVendorContact] = useState(line?.vendorContact ?? '')
+  const [supplierId, setSupplierId] = useState(line?.supplierId ?? '')
+  const [treatment, setTreatment] = useState<string>(line?.treatment ?? '')
+  const [inputTaxCents, setInputTaxCents] = useState(line?.inputTaxCents ?? 0)
+  const [inputTaxAuthority, setInputTaxAuthority] = useState(line?.inputTaxAuthority ?? '')
+  const [whtSection, setWhtSection] = useState(line?.whtSection ?? '')
   const [quotedCents, setQuotedCents] = useState<number | ''>(line?.quotedCents ?? '')
   const [negotiatedCents, setNegotiatedCents] = useState<number | ''>(line?.negotiatedCents ?? '')
   const [status, setStatus] = useState<Status>(line?.status ?? 'not_quoted')
   const [priority, setPriority] = useState<'must_have' | 'nice_to_have' | 'future'>(line?.priority ?? 'must_have')
   const [leadTimeDays, setLeadTimeDays] = useState<number | ''>(line?.leadTimeDays ?? '')
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(line?.expectedDeliveryDate?.slice(0, 10) ?? '')
+  const [actualDeliveryDate, setActualDeliveryDate] = useState(line?.actualDeliveryDate?.slice(0, 10) ?? '')
+  const [installedDate, setInstalledDate] = useState(line?.installedDate?.slice(0, 10) ?? '')
   const [notes, setNotes] = useState(line?.notes ?? '')
+
+  // On the register (or waiting for the CEO) the line IS capital: what it is,
+  // what it costs and when it arrived are fixed (409 LINE_CAPITALISED). Void
+  // the asset and prepare it again to change them.
+  const onRegister = !!line && ((line.capitalisation?.assetIds.length ?? 0) > 0 || !!line.capitalisation?.pendingEventId
+    || (line.ledger?.assets ?? []).some((a) => a.status !== 'voided'))
+  // Once an instalment is on the books the treatment can no longer change (409 TREATMENT_LOCKED).
+  const treatmentLocked = !!line && Object.values(line.ledger?.payments ?? {}).some((p) => p.status === 'posted')
+
+  const suppliers = project.lookups.suppliers
+  const supplier = suppliers.find((x) => x.id === supplierId)
+  const authorities = lookups.data?.taxAuthorities ?? Object.keys(AUTHORITY_LABEL)
+  const whtSections = lookups.data?.whtSections ?? Object.keys(WHT_SECTION_LABEL)
 
   const save = useMutation({
     mutationFn: () => {
       const payload = {
-        scope, item, quantity, unitCostCents, status, priority,
-        category: category || null, vendor: vendor || null, vendorContact: vendorContact || null,
+        scope, status, priority,
+        vendor: vendor || null, vendorContact: vendorContact || null,
+        supplierId: supplierId || null,
+        treatment: treatment || null,
+        whtSection: whtSection || null,
         quotedCents: quotedCents === '' ? null : +quotedCents,
-        negotiatedCents: negotiatedCents === '' ? null : +negotiatedCents,
         leadTimeDays: leadTimeDays === '' ? null : +leadTimeDays,
         expectedDeliveryDate: expectedDeliveryDate ? `${expectedDeliveryDate}T00:00:00Z` : null,
         notes: notes || null,
+        ...(onRegister ? {} : {
+          item, quantity, unitCostCents,
+          category: category || null,
+          negotiatedCents: negotiatedCents === '' ? null : +negotiatedCents,
+          inputTaxCents,
+          inputTaxAuthority: inputTaxCents > 0 && inputTaxAuthority ? inputTaxAuthority : null,
+          actualDeliveryDate: actualDeliveryDate ? `${actualDeliveryDate}T00:00:00Z` : null,
+          installedDate: installedDate ? `${installedDate}T00:00:00Z` : null,
+        }),
       }
       if (line) return api.patch(`/finance/capex/lines/${line.id}`, payload)
       return api.post(`/finance/capex/${projectId}/lines`, payload)
@@ -1201,17 +1202,23 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
   })
 
   return <ModalShell title={`${line ? 'Edit' : 'Add'} ${scope} line`} onClose={onClose} wide>
+    {onRegister && (
+      <div className="rounded-xl px-4 py-3 text-xs text-white/70" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.08)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.25)' }}>
+        This item is on the fixed-asset register (or waiting for the CEO), so its name, cost, quantity, tax and dates are fixed.
+        Void the asset on the register and prepare it again to change them.
+      </div>
+    )}
     <Field label="Item *">
-      <input value={item} onChange={(e) => setItem(e.target.value)}
-        placeholder="Rational SCC 6-2/1 combi oven · 5-tier walk-in shelving · Emergency lighting set" className={fieldCls} autoFocus />
+      <input value={item} onChange={(e) => setItem(e.target.value)} disabled={onRegister}
+        placeholder="Rational SCC 6-2/1 combi oven · 5-tier walk-in shelving · Emergency lighting set" className={fieldCls + ' disabled:opacity-60'} autoFocus />
     </Field>
 
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <Field label="Category">
-        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Cooking · Refrigeration" className={fieldCls} />
+        <input value={category} onChange={(e) => setCategory(e.target.value)} disabled={onRegister} placeholder="Cooking · Refrigeration" className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Quantity">
-        <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(+e.target.value || 1)} className={fieldCls} />
+        <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(+e.target.value || 1)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Priority">
         <select value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)} className={fieldCls}>
@@ -1223,29 +1230,70 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
     </div>
 
     <Section heading="Money">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Budgeted unit cost (PKR)">
-          <MoneyInput value={unitCostCents} onChange={setUnitCostCents} className={fieldCls} />
+          <MoneyInput value={unitCostCents} onChange={setUnitCostCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
           <Hint>{PKR(unitCostCents * quantity)} total for qty {quantity}</Hint>
         </Field>
         <Field label="Quoted (PKR)">
           <MoneyInput value={quotedCents === '' ? 0 : quotedCents} onChange={(c) => setQuotedCents(c)} className={fieldCls} placeholder="Initial quote" />
         </Field>
         <Field label="Negotiated (PKR)">
-          <MoneyInput value={negotiatedCents === '' ? 0 : negotiatedCents} onChange={(c) => setNegotiatedCents(c)} className={fieldCls} placeholder="What you committed" />
+          <MoneyInput value={negotiatedCents === '' ? 0 : negotiatedCents} onChange={(c) => setNegotiatedCents(c)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} placeholder="What you committed" />
         </Field>
       </div>
     </Section>
 
-    <Section heading="Vendor">
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Vendor"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
+    <Section heading="Supplier">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Supplier on file">
+          <select value={supplierId} onChange={(e) => {
+            const id = e.target.value
+            setSupplierId(id)
+            const picked = suppliers.find((x) => x.id === id)
+            if (picked && !vendor) setVendor(picked.name)
+            if (picked?.defaultTaxAuthority && !inputTaxAuthority) setInputTaxAuthority(picked.defaultTaxAuthority)
+          }} className={fieldCls}>
+            <option value="">Not on file</option>
+            {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <Hint>Pick a supplier so income tax can be withheld at their filer rate.</Hint>
+        </Field>
+        <Field label="Vendor name"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
         <Field label="Contact (name · phone)"><input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="Bilal · +92 300 1234567" className={fieldCls} /></Field>
       </div>
     </Section>
 
+    <Section heading="How it is booked">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Book as">
+          <select value={treatment} onChange={(e) => setTreatment(e.target.value as Treatment | '')} disabled={treatmentLocked} className={fieldCls + ' disabled:opacity-60'}>
+            {TREATMENT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          <Hint>{treatmentLocked ? 'An instalment is already on the books as it is, so this can no longer change.' : TREATMENT_OPTIONS.find((o) => o.key === treatment)?.hint}</Hint>
+        </Field>
+        <Field label="Income tax withholding">
+          <select value={whtSection} onChange={(e) => setWhtSection(e.target.value)} className={fieldCls}>
+            <option value="">Automatic (the supplier&rsquo;s default)</option>
+            {whtSections.map((x) => <option key={x} value={x}>{WHT_SECTION_LABEL[x] ?? x}</option>)}
+          </select>
+        </Field>
+        <Field label="Sales tax in the price (PKR)">
+          <MoneyInput value={inputTaxCents} onChange={setInputTaxCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+        </Field>
+        <Field label="Sales tax charged by">
+          <select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value)} disabled={onRegister || inputTaxCents === 0} className={fieldCls + ' disabled:opacity-60'}>
+            <option value="">{inputTaxCents === 0 ? 'Not needed' : 'Pick the authority'}</option>
+            {authorities.map((x) => <option key={x} value={x}>{AUTHORITY_LABEL[x] ?? x.toUpperCase()}</option>)}
+          </select>
+          {inputTaxCents > 0 && !inputTaxAuthority && <Hint>Say which authority charged it (required to claim it).</Hint>}
+        </Field>
+      </div>
+      <ExemptionLine supplier={supplier} />
+    </Section>
+
     <Section heading="Status & schedule">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Status">
           <select value={status} onChange={(e) => setStatus(e.target.value as Status)} className={fieldCls}>
             {Object.entries(STATUS_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
@@ -1256,6 +1304,13 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
         </Field>
         <Field label="Expected delivery">
           <input type="date" value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className={fieldCls} />
+        </Field>
+        <Field label="Delivered on">
+          <input type="date" value={actualDeliveryDate} onChange={(e) => setActualDeliveryDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+        </Field>
+        <Field label="Installed on">
+          <input type="date" value={installedDate} onChange={(e) => setInstalledDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+          <Hint>Depreciation starts from the install date, else the delivery date.</Hint>
         </Field>
       </div>
     </Section>
@@ -1269,9 +1324,10 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
     {line && <QuotePanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {/* Payment schedule */}
-    {line && <PaymentPanel line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
+    {line && <PaymentPanel project={project} line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {save.error && <ErrorBanner error={save.error} />}
+    {del.error && <ErrorBanner error={del.error} />}
 
     <ModalFooter onCancel={onClose}>
       {line && (
@@ -1280,7 +1336,7 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
           Delete line
         </button>
       )}
-      <button onClick={() => save.mutate()} disabled={save.isPending || !item.trim()} className={primaryBtn}>
+      <button onClick={() => save.mutate()} disabled={save.isPending || !item.trim() || (inputTaxCents > 0 && !inputTaxAuthority && !onRegister)} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
       </button>
     </ModalFooter>

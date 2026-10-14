@@ -257,9 +257,14 @@ exactly the rows shown):
 ## 10. Tax depreciation and the tax-year freeze
 
 - The **tax schedule** (Reports, Tax; the active company only) uses the Income Tax
-  Ordinance Third Schedule rates in the class table (H23): a declining-balance
-  rate by class, plus a **25% initial allowance** in the first year on
-  eligible plant (kitchen, IT, power, office equipment).
+  Ordinance Third Schedule rates in the class table (H23), on the **written-down
+  value** of each asset, per tax year (1 July to 30 June, named by the year it
+  ends in): in the year of first use a **25% initial allowance** on eligible
+  plant (kitchen, IT, power, office equipment) and then the class rate on what
+  is left; later years the rate on the opening value; in the year of disposal
+  no depreciation, and the proceeds come off the value. Cost is net of
+  claimable input tax. A partial smallwares write-off does not move the tax
+  value (Hasnain to confirm).
 - **Smallwares are not in the tax schedule.** The Third Schedule rates do not
   cover them; they are listed as **"tax treatment to confirm"** until
   Hasnain gives the treatment.

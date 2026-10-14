@@ -49,8 +49,9 @@ approving and printing a request **never move any cash**.
 
 The **head of department** is the holder's direct reporting manager (the same
 reporting line HR uses). Finance and management can sign for anyone. **The
-holder can never sign their own request.** The HOD opens **Cash requests ->
-Waiting for my signature**, checks it and signs (or rejects).
+holder can never sign their own request.** The HOD opens **Cash requests** (the
+requests waiting for their signature are listed there), checks one and signs (or
+rejects).
 
 ### 3. The director approves
 

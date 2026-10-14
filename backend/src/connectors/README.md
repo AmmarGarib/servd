@@ -17,7 +17,7 @@ order goes through `completeOrder`, which inserts the sale document.
 | `util.ts` | `withTimeout`, backoff, HMAC sign and verify, message scrubbing, PKT time helpers |
 | `drivers/test.ts` | The built-in deterministic test driver. It never contacts a network and never files a real invoice. |
 | `drivers/http.ts` | The generic "servd connector API v1" driver |
-| `fiscal/payload.ts` | Builds the payload from STORED order figures, with refunds pro rata, plus the ported SRB and FBR field mappings |
+| `fiscal/payload.ts` | Builds the payload from STORED order figures, with refunds pro rata, plus the ported SRB and FBR field mappings. A delivery fee stored on the order becomes its own `DELIVERY-CHARGE` line (H9, below). `totalsCheck` enforces the bill identity before anything is sent. |
 | `fiscal/outbox.ts` | `enqueueFiscalSaleTx` / `enqueueFiscalRefundTx` (inside the caller's transaction), `sendFiscalDocument` (DB lease, lookup before resubmit), `submitFiscalNow` / `submitFiscalAtTill`, `kickFiscal`, retry, manual filing, release of held documents, the sweeper |
 | `fiscal/view.ts` | `FiscalView`, `fiscalViewForOrder`, `legacySrbAlias` |
 | `fiscal/qr.ts` | `renderQrSvg` (synchronous inline SVG) |
@@ -71,6 +71,28 @@ Rules:
 - **The test driver** produces `TEST-…` numbers with `isTest=true`, and
   receipts say `TEST — NOT A FISCAL INVOICE`.
 
+Delivery charge (2026-10-14, H9) — the fee is a taxed supply:
+
+- An order with `Order.deliveryFeeCents > 0` sends the fee as a **line**
+  `{ lineId 'delivery:<orderId>', itemCode 'DELIVERY-CHARGE', description
+  'Delivery charge', quantity 1, unit = gross = the fee, taxRatePct = the
+  order's standard rate, taxCents = Order.deliveryFeeTaxCents }`
+  (`deliveryLineId`, `DELIVERY_CHARGE_ITEM_CODE`). The food lines carry
+  `Order.taxCents − deliveryFeeTaxCents`; `saleValueCents`, `discountCents`
+  and `taxCents` include the fee line; `totals.deliveryChargeCents` is **0**.
+- The discount covers the food lines first, then the delivery line, and only
+  the rest is `billDiscountCents` (F-RV-1). A refund spreads its taxable value
+  over the sale's lines by taxable value, so it returns its share of the fee
+  line.
+- A **legacy** delivery order (fee column 0, the fee untaxed inside the bill)
+  keeps the old rule: its fee is `totals.deliveryChargeCents`, what is left of
+  the bill once food, tax, service and tip are accounted for, and only on a
+  delivery order. Any other remainder is a `totals_mismatch`: the outbox never
+  files that document (`fiscal_failed`).
+- The FBR reference mapping (`toFbrInvoiceFields`) gives the line `ItemCode
+  'DELIVERY'` (menu lines stay `POS-ITEM`), `PCTCode 9963.1100`. Contract
+  version stays `1` (`docs/pos-connector-api.md`, 2026-10-14).
+
 Raast QR (2026-10-12):
 
 - **The connector row is `kind 'raast'`**, one per company; `enabled` =
@@ -107,3 +129,11 @@ Raast QR (2026-10-12):
   stale phone or another company behind the same NAT cannot lock it out).
 - **A future bank API** is one `RaastDriver` in `RAAST_DRIVERS` producing a
   `BankCredit` into `applyBankCredit` — no rework of intents or matching.
+- **Void, never booked (2026-10-13/14, CEO only).** A provisional Raast
+  receipt on a cancelled or rejected bill whose money no entry ever debited to
+  the bank can be voided by the CEO (finance may ask): status `voided`, **no
+  ledger entry**, the bank reference stays claimed. A voided receipt is not
+  money taken — refund due, hand-back tenders and the Z-report's cancelled-paid
+  leave it out (`isVoidedRaast`, `accounting/orderPosting.ts`) — and it stops
+  blocking the period close. The code is `modules/reconciliation/raast.ts`; the
+  runbook is `docs/raast.md`. Till clearing stays on **1110**.

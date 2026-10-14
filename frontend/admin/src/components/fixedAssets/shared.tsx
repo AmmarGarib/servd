@@ -282,11 +282,12 @@ export function useFaLookups() {
 }
 
 /**
- * What the caller may do on the register, for pages OUTSIDE it (CapEx). The
- * API's own flags; when the caller's modules cannot open the register
- * nothing is asked and every flag is false.
+ * What the caller may do on the register, for pages OUTSIDE it (CapEx), plus
+ * the register's lookups (outlets, brands, classes) for the forms. The API's
+ * own flags; when the caller's modules cannot open the register nothing is
+ * asked and every flag is false.
  */
-export function useFaCapabilities(): { canWrite: boolean; canCount: boolean; canApprove: boolean; ready: boolean } {
+export function useFaCapabilities(): { canWrite: boolean; canCount: boolean; canApprove: boolean; ready: boolean; lookups: FaLookups | undefined } {
   const { data: me } = usePermissions()
   const open = !!me && canOpenPath(FA_BASE, me.role, me.modules ?? [])
   const q = useQuery<FaLookups>({
@@ -297,7 +298,7 @@ export function useFaCapabilities(): { canWrite: boolean; canCount: boolean; can
     retry: false,
   })
   const c = q.data?.capabilities
-  return { canWrite: !!c?.canWrite, canCount: !!c?.canCount, canApprove: !!c?.canApprove, ready: !open || !!q.data }
+  return { canWrite: !!c?.canWrite, canCount: !!c?.canCount, canApprove: !!c?.canApprove, ready: !open || !!q.data || q.isError, lookups: q.data }
 }
 
 // ─── Page frame and tabs ────────────────────────────────────────────────────

@@ -40,9 +40,10 @@ already received); a **refund** pays it out.
 - **Bounced cheque / wrong entry**: **reverse** the payment. The entry is
   reversed and the invoice owes again.
 - **Credit note**: for returned goods or a price correction, against the
-  invoice. It reverses revenue and the tax the invoice credited. **Do not issue
-  a credit note on an invoice that has been written off** (see "Open point"
-  below).
+  invoice. It reverses revenue and the tax the invoice credited. A credit note
+  can only credit what was **not** written off as a bad debt: if it would go
+  past that, servd refuses with `WRITTEN_OFF_FIRST` and says how much is left to
+  credit; recover or reverse the write-off first (see "Bad debts" below).
 - **Refund**: pays out a customer who is in credit. *Dr 1110 / Cr the account
   it left from.*
 - **Void**: cancels an invoice that has no payment against it. If a bad-debt
@@ -111,16 +112,14 @@ the write-off is direct, with reason and evidence (H15).
    servd does not itself claim back the output tax on a bad debt - that is a
    tax-return decision for the accountant.
 
-## Open point
+## Credit notes after a write-off
 
-**A credit note after a write-off double-counts.** The credit-note limit is
-still "credited + new credit must not exceed the invoice total" and does not
-yet look at what was written off, so a credit note on a written-off invoice
-reduces revenue and tax a second time and 1110 goes negative. **Until this is
-guarded, do not raise a credit note on an invoice that has a write-off**;
-recover or reverse the write-off first. A guard (409 when credited + credit
-exceeds total less the written-off amount) has been suggested to Hasnain to
-confirm.
+A write-off already takes the whole amount, tax included, out of 1110. A credit
+note on the same money would lower revenue and output tax a second time and push
+1110 negative. So the credit-note limit is **total less what is written off**
+(net of recoveries), not just the total: a credit note that goes past it is
+refused with `WRITTEN_OFF_FIRST`. Recover or reverse the write-off first if the
+customer is really owed a credit.
 
 ## Who can do what
 

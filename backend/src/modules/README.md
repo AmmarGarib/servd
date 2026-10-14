@@ -8,16 +8,24 @@ Every module is `routes.ts` (HTTP handlers) optionally with `service.ts` (busine
 | `concepts` | `/concepts` | Brand / multi-tenant configuration |
 | `menu` | `/menu` | Categories, items, modifiers, allergens |
 | `orders` | `/orders`, `/order-items` | Order CRUD, status transitions, course pacing, auto-86 |
-| `pos` | `/pos` | Point-of-sale: takings, shifts, payments, receipts |
+| `pos` | `/pos` | Point-of-sale: takings, shifts, payments, receipts, **Box given** |
 | `kds` | (consumes WS) | Kitchen Display System events |
 | `stations` | `/stations` | Kitchen station definitions for KDS routing |
 | `storefront` | `/storefront` | Customer-facing menu/order endpoints |
 | `webhooks` | `/webhooks` | Inbound webhooks from Foodpanda, Careem, WhatsApp, payment providers |
-| `inventory` | `/inventory` | Stock items, par levels, alerts, waste log |
-| `recipes` | `/recipes` | Recipe costing, ingredient mappings, kitchen instructions |
-| `procurement` | `/procurement` | Suppliers, POs, bills, vendor payments, supplier chat |
-| `reports` | `/reports` | Sales, top items, station times, menu engineering, demand forecast |
+| `inventory` | `/inventory` | Stock items, par levels, alerts, waste log; the FIFO cut-over and cash-bought stock (`README.md`) |
+| `recipes` | `/recipes` | Recipe costing, ingredient mappings, the **Packaging section**, add-on recipes, kitchen instructions |
+| `procurement` | `/procurement` | Suppliers (filer status, certificate), POs, goods receiving (FIFO lots, 2015 GRNI), bills linked to receipts, **Received, not billed** (`/procurement/grni`), credit notes, vendor payments, supplier chat |
+| `reports` | `/reports` | Sales, top items, station times, menu engineering, demand forecast, **food cost variance** (`/reports/food-cost`) |
 | `accounting` | `/accounting` | Journal entries, trial balance, P&L, sales tax return |
+| `fixedAssets` | `/accounting/fixed-assets` | THE fixed-asset register: automatic monthly depreciation, smallwares pools, disposal / write-down requests (the CEO approves), tie-out, tax schedule (`README.md`, `docs/fixed-assets.md`) |
+| `receivables` | `/accounting/receivables` | Sales invoices on credit, payments, credit notes, refunds, income tax and **sales tax a client withholds** (1330 / 1335), CEO-approved **bad-debt write-offs** and recoveries (`docs/receivables.md`) |
+| `intercompany` | `/accounting/intercompany` | Inter-company transfers (both books), shared-fleet recharge, legacy cross-company tie-out |
+| `financePlanning` | `/finance` | CapEx projects and lines, **Quick buy**, capitalisation requests, prepaid / deposit lines, orphan advances, prepaid releases |
+| `opex` | `/opex` | OpEx categories, lines and payments: invoice, input tax by authority, WHT, prepaid treatment |
+| `trustops` | `/trustops` | Petty cash boxes, movements and receipts; **cash requests** (`/trustops/cash-vouchers`); deposit drops, staff meals (`docs/cash-requests-and-petty-cash.md`) |
+| `crosschecks` | `/crosschecks` | Dock receiving, spot and opening **stock counts**, prep batches, the exceptions inbox (Finance → Exceptions) |
+| `stockTransfers` | `/stock-transfers` | Outlet-to-outlet stock transfers (receive books a transit loss as waste) |
 | `finance` | `/finance` | Read-only financial summaries |
 | `crm` | `/crm` | Customer profiles, segments, smart segments, campaigns |
 | `loyalty` | `/loyalty` | Points, tiers, redemption |
