@@ -1,7 +1,7 @@
 'use client'
-// Global brand filter — the second column of the company switcher (owner,
-// 2026-10-14: "a second column for brand switcher"; it replaced the separate
-// "Brand" row under the switcher, so there is still ONE brand picker).
+// Global brand filter — the Brands column of the switcher module at the
+// bottom-left (owner, 2026-10-14; it replaced the separate "Brand" row under
+// the old top switcher, so there is still ONE brand picker).
 //
 // "All brands" by default. Picking one narrows every page that can be narrowed,
 // and the switcher says so when a page cannot ("not filtered here"), so a brand
@@ -70,10 +70,12 @@ export function brandLabel(current: PickerConcept | null): string {
 }
 
 /** The brands column inside the company switcher's panel. */
-export function BrandColumn({ concepts, brandId, onPick }: {
+export function BrandColumn({ concepts, brandId, onPick, scroll = true }: {
   concepts: PickerConcept[]
   brandId: string | null
   onPick: (id: string | null) => void
+  /** Own scroll box (side-by-side columns); off when the columns stack. */
+  scroll?: boolean
 }) {
   const rows = [{ id: null as string | null, name: 'All brands' }, ...concepts]
   return (
@@ -81,7 +83,7 @@ export function BrandColumn({ concepts, brandId, onPick }: {
       <div className="px-3 py-2 border-b border-white/[0.08]">
         <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">Brands</p>
       </div>
-      <div className="max-h-[280px] overflow-y-auto">
+      <div className={scroll ? 'max-h-[320px] overflow-y-auto' : undefined}>
         {rows.map((c) => {
           const selected = c.id === brandId
           return (

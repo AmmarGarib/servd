@@ -595,12 +595,16 @@ function Shell({ children }: { children: React.ReactNode }) {
     borderRight: '1px solid rgb(0 0 0 / 0.08)',
   }
 
-  function UserFooter({ collapsed: c }: { collapsed: boolean }) {
+  // `switcher`: the company / brand / view-as module sits here on desktop
+  // (owner, 2026-10-14). The phone drawer leaves it out — on a phone it is
+  // the pill pinned to the bottom-left of the screen.
+  function UserFooter({ collapsed: c, switcher = true }: { collapsed: boolean; switcher?: boolean }) {
     return (
       <div className={`relative z-10 shrink-0 ${c ? 'px-1.5 py-2' : 'px-3 py-3'}`}
         style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         {c ? (
           <>
+          {switcher && <TenantSwitcher placement="collapsed" />}
           <Link href="/account/password" title="Change password / PIN" aria-label="Change password / PIN"
             className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
             style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>
@@ -623,6 +627,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </>
         ) : (
           <div className="space-y-1.5">
+            {switcher && <TenantSwitcher placement="sidebar" />}
             <UserIdentityCard initials={initials} />
             <Link href="/account/password"
               className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-colors"
@@ -652,9 +657,8 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   function UserIdentityCard({ initials }: { initials: string }) {
     const { data: me } = usePermissions()
-    const viewAs = useViewAsRole((s) => s.role)
-    const setRole = useViewAsRole((s) => s.setRole)
-    // Only the CEO (admin) can impersonate other roles + approve new staff.
+    // Only the CEO (admin) can impersonate other roles — the "View as" choice
+    // is the third column of the switcher module just above this card.
     const isSuper = me?.role === 'admin'
 
     // Everything waiting on this login, from every module (decision D3) —
@@ -664,10 +668,6 @@ function Shell({ children }: { children: React.ReactNode }) {
     const { data: approvalCounts } = useApprovalCounts(Boolean(me))
     const waitingTotal = approvalCounts?.total ?? 0
     const hasQueue = waitingTotal > 0
-
-    // Drop admin/CEO from impersonation targets — viewing-as-self is the
-    // default state, no need to offer it as a discrete option.
-    const switchTargets = APP_ROLES.filter((r) => r.value !== 'admin')
 
     return (
       <div className="rounded-xl px-2 py-1.5"
@@ -704,28 +704,6 @@ function Shell({ children }: { children: React.ReactNode }) {
           </Link>
         )}
 
-        {isSuper && (
-          <div className={`${hasQueue ? 'mt-1' : 'mt-1.5'} pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5`}>
-            <span className="text-[9px] uppercase tracking-wider font-bold shrink-0"
-              style={{ color: viewAs ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
-              {viewAs ? '🔭 As' : 'View as'}
-            </span>
-            <select
-              value={viewAs ?? ''}
-              onChange={(e) => setRole((e.target.value || null) as ViewAsRole)}
-              className="flex-1 text-[10.5px] font-semibold rounded-md px-1.5 py-1 cursor-pointer focus:outline-none"
-              style={{
-                background: viewAs ? 'rgb(var(--ink-rgb) / 0.12)' : 'rgba(0,0,0,0.3)',
-                color: viewAs ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.6)',
-                border: `1px solid ${viewAs ? 'rgb(var(--ink-rgb) / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
-              }}>
-              <option value="">Myself</option>
-              {switchTargets.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.emoji} {opt.label}</option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
     )
   }
@@ -769,10 +747,12 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <TenantSwitcher collapsed={false} />
         <NavLinks pathname={pathname} collapsed={false} onNavigate={() => setMobileOpen(false)} />
-        <UserFooter collapsed={false} />
+        <UserFooter collapsed={false} switcher={false} />
       </aside>
+
+      {/* ── Phone: the switcher module, pinned bottom-left ─────────────────── */}
+      <TenantSwitcher placement="floating" />
 
       {/* ── Desktop sidebar ────────────────────────────────────────────────── */}
       <aside
@@ -819,7 +799,6 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
         )}
 
-        <TenantSwitcher collapsed={collapsed} />
         <NavLinks pathname={pathname} collapsed={collapsed} />
         <UserFooter collapsed={collapsed} />
       </aside>

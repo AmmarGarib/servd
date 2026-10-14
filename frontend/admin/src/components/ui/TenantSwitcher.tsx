@@ -5,7 +5,9 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
-import { useViewAsRole } from '../../store/viewAsRole'
+import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
+import { usePermissions } from '../../hooks/useCan'
+import { APP_ROLES, roleLabel } from '../../lib/appRoles'
 import { BrandColumn, brandLabel, useBrandOptions, type PickerConcept } from './BrandPicker'
 
 interface Tenant {
@@ -56,18 +58,29 @@ export function useViewAllTenants(): boolean {
 // impersonation doesn't lose the original intent.
 const PORTFOLIO_STASH_KEY = 'servd_view_all_stash'
 
-export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
+// The switcher module (owner, 2026-10-14): ONE place at the bottom-left to
+// pick the company, the brand and — for the CEO only — the role to view as.
+// Desktop: in the sidebar footer, where the CEO's "View as" used to be.
+// Phone: a pill pinned to the bottom-left of the screen. The panel has a
+// column per choice (Companies | Brands | View as) and opens upwards.
+export type SwitcherPlacement = 'sidebar' | 'collapsed' | 'floating'
+
+export function TenantSwitcher({ placement }: { placement: SwitcherPlacement }) {
   const qc = useQueryClient()
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [viewAll, setViewAll] = useState(false)
   const popRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLDivElement | null>(null)
-  // The brand filter lives in this switcher's second column (owner,
-  // 2026-10-14). Always called here, so a brand from another company is
-  // dropped even while the panel is closed.
+  // Always called here, so a brand from another company is dropped even
+  // while the panel is closed.
   const brand = useBrandOptions()
   const showBrands = !!brand.concepts && brand.concepts.length > 0
+  // Only the CEO (admin) can view as other roles — the real role from the
+  // server, never the role being viewed as.
+  const { data: me } = usePermissions()
+  const isSuper = me?.role === 'admin'
+  const setViewAsRole = useViewAsRole((s) => s.setRole)
   // When the CEO impersonates a non-admin role, portfolio view is incoherent
   // — that role wouldn't have multi-company access in production. Auto-clear
   // it on impersonation, and hide the "All companies" entry from the popover.
@@ -124,7 +137,7 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
     router.refresh()
   }
 
-  // Close on outside click
+  // Close on outside click (the trigger toggles itself) and on Escape.
   useEffect(() => {
     if (!open) return
     function onClick(e: MouseEvent) {
@@ -132,111 +145,127 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
       if (popRef.current?.contains(t) || triggerRef.current?.contains(t)) return
       setOpen(false)
     }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
   const active = tenants.find((t) => t.isActive) ?? tenants[0]
-  const displayLabel = viewAll ? 'All companies' : (active?.name ?? '—')
-  const displayInitial = viewAll ? '∞' : (active?.name ?? '?')[0]?.toUpperCase()
-  const accentTeal = viewAll
+  const companyLabel = viewAll ? 'All companies' : (active?.name ?? '—')
+  const initial = viewAll ? '∞' : (active?.name ?? '?')[0]?.toUpperCase()
+  const brandText = showBrands ? brandLabel(brand.current) : null
+  const viewAsText = isSuper && viewAsRole ? roleLabel(viewAsRole) : null
 
-  if (tenants.length === 0) return null
+  if (tenants.length === 0 && !isSuper) return null
 
-  // Collapsed sidebar — just a small badge with the first letter
-  if (collapsed) {
+  const panel = open && (
+    <SwitcherPopover ref={popRef} tenants={tenants}
+      activeId={viewAll ? '__ALL__' : (active?.id ?? '')}
+      onSwitch={(id) => switchTo.mutate(id)}
+      onActivateAll={activateViewAll}
+      allowPortfolio={!isImpersonating}
+      switching={switchTo.isPending ? switchTo.variables ?? null : null}
+      onClose={() => setOpen(false)}
+      brands={showBrands ? brand.concepts : null}
+      brandId={brand.brandId}
+      onPickBrand={(id) => { brand.pick(id); setOpen(false) }}
+      viewAs={isSuper ? { role: viewAsRole, onPick: (r) => { setViewAsRole(r); setOpen(false) } } : null}
+      triggerRef={triggerRef}
+      placement={placement} />
+  )
+
+  const badge = (
+    <span className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[11px] font-black"
+      style={{
+        background: viewAll ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
+        border: `1px solid ${viewAll ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+        color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)',
+      }}>
+      {initial}
+    </span>
+  )
+  const chevron = (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden className={`text-white/40 shrink-0 transition-transform ${open ? '' : 'rotate-180'}`}>
+      <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+  const summary = [companyLabel, brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')
+
+  // Collapsed sidebar — the badge alone; the panel opens to the right.
+  if (placement === 'collapsed') {
     return (
-      <div ref={triggerRef} className="relative z-20 flex flex-col items-center gap-1 py-2"
-        style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-        <button onClick={() => setOpen((o) => !o)}
-          title={showBrands ? `${displayLabel} · ${brandLabel(brand.current)}` : displayLabel}
-          className="h-7 w-7 rounded-lg flex items-center justify-center text-[11px] font-black hover:text-white transition-colors"
-          style={{
-            background: accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
-            border: `1px solid ${accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
-            color: accentTeal ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)',
-          }}>
-          {displayInitial}
+      <div ref={triggerRef} className="flex justify-center pb-1.5">
+        <button onClick={() => setOpen((o) => !o)} title={summary} aria-label={`Switch company, brand${isSuper ? ' or role' : ''}: ${summary}`} aria-expanded={open}>
+          {badge}
         </button>
-        {showBrands && brand.current && (
-          <button onClick={() => setOpen((o) => !o)} title={`Brand: ${brandLabel(brand.current)}`}
-            className="h-5 min-w-6 px-1 rounded-md text-[9px] font-black"
-            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.15)', color: 'var(--erp-primary)' }}>
-            {brandLabel(brand.current).slice(0, 2)}
-          </button>
-        )}
-        {open && active && (
-          <SwitcherPopover ref={popRef} tenants={tenants}
-            activeId={viewAll ? '__ALL__' : active.id}
-            onSwitch={(id) => switchTo.mutate(id)}
-            onActivateAll={activateViewAll}
-            allowPortfolio={!isImpersonating}
-            switching={switchTo.isPending ? switchTo.variables ?? null : null}
-            onClose={() => setOpen(false)}
-            brands={showBrands ? brand.concepts : null}
-            brandId={brand.brandId}
-            onPickBrand={(id) => { brand.pick(id); setOpen(false) }}
-            triggerRef={triggerRef}
-            anchor="left" />
-        )}
+        {panel}
       </div>
     )
   }
 
-  // Expanded sidebar — full row with name + chevron
-  return (
-    <div ref={triggerRef} className="relative z-20"
-      style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
-        className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.03] transition-colors text-left">
-        <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[11px] font-black"
-          style={{
-            background: accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.05)',
-            border: `1px solid ${accentTeal ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
-            color: accentTeal ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)',
-          }}>
-          {displayInitial}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-white/35 leading-none">
-            {viewAll ? 'Portfolio' : 'Company'}
-          </p>
-          <p className="text-xs font-bold truncate mt-0.5"
-            style={{ color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
-            {displayLabel}
-          </p>
-          {showBrands && (
-            <p className="text-[10px] font-bold truncate mt-0.5"
-              style={{ color: brand.current ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.5)' }}>
-              {brandLabel(brand.current)}
-            </p>
-          )}
-          {brand.notHere && <p className="text-[10px] mt-0.5" style={{ color: 'var(--erp-warning)' }}>Brand not filtered on this page</p>}
-        </div>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`text-white/40 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}>
-          <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+  // Phone — a pill pinned to the bottom-left of the screen.
+  if (placement === 'floating') {
+    return (
+      <div ref={triggerRef} className="erp-on-secondary fixed left-3 z-[45] md:hidden rounded-full"
+        style={{ bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))', background: 'var(--erp-secondary)', boxShadow: '0 8px 24px rgb(var(--ink-rgb) / 0.3)' }}>
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`Switch company, brand${isSuper ? ' or role' : ''}: ${summary}`}
+          className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 max-w-[78vw] text-left">
+          {badge}
+          <span className="min-w-0 flex flex-col">
+            <span className="text-[11px] font-bold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{companyLabel}</span>
+            {(brandText || viewAsText) && (
+              <span className="text-[10px] font-bold truncate" style={{ color: 'var(--erp-accent)' }}>
+                {[brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')}
+              </span>
+            )}
+          </span>
+          {chevron}
+        </button>
+        {panel}
+      </div>
+    )
+  }
 
-      {open && active && (
-        <SwitcherPopover ref={popRef} tenants={tenants}
-          activeId={viewAll ? '__ALL__' : active.id}
-          onSwitch={(id) => switchTo.mutate(id)}
-          onActivateAll={activateViewAll}
-          allowPortfolio={!isImpersonating}
-          switching={switchTo.isPending ? switchTo.variables ?? null : null}
-          onClose={() => setOpen(false)}
-          brands={showBrands ? brand.concepts : null}
-          brandId={brand.brandId}
-          onPickBrand={(id) => { brand.pick(id); setOpen(false) }}
-          triggerRef={triggerRef}
-          anchor="below" />
-      )}
+  // Sidebar footer — a full-width card; the panel opens upwards.
+  return (
+    <div ref={triggerRef} className="relative">
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="w-full flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors text-left hover:bg-white/[0.04]"
+        style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+        {badge}
+        <span className="flex-1 min-w-0">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-white/35 leading-none">
+            {viewAll ? 'Portfolio' : 'Company'}
+          </span>
+          <span className="block text-xs font-bold truncate mt-0.5" style={{ color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
+            {companyLabel}
+          </span>
+          {brandText && (
+            <span className="block text-[10px] font-bold truncate mt-0.5" style={{ color: brand.current ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.55)' }}>
+              {brandText}
+            </span>
+          )}
+          {isSuper && (
+            <span className="block text-[10px] font-bold truncate mt-0.5" style={{ color: viewAsText ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
+              {viewAsText ? `Viewing as ${viewAsText}` : 'Viewing as myself'}
+            </span>
+          )}
+          {brand.notHere && <span className="block text-[10px] mt-0.5" style={{ color: 'var(--erp-warning)' }}>Brand not filtered on this page</span>}
+        </span>
+        {chevron}
+      </button>
+      {panel}
     </div>
   )
 }
 
-const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, onPickBrand, triggerRef, anchor }: {
+const ROLE_TARGETS = APP_ROLES.filter((r) => r.value !== 'admin')
+
+const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, onPickBrand, viewAs, triggerRef, placement }: {
   ref: React.Ref<HTMLDivElement>
   tenants: Tenant[]
   activeId: string                // tenant id, or '__ALL__' when in portfolio view
@@ -249,52 +278,62 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
   brands: PickerConcept[] | null
   brandId: string | null
   onPickBrand: (id: string | null) => void
+  /** The CEO's "View as" column; null for everyone else. */
+  viewAs: { role: ViewAsRole; onPick: (role: ViewAsRole) => void } | null
   triggerRef: React.RefObject<HTMLDivElement | null>
-  anchor: 'below' | 'left'
+  placement: SwitcherPlacement
 }) => {
-  // The sidebar clips its children (overflow-hidden, and the mobile drawer is
-  // a transformed box), so the panel is portalled to <body> and placed from
-  // the trigger's box: under it when the sidebar is open, beside it when
-  // collapsed. Two columns need more room than the 220px sidebar.
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  // The sidebar clips its children (overflow-hidden; the phone drawer is a
+  // transformed box), so the panel is portalled to <body> and placed from the
+  // trigger's box: above it in the footer / on the phone pill, beside it when
+  // the sidebar is collapsed. Columns stack when the screen is too narrow.
+  const cols = 1 + (brands ? 1 : 0) + (viewAs ? 1 : 0)
+  const [pos, setPos] = useState<{ bottom: number; left: number; width: number; maxHeight: number; stacked: boolean } | null>(null)
   useLayoutEffect(() => {
     const place = () => {
       const r = triggerRef.current?.getBoundingClientRect()
       if (!r) return
       const vw = window.innerWidth
-      const want = brands ? 480 : 260
+      const vh = window.innerHeight
+      const want = cols === 1 ? 280 : cols === 2 ? 500 : 700
       const width = Math.min(want, vw - 16)
-      const left0 = anchor === 'below' ? r.left + 8 : r.right + 8
+      const stacked = width < cols * 165
+      const left0 = placement === 'collapsed' ? r.right + 8 : r.left
       const left = Math.max(8, Math.min(left0, vw - width - 8))
-      setPos({ top: anchor === 'below' ? r.bottom + 4 : r.top + 6, left, width })
+      const bottom = placement === 'collapsed' ? Math.max(8, vh - r.bottom) : vh - r.top + 6
+      setPos({ bottom, left, width, maxHeight: Math.max(200, vh - bottom - 12), stacked })
     }
     place()
     window.addEventListener('resize', place)
     return () => window.removeEventListener('resize', place)
-  }, [anchor, brands, triggerRef])
+  }, [cols, placement, triggerRef])
   if (typeof document === 'undefined' || !pos) return null
+
   const allActive = activeId === '__ALL__'
+  const colBorder = pos.stacked ? { borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)' } : { borderLeft: '1px solid rgb(var(--fg-rgb) / 0.08)' }
+  const listMax = pos.stacked ? undefined : 'max-h-[320px] overflow-y-auto'
   return createPortal(
-    <div ref={ref}
-      className="erp-on-surface fixed z-[100] rounded-xl overflow-hidden"
+    <div ref={ref} role="dialog" aria-label="Switch company, brand or role"
+      className="erp-on-surface fixed z-[100] rounded-xl overflow-y-auto"
       style={{
-        top: pos.top,
+        bottom: pos.bottom,
         left: pos.left,
         width: pos.width,
-        // The panel sits inside the purple sidebar but is a light card:
+        maxHeight: pos.maxHeight,
+        // The panel sits over the purple sidebar but is a light card:
         // .erp-on-surface resets the area colours so its text reads on white.
         color: 'var(--text)',
         background: 'var(--surface)',
         border: '1px solid rgb(var(--fg-rgb) / 0.1)',
         boxShadow: '0 16px 40px rgb(var(--ink-rgb) / 0.18)',
       }}>
-      <div className={brands ? 'grid' : ''}
-        style={brands ? { gridTemplateColumns: 'minmax(0, 1.45fr) minmax(0, 1fr)' } : undefined}>
+      <div className={pos.stacked ? '' : 'grid'}
+        style={pos.stacked ? undefined : { gridTemplateColumns: cols === 3 ? 'minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.1fr)' : cols === 2 ? 'minmax(0, 1.45fr) minmax(0, 1fr)' : 'minmax(0, 1fr)' }}>
       <div className="min-w-0">
       <div className="px-3 py-2 border-b border-white/[0.08]">
         <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">Your companies</p>
       </div>
-      <div className="max-h-[280px] overflow-y-auto">
+      <div className={listMax}>
         {/* Virtual "All companies" entry — only shown when portfolio access is
             allowed. While impersonating a non-admin role, the view-as target
             wouldn't have portfolio in production, so the option is hidden. */}
@@ -354,8 +393,36 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allo
       </div>
       </div>
       {brands && (
-        <div className="min-w-0" style={{ borderLeft: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-          <BrandColumn concepts={brands} brandId={brandId} onPick={onPickBrand} />
+        <div className="min-w-0" style={colBorder}>
+          <BrandColumn concepts={brands} brandId={brandId} onPick={onPickBrand} scroll={!pos.stacked} />
+        </div>
+      )}
+      {viewAs && (
+        <div className="min-w-0" style={colBorder}>
+          <div className="px-3 py-2 border-b border-white/[0.08]">
+            <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">View as</p>
+          </div>
+          <div className={listMax}>
+            {[{ value: null as ViewAsRole, label: 'Myself (CEO)' }, ...ROLE_TARGETS.map((r) => ({ value: r.value as ViewAsRole, label: r.label }))].map((r) => {
+              const selected = r.value === viewAs.role
+              return (
+                <button key={r.value ?? 'me'} onClick={() => viewAs.onPick(r.value)} aria-pressed={selected}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
+                    selected ? 'bg-primary/10' : 'hover:bg-white/[0.04]'
+                  } ${r.value ? '' : 'border-b border-white/[0.05]'}`}>
+                  <span className="flex-1 min-w-0 text-xs font-bold truncate"
+                    style={{ color: selected ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
+                    {r.label}
+                  </span>
+                  {selected && (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0" style={{ color: 'var(--erp-success)' }}>
+                      <path d="M2.5 6.2l2.3 2.3 4.7-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
       </div>
