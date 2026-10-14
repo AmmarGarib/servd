@@ -9,14 +9,16 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
-import { STOREFRONT_URL } from '../../lib/content'
+import { contentApi, isKitSlug, kitHref, STOREFRONT_BRANDS_KEY, STOREFRONT_URL, type ConceptLite } from '../../lib/content'
 
 
 export interface SiteLayoutListRow {
   id: string
   slug: string
-  kind: 'page' | 'hero' | 'header' | 'footer' | 'widget' | 'popup'
+  kind: 'page' | 'hero' | 'header' | 'footer' | 'widget' | 'popup' | 'kit'
   title: string | null
+  /** The API's display name for a kit row ("Brand kit — <Brand>"). */
+  label?: string | null
   tenantId: string | null
   draftStatus: 'none' | 'draft' | 'pending' | 'scheduled'
   liveVersion: number
@@ -33,12 +35,15 @@ export interface SiteLayoutListRow {
 export const PENDING_LAYOUTS_KEY = ['site-layouts', 'list', 'pending'] as const
 
 export function builderHref(slug: string): string {
+  if (isKitSlug(slug)) return kitHref(slug.split(':')[1]!)
   if (slug.startsWith('popup:')) return `/storefront/popups/${encodeURIComponent(slug.slice('popup:'.length))}`
   return `/storefront/pages/${encodeURIComponent(slug)}`
 }
 
-function describeSlug(slug: string): string {
+/** "Brand kit — <Brand>" for a kit row; the brand's slug until its name is known. */
+function describeSlug(slug: string, brandName?: (slug: string) => string | undefined): string {
   const [prefix, a, b] = slug.split(':')
+  if (isKitSlug(slug)) return `Brand kit — ${brandName?.(a!) ?? a}`
   const part = (p: string) => (p === 'header' ? 'top bar' : p)
   if (slug === 'servd:feedback') return 'servd feedback button'
   if (prefix === 'servd') return `servd ${part(a ?? '')}`
@@ -116,6 +121,9 @@ function ApprovalRow({ row, isCeo }: { row: SiteLayoutListRow; isCeo: boolean })
   const [note, setNote] = useState('')
   const [previewError, setPreviewError] = useState('')
   const path = `/site-layouts/${encodeURIComponent(row.slug)}`
+  const isKit = isKitSlug(row.slug)
+  const brands = useQuery<ConceptLite[]>({ queryKey: STOREFRONT_BRANDS_KEY, queryFn: contentApi.brands, enabled: isKit })
+  const brandName = (slug: string) => brands.data?.find((c) => c.slug === slug)?.name
   const isScheduled = row.draftStatus === 'scheduled'
 
   const done = () => {
@@ -154,7 +162,7 @@ function ApprovalRow({ row, isCeo }: { row: SiteLayoutListRow; isCeo: boolean })
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate font-semibold text-s-text">{row.title || describeSlug(row.slug)}</p>
+            <p className="truncate font-semibold text-s-text">{isKit ? row.label || describeSlug(row.slug, brandName) : row.title || describeSlug(row.slug)}</p>
             <span className="rounded-full border border-s-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-s-muted">{row.kind}</span>
             {row.liveVersion === 0 && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary-ink">first publish</span>}
           </div>
@@ -166,13 +174,15 @@ function ApprovalRow({ row, isCeo }: { row: SiteLayoutListRow; isCeo: boolean })
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => void openPreview()}
-            className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted hover:text-s-text">
-            Preview
-          </button>
+          {!isKit && (
+            <button onClick={() => void openPreview()}
+              className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted hover:text-s-text">
+              Preview
+            </button>
+          )}
           <Link href={builderHref(row.slug)}
             className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted hover:text-s-text">
-            Open in builder
+            {isKit ? 'Open the brand kit' : 'Open in builder'}
           </Link>
           {isCeo && (
             <>

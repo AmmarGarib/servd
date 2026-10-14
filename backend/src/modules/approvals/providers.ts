@@ -109,27 +109,31 @@ const storefrontPublish: ApprovalProvider = {
   delegable: true,
   async load(ctx) {
     type Row = {
-      id: string; slug: string; kind: string; title: string | null; tenantId: string | null
+      id: string; slug: string; kind: string; title: string | null; label?: string | null; tenantId: string | null
       liveVersion: number; submittedAt: string | null; submittedBy: { id: string; name: string | null } | null; updatedAt: string
     }
     const rows = await ctx.read<Row[]>('/site-layouts?status=pending')
     if (rows === null) return null
     return rows.map((r): ApprovalItem => {
       const path = `/site-layouts/${encodeURIComponent(r.slug)}`
+      // A brand kit (brand:<b>:kit) reads "Brand kit — <Brand>" (the list
+      // route's `label`) and opens its kit editor.
+      const kitBrand = r.kind === 'kit' ? /^brand:([^:]+):kit$/.exec(r.slug)?.[1] : undefined
+      const link = kitBrand ? `/storefront/kit/${encodeURIComponent(kitBrand)}` : '/storefront?tab=approvals'
       return {
         type: 'storefront_publish',
         id: r.id,
         tenantId: r.tenantId,
-        title: r.title || r.slug,
+        title: r.label || r.title || r.slug,
         subtitle: r.slug,
         facts: facts([
           ['Page', r.slug],
-          ['Kind', human(r.kind)],
+          ['Kind', kitBrand ? 'Brand kit' : human(r.kind)],
           ['Submitted by', r.submittedBy?.name ?? null],
           ['Live now', r.liveVersion > 0 ? `version ${r.liveVersion}` : 'Not published yet'],
         ]),
         waitingSince: iso(r.submittedAt ?? r.updatedAt),
-        link: '/storefront?tab=approvals',
+        link,
         actions: [
           { kind: 'approve', label: 'Publish now', method: 'POST', path: `${path}/approve`, body: {},
             confirm: 'Publish this draft to the live site now? To preview it or schedule it, open the Storefront.' },

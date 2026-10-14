@@ -12,6 +12,7 @@
 
 import type { Block, LibraryFont, PageSettings, PopupRules, SiteLayoutRead } from '../lib/blocks'
 import type { FrameRenderCode, FrameRenderInput } from './types'
+import { normalizeKit, normalizeKitFonts, type LiveKitEntry } from '../lib/brandKit'
 
 export const MAX_INPUT_BYTES = 600_000
 export const MAX_TOP_BLOCKS = 80
@@ -42,7 +43,9 @@ export function parseEditorSlug(slug: unknown): ParsedSlug | null {
   if (prefix === 'popup' && b === undefined) return { prefix, key: a, kind: 'popup' }
   if (prefix === 'brand') {
     if (b === undefined) return { prefix, brand: a, part: null, kind: 'page' }
-    if (PART.test(b)) return { prefix, brand: a, part: b, kind: chromeKind(b) }
+    // `brand:<slug>:kit` is the brand kit, never a page: the kit editor
+    // previews the brand's home with FrameDoc.kit instead.
+    if (PART.test(b) && b.toLowerCase() !== 'kit') return { prefix, brand: a, part: b, kind: chromeKind(b) }
   }
   return null
 }
@@ -169,6 +172,19 @@ export function isBackdropSlug(parsed: ParsedSlug): boolean {
   return false
 }
 
+/** A brand's unsaved kit to paint the frame with (protocol FrameKit). */
+export interface FrameKitInput { brand: string; entry: LiveKitEntry }
+
+/** FrameKit → the shape resolveKit reads; null when absent or malformed
+ *  (the page then paints with the live kits). Values go through the same
+ *  validation as live kits (lib/brandKit.ts normalizeKit). */
+export function sanitizeFrameKit(v: unknown): FrameKitInput | null {
+  if (!isPlainObject(v)) return null
+  const brand = v['brand']
+  if (typeof brand !== 'string' || !CONCEPT_SLUG.test(brand) || !isPlainObject(v['kit'])) return null
+  return { brand, entry: { kit: normalizeKit(v['kit']), version: 0, fonts: normalizeKitFonts(v['fonts']) } }
+}
+
 export interface SanitizedFrameInput {
   rev: number
   slug: string
@@ -176,6 +192,8 @@ export interface SanitizedFrameInput {
   /** The working copy as the public read shape; null = render `slug` live. */
   draft: SiteLayoutRead | null
   variant: 'a' | 'b'
+  /** A draft brand kit overriding that brand's live kit; null = live kits. */
+  kit: FrameKitInput | null
 }
 
 export type SanitizeResult =
@@ -223,5 +241,5 @@ export function sanitizeFrameInput(input: unknown): SanitizeResult {
       publishedAt: null, updatedAt: null,
     }
   }
-  return { ok: true, value: { rev, slug, parsed, draft, variant }, bytes }
+  return { ok: true, value: { rev, slug, parsed, draft, variant, kit: sanitizeFrameKit(i.kit) }, bytes }
 }

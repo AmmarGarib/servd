@@ -204,3 +204,101 @@ export function fontFamiliesUsed(blocks: unknown, settings: unknown): string[] {
   }
   return [...out]
 }
+
+// ── Brand kit (owner, 2026-10-14) ────────────────────────────────────────────
+// One SiteLayout row per brand at `brand:<slug>:kit` (kind 'kit') holds the
+// brand's look: palette, role colours, two fonts and four images. It lives in
+// settings.kit / draftSettings.kit; blocks are always []. Same draft → submit
+// → CEO approve / schedule / reject / rollback as a page. The storefront owns
+// the catalogue of palette keys per brand (src/lib/brandKit.ts) and drops
+// keys it does not know; this schema is the strict shape gate.
+//
+// Colours are 6-digit hex ONLY: the storefront mixes them with color-mix,
+// OG images need hex, and 3/8-digit or rgb() forms would break those.
+
+export const KIT_HEX = /^#[0-9a-fA-F]{6}$/
+/** Built-in font ids the storefront maps to its next/font stacks. Keep in
+ *  step with the storefront kit catalogue (`/api/storefront-brand-kit`). */
+export const KIT_BUILTIN_FONTS = [
+  'amarante', 'playfair', 'inter', 'poppins', 'alfa-slab', 'bricolage', 'syne', 'jetbrains-mono', 'times', 'georgia',
+] as const
+export const KIT_LIBRARY_FONT = /^library:([A-Za-z0-9_-]{1,64})$/
+export const KIT_PALETTE_KEY = /^[a-z][a-z0-9-]{0,30}$/
+export const KIT_MAX_PALETTE_KEYS = 24
+export const KIT_IMAGE_SLOTS = ['logo', 'wordmark', 'mascot', 'badge'] as const
+
+// A cleared form field ('' / null) means "use today's default" = absent.
+const unset = (v: unknown) => (v === '' || v === null ? undefined : v)
+
+const kitHex = z.string().regex(KIT_HEX, 'Use a 6-digit hex colour like #06392F')
+
+const kitFont = z.string().max(80).refine(
+  (v) => (KIT_BUILTIN_FONTS as readonly string[]).includes(v) || KIT_LIBRARY_FONT.test(v),
+  'Unknown font — pick a built-in font or a Library font',
+)
+
+/** An https URL (≤ 1000 chars) or a bundled site path under /brand/. */
+export function isKitSrc(v: string): boolean {
+  if (v.length === 0 || v.length > 1000) return false
+  if (v.startsWith('/brand/')) {
+    return /^\/brand\/[A-Za-z0-9._\/-]+$/.test(v) && !v.includes('..') && !v.includes('//')
+  }
+  if (!v.startsWith('https://')) return false
+  try {
+    const u = new URL(v)
+    return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password
+  } catch {
+    return false
+  }
+}
+const kitSrc = z.string().refine(isKitSrc, 'Use an https:// link or a /brand/ path')
+
+const opt = <T extends z.ZodTypeAny>(s: T) => z.preprocess(unset, s.optional())
+
+const kitPalette = z.preprocess(
+  (v) => {
+    if (v === null) return undefined
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return v
+    // Drop cleared entries; the rest must be valid.
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== '' && x !== null))
+  },
+  z.record(z.string().regex(KIT_PALETTE_KEY, 'Bad palette key'), kitHex)
+    .refine((r) => Object.keys(r).length <= KIT_MAX_PALETTE_KEYS, `At most ${KIT_MAX_PALETTE_KEYS} palette colours`)
+    .optional(),
+)
+
+export const brandKitSchema = z.object({
+  v: z.literal(1),
+  palette: kitPalette,
+  roles: opt(z.object({
+    accent:      opt(kitHex),
+    surfaceBg:   opt(kitHex),
+    surfaceText: opt(kitHex),
+    ordering:    opt(kitHex),
+  }).strict()),
+  fonts: opt(z.object({
+    display: opt(kitFont),
+    body:    opt(kitFont),
+  }).strict()),
+  images: opt(z.object({
+    logo:     opt(kitSrc),
+    wordmark: opt(kitSrc),
+    mascot:   opt(kitSrc),
+    badge:    opt(kitSrc),
+  }).strict()),
+}).strict()
+
+/** A kit row's settings: `{ kit }` and nothing else (no fonts/ab/popup/seo). */
+export const kitSettingsSchema = z.object({ kit: brandKitSchema }).strict()
+
+export type BrandKit = z.infer<typeof brandKitSchema>
+
+/** MediaAsset ids of the `library:` fonts a kit names. */
+export function kitLibraryFontIds(kit: BrandKit): string[] {
+  const ids = new Set<string>()
+  for (const ref of [kit.fonts?.display, kit.fonts?.body]) {
+    const m = ref ? KIT_LIBRARY_FONT.exec(ref) : null
+    if (m) ids.add(m[1]!)
+  }
+  return [...ids]
+}

@@ -37,7 +37,9 @@ export function editorFrameUrl(): string | null {
 
 // widget = servd chrome that floats over every page (servd:feedback, the
 // feedback button): sections only, no SEO or A/B, never in the sitemap.
-export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup'
+// kit = a brand's look (colours, images, fonts), kept in settings.kit of the
+// row `brand:<slug>:kit`; it has no elements.
+export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup' | 'kit'
 // 'none' = no working copy: what the API answers for a page nobody has edited
 // (and for a live page whose draft was published or discarded).
 export type DraftStatus = 'none' | 'draft' | 'pending' | 'scheduled'
@@ -64,7 +66,26 @@ export interface PopupRules {
   endsAt?: string
 }
 
+/** A brand's look, as the storefront's brand kit stores it (contract: DESIGN.md
+ *  "Storage"). Every field is optional; empty = the brand's built-in default.
+ *  Colours are 6-digit hex ONLY. A font is a built-in id or `library:<assetId>`.
+ *  An image is an https URL or a site path starting `/brand/`. */
+export interface BrandKit {
+  v: 1
+  palette?: Record<string, string>
+  roles?: { accent?: string; surfaceBg?: string; surfaceText?: string; ordering?: string }
+  fonts?: { display?: string; body?: string }
+  images?: { logo?: string; wordmark?: string; mascot?: string; badge?: string }
+}
+
+export const KIT_ROLE_KEYS = ['accent', 'surfaceBg', 'surfaceText', 'ordering'] as const
+export const KIT_IMAGE_KEYS = ['logo', 'wordmark', 'mascot', 'badge'] as const
+export type KitRoleKey = (typeof KIT_ROLE_KEYS)[number]
+export type KitImageKey = (typeof KIT_IMAGE_KEYS)[number]
+
 export interface PageSettings {
+  /** Only on a brand kit row (kind 'kit'): the brand's look. */
+  kit?: BrandKit
   fonts?: { heading?: string; body?: string }
   ab?: { splitPct: number; blocks: Block[] }
   popup?: PopupRules
@@ -107,6 +128,8 @@ export interface LayoutSummary {
   slug: string
   kind: LayoutKind
   title: string | null
+  /** The API's display name for a kit row ("Brand kit — <Brand>"). */
+  label?: string | null
   tenantId: string | null
   draftStatus: DraftStatus | null
   liveVersion: number | null
@@ -162,7 +185,12 @@ export interface MediaAssetLite {
   createdAt?: string
 }
 
-export interface ConceptLite { id: string; name: string; slug: string; tenantId?: string | null }
+export interface ConceptLite {
+  id: string; name: string; slug: string; tenantId?: string | null
+  /** The brand's ordering / ERP colour and logo (the kit's publish keeps them in step). */
+  primaryColor?: string | null
+  logoUrl?: string | null
+}
 
 // The Storefront editor's brand list: GET /concepts?view=storefront, which
 // answers anyone holding the 'storefront' module (marketing, brand_manager)
@@ -203,6 +231,7 @@ export const previewUrl = (token: string) => `${STOREFRONT_URL}/preview/${token}
 // ─── Slug helpers ──────────────────────────────────────────────────────────
 
 export function kindForSlug(slug: string): LayoutKind {
+  if (isKitSlug(slug)) return 'kit'
   if (slug.startsWith('popup:')) return 'popup'
   if (slug === 'servd:feedback') return 'widget'
   const last = slug.split(':').pop()
@@ -214,8 +243,15 @@ export function kindForSlug(slug: string): LayoutKind {
 /** Built-in brand sub-pages (anything else under brand:<slug>: is the
     owner's own page, served at /brand/<slug>/pages/<page>). */
 export const BRAND_BUILTIN_PAGES = ['header', 'footer', 'about', 'visit', 'menu'] as const
-const BRAND_RESERVED = new Set<string>([...BRAND_BUILTIN_PAGES, 'qr', 'pages', 'home'])
+const BRAND_RESERVED = new Set<string>([...BRAND_BUILTIN_PAGES, 'qr', 'pages', 'home', 'kit'])
 export const isReservedBrandPage = (p: string) => BRAND_RESERVED.has(p)
+
+/** The brand-kit row of a brand: `brand:<slug>:kit`. */
+export const kitSlugOf = (brandSlug: string) => `brand:${brandSlug}:kit`
+export const isKitSlug = (slug: string) => /^brand:[^:]+:kit$/.test(slug)
+/** The brand a kit slug belongs to (null when it is not a kit slug). */
+export const brandOfKitSlug = (slug: string) => (isKitSlug(slug) ? slug.split(':')[1]! : null)
+export const kitHref = (brandSlug: string) => `/storefront/kit/${encodeURIComponent(brandSlug)}`
 
 const SERVD_PATHS: Record<string, string> = {
   home: '/home', header: '/home', footer: '/home', feedback: '/home', waitlist: '/waitlist', press: '/press', reserve: '/reserve',
@@ -227,6 +263,7 @@ export function storefrontPath(slug: string): string | null {
   if (prefix === 'servd' && a) return SERVD_PATHS[a] ?? null
   if (prefix === 'page' && a) return `/pages/${a}`
   if (prefix === 'brand' && a) {
+    if (b === 'kit') return `/brand/${a}`
     if (!b || b === 'header' || b === 'footer') return `/brand/${a}`
     if (b === 'about' || b === 'visit' || b === 'menu') return `/brand/${a}/${b}`
     return `/brand/${a}/pages/${b}`
@@ -269,6 +306,7 @@ export function isValidSlug(slug: unknown): slug is string {
  *  dropped, the split rounded, pop-up page patterns trimmed. */
 export function cleanSettings(s: PageSettings, isPopup: boolean): PageSettings {
   const out: PageSettings = {}
+  if (s.kit) out.kit = cleanKit(s.kit)
   if (s.fonts && (s.fonts.heading || s.fonts.body)) out.fonts = s.fonts
   if (s.ab) out.ab = { splitPct: Math.max(0, Math.min(100, Math.round(s.ab.splitPct))), blocks: s.ab.blocks }
   if (isPopup && s.popup) out.popup = { ...s.popup, pages: s.popup.pages.map((p) => p.trim()).filter(Boolean) }
@@ -277,6 +315,52 @@ export function cleanSettings(s: PageSettings, isPopup: boolean): PageSettings {
     const description = s.seo.description?.trim()
     if (title || description) out.seo = { ...(title && { title }), ...(description && { description }) }
   }
+  return out
+}
+
+const HEX6 = /^#[0-9a-fA-F]{6}$/
+export const isHex6 = (v: unknown): v is string => typeof v === 'string' && HEX6.test(v)
+/** An image the kit may hold: an https URL (<= 1000 chars) or a site path under /brand/. */
+export const isKitSrc = (v: unknown): v is string =>
+  typeof v === 'string' && v.length <= 1000 && (/^https:\/\/\S+$/i.test(v) || /^\/brand\/\S+$/.test(v))
+export const isKitFontRef = (v: unknown): v is string =>
+  typeof v === 'string' && /^(library:[A-Za-z0-9_-]{1,64}|[a-z][a-z0-9-]{0,40})$/.test(v)
+
+/** A kit as saved: blank fields dropped (blank = the brand's default), values
+ *  trimmed, empty groups removed. Invalid values are KEPT so Save can refuse
+ *  them (see kitProblems) rather than silently dropping what was typed. */
+export function cleanKit(kit: BrandKit): BrandKit {
+  const out: BrandKit = { v: 1 }
+  const pick = (src: Record<string, string | undefined> | undefined) => {
+    const o: Record<string, string> = {}
+    for (const [k, v] of Object.entries(src ?? {})) {
+      const t = typeof v === 'string' ? v.trim() : ''
+      if (t) o[k] = t
+    }
+    return o
+  }
+  const palette = pick(kit.palette)
+  if (Object.keys(palette).length) out.palette = palette
+  const roles = pick(kit.roles)
+  if (Object.keys(roles).length) out.roles = roles
+  const fonts = pick(kit.fonts)
+  if (Object.keys(fonts).length) out.fonts = fonts
+  const images = pick(kit.images)
+  if (Object.keys(images).length) out.images = images
+  return out
+}
+
+/** Plain-words problems that stop a kit being saved (the API would refuse it
+ *  with a 422). Empty = fine. */
+export function kitProblems(kit: BrandKit): string[] {
+  const k = cleanKit(kit)
+  const out: string[] = []
+  for (const [key, v] of Object.entries(k.palette ?? {})) if (!isHex6(v)) out.push(`The colour "${key}" must look like #1a2b3c (six digits).`)
+  const roleName: Record<string, string> = { accent: 'Website signal colour', surfaceBg: 'Band / footer background', surfaceText: 'Band / footer text', ordering: 'Ordering & ERP colour' }
+  for (const [key, v] of Object.entries(k.roles ?? {})) if (!isHex6(v)) out.push(`${roleName[key] ?? key} must look like #1a2b3c (six digits).`)
+  const imgName: Record<string, string> = { logo: 'Logo', wordmark: 'Wordmark', mascot: 'Mascot', badge: 'Badge' }
+  for (const [key, v] of Object.entries(k.images ?? {})) if (!isKitSrc(v)) out.push(`${imgName[key] ?? key} must be a https:// address or pick one from the Library.`)
+  for (const [key, v] of Object.entries(k.fonts ?? {})) if (!isKitFontRef(v)) out.push(`The ${key === 'display' ? 'heading' : 'body'} font is not recognised.`)
   return out
 }
 

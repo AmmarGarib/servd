@@ -92,7 +92,7 @@ export function PagesPanel() {
   const known = new Set([...servd, ...brandList.flatMap(brandPages)].map((e) => e.slug))
   const custom: Entry[] = rows.filter((r) => r.slug.startsWith('page:')).map((r) => ({ slug: r.slug, label: r.title || r.slug.slice(5), hint: `/pages/${r.slug.slice(5)}` }))
   const other: Entry[] = rows
-    .filter((r) => r.kind !== 'popup' && !r.slug.startsWith('popup:') && !r.slug.startsWith('page:') && !known.has(r.slug))
+    .filter((r) => r.kind !== 'popup' && r.kind !== 'kit' && !r.slug.startsWith('popup:') && !r.slug.startsWith('page:') && !known.has(r.slug))
     .map((r) => ({ slug: r.slug, label: r.title || r.slug }))
 
   // New page: a servd page (page:<x>, at servd.pk/pages/<x>) or a brand page

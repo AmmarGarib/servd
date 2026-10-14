@@ -609,7 +609,7 @@ export function Builder({ slug }: { slug: string }) {
   )
 }
 
-function ApproveDialog({ busy, savesFirst, onCancel, onApprove }: { busy: boolean; savesFirst: boolean; onCancel: () => void; onApprove: (publishAt?: string) => void }) {
+export function ApproveDialog({ busy, savesFirst, onCancel, onApprove }: { busy: boolean; savesFirst: boolean; onCancel: () => void; onApprove: (publishAt?: string) => void }) {
   const [at, setAt] = useState('')
   const iso = fromLocalInput(at)
   const future = iso && new Date(iso).getTime() > Date.now() ? iso : undefined
@@ -632,7 +632,7 @@ function ApproveDialog({ busy, savesFirst, onCancel, onApprove }: { busy: boolea
   )
 }
 
-function RejectDialog({ busy, onCancel, onReject }: { busy: boolean; onCancel: () => void; onReject: (note: string) => void }) {
+export function RejectDialog({ busy, onCancel, onReject }: { busy: boolean; onCancel: () => void; onReject: (note: string) => void }) {
   const [note, setNote] = useState('')
   return (
     <Modal title="Send back with a note" onClose={onCancel}>

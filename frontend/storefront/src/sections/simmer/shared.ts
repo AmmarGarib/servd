@@ -65,7 +65,7 @@ export function surface(v: unknown, fallback: SurfaceName): Surface {
   const name: SurfaceName = v === 'bone' || v === 'green' ? v : fallback
   return name === 'bone'
     ? { name, background: 'var(--simmer-bone)', color: 'var(--simmer-green)', line: 'rgba(6,57,47,0.18)' }
-    : { name, background: 'var(--simmer-green)', color: 'var(--simmer-bone)', line: 'rgba(237,230,211,0.18)' }
+    : { name, background: 'var(--simmer-green)', color: 'var(--simmer-bone)', line: 'color-mix(in srgb, var(--simmer-bone) 18%, transparent)' }
 }
 
 /** The brand this page is about (live), or the bundled Simmer record. */

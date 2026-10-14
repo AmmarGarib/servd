@@ -17,6 +17,7 @@ import { OpenStatusBadge, HoursGrid, useHoursData } from '../../components/brand
 import type { SectionProps } from '../types'
 import { safeHref, safeSrc, str, link, list, color } from '../safe'
 import { FlipdLink, flipdHref } from './links'
+import { sectionKitImage } from '../brand/kitImage'
 
 const BRAND_BOOK_SIZE = 22
 
@@ -94,7 +95,7 @@ export function FlipdValues({ fields }: SectionProps) {
                   className="flipd-display"
                   style={{
                     fontSize: '1.6rem', display: 'block', lineHeight: 1,
-                    ...(fg ? { color: fg, opacity: 0.38 } : { color: 'rgba(254,213,97,0.38)' }),
+                    ...(fg ? { color: fg, opacity: 0.38 } : { color: 'color-mix(in srgb, var(--flipd-mustard) 38%, transparent)' }),
                   }}
                 >
                   {String(i + 1).padStart(2, '0')}
@@ -105,7 +106,7 @@ export function FlipdValues({ fields }: SectionProps) {
                 <p
                   style={{
                     fontSize: '0.88rem', lineHeight: 1.65, margin: 0,
-                    ...(fg ? { color: fg, opacity: 0.74 } : { color: 'rgba(254,213,97,0.74)' }),
+                    ...(fg ? { color: fg, opacity: 0.74 } : { color: 'color-mix(in srgb, var(--flipd-mustard) 74%, transparent)' }),
                   }}
                 >
                   {str(v.body)}
@@ -218,7 +219,9 @@ export function FlipdSignOff({ fields, ctx }: SectionProps) {
   const concept = ctx.concept
   // Field first, then operator-uploaded artwork, then the copy in this build.
   // `||` not `??` — a cleared admin field sends '', which must fall back too.
-  const own = safeSrc(fields.badge) || concept?.wordmarkUrl || ''
+  // Section field → kit badge (→ Concept wordmark → bundled badge, resolved by the kit).
+  const kitBadge = sectionKitImage(ctx, 'badge')
+  const own = safeSrc(fields.badge) || (kitBadge && kitBadge !== BUNDLED_BADGE ? kitBadge : '') || ''
   const badge = own || BUNDLED_BADGE
   const badgeIsFallback = !own
   // The badge is the brand's logo — its alt is the brand's name (search
@@ -255,7 +258,7 @@ export function FlipdSignOff({ fields, ctx }: SectionProps) {
           }}
         />
         {caption && (
-          <p className="flipd-eyebrow" style={{ color: 'rgba(254,213,97,0.6)' }}>
+          <p className="flipd-eyebrow" style={{ color: 'color-mix(in srgb, var(--flipd-mustard) 60%, transparent)' }}>
             {caption}
           </p>
         )}

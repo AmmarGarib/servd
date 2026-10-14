@@ -328,8 +328,8 @@ export const specs: SectionSpec[] = [
       kitchensHeading: 'Kitchens',
       // Live brands only; accents match the canonical per-brand palette.
       kitchens: [
-        { name: 'Stackd', href: 'https://stackd.pk/', dot: '#FCE8CE' },
-        { name: 'Simmer', href: 'https://simmer.pk/', dot: '#E94E1B' },
+        { name: 'Stackd', href: 'https://stackd.pk/', dot: 'var(--stackd-cream)' },
+        { name: 'Simmer', href: 'https://simmer.pk/', dot: 'var(--simmer-orange)' },
         { name: 'Flipd', href: 'https://flipd.pk/', dot: '#2092E9' },
       ],
       customerHeading: 'Customer',

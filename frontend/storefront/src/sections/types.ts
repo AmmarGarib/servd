@@ -1,3 +1,4 @@
+import type { LiveKits } from '../lib/brandKit'
 // Storefront sections — every storefront page is a list of blocks edited in
 // Admin → Storefront (owner, 2026-10-07: "every element in the storefront
 // module, all pages"). A page's bespoke design is broken into SECTIONS: one
@@ -86,6 +87,9 @@ export interface SectionContext {
   /** The route's own params when a page template serves many URLs
       (e.g. { loc: 'stackd-ittehad' } on /locations/[loc]). */
   params?: Record<string, string>
+  /** The live brand kits — with the editor's DRAFT kit laid over its brand
+      inside the editor frame (lib/brandKit.ts; sections/brand/kitImage.ts). */
+  kits?: LiveKits
 }
 
 export interface SectionProps<F = Record<string, unknown>> {

@@ -16,6 +16,8 @@ export interface FrameRenderInput {
     fonts: Array<{ family: string; url: string }>
   }
   variant: 'a' | 'b'
+  /** A brand's unsaved kit (protocol FrameKit); the page paints with it. */
+  kit?: { brand: string; kit: unknown; fonts?: unknown } | null
 }
 
 export type FrameRenderCode = 'BAD_INPUT' | 'TOO_LARGE' | 'RATE_LIMITED' | 'RENDER'

@@ -479,9 +479,9 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
   const { data: existingBrands = [] } = useQuery<Concept[]>({
     queryKey: ['wizard-concepts'], queryFn: () => api.get<Concept[]>('/concepts'),
   })
-  // mode: idle (just showing list), 'new' (form for a new brand), or
-  // { editing: brand } (form pre-populated for an existing brand).
-  const [mode, setMode] = useState<'idle' | 'new' | { editing: Concept }>('idle')
+  // mode: idle (just showing list) or 'new' (form for a new brand). Editing a
+  // brand opens Marketing -> Brands (the one brand editor), never this form.
+  const [mode, setMode] = useState<'idle' | 'new'>('idle')
 
   const del = useMutation({
     mutationFn: (id: string) => api.delete(`/concepts/${id}`),
@@ -502,10 +502,10 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
                 <p className="font-bold text-white/90 text-sm">{b.name}</p>
                 <p className="text-xs text-white/45 font-mono truncate">{b.conceptStatement ?? `/${b.slug}`}</p>
               </div>
-              <button onClick={() => setMode({ editing: b })}
+              <Link href={`/marketing/brands?id=${encodeURIComponent(b.id)}`}
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white shrink-0">
                 Edit
-              </button>
+              </Link>
               <button onClick={() => { if (confirm(`Delete brand "${b.name}"? You can re-create it later.`)) del.mutate(b.id) }}
                 className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-700/70 hover:text-red-700 shrink-0">
                 Delete
@@ -521,7 +521,6 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
             inline
             title=""
             hint=""
-            existingBrand={mode !== 'idle' && mode !== 'new' ? mode.editing : undefined}
             onCreated={() => {
               qc.invalidateQueries({ queryKey: ['wizard-concepts'] })
               setMode('idle')
@@ -652,7 +651,9 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
     && (currentRates.taxRateCash !== nextRates.taxRateCash || currentRates.taxRateCard !== nextRates.taxRateCard))
 
   // Visual / setup (auto-derived; hidden in advanced)
-  const [primaryColor, setPrimaryColor] = useState(existingBrand?.primaryColor ?? defaultColor ?? '#D4581A')
+  // A new brand starts with a distinct ordering colour picked for it; the
+  // brand's colours are then set in Storefront -> Brand kit, never here.
+  const startColor = defaultColor ?? '#D4581A'
   const [heroTagline, setHeroTagline] = useState(existingBrand?.heroTagline ?? '')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [slug, setSlug] = useState(existingBrand?.slug ?? '')
@@ -678,13 +679,11 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
     mutationFn: () => {
       const payload = {
         name, type,
-        primaryColor,
         // The province and the tender split the till charges. On edit they
         // are only sent when the operator changed the province, so rates set
         // in Brands → Tax registration are never overwritten by re-saving.
         ...(provinceChanged && province ? { province, ...provinceTenderRates(province) } : {}),
         heroTagline: heroTagline || conceptStatement || null,
-        isActive: true, storefrontVisible: true,
         conceptStatement: conceptStatement || null,
         cuisine: cuisine || null,
         heroProduct: heroProduct || null,
@@ -702,7 +701,11 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
           ...(serviceVessel && serviceVessel !== existingBrand.serviceVessel ? { serviceVessel } : {}),
         })
       }
-      return api.post('/concepts', { ...payload, slug, serviceVessel })
+      // Only a NEW brand is switched on and given its starting colour. An edit
+      // never sends isActive / storefrontVisible / primaryColor: re-saving a
+      // brief must not turn a retired or hidden brand back on, or reset a
+      // colour the brand kit has set.
+      return api.post('/concepts', { ...payload, primaryColor: startColor, isActive: true, storefrontVisible: true, slug, serviceVessel })
     },
     onSuccess: () => onCreated(),
   })
@@ -875,16 +878,6 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
           <input value={heroTagline} onChange={(e) => setHeroTagline(e.target.value)}
             placeholder="Smashed. Stacked. Sauced." maxLength={120} className={fieldCls} />
           <Hint>Goes in the hero of your storefront. Leave blank to use the concept statement.</Hint>
-        </Field>
-        <Field label="Brand colour">
-          <div className="flex gap-2">
-            <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="w-12 h-10 rounded cursor-pointer bg-transparent" />
-            <input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className={fieldCls + ' font-mono flex-1'} />
-            <div className="flex-1 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider"
-              style={{ background: primaryColor, color: 'var(--erp-on-primary)' }}>
-              Preview
-            </div>
-          </div>
         </Field>
       </Section>
 

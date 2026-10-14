@@ -3,11 +3,8 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
-import { useAuthStore } from '../../../store/auth'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
-import { brandPalette } from '../../../lib/brandPalettes'
-
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+import { BrandKitCard } from '../../../components/storefront/BrandKitCard'
 
 interface Concept {
   id: string
@@ -78,7 +75,6 @@ interface Concept {
  *  the PATCH is refused whole (403 FIELD_NOT_ALLOWED). */
 const MARKETING_FIELDS = [
   'description', 'heroTagline',
-  'logoUrl', 'wordmarkUrl', 'mascotUrl', 'primaryColor',
   'conceptStatement', 'cuisine', 'heroProduct', 'anchoringExperience',
   'targetCustomer', 'priceTier', 'daypartFocus', 'competitors',
   'differentiator', 'brandVoice',
@@ -201,7 +197,7 @@ export default function BrandEditorPage() {
                   <img src={c.logoUrl} alt={c.name} className="h-8 w-8 rounded-lg object-cover" />
                 ) : (
                   <div className="h-8 w-8 rounded-lg flex items-center justify-center text-xs font-black"
-                    style={{ background: brandPalette(c.slug)?.accent ?? c.primaryColor ?? '#3D4452', color: '#fff' }}>
+                    style={{ background: c.primaryColor ?? '#3D4452', color: '#fff' }}>
                     {c.name[0]?.toUpperCase()}
                   </div>
                 )}
@@ -245,8 +241,7 @@ type TabKey = 'identity' | 'contact' | 'brief' | 'storefront' | 'delivery' | 'ta
 function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => void }) {
   const qc = useQueryClient()
   const [tab, setTab] = useState<TabKey>('identity')
-  const palette = brandPalette(concept.slug)
-  // Marketing tier: copy, artwork, colour and brief are editable; name,
+  // Marketing tier: copy and the brand brief are editable; name,
   // status, contact, storefront switches and tax stay with management.
   const marketingOnly = concept.brandEditorAccess === 'marketing'
 
@@ -254,8 +249,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   // brand remounts it with fresh state — no re-sync effect needed.
   const [name, setName] = useState(concept.name)
   const [description, setDescription] = useState(concept.description ?? '')
-  const [logoUrl, setLogoUrl] = useState(concept.logoUrl ?? '')
-  const [primaryColor, setPrimaryColor] = useState(concept.primaryColor ?? '#87c540')
   const [isActive, setIsActive] = useState(concept.isActive)
   const [serviceVessel, setServiceVessel] = useState<'plate' | 'packaging' | ''>(concept.serviceVessel ?? '')
 
@@ -278,8 +271,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [heroTagline, setHeroTagline] = useState(concept.heroTagline ?? '')
   const [storefrontVisible, setStorefrontVisible] = useState(concept.storefrontVisible)
   const [reservationsEnabled, setReservationsEnabled] = useState(concept.reservationsEnabled)
-  const [wordmarkUrl, setWordmarkUrl] = useState(concept.wordmarkUrl ?? '')
-  const [mascotUrl, setMascotUrl] = useState(concept.mascotUrl ?? '')
 
   const [taxRateCash, setTaxRateCash] = useState(String(concept.taxRateCash ?? 15))
   const [taxRateCard, setTaxRateCard] = useState(String(concept.taxRateCard ?? 8))
@@ -293,8 +284,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
 
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [saveError, setSaveError] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const num = (v: string, fallback: number) => {
@@ -304,8 +293,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
 
   const marketingBody = () => {
     const body: Record<string, unknown> = {
-      description: description || null, logoUrl: logoUrl || null,
-      primaryColor: primaryColor || null,
+      description: description || null,
       conceptStatement: conceptStatement || null,
       cuisine: cuisine || null,
       priceTier: priceTier || null,
@@ -317,7 +305,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       daypartFocus,
       competitors: competitors.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
       heroTagline: heroTagline || null,
-      wordmarkUrl: wordmarkUrl || null, mascotUrl: mascotUrl || null,
     }
     // Belt and braces: never send a key outside the allow-list.
     return Object.fromEntries(Object.entries(body).filter(([k]) => (MARKETING_FIELDS as readonly string[]).includes(k)))
@@ -325,8 +312,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
 
   const save = useMutation({
     mutationFn: () => marketingOnly ? api.patch(`/concepts/${concept.id}`, marketingBody()) : api.patch(`/concepts/${concept.id}`, {
-      name, description: description || null, logoUrl: logoUrl || null,
-      primaryColor: primaryColor || null, isActive,
+      name, description: description || null, isActive,
       // Management form only (the marketing tier's body never carries it).
       ...(serviceVessel ? { serviceVessel } : {}),
       phone: phone.trim() || null,
@@ -345,7 +331,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       daypartFocus,
       competitors: competitors.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
       heroTagline: heroTagline || null,
-      wordmarkUrl: wordmarkUrl || null, mascotUrl: mascotUrl || null,
       storefrontVisible,
       reservationsEnabled,
       taxRateCash: num(taxRateCash, 15),
@@ -373,53 +358,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       onDeleted()
     },
   })
-
-  // One uploader for all three brand images (logo, wordmark, mascot). `setUrl`
-  // is the state setter for whichever field is being replaced.
-  //
-  // `credentials: 'include'` matters: the bearer token lives in memory only, so
-  // after a page reload there is nothing in the header and the request has to
-  // fall back to the session cookie. Without it this 401s on a fresh load while
-  // the identical uploader on the storefront-hero page keeps working — which is
-  // exactly what made it look like an intermittent R2 problem.
-  async function uploadBrandImage(
-    e: React.ChangeEvent<HTMLInputElement>,
-    setUrl: (v: string) => void,
-  ) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true); setUploadError('')
-    try {
-      const token = useAuthStore.getState().token
-      const qs = new URLSearchParams({ filename: file.name, contentType: file.type, category: 'marketing' })
-      const res = await fetch(`${API_URL}/api/v1/media/upload-url?${qs}`, {
-        credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      if (!res.ok) {
-        // The presigner rejects anything outside its allowlist (jpeg, png,
-        // webp, gif). Say so, rather than blaming R2 for a wrong file type.
-        throw new Error(res.status === 400 ? 'type' : 'presign')
-      }
-      const { uploadUrl, publicUrl } = await res.json() as { uploadUrl: string; publicUrl: string }
-      const put = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
-      if (!put.ok) throw new Error('put')
-      setUrl(publicUrl)
-    } catch (err) {
-      setUploadError(
-        (err as Error).message === 'type'
-          ? `${file.type || 'That file type'} isn’t accepted — use PNG, JPEG, WebP or GIF.`
-          : 'Upload failed — check R2 setup in Configuration → Integrations',
-      )
-    } finally {
-      setUploading(false)
-      // Let the same file be picked again after a failure; without this the
-      // input holds the old value and onChange never fires a second time.
-      e.target.value = ''
-    }
-  }
-
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => uploadBrandImage(e, setLogoUrl)
 
   const ALL_TABS: Array<{ key: TabKey; label: string; emoji: string }> = [
     { key: 'identity',   label: 'Identity',   emoji: '🏷' },
@@ -459,7 +397,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       {saveError && <p className="text-xs text-s-red">{saveError}</p>}
       {marketingOnly && (
         <p className="text-xs text-white/50">
-          You can edit the description, tagline, artwork, colour and brand brief. The name, status, contact details,
+          You can edit the description, tagline and brand brief. Colours, pictures and fonts are in Storefront → Brand kit. The name, status, contact details,
           storefront switches and tax registration are changed by management.
         </p>
       )}
@@ -484,63 +422,29 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       {/* ── Identity ─────────────────────────────────────────────────────── */}
       {tab === 'identity' && (
         <div className="space-y-5">
-          <Section title="Brand identity" subtitle="Name, logo, colour, description">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-              {/* Logo upload */}
-              <div>
-                <label className="text-xs text-white/55 block mb-2">Logo</label>
-                <div className="aspect-square rounded-xl overflow-hidden flex items-center justify-center"
-                  style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-                  {logoUrl ? (
-                    <img src={logoUrl} alt={name} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-3xl opacity-40">🏷</span>
-                  )}
-                </div>
-                <label className="block mt-2 cursor-pointer rounded-lg bg-white/5 hover:bg-white/10 text-center py-2 text-xs font-bold text-white/85">
-                  {uploading ? 'Uploading…' : '📤 Upload new logo'}
-                  <input type="file" accept="image/*" className="sr-only" onChange={handleLogoUpload} />
-                </label>
-                {uploadError && <p className="text-[10px] text-s-red mt-1">{uploadError}</p>}
-              </div>
-
-              {/* Name + description */}
-              <div className="sm:col-span-2 space-y-3">
-                <Field label="Display name *">
-                  <input value={name} onChange={(e) => setName(e.target.value)} disabled={marketingOnly}
-                    className="s-input w-full disabled:opacity-60" />
-                </Field>
-                <Field label="Description" hint="Shown in page titles, JSON-LD and cross-brand cards on the storefront.">
-                  <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
-                    className="s-input w-full resize-none" />
-                </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Primary colour"
-                    hint={palette
-                      ? 'Not used on this brand’s live microsite — its colours come from the storefront palette (Storefront tab). Used for admin chips and dashboards only.'
-                      : 'Used as the accent on the brand microsite and in dashboards.'}>
-                    <div className="flex items-center gap-2">
-                      <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)}
-                        className="h-10 w-12 rounded-lg cursor-pointer bg-transparent border border-white/10" />
-                      <input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)}
-                        className="s-input flex-1 font-mono text-xs" placeholder="#87c540" />
-                    </div>
-                    {palette && palette.accent.toLowerCase() !== primaryColor.toLowerCase() && (
-                      <button type="button" onClick={() => setPrimaryColor(palette.accent)}
-                        className="mt-1.5 text-[10px] font-bold text-primary-ink hover:underline">
-                        ↳ Match storefront accent ({palette.accent})
-                      </button>
-                    )}
-                  </Field>
+          <Section title="Brand identity" subtitle="Name and description">
+            <div className="space-y-3">
+              <Field label="Display name *">
+                <input value={name} onChange={(e) => setName(e.target.value)} disabled={marketingOnly}
+                  className="s-input w-full disabled:opacity-60" />
+              </Field>
+              <Field label="Description" hint="Shown in page titles, JSON-LD and cross-brand cards on the storefront.">
+                <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
+                  className="s-input w-full resize-none" />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
                   <Field label="Status" hint="Off = retired: hidden from the POS, pickers and the storefront. History is kept.">
                     <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
                       <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} disabled={marketingOnly} className="accent-primary" />
                       Brand is active
                     </label>
                   </Field>
-                </div>
               </div>
             </div>
+          </Section>
+
+          <Section title="Brand kit" subtitle="Colours, fonts and pictures. Read-only here: they are set in Storefront → Brand kit and go live after CEO approval.">
+            <BrandKitCard slug={concept.slug} primaryColor={concept.primaryColor} logoUrl={concept.logoUrl} />
           </Section>
 
           <Section title="Primary service vessel" subtitle="How this brand serves its food: on plates, or in packaging.">
@@ -694,48 +598,9 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               </fieldset>
             </div>
           </Section>
-          <Section
-            title="Brand artwork"
-            subtitle="Supplied art the microsite renders as images instead of type. Leave empty to use the artwork built into the storefront."
-          >
-            <div className="space-y-4">
-              <ArtworkField
-                label="Wordmark"
-                hint="The brand's own lettering, shown in the hero and the sign-off. Transparent PNG, 1200px wide or more."
-                value={wordmarkUrl}
-                onChange={setWordmarkUrl}
-                onFile={(e) => uploadBrandImage(e, setWordmarkUrl)}
-                uploading={uploading}
-                previewBg={palette?.surfaceBg ?? '#17181d'}
-              />
-              <ArtworkField
-                label="Character / mascot"
-                hint="The brand character, shown in its own band. Transparent PNG, 1000px or more on the long edge — it renders up to ~960px wide on a retina screen, so anything smaller looks soft."
-                value={mascotUrl}
-                onChange={setMascotUrl}
-                onFile={(e) => uploadBrandImage(e, setMascotUrl)}
-                uploading={uploading}
-                previewBg={palette?.surfaceBg ?? '#17181d'}
-              />
-              {uploadError && <p className="text-xs text-red-700">{uploadError}</p>}
-            </div>
-          </Section>
-          {palette && (
-            <Section title="Storefront palette" subtitle="Live brand colours rendered on the microsite. Source of truth is in code; shown here so this tab carries the colour info.">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {palette.swatches.map((s) => <SwatchChip key={s.hex + s.name} name={s.name} hex={s.hex} />)}
-              </div>
-              <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] mt-1">
-                <KV k="Accent" v={palette.accent} />
-                <KV k="Footer background" v={palette.surfaceBg} />
-                <KV k="Footer text" v={palette.surfaceText} />
-              </div>
-              {palette.note && <p className="text-[10px] text-white/35">{palette.note}</p>}
-            </Section>
-          )}
           <div className="rounded-xl p-4 text-xs text-white/55"
             style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.18)' }}>
-            The brand page itself (blocks above and below the signature design, pop-ups, fonts) is built in the <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}`)}`} className="text-primary-ink underline">storefront hub</Link>; footer copy and social links are on its <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink underline">footer page</Link>. Changes go live after CEO approval.
+            The brand&apos;s colours, fonts and pictures are in <Link href={`/storefront/kit/${encodeURIComponent(concept.slug)}`} className="text-primary-ink underline">Storefront → Brand kit</Link>. The brand page itself (blocks above and below the signature design, pop-ups) is built in the <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}`)}`} className="text-primary-ink underline">storefront hub</Link>; footer copy and social links are on its <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-primary-ink underline">footer page</Link>. Changes go live after CEO approval.
           </div>
         </div>
       )}
@@ -921,110 +786,5 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <p className="text-[10px] text-white/35 mt-1">{hint}</p>}
     </div>
-  )
-}
-
-/** Upload-or-paste control for one piece of brand artwork.
- *
- *  The preview sits on the brand's own dark surface rather than the admin's
- *  panel colour: this art is cream-on-plum with a transparent background, and
- *  on a light chip it would look like an empty box. The pixel size is read off
- *  the loaded image and shown back, because "is this file big enough?" is the
- *  entire reason an operator opens this field. */
-function ArtworkField({
-  label, hint, value, onChange, onFile, uploading, previewBg,
-}: {
-  label: string
-  hint?: string
-  value: string
-  onChange: (v: string) => void
-  onFile: (e: React.ChangeEvent<HTMLInputElement>) => void
-  uploading: boolean
-  previewBg: string
-}) {
-  const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
-  useEffect(() => { setDims(null) }, [value])
-
-  // What the storefront actually renders these at, in device pixels on a 2x
-  // screen. Under this and the art visibly softens.
-  const MIN_LONG_EDGE = 960
-  const tooSmall = dims !== null && Math.max(dims.w, dims.h) < MIN_LONG_EDGE
-
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex items-start gap-3">
-        <div
-          className="h-24 w-24 shrink-0 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden"
-          style={{ background: previewBg }}
-        >
-          {value ? (
-            <img
-              src={value}
-              alt=""
-              className="max-h-full max-w-full object-contain"
-              onLoad={(e) => setDims({
-                w: e.currentTarget.naturalWidth,
-                h: e.currentTarget.naturalHeight,
-              })}
-              onError={() => setDims(null)}
-            />
-          ) : (
-            <span className="text-[9px] text-white/30 text-center px-2 leading-tight">Using built-in</span>
-          )}
-        </div>
-
-        <div className="flex-1 min-w-0 space-y-2">
-          <input
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="Upload a file, or paste an image URL"
-            className="s-input w-full font-mono text-xs"
-          />
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="cursor-pointer text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70">
-              {uploading ? 'Uploading…' : 'Upload file'}
-              <input type="file" accept="image/*" onChange={onFile} disabled={uploading} className="sr-only" />
-            </label>
-            {value && (
-              <button
-                type="button"
-                onClick={() => onChange('')}
-                className="text-[11px] px-2.5 py-1.5 rounded-lg text-white/45 hover:text-white/80"
-              >
-                Clear
-              </button>
-            )}
-            {dims && (
-              <span className={`text-[10px] font-mono ${tooSmall ? 'text-amber-700' : 'text-white/35'}`}>
-                {dims.w} × {dims.h}
-                {tooSmall && ` — under ${MIN_LONG_EDGE}px, will look soft`}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-    </Field>
-  )
-}
-
-function SwatchChip({ name, hex }: { name: string; hex: string }) {
-  return (
-    <div className="rounded-xl overflow-hidden border border-white/10">
-      <div className="h-12 w-full" style={{ background: hex }} />
-      <div className="px-2 py-1.5">
-        <p className="text-[10px] font-bold text-white/80 truncate">{name}</p>
-        <p className="text-[9px] font-mono text-white/40">{hex}</p>
-      </div>
-    </div>
-  )
-}
-
-function KV({ k, v }: { k: string; v: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="h-3.5 w-3.5 rounded-full border border-white/15" style={{ background: v }} />
-      <span className="text-white/45">{k}</span>
-      <span className="font-mono text-white/70">{v}</span>
-    </span>
   )
 }

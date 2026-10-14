@@ -30,7 +30,7 @@ export function StackdRoom({ fields, ctx }: SectionProps) {
                 fontFamily: 'var(--stackd-body)',
                 fontSize: '1.05rem',
                 lineHeight: 1.75,
-                color: 'rgba(61,17,34,0.78)',
+                color: 'color-mix(in srgb, var(--stackd-plum-dark) 78%, transparent)',
                 margin: 0,
                 maxWidth: '62ch',
                 whiteSpace: 'pre-line',

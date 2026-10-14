@@ -68,7 +68,9 @@ export function VersionsDrawer({ slug, isAdmin, liveVersion, onClose, onRolledBa
                 </p>
                 {v.note && <p className="text-[11px] text-s-muted mt-1">{v.note}</p>}
                 <p className="text-[11px] text-s-dim mt-1">
-                  {v.blocks.length} element{v.blocks.length === 1 ? '' : 's'}
+                  {v.settings?.kit
+                    ? 'Brand kit'
+                    : <>{v.blocks.length} element{v.blocks.length === 1 ? '' : 's'}</>}
                   {v.settings?.ab && <> · A/B split {v.settings.ab.splitPct}% to B</>}
                 </p>
                 {vs.length > 0 && (

@@ -1,5 +1,7 @@
 // Concept-related shared utilities for storefront components.
 
+import { KIT_BRAND_SLUG_RE, kitVar, liveEntry, liveKitsSnapshot, resolveKit, type LiveKits } from './brandKit'
+
 export interface ServiceHourSlot {
   dayOfWeek: number   // 0 = Sun … 6 = Sat
   openMin:   number   // minutes since midnight
@@ -49,20 +51,23 @@ export interface Concept {
   reservationsEnabled?: boolean
 }
 
-// Per-brand visual override applied at the BrandLayout level. Lets a brand
-// page run its own visual language without depending on whatever color is
-// in the DB. Until the operator UI grows a real palette field, this map
-// is the source of truth for /brand/<slug> chrome.
-const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
-  simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
-  stackd: '#FCE8CE',  // Pantone 9180 cream — the wordmark colour on the plum field
-  flipd:  '#294375',  // Flipd Blue (Pantone 19-4057) — the brand book's ink
-}
+// ── Brand look ────────────────────────────────────────────────────────────
+// The brand's colours, fonts and images live in its BRAND KIT (Admin →
+// Storefront → Brand kit; lib/brandKit.ts is the one definition of the
+// defaults). These helpers keep their old names and signatures:
+//   - brandAccent() returns a concrete colour (server: the live kit snapshot
+//     brandKitFetch keeps, or the kits you pass in);
+//   - brandSurface() / brandWordmark() return CSS values that read the kit's
+//     tokens (`var(--kit-<slug>-…, <default>)`), which the root layout
+//     injects — so client components follow the published kit with no data
+//     of their own, and hydration can never disagree. Need real colour
+//     values (share images)? Use resolveKit(...).surface.
 
-/** Returns the brand accent the storefront should use for this concept,
- *  preferring the per-brand override over the DB primaryColor. */
-export function brandAccent(slug: string, fallback: string | null | undefined): string {
-  return BRAND_ACCENT_OVERRIDES[slug] ?? fallback ?? '#22c55e'
+/** Returns the brand accent (website signal colour) the storefront should use
+ *  for this concept: the brand kit's accent, else the bespoke default, else
+ *  the DB primaryColor, else servd's fallback. */
+export function brandAccent(slug: string, fallback: string | null | undefined, kits?: LiveKits): string {
+  return resolveKit(slug, { primaryColor: fallback ?? null }, liveEntry(kits ?? liveKitsSnapshot(), slug)).accent
 }
 
 // Per-brand surface palette for the dark "ink" sections (the microsite footer,
@@ -78,29 +83,33 @@ export interface BrandSurface {
   border: string  // hairline dividers
 }
 
-const BRAND_SURFACE: Record<string, BrandSurface> = {
-  simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
-  stackd: { bg: '#7C2946', text: '#FCE8CE', muted: 'rgba(252,232,206,0.72)', border: 'rgba(252,232,206,0.20)' },
-  // flipd's dark band is Flipd Blue with mustard type — the inverse of the
-  // page, which is mustard with blue type. Both halves of the brand book.
-  flipd:  { bg: '#294375', text: '#FED561', muted: 'rgba(254,213,97,0.72)',  border: 'rgba(254,213,97,0.22)'  },
-  servd:  { bg: '#6a0dad', text: '#ffffff', muted: 'rgba(255,255,255,0.72)', border: 'rgba(255,255,255,0.16)' },
-}
-
-/** The dark-section surface palette for a brand (falls back to near-black). */
+/** The dark-section surface palette for a brand, as CSS values that follow
+ *  the brand kit (`var(--kit-<slug>-surface-*, <default>)`). Never append hex
+ *  alpha to these — tint with color-mix(in srgb, <value> N%, transparent). */
 export function brandSurface(slug: string): BrandSurface {
-  return BRAND_SURFACE[slug] ?? { bg: '#0B0B0E', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' }
+  const d = resolveKit(slug).surface
+  if (!KIT_BRAND_SLUG_RE.test(slug)) return d
+  return {
+    bg:     `var(${kitVar(slug, 'surface-bg')}, ${d.bg})`,
+    text:   `var(${kitVar(slug, 'surface-text')}, ${d.text})`,
+    muted:  `var(${kitVar(slug, 'surface-muted')}, ${d.muted})`,
+    border: `var(${kitVar(slug, 'surface-border')}, ${d.border})`,
+  }
 }
 
 /** Per-brand wordmark styling for the nav brand-mark — the brand name renders
  *  in that brand's own type + colour, pasted straight on the page background
- *  (no chip behind it). The circular logo card carries the accent separately. */
+ *  (no chip behind it). The circular logo card carries the accent separately.
+ *  The display font is the brand kit's (the token follows it). */
 export function brandWordmark(slug: string): { font: string; color: string; weight: number } {
   switch (slug) {
     case 'simmer': return { font: 'var(--simmer-display)', color: 'var(--simmer-bone)',  weight: 400 }
-    case 'stackd':   return { font: 'var(--stackd-display)',   color: 'var(--stackd-cream)',   weight: 700 }
-    case 'flipd':  return { font: 'var(--flipd-display)', color: 'var(--flipd-blue)',   weight: 400 }
-    default:       return { font: 'var(--font-wordmark)',  color: 'var(--brand-accent)', weight: 800 }
+    case 'stackd': return { font: 'var(--stackd-display)', color: 'var(--stackd-cream)', weight: 700 }
+    case 'flipd':  return { font: 'var(--flipd-display)',  color: 'var(--flipd-blue)',   weight: 400 }
+    default:
+      return KIT_BRAND_SLUG_RE.test(slug)
+        ? { font: `var(${kitVar(slug, 'display')}, var(--font-wordmark))`, color: 'var(--brand-accent)', weight: 800 }
+        : { font: 'var(--font-wordmark)', color: 'var(--brand-accent)', weight: 800 }
   }
 }
 

@@ -7,10 +7,26 @@ joined by a second content system.
 
 ## Files
 
-- `page.tsx` — hub with tabs via `?tab=`: `pages` | `popups` | `library` | `approvals`
+- `page.tsx` — hub with tabs via `?tab=`: `kit` | `pages` | `popups` | `library` | `approvals` (default `pages`)
 - `pages/[slug]/page.tsx` — page builder for a SiteLayout slug (URL-encoded):
   `servd:<page>`, `brand:<slug>[:<page>]`, `page:<slug>`
 - `popups/[key]/page.tsx` — pop-up editor for `popup:<key>`
+- `kit/[slug]/page.tsx` — brand kit editor for one brand (`brand:<slug>:kit`)
+
+## Brand kit
+
+A brand's look — colours, two fonts (heading, body) and four pictures (logo,
+wordmark, mascot, badge) — is one `SiteLayout` row per brand, slug
+`brand:<slug>:kit`, kind `kit`, the kit in `settings.kit` (no elements). Same
+draft → submit → CEO approve / schedule / reject → versions → rollback as a
+page; there is no second approval engine. `components/storefront/KitEditor.tsx`
+builds its form from the storefront's `GET /api/storefront-brand-kit`
+(`kitCatalog.ts`; no brand palette is copied into the admin) and shows the
+brand's home page in the editor frame with the UNSAVED kit (`FrameDoc.kit`).
+Empty field = the brand's built-in look. The publish keeps the brand's
+ordering colour, logo, wordmark and mascot (`Concept`) in step, which is why
+Marketing -> Brands only shows the kit and links here. `kit` is a reserved
+brand page name (`isReservedBrandPage`).
 
 UI lives in `components/storefront/` (Builder, LiveCanvas, Canvas, BlockInspector,
 MotionPicker, SectionFields, panels, VersionsDrawer, ListPanels, LibraryPanel,

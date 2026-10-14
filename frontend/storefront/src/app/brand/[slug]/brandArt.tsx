@@ -2,11 +2,13 @@
 // browser / home-screen icons (./icon.tsx, ./apple-icon.tsx) — the same
 // ImageResponse convention as servd's own card (src/app/opengraph-image.tsx).
 //
-// Colours come from the brand's own palette (brandSurface / brandAccent in
-// lib/concept.ts), never literals here. Artwork is the brand's own: the
-// wordmark / logo uploaded in Admin → Brands, else the asset bundled in this
-// build (read from public/, which the Docker image ships), else the name set
-// as type. Simmer follows its SKILL rules: a flat tiber field, bone type, the
+// Colours come from the brand's PUBLISHED brand kit (lib/brandKit.ts
+// resolveKit: the kit's surface and accent, else the brand's defaults) as
+// real colour values — an image can't read CSS tokens — never literals here.
+// Artwork is the brand's own: kitImage() = the kit's image, else the Concept
+// field, else the asset bundled in this build (read from public/, which the
+// Docker image ships), else the name set as type. Fonts stay as below (the
+// kit's fonts are web fonts; the card fetches its own faces). Simmer follows its SKILL rules: a flat tiber field, bone type, the
 // lowercase wordmark with `simmer down.` BELOW it, the full stop the one
 // orange signal; no white, no gradient.
 //
@@ -16,7 +18,9 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ReactElement } from 'react'
-import { brandAccent, brandSurface, formatBrandName, type Concept } from '../../../lib/concept'
+import { formatBrandName, type Concept } from '../../../lib/concept'
+import { KIT_CATALOGUE, kitImage, liveEntry, resolveKit, type ResolvedKit } from '../../../lib/brandKit'
+import { getLiveKits } from '../../../lib/brandKitFetch'
 
 type Font = { name: string; data: ArrayBuffer; weight: 400 | 500 | 700 | 800 | 900; style: 'normal' }
 
@@ -102,19 +106,21 @@ function inkOn(bg: string, a: string, b: string): string {
   return contrast(la) >= contrast(lb) ? a : b
 }
 
-/** The artwork each brand's card falls back to when nothing is uploaded. */
-const BUNDLED_ART: Record<string, { src: string; width: number; height: number }> = {
-  stackd: { src: '/brand/stackd-wordmark-tagline.png', width: 599, height: 195 },
-  flipd:  { src: '/brand/flipd-badge.png', width: 760, height: 760 },
+/** The brand's look as real colours: defaults ⊕ its live kit. */
+async function kitFor(concept: Concept): Promise<ResolvedKit> {
+  return resolveKit(concept.slug, concept, liveEntry(await getLiveKits(), concept.slug))
 }
+
+/** Which kit image a brand's card shows (Flipd's is its square badge). */
+const CARD_ART: Record<string, 'wordmark' | 'badge'> = { flipd: 'badge' }
 
 export const OG_SIZE = { width: 1200, height: 630 }
 
 /** The brand's 1200×630 share card, and the fonts it needs. */
 export async function brandCard(concept: Concept): Promise<{ element: ReactElement; fonts: Font[] }> {
   const slug = concept.slug
-  const surface = brandSurface(slug)
-  const accent = brandAccent(slug, concept.primaryColor)
+  const kit = await kitFor(concept)
+  const { surface, accent } = kit
   const name = formatBrandName(concept.name)
   const about = (concept.description ?? '').replace(/\s+/g, ' ').trim()
   const line = about.length > 120 ? `${about.slice(0, 117).replace(/\s+\S*$/, '')}…` : about
@@ -127,7 +133,7 @@ export async function brandCard(concept: Concept): Promise<{ element: ReactEleme
   if (slug === 'simmer') {
     const mark = name.toLowerCase()
     const tagline = 'simmer down'
-    const uploaded = await artwork(concept.wordmarkUrl)
+    const uploaded = await artwork(kitImage(kit, 'wordmark'))
     const font = await googleFont('Amarante', 400, `${mark}${tagline}.`)
     return {
       fonts: font ? [font] : [],
@@ -146,8 +152,11 @@ export async function brandCard(concept: Concept): Promise<{ element: ReactEleme
     }
   }
 
-  const bundled = BUNDLED_ART[slug]
-  const art = (await artwork(concept.wordmarkUrl)) ?? (bundled ? await publicImage(bundled.src) : null)
+  const artKey = Object.prototype.hasOwnProperty.call(CARD_ART, slug) ? CARD_ART[slug]! : 'wordmark'
+  // A broken upload falls back to the bundled asset, as before the kit.
+  const bundled = (Object.prototype.hasOwnProperty.call(KIT_CATALOGUE, slug) ? KIT_CATALOGUE[slug]!.images[artKey] : undefined) ?? null
+  const chosen = kitImage(kit, artKey)
+  const art = (await artwork(chosen)) ?? (bundled && bundled !== chosen ? await publicImage(bundled) : null)
   const square = slug === 'flipd'
   const [display, body] = await Promise.all([
     art ? Promise.resolve(null) : googleFont('Bricolage Grotesque', 800, `${name}.`),
@@ -202,10 +211,10 @@ function monogram(concept: Concept): { letter: string; family: string; weight: F
  * icon, which iOS masks itself).
  */
 export async function brandMark(concept: Concept, size: number, square = false): Promise<{ element: ReactElement; fonts: Font[] }> {
-  const surface = brandSurface(concept.slug)
-  const accent = brandAccent(concept.slug, concept.primaryColor)
+  const kit = await kitFor(concept)
+  const { surface, accent } = kit
   const mono = monogram(concept)
-  const logo = await artwork(concept.logoUrl)
+  const logo = await artwork(kitImage(kit, 'logo'))
   const font = logo ? null : await googleFont(mono.family, mono.weight, mono.letter)
   return {
     fonts: font ? [font] : [],

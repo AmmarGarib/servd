@@ -26,7 +26,8 @@ import type { SectionProps } from '../types'
 import { safeSrc, str, link, list } from '../safe'
 import { useScrollProgress } from '../../components/kinetic/motionHooks'
 import { STACKD_DIE } from '../../lib/stackdDie'
-import { StackdFrame, stackdConcept, brandName, fill, stackdHref } from './shared'
+import { StackdFrame, stackdConcept, brandName, fill, stackdHref, FALLBACK_MASCOT } from './shared'
+import { sectionKitImage } from '../brand/kitImage'
 
 const BUNDLED_BREAD = '/brand/stackd/bread.png'
 const BUNDLED_GUY = '/brand/stackd/guy.png'
@@ -65,7 +66,11 @@ export function StackdSlip({ fields, ctx }: SectionProps) {
   // An uploaded mascot (the section's own, else admin -> Brands) can't be cut
   // into bread + guy at known pixel rows, so it is shown whole and still
   // rather than silently ignored.
-  const customMascot = safeSrc(fields.customMascot) || safeSrc(concept.mascotUrl)
+  // Section field → brand kit mascot → Concept mascot. The kit's bundled
+  // default (the full mascot art) is NOT a custom upload: the cut bread + guy
+  // below stay the default look.
+  const kitMascot = sectionKitImage(ctx, 'mascot', concept)
+  const customMascot = safeSrc(fields.customMascot) || (kitMascot && kitMascot !== FALLBACK_MASCOT ? safeSrc(kitMascot) : '')
   const breadSrc = safeSrc(fields.breadImage) || BUNDLED_BREAD
   const guySrc = safeSrc(fields.guyImage) || BUNDLED_GUY
   const mascotAlt = customMascot ? fill(fields.customMascotAlt, concept) : str(fields.mascotAlt)

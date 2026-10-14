@@ -52,8 +52,14 @@ export function AlignSelect({ value, onChange }: { value: Align; onChange: (v: A
   )
 }
 
-export function ColorInput({ value, onChange, placeholder }: { value: string | undefined; onChange: (v: string | undefined) => void; placeholder?: string }) {
-  const hex = value && /^#[0-9a-f]{6}$/i.test(value) ? value : '#000000'
+export function ColorInput({ value, onChange, placeholder, fallback }: {
+  value: string | undefined
+  onChange: (v: string | undefined) => void
+  placeholder?: string
+  /** What the colour picker shows while the value is empty (e.g. the default). */
+  fallback?: string
+}) {
+  const hex = value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback && /^#[0-9a-f]{6}$/i.test(fallback) ? fallback : '#000000'
   return (
     <div className="flex gap-2">
       <input type="color" value={hex} onChange={(e) => onChange(e.target.value)}

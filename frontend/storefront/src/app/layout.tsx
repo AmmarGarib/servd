@@ -10,6 +10,8 @@ import { FeedbackSlot } from '../components/feedback/FeedbackSlot'
 import { PopupHost } from '../components/popups/PopupHost'
 import { SERVD_ORIGIN, SERVD_OG_IMAGE, BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { ManagedPage } from '../sections/ManagedPage'
+import { allKitsCss } from '../lib/brandKit'
+import { getLiveKits } from '../lib/brandKitFetch'
 // The share card's own alt and type (app/opengraph-image.tsx), restated below:
 // an explicit openGraph.images replaces the file-based image metadata, which
 // is what used to emit og:image:alt / og:image:type.
@@ -161,6 +163,12 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // app: it is a live ordering storefront, and the brand pages already opt out
   // of static rendering anyway (see the fetch-caching note in CLAUDE.md).
   const initialBrandSlug = headers().get(BRAND_HOST_HEADER)
+  // Brand kits (Admin → Storefront → Brand kit): the ONE definition of every
+  // brand's tokens (--simmer-* / --stackd-* / --flipd-* and the --kit-<slug>-*
+  // roles), defaults ⊕ the published kits. Injected for every page so brand
+  // pages, ordering skins, checkout, the tracker and servd.pk's cross-brand
+  // tiles all follow. API down → {} → the defaults, which are in code.
+  const brandKitCss = allKitsCss(await getLiveKits())
   // The servd header and footer are content pages (`servd:header`,
   // `servd:footer` — Admin → Storefront), rendered here on the server and
   // handed to the client gates that hide them on brand microsites and the
@@ -169,6 +177,10 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // the draft itself.
   return (
     <html lang="en" className={fontVariables}>
+      <head>
+        {/* Generated from validated hex and built-in stacks only (lib/brandKit.ts). */}
+        <style id="servd-brand-kits" dangerouslySetInnerHTML={{ __html: brandKitCss }} />
+      </head>
       <body>
         <a
           href="#main"

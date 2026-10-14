@@ -7,6 +7,7 @@ import { useState, useEffect, type ElementType } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { brandSurface, brandWordmark } from '../../lib/concept'
+import { sectionKitImage } from './kitImage'
 import { useBrandSlug } from '../../lib/host'
 import type { SectionProps } from '../types'
 import { link, list, safeSrc } from '../safe'
@@ -72,10 +73,10 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
     ? {
         backgroundColor: surface.bg,
         backgroundImage:
-          'linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),' +
-          'linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),' +
-          'linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),' +
-          'linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)',
+          'linear-gradient(color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),' +
+          'linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),' +
+          'linear-gradient(color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px),' +
+          'linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px)',
         backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
       }
     : diner
@@ -85,7 +86,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
         backgroundSize: '36px 36px',
         backgroundRepeat: 'repeat',
       }
-    : { background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)` }
+    : { background: `linear-gradient(to bottom, color-mix(in srgb, ${surface.bg} 94.9%, transparent) 0%, color-mix(in srgb, ${surface.bg} 0%, transparent) 100%)` }
   // The diner checker is high-contrast and shreds plain text, so flipd floats
   // its nav on a bone card outlined in Flipd Blue with a hard blue drop shadow.
   const dinerCard: React.CSSProperties = diner
@@ -101,14 +102,17 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
   // plus Order on a single capsule: flipd keeps its bone/blue card, the dark
   // brands get a faint glass capsule so labels read on their deep backgrounds.
   const pillNav = pinnedNav
-  const pillTint = concept.slug === 'simmer' ? '243,236,222' : '197,199,204' // bone / grey
+  // The pill's glass tint: simmer's surface text (bone), a neutral grey on the rest.
+  const pillMix = (pct: number) => concept.slug === 'simmer'
+    ? `color-mix(in srgb, ${surface.text} ${pct}%, transparent)`
+    : `rgba(197,199,204,${pct / 100})`
   const navPill: React.CSSProperties = diner
     ? dinerCard
     : pillNav
-    ? { background: `rgba(${pillTint},0.05)`, border: `1px solid rgba(${pillTint},0.18)`, borderRadius: '999px' }
+    ? { background: pillMix(5), border: `1px solid ${pillMix(18)}`, borderRadius: '999px' }
     : {}
   // Fill behind the active link inside the pill.
-  const activeFill = diner ? 'rgba(9,13,23,0.12)' : pillNav ? `rgba(${pillTint},0.14)` : 'transparent'
+  const activeFill = diner ? 'rgba(9,13,23,0.12)' : pillNav ? pillMix(14) : 'transparent'
 
   // The link list is the owner's; tokens resolve against the live brand
   // (@book disappears when the brand takes no reservations; @visit goes to
@@ -122,11 +126,12 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
   const order = link(fields.order)
   const orderTo = to(order.href)
   const orderText = fill(order.text, ctx, name)
-  const logo = safeSrc(fields.logo) || concept.logoUrl
+  // Section field → kit logo → Concept logo (the kit resolves the last two).
+  const logo = safeSrc(fields.logo) || sectionKitImage(ctx, 'logo') || concept.logoUrl
   // The home link is active only on the home page; the others on their page
   // and below it. Absolute links (servd pages) are never this page.
   const isActive = (href: string) => (href === base ? pathname === href : href !== '/' && href.startsWith('/') && pathname.startsWith(href))
-  const badge = safeSrc(fields.badge) || concept.wordmarkUrl || BUNDLED_BADGE
+  const badge = safeSrc(fields.badge) || sectionKitImage(ctx, 'badge') || concept.wordmarkUrl || BUNDLED_BADGE
 
   return (
     <nav
@@ -325,7 +330,7 @@ export function BrandHeader({ fields, ctx }: SectionProps) {
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
           className={pillNav ? 'hidden' : 'inline-flex items-center justify-center sm:hidden'}
-          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-bone)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-blue)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-blue)' : undefined, color: diner ? 'var(--flipd-blue)' : surface.text, cursor: 'pointer' }}
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-bone)' : pillNav ? pillMix(5) : 'transparent', border: diner ? '2px solid var(--flipd-blue)' : pillNav ? `1px solid ${pillMix(18)}` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-blue)' : undefined, color: diner ? 'var(--flipd-blue)' : surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open

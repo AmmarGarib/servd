@@ -23,8 +23,9 @@ type Params = { params: Promise<{ slug: string; page: string }> | { slug: string
 
 // The brand's chrome and fixed pages are SiteLayouts under the same key
 // shape; /pages/<one of these> would serve the header as a page, or a second
-// copy of /menu, /about or /visit.
-const RESERVED = new Set(['header', 'footer', 'menu', 'about', 'visit'])
+// copy of /menu, /about or /visit. `kit` is the brand kit (colours, fonts,
+// images), never a page.
+const RESERVED = new Set(['header', 'footer', 'menu', 'about', 'visit', 'kit'])
 
 /** The page's live layout, or a 404. */
 async function livePage(slug: string, page: string) {

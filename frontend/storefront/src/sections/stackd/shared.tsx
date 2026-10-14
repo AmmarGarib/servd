@@ -9,6 +9,7 @@ import { FALLBACK_CONCEPTS } from '../../lib/fallbackBrands'
 import type { SectionContext } from '../types'
 import { safeSrc, str } from '../safe'
 import { brandHref } from '../brand/util'
+import { sectionKitImage } from '../brand/kitImage'
 import './stackd.css'
 
 // Bundled artwork. Used until the operator uploads a replacement in
@@ -47,7 +48,7 @@ export function stackdHref(href: unknown, ctx: SectionContext, concept: Concept)
 }
 
 /**
- * The wordmark: the section's own image, else the brand's uploaded one, else
+ * The wordmark: the section's own image, else the brand kit's, else the Concept's uploaded one, else
  * the bundled file. `|| fallback` on purpose: an empty string is what a
  * cleared admin field sends, and it must fall back too.
  *
@@ -55,8 +56,11 @@ export function stackdHref(href: unknown, ctx: SectionContext, concept: Concept)
  * space before the file arrives — known only for the bundled file, so the hint
  * is given only then (stating it for an upload of another shape shifts the page).
  */
-export function wordmark(field: unknown, concept: Concept): { src: string; dims: { width?: number; height?: number } } {
-  const src = safeSrc(field) || safeSrc(concept.wordmarkUrl) || FALLBACK_WORDMARK
+export function wordmark(field: unknown, concept: Concept, ctx?: SectionContext): { src: string; dims: { width?: number; height?: number } } {
+  // Section field → brand kit wordmark → Concept wordmark → bundled file
+  // (the kit resolves the last three, in that order).
+  const kit = ctx ? sectionKitImage(ctx, 'wordmark', concept) : null
+  const src = safeSrc(field) || safeSrc(kit) || safeSrc(concept.wordmarkUrl) || FALLBACK_WORDMARK
   return { src, dims: src === FALLBACK_WORDMARK ? { width: 599, height: 195 } : {} }
 }
 

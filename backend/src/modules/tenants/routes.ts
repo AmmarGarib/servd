@@ -632,7 +632,8 @@ export async function tenantRoutes(fastify: FastifyInstance) {
   // Everything anchored on a tenantId column moves in the same transaction:
   // brands, staff, memberships, locations, suppliers, inventory, riders, bank
   // accounts, modifier templates, webhooks, domains, capex/opex/pro-forma rows,
-  // workforce rows and the per-company singleton configs. Concept-scoped data
+  // workforce rows, storefront content (pages, brand kits, pop-ups) and the
+  // Library, and the per-company singleton configs. Concept-scoped data
   // (orders, items, etc.) follows its brand. Where the target already holds a
   // row with the same company-keyed unique key the target's row wins and the
   // source's duplicate is dropped — except kitchen staff, where the merge is
@@ -765,6 +766,10 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         tx.journalEntry, tx.periodLock,
         tx.capitalLedgerEntry, tx.capexProject, tx.opexCategory, tx.proForma, tx.projection,
         tx.position, tx.kitchenStaff, tx.kitchenPayrollRun, tx.complianceViolation,
+        // Storefront content (pages, brand kits, pop-ups) and the Library
+        // (images, videos, fonts, copy): slug / id are global, so a straight
+        // repoint — a brand kit's library: fonts move with it.
+        tx.siteLayout, tx.mediaAsset,
       ]
       for (const model of repoint) {
         await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })

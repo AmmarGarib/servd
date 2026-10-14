@@ -24,7 +24,7 @@ import { Monitor, RotateCw, Smartphone, Tablet, X } from 'lucide-react'
 import type { Block } from '../../lib/blocks'
 import {
   cleanSettings, contextPartName, editorFrameUrl, isValidSlug, kindForSlug, STOREFRONT_ORIGIN,
-  type PageSettings, type Variant,
+  type BrandKit, type PageSettings, type Variant,
 } from '../../lib/content'
 import { storefrontHost } from '../../lib/sections'
 import {
@@ -103,6 +103,9 @@ interface Props {
   fonts: Array<{ family: string; url: string }>
   /** Block id -> what the editor calls it (the frame's outline chip). */
   labels: Record<string, string>
+  /** A brand kit being edited: the frame paints that brand with this draft
+   *  kit over the live one (FrameDoc.kit). Nothing is saved by it. */
+  kit?: { brand: string; kit: BrandKit }
   selection: { id: string | null; source: SelectionSource; nonce: number }
   hover: { id: string | null; source: SelectionSource }
   /** Extra toolbar controls (A/B variant switch, the pop-up's display hint). */
@@ -137,7 +140,7 @@ const DOC_THROTTLE_MS = 250
 const INIT_ECHO_MS = 1_500
 
 export const LiveCanvas = forwardRef<LiveCanvasHandle, Props>(function LiveCanvas(props, ref) {
-  const { slug, doc, variant, fonts, labels, selection, hover, toolbarExtra } = props
+  const { slug, doc, variant, fonts, labels, kit, selection, hover, toolbarExtra } = props
   const kind = kindForSlug(slug)
   const isPopup = kind === 'popup'
   const src = editorFrameUrl()
@@ -206,19 +209,23 @@ export const LiveCanvas = forwardRef<LiveCanvasHandle, Props>(function LiveCanva
   // ─── The doc as the frame gets it ────────────────────────────────────────
   const body = useMemo(() => {
     const settings = cleanSettings(doc.settings, isPopup) as unknown as Record<string, unknown>
-    const b: Omit<FrameDoc, 'rev'> = {
+    // `kit` is FrameDoc.kit in the contract; typed here so this file does not
+    // depend on the protocol copy having been refreshed yet.
+    const b: Omit<FrameDoc, 'rev'> & { kit?: { brand: string; kit: BrandKit } } = {
       slug,
-      kind,
+      // The frame always shows a page/part, never the kit row itself.
+      kind: kind as FrameDoc['kind'],
       title: doc.title.trim() || null,
       variant,
       blocks: doc.blocks,
       settings: Object.keys(settings).length ? settings : null,
       fonts,
       labels,
+      ...(kit ? { kit } : {}),
     }
     const json = JSON.stringify(b)
     return { doc: b, json, size: utf8Length(json) }
-  }, [slug, kind, isPopup, doc, variant, fonts, labels])
+  }, [slug, kind, isPopup, doc, variant, fonts, labels, kit])
   const bodyRef = useRef(body)
   bodyRef.current = body
 

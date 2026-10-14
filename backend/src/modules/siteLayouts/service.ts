@@ -11,11 +11,11 @@ import { serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
-import { fontFamiliesUsed } from './schemas.js'
+import { fontFamiliesUsed, brandKitSchema, kitLibraryFontIds, type BrandKit } from './schemas.js'
 
 const db = serviceClient
 
-export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup'
+export type LayoutKind = 'page' | 'header' | 'footer' | 'widget' | 'popup' | 'kit'
 
 export type ParsedSlug =
   | { owner: 'shared'; kind: LayoutKind }
@@ -35,8 +35,10 @@ const SERVD_WIDGETS = new Set(['feedback'])
  *                                site chrome; servd:feedback is a widget —
  *                                the floating feedback button)
  * brand:<conceptSlug>[:<page>] → the brand's company (:header / :footer are
- *                                its chrome; about, visit, menu built-in pages;
- *                                anything else is a page the owner added)
+ *                                its chrome; :kit is its brand kit — colours,
+ *                                fonts, images, never a page; about, visit,
+ *                                menu built-in pages; anything else is a page
+ *                                the owner added)
  * page:<slug>                  → shared custom page
  * popup:<key>                  → shared, or the company of the brands it targets
  *
@@ -45,6 +47,13 @@ const SERVD_WIDGETS = new Set(['feedback'])
  */
 function chromeKind(part: string): LayoutKind {
   return part === 'header' ? 'header' : part === 'footer' ? 'footer' : 'page'
+}
+
+/** brand:<b>:kit — the one brand part that is the brand's look, not a page. */
+export const KIT_PART = 'kit'
+
+function brandPartKind(part: string): LayoutKind {
+  return part === KIT_PART ? 'kit' : chromeKind(part)
 }
 
 export function parseSlug(slug: string): ParsedSlug | null {
@@ -57,7 +66,7 @@ export function parseSlug(slug: string): ParsedSlug | null {
   if (prefix === 'popup' && b === undefined) return { owner: 'popup', kind: 'popup' }
   if (prefix === 'brand') {
     if (b === undefined) return { owner: 'brand', kind: 'page', conceptSlug: a }
-    if (PART.test(b)) return { owner: 'brand', kind: chromeKind(b), conceptSlug: a }
+    if (PART.test(b)) return { owner: 'brand', kind: brandPartKind(b), conceptSlug: a }
   }
   return null
 }
@@ -175,6 +184,10 @@ export async function publishDraft(
     })
     if (claimed.count === 0) return null
 
+    // A brand kit goes live with the brand's Concept fields in the SAME
+    // transaction (ordering pages, ERP chips and the mobile app read those).
+    await applyKitToConceptTx(tx, row, row.draftSettings)
+
     await tx.siteLayoutVersion.create({
       data: {
         layoutId:      row.id,
@@ -220,6 +233,87 @@ export async function publishDueLayouts(filter: { slug?: string; kind?: string }
     }
   }
   return published
+}
+
+// ── Brand kit ────────────────────────────────────────────────────────────────
+
+/** The kit inside a kit row's settings, or null (not a kit / invalid). */
+export function kitOf(settings: unknown): BrandKit | null {
+  if (!settings || typeof settings !== 'object') return null
+  const r = brandKitSchema.safeParse((settings as Record<string, unknown>)['kit'])
+  return r.success ? r.data : null
+}
+
+/**
+ * When a published row is a brand kit, copy the fields it SETS onto the
+ * brand's Concept — primaryColor ← roles.ordering, logoUrl ← images.logo,
+ * wordmarkUrl ← images.wordmark, mascotUrl ← images.mascot. A field the kit
+ * leaves empty is never written (no null over today's value). The brand is
+ * found by slug inside the row's OWN company, never another's. The one sync
+ * path: publishDraft (approve now + scheduled) and the rollback route call it
+ * inside their publishing transaction. Returns the fields written.
+ */
+export async function applyKitToConceptTx(
+  tx: Prisma.TransactionClient,
+  row: Pick<SiteLayout, 'slug' | 'tenantId'>,
+  settings: unknown,
+): Promise<string[]> {
+  const parsed = parseSlug(row.slug)
+  if (!parsed || parsed.owner !== 'brand' || parsed.kind !== 'kit' || !row.tenantId) return []
+  const kit = kitOf(settings)
+  if (!kit) return []
+  const data: Prisma.ConceptUpdateManyMutationInput = {}
+  if (kit.roles?.ordering) data.primaryColor = kit.roles.ordering
+  if (kit.images?.logo) data.logoUrl = kit.images.logo
+  if (kit.images?.wordmark) data.wordmarkUrl = kit.images.wordmark
+  if (kit.images?.mascot) data.mascotUrl = kit.images.mascot
+  const fields = Object.keys(data)
+  if (fields.length === 0) return []
+  await tx.concept.updateMany({
+    where: { slug: parsed.conceptSlug, tenantId: row.tenantId, deletedAt: null },
+    data,
+  })
+  return fields
+}
+
+/** A `library:` kit font must be a font of the layout's own company (422). */
+export async function assertKitFontsInCompany(kit: BrandKit, tenantId: string | null): Promise<void> {
+  const ids = kitLibraryFontIds(kit)
+  if (ids.length === 0) return
+  const found = tenantId === null ? [] : await db.mediaAsset.findMany({
+    where: { id: { in: ids }, kind: 'font', tenantId, url: { not: '' } },
+    select: { id: true },
+  })
+  if (found.length !== ids.length) {
+    throw new AppError('KIT_FONT_NOT_IN_COMPANY',
+      "A Library font in this brand kit is not a font of the brand's company. Upload it to that company's Library.", 422)
+  }
+}
+
+export interface KitFont { id: string; family: string; url: string; format: string | null }
+
+function fontFormat(nameOrUrl: string): string | null {
+  const ext = nameOrUrl.split('?')[0]!.split('.').pop()?.toLowerCase()
+  return ext === 'woff2' ? 'woff2' : ext === 'woff' ? 'woff' : ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : null
+}
+
+/** The `library:` fonts a kit names, resolved inside the kit row's company
+ *  (`id` is the kit's ref, `library:<assetId>`). Missing ones are skipped —
+ *  the storefront falls back to the brand's default font. */
+export async function resolveKitFonts(kit: BrandKit | null, tenantId: string | null): Promise<KitFont[]> {
+  if (!kit || !tenantId) return []
+  const ids = kitLibraryFontIds(kit)
+  if (ids.length === 0) return []
+  const assets = await db.mediaAsset.findMany({
+    where: { id: { in: ids }, kind: 'font', tenantId, url: { not: '' } },
+    select: { id: true, url: true, fontFamily: true, name: true, filename: true },
+  })
+  return assets.map((a) => ({
+    id: `library:${a.id}`,
+    family: a.fontFamily || a.name || a.filename,
+    url: a.url,
+    format: fontFormat(a.filename) ?? fontFormat(a.url),
+  }))
 }
 
 // ── Read shapes ──────────────────────────────────────────────────────────────
@@ -270,7 +364,9 @@ export async function publicShape(slug: string, row: SiteLayout | null, draft = 
     version: row.liveVersion,
     blocks,
     settings: settings ?? null,
-    fonts: blocks ? await resolveFonts(blocks, settings, row.tenantId) : [],
+    fonts: !blocks ? []
+      : parseSlug(row.slug)?.kind === 'kit' ? await resolveKitFonts(kitOf(settings), row.tenantId)
+      : await resolveFonts(blocks, settings, row.tenantId),
     publishedAt: row.publishedAt,
     updatedAt: useDraft ? row.draftUpdatedAt : row.updatedAt,
   }

@@ -7,6 +7,9 @@
 //                                 widget — the feedback button)
 //   brand:<slug>[:<page>]         a brand's pages, top bar,   the brand's company
 //                                 footer and the owner's own pages
+//   brand:<slug>:kit              the brand kit (kind 'kit'): the brand's company
+//                                 colours, fonts and images in
+//                                 settings.kit; blocks always []
 //   page:<slug>                   custom page (/pages/<slug>) tenantId null
 //   popup:<key>                   pop-up                      null, or the one company its brands belong to
 //
@@ -30,11 +33,11 @@ import { AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedErr
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import {
-  blocksSchema, pageSettingsSchema, popupRulesSchema, MAX_CONTENT_BYTES,
+  blocksSchema, pageSettingsSchema, popupRulesSchema, kitSettingsSchema, MAX_CONTENT_BYTES,
 } from './schemas.js'
 import {
   parseSlug, parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
-  publicShape, resolveFonts, namesById,
+  publicShape, resolveFonts, namesById, applyKitToConceptTx, assertKitFontsInCompany, kitOf, resolveKitFonts,
 } from './service.js'
 
 const PREVIEW_TOKEN_TYPE = 'site_preview'
@@ -44,9 +47,12 @@ const jwtSecret = () => process.env['JWT_SECRET'] as string
 type SlugParams = { Params: { slug: string } }
 
 /** brand:<slug>:<part> names the storefront serves from its own routes (the
- *  chrome, and the built-in about/visit/menu pages); any other part is a page
- *  the owner added, at /brand/<slug>/pages/<part>. */
-const BRAND_FIXED_PARTS = new Set(['header', 'footer', 'about', 'visit', 'menu'])
+ *  chrome, and the built-in about/visit/menu pages) or that are not pages at
+ *  all (kit = the brand kit); any other part is a page the owner added, at
+ *  /brand/<slug>/pages/<part>. */
+const BRAND_FIXED_PARTS = new Set(['header', 'footer', 'about', 'visit', 'menu', 'kit'])
+
+const LAYOUT_KINDS = ['page', 'hero', 'header', 'footer', 'widget', 'popup', 'kit'] as const
 
 function slugOf(req: FastifyRequest<SlugParams>): string {
   try { return decodeURIComponent(req.params.slug) } catch { return req.params.slug }
@@ -197,6 +203,43 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // Every LIVE brand kit of a brand on the storefront (active, visible, not
+  // deleted), keyed by brand slug, for the storefront's root layout. Spans
+  // companies like /pages/live (the public storefront lists every company's
+  // brands); a kit paints only the brand of its OWN company. `fonts` resolves
+  // the kit's library fonts inside that company. Registered before /:slug.
+  fastify.get(
+    '/kits/live',
+    { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } },
+    async () => {
+      await publishDueLayouts({ kind: 'kit' })
+      const rows = await prisma.siteLayout.findMany({
+        where: { kind: 'kit', liveVersion: { gt: 0 } },
+        select: { slug: true, tenantId: true, settings: true, liveVersion: true },
+        orderBy: { slug: 'asc' },
+      })
+      const bySlug = new Map<string, (typeof rows)[number]>()
+      for (const r of rows) {
+        const p = parseSlug(r.slug)
+        if (p?.owner === 'brand' && p.kind === 'kit' && r.tenantId) bySlug.set(p.conceptSlug, r)
+      }
+      const kits: Record<string, { kit: unknown; version: number; fonts: unknown[] }> = {}
+      if (bySlug.size === 0) return { kits }
+      const brands = await prisma.concept.findMany({
+        where: { slug: { in: [...bySlug.keys()] }, isActive: true, storefrontVisible: true, deletedAt: null },
+        select: { slug: true, tenantId: true },
+      })
+      for (const b of brands) {
+        const row = bySlug.get(b.slug)
+        if (!row || row.tenantId !== b.tenantId) continue
+        const kit = kitOf(row.settings)
+        if (!kit) continue
+        kits[b.slug] = { kit, version: row.liveVersion, fonts: await resolveKitFonts(kit, row.tenantId) }
+      }
+      return { kits }
+    },
+  )
+
   // Draft preview for the storefront's /preview/<token> page. A wildcard, not
   // `:token`: a JWT is longer than the router's 100-char param limit (414).
   fastify.get<{ Params: { '*': string } }>(
@@ -283,7 +326,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     async (req) => {
       const q = z.object({
         status: z.enum(['pending', 'draft', 'scheduled', 'all']).default('all'),
-        kind:   z.enum(['page', 'hero', 'header', 'footer', 'widget', 'popup']).optional(),
+        kind:   z.enum(LAYOUT_KINDS).optional(),
       }).parse(req.query)
       const rows = await prisma.siteLayout.findMany({
         where: {
@@ -294,11 +337,31 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         orderBy: { slug: 'asc' },
       })
       const names = await namesById(rows.map((r) => r.submittedById))
+      // Brand kits are listed as "Brand kit — <Brand>" (the approvals inbox
+      // and the Storefront → Approvals tab show `label` when set).
+      const kitBrand = new Map<string, string>()
+      for (const r of rows) {
+        const p = parseSlug(r.slug)
+        if (p?.owner === 'brand' && p.kind === 'kit') kitBrand.set(r.slug, p.conceptSlug)
+      }
+      const brandNames = new Map<string, string>()
+      if (kitBrand.size > 0) {
+        const concepts = await prisma.concept.findMany({
+          where: { slug: { in: [...new Set(kitBrand.values())] } },
+          select: { slug: true, name: true, tenantId: true },
+        })
+        for (const c of concepts) brandNames.set(`${c.tenantId}:${c.slug}`, c.name)
+      }
+      const labelOf = (r: (typeof rows)[number]) => {
+        const b = kitBrand.get(r.slug)
+        return b === undefined ? null : `Brand kit — ${brandNames.get(`${r.tenantId}:${b}`) ?? b}`
+      }
       return rows.map((r) => ({
         id: r.id,
         slug: r.slug,
         kind: r.kind,
         title: r.title,
+        label: labelOf(r),
         tenantId: r.tenantId,
         draftStatus: r.draftStatus,
         liveVersion: r.liveVersion,
@@ -338,25 +401,40 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     const parsed = parseSlugOrThrow(slug)
     const body = z.object({
       title:    z.string().max(120).nullish(),
-      kind:     z.enum(['page', 'hero', 'header', 'footer', 'widget', 'popup']).optional(), // derived from the slug; accepted for the contract
+      kind:     z.enum(LAYOUT_KINDS).optional(), // derived from the slug; accepted for the contract
       blocks:   blocksSchema,
-      settings: pageSettingsSchema.nullish(),
+      settings: z.unknown().optional(),
     }).parse(req.body)
-    const settings = body.settings ?? null
+
+    // A brand kit is `{ kit }` only, no blocks; a page never carries a kit.
+    const isKit = parsed.kind === 'kit'
+    if (isKit && body.blocks.length > 0) {
+      throw new AppError('KIT_NO_BLOCKS', 'A brand kit has no page blocks', 422)
+    }
+    if (isKit && (body.settings === undefined || body.settings === null)) {
+      throw new AppError('KIT_REQUIRED', 'A brand kit needs settings.kit', 422)
+    }
+    const kitSettings = isKit ? kitSettingsSchema.parse(body.settings) : null
+    const pageSettings = isKit ? null : (pageSettingsSchema.nullish().parse(body.settings) ?? null)
+    if (pageSettings && 'kit' in pageSettings) {
+      throw new AppError('KIT_NOT_ALLOWED', 'Only a brand kit (brand:<brand>:kit) carries a kit', 422)
+    }
+    const settings = kitSettings ?? pageSettings
 
     if (contentBytes(body.blocks, settings) > MAX_CONTENT_BYTES) {
       throw new AppError('LAYOUT_TOO_LARGE', 'This page is over 200KB. Slim it down.', 413)
     }
-    if (parsed.kind === 'popup' && !settings?.popup) {
+    if (parsed.kind === 'popup' && !pageSettings?.popup) {
       throw new AppError('POPUP_RULES_REQUIRED', 'A pop-up needs its display rules (settings.popup)', 422)
     }
-    if (parsed.kind !== 'popup' && settings?.popup) {
+    if (parsed.kind !== 'popup' && pageSettings?.popup) {
       throw new AppError('POPUP_RULES_NOT_ALLOWED', 'Only a pop-up carries pop-up rules', 422)
     }
 
     const before = await prisma.siteLayout.findUnique({ where: { slug } })
     if (before) await assertRowInScope(req, before, 'write')
-    const tenantId = await resolveLayoutTenant(req, slug, before ? 'write' : 'create', settings?.popup?.brands)
+    const tenantId = await resolveLayoutTenant(req, slug, before ? 'write' : 'create', pageSettings?.popup?.brands)
+    if (kitSettings) await assertKitFontsInCompany(kitSettings.kit, tenantId)
 
     const now = new Date()
     const draft = {
@@ -532,6 +610,8 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         },
       })
       if (claimed.count === 0) return false
+      // A brand kit's rollback syncs the brand's Concept like any publish.
+      await applyKitToConceptTx(tx, row, target.settings)
       await tx.siteLayoutVersion.create({
         data: {
           layoutId: row.id, version, blocks: target.blocks as Prisma.InputJsonValue, settings: jsonOrNull(target.settings),

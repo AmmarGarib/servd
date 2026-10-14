@@ -23,7 +23,7 @@ export function GenericHero({ fields, ctx }: SectionProps) {
   // Images, screen readers); without a description it stays a background.
   const imageAlt = t(fields.imageAlt).trim()
   const photo = !!heroImage && !!imageAlt
-  const wash = `linear-gradient(135deg, ${accent} 0%, ${accent}dd 60%, ${accent}aa 100%)`
+  const wash = `linear-gradient(135deg, ${accent} 0%, color-mix(in srgb, ${accent} 86.7%, transparent) 60%, color-mix(in srgb, ${accent} 66.7%, transparent) 100%)`
   const primary = link(fields.primary)
   const secondary = link(fields.secondary)
   const p = brandHref(primary.href, ctx)

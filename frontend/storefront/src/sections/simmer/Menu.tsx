@@ -91,7 +91,7 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
             paddingBottom: '0.9rem',
-            borderBottom: '1px solid rgba(237,230,211,0.22)',
+            borderBottom: '1px solid color-mix(in srgb, var(--simmer-bone) 22%, transparent)',
           }}>
             <span className="utility" style={{ fontSize: '0.72rem' }}>{simmerText(f['eyebrow'])}</span>
             <span className="utility signal" style={{ fontSize: '0.72rem', whiteSpace: 'nowrap' }}>{stampOr(f['stamp'])}</span>
@@ -131,8 +131,8 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
           {courses.map((course, ci) => (
             <div key={ci} style={{
               padding: '2.2rem 0',
-              borderTop: ci === 0 ? '1px solid rgba(237,230,211,0.22)' : '0',
-              borderBottom: '1px solid rgba(237,230,211,0.18)',
+              borderTop: ci === 0 ? '1px solid color-mix(in srgb, var(--simmer-bone) 22%, transparent)' : '0',
+              borderBottom: '1px solid color-mix(in srgb, var(--simmer-bone) 18%, transparent)',
             }}>
               {/* Course header — Amarante numeral + lowercase rubric */}
               <div style={{

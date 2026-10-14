@@ -27,7 +27,7 @@ function simmerTheme(s: Surface): CrossBrandTheme {
     panel: false,
     badgeBg: 'transparent',
     badgeText: 'var(--simmer-bone)',
-    badgeBorder: '1px solid rgba(237,230,211,0.4)',
+    badgeBorder: '1px solid color-mix(in srgb, var(--simmer-bone) 40%, transparent)',
     allClassName: onBone ? 'action action--ink' : 'action',
   }
 }

@@ -21,10 +21,10 @@ export function QRCard({ slug, brand, url }: Props) {
   // Forest green on bone for Simmer, white-card-on-grey for everyone
   // else. Both layouts print well on a black-and-white printer because
   // the QR's foreground stays dark + the surround stays light.
-  const surface = isSimmer ? '#EDE6D3' : '#f5f5f5'
-  const ink     = isSimmer ? '#06392F' : '#0e0e0e'
-  const muted   = isSimmer ? 'rgba(6,57,47,0.7)'  : 'rgba(14,14,14,0.6)'
-  const accent  = isSimmer ? '#E94E1B' : '#0e0e0e'
+  const surface = isSimmer ? 'var(--simmer-bone)' : '#f5f5f5'
+  const ink     = isSimmer ? 'var(--simmer-green)' : '#0e0e0e'
+  const muted   = isSimmer ? 'color-mix(in srgb, var(--simmer-green) 70%, transparent)' : 'rgba(14,14,14,0.6)'
+  const accent  = isSimmer ? 'var(--simmer-orange)' : '#0e0e0e'
 
   return (
     <div

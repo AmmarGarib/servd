@@ -10,7 +10,7 @@ import { StackdFrame, stackdConcept, fill, wordmark, stackdHref, SR_ONLY } from 
 
 export function StackdHero({ fields, ctx }: SectionProps) {
   const concept = stackdConcept(ctx)
-  const mark = wordmark(fields.wordmark, concept)
+  const mark = wordmark(fields.wordmark, concept, ctx)
   const primary = link(fields.primaryCta)
   const secondary = link(fields.secondaryCta)
   const primaryTo = stackdHref(primary.href, ctx, concept)

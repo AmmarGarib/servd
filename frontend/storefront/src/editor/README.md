@@ -51,6 +51,15 @@ Fonts: the frame renders the Library fonts the admin posts with the doc
 edited page's company (any company for `servd:*` / `page:*`) — the same rule
 the API's `resolveFonts` uses for the live page.
 
+Brand kit preview: `FrameDoc.kit = { brand, kit, fonts? }` (optional) carries
+a brand's UNSAVED kit (Admin → Storefront → Brand kit; the editor posts the
+brand's home `brand:<slug>` with it). The frame validates it with the same
+rules as live kits (`lib/brandKit.ts normalizeKit`), adds a `<style>` with
+that brand's tokens after the root layout's live ones, and themes the brand
+accent from it — never saved, never counted. `brand:<slug>:kit` itself is
+never a frame slug (it is not a page). Brand previews are wrapped in
+`.servd-brand-scope` like the live brand layout.
+
 ## Protocol (v1, `protocol.ts`)
 
 ```

@@ -1,7 +1,7 @@
 'use client'
 
 // Storefront: the ONE place storefront content is edited (owner decision 41).
-// Tabs (?tab=): Pages | Pop-ups | Library | Approvals. Every change is a draft;
+// Tabs (?tab=): Brand kit | Pages | Pop-ups | Library | Approvals (default Pages). Every change is a draft;
 // nothing reaches the storefront until the CEO approves it.
 
 import { Suspense } from 'react'
@@ -9,10 +9,12 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { contentApi } from '../../lib/content'
 import { PagesPanel, PopupsPanel } from '../../components/storefront/ListPanels'
+import { KitPanel } from '../../components/storefront/KitPanel'
 import { LibraryPanel } from '../../components/storefront/LibraryPanel'
 import { ApprovalsPanel } from '../../components/storefront/ApprovalsPanel'
 
 const TABS = [
+  { id: 'kit', label: 'Brand kit' },
   { id: 'pages', label: 'Pages' },
   { id: 'popups', label: 'Pop-ups' },
   { id: 'library', label: 'Library' },
@@ -37,7 +39,7 @@ function StorefrontHub() {
         <p className="text-xs text-s-muted">Marketing</p>
         <h1 className="text-2xl font-black">Storefront</h1>
         <p className="text-sm text-s-muted mt-1">
-          Build pages and pop-ups for the storefront. Every change is a draft until the CEO approves it.
+          Set each brand's look and build pages and pop-ups for the storefront. Every change is a draft until the CEO approves it.
         </p>
         <nav className="flex gap-1 mt-4 -mb-px">
           {TABS.map((t) => (
@@ -50,6 +52,7 @@ function StorefrontHub() {
         </nav>
       </header>
       <div className="max-w-6xl mx-auto p-6">
+        {tab === 'kit' && <KitPanel />}
         {tab === 'pages' && <PagesPanel />}
         {tab === 'popups' && <PopupsPanel />}
         {tab === 'library' && <LibraryPanel mode="manage" />}

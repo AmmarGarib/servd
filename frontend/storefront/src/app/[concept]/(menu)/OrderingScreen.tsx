@@ -791,7 +791,7 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
     >
       <div style={{
         aspectRatio: '4/3',
-        background: item.imageUrl ? undefined : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
+        background: item.imageUrl ? undefined : `linear-gradient(135deg, color-mix(in srgb, ${accent} 13.3%, transparent) 0%, white 200%)`,
         position: 'relative',
         overflow: 'hidden',
       }}>
@@ -928,7 +928,7 @@ function ItemDetailModal({
         {item.imageUrl || item.videoUrl ? (
           <div style={{
             aspectRatio: '16/10',
-            background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
+            background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, color-mix(in srgb, ${accent} 13.3%, transparent) 0%, white 200%)`,
             position: 'relative',
             overflow: 'hidden',
           }}>

@@ -20,6 +20,24 @@ export interface FrameDoc {
   settings: Record<string, unknown> | null     // cleanSettings(...) output, as saved
   fonts: Array<{ family: string; url: string }> // library fonts used by the doc
   labels: Record<string, string>               // block id -> editor label (overlay chip)
+  kit?: FrameKit                               // a brand's UNSAVED kit to preview the page with (Brand kit editor)
+}
+
+/** A brand kit as stored in settings.kit of `brand:<slug>:kit` (hex = #rrggbb;
+ *  font = built-in id or 'library:<mediaAssetId>'; image = https URL or /brand/ path). */
+export interface FrameBrandKit {
+  v: 1
+  palette?: Record<string, string>
+  roles?: { accent?: string; surfaceBg?: string; surfaceText?: string; ordering?: string }
+  fonts?: { display?: string; body?: string }
+  images?: { logo?: string; wordmark?: string; mascot?: string; badge?: string }
+}
+
+/** The draft kit the frame paints with instead of that brand's live kit. Never saved or counted. */
+export interface FrameKit {
+  brand: string                                // the brand (concept) slug the kit belongs to
+  kit: FrameBrandKit
+  fonts?: Array<{ id: string; family: string; url: string }>   // Library fonts its 'library:<id>' refs name
 }
 
 interface Envelope { ns: typeof EDITOR_NS; v: typeof EDITOR_PROTOCOL }

@@ -19,7 +19,7 @@ import {
 } from 'react'
 import {
   EDITOR_NS, EDITOR_PROTOCOL, MAX_DOC_CHARS, isAdminMessage, isForeignVersion,
-  type FrameDoc, type FrameRect, type FrameToAdmin, type FrameViewport,
+  type FrameDoc, type FrameKit, type FrameRect, type FrameToAdmin, type FrameViewport,
 } from './protocol'
 import { RENDER_ERROR_TEXT, type FrameRenderInput, type FrameRenderResult } from './types'
 import {
@@ -184,6 +184,8 @@ function checkDoc(d: unknown): DocCheck {
       rev, slug: d['slug'] as string, kind: parsed.kind, title: (title as string | null),
       variant: d['variant'], blocks: d['blocks'], settings: (settings as Record<string, unknown> | null),
       fonts: d['fonts'] as FrameDoc['fonts'], labels,
+      // The brand kit editor's draft kit; the server action validates it.
+      ...(isPlainObject(d['kit']) && { kit: d['kit'] as unknown as FrameKit }),
     },
   }
 }
@@ -500,6 +502,7 @@ export function EditorFrameClient({ render, allowedOrigins }: Props) {
         const res = await callRender({
           rev: doc.rev, slug: doc.slug, variant: doc.variant,
           edited: { title: doc.title, blocks: doc.blocks, settings: doc.settings, fonts: doc.fonts },
+          ...(doc.kit && { kit: doc.kit }),
         })
         if (res && handleResult(res) && res.ok) commit({ rev: res.rev, t0, node: res.node, popup: null })
       }

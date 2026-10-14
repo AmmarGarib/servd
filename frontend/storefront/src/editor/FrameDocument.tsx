@@ -19,6 +19,8 @@
 import type { ReactNode } from 'react'
 import type { SiteLayoutRead } from '../lib/blocks'
 import { brandAccent, type Concept } from '../lib/concept'
+import { kitCss, resolveKit, type LiveKits } from '../lib/brandKit'
+import { getLiveKits } from '../lib/brandKitFetch'
 import { fetchBrandLocations, isPublishableLocation } from '../lib/brandLocations'
 import { findConcept } from '../lib/liveConcepts'
 import { ManagedPage, defaultBlocks } from '../sections/ManagedPage'
@@ -27,7 +29,7 @@ import { SiteLayoutView } from '../components/blocks/SiteLayoutView'
 import { BrandShell } from '../components/brand/BrandShell'
 import { BlockMarker } from './BlockMarker'
 import { FETCH_TIMEOUT_MS, cachedConcepts, cachedLiveLayout, withTimeout } from './limits'
-import type { ParsedSlug, SanitizedFrameInput } from './sanitize'
+import type { FrameKitInput, ParsedSlug, SanitizedFrameInput } from './sanitize'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -48,6 +50,10 @@ export interface FrameData {
   live: Record<string, SiteLayoutRead>
   /** servd:location: the location shown; null = none to preview. */
   loc?: string | null
+  /** The brand kit editor's draft kit (overrides that brand's live kit). */
+  kit?: FrameKitInput | null
+  /** Live kits with the draft kit laid over them (what every part themes with). */
+  kits?: LiveKits
 }
 
 const live = (slug: string): Part => ({ slug, draft: null })
@@ -90,8 +96,10 @@ async function previewLocation(): Promise<string | null> {
 
 export async function loadFrameData(input: SanitizedFrameInput): Promise<FrameData> {
   const plan = planFor(input.parsed, input.slug, input.draft)
-  const concepts = await cachedConcepts()
+  const [concepts, liveKits] = await Promise.all([cachedConcepts(), getLiveKits()])
   if (plan.family === 'notice') return { plan, concepts, live: {} }
+  // A draft kit replaces only its own brand's live kit, for this render only.
+  const kitPart = input.kit ? { kit: input.kit, kits: { ...liveKits, [input.kit.brand]: input.kit.entry } } : {}
   if (plan.family === 'brand' && !findConcept(plan.brand, concepts)) {
     return { plan: { family: 'notice', text: 'This brand is not on the storefront.' }, concepts, live: {} }
   }
@@ -100,7 +108,7 @@ export async function loadFrameData(input: SanitizedFrameInput): Promise<FrameDa
   const reads = await Promise.all(liveSlugs.map((s) => cachedLiveLayout(s)))
   const liveMap: Record<string, SiteLayoutRead> = {}
   liveSlugs.forEach((s, i) => { liveMap[s] = reads[i] ?? emptyRead(s) })
-  const data: FrameData = { plan, concepts, live: liveMap }
+  const data: FrameData = { plan, concepts, live: liveMap, ...kitPart }
   if (plan.page.slug === 'servd:location') data.loc = await previewLocation()
   return data
 }
@@ -124,17 +132,27 @@ function Context({ slug, children }: { slug: string; children: ReactNode }) {
   return <div data-sv-context={slug} style={{ display: 'contents' }}>{children}</div>
 }
 
+/** The draft kit's tokens, after the root layout's live ones so they win
+ *  (`:root`, same specificity, later in the document). Preview only. */
+function DraftKitStyle({ kit, concepts }: { kit: FrameKitInput; concepts: Concept[] }) {
+  const concept = findConcept(kit.brand, concepts) ?? null
+  const css = kitCss([resolveKit(kit.brand, concept, kit.entry)])
+  return <style data-sv-draft-kit={kit.brand} dangerouslySetInnerHTML={{ __html: css }} />
+}
+
 export function FrameDocument({ data, variant }: { data: FrameData; variant: 'a' | 'b' }) {
   const { plan, concepts } = data
   if (plan.family === 'notice') return <FrameNote>{plan.text}</FrameNote>
+  const kitStyle = data.kit ? <DraftKitStyle kit={data.kit} concepts={concepts} /> : null
+  const kits = data.kits ? { kits: data.kits } : {}
 
   const render = (part: Part, extra?: { params?: Record<string, string> }) => {
     if (!part.draft) {
-      return <ManagedPage slug={part.slug} layout={data.live[part.slug] ?? emptyRead(part.slug)} previewVariant="a" concepts={concepts} {...extra} />
+      return <ManagedPage slug={part.slug} layout={data.live[part.slug] ?? emptyRead(part.slug)} previewVariant="a" concepts={concepts} {...kits} {...extra} />
     }
     return (
       <ManagedPage slug={part.slug} layout={part.draft} previewVariant={variant} concepts={concepts}
-        editor editorMarker={BlockMarker} {...extra} />
+        editor editorMarker={BlockMarker} {...kits} {...extra} />
     )
   }
 
@@ -171,6 +189,7 @@ export function FrameDocument({ data, variant }: { data: FrameData; variant: 'a'
     const pageNode = page.draft ? draftPage(page) : render(page, page.slug === 'servd:location' && data.loc ? { params: { loc: data.loc } } : undefined)
     return (
       <>
+        {kitStyle}
         {/* Sticky as a whole, like StorefrontNav does on live pages. */}
         <div {...(!header.draft && { 'data-sv-context': header.slug })} style={{ position: 'sticky', top: 0, zIndex: 50 }}>
           {headerNode}
@@ -184,17 +203,24 @@ export function FrameDocument({ data, variant }: { data: FrameData; variant: 'a'
     )
   }
 
-  // Brand microsite: the same shell and theming as app/brand/[slug]/layout.tsx.
+  // Brand microsite: the same shell, scope and theming as
+  // app/brand/[slug]/layout.tsx — .servd-brand-scope pins the servd tokens a
+  // brand page inherits, exactly as on the live page.
   const found = findConcept(plan.brand, concepts)!
-  const themed: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
+  const themed: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor, data.kits) }
   const { header, page, footer } = plan
   return (
-    <BrandShell
-      concept={themed}
-      header={header.draft ? render(header) : <Context slug={header.slug}>{render(header)}</Context>}
-      footer={footer.draft ? render(footer) : <Context slug={footer.slug}>{render(footer)}</Context>}
-    >
-      {page.draft ? draftPage(page) : <Context slug={page.slug}>{render(page)}</Context>}
-    </BrandShell>
+    <>
+      {kitStyle}
+      <div className="servd-brand-scope" style={{ display: 'contents' }}>
+        <BrandShell
+          concept={themed}
+          header={header.draft ? render(header) : <Context slug={header.slug}>{render(header)}</Context>}
+          footer={footer.draft ? render(footer) : <Context slug={footer.slug}>{render(footer)}</Context>}
+        >
+          {page.draft ? draftPage(page) : <Context slug={page.slug}>{render(page)}</Context>}
+        </BrandShell>
+      </div>
+    </>
   )
 }

@@ -122,13 +122,13 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
           {/* BLUEPRINT BACKDROP — deep ink paper with a faint grid + cream
               technical lines drawing the cooler. Reads as "schematic of the
               entrance". */}
-          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: '#06392F' }} />
+          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'var(--simmer-green)' }} />
           {/* Faint blueprint grid — 40px squares, thin cream stroke */}
           <div aria-hidden="true" style={{
             position: 'absolute', inset: 0,
             backgroundImage: `
-              linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px)
+              linear-gradient(color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),
+              linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px)
             `,
             backgroundSize: '40px 40px, 40px 40px',
           }} />
@@ -136,8 +136,8 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
           <div aria-hidden="true" style={{
             position: 'absolute', inset: 0,
             backgroundImage: `
-              linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)
+              linear-gradient(color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px),
+              linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px)
             `,
             backgroundSize: '200px 200px, 200px 200px',
           }} />
@@ -161,25 +161,25 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
             transition: 'opacity 80ms linear',
           } as CSSProperties}>
             <div className="simmer-fridge-title" style={{
-              color: 'rgba(237,230,211,0.7)',
+              color: 'color-mix(in srgb, var(--simmer-bone) 70%, transparent)',
               fontFamily: 'var(--font-display)',
               textTransform: 'uppercase',
             }}>
-              <p style={{ color: 'rgba(237,230,211,0.45)' }}>{t('projectEyebrow')}</p>
-              <p style={{ color: '#EDE6D3', fontWeight: 800 }}>
+              <p style={{ color: 'color-mix(in srgb, var(--simmer-bone) 45%, transparent)' }}>{t('projectEyebrow')}</p>
+              <p style={{ color: 'var(--simmer-bone)', fontWeight: 800 }}>
                 {brandName.toUpperCase()}{projectNote && ` · ${projectNote}`}
               </p>
-              <p className="simmer-fridge-title-gap" style={{ color: 'rgba(237,230,211,0.45)' }}>{t('sheet')}</p>
+              <p className="simmer-fridge-title-gap" style={{ color: 'color-mix(in srgb, var(--simmer-bone) 45%, transparent)' }}>{t('sheet')}</p>
             </div>
             <div className="simmer-fridge-title" style={{
-              color: 'rgba(237,230,211,0.7)',
+              color: 'color-mix(in srgb, var(--simmer-bone) 70%, transparent)',
               fontFamily: 'var(--font-display)',
               textTransform: 'uppercase',
               textAlign: 'right',
             }}>
-              <p style={{ color: 'rgba(237,230,211,0.45)' }}>{t('scale')}</p>
-              <p style={{ color: 'rgba(237,230,211,0.45)' }}>{revision}</p>
-              <p className="simmer-fridge-title-gap" style={{ color: '#EDE6D3', fontWeight: 800 }}>{t('scrollCue')}</p>
+              <p style={{ color: 'color-mix(in srgb, var(--simmer-bone) 45%, transparent)' }}>{t('scale')}</p>
+              <p style={{ color: 'color-mix(in srgb, var(--simmer-bone) 45%, transparent)' }}>{revision}</p>
+              <p className="simmer-fridge-title-gap" style={{ color: 'var(--simmer-bone)', fontWeight: 800 }}>{t('scrollCue')}</p>
             </div>
           </div>
 
@@ -252,16 +252,16 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
                   position: 'absolute', inset: 0,
                   transform: 'rotateY(180deg)',
                   backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
-                  background: '#06392F',
+                  background: 'var(--simmer-green)',
                   overflow: 'hidden',
                 }}>
                   <div style={{
                     position: 'absolute', inset: 0,
                     backgroundImage: `
-                      linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),
-                      linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)
+                      linear-gradient(color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),
+                      linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 6%, transparent) 1px, transparent 1px),
+                      linear-gradient(color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px),
+                      linear-gradient(90deg, color-mix(in srgb, var(--simmer-bone) 10%, transparent) 1px, transparent 1px)
                     `,
                     backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
                   }} />
@@ -396,7 +396,7 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
               screen readers skip it. */}
           <div aria-hidden="true" className="simmer-fridge-foot" style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-            color: 'rgba(237,230,211,0.55)',
+            color: 'color-mix(in srgb, var(--simmer-bone) 55%, transparent)',
             fontFamily: 'var(--font-display)',
             textTransform: 'uppercase',
             zIndex: 6,
@@ -418,20 +418,20 @@ export function FridgeHero({ fields: f, ctx }: SectionProps) {
 // Plain insulated panel, gasket, and the interior safety release. Same
 // 600×880 viewbox as the front so the faces align.
 function BlueprintDoorInside({ d }: { d: Drawing }) {
-  const line  = 'rgba(237,230,211,0.85)'
-  const fine  = 'rgba(237,230,211,0.45)'
-  const label = '#EDE6D3'
+  const line  = 'color-mix(in srgb, var(--simmer-bone) 85%, transparent)'
+  const fine  = 'color-mix(in srgb, var(--simmer-bone) 45%, transparent)'
+  const label = 'var(--simmer-bone)'
   return (
     <svg
       viewBox="0 0 600 880"
       preserveAspectRatio="xMidYMid meet"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}
     >
-      <rect x="40" y="40" width="520" height="800" fill="rgba(237,230,211,0.03)" stroke={line} strokeWidth="1.5" />
+      <rect x="40" y="40" width="520" height="800" fill="color-mix(in srgb, var(--simmer-bone) 3%, transparent)" stroke={line} strokeWidth="1.5" />
       <rect x="62" y="62" width="476" height="756" fill="none" stroke={fine} strokeWidth="1" strokeDasharray="6 4" rx="3" />
       <rect x="86" y="86" width="428" height="708" fill="none" stroke={fine} strokeWidth="0.7" strokeDasharray="2 3" />
       <circle cx="120" cy="446" r="22" fill="none" stroke={line} strokeWidth="1.5" />
-      <circle cx="120" cy="446" r="9"  fill="rgba(237,230,211,0.10)" stroke={line} strokeWidth="1" />
+      <circle cx="120" cy="446" r="9"  fill="color-mix(in srgb, var(--simmer-bone) 10%, transparent)" stroke={line} strokeWidth="1" />
       <line x1="142" y1="446" x2="200" y2="446" stroke={fine} strokeWidth="0.8" />
       <text x="206" y="442" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
         {d.release}
@@ -451,10 +451,10 @@ function BlueprintDoorInside({ d }: { d: Drawing }) {
 // plate, door height) are hidden by simmer.css where the screen is too narrow
 // to show them whole, rather than cut off at its edge.
 function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
-  const line   = 'rgba(237,230,211,0.85)'
-  const fine   = 'rgba(237,230,211,0.45)'
-  const dim    = 'rgba(237,230,211,0.35)'
-  const label  = '#EDE6D3'
+  const line   = 'color-mix(in srgb, var(--simmer-bone) 85%, transparent)'
+  const fine   = 'color-mix(in srgb, var(--simmer-bone) 45%, transparent)'
+  const dim    = 'color-mix(in srgb, var(--simmer-bone) 35%, transparent)'
+  const label  = 'var(--simmer-bone)'
   return (
     <svg
       viewBox="0 0 600 880"
@@ -464,7 +464,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}
     >
       {/* DOOR PANEL */}
-      <rect x="40" y="40" width="520" height="800" fill="rgba(237,230,211,0.04)" stroke={line} strokeWidth="2" rx="4" />
+      <rect x="40" y="40" width="520" height="800" fill="color-mix(in srgb, var(--simmer-bone) 4%, transparent)" stroke={line} strokeWidth="2" rx="4" />
       <rect x="56" y="56" width="488" height="768" fill="none" stroke={line} strokeWidth="1.2" rx="3" />
       {([[60, 60], [528, 60], [60, 808], [528, 808]] as Array<[number, number]>).map(([x, y], i) => (
         <g key={i} stroke={fine} strokeWidth="0.7">
@@ -477,7 +477,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
       {/* HINGES — three on the left edge */}
       {[150, 440, 690].map((y, i) => (
         <g key={i}>
-          <rect x="24" y={y} width="40" height="56" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
+          <rect x="24" y={y} width="40" height="56" fill="color-mix(in srgb, var(--simmer-bone) 5%, transparent)" stroke={line} strokeWidth="1.4" rx="2" />
           <circle cx="44" cy={y + 16} r="6" fill="none" stroke={line} strokeWidth="1.2" />
           <circle cx="44" cy={y + 40} r="6" fill="none" stroke={line} strokeWidth="1.2" />
           <line x1="44" y1={y + 4} x2="44" y2={y + 52} stroke={fine} strokeWidth="0.7" strokeDasharray="2 2" />
@@ -497,7 +497,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
 
       {/* VIEWING WINDOW */}
       <g>
-        <rect x="140" y="160" width="320" height="160" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.6" rx="3" />
+        <rect x="140" y="160" width="320" height="160" fill="color-mix(in srgb, var(--simmer-bone) 5%, transparent)" stroke={line} strokeWidth="1.6" rx="3" />
         <rect x="150" y="170" width="300" height="140" fill="none" stroke={fine} strokeWidth="1" rx="2" strokeDasharray="3 2" />
         <line x1="160" y1="180" x2="190" y2="180" stroke={fine} strokeWidth="0.7" />
         <line x1="160" y1="180" x2="160" y2="210" stroke={fine} strokeWidth="0.7" />
@@ -514,10 +514,10 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
 
       {/* PADDLE HANDLE */}
       <g>
-        <rect x="320" y="430" width="220" height="80" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.4" rx="3" />
-        <rect x="336" y="454" width="188" height="28" rx="14" fill="rgba(237,230,211,0.10)" stroke={accent} strokeWidth="1.6" />
+        <rect x="320" y="430" width="220" height="80" fill="color-mix(in srgb, var(--simmer-bone) 5%, transparent)" stroke={line} strokeWidth="1.4" rx="3" />
+        <rect x="336" y="454" width="188" height="28" rx="14" fill="color-mix(in srgb, var(--simmer-bone) 10%, transparent)" stroke={accent} strokeWidth="1.6" />
         <circle cx="358" cy="468" r="6" fill={accent} />
-        <circle cx="358" cy="468" r="3" fill="#06392F" />
+        <circle cx="358" cy="468" r="3" fill="var(--simmer-green)" />
         <rect x="436" y="490" width="40" height="14" fill="none" stroke={fine} strokeWidth="1" rx="2" />
         <circle cx="456" cy="497" r="2.5" fill={fine} />
         {/* Label on the backing plate's top band, above the lever, ending
@@ -534,7 +534,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
 
       {/* MANUFACTURER PLATE */}
       <g>
-        <rect x="80" y="80" width="180" height="46" fill="rgba(237,230,211,0.04)" stroke={line} strokeWidth="1" rx="2" />
+        <rect x="80" y="80" width="180" height="46" fill="color-mix(in srgb, var(--simmer-bone) 4%, transparent)" stroke={line} strokeWidth="1" rx="2" />
         <text x="90" y="98" fill={label} fontFamily="var(--font-display)" fontSize="9" letterSpacing="3.2" fontWeight="800">
           {d.plateTitle}
         </text>
@@ -548,7 +548,7 @@ function BlueprintCoolerDoor({ accent, d }: { accent: string; d: Drawing }) {
 
       {/* KICK PLATE */}
       <g>
-        <rect x="80" y="720" width="440" height="100" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
+        <rect x="80" y="720" width="440" height="100" fill="color-mix(in srgb, var(--simmer-bone) 5%, transparent)" stroke={line} strokeWidth="1.4" rx="2" />
         {[745, 760, 775, 790, 805].map((y) => (
           <line key={y} x1="100" y1={y} x2="500" y2={y} stroke={fine} strokeWidth="0.5" strokeDasharray="2 4" />
         ))}
@@ -683,7 +683,7 @@ function CoolerInterior({ cream, imageUrl, headline, headlineAccent, hours, d }:
         <FridgeWord
           text={hours}
           fireAt={0.78}
-          color="rgba(237,230,211,0.55)"
+          color="color-mix(in srgb, var(--simmer-bone) 55%, transparent)"
           heavyShadow
           className="simmer-fridge-hours"
           style={{
@@ -737,10 +737,10 @@ function FridgeWord({ text, fireAt, color, heavyShadow, className, style }: {
 // LED strip, floor dimension. Decoration: hidden from screen readers (the
 // headline and the hours drawn over it are not).
 function CoolerInteriorSVG({ d }: { d: Drawing }) {
-  const line  = 'rgba(237,230,211,0.85)'
-  const fine  = 'rgba(237,230,211,0.42)'
-  const dim   = 'rgba(237,230,211,0.28)'
-  const label = '#EDE6D3'
+  const line  = 'color-mix(in srgb, var(--simmer-bone) 85%, transparent)'
+  const fine  = 'color-mix(in srgb, var(--simmer-bone) 42%, transparent)'
+  const dim   = 'color-mix(in srgb, var(--simmer-bone) 28%, transparent)'
+  const label = 'var(--simmer-bone)'
   return (
     <svg
       viewBox="0 0 1600 1000"
@@ -765,13 +765,13 @@ function CoolerInteriorSVG({ d }: { d: Drawing }) {
       <polygon points="0,0 520,240 520,680 0,1000" fill="none" stroke={line} strokeWidth="1.6" />
       <polygon points="1600,0 1600,1000 1080,680 1080,240" fill="none" stroke={line} strokeWidth="1.6" />
       <polygon points="0,1000 1600,1000 1080,680 520,680" fill="none" stroke={line} strokeWidth="1.6" />
-      <rect x="520" y="240" width="560" height="440" fill="rgba(237,230,211,0.03)" stroke={line} strokeWidth="1.6" />
+      <rect x="520" y="240" width="560" height="440" fill="color-mix(in srgb, var(--simmer-bone) 3%, transparent)" stroke={line} strokeWidth="1.6" />
       <line x1="708" y1="240" x2="708" y2="680" stroke={fine} strokeWidth="0.8" />
       <line x1="892" y1="240" x2="892" y2="680" stroke={fine} strokeWidth="0.8" />
 
       {/* Ceiling evaporator */}
       <g transform="translate(800, 120)">
-        <rect x="-160" y="-30" width="320" height="70" fill="rgba(237,230,211,0.04)" stroke={line} strokeWidth="1.4" rx="2" />
+        <rect x="-160" y="-30" width="320" height="70" fill="color-mix(in srgb, var(--simmer-bone) 4%, transparent)" stroke={line} strokeWidth="1.4" rx="2" />
         <line x1="-140" y1="-36" x2="140" y2="-36" stroke={fine} strokeWidth="1" />
         {[-70, 70].map((cx) => (
           <g key={cx}>
@@ -862,7 +862,7 @@ function BlueprintRack({ side, lineColor, fineColor, labelColor, label, note }: 
         <polygon
           key={i}
           points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
-          fill="rgba(237,230,211,0.03)"
+          fill="color-mix(in srgb, var(--simmer-bone) 3%, transparent)"
           stroke={lineColor}
           strokeWidth="1.2"
         />

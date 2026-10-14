@@ -38,8 +38,8 @@ export const dynamic = 'force-dynamic'
 
 type Entry = MetadataRoute.Sitemap[number]
 
-/** Brand-page parts that are chrome or fixed pages, not owner pages. */
-const FIXED_BRAND_PARTS = new Set(['header', 'footer', 'about', 'visit', 'menu'])
+/** Brand-page parts that are chrome or fixed pages (or the brand kit), not owner pages. */
+const FIXED_BRAND_PARTS = new Set(['header', 'footer', 'about', 'visit', 'menu', 'kit'])
 /** The page names the brand and servd custom-page routes accept. */
 const PAGE_NAME = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 
@@ -71,7 +71,7 @@ function brandEntries(slug: string, published: Map<string, string>, livePages: s
     const parts = layoutSlug.split(':')
     if (parts.length !== 3 || parts[0] !== 'brand' || parts[1] !== slug) continue
     const page = parts[2]!
-    if (FIXED_BRAND_PARTS.has(page) || !PAGE_NAME.test(page)) continue
+    if (FIXED_BRAND_PARTS.has(page.toLowerCase()) || !PAGE_NAME.test(page)) continue
     own.push({ url: brandCanonical(slug, `pages/${page}`), ...lastModifiedOf(published, layoutSlug), changeFrequency: 'monthly', priority: 0.6 })
   }
   return [...fixed, ...own]

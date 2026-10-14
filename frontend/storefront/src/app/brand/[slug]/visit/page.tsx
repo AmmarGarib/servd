@@ -13,6 +13,7 @@ import { notFound } from 'next/navigation'
 import { fetchSiteLayout, pageSeo, type Block } from '../../../../lib/blocks'
 import { fetchBrandKitchens, filled, locationFromConcept, type BrandLocation } from '../../../../lib/brandLocations'
 import { brandAccent, formatBrandName, type Concept } from '../../../../lib/concept'
+import { getLiveKits } from '../../../../lib/brandKitFetch'
 import { faqSchema, jsonLdScript } from '../../../../lib/jsonLd'
 import { fetchLiveConcepts, findConceptOrThrow, fitSentences, resolveConcept } from '../../../../lib/liveConcepts'
 import { mergeFields } from '../../../../sections/catalog'
@@ -72,10 +73,10 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function BrandVisitPage({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const pageSlug = `brand:${slug}:visit`
-  const [concepts, layout] = await Promise.all([fetchLiveConcepts(), fetchSiteLayout(pageSlug)])
+  const [concepts, layout, kits] = await Promise.all([fetchLiveConcepts(), fetchSiteLayout(pageSlug), getLiveKits()])
   const found = findConceptOrThrow(slug, concepts)
   if (!found) notFound()
-  const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
+  const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor, kits) }
 
   // The questions this page shows: every brand.faq section on it, read from
   // the same blocks ManagedPage renders (it is handed this very layout read,

@@ -65,45 +65,8 @@
   --font-display:       var(--font-bricolage), var(--font-inter), system-ui, sans-serif;
   --font-wordmark:      var(--font-syne), var(--font-bricolage), system-ui, sans-serif;
 
-  /* ── Simmer brand tokens (per simmer-brand SKILL.md) ─────────────────────
-     Forest green surface ("tiber" #06392F), bone ink, fiery orange signal.
-     Night mode is the web default. Amarante for display, Times for body. */
-  --simmer-green:       #06392F;
-  --simmer-bone:        #EDE6D3;
-  --simmer-walnut:      #3D2817;
-  --simmer-black:       #0E0E0E;
-  --simmer-orange:      #E94E1B;
-  --simmer-display:     var(--font-amarante), serif;
-  --simmer-body:        'Times New Roman', Times, serif;
-
-  /* ── stackd brand tokens ────────────────────────────────────────────────
-        Palette straight off the Pantone chips in the brand deck:
-          19-2025 Red Plum  → the brand field. Everything sits on it.
-          9180              → butter/cream. The wordmark colour and all type.
-          635               → pale blue. One cool accent, used sparingly.
-        The interior direction is industrial but WARM — exposed brick, micro-
-        cement, black steel frames, cane and wood — so the greys here are warm
-        greys, never the cold navy the old stax theme used. */
-  --stackd-plum:             #7C2946;   /* Pantone 19-2025 Red Plum — brand field */
-  --stackd-plum-dark:        #3D1122;   /* near-black plum — footer, deep panels */
-  --stackd-cream:            #FCE8CE;   /* Pantone 9180 — the wordmark cream */
-  --stackd-cream-dim:        rgba(252,232,206,0.72);
-  --stackd-cream-faint:      rgba(252,232,206,0.42);
-  --stackd-sky:              #9BD3DD;   /* Pantone 635 — the one cool accent */
-  /* No yellow token. An earlier pass invented a 'butter' #F7DFA5 as a third
-     seal colour; it is not in the brand palette, which is plum + cream + the
-     one pale blue. Removed rather than left to be picked up again. */
-
-  /* Line work: thin black-steel frames over the plum field. */
-  --stackd-line:             rgba(252,232,206,0.22);
-  --stackd-line-faint:       rgba(252,232,206,0.10);
-
-  /* Warm concrete/micro-cement, for panels that lift off the plum. */
-  --stackd-cement:           #2E1922;
-
-  --stackd-display:          var(--font-playfair), 'Bodoni Moda', Georgia, serif;
-  --stackd-body:             var(--font-inter), system-ui, sans-serif;
-  --stackd-mono:             var(--font-jetbrains-mono), 'Courier New', monospace;
+  /* Brand tokens (--simmer-*, --stackd-*, --flipd-*) are no longer defined
+     here: the root layout injects them from lib/brandKit.ts. */
 
   /* ── Per-brand microsite component classes (moved out of <style jsx>
         because Next.js standalone build doesn't transpile styled-jsx in
@@ -145,7 +108,7 @@ summary:focus-visible {
 .simmer-page .amarante  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
 .simmer-page .utility   { font-family: var(--simmer-body); letter-spacing: 0.28em; text-transform: lowercase; }
 .simmer-page .signal    { color: var(--simmer-orange); }
-.simmer-page .rule      { height: 1px; background: rgba(237,230,211,0.2); border: 0; margin: 0; }
+.simmer-page .rule      { height: 1px; background: color-mix(in srgb, var(--simmer-bone) 20%, transparent); border: 0; margin: 0; }
 .simmer-page .wordmark  { font-family: var(--simmer-display); font-weight: 400; line-height: 1; }
 .simmer-page .action {
   display: inline-block; font-family: var(--simmer-body);
@@ -246,7 +209,7 @@ summary:focus-visible {
 /* The fixed bottom CTA bar uses rgba white — bump it to a bone wash
    so it doesn't read as a foreign chrome strip. */
 .simmer-ordering .fixed.bottom-0 {
-  background: rgba(237,230,211,0.96) !important;
+  background: color-mix(in srgb, var(--simmer-bone) 96%, transparent) !important;
   border-top-color: rgba(27,45,42,0.18) !important;
 }
 /* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
@@ -256,8 +219,8 @@ summary:focus-visible {
 .simmer-ordering div[style*="rgba(135,197,64,0.08)"],
 .simmer-ordering div[style*="rgba(135,197,64,0.25)"],
 .simmer-ordering div[style*="rgba(135,197,64,0.2)"] {
-  background: rgba(233,78,27,0.06) !important;
-  border-color: rgba(233,78,27,0.20) !important;
+  background: color-mix(in srgb, var(--simmer-orange) 6%, transparent) !important;
+  border-color: color-mix(in srgb, var(--simmer-orange) 20%, transparent) !important;
 }
 /* Menu page — the outer wrapper, the sticky category nav, the item
    modal + cart drawer all hardcode a white-ish surface inline. Repaint
@@ -399,7 +362,7 @@ summary:focus-visible {
 .flipd-ordering {
   --servd-ink:        var(--flipd-blue);
   --servd-mute:       var(--flipd-blue-dim);
-  --servd-line:       rgba(41,67,117,0.16);
+  --servd-line:       color-mix(in srgb, var(--flipd-blue) 16%, transparent);
   --servd-surface:    #FFFFFF;
   --servd-green:      var(--flipd-blue);
   --servd-green-dark: var(--flipd-blue-deep);
@@ -483,14 +446,14 @@ summary:focus-visible {
      theme — and fought the hand-drawn, sticker-and-seal feel of the brand.
      Just the plum field with a soft pool of light at the top. */
   background-image:
-    radial-gradient(120% 80% at 50% -10%, rgba(252,232,206,0.10), transparent 60%),
-    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%);
+    radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--stackd-cream) 10%, transparent), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, color-mix(in srgb, var(--stackd-plum-dark) 55%, transparent), transparent 65%);
   background-size: 100% 100%, 100% 100%;
   background-position: center, center;
 }
 
 /* Panels that lift off the plum field — micro-cement, very slightly warmer. */
-.stackd-page .stackd-grid-live { background-color: rgba(61,17,34,0.45); }
+.stackd-page .stackd-grid-live { background-color: color-mix(in srgb, var(--stackd-plum-dark) 45%, transparent); }
 
 .stackd-page .stackd-mono {
   font-family: var(--stackd-mono);
@@ -536,7 +499,7 @@ summary:focus-visible {
 }
 .stackd-page .stackd-btn-ghost:hover {
   border-color: var(--stackd-cream);
-  background: rgba(252,232,206,0.07);
+  background: color-mix(in srgb, var(--stackd-cream) 7%, transparent);
 }
 
 /* ── Stickers ───────────────────────────────────────────────────────────────
@@ -841,7 +804,7 @@ summary:focus-visible {
   background: var(--stackd-cream);
   color: var(--stackd-plum-dark);
   box-shadow:
-    0 0 0 3px rgba(252,232,206,0.5),
+    0 0 0 3px color-mix(in srgb, var(--stackd-cream) 50%, transparent),
     0 24px 50px -24px rgba(28,16,19,0.8);
   transform: rotate(-0.5deg);
 }
@@ -850,7 +813,7 @@ summary:focus-visible {
 .stackd-page .stackd-sticker .stackd-display,
 .stackd-page .stackd-sticker-lg .stackd-display { color: var(--stackd-plum-dark); }
 .stackd-page .stackd-sticker .stackd-spec,
-.stackd-page .stackd-sticker-lg .stackd-spec { color: rgba(61,17,34,0.55); }
+.stackd-page .stackd-sticker-lg .stackd-spec { color: color-mix(in srgb, var(--stackd-plum-dark) 55%, transparent); }
 
 @media (prefers-reduced-motion: reduce) {
   .stackd-page .stackd-sticker,
@@ -892,7 +855,7 @@ summary:focus-visible {
   border-radius: clamp(2.25rem, 5vw, 4rem);
   padding: clamp(2rem, 5vw, 4rem) clamp(2.5rem, 6vw, 5rem);
   box-shadow:
-    0 0 0 5px rgba(252,232,206,0.45),
+    0 0 0 5px color-mix(in srgb, var(--stackd-cream) 45%, transparent),
     0 50px 90px -38px rgba(28,16,19,0.92);
   /* The bob lives on the seal; the tilt lives on the keyframes so the two
      don't fight over `transform`. */
@@ -926,7 +889,7 @@ summary:focus-visible {
   position: absolute;
   inset: -14% -10%;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 45%, rgba(155,211,221,0.30), rgba(155,211,221,0) 68%);
+  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--stackd-sky) 30%, transparent), color-mix(in srgb, var(--stackd-sky) 0%, transparent) 68%);
   pointer-events: none;
   animation: stackd-glow 9s ease-in-out infinite;
 }
@@ -1075,7 +1038,7 @@ summary:focus-visible {
 /* Menu rows. The book's voice rule is "names the ingredient, skips the
    adjective", so the build line is the hero and the name is just a label. */
 .flipd-page .flipd-item + .flipd-item {
-  border-top: 1px solid rgba(41,67,117,0.16);
+  border-top: 1px solid color-mix(in srgb, var(--flipd-blue) 16%, transparent);
 }
 .flipd-page .flipd-item-name {
   font-family: var(--flipd-display);
@@ -1099,7 +1062,7 @@ summary:focus-visible {
   text-transform: uppercase;
   padding: 0.26rem 0.6rem;
   border-radius: 999px;
-  border: 1px solid rgba(41,67,117,0.3);
+  border: 1px solid color-mix(in srgb, var(--flipd-blue) 30%, transparent);
   color: var(--flipd-blue-dim);
   white-space: nowrap;
 }
@@ -1409,7 +1372,7 @@ html:has(.simmer-page) {
   grid-template-columns: auto 1fr;
   gap: 0.15rem 0.6rem;
   padding: 0.5rem 0;
-  border-top: 1px solid rgba(41,67,117,0.16);
+  border-top: 1px solid color-mix(in srgb, var(--flipd-blue) 16%, transparent);
 }
 .flipd-page .flipd-spec-list .flipd-spec-no { grid-row: span 2; align-self: center; }
 
@@ -1515,39 +1478,6 @@ html:has(.simmer-page) {
        tertiary that handles the marquee wordmark, 3D shadows under the
        cards/buttons, and the checkered floor. No red anywhere — the
        brand reads as a takeout chicken-paper print, not Coca-Cola. */
-  /* ── flipd — from the GS Foods brand book (Sept 2026) ──────────────────
-       Three colours, no more:
-         Flipd Blue    #294375  (Pantone 19-4057 TCX) — ink, dark panels, the
-                                 badge line-work. Everything structural.
-         Smash Mustard #FED561  (Pantone 13-0840 TCX) — the field. flipd is a
-                                 yellow brand; the blue sits ON the yellow.
-         Bone          #F9F0E1  (Pantone 9180) — the third checker square and
-                                 the quiet surface.
-       The previous palette was padel-court turf — vivid court blue, grass
-       green, optic-ball yellow-green. That directly contradicts the brand
-       book's own rule ("Not about padel: we happen to be there, we never
-       borrow the court's identity"), so it is gone rather than dimmed. */
-  --flipd-blue:         #294375;  /* Flipd Blue — ink, rules, line art */
-  --flipd-blue-deep:    #1D3159;  /* pressed / deeper panels */
-  --flipd-mustard:      #FED561;  /* Smash Mustard — the brand field */
-  --flipd-bone:         #F9F0E1;  /* Bone — the calm surface */
-  --flipd-blue-dim:     rgba(41,67,117,0.72);
-  --flipd-blue-faint:   rgba(41,67,117,0.42);
-
-  /* The checker is the brand's signature edge — navy and bone, never yellow,
-     so it reads as a border against the mustard field rather than dissolving
-     into it. Tiled SVG so it tessellates exactly from the top-left; the old
-     four-gradient recipe malformed the first row. */
-  --flipd-checker:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect width='36' height='36' fill='%23F9F0E1'/%3E%3Crect width='18' height='18' fill='%23294375'/%3E%3Crect x='18' y='18' width='18' height='18' fill='%23294375'/%3E%3C/svg%3E");
-
-  /* Display is "Bronto Burger" in the book — a Canva face with no webfont
-     licence we hold, so it cannot ship. Alfa Slab One is the closest thing
-     available: same heavy retro slab weight and warmth at heading sizes. The
-     wordmark itself is the supplied badge image, so the one place the real
-     face matters is unaffected. Swap this the day we license Bronto Burger.
-     Body is Poppins, which IS the book's choice and is freely available. */
-  --flipd-display:      var(--font-alfa-slab), 'Bevan', Georgia, serif;
-  --flipd-body:         var(--font-poppins), system-ui, sans-serif;
 }
 
 html {

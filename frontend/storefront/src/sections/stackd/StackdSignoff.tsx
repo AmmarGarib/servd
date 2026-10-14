@@ -14,7 +14,7 @@ import { StackdFrame, stackdConcept, fill, wordmark } from './shared'
 
 export function StackdSignoff({ fields, ctx }: SectionProps) {
   const concept = stackdConcept(ctx)
-  const mark = wordmark(fields.wordmark, concept)
+  const mark = wordmark(fields.wordmark, concept, ctx)
   const line = str(fields.address).trim() || concept.address || str(fields.addressMissing)
   return (
     <StackdFrame>

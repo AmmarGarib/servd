@@ -27,6 +27,7 @@ import { fetchSiteLayout, pageSeo } from '../../../lib/blocks'
 import { locationFromConcept } from '../../../lib/brandLocations'
 import { fetchLiveConcepts, findConceptOrThrow, resolveConcept } from '../../../lib/liveConcepts'
 import { ManagedPage } from '../../../sections/ManagedPage'
+import { getLiveKits } from '../../../lib/brandKitFetch'
 import { brandHomeTitle, brandPageMetadata, type Params } from './meta'
 
 export const dynamic = 'force-dynamic'
@@ -36,11 +37,13 @@ export default async function BrandLayout({
   params,
 }: Params & { children: React.ReactNode }) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
-  const live = await fetchLiveConcepts()
+  const [live, kits] = await Promise.all([fetchLiveConcepts(), getLiveKits()])
   const concept = findConceptOrThrow(slug, live)
   if (!concept) notFound()
 
-  const themed: Concept = { ...concept, primaryColor: brandAccent(concept.slug, concept.primaryColor) }
+  // The accent is the brand kit's (Admin → Storefront → Brand kit); the rest
+  // of the kit reaches the page as tokens injected by the root layout.
+  const themed: Concept = { ...concept, primaryColor: brandAccent(concept.slug, concept.primaryColor, kits) }
   // Hand ManagedPage the brands we already have (it falls back itself when
   // the list is empty).
   const known = live.length ? { concepts: live } : {}

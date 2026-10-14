@@ -7,6 +7,8 @@ import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 import { fetchSiteLayout, type Block, type SiteLayoutRead } from '../lib/blocks'
 import { brandAccent, formatBrandName, type Concept } from '../lib/concept'
+import type { LiveKits } from '../lib/brandKit'
+import { getLiveKits } from '../lib/brandKitFetch'
 import { FALLBACK_CONCEPTS } from '../lib/fallbackBrands'
 import { BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { SiteLayoutView } from '../components/blocks/SiteLayoutView'
@@ -23,22 +25,31 @@ async function liveConcepts(): Promise<Concept[]> {
   } catch { return [] }
 }
 
-/** The brand a `brand:<slug>[:…]` page is about (live, else the fallback). */
-function brandOf(slug: string, concepts: Concept[]): Concept | undefined {
+/** `brand:<slug>:kit` is a brand's kit (Admin → Storefront → Brand kit),
+ *  never a page: nothing renders for it. */
+export const isKitSlug = (slug: string): boolean => /^brand:[^:]+:kit$/i.test(slug)
+
+/** The brand a `brand:<slug>[:…]` page is about (live, else the fallback),
+ *  its primaryColor set to the brand kit's accent. */
+function brandOf(slug: string, concepts: Concept[], kits?: LiveKits): Concept | undefined {
   const m = /^brand:([^:]+)/.exec(slug)
   if (!m) return undefined
-  const found = concepts.find((c) => c.slug === m[1]) ?? FALLBACK_CONCEPTS[m[1]!]
-  return found ? { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) } : undefined
+  const found = concepts.find((c) => c.slug === m[1]) ?? (Object.prototype.hasOwnProperty.call(FALLBACK_CONCEPTS, m[1]!) ? FALLBACK_CONCEPTS[m[1]!] : undefined)
+  return found ? { ...found, primaryColor: brandAccent(found.slug, found.primaryColor, kits) } : undefined
 }
 
-/** Everything a section on `slug` renders against. */
-export async function sectionContextFor(slug: string, known?: { concepts?: Concept[]; params?: Record<string, string> }): Promise<SectionContext> {
-  const fetched = known?.concepts ?? await liveConcepts()
+/** Everything a section on `slug` renders against. `kits` overrides the live
+ *  brand kits (the editor frame's draft kit). */
+export async function sectionContextFor(slug: string, known?: { concepts?: Concept[]; params?: Record<string, string>; kits?: LiveKits }): Promise<SectionContext> {
+  const [fetched, kits] = await Promise.all([
+    known?.concepts ? Promise.resolve(known.concepts) : liveConcepts(),
+    known?.kits ? Promise.resolve(known.kits) : getLiveKits(),
+  ])
   const concepts = fetched.length ? fetched : Object.values(FALLBACK_CONCEPTS)
-  const concept = brandOf(slug, concepts)
+  const concept = brandOf(slug, concepts, kits)
   let onBrandHost = false
   try { onBrandHost = !!headers().get(BRAND_HOST_HEADER) } catch { /* outside a request */ }
-  return { pageSlug: slug, concepts, onBrandHost, ...(concept && { concept }), ...(known?.params && { params: known.params }) }
+  return { pageSlug: slug, concepts, onBrandHost, kits, ...(concept && { concept }), ...(known?.params && { params: known.params }) }
 }
 
 export function renderContextFor(sctx: SectionContext): RenderContext {
@@ -81,12 +92,18 @@ interface Props {
   editor?: boolean
   /** The frame's per-block marker component (see RenderContext.editorMarker). */
   editorMarker?: EditorMarker
+  /** Brand kits to theme with instead of the live ones (editor frame preview). */
+  kits?: LiveKits
 }
 
-export async function ManagedPage({ slug, concepts, notFoundWhenEmpty, layout: given, previewVariant, params, editor, editorMarker }: Props) {
+export async function ManagedPage({ slug, concepts, notFoundWhenEmpty, layout: given, previewVariant, params, editor, editorMarker, kits }: Props) {
+  if (isKitSlug(slug)) {
+    if (notFoundWhenEmpty) notFound()
+    return null
+  }
   const [layout, sctx] = await Promise.all([
     given ? Promise.resolve(given) : fetchSiteLayout(slug),
-    sectionContextFor(slug, { ...(concepts && { concepts }), ...(params && { params }) }),
+    sectionContextFor(slug, { ...(concepts && { concepts }), ...(params && { params }), ...(kits && { kits }) }),
   ])
   const context = renderContextFor(sctx)
   if (layout?.blocks?.length) {

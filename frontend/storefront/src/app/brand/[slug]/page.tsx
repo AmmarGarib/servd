@@ -6,6 +6,7 @@
 import { notFound } from 'next/navigation'
 import { brandAccent, formatBrandName, type Concept } from '../../../lib/concept'
 import { ManagedPage } from '../../../sections/ManagedPage'
+import { getLiveKits } from '../../../lib/brandKitFetch'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
 import { brandCanonical } from '../../../lib/brandDomains'
@@ -19,13 +20,13 @@ export const dynamic = 'force-dynamic'
 export default async function BrandHome({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
 
-  const [live, menu] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug)])
+  const [live, menu, kits] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug), getLiveKits()])
   const found = findConceptOrThrow(slug, live)
   if (!found) notFound()
   // API empty/down → the bundled brand records, so the cross-brand sections
   // still have a list to draw from.
   const concepts = conceptsOrFallback(live)
-  const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
+  const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor, kits) }
 
   // JSON-LD: the brand's Restaurant (its own description, hours and address
   // from the live Concept row — the same node /home and /locations emit, by
