@@ -167,7 +167,7 @@ describe('ONL-R2-01: a top-up is booked in the top-up company', () => {
 
   it('a paid top-up debits the tender account (cash → 1010) in its company', async () => {
     const c = await mkCustomer([conceptB])
-    const r = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 20_000, kind: 'paid', tender: 'cash' })
+    const r = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 20_000, kind: 'paid', tender: 'cash', paymentRef: `RW-${RUN}-cash` })
     expect(r.statusCode).toBe(201)
     const je = await entryLines(tenantB, `wallet.topup:${r.json().transactionId}`)
     expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([
@@ -290,7 +290,7 @@ describe('ONL-R2-01: 2050 never goes to a debit balance', () => {
 
     // A grants 200k goodwill, B takes 120k cash for a paid top-up.
     expect((await asStaff('mgrA', 'POST', '/wallet/topup', { customerId: c, amountCents: 200_000 })).statusCode).toBe(201)
-    expect((await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 120_000, kind: 'paid', tender: 'card' })).statusCode).toBe(201)
+    expect((await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 120_000, kind: 'paid', tender: 'card', paymentRef: `RW-${RUN}-card` })).statusCode).toBe(201)
 
     // Spend at A (wallet as method, 108k at the card rate) and complete it.
     const oA = await asCustomer(c, 'POST', '/storefront/orders', { conceptSlug: slugA, type: 'pickup', paymentGateway: 'wallet', items: basket(clubA) })
@@ -594,10 +594,10 @@ describe('finance gaps #9: a paid bank top-up is booked to the bank it was recei
     const ofB = (await prisma.bankAccount.create({ data: { tenantId: tenantB, name: 'B Ops', accountCode: '1020' } })).id
     const c = await mkCustomer([conceptC])
 
-    const noPick = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank' })
+    const noPick = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank_transfer', paymentRef: `RW-${RUN}-ibft` })
     expect(noPick.statusCode).toBe(422)
     expect(noPick.json().error.code).toBe('BANK_ACCOUNT_REQUIRED')
-    const foreign = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank', bankAccountId: ofB })
+    const foreign = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank_transfer', paymentRef: `RW-${RUN}-ibft`, bankAccountId: ofB })
     expect(foreign.statusCode).toBe(422)
     expect(foreign.json().error.code).toBe('BANK_ACCOUNT_NOT_IN_COMPANY')
     expect(await walletAt(tenantC, c)).toBe(0)
@@ -607,7 +607,7 @@ describe('finance gaps #9: a paid bank top-up is booked to the bank it was recei
     expect((await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, bankAccountId: second })).statusCode).toBe(400)
     expect((await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'cash', bankAccountId: second })).statusCode).toBe(400)
 
-    const ok = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank', bankAccountId: second })
+    const ok = await asStaff('mgrC', 'POST', '/wallet/topup', { customerId: c, amountCents: 10_000, kind: 'paid', tender: 'bank_transfer', paymentRef: `RW-${RUN}-ibft`, bankAccountId: second })
     expect(ok.statusCode, ok.body).toBe(201)
     const je = await entryLines(tenantC, `wallet.topup:${ok.json().transactionId}`)
     expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([
@@ -622,12 +622,14 @@ describe('finance gaps #9: a paid bank top-up is booked to the bank it was recei
     // B has exactly one bank (created above).
     const ofB = (await prisma.bankAccount.findFirstOrThrow({ where: { tenantId: tenantB, deletedAt: null } })).id
     const c = await mkCustomer([conceptB])
-    const r = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 7_000, kind: 'paid', tender: 'bank' })
+    // The old 'bank' tender still reads as a bank transfer.
+    const r = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 7_000, kind: 'paid', tender: 'bank', paymentRef: `RW-${RUN}-old` })
     expect(r.statusCode, r.body).toBe(201)
+    expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: r.json().transactionId } })).method).toBe('bank_transfer')
     const je = await entryLines(tenantB, `wallet.topup:${r.json().transactionId}`)
     expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([['credit', '2050', 7_000], ['debit', '1020', 7_000]])
     expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: r.json().transactionId } })).bankAccountId).toBe(ofB)
-    const card = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 3_000, kind: 'paid', tender: 'card' })
+    const card = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 3_000, kind: 'paid', tender: 'card', paymentRef: `RW-${RUN}-slip` })
     expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: card.json().transactionId } })).bankAccountId).toBeNull()
     expect((await entryLines(tenantB, `wallet.topup:${card.json().transactionId}`))!.lines.some((l) => l.account.code === '1030' && l.type === 'debit')).toBe(true)
   })

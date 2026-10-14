@@ -164,7 +164,7 @@ describe('gift cards (owner decision 14)', () => {
   let orderB: string
 
   beforeAll(async () => {
-    const r = await call('POST', '/gift-cards', auth(userA), { issuedAmountCents: 50_000, paymentMethod: 'cash' })
+    const r = await call('POST', '/gift-cards', auth(userA), { issuedAmountCents: 50_000, paymentMethod: 'cash', paymentRef: 'SEP-CASH-1' })
     expect(r.statusCode).toBe(201)
     cardId = r.json().id
     code = r.json().code
@@ -219,7 +219,7 @@ describe('gift cards (owner decision 14)', () => {
   })
 
   it("B cannot issue a card under A's brand", async () => {
-    const r = await call('POST', '/gift-cards', auth(userB), { issuedAmountCents: 20_000, conceptId: conceptA, paymentMethod: 'cash' })
+    const r = await call('POST', '/gift-cards', auth(userB), { issuedAmountCents: 20_000, conceptId: conceptA, paymentMethod: 'cash', paymentRef: 'SEP-CASH-2' })
     expect(r.statusCode).toBe(404)
   })
 })

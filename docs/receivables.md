@@ -30,12 +30,32 @@ already received); a **refund** pays it out.
 
 ## Money coming in
 
-- **Receive a payment**: amount, date, method (bank, cash, cheque, card), the
-  bank account if it went to a bank. Booked *Dr the bank/cash account / Cr
-  1110*. A payment larger than what is owed is refused (`OVERPAYMENT`); money that
-  arrives on a written-off part is recorded as a **recovery** instead (below).
-  Pick the **bank account** when the company has more than one
-  (`BANK_ACCOUNT_REQUIRED`); the account must belong to this company.
+- **Receive a payment**: amount, date, **paid by** (Cash, Card, Bank transfer,
+  **Bank deposit**, Cheque), the **payment reference #**, and the bank account
+  ("Received into") for a bank transfer, bank deposit or cheque. Booked *Dr the
+  bank / cash (1010) / card (1030) account / Cr 1110*. A payment larger than
+  what is owed is refused (`OVERPAYMENT`); money that arrives on a written-off
+  part is recorded as a **recovery** instead (below). Pick the **bank account**
+  when the company has more than one (`BANK_ACCOUNT_REQUIRED`); the account must
+  belong to this company (`BANK_ACCOUNT_NOT_IN_COMPANY`).
+- **Bank deposit** means the customer paid cash (or a cheque) straight into one
+  of our bank accounts at a branch. It lands in the bank you pick, like a
+  transfer. (Not the same as **Bank deposit drops**, which is us taking our own
+  till cash to the bank.)
+- **Payment reference #** (owner, 2026-10-14) is **required for every method,
+  cash included**: the cash receipt or voucher number, the card slip or
+  approval number, the transfer / IBFT reference, the deposit slip number or the
+  cheque number. Without it nothing is saved (`PAYMENT_REFERENCE_REQUIRED`). It
+  is stored on the payment, shown on the invoice, and written into the ledger
+  entry's description and the bank / cash line's memo (for example
+  *"AR-2026-0012: bank deposit, ref 4471"*), so it can be found on the bank
+  statement.
+- **A reference used before** is a **warning, never a block**: one transfer can
+  pay several invoices. The payment is saved and the page lists where this
+  company already used that reference (other invoice payments, gift cards,
+  wallet top-ups, …). Another company's payments are never shown.
+- Screens and integrations that still send the old method `bank` are read as
+  **Bank transfer**; payments already stored keep what they say.
 - **Bounced cheque / wrong entry**: **reverse** the payment. The entry is
   reversed and the invoice owes again.
 - **Credit note**: for returned goods or a price correction, against the
@@ -98,11 +118,15 @@ the write-off is direct, with reason and evidence (H15).
    If the month is closed through today the write-off is refused
    (`PERIOD_LOCKED`) and nothing is saved.
 3. **Recovery.** If the customer later pays part or all of what was written
-   off, finance records the **recovery** on the write-off (amount, date, method,
-   bank account, reference). It books *Dr 1110 / Cr 6160* (the debt comes back
-   and the bad-debt cost is reversed) together with the normal *Dr bank / Cr
-   1110* payment. The date cannot be earlier than the day the write-off was
-   approved. You cannot recover more than what was written off (`OVER_RECOVERY`).
+   off, finance records the **recovery** on the write-off: amount, date, paid by
+   (Cash, Card, Bank transfer, Bank deposit, Cheque), the **payment reference #**
+   (required, as for any payment) and the bank account for a bank-type method.
+   It books *Dr 1110 / Cr 6160* (the debt comes back and the bad-debt cost is
+   reversed) together with the normal *Dr bank / cash / card / Cr 1110* payment;
+   both entries carry the method and reference in their description. The date
+   cannot be earlier than the day the write-off was approved. You cannot recover
+   more than what was written off (`OVER_RECOVERY`). A reference used before is
+   a warning, as for a payment.
 4. **Reversing a recovery** (a cheque that bounced): reverse the payment as
    usual - servd also puts the amount back on the written-off figure and
    reverses the recovery entry (`RECOVERY_MISMATCH` if the pieces do not line

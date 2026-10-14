@@ -621,7 +621,7 @@ describe('(5) group-scale receivables, fixed assets and a customer\'s lifetime s
     const id = inv.json().id
     const list = (await call('ceoA', 'GET', '/accounting/receivables')).json() as { invoices: Array<{ id: string; balanceCents: number }> }
     expect(list.invoices.find((i) => i.id === id)?.balanceCents).toBe(2_500_000_000)
-    const pay = await call('ceoA', 'POST', `/accounting/receivables/${id}/payments`, { amountCents: 2_500_000_000, receivedAt: today, method: 'bank' })
+    const pay = await call('ceoA', 'POST', `/accounting/receivables/${id}/payments`, { reference: 'MBI-1', amountCents: 2_500_000_000, receivedAt: today, method: 'bank' })
     expect(pay.statusCode, pay.body).toBe(201)
     expect((await prisma.receivableInvoice.findUniqueOrThrow({ where: { id } })).status).toBe('paid')
     const refs = [`receivable.issue:${id}`, `receivable.payment:${pay.json().id}`]

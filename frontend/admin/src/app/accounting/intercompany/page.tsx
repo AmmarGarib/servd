@@ -12,6 +12,14 @@
 //                     subledgers, and the one-time write-off of the pre-launch
 //                     cross-company residue (CEO, preview first).
 //
+// A settlement (owner, 2026-10-14) is paid by bank transfer, bank deposit (the
+// paying company's cash paid into the receiving company's bank — only the
+// receiving company's bank is asked for), cheque or cash, and always carries a
+// payment reference #. A reference used before is a warning after saving.
+// The bank pickers are built here, not with BankAccountSelect: that one reads
+// the active company's banks only, and a settlement names a bank in each of
+// two companies (read across both with the portfolio header).
+//
 // What the signed-in user may do comes from the server (GET /companies `can`,
 // and each row's canApprove / canReverse / canDecide / canWriteOff) — this page
 // keeps no role list. Every 403 / 404 / 409 / 422 message is shown as the API
@@ -24,6 +32,9 @@ import { api, ApiError } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { banksOf, type BankAccountOption } from '../../../components/finance/BankAccountSelect'
+import {
+  PAYMENT_REFERENCE_ERROR_TEXT, ReferenceUsedBeforeNotice, receiptMethodLabel, type PaymentRefUse,
+} from '../../../components/finance/PaymentReceivedFields'
 
 // ─── API shapes ──────────────────────────────────────────────────────────────
 
@@ -136,6 +147,12 @@ const TABS = [
 type Tab = (typeof TABS)[number]['key']
 
 const KIND_LABEL: Record<TransferKind, string> = { charge: 'Charge', settlement: 'Settlement', netting: 'Netting' }
+/** How a settlement is paid — the API's SETTLEMENT_METHODS (receipt methods without card). */
+const SETTLEMENT_METHODS = ['bank_transfer', 'bank_deposit', 'cheque', 'cash'] as const
+type SettlementMethod = (typeof SETTLEMENT_METHODS)[number]
+/** Which company names a bank: the payer for a transfer or cheque, the receiver for those and for a deposit. */
+const payerUsesBank = (m: SettlementMethod) => m === 'bank_transfer' || m === 'cheque'
+const payeeUsesBank = (m: SettlementMethod) => m !== 'cash'
 const STATUS_BADGE: Record<TransferStatus, { cls: string; label: string }> = {
   submitted: { cls: 's-badge-amber', label: 'Waiting for the CEO' },
   posted: { cls: 's-badge-green', label: 'Posted' },
@@ -156,9 +173,11 @@ const fieldCls = 's-input'
 const labelCls = 'block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1'
 
 function errMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message
+  if (err instanceof ApiError) return (err.code && PAYMENT_REFERENCE_ERROR_TEXT[err.code]) || err.message
   return (err as Error)?.message ?? 'Something went wrong'
 }
+
+type Msg = { ok: boolean; text: string; uses?: PaymentRefUse[] }
 
 function monthLabel(m: string): string {
   const [y, mo] = m.split('-').map(Number) as [number, number]
@@ -182,12 +201,15 @@ function Money({ cents, tone }: { cents: number | null; tone?: 'auto' | 'plain' 
   return <span className="tabular-nums" style={style}>{fmtPkr(cents)}</span>
 }
 
-function Notice({ msg, onClose }: { msg: { ok: boolean; text: string } | null; onClose: () => void }) {
+function Notice({ msg, onClose }: { msg: Msg | null; onClose: () => void }) {
   if (!msg) return null
   return (
-    <div role={msg.ok ? 'status' : 'alert'} className="s-card flex items-start justify-between gap-3 p-3 text-sm">
-      <span className={msg.ok ? 'text-success' : ''} style={msg.ok ? undefined : { color: danger }}>{msg.text}</span>
-      <button type="button" onClick={onClose} className="text-xs text-white/40 hover:text-white/70" aria-label="Dismiss">Close</button>
+    <div role={msg.ok ? 'status' : 'alert'} className="s-card space-y-2 p-3 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <span className={msg.ok ? 'text-success' : ''} style={msg.ok ? undefined : { color: danger }}>{msg.text}</span>
+        <button type="button" onClick={onClose} className="text-xs text-white/40 hover:text-white/70" aria-label="Dismiss">Close</button>
+      </div>
+      <ReferenceUsedBeforeNotice uses={msg.uses} />
     </div>
   )
 }
@@ -196,7 +218,7 @@ function Notice({ msg, onClose }: { msg: { ok: boolean; text: string } | null; o
 
 export default function IntercompanyPage() {
   const [tab, setTab] = useState<Tab>('balances')
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [msg, setMsg] = useState<Msg | null>(null)
   const [settlePrefill, setSettlePrefill] = useState<{ debtor: string; creditor: string; cents: number } | null>(null)
 
   // ?tab=… deep links (the close checklist links here).
@@ -360,7 +382,7 @@ function TransfersTab({ companies, prefill, clearPrefill, setMsg }: {
   companies: Companies | null
   prefill: { debtor: string; creditor: string; cents: number } | null
   clearPrefill: () => void
-  setMsg: (m: { ok: boolean; text: string } | null) => void
+  setMsg: (m: Msg | null) => void
 }) {
   const qc = useQueryClient()
   const [status, setStatus] = useState<'' | TransferStatus>('')
@@ -395,7 +417,7 @@ function TransfersTab({ companies, prefill, clearPrefill, setMsg }: {
         <TransferForm
           companies={companies}
           prefill={prefill}
-          onDone={(text) => { setShowForm(false); clearPrefill(); setMsg({ ok: true, text }); refresh() }}
+          onDone={(text, uses) => { setShowForm(false); clearPrefill(); setMsg({ ok: true, text, uses }); refresh() }}
           onCancel={() => { setShowForm(false); clearPrefill() }}
           onError={(text) => setMsg({ ok: false, text })}
         />
@@ -459,7 +481,7 @@ function TransferRow({ t, onChanged, onError }: { t: Transfer; onChanged: (text:
           )}
           {t.kind === 'settlement' && (
             <p className="text-xs text-white/40">
-              By {t.method}{t.debtorBankName ? ` from ${t.debtorBankName}` : ''}{t.creditorBankName ? ` into ${t.creditorBankName}` : ''}{t.bankReference ? ` · ref ${t.bankReference}` : ''}
+              By {receiptMethodLabel(t.method).toLowerCase() || '—'}{t.debtorBankName ? ` from ${t.debtorBankName}` : ''}{t.creditorBankName ? ` into ${t.creditorBankName}` : ''}{t.bankReference ? ` · ref ${t.bankReference}` : ''}
             </p>
           )}
         </div>
@@ -503,10 +525,25 @@ function TransferRow({ t, onChanged, onError }: { t: Transfer; onChanged: (text:
   )
 }
 
+/** One company's banks for a settlement (that company's own, read across both companies). */
+function PairBankSelect({ id, label, banks, value, onChange }: {
+  id: string; label: string; banks: BankAccountOption[]; value: string; onChange: (v: string) => void
+}) {
+  return (
+    <label className="block" htmlFor={id}>
+      <span className={labelCls}>{label}{banks.length > 1 ? ' *' : ''}</span>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="s-select" required={banks.length > 1}>
+        <option value="">{banks.length === 1 ? `${banks[0]!.name} (only bank)` : banks.length === 0 ? 'Operating account (1020)' : '— pick the bank —'}</option>
+        {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
+      </select>
+    </label>
+  )
+}
+
 function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
   companies: Companies
   prefill: { debtor: string; creditor: string; cents: number } | null
-  onDone: (text: string) => void
+  onDone: (text: string, uses?: PaymentRefUse[]) => void
   onCancel: () => void
   onError: (text: string) => void
 }) {
@@ -520,7 +557,7 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
   const [memo, setMemo] = useState('')
   const [debtorCode, setDebtorCode] = useState('')
   const [creditorCode, setCreditorCode] = useState('6990')
-  const [method, setMethod] = useState<'bank' | 'cash'>('bank')
+  const [method, setMethod] = useState<SettlementMethod>('bank_transfer')
   const [debtorBank, setDebtorBank] = useState('')
   const [creditorBank, setCreditorBank] = useState('')
   const [bankRef, setBankRef] = useState('')
@@ -538,16 +575,19 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
   const nameOf = (id: string) => list.find((c) => c.id === id)?.name ?? 'company'
 
   const save = useMutation({
-    mutationFn: () => api.post<Transfer>('/accounting/intercompany/transfers', {
+    mutationFn: () => api.post<Transfer & { referenceUsedBefore?: PaymentRefUse[] }>('/accounting/intercompany/transfers', {
       kind, debtorTenantId: debtor, creditorTenantId: creditor, amountCents: amount, entryDate, memo: memo.trim(),
       ...(kind === 'charge' && { debtorAccountCode: debtorCode.trim(), creditorAccountCode: creditorCode.trim() }),
       ...(kind === 'settlement' && {
-        method, debtorBankAccountId: method === 'bank' && debtorBank ? debtorBank : null,
-        creditorBankAccountId: method === 'bank' && creditorBank ? creditorBank : null, bankReference: bankRef.trim() || null,
+        method, debtorBankAccountId: payerUsesBank(method) && debtorBank ? debtorBank : null,
+        creditorBankAccountId: payeeUsesBank(method) && creditorBank ? creditorBank : null, bankReference: bankRef.trim(),
       }),
       ...(postNow && { postNow: true }),
     }),
-    onSuccess: (t) => onDone(t.status === 'posted' ? 'Posted in both companies\' books.' : 'Submitted — it waits for the CEO in the approvals inbox.'),
+    onSuccess: (t) => onDone(
+      t.status === 'posted' ? 'Posted in both companies\' books.' : 'Submitted — it waits for the CEO in the approvals inbox.',
+      t.referenceUsedBefore,
+    ),
     onError: (err) => onError(errMessage(err)),
   })
 
@@ -557,6 +597,7 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
     : { debtor: 'First company', creditor: 'Second company' }
   const ready = debtor && creditor && debtor !== creditor && amount > 0 && memo.trim().length >= 3
     && (kind !== 'charge' || (debtorCode.trim() && creditorCode.trim()))
+    && (kind !== 'settlement' || bankRef.trim().length > 0)
 
   return (
     <form className="s-card space-y-3 p-4" onSubmit={(e) => { e.preventDefault(); if (ready) save.mutate() }}>
@@ -608,40 +649,34 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
         )}
         {kind === 'settlement' && (
           <>
-            <label className="block">
+            <label className="block" htmlFor="ic-method">
               <span className={labelCls}>Paid by</span>
-              <select value={method} onChange={(e) => setMethod(e.target.value as 'bank' | 'cash')} className="s-select">
-                <option value="bank">Bank</option>
-                <option value="cash">Cash</option>
+              <select id="ic-method" value={method} onChange={(e) => setMethod(e.target.value as SettlementMethod)} className="s-select">
+                {SETTLEMENT_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}
               </select>
             </label>
-            {method === 'bank' && (
-              <>
-                <label className="block">
-                  <span className={labelCls}>{nameOf(debtor)}&apos;s bank{debtorBanks.length > 1 ? ' *' : ''}</span>
-                  <select value={debtorBank} onChange={(e) => setDebtorBank(e.target.value)} className="s-select">
-                    <option value="">{debtorBanks.length === 1 ? `${debtorBanks[0]!.name} (only bank)` : debtorBanks.length === 0 ? 'Operating account (1020)' : '— pick the bank —'}</option>
-                    {debtorBanks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className={labelCls}>{nameOf(creditor)}&apos;s bank{creditorBanks.length > 1 ? ' *' : ''}</span>
-                  <select value={creditorBank} onChange={(e) => setCreditorBank(e.target.value)} className="s-select">
-                    <option value="">{creditorBanks.length === 1 ? `${creditorBanks[0]!.name} (only bank)` : creditorBanks.length === 0 ? 'Operating account (1020)' : '— pick the bank —'}</option>
-                    {creditorBanks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className={labelCls}>Bank reference</span>
-                  <input value={bankRef} onChange={(e) => setBankRef(e.target.value)} maxLength={100} className={fieldCls} />
-                </label>
-              </>
+            <label className="block" htmlFor="ic-ref">
+              <span className={labelCls}>Payment reference # *</span>
+              <input id="ic-ref" value={bankRef} onChange={(e) => setBankRef(e.target.value)} maxLength={100} required autoComplete="off"
+                placeholder={method === 'bank_deposit' ? 'Deposit slip no.' : method === 'cheque' ? 'Cheque no.' : method === 'cash' ? 'Cash receipt / voucher no.' : 'Transfer / IBFT reference'}
+                className={fieldCls} />
+            </label>
+            {payerUsesBank(method) && (
+              <PairBankSelect id="ic-debtor-bank" label={`${nameOf(debtor)}'s bank`} banks={debtorBanks} value={debtorBank} onChange={setDebtorBank} />
+            )}
+            {payeeUsesBank(method) && (
+              <PairBankSelect id="ic-creditor-bank" label={`${nameOf(creditor)}'s bank${method === 'bank_deposit' ? ' (deposited into)' : ''}`} banks={creditorBanks} value={creditorBank} onChange={setCreditorBank} />
             )}
           </>
         )}
       </div>
       {kind === 'netting' && (
         <p className="text-xs text-white/45">Netting cancels what each company owes the other, up to the smaller of the two amounts. No money moves.</p>
+      )}
+      {kind === 'settlement' && method === 'bank_deposit' && (
+        <p className="text-xs text-white/45">
+          A bank deposit is {nameOf(debtor)}&apos;s cash paid into {nameOf(creditor)}&apos;s bank: it leaves {nameOf(debtor)}&apos;s cash and lands in the bank picked.
+        </p>
       )}
       {companies.can.decide && (
         <label className="flex items-start gap-2 text-sm text-white/70">
@@ -661,7 +696,7 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
 
 // ─── Shared fleet ────────────────────────────────────────────────────────────
 
-function FleetTab({ canDecide, setMsg }: { canDecide: boolean; setMsg: (m: { ok: boolean; text: string } | null) => void }) {
+function FleetTab({ canDecide, setMsg }: { canDecide: boolean; setMsg: (m: Msg | null) => void }) {
   const qc = useQueryClient()
   const [from, setFrom] = useState(pktMonth(-5))
   const [to, setTo] = useState(pktMonth(0))

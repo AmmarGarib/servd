@@ -240,7 +240,7 @@ describe('the CEO approves every write-off', () => {
     expect(listed).toMatchObject({ balanceCents: 0, bucket: null, canRequestWriteOff: false })
     expect(listed.writeOffs.map((w) => w.id)).toEqual([r.id])
     // A payment on the written-off part is refused: that is a recovery.
-    const pay = await call('finA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 1_000, receivedAt: today(), method: 'cash' })
+    const pay = await call('finA', 'POST', `${AR}/${i.id}/payments`, { reference: 'BDW-1', amountCents: 1_000, receivedAt: today(), method: 'cash' })
     expect(pay.statusCode).toBe(409)
     // Approving twice changes nothing.
     expect((await call('ceoA', 'POST', `${WO}/${r.id}/approve`, {})).json().error.code).toBe('WRITE_OFF_NOT_PENDING')
@@ -269,7 +269,7 @@ describe('the CEO approves every write-off', () => {
   it('a payment after the request leaves too little to write off: 409 and nothing changes; reject and cancel', async () => {
     const i = await raise('finA')
     const r = (await request('finA', i.id, 115_000)).json() as Row
-    expect((await call('finA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
+    expect((await call('finA', 'POST', `${AR}/${i.id}/payments`, { reference: 'BDW-2', amountCents: 50_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
     const no = await call('ceoA', 'POST', `${WO}/${r.id}/approve`, {})
     expect(no.statusCode).toBe(409)
     expect(no.json().error.code).toBe('WRITE_OFF_EXCEEDS_BALANCE')
@@ -317,7 +317,7 @@ describe('money received after a write-off', () => {
     const w = (await request('ceoA', i.id, 115_000)).json() as Row
     expect(w.status).toBe('approved')
 
-    const foreignBank = await call('finA', 'POST', `${WO}/${w.id}/recover`, { amountCents: 40_000, receivedAt: today(), method: 'bank', bankAccountId: bankB })
+    const foreignBank = await call('finA', 'POST', `${WO}/${w.id}/recover`, { reference: 'BDW-3', amountCents: 40_000, receivedAt: today(), method: 'bank', bankAccountId: bankB })
     expect(foreignBank.statusCode).toBe(422)
     expect(foreignBank.json().error.code).toBe('BANK_ACCOUNT_NOT_IN_COMPANY')
     expect(await prisma.receivablePayment.count({ where: { invoiceId: i.id } })).toBe(0)
@@ -337,11 +337,11 @@ describe('money received after a write-off', () => {
     let now = await inv(i.id)
     expect([Number(now.paidCents), Number(now.writtenOffCents), now.status]).toEqual([40_000, 75_000, 'written_off'])
 
-    const over = await call('finA', 'POST', `${WO}/${w.id}/recover`, { amountCents: 75_001, receivedAt: today(), method: 'cash' })
+    const over = await call('finA', 'POST', `${WO}/${w.id}/recover`, { reference: 'BDW-4', amountCents: 75_001, receivedAt: today(), method: 'cash' })
     expect(over.statusCode).toBe(409)
     expect(over.json().error.code).toBe('OVER_RECOVERY')
 
-    const rest = await call('mgmtA', 'POST', `${WO}/${w.id}/recover`, { amountCents: 75_000, receivedAt: today(), method: 'cash' })
+    const rest = await call('mgmtA', 'POST', `${WO}/${w.id}/recover`, { reference: 'BDW-5', amountCents: 75_000, receivedAt: today(), method: 'cash' })
     expect(rest.statusCode, rest.body).toBe(201)
     expect(rest.json().writeOff).toMatchObject({ recoveredCents: 115_000, canRecover: false })
     now = await inv(i.id)
@@ -365,7 +365,7 @@ describe('money received after a write-off', () => {
     expect(twice.json().alreadyReversed).toBe(true)
     expect(Number((await inv(i.id)).writtenOffCents)).toBe(40_000)
     // The recalled 40,000 can be recovered again later.
-    const again = await call('finA', 'POST', `${WO}/${w.id}/recover`, { amountCents: 40_000, receivedAt: today(), method: 'cash' })
+    const again = await call('finA', 'POST', `${WO}/${w.id}/recover`, { reference: 'BDW-6', amountCents: 40_000, receivedAt: today(), method: 'cash' })
     expect(again.statusCode, again.body).toBe(201)
     expect([Number((await inv(i.id)).writtenOffCents), (await inv(i.id)).status]).toEqual([0, 'paid'])
   })
@@ -373,7 +373,7 @@ describe('money received after a write-off', () => {
   it('only an approved write-off can be recovered', async () => {
     const i = await raise('finA')
     const r = (await request('finA', i.id, 10_000)).json() as Row
-    const res = await call('finA', 'POST', `${WO}/${r.id}/recover`, { amountCents: 1_000, receivedAt: today(), method: 'cash' })
+    const res = await call('finA', 'POST', `${WO}/${r.id}/recover`, { reference: 'BDW-7', amountCents: 1_000, receivedAt: today(), method: 'cash' })
     expect(res.statusCode).toBe(409)
     expect(res.json().error.code).toBe('WRITE_OFF_NOT_APPROVED')
     await call('finA', 'POST', `${WO}/${r.id}/cancel`, {})
@@ -401,7 +401,7 @@ describe('what each role may do comes from the server', () => {
     expect(await rowFor('finA')).toMatchObject({ canApprove: false, canCancel: false, canRecover: true })
     // A financials viewer who may not request (the F&B manager) sees it and may do nothing.
     expect(await rowFor('fnbA')).toMatchObject({ canApprove: false, canReject: false, canCancel: false, canRecover: false })
-    expect((await call('fnbA', 'POST', `${WO}/${r.id}/recover`, { amountCents: 1_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(403)
+    expect((await call('fnbA', 'POST', `${WO}/${r.id}/recover`, { reference: 'BDW-8', amountCents: 1_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(403)
   })
 })
 
@@ -416,7 +416,7 @@ describe('company B never touches company A\'s write-offs', () => {
       expect((await request(who, i.id, 1_000)).statusCode, who).toBe(404)
       expect((await call(who, 'GET', `${WO}/${r.id}/evidence/${r.attachments[0]!.id}`)).statusCode).toBe(404)
       expect((await call(who, 'POST', `${WO}/${r.id}/cancel`, {})).statusCode).toBe(404)
-      expect((await call(who, 'POST', `${WO}/${applied.id}/recover`, { amountCents: 1_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(404)
+      expect((await call(who, 'POST', `${WO}/${applied.id}/recover`, { reference: 'BDW-9', amountCents: 1_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(404)
       const list = (await call(who, 'GET', WO)).json() as { items: Row[] }
       expect(list.items.some((x) => x.tenantId === tenantA)).toBe(false)
     }
@@ -451,7 +451,7 @@ describe('company B never touches company A\'s write-offs', () => {
 describe('a credit note after a write-off', () => {
   it('can never credit the written-off part (409 WRITTEN_OFF_FIRST); the rest still credits and a refund stays capped at what is owed back', async () => {
     const i = await raise('finA')                                          // 100,000 + 15,000
-    expect((await call('finA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 57_500, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
+    expect((await call('finA', 'POST', `${AR}/${i.id}/payments`, { reference: 'BDW-10', amountCents: 57_500, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
     const w = await request('ceoA', i.id, 57_500)                           // the CEO's own request applies at once
     expect(w.statusCode, w.body).toBe(201)
     expect(Number((await inv(i.id)).writtenOffCents)).toBe(57_500)

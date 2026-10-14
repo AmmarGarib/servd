@@ -68,8 +68,13 @@ async function entry(tenantId: string, reference: string): Promise<Line[] | null
 const amt = (lines: Line[], code: string, type: 'debit' | 'credit') =>
   lines.filter((l) => l.code === code && l.type === type).reduce((t, l) => t + l.amount, 0)
 
+// A sold card carries its payment reference # (owner, 2026-10-14) — a fresh
+// one per call unless the case names its own.
+let refSeq = 0
+const withRef = (body: Record<string, unknown>) =>
+  body.paymentMethod && !('paymentRef' in body) ? { ...body, paymentRef: `GC-${RUN}-${++refSeq}` } : body
 async function issue(who: string, body: Record<string, unknown>) {
-  const r = await call(who, 'POST', '/gift-cards', { issuedAmountCents: 50_000, ...body })
+  const r = await call(who, 'POST', '/gift-cards', { issuedAmountCents: 50_000, ...withRef(body) })
   return r
 }
 async function issued(who: string, body: Record<string, unknown>): Promise<{ id: string; code: string }> {
@@ -256,12 +261,12 @@ describe('void: the balance leaves 2080 the way the disposition says', () => {
     const legacy = await prisma.giftCard.create({ data: { tenantId: tenantA, code: `GS-LEG-${RUN}`.toUpperCase(), issuedAmountCents: 40_000, balanceCents: 40_000 } })
     const v = await call('mgrA', 'POST', `/gift-cards/${legacy.id}/void`, { reason: 'refund it', disposition: 'refund', refundMethod: 'cash' })
     expect(v.json().error.code).toBe('ISSUE_NOT_BOOKED')
-    expect((await call('mgrB', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash', paymentRef: 'LATE-BOOK-1' })).statusCode).toBe(404)
 
-    const b = await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash' })
+    const b = await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash', paymentRef: 'LATE-BOOK-1' })
     expect(b.statusCode, b.body).toBe(200)
     expect(amt((await entry(tenantA, `giftcard.issue:${legacy.id}`))!, '2080', 'credit')).toBe(40_000)
-    expect((await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash' })).statusCode).toBe(409)
+    expect((await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash', paymentRef: 'LATE-BOOK-1' })).statusCode).toBe(409)
     expect((await call('mgrA', 'POST', `/gift-cards/${legacy.id}/void`, { reason: 'refund it', disposition: 'refund', refundMethod: 'cash' })).statusCode).toBe(200)
   })
 })
@@ -380,7 +385,7 @@ describe('the register and the 2080 check', () => {
     expect(a.differenceCents).toBe(-a.issueNotBooked.cents)
     expect(a.unexplainedCents).toBe(0)
 
-    expect((await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash' })).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash', paymentRef: 'LATE-BOOK-1' })).statusCode).toBe(200)
     const after = (await call('mgrA', 'GET', '/gift-cards/reconcile')).json().companies[0] as typeof a
     expect(after.differenceCents).toBe(0)
     expect(after.ledgerCents).toBe(after.expectedCents)

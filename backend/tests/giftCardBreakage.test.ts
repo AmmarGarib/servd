@@ -65,8 +65,12 @@ async function entry(tenantId: string, reference: string): Promise<Line[] | null
 const amt = (lines: Line[], code: string, type: 'debit' | 'credit') =>
   lines.filter((l) => l.code === code && l.type === type).reduce((t, l) => t + l.amount, 0)
 
+// A sold card carries its payment reference # (owner, 2026-10-14).
+let refSeq = 0
+const withRef = (body: Record<string, unknown>) =>
+  body.paymentMethod && !('paymentRef' in body) ? { ...body, paymentRef: `GB-${RUN}-${++refSeq}` } : body
 async function issued(who: string, body: Record<string, unknown>): Promise<{ id: string; code: string }> {
-  const r = await call(who, 'POST', '/gift-cards', { issuedAmountCents: 50_000, ...body })
+  const r = await call(who, 'POST', '/gift-cards', { issuedAmountCents: 50_000, ...withRef(body) })
   expect(r.statusCode, r.body).toBe(201)
   return r.json()
 }
@@ -204,7 +208,7 @@ describe('held breakage', () => {
     expect(await flags()).toHaveLength(1)   // never raised twice
 
     // A void would be refused too (the same check), so book the sale; the next sweep books the breakage.
-    expect((await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash' })).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/gift-cards/${legacy.id}/book-issue`, { paymentMethod: 'cash', paymentRef: 'LATE-BOOK-1' })).statusCode).toBe(200)
     expect(await expireDueGiftCards(tenantA)).toMatchObject({ breakageCount: 1, breakageCents: 40_000, held: 0 })
     const je = (await entry(tenantA, `giftcard.expire:${legacy.id}`))!
     expect(amt(je, '4200', 'credit')).toBe(40_000)
@@ -213,7 +217,7 @@ describe('held breakage', () => {
   })
 
   it('4200 missing: the card stays expired with its balance, breakagePendingAt + posting_failed; the next run books it once the chart is fixed', async () => {
-    const r = await call('mgrC', 'POST', '/gift-cards', { issuedAmountCents: 25_000, paymentMethod: 'cash' })
+    const r = await call('mgrC', 'POST', '/gift-cards', { issuedAmountCents: 25_000, paymentMethod: 'cash', paymentRef: `GB-${RUN}-C` })
     expect(r.statusCode, r.body).toBe(201)
     const c = r.json() as { id: string }
     await expireNow([c.id])

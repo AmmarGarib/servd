@@ -29,6 +29,13 @@
 // canReject, canCancel, canRecover) — this page keeps no role list.
 // A credit note can only credit what was not written off (WRITTEN_OFF_FIRST).
 // The approvals inbox links here with ?writeOff=<id> to open that request.
+//
+// Record payment (owner, 2026-10-14) uses the shared PaymentReceivedFields:
+// Cash / Card / Bank transfer / Bank deposit / Cheque, a payment reference #
+// that is required for every method (cash included), and "Received into" for
+// a bank-type method. A reference used before is a warning (the API answers
+// referenceUsedBefore and the payment is saved), never a block. Refund is
+// money OUT and keeps its own methods.
 
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -38,6 +45,10 @@ import { api } from '../../../lib/api'
 import { fmtPkrWhole, todayPktIso } from '../../../lib/money'
 import { useActiveCompany } from '../../../lib/connectorsApi'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
+import {
+  PaymentReceivedFields, RECEIPT_METHOD_LABEL, ReferenceUsedBeforeNotice, receiptFieldsValid, receiptMethodLabel, isBankMethod,
+  type PaymentRefUse,
+} from '../../../components/finance/PaymentReceivedFields'
 import {
   EvidenceFiles, RecoveryDialog, WRITE_OFF_STATUS, WriteOffDecisionDialog, WriteOffDialog, receivablesErrorMessage,
   type DecisionMode, type WriteOffRow,
@@ -93,7 +104,8 @@ const STATUS: Record<Status, { label: string; color: string }> = {
   issued:   { label: 'Credit note', color: 'var(--erp-primary)' },
 }
 const KIND_LABEL: Record<PaymentKind, string> = { payment: 'Payment', withholding: 'Income tax withheld', refund: 'Refund to customer' }
-const METHOD_LABEL: Record<string, string> = { bank: 'Bank transfer', cheque: 'Cheque', cash: 'Cash', card: 'Card', wht: 'Certificate', st_withheld: 'Certificate' }
+/** The shared receipt-method words, plus the two withholding rows (a certificate, not money). */
+const METHOD_LABEL: Record<string, string> = { ...RECEIPT_METHOD_LABEL, wht: 'Certificate', st_withheld: 'Certificate' }
 const AUTHORITY_LABEL: Record<string, string> = { fbr: 'FBR', srb: 'SRB', pra: 'PRA', kpra: 'KPRA', bra: 'BRA' }
 const authorityLabel = (a: string | null | undefined) => (a ? AUTHORITY_LABEL[a] ?? a.toUpperCase() : null)
 
@@ -423,7 +435,7 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
                   <span className="text-white/50">
                     {METHOD_LABEL[p.method] ?? p.method}
                     {p.bankName ? ` · ${p.bankName}${p.bankAccountCode ? ` (${p.bankAccountCode})` : ''}` : ''}
-                    {p.reference ? ` · ${p.reference}` : ''}
+                    {p.reference ? ` · ${p.kind === 'withholding' ? 'certificate' : 'ref'} ${p.reference}` : ''}
                   </span>
                   <span className={`font-bold ${p.reversedAt ? 'line-through text-white/40' : 'text-white/85'}`}>{fmtPkrWhole(Math.abs(p.amountCents))}</span>
                   {p.reversedAt
@@ -549,37 +561,53 @@ function Pay({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   const done = useDone(onClose)
   const [amount, setAmount] = useState(rupees(inv.balanceCents))
   const [date, setDate] = useState(today())
-  const [method, setMethod] = useState('bank')
+  const [method, setMethod] = useState('bank_transfer')
   const [bankAccountId, setBankAccountId] = useState('')
   const [reference, setReference] = useState('')
   const [err, setErr] = useState('')
-  const usesBank = method === 'bank' || method === 'cheque'
+  // Saved, but the reference was used before: say so before closing.
+  const [usedBefore, setUsedBefore] = useState<PaymentRefUse[] | null>(null)
   const go = useMutation({
-    mutationFn: () => api.post(`/accounting/receivables/${inv.id}/payments`, {
-      amountCents: toPaisa(amount), receivedAt: date, method, reference: reference || undefined,
-      bankAccountId: usesBank && bankAccountId ? bankAccountId : undefined,
+    mutationFn: () => api.post<{ referenceUsedBefore?: PaymentRefUse[] }>(`/accounting/receivables/${inv.id}/payments`, {
+      amountCents: toPaisa(amount), receivedAt: date, method, reference: reference.trim(),
+      bankAccountId: isBankMethod(method) && bankAccountId ? bankAccountId : undefined,
     }),
-    onSuccess: done,
+    onSuccess: (r) => {
+      if (r.referenceUsedBefore?.length) setUsedBefore(r.referenceUsedBefore)
+      else done()
+    },
     onError: (e: Error) => setErr(receivablesErrorMessage(e)),
   })
+  if (usedBefore) {
+    return (
+      <Modal title="Payment recorded" onClose={done}>
+        <p className="text-sm text-white/70 mb-3">{fmtPkrWhole(toPaisa(amount))} received on {inv.number} ({receiptMethodLabel(method).toLowerCase()}, ref {reference.trim()}).</p>
+        <ReferenceUsedBeforeNotice uses={usedBefore} />
+        <button onClick={done} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+      </Modal>
+    )
+  }
   return (
     <Modal title={`Payment on ${inv.number}`} onClose={onClose}>
       <p className="text-sm text-white/60">Balance owed: <strong className="text-white/90">{fmtPkrWhole(inv.balanceCents)}</strong></p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t="Amount received (PKR)"><input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} /></L>
         <L t="Received"><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
-        <L t="Method"><select className={inp} value={method} onChange={(e) => setMethod(e.target.value)}>
-          <option value="bank">Bank transfer</option><option value="cheque">Cheque</option><option value="cash">Cash</option><option value="card">Card</option></select></L>
-        <L t="Reference"><input className={inp} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></L>
-        {usesBank && (
-          <div className="sm:col-span-2">
-            <BankAccountSelect tenantId={inv.tenantId} value={bankAccountId} onChange={setBankAccountId} id="ar-pay-bank" label="Received into" className={inp} />
-          </div>
-        )}
+        <div className="sm:col-span-2">
+          <PaymentReceivedFields
+            tenantId={inv.tenantId}
+            method={method} onMethod={setMethod}
+            reference={reference} onReference={setReference}
+            bankAccountId={bankAccountId} onBank={setBankAccountId}
+            idPrefix="ar-pay"
+            selectClassName={inp} inputClassName={inp}
+            labelClassName="block text-[11px] font-bold text-white/50"
+          />
+        </div>
       </div>
       <p className="text-[11px] text-white/45 mt-3">If the client kept back income tax, record the cash here and the tax with &ldquo;Tax withheld&rdquo; when their certificate arrives.</p>
       {err && <p className="text-xs text-s-red mt-3">{err}</p>}
-      <Buttons busy={go.isPending} disabled={!Number(amount)} label="Record payment" busyLabel="Saving…" onGo={() => go.mutate()} onClose={onClose} />
+      <Buttons busy={go.isPending} disabled={!Number(amount) || !receiptFieldsValid({ method, reference })} label="Record payment" busyLabel="Saving…" onGo={() => { setErr(''); go.mutate() }} onClose={onClose} />
     </Modal>
   )
 }
@@ -724,6 +752,9 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   )
 }
 
+/** Money OUT keeps its own methods (the API's refund list); only the words are shared. */
+const REFUND_METHODS = ['bank', 'cheque', 'cash'] as const
+
 function Refund({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   const done = useDone(onClose)
   const max = Math.max(0, Math.min(-inv.balanceCents, inv.paidCents))
@@ -749,7 +780,7 @@ function Refund({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
         <L t="Refund (PKR)"><input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} /></L>
         <L t="Paid on"><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
         <L t="Method"><select className={inp} value={method} onChange={(e) => setMethod(e.target.value)}>
-          <option value="bank">Bank transfer</option><option value="cheque">Cheque</option><option value="cash">Cash</option></select></L>
+          {REFUND_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}</select></L>
         <L t="Reference"><input className={inp} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></L>
         {usesBank && (
           <div className="sm:col-span-2">

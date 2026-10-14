@@ -8,6 +8,14 @@
 //               creditor: Dr Due from debtor / Cr creditorAccountCode
 //   settlement  debtor:   Dr Due to creditor / Cr its bank or cash (moneyAccountCode)
 //               creditor: Dr its bank or cash / Cr Due from debtor
+//               Methods (owner, 2026-10-14): bank transfer, bank deposit, cheque,
+//               cash (the old 'bank' = bank transfer; stored rows keep it).
+//               'bank_deposit' = the paying company's CASH paid into the
+//               receiving company's bank: debtor Cr 1010, creditor Dr its named
+//               bank — the paying company names no bank (422). The payment
+//               reference # (bankReference) is required for every method when
+//               the settlement is created, never re-checked at approval; it is
+//               in the entries' description and both money lines' memos.
 //   netting     debtor:   Dr Due to creditor / Cr Due from creditor
 //               creditor: Dr Due to debtor   / Cr Due from debtor
 //
@@ -28,7 +36,7 @@ import { Prisma, type IntercompanyTransfer } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
 import { isMemberOfBoth } from '../../lib/companyPairs.js'
 import { postJournalEntry, reverseJournalEntry, withLateNote, type JournalLineInput } from '../accounting/journal.js'
 import { fmtPktDate, parsePktStartOfDay, pktToday } from '../accounting/dates.js'
@@ -45,7 +53,30 @@ export const TRANSFER_KINDS = ['charge', 'settlement', 'netting'] as const
 export type TransferKind = (typeof TRANSFER_KINDS)[number]
 export const SYSTEM_SOURCES = ['fleet', 'cod'] as const
 export type SystemSource = (typeof SYSTEM_SOURCES)[number]
-export const SETTLEMENT_METHODS = ['bank', 'cash'] as const
+/** How a settlement was paid (receipt methods without card — lib/bankAccounts.ts RECEIPT_METHODS). */
+export const SETTLEMENT_METHODS = ['bank_transfer', 'bank_deposit', 'cheque', 'cash'] as const
+export type SettlementMethod = (typeof SETTLEMENT_METHODS)[number]
+
+/** A settlement method as sent: the old 'bank' (before 2026-10-14) is a bank transfer. */
+export function normalizeSettlementMethod(m: string | null | undefined): SettlementMethod | null {
+  if (m === null || m === undefined || m === '') return null
+  const v = m === 'bank' ? 'bank_transfer' : m
+  if (!(SETTLEMENT_METHODS as readonly string[]).includes(v)) {
+    throw new AppError('BAD_PAYMENT_METHOD', `Unknown settlement method "${m}" — bank transfer, bank deposit, cheque or cash`, 422)
+  }
+  return v as SettlementMethod
+}
+
+/**
+ * The method each side's money account is resolved with. A bank deposit is
+ * the payer's cash going into the payee's bank: cash for the paying company,
+ * the named bank for the receiving one. Every other method is the same on
+ * both sides (stored rows may still say 'bank').
+ */
+export function settlementSideMethods(method: string | null): { debtor: string | null; creditor: string | null } {
+  if (method === 'bank_deposit') return { debtor: 'cash', creditor: 'bank_deposit' }
+  return { debtor: method, creditor: method }
+}
 
 export type TransferRow = IntercompanyTransfer
 
@@ -286,17 +317,20 @@ async function linesOf(tx: Tx, t: TransferRow, names: Map<string, string>): Prom
     }
   }
   if (t.kind === 'settlement') {
-    const dMoney = await moneyAccountCode(tx, D, { method: t.method, bankAccountId: t.debtorBankAccountId })
-    const cMoney = await moneyAccountCode(tx, C, { method: t.method, bankAccountId: t.creditorBankAccountId })
-    const ref = t.bankReference ? ` ref ${t.bankReference}` : ''
+    const side = settlementSideMethods(t.method)
+    const dMoney = await moneyAccountCode(tx, D, { method: side.debtor, bankAccountId: t.debtorBankAccountId })
+    const cMoney = await moneyAccountCode(tx, C, { method: side.creditor, bankAccountId: t.creditorBankAccountId })
+    // "bank deposit, ref 4471" (rows from before the reference was required may have none).
+    const how = receiptText(t.method, t.bankReference)
+    const deposit = t.method === 'bank_deposit'
     return {
       debtor: [
-        { accountCode: pair.aDueTo, type: 'debit', amountCents: amount, memo: `Settled to ${cName}${ref}: ${memo}` },
-        { accountCode: dMoney.code, type: 'credit', amountCents: amount, memo: `Paid to ${cName}${ref}` },
+        { accountCode: pair.aDueTo, type: 'debit', amountCents: amount, memo: `Settled to ${cName} (${how}): ${memo}`.slice(0, 250) },
+        { accountCode: dMoney.code, type: 'credit', amountCents: amount, memo: `${deposit ? `Cash deposited into ${cName}'s bank` : `Paid to ${cName}`} (${how})`.slice(0, 250) },
       ],
       creditor: [
-        { accountCode: cMoney.code, type: 'debit', amountCents: amount, memo: `Received from ${dName}${ref}` },
-        { accountCode: pair.bDueFrom, type: 'credit', amountCents: amount, memo: `Settled by ${dName}${ref}: ${memo}` },
+        { accountCode: cMoney.code, type: 'debit', amountCents: amount, memo: `${deposit ? `Cash deposited by ${dName}` : `Received from ${dName}`} (${how})`.slice(0, 250) },
+        { accountCode: pair.bDueFrom, type: 'credit', amountCents: amount, memo: `Settled by ${dName} (${how}): ${memo}`.slice(0, 250) },
       ],
     }
   }
@@ -326,7 +360,8 @@ async function postBothBooks(
   await assertOpenInBoth(tx, [t.tenantId, t.counterpartyTenantId], opts.entryDate)
   const lines = await linesOf(tx, t, names)
   const what = t.kind === 'charge' ? 'charge' : t.kind === 'settlement' ? 'settlement' : 'netting'
-  const description = `Inter-company ${what}: ${names.get(t.tenantId) ?? ''} → ${names.get(t.counterpartyTenantId) ?? ''} — ${t.memo}`.slice(0, 480)
+  const how = t.kind === 'settlement' ? ` (${receiptText(t.method, t.bankReference)})` : ''
+  const description = `Inter-company ${what}: ${names.get(t.tenantId) ?? ''} → ${names.get(t.counterpartyTenantId) ?? ''}${how} — ${t.memo}`.slice(0, 480)
   const d = withLateNote(description, lines.debtor, opts.memoNote)
   const c = withLateNote(description, lines.creditor, opts.memoNote)
   const debtor = await postJournalEntry({
@@ -357,9 +392,11 @@ export interface CreateTransferInput {
   debtorAccountCode?: string | null
   creditorAccountCode?: string | null
   conceptSplit?: ConceptShare[] | null
-  method?: 'bank' | 'cash' | null
+  /** A settlement's method (SETTLEMENT_METHODS; the old 'bank' = bank_transfer). */
+  method?: SettlementMethod | 'bank' | null
   debtorBankAccountId?: string | null
   creditorBankAccountId?: string | null
+  /** A settlement's payment reference # — required for every method. */
   bankReference?: string | null
 }
 
@@ -382,9 +419,10 @@ export async function createTransfer(actor: TransferActor, input: CreateTransfer
   let debtorAccountCode: string | null = null
   let creditorAccountCode: string | null = null
   let conceptSplit: ConceptShare[] | null = null
-  let method: string | null = null
+  let method: SettlementMethod | null = null
   let debtorBankAccountId: string | null = null
   let creditorBankAccountId: string | null = null
+  let bankReference: string | null = null
   if (input.kind === 'charge') {
     if (!input.debtorAccountCode || !input.creditorAccountCode) {
       throw new AppError('ACCOUNT_REQUIRED', "A charge names the paying company's expense account and the charging company's recovery account", 422)
@@ -395,11 +433,22 @@ export async function createTransfer(actor: TransferActor, input: CreateTransfer
     creditorAccountCode = input.creditorAccountCode
     conceptSplit = await assertConceptSplit(serviceClient, D, input.conceptSplit, input.amountCents)
   } else if (input.kind === 'settlement') {
-    if (!input.method) throw new AppError('METHOD_REQUIRED', 'Say how the settlement was paid: bank or cash', 422)
-    method = input.method
+    method = normalizeSettlementMethod(input.method)
+    if (!method) throw new AppError('METHOD_REQUIRED', 'Say how the settlement was paid: bank transfer, bank deposit, cheque or cash', 422)
+    // The payment reference # — every method, cash included (owner,
+    // 2026-10-14). Checked here only: an approval never re-checks it.
+    bankReference = assertPaymentReference(method, input.bankReference)
+    if (method === 'bank_deposit' && input.debtorBankAccountId) {
+      throw new AppError(
+        'BANK_ACCOUNT_ON_DEPOSIT',
+        `A bank deposit is ${names.get(D) ?? 'the paying company'}'s cash paid into ${names.get(C) ?? 'the receiving company'}'s bank — the paying company does not use a bank account`,
+        422,
+      )
+    }
     // Resolve now so a wrong bank answers before anything is saved.
-    debtorBankAccountId = (await moneyAccountCode(serviceClient, D, { method, bankAccountId: input.debtorBankAccountId ?? null })).bankAccountId
-    creditorBankAccountId = (await moneyAccountCode(serviceClient, C, { method, bankAccountId: input.creditorBankAccountId ?? null })).bankAccountId
+    const side = settlementSideMethods(method)
+    debtorBankAccountId = (await moneyAccountCode(serviceClient, D, { method: side.debtor, bankAccountId: input.debtorBankAccountId ?? null })).bankAccountId
+    creditorBankAccountId = (await moneyAccountCode(serviceClient, C, { method: side.creditor, bankAccountId: input.creditorBankAccountId ?? null })).bankAccountId
   }
   await assertOpenInBoth(serviceClient, [D, C], entryDate)
 
@@ -412,8 +461,7 @@ export async function createTransfer(actor: TransferActor, input: CreateTransfer
         amountCents: input.amountCents, entryDate, memo: input.memo.trim(),
         debtorAccountCode, creditorAccountCode,
         conceptSplit: splitJson(conceptSplit),
-        method, debtorBankAccountId, creditorBankAccountId,
-        bankReference: input.kind === 'settlement' ? (input.bankReference?.trim() || null) : null,
+        method, debtorBankAccountId, creditorBankAccountId, bankReference,
         status: 'submitted', preparedById: actor.id,
       },
     })

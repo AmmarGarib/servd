@@ -15,8 +15,12 @@
 //                           Whether the caller may is the row's canApprove /
 //                           canReject / canCancel flag — no role list here.
 //   RecoveryDialog          money received later on an approved write-off:
-//                           POST .../write-offs/:id/recover (amount, date,
-//                           method, bank account, reference).
+//                           POST .../write-offs/:id/recover (amount, date and
+//                           the shared PaymentReceivedFields: Cash / Card /
+//                           Bank transfer / Bank deposit / Cheque, a payment
+//                           reference # required for every method, the bank
+//                           for a bank-type method). A reference used before
+//                           is shown as a warning after it is saved.
 //   EvidenceFiles           the evidence files of a write-off, opened with the
 //                           session (the API serves them only to a login that
 //                           may see them).
@@ -34,7 +38,10 @@ import { useMutation } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { fetchEvidenceUrl, kb, prepareReceiptFile } from '../../lib/photoPrep'
-import { BankAccountSelect } from './BankAccountSelect'
+import {
+  PAYMENT_REFERENCE_ERROR_TEXT, PaymentReceivedFields, ReferenceUsedBeforeNotice, isBankMethod, receiptFieldsValid,
+  type PaymentRefUse,
+} from './PaymentReceivedFields'
 
 // ─── Shapes ──────────────────────────────────────────────────────────────────
 
@@ -131,6 +138,11 @@ export function receivablesErrorMessage(e: unknown, fallback = 'Something went w
       return 'This company has more than one bank account. Pick the one the money went into.'
     case 'BANK_ACCOUNT_NOT_IN_COMPANY':
       return 'That bank account belongs to another company. Pick one of this invoice’s company.'
+    case 'BANK_ACCOUNT_ON_CASH':
+      return 'A cash payment does not go into a bank account. Pick Bank deposit if the cash was paid into the bank.'
+    case 'PAYMENT_REFERENCE_REQUIRED':
+    case 'PAYMENT_REFERENCE_TOO_LONG':
+      return PAYMENT_REFERENCE_ERROR_TEXT[e.code]!
     case 'ACCOUNT_CODE_TAKEN':
     case 'ACCOUNT_INACTIVE':
     case 'ACCOUNT_NOT_FOUND':
@@ -144,7 +156,7 @@ export function receivablesErrorMessage(e: unknown, fallback = 'Something went w
     case 'SELF_APPROVAL_BLOCKED':
       return 'You cannot approve a write-off you asked for. Have the CEO or a colleague decide it.'
     case 'VALIDATION_ERROR':
-      return 'Something in the form is not valid — check the amount, the dates and the reason (10 to 500 characters).'
+      return 'Something in the form is not valid — check the amount, the dates, the method and the reason (10 to 500 characters).'
   }
   if (e.status === 403) return 'You do not have permission to do this. Finance, management and the owner ask for write-offs; only the CEO approves them.'
   if (e.status === 413) return 'The files are too large to send together. Use fewer or smaller files.'
@@ -418,30 +430,47 @@ export function RecoveryDialog({ writeOff, onClose, onDone }: {
 }) {
   const [amount, setAmount] = useState(rupees(writeOff.recoverableCents))
   const [date, setDate] = useState(todayPktIso())
-  const [method, setMethod] = useState<'bank' | 'cheque' | 'cash'>('bank')
+  const [method, setMethod] = useState('bank_transfer')
   const [bankAccountId, setBankAccountId] = useState('')
   const [reference, setReference] = useState('')
   const [err, setErr] = useState('')
-  const usesBank = method === 'bank' || method === 'cheque'
+  // Saved, but its reference was used before: shown before the dialog closes.
+  const [saved, setSaved] = useState<{ writeOff: WriteOffRow; uses: PaymentRefUse[] } | null>(null)
   const earliest = writeOff.decidedAt ? pktDay(writeOff.decidedAt) : undefined
   const cents = toPaisa(amount)
   const problem =
     cents <= 0 ? 'Enter the amount received.'
     : cents > writeOff.recoverableCents ? `Only ${fmtPkrWhole(writeOff.recoverableCents)} is left to recover on this write-off.`
     : earliest && date < earliest ? 'A recovery cannot be dated before the write-off was approved.'
+    : !receiptFieldsValid({ method, reference }) ? 'Enter the payment reference # (the receipt, slip, transfer or cheque number).'
     : null
 
   const go = useMutation({
-    mutationFn: () => api.post<{ writeOff: WriteOffRow }>(`/accounting/receivables/write-offs/${writeOff.id}/recover`, {
+    mutationFn: () => api.post<{ writeOff: WriteOffRow; referenceUsedBefore?: PaymentRefUse[] }>(`/accounting/receivables/write-offs/${writeOff.id}/recover`, {
       amountCents: cents,
       receivedAt: date,
       method,
-      bankAccountId: usesBank && bankAccountId ? bankAccountId : undefined,
-      reference: reference.trim() || undefined,
+      bankAccountId: isBankMethod(method) && bankAccountId ? bankAccountId : undefined,
+      reference: reference.trim(),
     }),
-    onSuccess: (r) => onDone(r.writeOff, cents),
+    onSuccess: (r) => {
+      if (r.referenceUsedBefore?.length) setSaved({ writeOff: r.writeOff, uses: r.referenceUsedBefore })
+      else onDone(r.writeOff, cents)
+    },
     onError: (e: Error) => setErr(receivablesErrorMessage(e)),
   })
+
+  if (saved) {
+    return (
+      <Modal title="Recovery recorded" onClose={() => onDone(saved.writeOff, cents)}>
+        <p className="text-sm text-white/70 mb-3">{fmtPkrWhole(cents)} recovered on {writeOff.invoiceNumber ?? 'the invoice'}. It is booked back against bad debts.</p>
+        <ReferenceUsedBeforeNotice uses={saved.uses} />
+        <div className="flex flex-wrap gap-2 mt-5">
+          <button onClick={() => onDone(saved.writeOff, cents)} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+        </div>
+      </Modal>
+    )
+  }
 
   return (
     <Modal title={`Money recovered on ${writeOff.invoiceNumber ?? 'a written-off invoice'}`} onClose={onClose}>
@@ -454,17 +483,17 @@ export function RecoveryDialog({ writeOff, onClose, onDone }: {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <Field t="Amount received (PKR)"><input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <Field t="Received on"><input type="date" className={inp} value={date} min={earliest} max={todayPktIso()} onChange={(e) => setDate(e.target.value)} /></Field>
-        <Field t="Method">
-          <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
-            <option value="bank">Bank transfer</option><option value="cheque">Cheque</option><option value="cash">Cash</option>
-          </select>
-        </Field>
-        <Field t="Reference"><input className={inp} value={reference} maxLength={80} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></Field>
-        {usesBank && (
-          <div className="sm:col-span-2">
-            <BankAccountSelect tenantId={writeOff.tenantId} value={bankAccountId} onChange={setBankAccountId} id="wo-recover-bank" label="Received into" className={inp} />
-          </div>
-        )}
+        <div className="sm:col-span-2">
+          <PaymentReceivedFields
+            tenantId={writeOff.tenantId}
+            method={method} onMethod={setMethod}
+            reference={reference} onReference={setReference}
+            bankAccountId={bankAccountId} onBank={setBankAccountId}
+            idPrefix="wo-recover"
+            selectClassName={inp} inputClassName={inp}
+            labelClassName="block text-[11px] font-bold text-white/50"
+          />
+        </div>
       </div>
       {problem && !err && <p className="text-[11px] text-white/45 mt-3">{problem}</p>}
       {err && <ErrorLine text={err} />}

@@ -1101,7 +1101,7 @@ async function classifyVoucherSpend(
       // An unknown key or a code missing from the chart: try the words below.
     }
   }
-  return classifySpend(tenantId, { category: m.category ?? v.category, reason: m.reason }, undefined)
+  return classifySpend(tenantId, { category: m.category || v.category, reason: m.reason }, undefined)
 }
 
 /** The opening of one box, computed with the box locked (critic: never from a stale read). */

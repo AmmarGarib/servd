@@ -9,6 +9,11 @@
 // money" void — is other income (4200, no sales tax); a promotional card's goes
 // back to Marketing & Promo (6060). The figures are the server's, never worked
 // out here.
+// Payment received (owner, 2026-10-14): selling a card or booking a late sale
+// asks how it was paid (cash, card, bank transfer, bank deposit, cheque) and
+// its payment reference # — required on every method — through the shared
+// <PaymentReceivedFields>. A reference used before is a notice, never a block.
+// The void REFUND keeps its own list (money out: no bank deposit).
 
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useState, type ReactNode } from 'react'
@@ -19,9 +24,14 @@ import { useAuthStore } from '../../store/auth'
 import { useManagerRoles } from '../../lib/roles'
 import { useActiveCompany } from '../../lib/connectorsApi'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
+import {
+  PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, receiptMethodLabel, isBankMethod,
+  PAYMENT_REFERENCE_ERROR_TEXT, type PaymentRefUse,
+} from '../../components/finance/PaymentReceivedFields'
 
 type Status = 'active' | 'redeemed_full' | 'expired' | 'voided'
-type Method = 'cash' | 'card' | 'bank_transfer'
+/** How a void refund pays the balance back (money out — its own list, no bank deposit). */
+type RefundMethod = 'cash' | 'card' | 'bank_transfer'
 type Disposition = 'refund' | 'payment_not_received' | 'forfeit'
 
 interface GiftCard {
@@ -29,7 +39,10 @@ interface GiftCard {
   kind: 'sold' | 'promotional'
   issuedAmountCents: number; balanceCents: number
   status: Status
-  paymentMethod: Method | null
+  /** RECEIPT_METHODS (backend lib/bankAccounts.ts); null for a promotional card. */
+  paymentMethod: string | null
+  /** The payment reference # the sale was recorded with (cards sold since 2026-10-14). */
+  paymentRef?: string | null
   buyerEmail: string | null; recipientName: string | null
   expiresAt: string | null; expiredAt: string | null; createdAt: string
   voidedAt: string | null; voidDisposition: Disposition | null
@@ -43,7 +56,7 @@ interface GiftCard {
 interface Page { items: GiftCard[]; nextCursor: string | null; total: number }
 
 interface CardHistory {
-  card: Pick<GiftCard, 'id' | 'tenantId' | 'code' | 'kind' | 'issuedAmountCents' | 'balanceCents' | 'status' | 'createdAt' | 'expiresAt' | 'expiredAt' | 'voidedAt' | 'voidDisposition' | 'paymentMethod'> & { voidReason: string | null }
+  card: Pick<GiftCard, 'id' | 'tenantId' | 'code' | 'kind' | 'issuedAmountCents' | 'balanceCents' | 'status' | 'createdAt' | 'expiresAt' | 'expiredAt' | 'voidedAt' | 'voidDisposition' | 'paymentMethod' | 'paymentRef'> & { voidReason: string | null }
   redemptions: Array<{ id: string; amountCents: number; balanceAfter: number; redeemedAt: string; reversedAt: string | null; order: { id: string; placedAt: string; status: string } | null }>
 }
 
@@ -78,7 +91,6 @@ const STATUS_BADGE: Record<Status, string> = {
   voided:        's-badge-red',
 }
 const STATUS_LABEL: Record<Status, string> = { active: 'Active', redeemed_full: 'Spent', expired: 'Expired', voided: 'Voided' }
-const METHOD_LABEL: Record<Method, string> = { cash: 'Cash', card: 'Card', bank_transfer: 'Bank transfer' }
 const DISPOSITION_LABEL: Record<Disposition, string> = {
   refund: 'Refunded', payment_not_received: 'Payment never received', forfeit: 'Unused value forfeited',
 }
@@ -99,6 +111,7 @@ const ERROR_TEXT: Record<string, string> = {
   PROMO_CARD_NOT_PAID: 'A promotional card is given away — it takes no payment method or bank account.',
   REASON_REQUIRED: 'Say why this promotional card is being given.',
   EXPIRY_IN_PAST: 'The expiry date must be in the future.',
+  ...PAYMENT_REFERENCE_ERROR_TEXT,
 }
 const errText = (e: unknown) => {
   const x = e as { code?: string; message?: string } | null
@@ -124,6 +137,8 @@ export default function GiftCardsPage() {
   const [status, setStatus] = useState<Status | ''>('')
   const [showNew, setShowNew] = useState(false)
   const [issuedCode, setIssuedCode] = useState<string | null>(null)
+  // The new card's payment reference # was used before (a warning — the card is issued).
+  const [issuedRefUses, setIssuedRefUses] = useState<PaymentRefUse[]>([])
   const [voiding, setVoiding] = useState<VoidTarget | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [redeemCode, setRedeemCode] = useState('')
@@ -165,14 +180,17 @@ export default function GiftCardsPage() {
           <p className="text-xs text-success">Finance</p>
           <h1 className="text-xl font-bold text-s-text">Gift cards</h1>
         </div>
-        {canSell && <button onClick={() => { setIssuedCode(null); setShowNew(true) }} className="s-btn-primary text-xs">+ Issue card</button>}
+        {canSell && <button onClick={() => { setIssuedCode(null); setIssuedRefUses([]); setShowNew(true) }} className="s-btn-primary text-xs">+ Issue card</button>}
       </header>
 
       <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
         {issuedCode && (
-          <div className="s-card p-4 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-s-text">Card issued: <span className="font-mono font-bold">{issuedCode}</span> — give this code to the customer.</p>
-            <button onClick={() => setIssuedCode(null)} className="s-btn-ghost text-xs">Dismiss</button>
+          <div className="s-card p-4 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-s-text">Card issued: <span className="font-mono font-bold break-all">{issuedCode}</span> — give this code to the customer.</p>
+              <button onClick={() => { setIssuedCode(null); setIssuedRefUses([]) }} className="s-btn-ghost text-xs">Dismiss</button>
+            </div>
+            <ReferenceUsedBeforeNotice uses={issuedRefUses} />
           </div>
         )}
 
@@ -291,7 +309,7 @@ export default function GiftCardsPage() {
         <NewGiftCardModal
           canGivePromo={isManager}
           onClose={() => setShowNew(false)}
-          onCreated={(code) => { setIssuedCode(code); setShowNew(false); refresh() }}
+          onCreated={(code, uses) => { setIssuedCode(code); setIssuedRefUses(uses); setShowNew(false); refresh() }}
         />
       )}
       {voiding && (
@@ -355,6 +373,8 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
   onSettle: (t: VoidTarget) => void; onChanged: () => void
 }) {
   const [booking, setBooking] = useState<string | null>(null)
+  // The last booked sale's payment reference # was used before (a warning — it is booked).
+  const [bookedRefUses, setBookedRefUses] = useState<PaymentRefUse[]>([])
   const agrees = c.differenceCents === 0
   return (
     <div className="mt-3 border-t border-s-border pt-3 space-y-2 text-xs">
@@ -387,6 +407,13 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
         </p>
       )}
 
+      {bookedRefUses.length > 0 && (
+        <div className="space-y-1">
+          <ReferenceUsedBeforeNotice uses={bookedRefUses} />
+          <button onClick={() => setBookedRefUses([])} className="s-btn-ghost text-xs">Dismiss</button>
+        </div>
+      )}
+
       {c.issueNotBooked.count > 0 && (
         <div>
           <p className="font-bold text-s-text mt-2">Sale not in the books ({c.issueNotBooked.count})</p>
@@ -396,9 +423,10 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
               <span className="font-mono">{i.code}</span>
               <span>{fmtPkr(i.issuedAmountCents)}</span>
               <span className="text-s-muted">{fmtDate(i.createdAt)}</span>
-              {canBook && booking !== i.id && <button onClick={() => setBooking(i.id)} className="s-btn-ghost text-xs">Book the sale</button>}
+              {canBook && booking !== i.id && <button onClick={() => { setBooking(i.id); setBookedRefUses([]) }} className="s-btn-ghost text-xs">Book the sale</button>}
               {booking === i.id && (
-                <BookIssueForm cardId={i.id} tenantId={c.tenantId} onCancel={() => setBooking(null)} onDone={() => { setBooking(null); onChanged() }} />
+                <BookIssueForm cardId={i.id} tenantId={c.tenantId} onCancel={() => setBooking(null)}
+                  onDone={(uses) => { setBooking(null); setBookedRefUses(uses); onChanged() }} />
               )}
             </div>
           ))}
@@ -469,30 +497,34 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-function BookIssueForm({ cardId, tenantId, onCancel, onDone }: { cardId: string; tenantId: string; onCancel: () => void; onDone: () => void }) {
-  const [method, setMethod] = useState<Method>('cash')
+function BookIssueForm({ cardId, tenantId, onCancel, onDone }: { cardId: string; tenantId: string; onCancel: () => void; onDone: (uses: PaymentRefUse[]) => void }) {
+  const [method, setMethod] = useState('cash')
+  const [reference, setReference] = useState('')
   const [bankAccountId, setBankAccountId] = useState('')
   const book = useMutation({
-    mutationFn: () => api.post(`/gift-cards/${cardId}/book-issue`, {
+    mutationFn: () => api.post<{ referenceUsedBefore?: PaymentRefUse[] }>(`/gift-cards/${cardId}/book-issue`, {
       paymentMethod: method,
-      ...(method === 'bank_transfer' && bankAccountId ? { bankAccountId } : {}),
+      paymentRef: reference.trim(),
+      ...(isBankMethod(method) && bankAccountId ? { bankAccountId } : {}),
     }, { tenantId }),
-    onSuccess: onDone,
+    onSuccess: (r) => onDone(r.referenceUsedBefore ?? []),
   })
+  const ok = receiptFieldsValid({ method, reference })
   return (
     <div className="w-full flex flex-wrap items-end gap-2 py-1">
-      <label className="block">
-        <span className="block text-[11px] text-s-muted mb-1">Paid by</span>
-        <select value={method} onChange={(e) => setMethod(e.target.value as Method)} className="s-select py-1 text-xs w-auto">
-          {(Object.keys(METHOD_LABEL) as Method[]).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
-        </select>
-      </label>
-      {method === 'bank_transfer' && (
-        <div className="min-w-[180px]">
-          <BankAccountSelect id={`bank-${cardId}`} tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId} className="s-select py-1 text-xs" />
-        </div>
-      )}
-      <button onClick={() => book.mutate()} disabled={book.isPending} className="s-btn-primary text-xs">{book.isPending ? 'Booking…' : 'Book'}</button>
+      <div className="w-full sm:w-64">
+        <PaymentReceivedFields
+          tenantId={tenantId}
+          method={method} onMethod={setMethod}
+          reference={reference} onReference={setReference}
+          bankAccountId={bankAccountId} onBank={setBankAccountId}
+          idPrefix={`book-${cardId}`}
+          selectClassName="s-select py-1 text-xs"
+          inputClassName="s-input py-1 text-xs"
+          labelClassName="block text-[11px] text-s-muted mb-1"
+        />
+      </div>
+      <button onClick={() => book.mutate()} disabled={book.isPending || !ok} className="s-btn-primary text-xs">{book.isPending ? 'Booking…' : 'Book'}</button>
       <button onClick={onCancel} className="s-btn-ghost text-xs">Cancel</button>
       {book.isError && <p className="w-full text-s-red">{errText(book.error)}</p>}
     </div>
@@ -514,7 +546,7 @@ function CardHistoryPanel({ id, row, canVoid: mayVoid, onVoid }: { id: string; r
     <div className="px-4 py-3 bg-s-bg-soft/40 text-xs space-y-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-s-muted">
-          {c.kind === 'promotional' ? 'Promotional (given away)' : `Sold${c.paymentMethod ? ` · paid by ${METHOD_LABEL[c.paymentMethod].toLowerCase()}` : ''}`}
+          {c.kind === 'promotional' ? 'Promotional (given away)' : `Sold${c.paymentMethod ? ` · paid by ${receiptMethodLabel(c.paymentMethod).toLowerCase()}` : ''}${c.paymentRef ? ` · ref ${c.paymentRef}` : ''}`}
           {' · '}issued {fmtPkr(c.issuedAmountCents)} on {fmtDate(c.createdAt)} · balance {fmtPkr(c.balanceCents)}
           {c.expiresAt && <> · {c.expiredAt ? `expired ${fmtDate(c.expiredAt)}` : `expires ${fmtDate(c.expiresAt)}`}</>}
           {c.voidedAt && <> · voided {fmtDate(c.voidedAt)}{c.voidDisposition ? ` (${DISPOSITION_LABEL[c.voidDisposition].toLowerCase()})` : ''}{c.voidReason ? ` — ${c.voidReason}` : ''}</>}
@@ -570,7 +602,7 @@ interface VoidTarget {
 function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTarget; canForfeitSold: boolean; onClose: () => void; onDone: () => void }) {
   const promo = target.kind === 'promotional'
   const [disposition, setDisposition] = useState<Disposition>(promo ? 'forfeit' : 'refund')
-  const [refundMethod, setRefundMethod] = useState<Method>('cash')
+  const [refundMethod, setRefundMethod] = useState<RefundMethod>('cash')
   const [bankAccountId, setBankAccountId] = useState('')
   const [reason, setReason] = useState('')
 
@@ -622,7 +654,7 @@ function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTa
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block">
                 <span className="block text-xs text-s-muted mb-1">Paid back by</span>
-                <select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as Method)} className="s-select">
+                <select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as RefundMethod)} className="s-select">
                   <option value="cash">Cash (from the safe)</option>
                   <option value="card">Card</option>
                   <option value="bank_transfer">Bank transfer</option>
@@ -652,7 +684,7 @@ function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTa
 
 // ── Issue ────────────────────────────────────────────────────────────────────
 
-function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: boolean; onClose: () => void; onCreated: (code: string) => void }) {
+function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: boolean; onClose: () => void; onCreated: (code: string, referenceUsedBefore: PaymentRefUse[]) => void }) {
   const company = useActiveCompany()
   const [kind, setKind] = useState<'sold' | 'promotional'>('sold')
   const [amount, setAmount] = useState('2000')
@@ -661,7 +693,8 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
   const [buyerEmail, setBuyerEmail] = useState('')
   const [message, setMessage] = useState('')
   const [expiresOn, setExpiresOn] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState<Method>('cash')
+  const [paymentMethod, setPaymentMethod] = useState('cash')
+  const [paymentRef, setPaymentRef] = useState('')
   const [bankAccountId, setBankAccountId] = useState('')
   const [reason, setReason] = useState('')
 
@@ -669,9 +702,11 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
   const amountCents = Number.isFinite(rupees) ? Math.round(rupees * 100) : 0
   const amountOk = amountCents >= 10_000 && amountCents <= 10_000_000
   const promo = kind === 'promotional'
+  // A sold card needs how it was paid and its payment reference # (every method).
+  const paymentOk = promo || receiptFieldsValid({ method: paymentMethod, reference: paymentRef })
 
   const create = useMutation({
-    mutationFn: () => api.post<{ code: string }>('/gift-cards', {
+    mutationFn: () => api.post<{ code: string; referenceUsedBefore?: PaymentRefUse[] }>('/gift-cards', {
       kind,
       issuedAmountCents: amountCents,
       recipientName: recipient.trim() || null,
@@ -682,9 +717,9 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
       expiresAt: expiresOn ? new Date(`${expiresOn}T23:59:59.999+05:00`).toISOString() : null,
       ...(promo
         ? { reason: reason.trim() }
-        : { paymentMethod, ...(paymentMethod === 'bank_transfer' && bankAccountId ? { bankAccountId } : {}) }),
+        : { paymentMethod, paymentRef: paymentRef.trim(), ...(isBankMethod(paymentMethod) && bankAccountId ? { bankAccountId } : {}) }),
     }, company ? { tenantId: company.id } : undefined),
-    onSuccess: (c) => onCreated(c.code),
+    onSuccess: (c) => onCreated(c.code, c.referenceUsedBefore ?? []),
   })
 
   return (
@@ -741,28 +776,22 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
               <span className="block text-[11px] text-s-muted mt-1">Booked to Marketing &amp; Promo. No money is taken.</span>
             </label>
           ) : (
-            <div className="space-y-2">
-              <label className="block">
-                <span className="block text-xs text-s-muted mb-1">Paid by</span>
-                <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as Method)} className="s-select">
-                  <option value="cash">Cash (into the safe)</option>
-                  <option value="card">Card</option>
-                  <option value="bank_transfer">Bank transfer</option>
-                </select>
-              </label>
-              {paymentMethod === 'cash' && (
-                <p className="text-[11px] text-s-muted">Back-office cash only: the money goes to the safe, not a till drawer. Cards are not sold at the till.</p>
-              )}
-              {paymentMethod === 'bank_transfer' && (
-                <BankAccountSelect id="issue-bank" tenantId={company?.id} value={bankAccountId} onChange={setBankAccountId} className="s-select" />
-              )}
-            </div>
+            <PaymentReceivedFields
+              tenantId={company?.id}
+              method={paymentMethod} onMethod={setPaymentMethod}
+              reference={paymentRef} onReference={setPaymentRef}
+              bankAccountId={bankAccountId} onBank={setBankAccountId}
+              idPrefix="issue"
+              hint={paymentMethod === 'cash'
+                ? <p className="text-[11px] text-s-muted">Back-office cash only: the money goes to the safe, not a till drawer. Cards are not sold at the till.</p>
+                : null}
+            />
           )}
           {create.isError && <p className="text-xs text-s-red">{errText(create.error)}</p>}
         </div>
         <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
           <button onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={create.isPending || !amountOk || (promo && reason.trim().length < 3)} className="s-btn-primary text-sm">
+          <button onClick={() => create.mutate()} disabled={create.isPending || !amountOk || !paymentOk || (promo && reason.trim().length < 3)} className="s-btn-primary text-sm">
             {create.isPending ? 'Issuing…' : `Issue · ${amountOk ? fmtPkr(amountCents) : 'PKR —'}`}
           </button>
         </div>
