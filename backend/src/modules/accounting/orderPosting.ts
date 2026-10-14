@@ -1,8 +1,20 @@
 // Order → journal posting.
 //
 // Every completed order posts ONE journal entry capturing: payment receipts,
-// gross revenue (per concept), GST output, contra-revenue (discounts/promos),
-// wallet/loyalty liability movements, and COGS / inventory derecognition.
+// gross revenue (per concept), the delivery fee (4110 Delivery Fee Income —
+// finance wave B, H9), output tax (food GST + the fee's GST, to the brand's
+// authority — taxAuthorities.ts), contra-revenue (discounts/promos),
+// wallet/loyalty liability movements, and cost of sales by class from the FIFO
+// lots the order relieved (accounting/cogs.ts cogsLinesForOrders — food
+// 5010/1210, drinks 5020/1220, packaging 5030/1230; a pre-cut-over order books
+// its old plate cost to 5010/1210 memo'd 'pre-FIFO order').
+//
+// The delivery fee is charged ON TOP of the food and carries sales tax at the
+// order's tender rate (H9): Order.deliveryFeeCents (ex-tax) is credited to
+// 4110, tagged with the brand, and its GST (Order.deliveryFeeTaxCents) is
+// already inside Order.taxCents, so the one output-tax credit carries both. An
+// order placed before the fee had its own column (deliveryFeeCents 0) books
+// exactly as before: its fee stays inside brand revenue.
 //
 // Posting is idempotent on (sourceType, sourceId) — see journal.ts. Replays
 // from concurrent KDS bumps, retried webhooks, or worker reruns are no-ops.
@@ -10,53 +22,24 @@
 import type { Order, OrderItem, Payment, Concept, Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
-import { cogsForSoldLines } from '../../lib/recipeCost.js'
+import { cogsLinesForOrders } from './cogs.js'
 import { postLoyaltyReversal } from './loyaltyPosting.js'
 import { restoreOrderWallet } from '../wallet/service.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { sumCents } from '../../lib/money.js'
 import { AppError } from '../../lib/errors.js'
-
-/** Gift Card Liability — credited when a card is sold (giftCards/routes.ts). */
-export const GIFT_CARD_LIABILITY = '2080'
+import { outputTaxCodeFor, OUTPUT_TAX_ACCOUNTS, type TaxJurisdiction } from './taxAuthorities.js'
 
 // ─── Output tax: which authority the sale's tax is owed to (BOOKS-10) ───────
 //
-// Restaurant services are taxed by the PROVINCE the kitchen is in, not by FBR:
-// a Karachi brand's 15% cash / 8% card tax is Sindh sales tax on services,
-// payable to the Sindh Revenue Board (2032). Every sale, refund and shift
-// close used to credit 2030 "GST Output (Payable to FBR)" whatever the brand's
-// province, so the SRB line of the return was always zero. The brand's
-// Concept.province decides the account; a brand registered with SRB (srbPosId)
-// but with no province set is a Sindh kitchen. Islamabad (ICT) services tax is
-// collected by FBR, and a brand with no province stays on 2030 — the return
-// flags it (salesTaxReturn.ts).
-const OUTPUT_TAX_BY_PROVINCE: Record<string, string> = {
-  SD: ACCT.SRB_TAX_OUTPUT,   // 2032 Sindh Revenue Board
-  PB: ACCT.PRA_TAX_OUTPUT,   // 2031 Punjab Revenue Authority
-  KP: ACCT.KPRA_TAX_OUTPUT,  // 2033 KP Revenue Authority
-  BL: ACCT.BRA_TAX_OUTPUT,   // 2034 Balochistan Revenue Authority
-}
+// Restaurant services are taxed by the PROVINCE the kitchen is in, not by FBR.
+// THE table (province → authority → output / input account) is
+// accounting/taxAuthorities.ts; these names are re-exported so every importer
+// of this file keeps working. Never keep a second province map here.
+export { OUTPUT_TAX_BY_PROVINCE, OUTPUT_TAX_ACCOUNTS, outputTaxCodeFor, type TaxJurisdiction } from './taxAuthorities.js'
 
-export interface TaxJurisdiction { province?: string | null; srbPosId?: number | null }
-
-/**
- * The output-tax account a brand's sales tax is credited to today. A refund
- * debits the account its SALE credited while that account still holds the
- * brand's tax (refundTaxAccountFor, below) — the brand's authority at the
- * time of the refund only when the sale's account has been reclassed away.
- */
-export function outputTaxCodeFor(concept: TaxJurisdiction | null | undefined): string {
-  const province = concept?.province?.trim().toUpperCase() || null
-  if (province) return OUTPUT_TAX_BY_PROVINCE[province] ?? ACCT.GST_OUTPUT
-  if (concept?.srbPosId != null) return ACCT.SRB_TAX_OUTPUT
-  return ACCT.GST_OUTPUT
-}
-
-/** Every output sales-tax account: FBR 2030 and the four provincial ones. */
-export const OUTPUT_TAX_ACCOUNTS: readonly string[] = [
-  ACCT.GST_OUTPUT, ACCT.PRA_TAX_OUTPUT, ACCT.SRB_TAX_OUTPUT, ACCT.KPRA_TAX_OUTPUT, ACCT.BRA_TAX_OUTPUT,
-]
+/** Gift Card Liability — credited when a card is sold (giftCards/routes.ts). */
+export const GIFT_CARD_LIABILITY = '2080'
 
 /**
  * Memo prefix of the 1110 credit a shift close books for money taken on a
@@ -173,6 +156,15 @@ export function homeShiftOf(order: { payments: Array<{ id: string; shiftId: stri
 }
 
 /**
+ * A Raast tender whose receipt the CEO voided as never booked (RaastReceipt
+ * status 'voided', reconciliation/raast.ts voidNeverBooked): no entry ever
+ * held its money, so it is no refund due.
+ */
+export function isVoidedRaast(p: { method: string; raastReceipt?: { status?: string | null } | null }): boolean {
+  return p.method === 'raast' && p.raastReceipt?.status === 'voided'
+}
+
+/**
  * LEDGER-R5 — money taken AT THE TILL on a cancelled / rejected order that is
  * still owed back to the customer: its drawer receipts (isShiftReceipt with a
  * shift, comps excluded — a comp is not money) less the refunds already
@@ -183,14 +175,23 @@ export function homeShiftOf(order: { payments: Array<{ id: string; shiftId: stri
  * leave stranded: the shift close holds it in 1110 until it is handed back.
  * (Money an online gateway took is not here — it never reached a drawer, and
  * goes back through the gateway's own refund.)
+ *
+ * A Raast tender whose receipt the CEO VOIDED as never booked
+ * (reconciliation/raast.ts voidNeverBooked — RaastReceipt.status 'voided') is
+ * not money taken either: the books never held it, so nothing is owed back on
+ * the ticket for it. Pass the payment's `raastReceipt` (its status) for every
+ * Raast row — a row loaded without it is counted as before.
  */
 export function refundDueCents(order: {
   status: string
-  payments: Array<{ method: string; status: string; amountCents: number; gatewayRef: string | null; shiftId: string | null }>
+  payments: Array<{
+    method: string; status: string; amountCents: number; gatewayRef: string | null; shiftId: string | null
+    raastReceipt?: { status?: string | null } | null
+  }>
 }): number {
   if (order.status !== 'cancelled' && order.status !== 'rejected') return 0
   const taken = order.payments
-    .filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'comp' && isShiftReceipt(p))
+    .filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'comp' && !isVoidedRaast(p) && isShiftReceipt(p))
     .reduce((t, p) => t + p.amountCents, 0)
   const handedBack = order.payments
     .filter((p) => p.status === 'refunded' && p.amountCents < 0)
