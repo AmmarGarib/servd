@@ -40,8 +40,8 @@ const LEGACY_REDIRECTS = [
   // hop too); the middleware does the same for every other brand.
   { source: '/:concept(stackd|simmer|flipd)/menu',  destination: '/:concept', permanent: true },
   { source: '/:concept(stackd|simmer|flipd)/order', destination: '/:concept', permanent: true },
-  // The brand picker merged into /home, the one landing page (owner,
-  // 2026-10-07) — permanent, so /home is the URL that gets indexed.
+  // The brand picker merged into servd's one landing page (owner, 2026-10-07),
+  // served at the root since 2026-10-14 — permanent, so / is what gets indexed.
   { source: '/browse',            destination: '/',                    permanent: true },
   { source: '/order',             destination: '/',                    permanent: true },
   // The icon paths browsers and crawlers probe without reading the page's
@@ -87,8 +87,8 @@ const nextConfig = {
   //
   // www.<domain> → <domain> comes first, in one hop to the final page: a
   // legacy path on www goes straight to its apex destination
-  // (www.servd.pk/browse → https://servd.pk/home), and www.servd.pk/ straight
-  // to /home. Only the /brand/… pages on www are left to the middleware,
+  // (www.servd.pk/browse → https://servd.pk/), and www.servd.pk/ and
+  // www.servd.pk/home straight to https://servd.pk/. Only the /brand/… pages on www are left to the middleware,
   // because where they settle depends on which brand owns the domain
   // (www.stackd.pk/brand/stackd/menu → https://stackd.pk/menu). The Cloudflare
   // zone rule (www → apex) is still worth having — it saves the trip into the
@@ -97,9 +97,9 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/',
+        source: '/:home(home)?',
         has: [{ type: 'host', value: `www\\.${escapeRe(SERVD_URL.hostname)}` }],
-        destination: `${SERVD_URL.origin}/home`,
+        destination: `${SERVD_URL.origin}/`,
         permanent: true,
       },
       ...LEGACY_REDIRECTS.map((r) => ({ ...r, has: [WWW_HOST], destination: `https://:apex${r.destination}` })),

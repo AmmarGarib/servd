@@ -471,3 +471,4 @@ RESUME ORDER:
   W1 journals: wf_15d8e85d-090 (stock, hr), wf_944789d5-ac2 (taxcore, ic, dlv-core cancel), wf_44be91d7-aa9 (fa-engine, taxsales, recon).
   NEXT: read gate result -> fix blockers -> commit "wave B w1" on main -> launch W2 (all 8 at once: 4 workflows x 2 ids, Opus) with
   args.note = W1 gate notesForNextStage + patch notes per target builder.
+- ~00:20 UTC DEPLOYED storefront only: servd.pk serves home at / (685af25), /home 308 -> /; rollback tag ammargarib/servd:storefront-rollback-20261014a. www one-hop fix committed (next commit) — ships with the finance deploy. Deploy key = the single 64-hex value after deploy?secret= in the transcript (scratchpad/sf-release.sh pattern was wrong).
