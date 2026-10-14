@@ -1044,10 +1044,25 @@ review, and it personally handles anything correctness-critical —
 payments, FBR/SRB tax submission, auth/permissions, RLS/tenant
 isolation, order money math.
 
-**Subagents run on Opus 5.5 (product owner, 2026-09-27, revised the same
-day).** Pass `model: "opus"` on every Agent call — no tiering to sonnet or
-haiku, and no Fable for agents (tried it for a day; the owner prefers Opus).
-The main session runs on whatever the owner sets with `/model`.
+**Subagents are tiered by the job (product owner, 2026-10-14 — replaces the
+"Opus only" rule of 2026-09-27).** Use the cheapest model that will do the
+job right the first time:
+
+- **haiku** — lookups and mechanical work: searching, listing, reading logs,
+  renames, copy edits, extracting reports, running a given test command.
+- **sonnet** — ordinary building: UI pages and forms, small routes, tests,
+  docs, wiring that follows an existing pattern.
+- **opus at `effort: "medium"`** — the supervisors. On every large task an
+  Opus agent acts as the CEO of that task: it plans and splits the work,
+  hands the pieces to sonnet/haiku workers, watches what they hand back,
+  reviews and gate-checks it, and sends work back when it is wrong. Opus also
+  does the hard building itself: money, tax, ledger, auth/permissions,
+  company separation, migrations. Raise the effort above medium only for a
+  final gate on money/tax/auth code.
+- No Fable for agents. The main session runs on whatever the owner sets with
+  `/model` and stays the orchestrator.
+
+Verification of money/tax/auth code is never delegated below Opus.
 
 ### Parallel agents
 
