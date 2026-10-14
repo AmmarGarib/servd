@@ -40,12 +40,11 @@ import Link from 'next/link'
 import { api, ApiError, RAAST_STATUS_LABEL, RAAST_STATUS_SHORT, type RaastReceiptStatus } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 
-/** The server's statuses — 'voided' (wave B) until lib/api.ts lists it. */
-type ReceiptStatus = RaastReceiptStatus | 'voided'
+/** The server's statuses (lib/api.ts lists 'voided', wave B). */
+type ReceiptStatus = RaastReceiptStatus
 
-const statusLabel = (s: ReceiptStatus): string =>
-  s === 'voided' ? 'Voided by the CEO — never booked, no ledger entry' : RAAST_STATUS_LABEL[s] ?? s
-const statusShort = (s: ReceiptStatus): string => (s === 'voided' ? 'Voided' : RAAST_STATUS_SHORT[s] ?? s)
+const statusLabel = (s: ReceiptStatus): string => RAAST_STATUS_LABEL[s] ?? s
+const statusShort = (s: ReceiptStatus): string => RAAST_STATUS_SHORT[s] ?? s
 
 // ─── Types (backend modules/reconciliation/raastRoutes.ts) ───────────────────
 

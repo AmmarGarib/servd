@@ -135,9 +135,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   tables:         [{ label: 'Floor plan', href: '/floorplan', icon: '🪑' }],
   dispatch:       [{ label: 'Dispatch', href: '/dispatch', icon: '🛵' }],
   riders:         [{ label: 'Riders', href: '/riders' }],
-  // A delivery completes only with the customer's code; when that fails the
-  // RGM, chef or F&B manager acts here (owner, 2026-10-13).
-  emergency_overrides: [{ label: 'Emergency overrides', href: '/emergency-overrides', hint: 'Send the hand-over code to the rider; log food a rider brought back' }],
+  // emergency_overrides: PARKED with delivery (owner, 2026-10-13 —
+  // .handoff/parked/2026-10-14/PARKED.md). The module id stays (Module
+  // Access, workspaces), but there is no page yet, so no link: staff
+  // "Delivered" still works as before until delivery resumes.
 
   // ── Finance
   finance_pl:     [
@@ -159,20 +160,26 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Sales quadrants', href: '/accounting/menu-engineering', sub: true },
     { label: 'AP aging', href: '/accounting/ap-aging', sub: true },
     { label: 'Received, not billed', href: '/procurement/grni', sub: true },
+    // H20: waste and count differences wait in 1290 until the CEO approves
+    // them into cost of sales (API /accounting/stock-differences).
+    { label: 'Stock differences', href: '/finance/stock-differences', sub: true, hint: 'Waste and count differences waiting for the CEO, with their reasons' },
+    // The opening count is finance's job, and finance holds no inventory
+    // module: this entry lets accounting holders open the count page (and
+    // its history) as well as the Stock count link under Inventory.
+    { label: 'Opening stock count', href: '/inventory/count', sub: true, hint: "The first count of a company's stock — posted to owner's capital (3010)" },
     { label: 'Receivables', href: '/accounting/receivables', sub: true },
-    { label: 'On-account clients', href: '/accounting/receivables/clients', sub: true, hint: 'Corporate clients who pay monthly — credit limits, QR cards, statements' },
     { label: 'Sales tax return', href: '/accounting/sales-tax-return', sub: true },
     { label: 'Statutory payments', href: '/accounting/statutory', sub: true },
     { label: 'Inter-company', href: '/accounting/intercompany', sub: true },
-    { label: 'Fixed assets', href: '/accounting/fixed-assets', sub: true, hint: 'Register, automatic monthly depreciation, smallwares pools, disposals, PPE note' },
+    { label: 'Fixed assets', href: '/accounting/fixed-assets', sub: true, hint: 'Register, smallwares pools, requests and reports; depreciation runs by itself each month' },
     { label: 'Petty cash', href: '/finance/petty-cash', sub: true },
-    { label: 'Cash requests', href: '/finance/cash-vouchers', sub: true, hint: 'Anyone asks for cash; HOD and director sign; the cashier pays; receipts book it' },
+    { label: 'Cash requests', href: '/finance/cash-vouchers', sub: true, hint: 'Anyone asks for cash; HOD and director sign; the cashier pays (booked to its category); receipts kept for the file' },
     { label: 'Deposit drops', href: '/finance/deposit-drops', sub: true },
     { label: 'Bank accounts', href: '/configuration/bank-accounts', sub: true },
   ],
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
   gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: '🎁' }],
-  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️', hint: 'Shift closes, bank statements, card payouts, Raast QR receipts (provisional until the statement matches) and cash on delivery owed by riders' }],
+  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️', hint: 'Shift closes, bank statements, card payouts and Raast QR receipts (provisional until the statement matches)' }],
   voided_prebills: [{ label: 'Voided pre bills', href: '/finance/voided-pre-bills', hint: 'Every pre-bill printed — flagged when it never became a full & final bill or the final bill came out lower' }],
   exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: '🚨' }],
   capital:        [
@@ -310,6 +317,19 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet. Raast QR bank-SMS matching is off per company until the CEO switches it on; servd never logs in to internet banking.',
   integrations: 'No backup or data export screen. Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport. Meta tokens are global settings, so every company shares one Facebook page.',
   audit_log: 'Sign-ins (success, failure, OTP, 2FA, sign-out) are audited alongside account, access and on-shift actions, per company.',
+}
+
+/**
+ * Module ids PARKED by the owner (2026-10-13, .handoff/parked/2026-10-14/):
+ * the ids stay (Module Access, workspaces) but they have no page, so the
+ * workspace homes and /modules hide a section made only of them instead of
+ * showing an empty "No admin page" card.
+ */
+export const PARKED_MODULES: ReadonlySet<string> = new Set<string>(['emergency_overrides'])
+
+/** True when every module of a section is parked (the section is hidden). */
+export function isParkedSection(modules: readonly string[]): boolean {
+  return modules.length > 0 && modules.every((m) => PARKED_MODULES.has(m))
 }
 
 /** Pages behind a set of module ids, in order, de-duplicated by href. */

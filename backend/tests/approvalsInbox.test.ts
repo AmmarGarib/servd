@@ -8,6 +8,10 @@
 //     route, whose own guard still applies (wrong role 403, other company 404).
 //   - Module access still applies through the module's own queue route.
 //   - The plugin works registered under /api/v1 (registerApprovalsPlugin).
+//   - Finance wave B types (fixed-asset requests, inter-company transfers, bad
+//     debts, Raast voids, GRNI write-offs, cash requests for the HOD, stock
+//     differences): per company, CEO-only buttons through the module routes,
+//     on_account_client PARKED (lists nothing).
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
@@ -35,6 +39,12 @@ const { hrRoutes } = await import('../src/modules/hr/routes.js')
 const { tipPoolRoutes } = await import('../src/modules/tipPools/routes.js')
 const { stockTransferRoutes } = await import('../src/modules/stockTransfers/routes.js')
 const { trustopsRoutes } = await import('../src/modules/trustops/routes.js')
+const { fixedAssetRoutes } = await import('../src/modules/fixedAssets/routes.js')
+const { receivableRoutes } = await import('../src/modules/receivables/routes.js')
+const { reconciliationRoutes } = await import('../src/modules/reconciliation/routes.js')
+const { grniRoutes } = await import('../src/modules/procurement/grniRoutes.js')
+const { intercompanyRoutes } = await import('../src/modules/intercompany/routes.js')
+const { ensureChartOfAccounts } = await import('../src/lib/chartOfAccounts.js')
 const { registerApprovalsPlugin, APPROVAL_PROVIDERS, collectApprovals } = await import('../src/modules/approvals/index.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
 
@@ -45,6 +55,8 @@ const T: Record<'A' | 'B', string> = { A: '', B: '' }
 const U: Record<string, { id: string; name: string; email: string; role: string }> = {}
 /** The ids of the fixtures per company, per type. */
 const ids: Record<'A' | 'B', Record<string, string>> = { A: {}, B: {} }
+/** The A → B inter-company transfer waiting for the CEO (it belongs to both companies). */
+let icTransferId = ''
 
 async function mkUser(key: string, role: string, tenants: string[], extra: Record<string, unknown> = {}) {
   const u = await prisma.user.create({
@@ -135,6 +147,45 @@ async function seedCompany(co: 'A' | 'B', hod: string, owner: string) {
     },
   })
   ids[co]['cash_voucher'] = voucher.id
+
+  // ── Finance wave B ──
+  const asker = co === 'A' ? U['finance']!.id : U['adminB']!.id
+  // A disposal request on a fixed asset, waiting for the CEO.
+  const asset = await prisma.fixedAsset.create({
+    data: { tenantId, name: `${P} oven ${co}`, category: 'kitchen_equipment', assetTag: `FA-${co}-1`, acquiredAt: new Date('2026-01-10'), costCents: 400_000_00, usefulLifeMonths: 60 },
+  })
+  const faEvent = await prisma.fixedAssetEvent.create({
+    data: { tenantId, assetId: asset.id, kind: 'disposal', status: 'pending', effectiveDate: new Date(), payload: { disposalKind: 'scrap' }, amountCents: 0, reason: 'Burnt out', requestedById: asker },
+  })
+  ids[co]['fixed_asset_request'] = faEvent.id
+  // A bad-debt write-off asked of the CEO.
+  const inv = await prisma.receivableInvoice.create({
+    data: { tenantId, conceptId: concept.id, number: `AR-${co}-0001`, customerName: `${P} client ${co}`, issueDate: new Date('2026-08-01'), dueDate: new Date('2026-08-31'), description: 'Catering', amountCents: 50_000_00 },
+  })
+  const wo = await prisma.receivableWriteOff.create({
+    data: { tenantId, invoiceId: inv.id, amountCents: 50_000_00, reason: 'Client closed down, nothing to recover', requestedById: asker, status: 'requested' },
+  })
+  ids[co]['bad_debt'] = wo.id
+  // A Raast receipt finance asked the CEO to void (its sale was never booked).
+  const bank = await prisma.bankAccount.create({ data: { tenantId, name: `${P} Raast ${co}`, accountCode: '1020' } })
+  const ord = await prisma.order.create({
+    data: { conceptId: concept.id, source: 'pos', status: 'cancelled', totalCents: 2_000_00, placedAt: new Date(), externalId: `${P}-raast-${co}` },
+  })
+  const raast = await prisma.raastReceipt.create({
+    data: {
+      tenantId, orderId: ord.id, conceptId: concept.id, bankAccountId: bank.id, ledgerCode: '1020', amountCents: 2_000_00, dueCents: 2_000_00,
+      bankRef: `${co}123456789`, bankRefRaw: `${co}123456789`, status: 'provisional', confirmedVia: 'cashier', confirmedAt: new Date(), cashierVerified: true,
+      idempotencyKey: `${P}-raast-${co}`, createdById: asker,
+      voidRequestedAt: new Date(), voidRequestedById: asker, voidRequestReason: 'Cancelled before the money arrived',
+    },
+  })
+  ids[co]['raast_void'] = raast.id
+  // A delivery the supplier will never bill — write-off asked of the CEO.
+  const receipt = await prisma.goodsReceipt.create({ data: { tenantId, supplierId: supplier.id, receivedById: U[hod]!.id, receivedAt: new Date('2026-09-01') } })
+  const grLine = await prisma.goodsReceiptLine.create({
+    data: { receiptId: receipt.id, description: `${P} sample crates ${co}`, receivedQty: 4, writeOffRequestedAt: new Date(), writeOffRequestedById: asker, writeOffReason: 'Free samples' },
+  })
+  ids[co]['grni_writeoff'] = grLine.id
 }
 
 beforeAll(async () => {
@@ -147,8 +198,12 @@ beforeAll(async () => {
   await mkUser('hodB', 'boh_management', [T.B])
   await mkUser('ceoBoth', 'admin', [T.A, T.B])
   await mkUser('ownerNoPayroll', 'owner', [T.A], { moduleDeny: ['payroll'] })
+  for (const t of [T.A, T.B]) await ensureChartOfAccounts(t)
   await seedCompany('A', 'hodA', 'owner')
   await seedCompany('B', 'hodB', 'ownerB')
+  icTransferId = (await prisma.intercompanyTransfer.create({
+    data: { tenantId: T.A, counterpartyTenantId: T.B, kind: 'charge', status: 'submitted', amountCents: 75_000_00, entryDate: new Date(), memo: 'Shared kitchen staff, September', preparedById: U['finance']!.id },
+  })).id
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -166,6 +221,12 @@ beforeAll(async () => {
     await api.register(tipPoolRoutes, { prefix: '/tip-pools' })
     await api.register(stockTransferRoutes, { prefix: '/stock-transfers' })
     await api.register(trustopsRoutes, { prefix: '/trustops' })
+    await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
+    await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
+    await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
+    await api.register(reconciliationRoutes, { prefix: '/reconciliation' })
+    await api.register(grniRoutes, { prefix: '/procurement/grni' })
+    // No /accounting/stock-differences here: the type answers 404 → not listed.
     await registerApprovalsPlugin(api)
   }, { prefix: '/api/v1' })
   await app.ready()
@@ -181,10 +242,12 @@ describe('two companies', () => {
     expect(a.statusCode).toBe(200)
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
-    expect(body.types.map((t) => t.type).sort()).toEqual(
-      ['cash_voucher', 'hr_request', 'payroll_run', 'purchase_order', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool'],
-    )
-    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher']) {
+    expect(body.types.map((t) => t.type).sort()).toEqual([
+      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'payroll_run',
+      'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool',
+    ])
+    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher',
+      'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff']) {
       expect(countOf(body, t), t).toBe(1)
       expect(body.items.find((i) => i.type === t)?.id, t).toBe(ids.A[t])
     }
@@ -195,6 +258,8 @@ describe('two companies', () => {
     expect(body.items.every((i) => i.tenantId === T.A)).toBe(true)
     expect(body.items.every((i) => i.companyName === 'Approvals Co A')).toBe(true)
     expect(body.total).toBe(body.types.reduce((n, t) => n + t.count, 0))
+    // The A → B transfer is listed in A's view under A (a party).
+    expect(body.items.filter((i) => i.type === 'intercompany_transfer').map((i) => i.id)).toEqual([icTransferId])
 
     const b = (await inbox('adminB')).json() as Inbox
     const bIds = new Set(b.items.map((i) => i.id))
@@ -417,6 +482,173 @@ describe('review fixes', () => {
   it('stock transfers point at the inbox itself (no admin transfer screen exists)', async () => {
     const body = (await counts('fnb_manager')).json() as Inbox & { types: Array<{ type: string; link: string }> }
     expect(body.types.find((t) => t.type === 'stock_transfer')!.link).toBe('/ceo/approvals?type=stock_transfer')
+  })
+})
+
+describe('finance wave B types', () => {
+  const NEW_CEO_TYPES = ['fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff'] as const
+  const act = (key: string, a: { method: string; path: string; body: Record<string, unknown> }, extra: Record<string, unknown> = {}) =>
+    app.inject({ method: a.method as 'POST', url: `/api/v1${a.path}`, headers: auth(key), payload: { ...a.body, ...extra } })
+
+  it("each new type is A's CEO's for A's rows only, B's CEO's for B's; counts per company", async () => {
+    const a = (await inbox('admin')).json() as Inbox
+    const b = (await inbox('adminB')).json() as Inbox
+    for (const t of NEW_CEO_TYPES) {
+      expect(a.items.filter((i) => i.type === t).map((i) => i.id), t).toEqual([ids.A[t]])
+      expect(b.items.filter((i) => i.type === t).map((i) => i.id), t).toEqual([ids.B[t]])
+    }
+    // The CEO of both companies: one each per company in view, both in "All companies".
+    const one = (await counts('ceoBoth')).json() as Inbox
+    const both = (await counts('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
+    for (const t of NEW_CEO_TYPES) {
+      expect(countOf(one, t), t).toBe(1)
+      expect(countOf(both, t), t).toBe(2)
+    }
+    // The inter-company transfer is ONE item, in whichever party is in view.
+    expect(countOf(one, 'intercompany_transfer')).toBe(1)
+    expect(countOf(both, 'intercompany_transfer')).toBe(1)
+    expect(b.items.find((i) => i.type === 'intercompany_transfer')).toMatchObject({ id: icTransferId, tenantId: T.B })
+  })
+
+  it('an inter-company transfer is acted on only by a CEO in BOTH companies (else the buttons are disabled)', async () => {
+    const onlyA = ((await inbox('admin')).json() as Inbox).items.find((i) => i.id === icTransferId)!
+    for (const a of onlyA.actions) expect(a.disabledReason).toMatch(/both companies/)
+    const ceo = ((await inbox('ceoBoth')).json() as Inbox).items.find((i) => i.id === icTransferId)!
+    const approve = ceo.actions.find((a) => a.kind === 'approve')!
+    expect(approve.disabledReason).toBeUndefined()
+    expect(approve.path).toBe(`/accounting/intercompany/transfers/${icTransferId}/approve`)
+    // The module route is the guard: a CEO of one company is refused.
+    expect((await act('admin', approve)).statusCode).toBe(403)
+  })
+
+  it('a finance user never sees an Approve; the module routes refuse finance', async () => {
+    const types = ((await counts('finance')).json() as Inbox).types.map((t) => t.type)
+    for (const t of [...NEW_CEO_TYPES, 'intercompany_transfer', 'stock_difference']) expect(types).not.toContain(t)
+    const item = ((await inbox('admin')).json() as Inbox).items.find((i) => i.type === 'bad_debt')!
+    const approve = item.actions.find((a) => a.kind === 'approve')!
+    expect(approve).toMatchObject({ method: 'POST', path: `/accounting/receivables/write-offs/${ids.A['bad_debt']}/approve` })
+    expect((await act('finance', approve)).statusCode).toBe(403)
+    expect((await act('adminB', approve)).statusCode).toBe(404)
+  })
+
+  it("acting calls the module's own route: the CEO sends back A's GRNI write-off; it leaves the inbox", async () => {
+    const item = ((await inbox('admin')).json() as Inbox).items.find((i) => i.type === 'grni_writeoff')!
+    const reject = item.actions.find((a) => a.kind === 'reject')!
+    expect(reject).toMatchObject({ path: `/procurement/grni/${ids.A['grni_writeoff']}/write-off/reject`, input: { field: 'note', required: true } })
+    expect((await act('adminB', reject, { note: 'not yours' })).statusCode).toBe(404)
+    expect((await act('admin', reject, { note: 'The supplier will bill it next week' })).statusCode).toBe(200)
+    expect((await prisma.goodsReceiptLine.findUniqueOrThrow({ where: { id: ids.A['grni_writeoff']! } })).writeOffRequestedAt).toBeNull()
+    expect(countOf((await counts('admin')).json() as Inbox, 'grni_writeoff')).toBe(0)
+    // The fixed-asset request and the Raast void call their modules' routes too.
+    const all = ((await inbox('admin')).json() as Inbox).items
+    expect(all.find((i) => i.type === 'fixed_asset_request')!.actions.map((a) => a.path)).toEqual([
+      `/accounting/fixed-assets/requests/${ids.A['fixed_asset_request']}/approve`, `/accounting/fixed-assets/requests/${ids.A['fixed_asset_request']}/reject`,
+    ])
+    const raast = all.find((i) => i.type === 'raast_void')!
+    expect(raast.actions.find((a) => a.kind === 'approve')).toMatchObject({ path: `/reconciliation/raast/receipts/${ids.A['raast_void']}/void`, input: { field: 'reason', required: true } })
+    expect(raast.actions.find((a) => a.kind === 'reject')).toMatchObject({ path: `/reconciliation/raast/receipts/${ids.A['raast_void']}/void-request/reject` })
+  })
+
+  it('on_account_client is PARKED: no provider, it lists nothing', async () => {
+    expect(APPROVAL_PROVIDERS.some((p) => p.type === 'on_account_client')).toBe(false)
+    const body = (await inbox('admin', {}, '?type=on_account_client')).json() as Inbox
+    expect(body.items).toEqual([])
+    expect(body.types.some((t) => t.type === 'on_account_client')).toBe(false)
+  })
+
+  it("cash requests: labelled 'Cash requests'; Approve is disabled for the login that signed as HOD", async () => {
+    const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A } })
+    const own = await prisma.cashVoucher.create({
+      data: {
+        tenantId: T.A, seq: 2, number: 'CV-00002', voucherDate: new Date(), payeeName: `${P} payee own`, purpose: 'Signed by the CEO as HOD',
+        amountCents: 1_000_00, boxId: box.id, status: 'hod_signed', preparedById: U['finance']!.id, hodSignedById: U['admin']!.id, hodSignedAt: new Date(),
+      },
+    })
+    const body = (await inbox('admin')).json() as Inbox & { types: Array<{ type: string; label: string }> }
+    expect(body.types.find((t) => t.type === 'cash_voucher')!.label).toBe('Cash requests')
+    const mine = body.items.find((i) => i.id === own.id)!
+    expect(mine.actions.find((a) => a.kind === 'approve')!.disabledReason).toMatch(/HOD/)
+    expect(mine.actions.find((a) => a.kind === 'reject')!.disabledReason).toBeUndefined()
+    const other = body.items.find((i) => i.id === ids.A['cash_voucher'])!
+    expect(other.actions.find((a) => a.kind === 'approve')!.disabledReason).toBeUndefined()
+    await prisma.cashVoucher.delete({ where: { id: own.id } })
+  })
+
+  it("cash_request_hod: the holder's line manager signs from the inbox; nobody else's request is theirs", async () => {
+    // The line manager is a non-keeper login (a head chef, role boh): the HR reporting line decides.
+    const lead = await mkUser('chefLead', 'boh', [T.A])
+    const holder = await mkUser('chefHolder', 'kitchen', [T.A])
+    const stranger = await mkUser('chefOther', 'boh', [T.A])
+    const leadEmp = await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-lead`, fullName: 'Lead chef', userId: lead.id } })
+    await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-holder`, fullName: 'Line cook', userId: holder.id, managerId: leadEmp.id } })
+    await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-other`, fullName: 'Other chef', userId: stranger.id } })
+    const draft = await prisma.cashVoucher.create({
+      data: {
+        tenantId: T.A, seq: 3, number: 'CV-00003', voucherDate: new Date(), payeeName: 'Line cook', payeeUserId: holder.id, purpose: 'Market run for herbs',
+        amountCents: 3_000_00, status: 'draft', preparedById: holder.id,
+      },
+    })
+    try {
+      const body = (await inbox('chefLead')).json() as Inbox
+      const item = body.items.find((i) => i.type === 'cash_request_hod')!
+      expect(item).toMatchObject({ id: draft.id, tenantId: T.A })
+      const sign = item.actions.find((a) => a.kind === 'approve')!
+      expect(sign).toMatchObject({ method: 'POST', path: `/trustops/cash-vouchers/${draft.id}/sign-hod` })
+      expect(item.actions.find((a) => a.kind === 'reject')).toMatchObject({ path: `/trustops/cash-vouchers/${draft.id}/reject`, input: { field: 'note', required: true } })
+      // Not the stranger's, not the holder's own; company B's CEO never sees it.
+      expect(((await inbox('chefOther')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
+      expect(((await inbox('chefHolder')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
+      expect(((await inbox('adminB')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
+      expect((await act('chefOther', sign)).statusCode).toBe(403)
+      expect((await act('chefLead', sign)).statusCode).toBe(200)
+      expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe('hod_signed')
+      expect(((await inbox('chefLead')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
+    } finally {
+      await prisma.cashVoucher.delete({ where: { id: draft.id } })
+    }
+  })
+
+  it("the recipe provider resolves an add-on recipe's company through modifier → group → dish → brand", async () => {
+    const concept = await prisma.concept.findFirstOrThrow({ where: { tenantId: T.A } })
+    const cat = await prisma.category.create({ data: { conceptId: concept.id, name: `${P} mains` } })
+    const dish = await prisma.menuItem.create({ data: { conceptId: concept.id, categoryId: cat.id, name: `${P} burger`, priceCents: 1_500_00 } })
+    const group = await prisma.modifierGroup.create({ data: { menuItemId: dish.id, name: 'Extras' } })
+    const mod = await prisma.modifier.create({ data: { groupId: group.id, name: 'Extra cheese', priceDeltaCents: 150_00 } })
+    const r = await prisma.recipe.create({
+      data: { kind: 'modifier', modifierId: mod.id, name: 'Extra cheese', status: 'pending_approval', submittedById: U['hodA']!.id, submittedAt: new Date() },
+    })
+    const item = ((await inbox('admin')).json() as Inbox & { items: Array<{ facts?: Array<{ label: string; value: string }> }> }).items
+      .find((i) => i.id === r.id) as (Inbox['items'][number] & { facts: Array<{ label: string; value: string }> }) | undefined
+    expect(item).toBeTruthy()
+    expect(item!.tenantId).toBe(T.A)
+    expect(item!.facts.find((f) => f.label === 'Kind')!.value).toBe('Add-on')
+    // Company B's CEO does not see it.
+    expect(((await inbox('adminB')).json() as Inbox).items.some((i) => i.id === r.id)).toBe(false)
+  })
+
+  it('stock_difference: not listed while its route 404s; once it answers, rows map per company with CEO-only buttons', async () => {
+    expect(((await counts('admin')).json() as Inbox).types.some((t) => t.type === 'stock_difference')).toBe(false)
+    const provider = APPROVAL_PROVIDERS.find((p) => (p.type as string) === 'stock_difference')!
+    expect(provider).toMatchObject({ label: 'Stock differences', module: 'accounting', delegable: false })
+    expect(provider.approverRoles).toEqual(['admin'])
+    // GET /accounting/stock-differences answers { rows: StockDifferenceRow[] } (stockDifferences/service.ts).
+    const rows = [
+      { lineId: 'jl-a', tenantId: T.A, itemName: 'Flour', locationName: 'A Kitchen 1', conceptName: 'Brand A', kind: 'waste', reason: 'Spoiled', valueCents: 12_000, entryDate: '2026-10-10T10:00:00.000Z', recordedByName: 'Chef A' },
+      { lineId: 'jl-b', tenantId: T.B, itemName: 'Rice', locationName: 'B Kitchen 1', conceptName: 'Brand B', kind: 'count', reason: 'Short at count', valueCents: 9_000, entryDate: '2026-10-11T10:00:00.000Z', recordedByName: 'Chef B' },
+    ]
+    const read = async <T,>(path: string): Promise<T | null> => (path.startsWith('/accounting/stock-differences?status=pending') ? { rows } as T : null)
+    const ctx = { user: { id: U['ceoBoth']!.id, role: 'admin' as never }, tenantIds: [T.A], memberTenantIds: [T.A, T.B], read }
+    const res = await collectApprovals(ctx, { providers: [provider] })
+    expect(res.items.map((i) => i.id)).toEqual(['jl-a'])
+    expect(res.types[0]).toMatchObject({ type: 'stock_difference', count: 1, elsewhere: 1 })
+    const [approve, query] = res.items[0]!.actions
+    expect(approve).toMatchObject({ kind: 'approve', method: 'POST', path: '/accounting/stock-differences/approve', body: { lineIds: ['jl-a'] } })
+    expect(query).toMatchObject({ kind: 'reject', method: 'POST', path: '/accounting/stock-differences/jl-a/query', input: { field: 'note', required: true } })
+    expect(res.items[0]).toMatchObject({ link: '/finance/stock-differences', amountCents: 12_000 })
+    expect((res.items[0] as { facts: Array<{ label: string; value: string }> }).facts.find((f) => f.label === 'Outlet')!.value).toBe('A Kitchen 1')
+    // A finance login is not offered the type at all.
+    const fin = await collectApprovals({ ...ctx, user: { id: U['finance']!.id, role: 'finance' as never } }, { providers: [provider] })
+    expect(fin.types).toEqual([])
   })
 })
 

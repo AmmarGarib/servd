@@ -1,163 +1,179 @@
 'use client'
-// New voucher / edit a draft. Saving makes (or updates) a DRAFT only — no
-// signature, no cash. The cash box decides the cashier (its custodian) and
-// the company: a box's voucher is that box's company's.
+// Request cash / edit a request. Saving makes (or updates) a request waiting
+// for its HOD — no signature, no cash. The category is the expense the cash is
+// booked to when it is paid (H3: expensed at payment; receipts kept for the
+// file). Finance or a manager may also name someone else as the holder, pick
+// an explicit 6xxx account and the cash box; everyone else asks for
+// themselves and the cashier picks the box when paying.
 
-import { useMemo, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { formatBrandName } from '../../../lib/brandName'
-import { useMyTenants } from '../../../components/ui/TenantPicker'
+import { useAuthStore } from '../../../store/auth'
+import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
-  CATEGORY_SUGGESTIONS, CV_BASE, dateInput, errorWords, todayKarachi, useBrands, usePettyBoxes, useStaffNames,
+  CV_BASE, dateInput, errorWords, todayKarachi, useBrands, useCategories, usePettyBoxes, useStaffNames,
   type CashVoucher,
 } from './data'
 import { ErrorBanner, Field, Footer, Modal, fieldCls, primaryBtn } from './ui'
 
-/** "2,50,000" / "250000.5" → paisa; NaN when it is not a positive amount. */
-function toCents(s: string): number {
-  const n = Number(s.replace(/[,\s]/g, ''))
-  if (!Number.isFinite(n) || n <= 0) return NaN
-  return Math.round(n * 100)
-}
-
-export function VoucherForm({ voucher, onClose, onSaved }: {
-  /** Editing this draft; omitted = a new voucher. */
+export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
+  /** Editing this request; omitted = a new one. */
   voucher?: CashVoucher
+  /** The server says this login runs petty cash (finance / the manager tiers). */
+  isKeeper: boolean
   onClose: () => void
   onSaved: (v: CashVoucher) => void
 }) {
   const editing = !!voucher
-  const { data: boxes = [], isLoading: boxesLoading, error: boxesError } = usePettyBoxes()
+  const me = useAuthStore((s) => s.user)
+  // Once the HOD has signed, finance may still change the category and the box — nothing else.
+  const categoryOnly = editing && voucher!.status !== 'draft'
+  const { data: cats } = useCategories()
+  const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
   const { data: brands = [] } = useBrands()
+  const { data: boxes = [] } = usePettyBoxes()
   const { data: staff = [] } = useStaffNames()
-  const { data: tenants = [] } = useMyTenants()
+  const { data: chart = [] } = useQuery<Array<{ code: string; name: string; isActive: boolean; tenantId: string | null }>>({
+    queryKey: ['chart-of-accounts'],
+    queryFn: () => api.get('/setup/chart-of-accounts'),
+    enabled: isKeeper,
+    retry: false, meta: { background: true }, staleTime: 300_000,
+  })
 
-  const [payeeName, setPayeeName] = useState(voucher?.payeeName ?? '')
-  const [amount, setAmount] = useState(voucher ? String(voucher.amountCents / 100) : '')
+  const [amountCents, setAmountCents] = useState(voucher?.amountCents ?? 0)
   const [purpose, setPurpose] = useState(voucher?.purpose ?? '')
   const [category, setCategory] = useState(voucher?.category ?? '')
   const [conceptId, setConceptId] = useState(voucher?.conceptId ?? '')
   const [department, setDepartment] = useState(voucher?.department ?? '')
   const [voucherDate, setVoucherDate] = useState(voucher ? dateInput(voucher.voucherDate) : todayKarachi())
+  const [holderUserId, setHolderUserId] = useState(voucher?.payeeUserId ?? me?.id ?? '')
+  const [payeeName, setPayeeName] = useState(voucher?.payeeName ?? '')
   const [boxId, setBoxId] = useState(voucher?.boxId ?? '')
 
-  const activeBoxes = boxes.filter((b) => b.isActive || b.id === voucher?.boxId)
-  const box = boxes.find((b) => b.id === boxId) ?? null
-  const multiCompany = new Set(activeBoxes.map((b) => b.tenantId)).size > 1
-  const companyOf = (tenantId: string | null) => tenants.find((t) => t.id === tenantId)?.name
-
-  // Suggestions: the usual categories plus whatever the boxes' spends used.
-  const categories = useMemo(() => {
-    const seen = new Set(CATEGORY_SUGGESTIONS)
-    for (const b of boxes) for (const m of b.movements ?? []) if (m.category) seen.add(m.category)
-    return Array.from(seen)
-  }, [boxes])
-
-  const cents = toCents(amount)
-  const payeeUserId = staff.find((u) => u.name.trim().toLowerCase() === payeeName.trim().toLowerCase())?.id ?? null
-  const ready = !!payeeName.trim() && Number.isFinite(cents) && !!purpose.trim() && !!boxId
+  const tenantId = voucher?.tenantId ?? null
+  const companyBoxes = boxes.filter((b) => b.isActive && (!tenantId || b.tenantId === tenantId))
+  const companyBrands = brands.filter((b) => !tenantId || !b.tenantId || b.tenantId === tenantId)
+  const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
+  const isCode = /^\d{4}$/.test(category)
+  const ready = amountCents > 0 && !!purpose.trim() && !!category
 
   const save = useMutation({
     mutationFn: () => {
-      const body = {
-        voucherDate,
-        payeeName: payeeName.trim(),
-        payeeUserId,
-        purpose: purpose.trim(),
-        category: category.trim() || null,
-        conceptId: conceptId || null,
-        department: department.trim() || null,
-        amountCents: cents,
-        // On an edit the box is sent only when it changed: the API re-checks a
-        // sent box (open, this company's), and an unchanged one needs no check.
-        ...(!editing || boxId !== voucher!.boxId ? { boxId } : {}),
-      }
-      // The write belongs to the box's company — so the "All companies" view
-      // never asks which company (the same pin the approvals inbox uses).
-      const tenantId = (editing ? voucher!.tenantId : box?.tenantId) ?? undefined
+      const cat = isCode ? { categoryKey: null, accountCode: category } : { categoryKey: category, accountCode: null }
+      const body: Record<string, unknown> = categoryOnly
+        ? { ...cat, ...(isKeeper && boxId !== (voucher!.boxId ?? '') ? { boxId: boxId || null } : {}) }
+        : {
+          voucherDate,
+          purpose: purpose.trim(),
+          ...cat,
+          conceptId: conceptId || null,
+          department: department.trim() || null,
+          amountCents,
+          ...(isKeeper && holderUserId && holderUserId !== voucher?.payeeUserId ? { holderUserId } : {}),
+          ...(payeeName.trim() && payeeName.trim() !== voucher?.payeeName ? { payeeName: payeeName.trim() } : {}),
+          ...(isKeeper && (!editing || boxId !== (voucher!.boxId ?? '')) && boxId ? { boxId } : {}),
+        }
+      // An edit is pinned to the request's company, so the "All companies" view never asks.
       const extra = tenantId ? { tenantId } : undefined
       return editing
         ? api.patch<CashVoucher>(`${CV_BASE}/${voucher!.id}`, body, extra)
-        : api.post<CashVoucher>(CV_BASE, body, extra)
+        : api.post<CashVoucher>(CV_BASE, body)
     },
     meta: { inlineErrors: true },
     onSuccess: (v) => onSaved(v),
   })
 
   return (
-    <Modal title={editing ? `Edit ${voucher!.number}` : 'New cash voucher'} onClose={onClose} wide>
-      <p className="text-xs text-white/50">
-        Saving makes a draft. Nothing reaches cash until the HOD and the director have signed, the cashier has paid
-        against the printed voucher, and its signed photo is uploaded.
-      </p>
-
-      <Field label="Pay to *" hint={payeeUserId ? 'Matches a servd login.' : undefined}>
-        <input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} list="cv-payees"
-          placeholder="Who receives the cash" className={fieldCls} autoFocus />
-        <datalist id="cv-payees">{staff.map((u) => <option key={u.id} value={u.name} />)}</datalist>
-      </Field>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Amount (PKR) *">
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25,000" className={fieldCls} />
-        </Field>
-        <Field label="Date *">
-          <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className={fieldCls} />
-        </Field>
-      </div>
-      {Number.isFinite(cents) && (
-        <p className="-mt-1 text-[11px] text-white/55">
-          PKR {formatPkr(cents)} — {amountInWords(cents)}
+    <Modal title={editing ? (categoryOnly ? `Category of ${voucher!.number}` : `Edit ${voucher!.number}`) : 'Request cash'} onClose={onClose} wide>
+      {!categoryOnly && (
+        <p className="text-xs text-white/50">
+          Saving sends it to your HOD. Nothing leaves a cash box until the HOD and the director have signed and the cashier pays it.
+          Keep the receipts — you upload them here afterwards.
         </p>
       )}
 
-      <Field label="Purpose *">
-        <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2}
-          placeholder="What the cash is for" className={fieldCls} />
-      </Field>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Category">
-          <input value={category} onChange={(e) => setCategory(e.target.value)} list="cv-categories" placeholder="supplies · courier" className={fieldCls} />
-          <datalist id="cv-categories">{categories.map((c) => <option key={c} value={c} />)}</datalist>
-        </Field>
-        <Field label="Department">
-          <input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Optional" className={fieldCls} />
-        </Field>
-      </div>
-
-      <Field label="Brand">
-        <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
-          <option value="">— no brand (company-wide) —</option>
-          {brands.map((b) => <option key={b.id} value={b.id}>{formatBrandName(b.name)}</option>)}
-        </select>
-      </Field>
-
-      <Field label="Paid from (cash box) *"
-        hint={box
-          ? <>Cashier: <span className="font-bold text-white/75">{box.custodianName ?? '—'}</span> · the box holds PKR {formatPkr(box.floatCents)}{Number.isFinite(cents) && cents > box.floatCents && <span className="text-s-amber font-bold"> — not enough for this voucher; top it up before paying</span>}</>
-          : 'The box the cashier pays from. Its custodian is the cashier who signs the paper.'}>
-        <select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
-          <option value="">{boxesLoading ? 'Loading boxes…' : '— pick a cash box —'}</option>
-          {activeBoxes.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}{b.custodianName ? ` — ${b.custodianName}` : ''}{multiCompany && companyOf(b.tenantId) ? ` · ${companyOf(b.tenantId)}` : ''}
-            </option>
-          ))}
-        </select>
-      </Field>
-      {!boxesLoading && activeBoxes.length === 0 && (
-        <p className="text-xs text-s-amber">
-          {boxesError ? 'The cash boxes could not be read with this login.' : 'No cash box yet.'} Add one on Finance → Petty cash first.
-        </p>
+      {!categoryOnly && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Amount (PKR) *">
+              <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
+            </Field>
+            <Field label="Needed on *">
+              <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className={fieldCls} />
+            </Field>
+          </div>
+          {amountCents > 0 && (
+            <p className="-mt-1 text-[11px] text-white/55">PKR {formatPkr(amountCents)} — {amountInWords(amountCents)}</p>
+          )}
+          <Field label="What is it for? *">
+            <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} maxLength={500}
+              placeholder="e.g. Cleaning supplies for the outlet" className={fieldCls} />
+          </Field>
+        </>
       )}
 
-      {save.error && <ErrorBanner message={errorWords(save.error, 'save')} />}
+      <Field label="Expense category *" hint="The cash is booked to this when it is paid. Receipts that show something else (stock, equipment, another category) move it there.">
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
+          <option value="">— pick a category —</option>
+          {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
+          {isKeeper && expenseAccounts.length > 0 && (
+            <optgroup label="Another expense account">
+              {expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+            </optgroup>
+          )}
+        </select>
+      </Field>
+
+      {!categoryOnly && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Brand">
+              <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+                <option value="">— company-wide —</option>
+                {companyBrands.map((b) => <option key={b.id} value={b.id}>{formatBrandName(b.name)}</option>)}
+              </select>
+            </Field>
+            <Field label="Department">
+              <input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Optional" className={fieldCls} />
+            </Field>
+          </div>
+
+          {isKeeper && staff.length > 0 ? (
+            <Field label="Who takes the cash" hint="They bring the receipts back. Their HOD signs the request.">
+              <select value={holderUserId} onChange={(e) => setHolderUserId(e.target.value)} className={fieldCls}>
+                {me && <option value={me.id}>Me</option>}
+                {staff.filter((u) => u.id !== me?.id && (!tenantId || !u.tenantId || u.tenantId === tenantId)).map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </Field>
+          ) : (
+            <p className="text-xs text-white/50">You take the cash and bring the receipts back.</p>
+          )}
+          <Field label="Name on the voucher" hint="Leave empty to print the holder's name.">
+            <input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} maxLength={120} placeholder="Optional" className={fieldCls} />
+          </Field>
+        </>
+      )}
+
+      {isKeeper && (
+        <Field label="Paid from (cash box)" hint="Optional — otherwise the cashier picks the box when paying.">
+          <select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
+            <option value="">— the cashier picks —</option>
+            {companyBoxes.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}{b.custodianName ? ` — ${b.custodianName}` : ''} · PKR {formatPkr(b.floatCents)}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      {save.error && <ErrorBanner message={errorWords(save.error)} />}
       <Footer onCancel={onClose} primary={
         <button onClick={() => save.mutate()} disabled={save.isPending || !ready} className={primaryBtn}>
-          {save.isPending ? 'Saving…' : editing ? 'Save draft' : 'Save as draft'}
+          {save.isPending ? 'Saving…' : editing ? 'Save' : 'Send to my HOD'}
         </button>
       } />
     </Modal>

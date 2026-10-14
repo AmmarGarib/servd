@@ -5,8 +5,9 @@
 // are on no spend (`filePath(id)` serves / deletes one). The parent keeps the
 // list and sends the ids with the spend.
 //
-// Used by the petty-cash spend (POST /trustops/petty-cash/receipts) and, from
-// W3, the cash-request settlements.
+// Used by the petty-cash spend (POST /trustops/petty-cash/receipts) and the
+// cash requests (POST /trustops/cash-vouchers/:id/receipts — served from
+// /:id/attachments/:aid, removed at /:id/receipts/:aid: `deletePath`).
 
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
@@ -24,6 +25,7 @@ export function ReceiptUploader({
   uploadPath,
   extraBody,
   filePath,
+  deletePath,
   receipts,
   onChange,
   max = 5,
@@ -34,6 +36,8 @@ export function ReceiptUploader({
   extraBody: Record<string, unknown>
   /** The API path of one uploaded receipt (GET shows it, DELETE removes it). */
   filePath: (id: string) => string
+  /** Where DELETE goes when it is not `filePath`. */
+  deletePath?: (id: string) => string
   receipts: UploadedReceipt[]
   onChange: (next: UploadedReceipt[]) => void
   max?: number
@@ -55,7 +59,7 @@ export function ReceiptUploader({
     let next = [...receipts]
     try {
       for (const file of Array.from(files)) {
-        if (next.length >= max) { setError(`At most ${max} receipts on one spend.`); break }
+        if (next.length >= max) { setError(`At most ${max} receipts here.`); break }
         const prepared = await prepareReceiptFile(file)
         const row = await api.post<{ id: string; mime: string; sizeBytes: number }>(uploadPath, { ...extraBody, photo: prepared.base64, mime: prepared.mime })
         if (prepared.previewUrl) previews.current.push(prepared.previewUrl)
@@ -73,7 +77,7 @@ export function ReceiptUploader({
   async function remove(r: UploadedReceipt) {
     setError(null)
     try {
-      await api.delete(filePath(r.id))
+      await api.delete((deletePath ?? filePath)(r.id))
       onChange(receipts.filter((x) => x.id !== r.id))
     } catch (e) {
       setError(e instanceof ApiError || e instanceof Error ? e.message : 'The receipt could not be removed.')

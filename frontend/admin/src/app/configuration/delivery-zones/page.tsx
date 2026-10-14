@@ -3,6 +3,17 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { fmtPkrWhole } from '../../../lib/money'
+
+// The zone fee is the price BEFORE sales tax: checkout adds GST on top at the
+// order's tender rate (backend lib/pricing.ts) — the page never works it out.
+const GST_HELP = 'GST is added at checkout at the brand\'s rate: 15 % cash, 8 % card or Raast.'
+
+function rupeesOf(cents: number): string { return String(cents / 100) }
+function paisaOf(rupees: string): number {
+  const n = parseFloat(rupees)
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0
+}
 
 interface Zone {
   id: string
@@ -33,22 +44,23 @@ export default function DeliveryZonesPage() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
-      <header className="px-7 py-6 border-b border-white/[0.05]">
+      <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <div className="flex items-start justify-between gap-4 mt-2">
+        <div className="flex flex-wrap items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🛵 Delivery zones</h1>
+            <h1 className="text-2xl font-black text-white/90">Delivery zones</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Radius-based delivery rings, measured from the brand's kitchen (its Location's map pin). Each zone has its own
               fee, minimum order, and free-delivery threshold. These bands are the only thing that decides delivery: an
               address beyond a brand's last zone is refused at checkout, and a brand with no active zone takes pickup only.
             </p>
+            <p className="text-xs text-white/45 mt-2 max-w-2xl">{GST_HELP}</p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New zone</button>
+          <button onClick={() => setAdding(true)} className="shrink-0 rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New zone</button>
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
+      <div className="px-4 sm:px-7 py-6 max-w-4xl mx-auto space-y-2">
         {zones.length === 0 && (
           <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
             <p className="font-bold text-white/85">No delivery zones yet</p>
@@ -61,18 +73,18 @@ export default function DeliveryZonesPage() {
             <div key={z.id} className="rounded-2xl p-5"
               style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-black text-white/90">{z.name}</h3>
                     {!z.isActive && <span className="text-[10px] font-bold text-white/30 px-1.5 py-0.5 rounded bg-white/5">PAUSED</span>}
                     {concept && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>{concept.name}</span>}
                   </div>
                   <div className="text-sm text-white/55 mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                    <span>📍 {z.radiusKmMin ?? 0}–{z.radiusKmMax ?? '∞'} km</span>
-                    <span>💸 PKR {(z.feeCents / 100).toFixed(0)}</span>
-                    <span>🛒 Min order PKR {(z.minOrderCents / 100).toFixed(0)}</span>
-                    {z.freeAboveCents != null && <span>🎁 Free above PKR {(z.freeAboveCents / 100).toFixed(0)}</span>}
-                    {z.estimatedMinutes != null && <span>⏱ ~{z.estimatedMinutes} min</span>}
+                    <span>{z.radiusKmMin ?? 0}–{z.radiusKmMax ?? 'any'} km</span>
+                    <span>Fee {fmtPkrWhole(z.feeCents)} before GST</span>
+                    <span>Min order {fmtPkrWhole(z.minOrderCents)}</span>
+                    {z.freeAboveCents != null && <span>Free above {fmtPkrWhole(z.freeAboveCents)}</span>}
+                    {z.estimatedMinutes != null && <span>About {z.estimatedMinutes} min</span>}
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 shrink-0">
@@ -81,6 +93,7 @@ export default function DeliveryZonesPage() {
                     className="rounded-lg border border-red-500/20 text-red-700/70 px-3 py-1.5 text-xs hover:text-red-700">Delete</button>
                 </div>
               </div>
+              {del.isError && del.variables === z.id && <p className="text-xs text-red-700 mt-2">{(del.error as Error).message}</p>}
             </div>
           )
         })}
@@ -99,22 +112,24 @@ function Modal({ zone, concepts, onClose, onSaved }: { zone: Zone | null; concep
   const [conceptId, setConceptId] = useState(zone?.conceptId ?? '')
   const [radiusKmMin, setRadiusKmMin] = useState(zone?.radiusKmMin ?? 0)
   const [radiusKmMax, setRadiusKmMax] = useState(zone?.radiusKmMax ?? 5)
-  const [feeCents, setFeeCents] = useState(zone?.feeCents ?? 0)
-  const [freeAboveCents, setFreeAboveCents] = useState(zone?.freeAboveCents ?? 0)
-  const [minOrderCents, setMinOrderCents] = useState(zone?.minOrderCents ?? 0)
+  // Money is typed in rupees and sent in paisa.
+  const [feeRs, setFeeRs] = useState(rupeesOf(zone?.feeCents ?? 0))
+  const [freeAboveRs, setFreeAboveRs] = useState(zone?.freeAboveCents ? rupeesOf(zone.freeAboveCents) : '')
+  const [minOrderRs, setMinOrderRs] = useState(rupeesOf(zone?.minOrderCents ?? 0))
   const [estimatedMinutes, setEstimatedMinutes] = useState(zone?.estimatedMinutes ?? 30)
   const [isActive, setIsActive] = useState(zone?.isActive ?? true)
 
   const save = useMutation({
     mutationFn: () => {
+      const freeAboveCents = paisaOf(freeAboveRs)
       const payload = {
         name: name.trim(),
         conceptId: conceptId || null,
         radiusKmMin,
         radiusKmMax,
-        feeCents,
+        feeCents: paisaOf(feeRs),
         freeAboveCents: freeAboveCents > 0 ? freeAboveCents : null,
-        minOrderCents,
+        minOrderCents: paisaOf(minOrderRs),
         estimatedMinutes,
         isActive,
       }
@@ -131,7 +146,7 @@ function Modal({ zone, concepts, onClose, onSaved }: { zone: Zone | null; concep
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{zone ? 'Edit zone' : 'New delivery zone'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-white/40 text-sm font-bold">Close</button>
         </div>
         <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <Field label="Zone name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="DHA Phase 5" className={fieldCls} autoFocus /></Field>
@@ -146,11 +161,12 @@ function Modal({ zone, concepts, onClose, onSaved }: { zone: Zone | null; concep
             <Field label="To (km)"><input type="number" step="0.1" value={radiusKmMax} onChange={(e) => setRadiusKmMax(parseFloat(e.target.value) || 0)} className={fieldCls} /></Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Delivery fee (paisa)"><input type="number" value={feeCents} onChange={(e) => setFeeCents(parseInt(e.target.value) || 0)} className={fieldCls} /></Field>
-            <Field label="Min order (paisa)"><input type="number" value={minOrderCents} onChange={(e) => setMinOrderCents(parseInt(e.target.value) || 0)} className={fieldCls} /></Field>
+            <Field label="Fee (before GST), PKR"><input type="number" min={0} step="1" inputMode="decimal" value={feeRs} onChange={(e) => setFeeRs(e.target.value)} className={fieldCls} /></Field>
+            <Field label="Min order, PKR"><input type="number" min={0} step="1" inputMode="decimal" value={minOrderRs} onChange={(e) => setMinOrderRs(e.target.value)} className={fieldCls} /></Field>
           </div>
+          <p className="text-[11px] text-white/45 -mt-2">{GST_HELP}</p>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Free above (paisa)"><input type="number" value={freeAboveCents} onChange={(e) => setFreeAboveCents(parseInt(e.target.value) || 0)} placeholder="0 = always charge" className={fieldCls} /></Field>
+            <Field label="Free above, PKR"><input type="number" min={0} step="1" inputMode="decimal" value={freeAboveRs} onChange={(e) => setFreeAboveRs(e.target.value)} placeholder="Empty = always charge" className={fieldCls} /></Field>
             <Field label="Est. minutes"><input type="number" value={estimatedMinutes} onChange={(e) => setEstimatedMinutes(parseInt(e.target.value) || 0)} className={fieldCls} /></Field>
           </div>
           {zone && (
@@ -160,6 +176,7 @@ function Modal({ zone, concepts, onClose, onSaved }: { zone: Zone | null; concep
             </label>
           )}
         </div>
+        {save.isError && <p className="px-5 pb-3 text-xs text-red-700">{(save.error as Error).message}</p>}
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}

@@ -16,10 +16,12 @@ import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM, ADMIN_ONLY } from '../a
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId, resolveTenantScope } from '../../lib/tenantScope.js'
+import { zReceiptMethod, zPaymentRef } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { redeemGiftCard } from './service.js'
 import {
   issueGiftCard, voidGiftCard, bookMissingIssue, giftCardBooksCheck,
-  GIFT_CARD_PAYMENT_METHODS, VOID_DISPOSITIONS,
+  GIFT_CARD_PAYMENT_METHODS, GIFT_CARD_REFUND_METHODS, VOID_DISPOSITIONS,
 } from './books.js'
 
 // ── Company scope (owner decision 14) ───────────────────────────────────────
@@ -47,6 +49,13 @@ const GIFT_CARD_READERS = FINANCE_TEAM
 // (1010), card on the back-office machine (1030), or a transfer to a named
 // bank of the company. A PROMOTIONAL card (given away, Dr 6060) is a manager's
 // call only, with a reason.
+//
+// Payment received (owner, 2026-10-14): a sold card is paid by cash, card,
+// bank transfer, bank deposit or cheque (lib/bankAccounts.ts RECEIPT_METHODS)
+// and ALWAYS carries its payment reference # (422 PAYMENT_REFERENCE_REQUIRED,
+// every method, cash included). A reference this company used before is a
+// warning, never a block: the response carries `referenceUsedBefore`
+// (lib/paymentRefs.ts — this company's rows only).
 const GIFT_CARD_SELLERS = FINANCE_TEAM
 const PROMO_ISSUERS = new Set<string>(MANAGERS)
 
@@ -154,7 +163,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         select: {
           id: true, tenantId: true, code: true, kind: true, issuedAmountCents: true, balanceCents: true, status: true,
           createdAt: true, expiresAt: true, expiredAt: true, voidedAt: true, voidReason: true, voidDisposition: true,
-          paymentMethod: true, bankAccountId: true,
+          paymentMethod: true, bankAccountId: true, paymentRef: true,
         },
       })
       if (!card) throw new NotFoundError('GiftCard', req.params.id)
@@ -174,6 +183,10 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
   // Issue — a sold card (back office: managers + finance) or a promotional
   // one (managers, with a reason). The card and its entry are one transaction:
   // if the books refuse, no card exists and the error comes back.
+  //   body: paymentMethod (RECEIPT_METHODS) + paymentRef (required on a sold
+  //         card, refused on a promotional one: 422 PROMO_CARD_NOT_PAID) +
+  //         bankAccountId (bank-type methods; the ACTIVE company's bank only).
+  //   201:  the card + referenceUsedBefore: PaymentRefUse[] (a warning).
   fastify.post('/', { preHandler: requireAuth(...GIFT_CARD_SELLERS) }, async (req, reply) => {
     const body = z.object({
       kind:              z.enum(['sold', 'promotional']).default('sold'),
@@ -185,7 +198,8 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       message:           z.string().max(500).nullable().optional(),
       conceptId:         z.string().uuid().nullable().optional(),
       expiresAt:         z.string().datetime().nullable().optional(),
-      paymentMethod:     z.enum(GIFT_CARD_PAYMENT_METHODS).nullable().optional(),
+      paymentMethod:     zReceiptMethod(GIFT_CARD_PAYMENT_METHODS).nullable().optional(),
+      paymentRef:        zPaymentRef.nullable().optional(),
       bankAccountId:     z.string().min(1).max(64).nullable().optional(),
       reason:            z.string().trim().min(3).max(300).nullable().optional(),
     }).parse(req.body)
@@ -207,7 +221,8 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       tenantId,
       kind: body.kind,
       issuedAmountCents: body.issuedAmountCents,
-      paymentMethod: body.paymentMethod ?? null,
+      paymentMethod: (body.paymentMethod as typeof GIFT_CARD_PAYMENT_METHODS[number] | null | undefined) ?? null,
+      paymentRef: body.paymentRef ?? null,
       bankAccountId: body.bankAccountId ?? null,
       reason: body.reason ?? null,
       conceptId: body.conceptId ?? null,
@@ -223,40 +238,53 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     await audit({ category: 'identity',
       action: 'giftcard.issue', entity: 'GiftCard', entityId: card.id,
       userId: req.staffUser?.id ?? null, tenantId, userEmail: req.staffUser?.email ?? null,
-      after: { code: card.code, amount: card.issuedAmountCents, kind: card.kind, paymentMethod: card.paymentMethod, bankAccountId: card.bankAccountId },
+      after: { code: card.code, amount: card.issuedAmountCents, kind: card.kind, paymentMethod: card.paymentMethod, paymentRef: card.paymentRef, bankAccountId: card.bankAccountId },
       ...(body.kind === 'promotional' && { metadata: { reason: body.reason } }),
     })
 
-    return reply.status(201).send(card)
+    // Where else THIS company recorded the same reference — saved anyway.
+    const referenceUsedBefore = card.paymentRef
+      ? await findPaymentReferenceUses(prisma, tenantId, card.paymentRef, { exclude: { kind: 'gift_card', id: card.id } })
+      : []
+    return reply.status(201).send({ ...card, referenceUsedBefore })
   })
 
   // Book the sale of a card whose issue entry never posted (cards issued
   // before 2026-10-13, when it was log-only). The books check lists them.
+  //   body: paymentMethod (RECEIPT_METHODS) + paymentRef (required, every
+  //         method) + bankAccountId (bank-type; the CARD's company's bank).
+  //   200:  { card, entryId, debitCode, referenceUsedBefore }.
   fastify.post<{ Params: { id: string } }>(
     '/:id/book-issue',
     { preHandler: requireAuth(...GIFT_CARD_SELLERS) },
     async (req) => {
       const body = z.object({
-        paymentMethod: z.enum(GIFT_CARD_PAYMENT_METHODS),
+        paymentMethod: zReceiptMethod(GIFT_CARD_PAYMENT_METHODS),
+        paymentRef:    zPaymentRef.nullable().optional(),
         bankAccountId: z.string().min(1).max(64).nullable().optional(),
       }).parse(req.body)
       const r = await bookMissingIssue({
         cardId: req.params.id,
         scope: await scopeTenantWhere(req, 'write'),
-        paymentMethod: body.paymentMethod,
+        paymentMethod: body.paymentMethod as typeof GIFT_CARD_PAYMENT_METHODS[number],
+        paymentRef: body.paymentRef ?? null,
         bankAccountId: body.bankAccountId ?? null,
         postedBy: req.staffUser?.id ?? 'system',
       })
       await audit({ category: 'identity',
         action: 'giftcard.book_issue', entity: 'GiftCard', entityId: r.card.id,
         userId: req.staffUser?.id ?? null, tenantId: r.card.tenantId, userEmail: req.staffUser?.email ?? null,
-        after: { paymentMethod: body.paymentMethod, debitCode: r.debitCode, amount: r.card.issuedAmountCents, entryId: r.entryId },
+        after: { paymentMethod: body.paymentMethod, paymentRef: body.paymentRef?.trim() ?? null, debitCode: r.debitCode, amount: r.card.issuedAmountCents, entryId: r.entryId },
       })
+      // The CARD's company — never the operator's other companies.
+      const referenceUsedBefore = r.card.tenantId
+        ? await findPaymentReferenceUses(prisma, r.card.tenantId, body.paymentRef, { exclude: { kind: 'gift_card', id: r.card.id } })
+        : []
       // Finance books the sale but never sees the bearer code or contacts.
       const card = seesFullCard(req) ? r.card : {
         ...r.card, code: maskGiftCardCode(r.card.code), buyerEmail: null, recipientEmail: null, buyerCustomerId: null, message: null,
       }
-      return { card, entryId: r.entryId, debitCode: r.debitCode }
+      return { card, entryId: r.entryId, debitCode: r.debitCode, referenceUsedBefore }
     },
   )
 
@@ -333,7 +361,8 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       const body = z.object({
         reason:        z.string().trim().min(3).max(300),
         disposition:   z.enum(VOID_DISPOSITIONS),
-        refundMethod:  z.enum(GIFT_CARD_PAYMENT_METHODS).nullable().optional(),
+        // Money OUT: its own list (no "bank deposit" as a refund method).
+        refundMethod:  z.enum(GIFT_CARD_REFUND_METHODS).nullable().optional(),
         bankAccountId: z.string().min(1).max(64).nullable().optional(),
       }).parse(req.body)
       const r = await voidGiftCard({

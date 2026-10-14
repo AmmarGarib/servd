@@ -1410,10 +1410,10 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   })
 
   // No sale → what the kitchen had not started goes back into its lots, and
-  // what it had fired is wasted 'cancelled_after_fire' (Dr 5040 / Cr class
+  // what it had fired is wasted 'cancelled_after_fire' (Dr 1290 / Cr class
   // inventory in the order's company). When a drawer close already booked the
   // ticket's cost of sales, both go against cost of sales instead (Dr 12x0 /
-  // Cr 50x0 for what comes back, Dr 5040 / Cr 50x0 for the waste) — see
+  // Cr 50x0 for what comes back, Dr 1290 / Cr 50x0 for the waste) — see
   // orders/stock.ts. Only on the
   // call that actually made the change; the restore is itself once-only, so
   // a retry after a failure is safe. A failure is flagged, never only logged.
@@ -1573,7 +1573,7 @@ export async function updateItemStatus(itemId: string, status: Exclude<ItemStatu
   if (status === 'recalled' && item.status !== 'recalled') {
     await reopenOrderForRemake(item.orderId)
     // The remake cooks the dish again: its recipe is booked as waste 'remake'
-    // (its own WasteLog per recall, FIFO value, Dr 5040 / Cr inventory) —
+    // (its own WasteLog per recall, FIFO value, Dr 1290 / Cr inventory) —
     // never silently left as unexplained variance. A failure is flagged on
     // the LINE (the re-run needs to know which line to re-book).
     try {
@@ -1970,7 +1970,7 @@ type QueuedDoc = { id: string; status: string }
  * Null sale when the company does not report sales (§17.7).
  */
 async function enqueueSaleDocumentsTx(tx: Prisma.TransactionClient, orderId: string, tenantId: string): Promise<{ sale: QueuedDoc | null; refunds: QueuedDoc[] }> {
-  const { enqueueFiscalSaleTx, enqueueFiscalRefundTx } = await import('../../connectors/fiscal/outbox.js')
+  const { enqueueFiscalSaleTx, enqueueFiscalRefundTx, voidRefundShape } = await import('../../connectors/fiscal/outbox.js')
   const sale = await enqueueFiscalSaleTx(tx, { orderId, tenantId })
   if (!sale) return { sale: null, refunds: [] }
   const given = await tx.payment.findMany({
@@ -1980,12 +1980,12 @@ async function enqueueSaleDocumentsTx(tx: Prisma.TransactionClient, orderId: str
   })
   const refunds: QueuedDoc[] = []
   for (const p of given) {
-    const meta = (p.gatewayMeta ?? {}) as { refund?: { reason?: unknown; voidedItemId?: unknown } }
-    const isVoid = typeof meta.refund?.voidedItemId === 'string'
+    const meta = (p.gatewayMeta ?? {}) as { refund?: { reason?: unknown } }
     const r = await enqueueFiscalRefundTx(tx, {
       orderId, tenantId, refundPaymentId: p.id, amountCents: Math.abs(p.amountCents),
       reason: typeof meta.refund?.reason === 'string' ? meta.refund.reason : undefined, method: p.method,
-      ...(isVoid && { tipShareCents: 0 }),
+      // A voided line's refund: no tip share, and its exact split on its own line (TILL-R3).
+      ...voidRefundShape(p),
     })
     if (r) refunds.push(r)
   }

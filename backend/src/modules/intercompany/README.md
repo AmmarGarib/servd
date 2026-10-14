@@ -32,14 +32,42 @@ CREDITOR = `counterpartyTenantId` (its *Due from <debtor>* moves).
 | kind | debtor's book | creditor's book |
 |---|---|---|
 | charge | Dr `debtorAccountCode` (per debtor brand when `conceptSplit`) / Cr Due to creditor | Dr Due from debtor / Cr `creditorAccountCode` (no brand) |
-| settlement | Dr Due to creditor / Cr its money account (`moneyAccountCode`) | Dr its money account / Cr Due from debtor |
+| settlement | Dr Due to creditor / Cr its money account (`moneyAccountCode`; 1010 on a bank deposit) | Dr its money account / Cr Due from debtor |
 | netting | Dr Due to creditor / Cr Due from creditor | Dr Due to debtor / Cr Due from debtor |
 | reversal | `ic.transfer.reversal:<id>` in both (`reverseJournalEntry`) | same |
 
 - Fleet charge (system): debtor = CLIENT (Dr **6035** per client brand), creditor = PROVIDER (Cr **6990** Costs Recharged to Group Companies — never 6035). Dated the month's last day (midday PKT), else the first day open in BOTH companies with a note naming the month.
-- COD of a fleet rider (system, w2-dlv-cod): debtor = PROVIDER (Dr **1351** — the rider owes it), creditor = CLIENT (Cr **1010** — the cash it never got).
+- COD of a fleet rider: PARKED with delivery (owner, 2026-10-13; COD custody on 1351 is not built). The `cod` source value stays in the schema, unused; nothing posts it.
 - Manual: dates are user-entered and never moved — a closed month in either company is 422 `PERIOD_LOCKED` naming the company, nothing saved. The claim (`submitted → posted`) and both postings share one transaction, so a refusal in either book rolls the claim back.
 - Settlement ≤ what the debtor owes (both books, on the date and today, net of settlements / nettings still waiting) → 422 `SETTLEMENT_OVER_BALANCE`; netting ≤ the smaller direction → 422 `NETTING_OVER_BALANCE`. Re-checked at approval.
+
+### Settlement methods and the payment reference # (owner, 2026-10-14)
+
+`SETTLEMENT_METHODS = bank_transfer | bank_deposit | cheque | cash` (the receipt
+methods of `lib/bankAccounts.ts` without card). The old `bank` is read as
+`bank_transfer` at the route and in `createTransfer`
+(`normalizeSettlementMethod`); stored rows keep `bank` and still post.
+
+| method | debtor (payer) money line | creditor (payee) money line |
+|---|---|---|
+| bank_transfer, cheque | its named bank (`moneyAccountCode`) | its named bank |
+| bank_deposit | **Cr 1010** — the payer's cash; naming a payer bank → 422 `BANK_ACCOUNT_ON_DEPOSIT` | **Dr its named bank** — the cash deposited at its branch |
+| cash | Cr 1010 | Dr 1010 |
+
+`settlementSideMethods(method)` is the one place that splits a method into the
+two sides (create and posting both use it).
+
+- `bankReference` is the **payment reference #**, required for **every**
+  settlement method (cash included) when the transfer is created — 422
+  `PAYMENT_REFERENCE_REQUIRED`, nothing saved. It is **never re-checked at
+  approval**, so a settlement waiting from before the rule still approves.
+- The reference and method are written into both entries' description
+  (`Inter-company settlement: A → B (bank deposit, ref 4471) — memo`) and every
+  line memo (e.g. `Cash deposited into B's bank (bank deposit, ref 4471)`).
+  `journal_entries.reference` stays the key `ic.transfer:<id>`.
+- `POST /transfers` answers `referenceUsedBefore` (`lib/paymentRefs.ts`, looked
+  up in BOTH companies of the pair — the caller is a member of both — this
+  transfer left out): a warning, never a block.
 - A reversed SYSTEM transfer frees its `sourceRef` (suffix `#reversed:<id>`), so the month / payment can be booked again once corrected (e.g. reverse a fleet charge → set the right rate → Charge now).
 
 Controlled accounts (journal.ts): any posting touching a pair account must have a sourceType starting `ic.` (422 `INTERCOMPANY_ACCOUNT_CONTROLLED`, no override).
@@ -101,7 +129,7 @@ Dr 2050/2060 / Cr 6060; lower → Dr 6060 / Cr 2050/2060. Key
 | GET | `/balances?asOf=` | FINANCIALS_VIEWERS | both sides only for a member of both |
 | GET | `/transfers?status=&limit=` | FINANCIALS_VIEWERS | either party in read scope; `{ items }` with `canApprove` / `canReverse` |
 | GET | `/transfers/:id` | FINANCIALS_VIEWERS | 404 outside read scope |
-| POST | `/transfers` | admin, finance | `assertBothSidesOwned`; `postNow` CEO only |
+| POST | `/transfers` | admin, finance | `assertBothSidesOwned`; `postNow` CEO only; settlement: `method`, `bankReference` required (422 `PAYMENT_REFERENCE_REQUIRED`), 422 `BANK_ACCOUNT_ON_DEPOSIT`; 201 + `referenceUsedBefore` |
 | POST | `/transfers/:id/approve` | admin | member of both; 409 `NOT_SUBMITTED` |
 | POST | `/transfers/:id/reject` | admin | `{ note ≥ 3 }` |
 | POST | `/transfers/:id/reverse` | admin | `{ reason ≥ 10 }`; 409 `NOT_POSTED`, `REVERSE_FROM_SOURCE` (COD) |

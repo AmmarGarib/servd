@@ -20,7 +20,7 @@
 // GET /?writeOffRequested=1 (type 'grni_writeoff').
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { UserRole } from '@prisma/client'
+import type { Prisma, PrismaClient, UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ADMIN_ONLY, PROCUREMENT_TEAM } from '../auth/middleware.js'
@@ -60,23 +60,36 @@ async function openLineIds(tenantIds: string[], o: { supplierId?: string; olderT
      LIMIT 2000`
 }
 
-/** The open value of each line: its lots' receipt value − what live bill matches cleared; a pre-FIFO line: open qty × cost. */
-async function openValues(lines: Array<{ id: string; receivedQty: number; billedQty: number; lotUnitCostCents: number | null; poUnitCostCents: number | null }>): Promise<Map<string, number>> {
-  const ids = lines.map((l) => l.id)
+type Db = Prisma.TransactionClient | PrismaClient
+
+/**
+ * THE open GRNI value of receipt lines — one rule, read by this page and by
+ * the food-cost valuation (reports/foodCost.ts): a line's lots' receipt value
+ * − what live bill matches cleared; a pre-FIFO line (no lots): open qty × cost.
+ */
+export async function grniLineOpenValues(
+  db: Db,
+  lines: Array<{ id: string; receivedQty: number; billedQty: number; lotUnitCostCents: number | null; poUnitCostCents: number | null }>,
+): Promise<Map<string, number>> {
   const out = new Map<string, number>()
-  if (ids.length === 0) return out
-  const lots = await prisma.stockLot.findMany({ where: { receiptLineId: { in: ids } }, select: { id: true, receiptLineId: true } })
-  const lineOfLot = new Map(lots.map((l) => [l.id, l.receiptLineId!]))
-  const received = lots.length === 0 ? [] : await prisma.stockMovement.groupBy({
-    by: ['lotId'], where: { lotId: { in: lots.map((l) => l.id) }, kind: 'receipt' }, _sum: { valueCents: true },
-  })
+  if (lines.length === 0) return out
   const receivedByLine = new Map<string, number>()
-  for (const r of received) {
-    const line = r.lotId ? lineOfLot.get(r.lotId) : undefined
-    if (line) receivedByLine.set(line, (receivedByLine.get(line) ?? 0) + sumCents(r._sum.valueCents))
+  const matchedByLine = new Map<string, number>()
+  const ids = lines.map((l) => l.id)
+  for (let i = 0; i < ids.length; i += 1000) {
+    const part = ids.slice(i, i + 1000)
+    const lots = await db.stockLot.findMany({ where: { receiptLineId: { in: part } }, select: { id: true, receiptLineId: true } })
+    const lineOfLot = new Map(lots.map((l) => [l.id, l.receiptLineId!]))
+    const received = lots.length === 0 ? [] : await db.stockMovement.groupBy({
+      by: ['lotId'], where: { lotId: { in: lots.map((l) => l.id) }, kind: 'receipt' }, _sum: { valueCents: true },
+    })
+    for (const r of received) {
+      const line = r.lotId ? lineOfLot.get(r.lotId) : undefined
+      if (line) receivedByLine.set(line, (receivedByLine.get(line) ?? 0) + sumCents(r._sum.valueCents))
+    }
+    const matched = await db.grniMatch.groupBy({ by: ['receiptLineId'], where: { receiptLineId: { in: part }, status: 'live' }, _sum: { grniCents: true } })
+    for (const m of matched) if (m.receiptLineId) matchedByLine.set(m.receiptLineId, sumCents(m._sum.grniCents))
   }
-  const matched = await prisma.grniMatch.groupBy({ by: ['receiptLineId'], where: { receiptLineId: { in: ids }, status: 'live' }, _sum: { grniCents: true } })
-  const matchedByLine = new Map(matched.map((m) => [m.receiptLineId!, sumCents(m._sum.grniCents)]))
   for (const l of lines) {
     const rec = receivedByLine.get(l.id)
     out.set(l.id, rec != null
@@ -166,7 +179,7 @@ export async function grniRoutes(fastify: FastifyInstance) {
         receipt: { select: { receivedAt: true, supplierId: true, poId: true, locationId: true } },
       },
     })
-    const values = await openValues(lines)
+    const values = await grniLineOpenValues(prisma, lines)
     const supplierIds = [...new Set(lines.map((l) => l.receipt.supplierId))]
     const suppliers = new Map((await prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } })).map((s) => [s.id, s.name]))
     const rows = lines
@@ -198,9 +211,14 @@ export async function grniRoutes(fastify: FastifyInstance) {
         billLine: { select: { description: true } },
       },
     })
+    const role = req.staffUser!.role as UserRole
     return {
       tenantIds,
       staleDays: STALE_DAYS,
+      // What the page may offer: the CEO approves / rejects a write-off;
+      // the requester roles may ask for one. The routes enforce both.
+      canApprove: ADMIN_ONLY.includes(role),
+      canRequestWriteOff: GRNI_WRITE_OFF_REQUESTERS.includes(role),
       lines: rows,
       totals: {
         openValueCents: rows.reduce((s, r) => s + r.openValueCents, 0),

@@ -6,12 +6,13 @@ Backend module: **reconciliation**. HTTP routes + business logic for the Reconci
 
 - `routes.ts` — Fastify route registrations for this module
 - `service.ts` — Business-logic functions invoked by route handlers
-- `backfillOrders.ts` — re-posts order completions, loyalty postings and refund restores the ledger refused (behind `POST /reconciliation/backfill-unposted`)
+- `backfillOrders.ts` — re-posts order completions, loyalty postings and refund restores the ledger refused (behind `POST /reconciliation/backfill-unposted`), plus every refused document posting in `REPOSTERS` (see "Backfill unposted" below)
 - `raast.ts` — Raast QR on the bank statement: the import's reference pass, the generic matcher's skip set, manual match / unmatch / reference fix / write-off, the CEO's "void, never booked", the daily `raast_unmatched` flag, the period-close count
 - `raastRoutes.ts` — `/reconciliation/raast/*` (registered from `routes.ts`)
 - `cardPayouts.ts` — card payouts at payout (H12): settings, card day gross, the fit rule, settle / undo, the manual claim, unsettled days, the `card_unsettled` close check
 - `cardPayoutRoutes.ts` — `/reconciliation/card-payouts/*` (registered from `routes.ts`)
-- `codRoutes.ts`, `pettyCashBackfillRoutes.ts` — wave-B child plugins of other owners
+- `pettyCashBackfillRoutes.ts` — `/reconciliation/backfill-petty-cash` (below)
+- `codRoutes.ts` — an EMPTY stub plugin at `/reconciliation/cod`: COD custody (H5, rider debt 1351) is PARKED with delivery (owner, 2026-10-13); nothing is built behind it
 
 ## Bank statements
 
@@ -214,5 +215,10 @@ A Raast payment completes the sale at the till and writes a `RaastReceipt`
 
 ## CEO-only catch-up actions (role `admin`, dry run by default)
 
-- `POST /reconciliation/backfill-unposted` — closed shifts, sales, points and refunds that never reached the ledger.
-- `POST /reconciliation/apply-missed-bill-variances` `{ dryRun = true, tenantId? }` — supplier bills booked before their goods whose carried price difference was never applied by a receipt (receipts before receiving did it itself). Runs `applyMissedCarriedBillVariances` per company in scope (a picked `tenantId` outside the scope is 404). Idempotent; a company whose books are closed through today lists its lines as `locked` and applies nothing. Shares the backfill's single-flight slot (409 `BACKFILL_RUNNING`).
+- `POST /reconciliation/backfill-unposted` — closed shifts, sales, points and refunds that never reached the ledger, and every refused document posting:
+  - **`REPOSTERS`** (one per refused `sourceType`; each calls the module's OWN poster with the same key, so nothing posts twice): `deposit.drop`, `inventory.waste`, `inventory.count`, `pos.void_waste`, `order.cancel_unwind`, `pos.card_failed`, `reservation.deposit_capture`, `fixed_asset.depreciation`, `prepaid.release`, `inventory.prep_draw`, `giftcard.expire`, `ic.fleet_charge`, and the six cost-of-sales fixes of `orders/stock.ts ORDER_COGS_FIX` (`order_item.return`, `order_item.box_given`, `order_item.box_given_undo`, `order.legacy_return`, `order.cogs_late`, `order.cancel_settle`). A reposter's `entityType` (plus optional `entityTypes`, e.g. prepaid flags on CapEx or OpEx payments) names the flags it reads; **`multiPost`** marks a document whose entries are not keyed `<kind>:<sourceId>` (depreciation, prepaid releases, gift-card breakage, fleet charges), so "already on the books" is decided by the poster, not by one key. Waste with any `VOID_WASTE_REASONS` reason owes nothing (the sold-line void posts it); transit loss is NOT a void reason. Flags the backfill raises carry `metadata.documentDate`.
+  - **Miss sweeps:** waste and counts with no entry and no flag, and ad-hoc prep batches with prep-draw movements but no entry, are listed as `unflagged`; Post flags them, the next run posts them.
+  - **Step 5, failed stock steps** (`stock.deplete` / `stock.restore` / `stock.remake`): open `stock_restore_failed` flags are re-run by phase — `ensureOrderDepleted` (closed once the depletion claim exists), `restoreInventoryForOrder` with fired lines wasted `cancelled_after_fire` (closed once the give-back claim exists), `bookRemakeWaste` once per failed recall still owed. Its sweep lists a cancelled order with a depletion claim, no give-back claim and no flag as `unflagged`, dated at the depletion; an order that is not cancelled shows `not_cancelled` for a person. `box_given` flags are left for a person.
+- `POST /reconciliation/backfill-petty-cash` `{ dryRun = true, historicTopupSource: 'safe' | 'garibsons' | { tenantId: … }, picks, tenantId? }` — books what was in the petty-cash boxes before the ledger tracked them (each box's opening and every unbooked movement), placed by owner decision 6. Dry run first; one audit row `petty_cash.backfill` per company; 409 `BACKFILL_RUNNING`. Registered from `pettyCashBackfillRoutes.ts`; the logic is `accounting/pettyCashPosting.ts backfillPettyCash`.
+
+`POST /reconciliation/apply-missed-bill-variances` no longer exists: the catch-up it ran (bills booked before their goods whose carried price difference no receipt applied) now runs once, as step 0 of the FIFO cut-over (`inventory/fifoCutover.ts`). A refusal there is flagged `posting_failed` and kept in Setting `foodcost.preFifoCatchupRefused:<tenant>` for the align screen.

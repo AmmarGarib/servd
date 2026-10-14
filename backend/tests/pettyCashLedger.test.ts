@@ -18,7 +18,8 @@
 //   a closed day → 422 PERIOD_LOCKED, float unchanged; a replay is a no-op;
 //   tie-out      ok after a mixed sequence, a hand-edited float → not ok;
 //   backfill     dry run outcomes, one real run, picks, re-runs find nothing,
-//                B's rows untouched, CEO only;
+//                B's rows untouched, CEO only; an old-flow cash voucher's spend
+//                is expensed in its category (H3), never an advance on 1355;
 //   scope        B → 404 on A's box, receipt and line reclass; boxes?mine=1;
 //   the till     offers only the 'expense' categories; a 'cogs' pay-out → 400.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -30,7 +31,7 @@ import { prisma, mkCompany, mkUser, type Company, type Who } from './connectorsF
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { posRoutes } from '../src/modules/pos/routes.js'
 import pettyCashBackfillRoutes from '../src/modules/reconciliation/pettyCashBackfillRoutes.js'
-import { postPettyCashMovementTx, pettyCashTieOut } from '../src/modules/accounting/pettyCashPosting.js'
+import { postPettyCashMovementTx, pettyCashTieOut, cashRequestPaidAccountTx } from '../src/modules/accounting/pettyCashPosting.js'
 import { drawerExpectation } from '../src/lib/drawer.js'
 import { expectedShiftDeposit } from '../src/modules/accounting/depositPosting.js'
 
@@ -226,7 +227,7 @@ describe('a spend books its lines against 1011', () => {
     expect(flag.tenantId).toBe(A.tenantId)
   })
 
-  it('lines: several, each its own code; B\'s outlet or brand → 422; stock / capex → 422; must add up', async () => {
+  it('lines: several, each its own code; B\'s outlet or brand → 422; stock / capex of another company → 422; must add up', async () => {
     const r = await call(finA, 'POST', '/trustops/petty-cash/movements', {
       boxId: boxA, type: 'spend', amountCents: 3_000, reason: 'Sundries',
       lines: [
@@ -245,8 +246,8 @@ describe('a spend books its lines against 1011', () => {
     }
     await bad({ locationId: B.locationId }, 'LOCATION_NOT_IN_COMPANY')
     await bad({ conceptId: B.conceptId }, 'CONCEPT_NOT_IN_COMPANY')
-    await bad({ kind: 'stock', inventoryItemId: 'x', quantity: 1 }, 'STOCK_LINES_UNAVAILABLE')
-    await bad({ kind: 'capex', capexLineId: 'x' }, 'CAPEX_LINES_UNAVAILABLE')
+    await bad({ kind: 'stock', inventoryItemId: 'x', quantity: 1 }, 'ITEM_NOT_IN_COMPANY')
+    await bad({ kind: 'capex', capexLineId: 'x' }, 'CAPEX_LINE_NOT_IN_COMPANY')
     await bad({ amountCents: 900 }, 'LINES_DONT_ADD_UP')
     expect(await floatOf(boxA)).toBe(floatBefore)
   })
@@ -447,11 +448,13 @@ describe('history backfill (CEO): openings and unbooked movements, placed by own
     await mv('oneSided', c1, 'transfer', 1_500, 'Transfer TRF-AAAA1111 from Old box: float')
     await mv('pairOut', c1, 'transfer', -2_000, 'Transfer TRF-BBBB2222 to C back: float')
     await mv('pairIn', c2, 'transfer', 2_000, 'Transfer TRF-BBBB2222 from C front: float')
-    await mv('voucher', c1, 'spend', -3_000, 'Cash voucher CV-00001: Event setup')
+    // An old-flow voucher's spend (the signed voucher was the final payment and
+    // carried the voucher's category) — H3: expensed when paid, never 1355.
+    await mv('voucher', c1, 'spend', -3_000, 'Cash voucher CV-00001: Event setup', { category: 'marketing' })
     await mv('today', c1, 'spend', -400, 'Courier today', { category: 'courier' }, new Date())
     await prisma.cashVoucher.create({
       data: {
-        tenantId: C.tenantId, seq: 1, number: 'CV-00001', voucherDate: AUG(10), payeeName: 'Event lead', purpose: 'Event setup',
+        tenantId: C.tenantId, seq: 1, number: 'CV-00001', voucherDate: AUG(10), payeeName: 'Event lead', purpose: 'Event setup', category: 'marketing',
         amountCents: 3_000, boxId: c1, status: 'disbursed', preparedById: ceoC.id, pettyCashMovementId: ids['voucher'], disbursedAt: AUG(10),
       },
     })
@@ -489,7 +492,8 @@ describe('history backfill (CEO): openings and unbooked movements, placed by own
     expect(by(ids['oneSided']!)).toMatchObject({ outcome: 'needs_review' })
     expect(by(ids['pairOut']!)).toBeUndefined()
     expect(by(ids['pairIn']!)).toBeUndefined()
-    expect(by(ids['voucher']!)).toMatchObject({ accountCode: '1355' })
+    expect(by(ids['voucher']!)).toMatchObject({ accountCode: '6060' })
+    expect(by(ids['voucher']!)!.detail).toMatch(/expensed when paid/)
     expect(by(ids['today']!)).toMatchObject({ accountCode: '6175', outcome: 'would_post' })
     // GS Foods holds no cash: with the safe as the source, 1010 goes negative.
     const coh = rows.find((x) => x.kind === 'cash_on_hand')!
@@ -514,7 +518,10 @@ describe('history backfill (CEO): openings and unbooked movements, placed by own
     expect(await linesOf(`pettycash.opening:${c1}`, C.tenantId)).toEqual([['1010', 'credit', 20_000], ['1011', 'debit', 20_000]])
     expect(await linesOf(`pettycash.spend:${ids['random']}`, C.tenantId)).toEqual([['1011', 'credit', 700], ['6170', 'debit', 700]])
     expect(await linesOf(`pettycash.transfer:${ids['oneSided']}`, C.tenantId)).toEqual([['1011', 'debit', 1_500], ['2210', 'credit', 1_500]])
-    expect(await linesOf(`pettycash.spend:${ids['voucher']}`, C.tenantId)).toEqual([['1011', 'credit', 3_000], ['1355', 'debit', 3_000]])
+    expect(await linesOf(`pettycash.spend:${ids['voucher']}`, C.tenantId)).toEqual([['1011', 'credit', 3_000], ['6060', 'debit', 3_000]])
+    // The request's paid account is now its category's 6xxx: receipts and change reclass out of it (H3).
+    const cv = await prisma.cashVoucher.findFirstOrThrow({ where: { tenantId: C.tenantId, number: 'CV-00001' } })
+    expect(await cashRequestPaidAccountTx(prisma, cv.id)).toBe('6060')
     const late = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: C.tenantId, reference: `pettycash.reconcile:${ids['count']}` } })
     expect(late.entryDate.getTime()).toBeGreaterThan(new Date('2026-09-30T19:00:00Z').getTime())
     expect(late.description).toMatch(/posted late/)
@@ -524,7 +531,7 @@ describe('history backfill (CEO): openings and unbooked movements, placed by own
     expect(audit.userId).toBe(ceoC.id)
 
     const [tie] = await pettyCashTieOut([C.tenantId])
-    expect(tie, JSON.stringify(tie)).toMatchObject({ ok: true, openAdvancesCents: 3_000, ledger1355Cents: 3_000, unbookedMovements: 0, boxesWithoutOpening: 0 })
+    expect(tie, JSON.stringify(tie)).toMatchObject({ ok: true, openAdvancesCents: 0, ledger1355Cents: 0, unbookedMovements: 0, boxesWithoutOpening: 0 })
 
     const again = await run(ceoC, { dryRun: false })
     expect(again.json().rows).toEqual([])

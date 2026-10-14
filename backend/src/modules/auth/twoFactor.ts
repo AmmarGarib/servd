@@ -31,6 +31,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, UnauthorizedError } from '../../lib/errors.js'
 import { requestOtp, verifyOtp, normalisePhone, requestSharedCode, verifySharedCode } from './otp.js'
 import { ACTIVE_ACCOUNT_WHERE } from './accountStatus.js'
+import { practiceCodeField } from '../../lib/sandbox.js'
 
 const JWT_SECRET = process.env['JWT_SECRET'] ?? ''
 
@@ -66,7 +67,7 @@ export async function startLoginChallenge(user: {
   id: string
   twoFactorPhone: string | null
   email?: string | null
-}): Promise<{ challengeToken: string; phoneHint: string }> {
+}): Promise<{ challengeToken: string; phoneHint: string; practiceCode?: string }> {
   const phone = user.twoFactorPhone
   if (!phone) throw new AppError('MFA_NOT_ENROLLED', 'Two-factor is not set up for this account', 400)
 
@@ -76,7 +77,7 @@ export async function startLoginChallenge(user: {
   // could sign in. Staff emails are company mailboxes, which is the trade the
   // owner chose over being locked out whenever WhatsApp is down.
   const email = user.email ?? null
-  await requestSharedCode({ phone, email, purpose: 'staff_2fa' })
+  const sent = await requestSharedCode({ phone, email, purpose: 'staff_2fa' })
 
   const challengeToken = jwt.sign(
     { sub: user.id, type: 'mfa', phone, email } satisfies MfaChallengePayload,
@@ -84,7 +85,8 @@ export async function startLoginChallenge(user: {
     { expiresIn: CHALLENGE_EXPIRY },
   )
 
-  return { challengeToken, phoneHint: maskPhone(phone) }
+  // Practice copy only: the password is already verified, so the code may be shown (lib/sandbox.ts).
+  return { challengeToken, phoneHint: maskPhone(phone), ...practiceCodeField(sent.practiceCode) }
 }
 
 /**
@@ -146,15 +148,15 @@ export async function verifyLoginChallenge(challengeToken: string, code: string)
  * Step 1 of enrolment: send a code to the number the staff member wants to use.
  * Nothing is written to the account yet.
  */
-export async function startEnrolment(userId: string, rawPhone: string): Promise<{ phoneHint: string }> {
+export async function startEnrolment(userId: string, rawPhone: string): Promise<{ phoneHint: string; practiceCode?: string }> {
   const phone = normalisePhone(rawPhone)
   if (phone.length < 11) throw new AppError('INVALID_PHONE', 'That phone number looks too short', 400)
 
   const user = await prisma.user.findFirst({ where: { id: userId, deletedAt: null } })
   if (!user) throw new UnauthorizedError('Invalid credentials')
 
-  await requestOtp({ phone, purpose: 'staff_2fa_enrol' })
-  return { phoneHint: maskPhone(phone) }
+  const sent = await requestOtp({ phone, purpose: 'staff_2fa_enrol' })
+  return { phoneHint: maskPhone(phone), ...practiceCodeField(sent.practiceCode) } // practiceCode: practice copy only, signed-in caller
 }
 
 /**

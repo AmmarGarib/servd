@@ -194,12 +194,12 @@ describe('transfers between A and B', () => {
 
   it('finance of A only is 403; an active company that is neither side is 422', async () => {
     const one = await call(finA, 'POST', '/transfers', {
-      kind: 'settlement', debtorTenantId: A, creditorTenantId: B, amountCents: 1_000, entryDate: daysAgo(1), memo: 'grab', method: 'cash',
+      kind: 'settlement', debtorTenantId: A, creditorTenantId: B, amountCents: 1_000, entryDate: daysAgo(1), memo: 'grab', method: 'cash', bankReference: 'IC-CASH-1',
     })
     expect(one.statusCode).toBe(403)
     expect(one.json().error.code).toBe('NOT_IN_BOTH_COMPANIES')
     const other = await call(ceoABC_activeC, 'POST', '/transfers', {
-      kind: 'settlement', debtorTenantId: A, creditorTenantId: B, amountCents: 1_000, entryDate: daysAgo(1), memo: 'from C', method: 'cash',
+      kind: 'settlement', debtorTenantId: A, creditorTenantId: B, amountCents: 1_000, entryDate: daysAgo(1), memo: 'from C', method: 'cash', bankReference: 'IC-CASH-2',
     })
     expect(other.statusCode).toBe(422)
     expect(other.json().error.code).toBe('ACTIVE_COMPANY_NOT_A_PARTY')
@@ -233,7 +233,7 @@ describe('transfers between A and B', () => {
 
   it('a settlement over what is owed is 422; netting is capped by the smaller direction', async () => {
     const over = await call(finAB, 'POST', '/transfers', {
-      kind: 'settlement', debtorTenantId: A, creditorTenantId: B, amountCents: 60_001, entryDate: daysAgo(1), memo: 'too much', method: 'cash',
+      kind: 'settlement', debtorTenantId: A, creditorTenantId: B, amountCents: 60_001, entryDate: daysAgo(1), memo: 'too much', method: 'cash', bankReference: 'IC-CASH-3',
     })
     expect(over.statusCode).toBe(422)
     expect(over.json().error.code).toBe('SETTLEMENT_OVER_BALANCE')

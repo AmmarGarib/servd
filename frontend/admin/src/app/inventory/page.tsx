@@ -7,10 +7,22 @@ import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { useKitchenView, useStockActions } from './kitchenView'
+import { canOpenPath } from '../../lib/moduleCatalog'
+import { usePermissions } from '../../hooks/useCan'
+import { useManagerRoles } from '../../lib/roles'
+import { useAuthStore } from '../../store/auth'
+import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryLabel, categoryValueOf, stockErrorText } from '../../lib/stockUi'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
   unitCostCents: number | null; supplierId: string | null; notes: string | null
+  /** One of the stock categories (Drinks = beverage → 1220, Packaging → 1230, the rest food → 1210). */
+  category?: string | null
+  /** Oil, salt and other items no recipe measures: each receipt goes straight to cost of sales. */
+  issueOnReceipt?: boolean
+  /** 'deliveries' = the cost is the price paid (lots / deliveries); 'opening' = a typed estimate. */
+  costSource?: 'deliveries' | 'opening' | null
+  onHandValueCents?: number
   /** Kitchen floor view: the API took cost and supplier out (wave 3). */
   costsHidden?: boolean
   // Tenant scoping added 2026-05-13. Backfilled via supplier where one
@@ -31,7 +43,11 @@ interface WasteLog {
   recordedAt: string
   inventoryItem: { name: string; unit: string }
   recordedBy: { name: string } | null
+  conceptId?: string | null
+  locationId?: string | null
 }
+interface BrandLite { id: string; name: string; tenantId: string | null }
+interface OutletLite { id: string; name: string; tenantId?: string | null; isActive?: boolean }
 
 type Tab = 'stock' | 'alerts' | 'waste'
 
@@ -101,7 +117,7 @@ function downloadStockCsv(items: InventoryItem[]) {
     ['Name', 'Category', 'Current Stock', 'Unit', 'Par Level', 'Status'],
     ...items.map((i) => [
       i.name,
-      i.notes ?? 'Uncategorised',
+      categoryLabel(i.category),
       String(i.currentStock),
       i.unit,
       String(i.parLevel),
@@ -122,7 +138,7 @@ export default function InventoryPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('stock')
   const [showAdd, setShowAdd] = useState(false)
-  const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', notes: '', tenantId: '' })
+  const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', category: '', notes: '', tenantId: '' })
   const { data: tenants = [] } = useMyTenants()
   const viewAll = useViewAllTenants()
 
@@ -131,7 +147,17 @@ export default function InventoryPage() {
   // to the first membership used to file items under the wrong company.
   const needsCompanyPick = viewAll && tenants.length > 1
   const [wasteItemId, setWasteItemId] = useState<string | null>(null)
-  const [wasteForm, setWasteForm] = useState({ quantity: '', unit: 'kg', reason: 'spoilage' as typeof WASTE_REASONS[number], notes: '' })
+  const [wasteForm, setWasteForm] = useState({ quantity: '', unit: 'kg', reason: 'spoilage' as typeof WASTE_REASONS[number], notes: '', conceptId: '', locationId: '' })
+  // Edit panel (category, opening cost, par, issue on receipt) and the
+  // "assign a company" panel for a company-less item.
+  const [editItemId, setEditItemId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ category: '', costPkr: '', parLevel: '', issueOnReceipt: false })
+  const [assignItemId, setAssignItemId] = useState<string | null>(null)
+  const [assignForm, setAssignForm] = useState({ tenantId: '', costPkr: '' })
+  const me = useAuthStore((s) => s.user)
+  const managerRoles = useManagerRoles()
+  const { data: perms } = usePermissions()
+  const canOpen = (path: string) => !!perms && canOpenPath(path, perms.role, perms.modules ?? [])
   // The uploaded photo: its public URL (sent as photoUrl) and a local preview.
   const [wastePhoto, setWastePhoto] = useState<{ url: string; previewUrl: string } | null>(null)
   const [photoBusy, setPhotoBusy] = useState(false)
@@ -166,18 +192,75 @@ export default function InventoryPage() {
     enabled: tab === 'waste',
   })
 
+  // The waste drawer's brand and outlet pickers (and the names in the log).
+  // Both lists are the operator's own companies'; the drawer narrows them to
+  // the wasted item's company.
+  const { data: brands = [] } = useQuery<BrandLite[]>({
+    queryKey: ['concepts-picker'],
+    queryFn: () => api.get('/concepts?view=picker'),
+    enabled: !!wasteItemId || tab === 'waste',
+    retry: false, meta: { background: true }, staleTime: 300_000,
+  })
+  const { data: outlets = [] } = useQuery<OutletLite[]>({
+    queryKey: ['locations'],
+    queryFn: () => api.get('/locations'),
+    enabled: !!wasteItemId || tab === 'waste',
+    retry: false, meta: { background: true }, staleTime: 300_000,
+  })
+
   const addMutation = useMutation({
     mutationFn: () => api.post('/inventory', {
       name: addForm.name,
       unit: addForm.unit,
       parLevel: Number(addForm.parLevel),
+      category: addForm.category || null,
       notes: addForm.notes || undefined,
       ...(needsCompanyPick && addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       setShowAdd(false)
-      setAddForm({ name: '', unit: 'kg', parLevel: '', notes: '', tenantId: '' })
+      setAddForm({ name: '', unit: 'kg', parLevel: '', category: '', notes: '', tenantId: '' })
+    },
+  })
+
+  // PATCH /inventory/:id — category (moves the item's stock value to the right
+  // account when the cost class changes), the opening cost of an item with no
+  // deliveries (422 COST_FROM_DELIVERIES otherwise), par, issue on receipt.
+  const editItem = editItemId ? items.find((i) => i.id === editItemId) ?? null : null
+  const editMutation = useMutation({
+    mutationFn: (item: InventoryItem) => {
+      const body: Record<string, unknown> = {}
+      const cat = editForm.category
+      if (cat && cat !== categoryValueOf(item.category)) body['category'] = cat
+      if (item.costSource !== 'deliveries' && editForm.costPkr.trim() !== '') {
+        const cents = Math.round(Number(editForm.costPkr) * 100)
+        if (cents !== item.unitCostCents) body['unitCostCents'] = cents
+      }
+      if (editForm.parLevel.trim() !== '' && Number(editForm.parLevel) !== item.parLevel) body['parLevel'] = Number(editForm.parLevel)
+      if (editForm.issueOnReceipt !== !!item.issueOnReceipt) body['issueOnReceipt'] = editForm.issueOnReceipt
+      return Object.keys(body).length === 0 ? Promise.resolve(null) : api.patch(`/inventory/${item.id}`, body)
+    },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['inventory'] }); setEditItemId(null) },
+  })
+
+  // Give a company-less item its company. An item that holds stock gets an
+  // OPENING count in that company at the unit cost typed here (finance, CEO or
+  // management; the server refuses anyone else: 403 OPENING_COUNT_ROLE).
+  const assignItem = assignItemId ? items.find((i) => i.id === assignItemId) ?? null : null
+  const assignMutation = useMutation({
+    mutationFn: (item: InventoryItem) => api.patch<{ openingCount?: { id: string; ledger: { posted: boolean; reason?: string; error?: string } } }>(`/inventory/${item.id}`, {
+      tenantId: assignForm.tenantId,
+      ...(assignForm.costPkr.trim() !== '' ? { unitCostCents: Math.round(Number(assignForm.costPkr) * 100) } : {}),
+    }),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['inventory'] })
+      setAssignItemId(null)
+      if (r?.openingCount) {
+        showToast(r.openingCount.ledger.posted
+          ? 'Company assigned. Its stock was booked as an opening count.'
+          : `Company assigned and the opening count saved, but its books entry did not post: ${r.openingCount.ledger.reason ?? r.openingCount.ledger.error ?? 'the ledger refused it'}`)
+      } else showToast('Company assigned.')
     },
   })
 
@@ -187,6 +270,9 @@ export default function InventoryPage() {
       unit: wasteForm.unit,
       reason: wasteForm.reason,
       notes: wasteForm.notes || undefined,
+      // Charged to a brand, or (left empty) split by each brand's recipe use.
+      conceptId: wasteForm.conceptId || null,
+      locationId: wasteForm.locationId || null,
       ...(wastePhoto ? { photoUrl: wastePhoto.url } : {}),
     }),
     onSuccess: () => {
@@ -206,13 +292,31 @@ export default function InventoryPage() {
     clearPhoto()
     wasteMutation.reset()
     setWasteItemId(item.id)
-    setWasteForm({ quantity: '', unit: item.unit, reason: 'spoilage', notes: '' })
+    setWasteForm({ quantity: '', unit: item.unit, reason: 'spoilage', notes: '', conceptId: '', locationId: '' })
+  }
+
+  function openEdit(item: InventoryItem) {
+    editMutation.reset()
+    setAssignItemId(null)
+    setEditItemId(item.id)
+    setEditForm({
+      category: categoryValueOf(item.category),
+      costPkr: item.unitCostCents != null ? String(item.unitCostCents / 100) : '',
+      parLevel: String(item.parLevel),
+      issueOnReceipt: !!item.issueOnReceipt,
+    })
+  }
+  function openAssign(item: InventoryItem) {
+    assignMutation.reset()
+    setEditItemId(null)
+    setAssignItemId(item.id)
+    setAssignForm({ tenantId: tenants.length === 1 ? tenants[0]!.id : '', costPkr: item.unitCostCents != null ? String(item.unitCostCents / 100) : '' })
   }
 
   function closeWaste() {
     clearPhoto()
     setWasteItemId(null)
-    setWasteForm({ quantity: '', unit: 'kg', reason: 'spoilage', notes: '' })
+    setWasteForm({ quantity: '', unit: 'kg', reason: 'spoilage', notes: '', conceptId: '', locationId: '' })
   }
 
   async function onPhotoPicked(e: React.ChangeEvent<HTMLInputElement>) {
@@ -239,6 +343,11 @@ export default function InventoryPage() {
   const wasteError = wasteMutation.error as Error | null
   const photoRequiredMsg = wasteError instanceof ApiError && wasteError.code === 'PHOTO_REQUIRED' ? wasteError.message : null
   const wasteItem = items.find((i) => i.id === wasteItemId) ?? null
+  // Only the wasted item's own company's brands and outlets are offered.
+  const wasteBrands = brands.filter((b) => !wasteItem?.tenantId || b.tenantId === wasteItem.tenantId)
+  const wasteOutlets = outlets.filter((o) => o.isActive !== false && (!wasteItem?.tenantId || !o.tenantId || o.tenantId === wasteItem.tenantId))
+  const brandName = (id?: string | null) => (id ? brands.find((b) => b.id === id)?.name ?? null : null)
+  const outletName = (id?: string | null) => (id ? outlets.find((o) => o.id === id)?.name ?? null : null)
   const wasteQty = Number(wasteForm.quantity)
   const wasteValueCents = wasteItem?.unitCostCents && wasteQty > 0 ? Math.round(wasteItem.unitCostCents * wasteQty) : null
   const photoLikelyNeeded = wasteValueCents != null && wasteValueCents >= DEFAULT_PHOTO_LIMIT_CENTS
@@ -251,7 +360,7 @@ export default function InventoryPage() {
 
   const grouped: Record<string, InventoryItem[]> = {}
   for (const item of tracked) {
-    const cat = item.notes ?? 'Uncategorised'
+    const cat = categoryLabel(item.category)
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat]!.push(item)
   }
@@ -270,7 +379,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      <header className="border-b border-s-border px-6 py-4 flex items-center justify-between">
+      <header className="border-b border-s-border px-4 sm:px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-s-text mt-0.5">Inventory</h1>
           <p className="text-sm text-s-muted">
@@ -278,11 +387,17 @@ export default function InventoryPage() {
             {alertCount > 0 && <span className="text-s-red font-semibold">{alertCount} low stock alert{alertCount !== 1 ? 's' : ''}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {canCount && (
             <Link href="/inventory/count"
               className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary hover:text-primary-ink">
               Stock count
+            </Link>
+          )}
+          {!kitchenView && canOpen('/procurement') && (
+            <Link href="/procurement?new=po"
+              className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary hover:text-primary-ink">
+              Purchase order
             </Link>
           )}
           {!kitchenView && (
@@ -297,7 +412,7 @@ export default function InventoryPage() {
       {alertCount > 0 && (
         <div className="mx-6 mt-4 rounded-xl border border-s-red/40 bg-red-100/15 px-4 py-3 flex items-center gap-3 cursor-pointer"
           onClick={() => setTab('alerts')}>
-          <span className="text-lg leading-none">⚠️</span>
+          <span className="s-badge-red shrink-0">Low</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-s-red">
               {alertCount} item{alertCount !== 1 ? 's' : ''} below par level
@@ -347,17 +462,24 @@ export default function InventoryPage() {
                   <input type="number" value={addForm.parLevel} onChange={(e) => setAddForm({ ...addForm, parLevel: e.target.value })}
                     placeholder="5" className={fi} />
                 </F>
-                <F label="Notes / category (optional)">
+                <F label="Category">
+                  <select value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className={fi}>
+                    <option value="">— pick a category —</option>
+                    {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
+                  </select>
+                </F>
+                <F label="Notes (optional)">
                   <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
-                    placeholder="Proteins, Veg, Dry goods…" className={fi} />
+                    placeholder="Brand, cut, pack size…" className={fi} />
                 </F>
               </div>
               {/* Tenant picker — hidden when the operator has one tenant
                   (auto-defaults). In portfolio view it's required and
                   prompts "— pick a company —". */}
               <p className="text-xs text-s-muted">
-                New items start at zero on hand. Record the opening stock with a{' '}
-                <Link href="/inventory/count" className="text-primary-ink hover:underline">stock count</Link>.
+                The category decides which stock account the item&rsquo;s value sits in: Drinks in 1220, Packaging in 1230, everything else in 1210.
+                New items start at zero on hand — record opening stock with an{' '}
+                <Link href="/inventory/count" className="text-primary-ink hover:underline">opening count</Link>.
               </p>
               {needsCompanyPick && (
                 <TenantField value={addForm.tenantId} autoDefault={false}
@@ -378,6 +500,93 @@ export default function InventoryPage() {
                   className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
               {addMutation.isError && <p className="text-xs text-s-red">{(addMutation.error as Error).message}</p>}
+            </div>
+          )}
+
+          {/* Edit item: category, opening cost, par, issue on receipt */}
+          {editItem && !kitchenView && (
+            <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+              <p className="font-bold text-s-text text-sm">Edit — {editItem.name}</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <F label="Category">
+                  <select value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} className={fi}>
+                    <option value="">— none —</option>
+                    {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
+                  </select>
+                </F>
+                <F label={editItem.costSource === 'deliveries' ? 'Cost (price actually paid)' : 'Opening cost (PKR per unit)'}>
+                  {editItem.costSource === 'deliveries' ? (
+                    <p className="rounded-lg border border-s-border bg-s-elevated px-3 py-2 text-sm text-s-text">
+                      {editItem.unitCostCents != null ? `PKR ${(editItem.unitCostCents / 100).toLocaleString('en-PK', { maximumFractionDigits: 3 })} per ${editItem.unit}` : '—'}
+                    </p>
+                  ) : (
+                    <input type="number" step="any" min={0} value={editForm.costPkr} onChange={(e) => setEditForm({ ...editForm, costPkr: e.target.value })}
+                      placeholder="1.5" className={fi} />
+                  )}
+                </F>
+                <F label="Par level">
+                  <input type="number" min={0} value={editForm.parLevel} onChange={(e) => setEditForm({ ...editForm, parLevel: e.target.value })} className={fi} />
+                </F>
+              </div>
+              <p className="text-xs text-s-muted">
+                {editItem.costSource === 'deliveries'
+                  ? 'This item has stock or deliveries, so its cost is the price actually paid. It changes when stock is received, not by typing a number.'
+                  : 'No delivery yet: this cost is only an estimate. The first delivery replaces it with the price paid.'}
+                {' '}Changing the category to or from Drinks or Packaging moves the item&rsquo;s stock value to the right account.
+              </p>
+              {managerRoles.has(me?.role ?? '') && (
+                <label className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
+                  <input type="checkbox" className="accent-accent mt-0.5" checked={editForm.issueOnReceipt}
+                    onChange={(e) => setEditForm({ ...editForm, issueOnReceipt: e.target.checked })} />
+                  <span>
+                    <span className="font-semibold">Issue on receipt</span>
+                    <span className="block text-xs text-s-muted">For oil, salt and other items no recipe measures: each delivery goes straight to cost of sales instead of sitting in stock.</span>
+                  </span>
+                </label>
+              )}
+              <div className="flex gap-2">
+                <button onClick={() => editMutation.mutate(editItem)} disabled={editMutation.isPending}
+                  className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                  {editMutation.isPending ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditItemId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+              </div>
+              {editMutation.isError && <p role="alert" className="text-xs text-s-red">{stockErrorText(editMutation.error)}</p>}
+            </div>
+          )}
+
+          {/* Assign a company to a company-less item */}
+          {assignItem && !kitchenView && (
+            <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+              <p className="font-bold text-s-text text-sm">Assign a company — {assignItem.name}</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <F label="Company">
+                  <select value={assignForm.tenantId} onChange={(e) => setAssignForm({ ...assignForm, tenantId: e.target.value })} className={fi}>
+                    <option value="">— pick a company —</option>
+                    {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </F>
+                {assignItem.currentStock > 0 && (
+                  <F label={`Opening unit cost (PKR per ${assignItem.unit})`}>
+                    <input type="number" step="any" min={0} value={assignForm.costPkr} onChange={(e) => setAssignForm({ ...assignForm, costPkr: e.target.value })}
+                      placeholder="1.5" className={fi} />
+                  </F>
+                )}
+              </div>
+              <p className="text-xs text-s-muted">
+                {assignItem.currentStock > 0
+                  ? `${assignItem.name} holds ${assignItem.currentStock} ${assignItem.unit} with no company. Giving it a company books that stock as an opening count to the owner’s capital, at this unit cost. Only finance, the CEO or management can do this.`
+                  : 'An item needs a company before it can be counted, wasted, received or costed. This cannot be changed afterwards.'}
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => assignMutation.mutate(assignItem)}
+                  disabled={assignMutation.isPending || !assignForm.tenantId || (assignItem.currentStock > 0 && assignForm.costPkr.trim() === '')}
+                  className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+                  {assignMutation.isPending ? 'Assigning…' : 'Assign company'}
+                </button>
+                <button onClick={() => setAssignItemId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+              </div>
+              {assignMutation.isError && <p role="alert" className="text-xs text-s-red">{stockErrorText(assignMutation.error)}</p>}
             </div>
           )}
 
@@ -405,6 +614,24 @@ export default function InventoryPage() {
                 <F label="Notes (optional)">
                   <input value={wasteForm.notes} onChange={(e) => setWasteForm({ ...wasteForm, notes: e.target.value })}
                     placeholder="Describe waste…" className={fi} />
+                </F>
+              </div>
+
+              {/* Whose waste is it? A brand of the item's own company, and the
+                  outlet it happened at. Left empty, the cost is split across
+                  the brands by how much each uses the item. */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <F label="Brand (optional)">
+                  <select value={wasteForm.conceptId} onChange={(e) => setWasteForm({ ...wasteForm, conceptId: e.target.value })} className={fi}>
+                    <option value="">Not sure — split by recipe use</option>
+                    {wasteBrands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </F>
+                <F label="Outlet (optional)">
+                  <select value={wasteForm.locationId} onChange={(e) => setWasteForm({ ...wasteForm, locationId: e.target.value })} className={fi}>
+                    <option value="">No particular outlet</option>
+                    {wasteOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
                 </F>
               </div>
 
@@ -454,7 +681,7 @@ export default function InventoryPage() {
                 <button onClick={closeWaste}
                   className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
-              {wasteError && !photoRequiredMsg && <p className="text-xs text-s-red">{wasteError.message}</p>}
+              {wasteError && !photoRequiredMsg && <p role="alert" className="text-xs text-s-red">{stockErrorText(wasteError)}</p>}
             </div>
           )}
 
@@ -468,14 +695,14 @@ export default function InventoryPage() {
                   <p className="text-sm mt-1">Your manager adds the ingredients; they appear here once they have a par level or stock on hand.</p>
                 </div>
               ) : <EmptyStateGuide
-                icon="📦"
+                icon=""
                 title="Track what you cook with"
                 description="Inventory drives recipe costing, auto-86, demand forecasting, and reorder alerts. Add raw ingredients first — finished menu items get linked via Recipe Costing."
                 whyItMatters="When inventory hits zero, the platform auto-disables menu items across POS and storefront. No more 'sorry, we ran out' calls to disappointed customers."
                 samples={[
-                  { emoji: '🐔', title: 'Chicken (boneless)', hint: 'unit: kg · par: 10 kg · supplier: Mubarak Meat' },
-                  { emoji: '🌶', title: 'Red chili powder', hint: 'unit: kg · par: 2 kg · supplier: Karachi Spice Co' },
-                  { emoji: '🛢',  title: 'Cooking oil',       hint: 'unit: L · par: 20 L · supplier: City Distributors' },
+                  { emoji: '', title: 'Chicken (boneless)', hint: 'unit: kg · par: 10 kg · supplier: Mubarak Meat' },
+                  { emoji: '', title: 'Red chili powder', hint: 'unit: kg · par: 2 kg · supplier: Karachi Spice Co' },
+                  { emoji: '', title: 'Cooking oil',       hint: 'unit: L · par: 20 L · supplier: City Distributors' },
                 ]}
                 primaryAction={{ label: 'Add your first ingredient', onClick: () => setShowAdd(true) }}
                 secondaryAction={{ label: 'Set up suppliers first', href: '/procurement/chat' }}
@@ -508,7 +735,7 @@ export default function InventoryPage() {
                         return (
                           <div key={item.id}
                             className={`border-b border-s-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-100/5' : ''}`}>
-                            <div className="flex items-center justify-between px-4 py-3">
+                            <div className="flex items-center justify-between gap-2 px-4 py-3 flex-wrap">
                               <div className="flex items-center gap-3 min-w-0 flex-wrap">
                                 <span className={`text-sm font-semibold ${isLow ? 'text-s-red' : 'text-s-text'}`}>
                                   {item.name}
@@ -518,9 +745,13 @@ export default function InventoryPage() {
                                     belongs to one company. Orphan rows always
                                     show "⚠ No company". */}
                                 <TenantChip tenant={item.tenant} tenantId={item.tenantId} tenants={tenants} />
+                                {item.issueOnReceipt && <span className="s-badge-muted" title="Each delivery goes straight to cost of sales">Issued on receipt</span>}
+                                {item.onHandValueCents != null && item.onHandValueCents > 0 && (
+                                  <span className="text-xs text-s-muted">worth PKR {Math.round(item.onHandValueCents / 100).toLocaleString('en-PK')}</span>
+                                )}
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className={`font-black text-lg w-14 text-center ${isLow ? 'text-s-red' : 'text-s-text'}`}>
                                   {item.currentStock}
                                 </span>
@@ -539,6 +770,18 @@ export default function InventoryPage() {
                                     waste
                                   </button>
                                 )}
+                                {!kitchenView && item.tenantId && (
+                                  <button onClick={() => openEdit(item)}
+                                    className="text-xs px-2 py-1 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
+                                    edit
+                                  </button>
+                                )}
+                                {!kitchenView && !item.tenantId && (
+                                  <button onClick={() => openAssign(item)}
+                                    className="text-xs px-2 py-1 rounded-lg border border-primary/40 text-primary-ink hover:bg-primary/10 transition-colors">
+                                    Assign a company
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -555,14 +798,13 @@ export default function InventoryPage() {
           {tab === 'alerts' && (
             alerts.length === 0 ? (
               <div className="text-center py-16 text-s-muted">
-                <p className="text-4xl mb-3">✅</p>
                 <p className="font-semibold text-success">All stocked up</p>
                 <p className="text-sm mt-1">No items are below par level</p>
               </div>
             ) : (
               <div className="rounded-xl border border-s-red/30 overflow-hidden">
                 <div className="px-4 py-3 bg-red-100/10 border-b border-s-red/30 flex items-center justify-between">
-                  <p className="font-bold text-s-red text-sm">⚠ {alerts.length} item{alerts.length !== 1 ? 's' : ''} below par level</p>
+                  <p className="font-bold text-s-red text-sm">{alerts.length} item{alerts.length !== 1 ? 's' : ''} below par level</p>
                   <p className="text-xs text-s-muted">Suggested order quantities to reach par</p>
                 </div>
                 <div className="overflow-x-auto">
@@ -583,7 +825,7 @@ export default function InventoryPage() {
                         <tr key={item.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-elevated/40">
                           <td className="px-4 py-3">
                             <p className="text-sm font-semibold text-s-text">{item.name}</p>
-                            <p className="text-xs text-s-muted">{item.notes ?? 'Uncategorised'}</p>
+                            <p className="text-xs text-s-muted">{categoryLabel(item.category)}</p>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <p className="text-lg font-black text-s-red">
@@ -600,11 +842,13 @@ export default function InventoryPage() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() => showToast('Purchase order feature coming soon')}
-                              className="text-xs px-3 py-1.5 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
-                              Create PO
-                            </button>
+                            {/* A new purchase order for this item (Procurement → Purchase Orders). */}
+                            {canOpen('/procurement') && (
+                              <Link href={`/procurement?new=po&item=${encodeURIComponent(item.id)}&qty=${suggestedQty}`}
+                                className="inline-block text-xs px-3 py-1.5 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
+                                Purchase order
+                              </Link>
+                            )}
                           </td>
                         </tr>
                       )
@@ -646,7 +890,6 @@ export default function InventoryPage() {
                 <p className="text-s-muted text-sm">Loading…</p>
               ) : wasteLogs.length === 0 ? (
                 <div className="text-center py-16 text-s-muted">
-                  <p className="text-4xl mb-3">✅</p>
                   <p className="font-semibold text-s-text">No waste logged</p>
                   {canWaste && <p className="text-sm mt-1">Use the "waste" button on any inventory item to record spoilage</p>}
                 </div>
@@ -668,6 +911,11 @@ export default function InventoryPage() {
                         <tr key={log.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-elevated/40">
                           <td className="px-4 py-3">
                             <p className="font-semibold text-s-text">{log.inventoryItem.name}</p>
+                            {(brandName(log.conceptId) || outletName(log.locationId)) && (
+                              <p className="text-xs text-s-muted mt-0.5">
+                                {[brandName(log.conceptId), outletName(log.locationId)].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
                             {log.notes && <p className="text-xs text-s-muted mt-0.5">{log.notes}</p>}
                             {log.photoUrl && (
                               <a href={log.photoUrl} target="_blank" rel="noreferrer"

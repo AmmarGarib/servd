@@ -1,37 +1,58 @@
 'use client'
-// Cash vouchers — shared types, status words, error words and reads.
+// Cash requests — shared types, step words, error words and reads.
 //
-// The owner's process (2026-10-13): the HOD prepares the voucher in servd and
-// signs it, the director (the CEO) signs it, it is printed, the cashier (the
-// cash box's custodian) signs the paper and pays the cash, and a photo of the
-// signed paper is uploaded. Only that upload puts it in cash — it becomes one
-// petty-cash spend on its box. Generating, signing or printing never does.
+// The owner's process (2026-10-13) with the accountant's rule (H3, 2026-10-14:
+// "expense at payment; receipts kept for the file"): anyone raises a request
+// naming its expense category, the HOD signs, the director (CEO) approves,
+// the box's custodian pays the cash to the holder — that books it to the
+// category at once — and the holder uploads the receipts. Receipts that show
+// another category, stock or equipment move the money there; change goes
+// back into a box. The paper is still the "Cash payment voucher" (CV numbers).
 //
-// API: backend modules/trustops/cashVouchers.ts, under /trustops/cash-vouchers.
+// API: backend modules/trustops/cashVouchers.ts + cashRequestSettle.ts, under
+// /trustops/cash-vouchers. Every row carries the viewer's capability flags —
+// the buttons follow those, never a local role list.
 
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
 
 export const CV_BASE = '/trustops/cash-vouchers'
-/** Every cash-voucher read starts with this key, so one invalidation refreshes all. */
+/** Every cash-request read starts with this key, so one invalidation refreshes all. */
 export const CV_ROOT = 'cash-vouchers'
 
-export type VoucherStatus = 'draft' | 'hod_signed' | 'approved' | 'disbursed' | 'rejected' | 'cancelled'
+export type VoucherStatus = 'draft' | 'hod_signed' | 'approved' | 'disbursed' | 'rejected' | 'cancelled' | 'settled' | 'converted'
+/** The step shown (the stored status, with 'disbursed' split into paid / receipts in / needs review). */
+export type RequestStage =
+  | 'draft' | 'hod_signed' | 'approved' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
 
-export const STATUSES: VoucherStatus[] = ['draft', 'hod_signed', 'approved', 'disbursed', 'rejected', 'cancelled']
-
-/** The words and the badge for each status (globals.css s-badge-*). */
-export const STATUS_META: Record<VoucherStatus, { label: string; chip: string; badge: string }> = {
-  draft:      { label: 'Draft',                   chip: 'Draft',                badge: 's-badge-muted' },
-  hod_signed: { label: 'Waiting for director',    chip: 'Waiting for director', badge: 's-badge-amber' },
-  approved:   { label: 'Approved — print & pay',  chip: 'Approved — print & pay', badge: 's-badge-purple' },
-  disbursed:  { label: 'Paid',                    chip: 'Paid',                 badge: 's-badge-green' },
-  rejected:   { label: 'Rejected',                chip: 'Rejected',             badge: 's-badge-red' },
-  cancelled:  { label: 'Cancelled',               chip: 'Cancelled',            badge: 's-badge-muted' },
+/** The words and the badge for each step (globals.css s-badge-*): green = good news, amber = waiting, red = bad. */
+export const STAGE_META: Record<RequestStage, { label: string; badge: string }> = {
+  draft:        { label: 'Waiting for HOD',          badge: 's-badge-muted' },
+  hod_signed:   { label: 'Waiting for director',     badge: 's-badge-amber' },
+  approved:     { label: 'Approved — to pay',        badge: 's-badge-purple' },
+  paid:         { label: 'Paid — receipts due',      badge: 's-badge-amber' },
+  receipts_in:  { label: 'Receipts in',              badge: 's-badge-teal' },
+  settled:      { label: 'Settled',                  badge: 's-badge-green' },
+  needs_review: { label: 'Needs review',             badge: 's-badge-red' },
+  rejected:     { label: 'Rejected',                 badge: 's-badge-red' },
+  cancelled:    { label: 'Cancelled',                badge: 's-badge-muted' },
+  converted:    { label: 'Converted',                badge: 's-badge-muted' },
 }
 
-export function statusMeta(s: string) {
-  return STATUS_META[s as VoucherStatus] ?? { label: s, chip: s, badge: 's-badge-muted' }
+export function stageMeta(s: string) {
+  return STAGE_META[s as RequestStage] ?? { label: s.replace(/_/g, ' '), badge: 's-badge-muted' }
+}
+
+export interface ReceiptMeta { id: string; mime: string; sizeBytes: number; createdAt: string; uploadedById?: string; settlementId?: string | null }
+
+export interface SettlementLine {
+  id: string; kind: 'expense' | 'stock' | 'capex'; categoryKey: string | null; accountCode: string; amountCents: number
+  description: string; conceptId: string | null; inventoryItemId: string | null; quantity: number | null; unit: string | null
+  capexLineId: string | null; capexPaymentId: string | null; receiptLineId: string | null
+}
+export interface Settlement {
+  id: string; seq: number; totalCents: number; note: string | null; submittedById: string; submittedByName: string | null; createdAt: string
+  lines: SettlementLine[]; attachments: ReceiptMeta[]
 }
 
 export interface CashVoucher {
@@ -41,22 +62,26 @@ export interface CashVoucher {
   voucherDate: string
   payeeName: string
   payeeUserId: string | null
+  holderUserId?: string | null
+  holderName?: string | null
   purpose: string
+  /** A PAYOUT key or a keeper's 6xxx (as stored). */
   category: string | null
+  categoryKey?: string | null
+  categoryAccountCode?: string | null
   conceptId: string | null
   department: string | null
   amountCents: number
-  boxId: string
+  boxId: string | null
   status: VoucherStatus
+  stage: RequestStage
   preparedById: string
   hodSignedById: string | null
   hodSignedAt: string | null
   directorSignedById: string | null
   directorSignedAt: string | null
-  rejectedById?: string | null
   rejectedAt?: string | null
   rejectNote?: string | null
-  cancelledById?: string | null
   cancelledAt?: string | null
   cancelNote?: string | null
   disbursedById?: string | null
@@ -64,9 +89,21 @@ export interface CashVoucher {
   /** The box custodian's name when it was paid. */
   cashierName?: string | null
   pettyCashMovementId?: string | null
+  dueBy?: string | null
+  settledCents: number
+  returnedCents: number
+  convertedCents: number
+  remainingCents: number
+  settledAt?: string | null
+  overdue: boolean
+  needsReview: boolean
+  receiptCount: number
+  receiptsUnsettled: number
+  receipts: ReceiptMeta[]
+  signedPhotos: ReceiptMeta[]
+  isMine: boolean
   createdAt: string
-  updatedAt?: string
-  // ── Names the API adds (detail; the list may carry some of them) ──
+  // Names
   preparedByName?: string | null
   hodSignedByName?: string | null
   directorSignedByName?: string | null
@@ -78,24 +115,28 @@ export interface CashVoucher {
   custodianName?: string | null
   conceptName?: string | null
   companyName?: string | null
-  payeeUserName?: string | null
-  hasPhoto?: boolean
-  photo?: { mime: string; sizeBytes: number; uploadedAt: string; uploadedById: string } | null
-  box?: { id?: string; name?: string | null; custodianId?: string | null; custodianName?: string | null } | null
-  concept?: { id?: string; name?: string | null } | null
-  tenant?: { id?: string; name?: string | null } | null
+  // What this viewer may do (the server re-checks each one)
+  canEdit: boolean
+  canEditCategory: boolean
+  canSignHod: boolean
+  canApprove: boolean
+  canReject: boolean
+  canCancel: boolean
+  canPay: boolean
+  canUploadReceipts: boolean
+  canSettle: boolean
+  canReturnChange: boolean
+  canReclass: boolean
+  canNameHolder: boolean
+  // Detail only
+  paidAccountCode?: string | null
+  payMovement?: { id: string; amountCents: number; createdAt: string; journalEntryId: string | null; boxId: string } | null
+  settlements?: Settlement[]
 }
 
-/** The box's name, wherever the API put it. */
-export function boxNameOf(v: CashVoucher): string | null {
-  return v.boxName ?? v.box?.name ?? null
-}
 /** The cashier: the name stamped when it was paid, else the box's custodian now. */
 export function cashierOf(v: CashVoucher): string | null {
-  return v.cashierName ?? v.custodianName ?? v.box?.custodianName ?? null
-}
-export function brandNameOf(v: CashVoucher): string | null {
-  return v.conceptName ?? v.concept?.name ?? null
+  return v.cashierName ?? v.custodianName ?? null
 }
 
 export interface PettyBox {
@@ -107,10 +148,9 @@ export interface PettyBox {
   custodianName?: string | null
   floatCents: number
   isActive: boolean
-  movements?: Array<{ category: string | null }>
 }
 
-/** The detail answers the voucher, or `{ voucher }` (disburse answers `{ voucher, movement }`). */
+/** A pay / return-change answers `{ voucher, … }`; the rest answer the request. */
 function asOne(r: unknown): CashVoucher {
   const o = (r ?? {}) as Record<string, unknown>
   return (o['voucher'] && typeof o['voucher'] === 'object' ? o['voucher'] : r) as CashVoucher
@@ -121,9 +161,10 @@ const PAGE = 200
 const MAX_PAGES = 10
 
 /**
- * Every voucher in view (all statuses — the page counts and filters them).
- * GET / answers `{ items, nextCursor }`; the pages are followed so the counts
- * are true, up to MAX_PAGES × PAGE vouchers (`truncated` past that).
+ * Every request this login may see (all statuses — the page counts and
+ * filters them by the capability flags). Follows the pages up to
+ * MAX_PAGES × PAGE (`truncated` past that). `keeper` = the server says this
+ * login runs petty cash.
  */
 export function useVouchers() {
   return useQuery({
@@ -131,15 +172,16 @@ export function useVouchers() {
     queryFn: async () => {
       const all: CashVoucher[] = []
       let cursor: string | null = null
+      let keeper = false
       for (let i = 0; i < MAX_PAGES; i++) {
         const qs: string = `?limit=${PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
-        const r: { items?: CashVoucher[]; nextCursor?: string | null } | CashVoucher[] = await api.get(`${CV_BASE}${qs}`)
-        if (Array.isArray(r)) return { items: r, truncated: false }
+        const r: { items?: CashVoucher[]; nextCursor?: string | null; keeper?: boolean } = await api.get(`${CV_BASE}${qs}`)
+        keeper = !!r.keeper
         all.push(...(r.items ?? []))
         cursor = r.nextCursor ?? null
-        if (!cursor) return { items: all, truncated: false }
+        if (!cursor) return { items: all, truncated: false, keeper }
       }
-      return { items: all, truncated: true }
+      return { items: all, truncated: true, keeper }
     },
     refetchInterval: 60_000,
   })
@@ -154,7 +196,7 @@ export function useVoucher(id: string) {
   })
 }
 
-/** The petty-cash boxes (same read and cache key as the Petty cash page). */
+/** Every petty-cash box (cash keepers only — 403 for everyone else, silently). */
 export function usePettyBoxes() {
   return useQuery<PettyBox[]>({
     queryKey: ['petty-cash-boxes'],
@@ -164,20 +206,49 @@ export function usePettyBoxes() {
   })
 }
 
+/** The boxes I hold (any login) — the custodian's box picker. */
+export function useMyBoxes() {
+  return useQuery<PettyBox[]>({
+    queryKey: ['petty-cash-boxes', 'mine'],
+    queryFn: () => api.get('/trustops/petty-cash/boxes?mine=1'),
+    retry: false,
+    meta: { background: true },
+  })
+}
+
+export interface SpendCategory { key: string; label: string; code: string; kind: string }
+
+/** The expense categories a request can name (the server's one list). */
+export function useCategories() {
+  return useQuery<{ categories: SpendCategory[] }>({
+    queryKey: ['petty-cash-categories'],
+    queryFn: () => api.get('/trustops/petty-cash/categories'),
+    staleTime: 300_000,
+  })
+}
+
+/** "Transport / conveyance (6140)" for a stored category (a key or a 6xxx). */
+export function categoryWords(category: string | null | undefined, categories: SpendCategory[]): string {
+  if (!category) return '—'
+  const c = categories.find((x) => x.key === category)
+  if (c) return `${c.label} (${c.code})`
+  return /^\d{4}$/.test(category) ? `Account ${category}` : category
+}
+
 /** Brands for the optional brand field — every staff role reads this list. */
 export function useBrands() {
   return useQuery({
     queryKey: ['concepts', 'brand-picker'],
-    queryFn: () => api.get<Array<{ id: string; name: string }>>('/concepts?view=picker'),
+    queryFn: () => api.get<Array<{ id: string; name: string; tenantId?: string | null }>>('/concepts?view=picker'),
     staleTime: 60_000,
     meta: { background: true },
     retry: (count, err) => !(err instanceof ApiError && err.status === 403) && count < 1,
   })
 }
 
-/** Staff names, for the "Pay to" suggestions (managers and HR read it; others type the name). */
+/** Staff logins (managers and HR read it) — a keeper names someone else as the holder. */
 export function useStaffNames() {
-  return useQuery<Array<{ id: string; name: string }>>({
+  return useQuery<Array<{ id: string; name: string; tenantId?: string | null }>>({
     queryKey: ['users'],
     queryFn: () => api.get('/auth/users'),
     retry: false,
@@ -185,52 +256,82 @@ export function useStaffNames() {
   })
 }
 
-/** Categories offered as suggestions — free text; the petty-cash spend gets the same category. */
-export const CATEGORY_SUGGESTIONS = [
-  'supplies', 'courier', 'repairs & maintenance', 'fuel & transport', 'utilities',
-  'staff welfare', 'cleaning', 'office', 'marketing', 'kitchen equipment', 'advance', 'miscellaneous',
-]
-
 // ─── Error words ────────────────────────────────────────────────────────────
 
 const ERROR_WORDS: Record<string, string> = {
-  VOUCHER_NOT_APPROVED: 'The director has not approved this voucher yet — the signed photo can be uploaded only after approval.',
-  ALREADY_DISBURSED: 'This voucher is already paid — it is in petty cash.',
+  VOUCHER_NOT_APPROVED: 'The director has not approved this request yet — it can be paid only after approval.',
+  ALREADY_PAID: 'This request is already paid.',
   INSUFFICIENT_FLOAT: "The cash box doesn't hold enough — top it up first.",
   SAME_SIGNER: 'The director must be a different person from the HOD who signed.',
-  BOX_NOT_IN_COMPANY: "That cash box is not one of this company's boxes — pick a box of the voucher's company.",
+  SELF_SIGN_HOD: 'You hold this cash — your HOD signs it, not you.',
+  NOT_HOD: 'Only the HOD of the person who holds the cash (their reporting manager), finance or a manager can sign this.',
+  NOT_YOURS: "This request is not one you raised, hold, sign or pay.",
+  NOT_CUSTODIAN: 'Only the cashier who holds the cash box, finance or a manager can pay from it.',
+  BOX_REQUIRED: 'Pick the cash box the money comes from.',
+  BOX_PICK_KEEPERS_ONLY: 'Only finance or a manager picks or changes the cash box.',
+  BOX_NOT_IN_COMPANY: "That cash box is not an open box of this request's company.",
+  BOX_UNAVAILABLE: 'That cash box is closed — pick another one.',
+  HOLDER_REQUIRED: 'This request names nobody to take the cash — finance names the holder first.',
+  CATEGORY_REQUIRED: 'This request names no expense category — finance sets it before it is paid.',
+  SPEND_CATEGORY_REQUIRED: 'Pick what the cash is for (the expense category).',
+  SPEND_CATEGORY_UNKNOWN: 'The category on this request is not one servd knows — finance picks one from the list before it is paid.',
+  USE_STOCK_LINE: 'Food, drinks and packaging are not an expense category — raise it under the closest category; the receipts bring them into stock.',
+  EXPLICIT_ACCOUNT_NOT_ALLOWED: 'Only finance or a manager can pick an account — pick a category.',
+  NOT_AN_EXPENSE_CODE: 'That is not an operating-expense (6xxx) account.',
+  ACCOUNT_NOT_FOUND: "This company's chart does not have that account.",
+  AMOUNT_TOO_LARGE: 'That amount is too large for a cash request.',
+  CONCEPT_NOT_IN_COMPANY: "That brand belongs to another company — pick one of the request's company's brands.",
+  PAYEE_NOT_IN_COMPANY: "That login is not a member of this request's company.",
+  VOUCHER_NOT_DRAFT: 'Only a request still waiting for its HOD can be edited — finance may change the category until it is paid.',
+  VOUCHER_CHANGED: 'Someone else changed this request — reload to see where it is.',
+  VOUCHER_NOT_HOD_SIGNED: 'This request has moved on — reload to see where it is.',
+  VOUCHER_NOT_CANCELLABLE: 'Only a request that is not yet paid can be cancelled.',
+  VOUCHER_NOT_PAID: 'Receipts and change come in once the request is paid, until it is settled.',
+  RECEIPT_NOT_ALLOWED: 'Only the person who holds the cash, finance or a manager can add or remove its receipts.',
+  SETTLE_NOT_ALLOWED: 'Only the person who holds the cash, finance or a manager can submit its receipts.',
+  TOO_MANY_RECEIPTS: 'A cash request takes at most 20 receipts.',
+  RECEIPT_REQUIRED: 'Add the receipts these lines come from first.',
+  RECEIPT_NOT_ON_REQUEST: 'A receipt was not uploaded on this request.',
+  RECEIPT_IN_USE: 'That receipt is already on a submitted settlement.',
+  LINES_EMPTY: 'Say what the receipts were for — add at least one line.',
+  RECEIPTS_OVER_REQUEST: 'The lines come to more than is still open on this request.',
+  OVER_REMAINING: 'That is more change than is still open on this request.',
+  STOCK_LINES_NOT_ALLOWED: 'Only finance, a manager or someone who runs the stock can book goods into stock.',
+  STOCK_LINE_FIXED: 'Stock and equipment lines are fixed by their documents — only an expense line moves.',
+  ITEM_NOT_IN_COMPANY: "That stock item is not one of this company's.",
+  UNIT_MISMATCH: "That unit cannot be converted to the item's own unit.",
+  CAPEX_LINE_NOT_IN_COMPANY: "That CapEx item is not one of this company's.",
+  NOT_CAPITAL: 'That CapEx line is not equipment — pick an equipment line.',
+  USE_CAPEX: 'That looks like equipment — book it as an Equipment (CapEx) line.',
+  PAYMENT_NOT_BOOKED: 'The payment of this request is not on the books yet — book the petty-cash history first.',
+  CASH_REQUEST_PAID_FIXED: 'Receipts are already booked against this payment — move money with a settlement line instead.',
+  PERIOD_LOCKED: 'That month is closed in the books.',
+  BAD_FILE: 'That file could not be used. Take the photo again (JPEG, PNG or WebP), or pick a PDF up to 3 MB.',
   BAD_PHOTO: 'That photo could not be used. Take it again (a JPEG, PNG or WebP image).',
-  PHOTO_TOO_LARGE: 'That photo is too large. Take it again a little further away.',
-  AMOUNT_TOO_LARGE: 'That amount is too large for a cash voucher.',
-  CONCEPT_NOT_IN_COMPANY: "That brand belongs to another company — pick one of the cash box's company's brands.",
-  PAYEE_NOT_IN_COMPANY: "That login is not a member of this voucher's company — type the name without picking a login.",
-  BOX_UNAVAILABLE: 'The cash box on this voucher has been closed — cancel the voucher and raise a new one.',
-  VOUCHER_NOT_DRAFT: 'Only a draft can be edited or signed as HOD — someone may have signed it already. Reload to see where it is.',
-  VOUCHER_NOT_HOD_SIGNED: 'Only a voucher the HOD has signed can be approved or rejected — it may have moved on. Reload to see where it is.',
-  VOUCHER_NOT_CANCELLABLE: 'Only a voucher that is not yet paid can be cancelled.',
   BAD_CURSOR: 'The list is out of date — reload the page.',
   NO_ACTIVE_COMPANY: 'Pick a company first (the company switcher, top left).',
   PORTFOLIO_WRITE_CANCELLED: 'You cancelled — nothing was saved.',
 }
 
 /** A refusal in plain words: the known codes, else the server's own message. */
-export function errorWords(e: unknown, action?: 'approve' | 'reject' | 'save' | 'sign' | 'cancel' | 'disburse'): string {
+export function errorWords(e: unknown): string {
   if (e instanceof ApiError) {
     const known = ERROR_WORDS[e.code]
-    // These two carry useful specifics from the server (the sizes, the float).
-    if (known && (e.code === 'BAD_PHOTO' || e.code === 'INSUFFICIENT_FLOAT') && e.message) return `${known} (${e.message})`
+    // These carry useful specifics from the server (sizes, the float, the amounts).
+    if (known && ['BAD_PHOTO', 'BAD_FILE', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH'].includes(e.code) && e.message) {
+      return `${known} (${e.message})`
+    }
     if (known) return known
-    if (e.status === 413) return ERROR_WORDS['PHOTO_TOO_LARGE']!
-    if (e.status === 403 && (action === 'approve' || action === 'reject')) return 'Only the CEO (director) can approve or reject a cash voucher.'
-    if (e.status === 403) return "Your login can't do that on cash vouchers."
-    if (e.status === 404) return 'This voucher was not found — it may belong to another company.'
-    if (e.status === 409) return e.message || 'This voucher has moved on — refresh to see where it is now.'
+    if (e.status === 413) return 'That file is too large. Take the photo again a little further away.'
+    if (e.status === 403) return e.message || "Your login can't do that on cash requests."
+    if (e.status === 404) return 'This request was not found — it may belong to another company.'
+    if (e.status === 409) return e.message || 'This request has moved on — refresh to see where it is now.'
     return e.message
   }
   return e instanceof Error ? e.message : 'Something went wrong.'
 }
 
-// ─── Dates ──────────────────────────────────────────────────────────────────
+// ─── Money and dates ────────────────────────────────────────────────────────
 
 const TZ = 'Asia/Karachi'
 
@@ -238,7 +339,7 @@ const TZ = 'Asia/Karachi'
 export function todayKarachi(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
-/** The voucher's date as YYYY-MM-DD for the date field. */
+/** A date as YYYY-MM-DD for the date field. */
 export function dateInput(iso: string | null | undefined): string {
   if (!iso) return todayKarachi()
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso

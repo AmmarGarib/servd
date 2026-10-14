@@ -24,6 +24,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { addLotTx, ensureFifoReady } from '../src/lib/stockLedger.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
@@ -89,8 +90,17 @@ async function lockThrough(tenantId: string, through: Date) {
 }
 
 let seq = 0
+/** An item whose stock on hand is held on one FIFO lot at its cost (finance wave B: stock lives on lots). */
 async function inventoryItem(tenantId: string, name: string, unitCostCents: number, currentStock = 100) {
-  return prisma.inventoryItem.create({ data: { name: `${name} ${++seq}`, unit: 'kg', currentStock, unitCostCents, tenantId } })
+  await ensureFifoReady(tenantId)
+  const item = await prisma.inventoryItem.create({ data: { name: `${name} ${++seq}`, unit: 'kg', currentStock: 0, unitCostCents, tenantId } })
+  if (currentStock > 0) {
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId, inventoryItemId: item.id, qty: currentStock, unitCostCents, kind: 'fifo_cutover', lotSourceType: 'fifo_cutover',
+      lotSourceId: `test-seed:${item.id}`, movementSourceType: 'test.seed', movementSourceId: item.id, receivedAt: new Date(Date.now() - DAY),
+    }))
+  }
+  return prisma.inventoryItem.findUniqueOrThrow({ where: { id: item.id } })
 }
 async function order(conceptId: string, status: 'received' | 'completed' | 'cancelled' = 'completed', totalCents = 100_000) {
   return prisma.order.create({
@@ -176,14 +186,14 @@ afterAll(async () => {
 describe('manual waste — a refused posting is flagged and re-posted', () => {
   it('flags in the item\'s company; B\'s backfill never lists, posts or closes it; A\'s posts it once on its own day', async () => {
     const beef = await inventoryItem(tenantA, 'Beef mince', 180_000, 10)
-    await setActive(tenantA, '5040', false)
+    await setActive(tenantA, '1290', false)
     let wasteId: string
     try {
       const res = await call('chefA', 'POST', `/inventory/${beef.id}/waste`, { quantity: 0.1, unit: 'kg', reason: 'spoilage', photoUrl: PHOTO })
       expect(res.statusCode, res.body).toBe(201)
       wasteId = res.json().id
     } finally {
-      await setActive(tenantA, '5040', true)
+      await setActive(tenantA, '1290', true)
     }
     expect(await entry(tenantA, `inventory.waste:${wasteId}`)).toBeNull()
     const flags = await openFlags(wasteId)
@@ -206,7 +216,7 @@ describe('manual waste — a refused posting is flagged and re-posted', () => {
 
     expect(rowOf(await backfill('adminA', false), 'inventory.waste', wasteId)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `inventory.waste:${wasteId}`)
-    expect(sum(je!.lines, '5040', 'debit')).toBe(18_000)
+    expect(sum(je!.lines, '1290', 'debit')).toBe(18_000)
     expect(sum(je!.lines, '1210', 'credit')).toBe(18_000)
     expect(je!.entryDate.toISOString()).toBe(log.recordedAt.toISOString())
     expect(await openFlags(wasteId)).toHaveLength(0)
@@ -231,11 +241,11 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
   it('flags in the count\'s company (no variance is not a failure); the backfill posts it once', async () => {
     const bun = await inventoryItem(tenantA, 'Potato bun', 6_000, 35)
     const salt = await inventoryItem(tenantA, 'Salt', 5_000, 4)
-    await setActive(tenantA, '5050', false)
+    await setActive(tenantA, '1290', false)
     let countId: string
     let flatId: string
     try {
-      const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: bun.id, physicalQty: 30 }] })
+      const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: bun.id, physicalQty: 30, reason: 'five missing' }] })
       expect(res.statusCode, res.body).toBe(201)
       expect(res.json().ledger).toMatchObject({ posted: false })
       countId = res.json().id
@@ -243,7 +253,7 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
       expect(flat.json().ledger).toMatchObject({ posted: false, reason: 'no_variance' })
       flatId = flat.json().id
     } finally {
-      await setActive(tenantA, '5050', true)
+      await setActive(tenantA, '1290', true)
     }
     const flags = await openFlags(countId)
     expect(flags).toHaveLength(1)
@@ -255,7 +265,7 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
     expect(rowOf(await backfill('adminA', true), 'inventory.count', countId)).toMatchObject({ outcome: 'would_post' })
     expect(rowOf(await backfill('adminA', false), 'inventory.count', countId)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `inventory.count:${countId}`)
-    expect(sum(je!.lines, '5050', 'debit')).toBe(30_000)
+    expect(sum(je!.lines, '1290', 'debit')).toBe(30_000)
     expect(sum(je!.lines, '1210', 'credit')).toBe(30_000)
     expect(await openFlags(countId)).toHaveLength(0)
     expect(rowOf(await backfill('adminA', false), 'inventory.count', countId)).toBeUndefined()
@@ -371,7 +381,7 @@ describe('waste from a line voided after firing', () => {
     expect(rowOf(await backfill('adminA', true), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'would_post', date: log.recordedAt.toISOString() })
     expect(rowOf(await backfill('adminA', false), 'pos.void_waste', line.id)).toMatchObject({ outcome: 'posted' })
     const je = await entry(tenantA, `pos.void_waste:${line.id}`)
-    expect(sum(je!.lines, '5040', 'debit')).toBe(30_000)
+    expect(sum(je!.lines, '1290', 'debit')).toBe(30_000)
     expect(sum(je!.lines, '1210', 'credit')).toBe(30_000)
     expect(je!.entryDate.toISOString()).toBe(log.recordedAt.toISOString())
     expect(await openFlags(line.id)).toHaveLength(0)
@@ -379,7 +389,7 @@ describe('waste from a line voided after firing', () => {
     expect((await postVoidWaste(tenantA, line.id, [log.id], conceptA)).posted).toBe(false)
     expect(await countRefs(`pos.void_waste:${line.id}`)).toBe(1)
     // The waste log itself is never booked again as a manual waste.
-    const { postWasteLog } = await import('../src/modules/accounting/supplierPosting.js')
+    const { postWasteLog } = await import('../src/modules/accounting/inventoryPosting.js')
     expect((await postWasteLog(log.id)).reason).toBe('booked_by_void')
   })
 
@@ -397,7 +407,7 @@ describe('waste from a line voided after firing', () => {
       const je = await entry(tenantA, `pos.void_waste:${line.id}`)
       expect(je!.entryDate.getTime()).toBeGreaterThan(Date.now() - 60_000)
       for (const l of je!.lines) expect(l.memo).toContain(`dated ${ymd(at)}`)
-      expect(sum(je!.lines, '5040', 'debit')).toBe(12_000)
+      expect(sum(je!.lines, '1290', 'debit')).toBe(12_000)
       expect(await openFlags(line.id)).toHaveLength(0)
     } finally {
       await unlock()

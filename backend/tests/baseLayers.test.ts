@@ -110,7 +110,7 @@ describe('fixed assets in the ledger', () => {
     // Sold on 5 March (the disposal month is not charged): book value 1,000,000; sold for 1,050,000 → 50,000 gain.
     const sold = await createRequest({
       kind: 'disposal', assetId: a.id, effectiveDate: new Date('2026-03-05T12:00:00+05:00'), reason: 'Sold to the franchisee',
-      payload: { kind: 'sale', proceedsCents: 1_050_000 },
+      payload: { kind: 'sale', proceedsCents: 1_050_000, reference: 'IBFT-1050' },
     }, { id: ceoId, role: 'admin' })
     expect(sold.applied).toBe(true)
     expect(sold.event.payload).toMatchObject({ nbvCents: 1_000_000, gainLossCents: 50_000 })
@@ -209,11 +209,11 @@ describe('receivables — issue, pay, overpay, void', () => {
     expect(inv.number).toMatch(/^AR-2026-\d{4}$/)
     expect(await balance('1110')).toBe(115_000)
 
-    const over = await call('POST', `/r/${inv.id}/payments`, { amountCents: 200_000, receivedAt: '2026-09-10', method: 'bank' })
+    const over = await call('POST', `/r/${inv.id}/payments`, { reference: 'BL-1', amountCents: 200_000, receivedAt: '2026-09-10', method: 'bank' })
     expect(over.statusCode).toBe(409)
     expect(over.json().error.code).toBe('OVERPAYMENT')
 
-    const part = await call('POST', `/r/${inv.id}/payments`, { amountCents: 50_000, receivedAt: '2026-09-10', method: 'bank' })
+    const part = await call('POST', `/r/${inv.id}/payments`, { reference: 'BL-2', amountCents: 50_000, receivedAt: '2026-09-10', method: 'bank' })
     expect(part.statusCode).toBe(201)
     expect((await prisma.receivableInvoice.findUnique({ where: { id: inv.id } }))!.status).toBe('partial')
     expect(await balance('1110')).toBe(65_000)
@@ -221,7 +221,7 @@ describe('receivables — issue, pay, overpay, void', () => {
     const voidPaid = await call('POST', `/r/${inv.id}/void`, { reason: 'raised in error' })
     expect(voidPaid.statusCode).toBe(409)
 
-    const rest = await call('POST', `/r/${inv.id}/payments`, { amountCents: 65_000, receivedAt: '2026-09-20', method: 'cash' })
+    const rest = await call('POST', `/r/${inv.id}/payments`, { reference: 'BL-3', amountCents: 65_000, receivedAt: '2026-09-20', method: 'cash' })
     expect(rest.statusCode).toBe(201)
     expect((await prisma.receivableInvoice.findUnique({ where: { id: inv.id } }))!.status).toBe('paid')
     expect(await balance('1110')).toBe(0)

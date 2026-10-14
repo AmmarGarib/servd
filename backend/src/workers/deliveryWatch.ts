@@ -30,6 +30,7 @@ import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendText } from '../lib/whatsapp.js'
 import { sendEmail, emailConfigured } from '../lib/mailer.js'
 import { whatsappConfigured } from '../lib/whatsapp.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 /** Where the current delivery state is parked for the admin dashboard. */
 export const DELIVERY_STATE_KEY = 'integrations.delivery.state'
@@ -84,6 +85,8 @@ export async function probeDelivery(): Promise<DeliveryState> {
   const mk = (ok: boolean, cause: DeliveryState['cause']): DeliveryState => ({
     ok, cause, ...HUMAN[cause], checkedAt: now,
   })
+  // Practice copy: no probe of the real gateway (and so never an alert).
+  if (sandboxBlocks('whatsapp_probe')) return { ...mk(true, 'ok'), detail: 'Practice copy: messages are not sent', fix: '' }
 
   if (!(await whatsappConfigured())) return mk(false, 'unconfigured')
 
@@ -224,6 +227,7 @@ export async function runDeliveryWatch(): Promise<DeliveryState> {
 }
 
 export function startDeliveryWatch(): void {
+  if (sandboxBlocks('worker', { summary: 'deliveryWatch' })) return // practice copy: nothing to watch
   // Every ten minutes. Frequent enough that a dropped session is caught within
   // one order's worth of time; infrequent enough to be invisible.
   cron.schedule('*/10 * * * *', () => {

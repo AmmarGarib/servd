@@ -12,7 +12,11 @@
 // "On the books" (owner decision 24): capex instalments post as supplier
 // advances when paid and delivered items are capitalised onto the
 // fixed-asset register, so this page shows what is already an asset vs
-// what has been advanced but not yet capitalised.
+// what has been advanced but not yet capitalised. "On the books as assets"
+// counts only assets still on the register: sold, scrapped and voided ones
+// are left out and shown apart. Nothing here puts an old purchase on the
+// register: equipment owned before servd is not entered (owner), and new
+// equipment comes through CapEx only.
 
 import { useMemo } from 'react'
 import Link from 'next/link'
@@ -73,17 +77,17 @@ interface Project {
     totalAskCents: number
     varianceVsEnvelopeCents: number
   }
-  books?: { capitalisedCents: number; advancedCents: number; notYetCapitalisedCents: number; prepaidCents: number; expensedCents: number }
+  books?: { capitalisedCents: number; disposedCents?: number; advancedCents: number; notYetCapitalisedCents: number; prepaidCents: number; expensedCents: number }
 }
 
 const SCOPE_META: Record<string, { emoji: string; label: string; color: string }> = {
   BOH:        { emoji: '🍳', label: 'Back of House',  color: 'var(--erp-warning)' },
   FOH:        { emoji: '🪑', label: 'Front of House', color: 'var(--erp-secondary)' },
-  AG:         { emoji: '✨', label: 'AG / Finishing', color: '#be185d' },
+  AG:         { emoji: '✨', label: 'AG / Finishing', color: 'var(--erp-secondary)' },
   Equipment:  { emoji: '🛠', label: 'Small wares',    color: 'var(--erp-primary-ink)' },
   MEP:        { emoji: '⚡', label: 'MEP',            color: 'var(--erp-warning)' },
   Civil:      { emoji: '🏗', label: 'Civil',          color: 'var(--muted)' },
-  Tech:       { emoji: '💻', label: 'Tech',           color: '#1d4ed8' },
+  Tech:       { emoji: '💻', label: 'Tech',           color: 'var(--erp-primary-ink)' },
   Branding:   { emoji: '🎨', label: 'Branding',       color: 'var(--erp-danger)' },
   Permits:    { emoji: '📑', label: 'Permits',        color: 'var(--erp-success)' },
   SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: 'var(--erp-success)' },
@@ -92,7 +96,7 @@ const SCOPE_META: Record<string, { emoji: string; label: string; color: string }
 
 const PHASE_META: Record<Project['phase'], { label: string; bg: string; fg: string }> = {
   planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
-  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: 'var(--erp-warning)' },
+  quoting:   { label: 'Quoting',    bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)',  fg: 'var(--erp-warning)' },
   executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary)' },
   snagging:  { label: 'Snagging',   bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
   live:      { label: 'Live',       bg: 'rgb(var(--erp-accent-rgb) / 0.15)',   fg: 'var(--erp-success)' },
@@ -270,34 +274,58 @@ export default function InvestmentDashboardPage() {
                 hint={agg.runwayMonths ? `~${agg.runwayMonths.toFixed(1)} mo runway` : 'avg over 90 days'}
                 value={PKR_LAKHS(agg.burnPerMonth)}
                 subValue={`over last 90 days`}
-                bg="rgba(236,72,153,0.05)" border="rgba(236,72,153,0.22)" color="#be185d"
+                bg="color-mix(in srgb, var(--erp-danger) 6%, transparent)" border="color-mix(in srgb, var(--erp-danger) 25%, transparent)" color="var(--erp-danger)"
               />
             </div>
 
             {/* ── On the books ─────────────────────────────────────────── */}
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              <KpiTile
-                label="On the books as assets"
-                hint="capitalised onto the fixed-asset register"
-                value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
-                subValue={PKR(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
-                bg="rgb(var(--erp-accent-rgb) / 0.05)" border="rgb(var(--erp-accent-rgb) / 0.22)" color="var(--erp-success)"
-              />
-              <KpiTile
-                label="Not yet capitalised"
-                hint="advanced to suppliers, item not on the register yet"
-                value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
-                subValue={PKR(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
-                bg="rgba(252,211,77,0.05)" border="rgba(252,211,77,0.22)" color="var(--erp-warning)"
-              />
-              <KpiTile
-                label="Prepaid rent · fees expensed"
-                hint="rent advances (1310) · broker / consultant fees (6110)"
-                value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0) + (p.books?.expensedCents ?? 0), 0))}
-                subValue={`${PKR(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0), 0))} prepaid · ${PKR(projects.reduce((t, p) => t + (p.books?.expensedCents ?? 0), 0))} fees`}
-                bg="rgb(var(--erp-primary-rgb) / 0.05)" border="rgb(var(--erp-primary-rgb) / 0.22)" color="var(--erp-primary-ink)"
-              />
-            </div>
+            {(() => {
+              const sum = (f: (p: Project) => number) => projects.reduce((t, p) => t + f(p), 0)
+              const assets = sum((p) => p.books?.capitalisedCents ?? 0)
+              const disposed = sum((p) => p.books?.disposedCents ?? 0)
+              const notYet = sum((p) => p.books?.notYetCapitalisedCents ?? 0)
+              const prepaid = sum((p) => p.books?.prepaidCents ?? 0)
+              const fees = sum((p) => p.books?.expensedCents ?? 0)
+              return (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                  <KpiTile
+                    label="On the books as assets"
+                    hint="on the fixed-asset register now; sold, scrapped and voided assets are not counted"
+                    value={PKR_LAKHS(assets)}
+                    subValue={PKR(assets)}
+                    bg="rgb(var(--erp-accent-rgb) / 0.05)" border="rgb(var(--erp-accent-rgb) / 0.22)" color="var(--erp-success)"
+                  />
+                  {disposed > 0 && (
+                    <KpiTile
+                      label="Sold or scrapped"
+                      hint="was capitalised from here, since disposed of. Shown apart"
+                      value={PKR_LAKHS(disposed)}
+                      subValue={PKR(disposed)}
+                      bg="rgb(var(--fg-rgb) / 0.03)" border="rgb(var(--fg-rgb) / 0.12)" color="var(--muted)"
+                    />
+                  )}
+                  <KpiTile
+                    label="Not yet capitalised"
+                    hint="advanced to suppliers, item not on the register yet"
+                    value={PKR_LAKHS(notYet)}
+                    subValue={PKR(notYet)}
+                    bg="color-mix(in srgb, var(--erp-warning) 6%, transparent)" border="color-mix(in srgb, var(--erp-warning) 25%, transparent)" color="var(--erp-warning)"
+                  />
+                  <KpiTile
+                    label="Prepaid rent · fees expensed"
+                    hint="rent advances (1310) · broker / consultant fees (6110)"
+                    value={PKR_LAKHS(prepaid + fees)}
+                    subValue={`${PKR(prepaid)} prepaid · ${PKR(fees)} fees`}
+                    bg="rgb(var(--erp-primary-rgb) / 0.05)" border="rgb(var(--erp-primary-rgb) / 0.22)" color="var(--erp-primary-ink)"
+                  />
+                </div>
+              )
+            })()}
+            <p className="text-[11px] text-white/40 -mt-3">
+              The register lives in{' '}
+              <Link href="/accounting/fixed-assets" className="text-primary-ink font-bold hover:opacity-80">Accounting &rarr; Fixed assets</Link>.
+              Equipment owned before servd is not entered; new equipment reaches it through CapEx only.
+            </p>
 
             {/* ── Progress bar against total ask ─────────────────────────── */}
             {agg.totalAsk > 0 && (
@@ -461,7 +489,7 @@ export default function InvestmentDashboardPage() {
                           style={{
                             background: r.payment.label === 'deposit' ? 'rgb(var(--ink-rgb) / 0.15)'
                                       : r.payment.label === 'balance' ? 'rgb(var(--erp-accent-rgb) / 0.15)'
-                                      : 'rgba(245,158,11,0.15)',
+                                      : 'color-mix(in srgb, var(--erp-warning) 15%, transparent)',
                             color:      r.payment.label === 'deposit' ? 'var(--erp-primary-ink)'
                                       : r.payment.label === 'balance' ? 'var(--erp-success)'
                                       : 'var(--erp-warning)',

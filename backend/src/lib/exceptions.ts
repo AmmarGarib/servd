@@ -89,8 +89,10 @@ export type ExceptionKind =
   | 'period_close_override'      // the CEO closed a period over a blocking close check
   | 'intercompany_mismatch'      // the two sides of a company pair's due-to / due-from disagree
   // Cash requests
-  | 'cash_advance_overdue'       // a paid cash request still not settled with receipts past its due date
-  | 'cash_request_needs_review'  // a cash request a person must look at (receipts over the advance, odd lines)
+  | 'cash_request_receipts_overdue' // a paid cash request past its due date with no receipt uploaded (H3: flagged, nothing booked)
+  | 'stock_difference_queried'      // the CEO sent a waste / count difference back with a note (H20)
+  | 'cash_advance_overdue'       // legacy (pre-H3): no longer raised; kept so old rows still read
+  | 'cash_request_needs_review'  // legacy (pre-H3): no longer raised; kept so old rows still read
   // Delivery
   | 'delivery_code_rerouted'     // the hand-over code was sent to the rider's number (Emergency overrides)
   | 'food_returned'              // a rider brought a delivery back; the food was booked as waste

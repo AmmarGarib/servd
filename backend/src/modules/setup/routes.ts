@@ -24,7 +24,11 @@ import { prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, APPROVERS } from '../auth/middleware.js'
 import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
+import { SCHEDULED_REPORT_MODULES, mayScheduleReport } from '../../lib/moduleAccess.js'
+import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
+import { REQUIRED_ACCOUNT_CODES } from '../../lib/chartOfAccounts.js'
+import { ACCT, revenueCodeForConcept } from '../accounting/journal.js'
+import { AUTHORITY_LIST } from '../accounting/taxAuthorities.js'
 import {
   scopeTenantWhere, assertConceptOwned, conceptIdsInScope, conceptWhere, type ScopeMode,
   activeTenantId as requireActiveTenant,
@@ -52,6 +56,74 @@ async function brandRowWhere(
   if (conceptId) return { ...tenant, ...(await conceptWhere(req, conceptId, mode)) }
   return { ...tenant }
 }
+
+/**
+ * Chart of accounts: may this account be switched off? (PATCH
+ * /setup/chart-of-accounts/:id isActive:false.) Throws 422 when the books
+ * need it — see the route.
+ */
+async function assertAccountMayBeSwitchedOff(acc: { tenantId: string | null; code: string; name: string; controlledBy: string | null }): Promise<void> {
+  const label = `${acc.code} ${acc.name}`
+  if (acc.tenantId) {
+    const cls = await prisma.fixedAssetClass.findFirst({
+      where: { tenantId: acc.tenantId, isActive: true, OR: [{ costAccountCode: acc.code }, { accumAccountCode: acc.code }] },
+      select: { label: true, costAccountCode: true },
+    })
+    if (cls) {
+      throw new AppError(
+        'ACCOUNT_IN_USE',
+        `${label} is the ${cls.costAccountCode === acc.code ? 'cost' : 'accumulated depreciation'} account of the fixed-asset class "${cls.label}" — switch that class off first (Accounting → Fixed assets → Classes)`,
+        422,
+      )
+    }
+  }
+  if (acc.controlledBy) {
+    const who = acc.controlledBy === 'intercompany' ? 'the inter-company module (a Due-from / Due-to of a company pair)'
+      : acc.controlledBy === 'fixed_asset' ? 'the fixed-asset register'
+      : acc.controlledBy === 'head_office' ? 'the head-office module'
+      : `'${acc.controlledBy}'`
+    throw new AppError('ACCOUNT_CONTROLLED', `${label} is kept by ${who} — it cannot be switched off here (renaming is fine)`, 422)
+  }
+  if (SYSTEM_POSTED_CODES.has(acc.code)) {
+    throw new AppError('ACCOUNT_IN_USE', `${label} is one of the accounts servd posts to on its own — it cannot be switched off (renaming is fine)`, 422)
+  }
+  if (acc.tenantId) {
+    // A live brand's sales account, a live linked bank's chart code, or the
+    // bank code a Raast receipt still waiting on the statement will post to.
+    const brands = await prisma.concept.findMany({ where: { tenantId: acc.tenantId, deletedAt: null }, select: { slug: true, name: true } })
+    const brand = brands.find((b) => revenueCodeForConcept(b.slug) === acc.code)
+    if (brand) {
+      throw new AppError('ACCOUNT_IN_USE', `${label} is the sales account of the brand ${brand.name} — it cannot be switched off while the brand is live (renaming is fine)`, 422)
+    }
+    const bank = await prisma.bankAccount.findFirst({
+      where: { tenantId: acc.tenantId, accountCode: acc.code, deletedAt: null, isActive: true },
+      select: { name: true },
+    })
+    if (bank) {
+      throw new AppError('ACCOUNT_IN_USE', `${label} is the ledger account of the bank account "${bank.name}" — unlink or switch off that bank account first (Configuration → Bank accounts)`, 422)
+    }
+    const raast = await prisma.raastReceipt.count({
+      where: { tenantId: acc.tenantId, ledgerCode: acc.code, status: { in: ['awaiting', 'provisional', 'needs_attention'] } },
+    })
+    if (raast > 0) {
+      throw new AppError('ACCOUNT_IN_USE', `${label} is the bank account ${raast} Raast receipt(s) still waiting on the bank statement will post to — match or resolve them first (Finance → Reconciliation → Raast)`, 422)
+    }
+  }
+}
+
+/**
+ * Codes servd posts to on its own, so a CEO can never switch one off (the
+ * next posting that needs it would be refused 500 ACCOUNT_NOT_FOUND): the
+ * required list (/health checks those exist), every ACCT code the posting
+ * modules name, and every authority's output and input tax code (a Sindh
+ * brand's sales post to 2032). Kept apart from REQUIRED_ACCOUNT_CODES so
+ * /health's list is unchanged.
+ */
+const SYSTEM_POSTED_CODES: ReadonlySet<string> = new Set([
+  ...REQUIRED_ACCOUNT_CODES,
+  ...Object.values(ACCT),
+  ...AUTHORITY_LIST.flatMap((a) => [a.outputCode, a.inputCode]),
+])
 
 /** 422 unless `conceptId` is a live brand of `tenantId`. */
 async function assertBrandOf(tenantId: string, conceptId: string): Promise<void> {
@@ -707,6 +779,15 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     // Never let a schedule email out another company's brand data.
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    // Nor a report whose page this login is refused (food cost, AP aging):
+    // /setup is not module-gated, the report's page is.
+    if (SCHEDULED_REPORT_MODULES[body.reportType]) {
+      const me = await prisma.user.findUnique({ where: { id: req.staffUser!.id }, select: { moduleAllow: true, moduleDeny: true } })
+      const ok = await mayScheduleReport({ role: req.staffUser!.role as UserRole, moduleAllow: me?.moduleAllow ?? [], moduleDeny: me?.moduleDeny ?? [] }, body.reportType)
+      if (!ok) {
+        throw new ForbiddenError(`Your account does not have access to this module (${SCHEDULED_REPORT_MODULES[body.reportType]![0]}). Ask the CEO to enable it in Module Access.`)
+      }
+    }
     const created = await prisma.scheduledReport.create({ data: { ...body, createdById: req.staffUser!.id, tenantId: activeTenantId(req) } })
     return reply.status(201).send(created)
   })
@@ -981,6 +1062,17 @@ export async function setupRoutes(fastify: FastifyInstance) {
     })
     return reply.status(201).send(created)
   })
+  // Renaming (name / description) is always allowed. Switching an account OFF
+  // is refused when the books need it (finance wave B):
+  //   422 ACCOUNT_IN_USE      a REQUIRED_ACCOUNT_CODES code (the posting engine
+  //                           cannot run without it — /health checks them), or
+  //                           the cost / accumulated-depreciation code of an
+  //                           active fixed-asset class of the account's company
+  //   422 ACCOUNT_CONTROLLED  an account a module controls (Account.controlledBy:
+  //                           an inter-company Due-from / Due-to, a head-office
+  //                           link, the register's 15xx / 2012)
+  // The type is never edited here, and POST never sets controlledBy (the
+  // modules create their controlled accounts themselves).
   fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
     const body = z.object({
       name:        z.string().min(1).max(120).optional(),
@@ -991,6 +1083,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
+    if (body.isActive === false && existing.isActive) await assertAccountMayBeSwitchedOff(existing)
     const updated = await prisma.account.update({ where: { id: existing.id }, data: body })
     await audit({ category: 'accounting',
       action: 'account.update',

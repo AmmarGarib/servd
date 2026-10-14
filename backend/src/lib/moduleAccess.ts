@@ -99,9 +99,10 @@ export function isRetiredModuleId(id: string): boolean { return RETIRED_SET.has(
 //   voided_prebills — GET /pre-bills: admin, owner, management, finance
 // So management holds everything except the WhatsApp connector (whose routes
 // it cannot open), owner and the legacy manager hold neither API connector.
-//   emergency_overrides — /emergency-overrides: the RGM (foh_management), the
-//     chef (boh_management), the F&B manager, management and the CEO — the
-//     people on shift who own a delivery gone wrong. Not the co-owner, not the
+//   emergency_overrides — /emergency-overrides (PARKED with delivery, owner
+//     2026-10-13: no route or page yet): the RGM (foh_management), the chef
+//     (boh_management), the F&B manager, management and the CEO — the people
+//     on shift who own a delivery gone wrong. Not the co-owner, not the
 //     legacy manager.
 const API_WHATSAPP_ONLY = ['api_whatsapp']
 const API_CONNECTORS = ['api_whatsapp', 'api_pos']
@@ -318,6 +319,31 @@ export async function effectiveModulesForUser(user: {
   return base
 }
 
+/**
+ * Scheduled reports (POST /setup/scheduled-reports; workers/scheduledReports.ts):
+ * a report type whose page is module-gated needs the same module(s) — the
+ * read side of that page's GATED_PREFIXES rule — to be scheduled AND every
+ * time it runs (the creator's access is re-read, so the CEO's untick stops
+ * the emails). /setup itself is not module-gated, so without this a manager
+ * refused the page (foh_management on the food-cost variance) could have it
+ * emailed anywhere.
+ */
+export const SCHEDULED_REPORT_MODULES: Readonly<Record<string, readonly string[]>> = {
+  food_cost: ['food_cost', 'accounting'],    // /reports/food-cost (readAnyOf)
+  ap_aging:  ['procurement', 'accounting'],  // /procurement/ap-aging
+}
+
+/** May this login run (or schedule) `reportType`? Admin always; else its effective modules. */
+export async function mayScheduleReport(
+  user: { role: UserRole; moduleAllow?: string[]; moduleDeny?: string[] },
+  reportType: string,
+): Promise<boolean> {
+  const needs = SCHEDULED_REPORT_MODULES[reportType]
+  if (!needs || user.role === 'admin') return true
+  const modules = await effectiveModulesForUser(user)
+  return needs.some((m) => modules.has(m))
+}
+
 // ── URL → required-module map (first match wins; ANY listed module passes) ──
 // Paths are matched after stripping the /api/v1 prefix. Covers the
 // audit-flagged financial/reporting surfaces, the HR back office and (wave 3,
@@ -456,16 +482,18 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // needs one of these modules to bump, fire or hand off a ticket.
   { prefix: '/expo',     anyOf: ['expo_station', 'kds_dashboard', 'kds_all'] },
   // /dispatch — admin /dispatch (dispatch), /riders (riders: assign, rider
-  // status) and the tablet Dispatch screen. There is no staff "Delivered" any
-  // more (owner, 2026-10-13): a delivery completes only with the customer's
-  // code; when the customer cannot receive it, Emergency overrides sends it to
-  // the rider (below).
+  // status) and the tablet Dispatch screen. Customer-code-only completion and
+  // Emergency overrides are PARKED with delivery (owner, 2026-10-13;
+  // .handoff/parked/2026-10-14/): the staff "Delivered" override works as
+  // before until delivery resumes.
   { prefix: '/dispatch', anyOf: ['dispatch', 'riders'] },
   // /riders — the roster, history, fleet agreements: admin /riders only. The
   // rider app is /rider/* with a rider token and never reaches this.
   { prefix: '/riders',   anyOf: ['riders'] },
-  // Operations → Emergency overrides (admin page + the tablet tab): reroute
-  // the hand-over code to the rider's number, log food a rider brought back.
+  // Operations → Emergency overrides: PARKED with delivery (owner,
+  // 2026-10-13). No route is registered under this prefix and no page links
+  // to it; the gate rule and module id stay so the resume needs no access
+  // change (reroute the hand-over code to the rider, log food brought back).
   { prefix: '/emergency-overrides', anyOf: ['emergency_overrides'] },
   // CRM. The guest-context panel (GET context / PATCH notes) also sits on the
   // Reservations page (CustomerContextSidebar) and the tablet's Customer

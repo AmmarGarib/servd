@@ -18,6 +18,7 @@ import {
   assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf,
 } from './staffAccounts.js'
 import { maskPhoneForLog } from '../../lib/notify.js'
+import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice } from '../../lib/sandbox.js'
 import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover } from '../../lib/roles.js'
 import type { UserRole } from '@prisma/client'
 import { sendText, whatsappSettingsView, saveWhatsappSettings } from '../../lib/whatsapp.js'
@@ -218,6 +219,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         twoFactorRequired: true,
         challengeToken: result.challengeToken,
         phoneHint: result.phoneHint,
+        ...practiceCodeField(result.practiceCode), // practice copy only
       })
     }
 
@@ -243,6 +245,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // The response is identical whether or not a number matched. Anything else
   // turns this into a way to ask "is this number a cashier here?".
   fastify.post('/staff/otp/request', async (req, reply) => {
+    refuseCodeRequestInPractice('staff') // practice copy: nothing is sent, say so (lib/sandbox.ts)
     const body = staffOtpRequestSchema.parse(req.body)
     const phone = normalisePhone(body.phone)
 
@@ -470,6 +473,8 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/password/forgot', async (req, reply) => {
     const body = z.object({ email: z.string().email().max(200) }).parse(req.body)
     const emailKey = body.email.trim().toLowerCase()
+    // Practice copy: no link is sent, and one is never echoed to an unauthenticated caller (lib/sandbox.ts).
+    if (sandboxBlocks('password_reset')) throw new AppError('RESET_UNAVAILABLE', 'Practice copy: reset links are not sent here. Ask an admin to issue you a new password from Workforce.', 503)
 
     // Say so rather than promising a link that physically cannot be sent.
     // This is a fact about the server, not about the account, so it gives away
@@ -854,6 +859,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // is the point of having two. Only when neither can be reached does signup
   // stop. Per channel: 'sent' or 'failed'.
   fastify.post('/customer/request-signup-codes', async (req, reply) => {
+    refuseCodeRequestInPractice('customer') // practice copy: nothing is sent
     const ip = req.ip ?? 'unknown'
     await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, ip)
     const body = z.object({
@@ -878,6 +884,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // created before email verification existed). Uses the contact details on
   // file — the customer cannot point a code at an address that is not theirs.
   fastify.post('/customer/contact/request', { preHandler: requireCustomerAuth }, async (req, reply) => {
+    refuseCodeRequestInPractice('customer') // practice copy: nothing is sent
     const body = z.object({ channel: z.enum(['phone', 'email']) }).parse(req.body)
     const c = await prisma.customer.findUnique({
       where: { id: req.customer!.id },
@@ -1366,6 +1373,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   fastify.post('/integrations/email/test', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
     const body = z.object({ to: z.string().email() }).parse(req.body)
+    if (sandboxBlocks('email', { to: body.to, summary: 'admin test' })) return { ok: true, practice: true, note: PRACTICE_NOTE }
     try {
       await sendEmail({
         to: body.to,
@@ -1452,6 +1460,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/integrations/whatsapp/test', { preHandler: requireAuth(...CONNECTOR_ADMINS) }, async (req) => {
     const body = z.object({ phone: z.string().min(7).max(20) }).parse(req.body)
     const phone = normalisePhone(body.phone)
+    if (sandboxBlocks('whatsapp', { to: phone, summary: 'admin test' })) return { ok: true, sentTo: `…${phone.slice(-4)}`, practice: true, note: PRACTICE_NOTE }
     try {
       await sendText(phone, 'servd: WhatsApp gateway test. If you can read this, signup and sign-in codes will arrive here.')
       return { ok: true, sentTo: `…${phone.slice(-4)}` }
@@ -2274,6 +2283,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/customer/request', {
     config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
   }, async (req, reply) => {
+    refuseCodeRequestInPractice('customer') // practice copy: no link is sent
     const body = z.object({
       email: z.string().email().optional(),
       phone: z.string().min(7).max(20).optional(),

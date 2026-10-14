@@ -117,18 +117,18 @@ afterAll(async () => {
 describe('a receipt posts to the bank it went into', () => {
   it('two banks and no pick is 422 with nothing saved; the picked bank is debited and shown', async () => {
     const i = await raise('admA')
-    const noPick = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'bank' })
+    const noPick = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-1', amountCents: 50_000, receivedAt: today(), method: 'bank' })
     expect(noPick.statusCode).toBe(422)
     expect(noPick.json().error.code).toBe('BANK_ACCOUNT_REQUIRED')
     expect(Number((await inv(i.id)).paidCents)).toBe(0)
     expect(await prisma.receivablePayment.count({ where: { invoiceId: i.id } })).toBe(0)
 
-    const foreign = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankB })
+    const foreign = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-2', amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankB })
     expect(foreign.statusCode).toBe(422)
     expect(foreign.json().error.code).toBe('BANK_ACCOUNT_NOT_IN_COMPANY')
     expect(await prisma.receivablePayment.count({ where: { invoiceId: i.id } })).toBe(0)
 
-    const cashWithBank = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'cash', bankAccountId: bankA1 })
+    const cashWithBank = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-3', amountCents: 50_000, receivedAt: today(), method: 'cash', bankAccountId: bankA1 })
     expect(cashWithBank.statusCode).toBe(422)
 
     const ok = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'cheque', bankAccountId: bankA2, reference: 'CHQ-1' })
@@ -139,7 +139,7 @@ describe('a receipt posts to the bank it went into', () => {
     expect(amt(lines, '1020', 'debit')).toBe(0)
     expect(amt(lines, '1110', 'credit')).toBe(50_000)
 
-    const cash = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 5_000, receivedAt: today(), method: 'cash' })
+    const cash = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-4', amountCents: 5_000, receivedAt: today(), method: 'cash' })
     expect(cash.statusCode).toBe(201)
     expect(amt((await entry(tenantA, `receivable.payment:${cash.json().id}`))!, '1010', 'debit')).toBe(5_000)
 
@@ -152,7 +152,7 @@ describe('a receipt posts to the bank it went into', () => {
 
   it('a one-bank company uses its only bank without a pick', async () => {
     const i = await raise('admB', { conceptId: conceptB })
-    const r = await call('admB', 'POST', `${AR}/${i.id}/payments`, { amountCents: 115_000, receivedAt: today(), method: 'bank' })
+    const r = await call('admB', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-5', amountCents: 115_000, receivedAt: today(), method: 'bank' })
     expect(r.statusCode, r.body).toBe(201)
     expect(r.json().bankAccountId).toBe(bankB)
     expect(amt((await entry(tenantB, `receivable.payment:${r.json().id}`))!, '1020', 'debit')).toBe(115_000)
@@ -165,11 +165,11 @@ describe('a receipt posts to the bank it went into', () => {
 describe('company B never touches company A\'s receivables', () => {
   it('every write on an A invoice or payment is 404 for B, and B\'s list does not show it', async () => {
     const i = await raise('admA')
-    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 1_000, receivedAt: today(), method: 'cash' })
+    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-6', amountCents: 1_000, receivedAt: today(), method: 'cash' })
     expect(p.statusCode).toBe(201)
     const before = await inv(i.id)
     for (const [url, body] of [
-      [`${AR}/${i.id}/payments`, { amountCents: 1_000, receivedAt: today(), method: 'cash' }],
+      [`${AR}/${i.id}/payments`, { reference: 'ARC-7', amountCents: 1_000, receivedAt: today(), method: 'cash' }],
       [`${AR}/${i.id}/credit-notes`, { amountCents: 1_000, reason: 'dispute', date: today() }],
       [`${AR}/${i.id}/withholding`, { amountCents: 1_000, date: today() }],
       [`${AR}/${i.id}/refunds`, { amountCents: 1_000, date: today(), method: 'cash' }],
@@ -254,7 +254,7 @@ describe('credit notes', () => {
     expect(rest.statusCode).toBe(201)
     expect(rest.json().invoice).toMatchObject({ status: 'credited', balanceCents: 0 })
     // Nothing left: no payment, no credit note on a credit note.
-    expect((await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 1, receivedAt: today(), method: 'cash' })).statusCode).toBe(409)
+    expect((await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-8', amountCents: 1, receivedAt: today(), method: 'cash' })).statusCode).toBe(409)
     const onNote = await call('admA', 'POST', `${AR}/${rest.json().id}/credit-notes`, { amountCents: 1, reason: 'nested', date: today() })
     expect(onNote.statusCode).toBe(409)
     expect(onNote.json().error.code).toBe('NOT_AN_INVOICE')
@@ -262,7 +262,7 @@ describe('credit notes', () => {
 
   it('a credit on a paid invoice leaves the customer in credit; a refund pays it out from the bank picked', async () => {
     const i = await raise('admA', { taxCents: 0, amountCents: 50_000 })
-    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-9', amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
     expect(p.statusCode).toBe(201)
     expect((await inv(i.id)).status).toBe('paid')
 
@@ -310,7 +310,7 @@ describe('credit notes', () => {
       expect(await prisma.receivableInvoice.count({ where: { tenantId: tenantA, kind: 'credit_note' } })).toBe(before)
       expect(Number((await inv(i.id)).creditedCents)).toBe(0)
       // A payment dated there too.
-      const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 5_000, receivedAt: yesterday, method: 'cash' })
+      const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-10', amountCents: 5_000, receivedAt: yesterday, method: 'cash' })
       expect(p.statusCode).toBe(422)
       expect(await prisma.receivablePayment.count({ where: { invoiceId: i.id } })).toBe(0)
       expect(Number((await inv(i.id)).paidCents)).toBe(0)
@@ -341,7 +341,7 @@ describe('credit notes', () => {
 
   it('a receipt and a refund that net to zero still block the void; a void invoice refuses reversals', async () => {
     const i = await raise('admA', { taxCents: 0, amountCents: 50_000 })
-    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-11', amountCents: 50_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
     expect(p.statusCode, p.body).toBe(201)
     const cn = (await call('admA', 'POST', `${AR}/${i.id}/credit-notes`, { amountCents: 50_000, reason: 'Event cancelled', date: today() })).json()
     const r = await call('admA', 'POST', `${AR}/${i.id}/refunds`, { amountCents: 50_000, date: today(), method: 'bank', bankAccountId: bankA2 })
@@ -355,7 +355,7 @@ describe('credit notes', () => {
 
     // A void invoice (another path) refuses a reversal of anything on it.
     const j = await raise('admA', { taxCents: 0, amountCents: 20_000 })
-    const pj = await call('admA', 'POST', `${AR}/${j.id}/payments`, { amountCents: 20_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    const pj = await call('admA', 'POST', `${AR}/${j.id}/payments`, { reference: 'ARC-12', amountCents: 20_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
     await prisma.receivableInvoice.update({ where: { id: j.id }, data: { status: 'void' } })
     const rv = await call('admA', 'POST', `${AR}/${j.id}/payments/${pj.json().id}/reverse`, { reason: 'bounced' })
     expect(rv.statusCode).toBe(409)
@@ -368,7 +368,7 @@ describe('credit notes', () => {
 describe('income tax the client withheld', () => {
   it('100,000 paid 96,000 + 4,000 withheld → paid; Dr bank 96,000, Dr 1330 4,000, Cr 1110 100,000', async () => {
     const i = await raise('admA', { taxCents: 0 })
-    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 96_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    const p = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-13', amountCents: 96_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
     expect(p.statusCode).toBe(201)
     const over = await call('admA', 'POST', `${AR}/${i.id}/withholding`, { amountCents: 4_001, date: today() })
     expect(over.statusCode).toBe(409)
@@ -421,7 +421,7 @@ describe('a receipt can be reversed (bounced cheque)', () => {
     expect(Number((await inv(i.id)).paidCents)).toBe(0)
 
     // Owes it again: a new receipt is accepted, and the old one is listed as reversed.
-    const again = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 30_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
+    const again = await call('admA', 'POST', `${AR}/${i.id}/payments`, { reference: 'ARC-14', amountCents: 30_000, receivedAt: today(), method: 'bank', bankAccountId: bankA1 })
     expect(again.statusCode).toBe(201)
     expect((await inv(i.id)).status).toBe('paid')
     const unknownPay = await call('admA', 'POST', `${AR}/${i.id}/payments/00000000-0000-0000-0000-000000000000/reverse`, { reason: 'nope' })

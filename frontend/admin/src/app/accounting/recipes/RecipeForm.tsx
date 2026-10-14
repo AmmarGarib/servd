@@ -6,17 +6,28 @@
 // In edit mode the parent fetches the existing recipe and passes it as
 // `initial`; the form seeds its state from that and PUTs to /recipes/:id on
 // save. In create mode no `initial` is passed and we POST to /recipes.
+//
+// Three kinds (finance wave B): a finished plate (a dish), a sub-recipe, and
+// an add-on (a menu modifier — what ONE unit of it adds, or removes).
+// Every plate has an optional Packaging section (owner's packaging rule,
+// 2026-10-13): packaging-class stock only, no order-type choice per line —
+// whether a sale uses it is decided at the sale (takeaway / delivery, a brand
+// that serves in packaging, or "Box given" on a dine-in line). The material
+// cost (MC) readout and the warnings come from the server's
+// POST /recipes/costing-preview — the same costing everything else uses.
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { RecipeTestLog, type DraftAttempt } from '../../../components/recipe/RecipeTestLog'
 import { fmtPkrWhole } from '../../../lib/money'
 import { useKitchenRole } from '../../inventory/kitchenView'
+import { PACKAGING_USED_WHEN } from './KitchenRecipe'
 
-type Kind = 'plate' | 'component'
+type Kind = 'plate' | 'component' | 'modifier'
+type LineSection = 'ingredients' | 'packaging'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
 // A finished-plate method step: what happens, and which station does it.
 interface MethodStep { station: string; instruction: string }
@@ -30,8 +41,13 @@ interface InventoryItem {
   allergens: string[]
   category: string | null
 }
-interface Concept { id: string; name: string; slug: string; forecastPortionsPerMonth: number }
+interface Concept { id: string; name: string; slug: string; forecastPortionsPerMonth: number; serviceVessel?: string }
 interface MenuItem { id: string; name: string; conceptId: string; priceCents: number }
+
+// GET /menu/:conceptId — the brand's menu tree (categories → dishes → add-on groups → add-ons).
+interface MenuTreeGroup { id: string; name: string; modifiers: Array<{ id: string; name: string }> }
+interface MenuTreeItem { id: string; name: string; modifierGroups?: MenuTreeGroup[] }
+interface MenuTreeCategory { id: string; name: string; items: MenuTreeItem[] }
 
 interface IngredientRow {
   key: string
@@ -40,6 +56,38 @@ interface IngredientRow {
   prepRecipeId: string
   quantity: number | null            // null = empty field (renders blank, not "0")
   yieldPctOverride: number | null    // UI percent 0–100; null = use the inventory default
+  section: LineSection               // a dish's Packaging section, or its ingredients
+  removes: boolean                   // add-on recipes only: takes the quantity OFF the dish (sent negative)
+}
+
+/** Packaging-class stock — the server's lib/inventoryClass.ts costClassOf (packing → packaging). */
+function isPackagingItem(i: { category: string | null } | undefined): boolean {
+  const c = (i?.category ?? '').trim().toLowerCase()
+  return c === 'packaging' || c === 'packing'
+}
+
+// ─── The server's material-cost readout (GET /recipes/:id/costing, POST /recipes/costing-preview) ──
+
+/** Per portion, whole paisa. standardCents = the plate MC (food + drinks); Q is apart, never inside an MC. */
+export interface McFields {
+  stockByClass:   { food: number; beverage: number; packaging: number }
+  packagingCents: number
+  standardCents:  number
+  qCents:         number
+  targetMcCents:  { dine_in: number; takeout: number; delivery: number }
+}
+export interface CostWarnings {
+  outsideCompany: Array<{ lineId: string; itemName: string }>
+  costedWhileUnapproved: boolean
+  noPackaging: boolean
+}
+interface PreviewResult extends McFields {
+  warnings: CostWarnings
+  /** Save-time codes: PACKAGING_MISSING, or an untouched older line that breaks today's rules. */
+  lineWarnings: string[]
+  serviceVessel: string | null
+  perPortionCents: number
+  costPerGramCents: number | null
 }
 
 // Component (sub-recipe) option for the ingredient picker. Cost-per-gram is
@@ -51,7 +99,7 @@ export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 
 // Shared status badge styling — reused by the recipe list + approvals inbox.
 export const recipeStatusMeta: Record<RecipeStatus, { label: string; color: string; bg: string }> = {
-  iteration:        { label: 'Testing',          color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.12)' },
+  iteration:        { label: 'Testing',          color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)' },
   pending_approval: { label: 'Pending approval',  color: 'var(--erp-primary-ink)', bg: 'rgb(var(--ink-rgb) / 0.15)' },
   production:       { label: 'Live',              color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.15)' },
 }
@@ -71,9 +119,11 @@ export interface RecipeFormInitial {
   methodSteps: MethodStep[] | null
   qFactorPct: number
   targetProfitPct: number
-  packagingPct: number
   actualSellingPriceCents: number | null
   brandId: string | null
+  /** kind 'modifier': the add-on, and the dish and group it hangs off (fixed once created). */
+  modifierId?: string | null
+  modifierPath?: { menuItemId: string; groupId: string; label: string } | null
   // Deferred new-menu-item details for a testing plate that hasn't opened its
   // menu item yet. Used to prefill the menu-item fields when editing.
   pendingMenuItem: { conceptId: string; categoryId: string; name: string; description: string | null } | null
@@ -83,16 +133,19 @@ export interface RecipeFormInitial {
     prepRecipeId: string | null
     quantity: number
     yieldPct: number | null
+    section?: string | null
   }>
 }
 
-const blankRow = (): IngredientRow => ({
+const blankRow = (section: LineSection = 'ingredients'): IngredientRow => ({
   key: Math.random().toString(36).slice(2),
   source: 'raw',
   inventoryItemId: '',
   prepRecipeId: '',
   quantity: null,
   yieldPctOverride: null,
+  section,
+  removes: false,
 })
 
 // Per-gram cost to 3 decimals (cents → PKR/g). Gram-scale costs are tiny, so
@@ -117,6 +170,8 @@ interface RecipeFormProps {
   // brand + category they were already looking at.
   prefillBrandId?: string
   prefillCategoryId?: string
+  // Configuration → Modifiers' "Ingredients" action: a new add-on recipe for this add-on.
+  prefillModifier?: { menuItemId: string; groupId: string; modifierId: string }
 }
 
 // The kitchen floor (boh, kitchen, expediter) reads recipes but never creates,
@@ -140,7 +195,7 @@ export function RecipeForm(props: RecipeFormProps) {
   return <RecipeFormBody {...props} />
 }
 
-function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFormProps) {
+function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillModifier }: RecipeFormProps) {
   const router = useRouter()
   const qc = useQueryClient()
   const isEdit = !!initial
@@ -160,7 +215,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
   })
 
   // ── Form state, seeded from `initial` on edit ───────────────────────────
-  const [kind, setKind]                 = useState<Kind>(initial?.kind ?? 'plate')
+  const [kind, setKind]                 = useState<Kind>(initial?.kind ?? (prefillModifier ? 'modifier' : 'plate'))
+  // Add-on recipes: the dish → add-on group → add-on chain (fixed on edit).
+  const [modMenuItemId, setModMenuItemId] = useState(initial?.modifierPath?.menuItemId ?? prefillModifier?.menuItemId ?? '')
+  const [modGroupId, setModGroupId]       = useState(initial?.modifierPath?.groupId ?? prefillModifier?.groupId ?? '')
+  const [modifierId, setModifierId]       = useState(initial?.modifierId ?? prefillModifier?.modifierId ?? '')
   const [name, setName]                 = useState(initial?.name ?? '')
   const [brandId, setBrandId]           = useState<string>(initial?.brandId ?? prefillBrandId ?? '')
   // 'new' = create a new menu item inline (default for fresh recipes);
@@ -178,11 +237,6 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
   // Finished-plate station-tagged method steps.
   const [methodSteps, setMethodSteps]   = useState<MethodStep[]>(initial?.methodSteps ?? [])
   const [qFactor, setQFactor]           = useState(initial?.qFactorPct ?? 10)
-  const [targetProfit, setTargetProfit] = useState(initial?.targetProfitPct ?? 25)
-  const [packaging, setPackaging]       = useState(initial?.packagingPct ?? 8)
-  const [actualSpPkr, setActualSpPkr]   = useState<string>(
-    initial?.actualSellingPriceCents ? String(Math.round(initial.actualSellingPriceCents / 100)) : '',
-  )
   const [ings, setIngs] = useState<IngredientRow[]>(
     initial?.ingredients.length
       ? initial.ingredients.map((i) => ({
@@ -190,7 +244,10 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
           source: i.prepRecipeId ? 'component' : 'raw',
           inventoryItemId: i.inventoryItemId ?? '',
           prepRecipeId: i.prepRecipeId ?? '',
-          quantity: i.quantity,
+          // An add-on line that removes an ingredient is stored negative.
+          quantity: Math.abs(i.quantity),
+          removes: i.quantity < 0,
+          section: i.section === 'packaging' ? 'packaging' : 'ingredients',
           // stored as a fraction (0–1) → show as a percent (0–100).
           yieldPctOverride: i.yieldPct != null ? Math.round(i.yieldPct * 100) : null,
         }))
@@ -211,16 +268,18 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
 
   const activeConcept = concepts.find((c) => c.id === brandId)
 
-  // Categories under the picked brand (for the "new menu item" mode's
-  // category dropdown). Fetched lazily when a brand is selected.
-  const { data: brandCategories = [] } = useQuery<Array<{ id: string; name: string }>>({
-    queryKey: ['recipes', 'brand-categories', brandId],
-    queryFn: async () => {
-      const cats = await api.get<Array<{ id: string; name: string; items: unknown[] }>>(`/menu/${brandId}`)
-      return cats.map((c) => ({ id: c.id, name: c.name }))
-    },
+  // The picked brand's menu tree: its categories (the "new menu item" mode's
+  // category dropdown) and its dishes' add-on groups (the add-on pickers).
+  // Fetched lazily when a brand is selected.
+  const { data: brandMenu = [] } = useQuery<MenuTreeCategory[]>({
+    queryKey: ['recipes', 'brand-menu', brandId],
+    queryFn: () => api.get<MenuTreeCategory[]>(`/menu/${brandId}`),
     enabled: !!brandId,
   })
+  const brandCategories = brandMenu.map((c) => ({ id: c.id, name: c.name }))
+  const brandDishes = brandMenu.flatMap((c) => c.items)
+  const modGroups = brandDishes.find((d) => d.id === modMenuItemId)?.modifierGroups ?? []
+  const modOptions = modGroups.find((g) => g.id === modGroupId)?.modifiers ?? []
 
   // Components (sub-recipes) available to use as ingredients. Both plates AND
   // components can pull a finished component in — e.g. a "Caramel" component
@@ -240,20 +299,24 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
   // Stations for the selected brand — used to autocomplete the "station" field
   // on finished-plate method steps (grill, assemble, expo, …). Free text still
   // works if a station isn't formally configured yet.
-  const { data: brandStations = [] } = useQuery<Array<{ id: string; name: string }>>({
+  const { data: brandStations = [] } = useQuery<Array<{ id: string; name: string }>>({  // plates only
     queryKey: ['recipes', 'stations', brandId],
     queryFn: () => api.get(`/kds/stations?conceptId=${brandId}`),
     enabled: kind === 'plate' && !!brandId,
   })
 
   // ── Live cost preview ───────────────────────────────────────────────────
+  // Per-line figures, computed here so the table answers as you type. The
+  // headline numbers (MC by class, target MC per order type, Q, warnings)
+  // come from the server's preview below — the one costing.
   const computed = useMemo(() => {
     const invById = new Map(inventory.map((i) => [i.id, i]))
     const prepById = new Map(prepOptions.map((p) => [p.id, p]))
     const rows = ings.map((row) => {
       // Component (sub-recipe) row: cost-per-gram is precomputed by the batch
       // (already yield-adjusted), so cost = cost/g × grams used. No row yield.
-      const qty = row.quantity ?? 0
+      // An add-on line that removes an ingredient takes its cost off.
+      const qty = (row.quantity ?? 0) * (row.removes ? -1 : 1)
       if (row.source === 'component') {
         const prep = prepById.get(row.prepRecipeId)
         const cpgCents  = prep?.costPerGramCents ?? 0
@@ -273,7 +336,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
       const u = inv.unit.toLowerCase()
       const isCount = (u === 'pcs' || u === 'unit' || u === 'each')
       // Yield (0–100) raises cost: to get `quantity` usable you buy quantity ÷ yield.
-      const yieldPct    = (row.yieldPctOverride ?? inv.yieldPct) || 100
+      // Packaging is used whole (saved at yield 1).
+      const yieldPct    = row.section === 'packaging' ? 100 : ((row.yieldPctOverride ?? inv.yieldPct) || 100)
       const yieldFactor = Math.max(yieldPct / 100, 0.01)
       // For count items, "cpg" is really cost-per-unit; for weighed items it's per gram.
       const cpgCents    = isCount ? (inv.unitCostCents ?? 0) : invCostPerGramCents(inv)
@@ -285,39 +349,21 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
         allergens: inv.allergens,
       }
     })
-    const totalIngredient = rows.reduce((s, r) => s + r.costCents, 0)
+    const inDish = rows.filter((r) => r.section !== 'packaging')
+    const totalIngredient = inDish.reduce((s, r) => s + r.costCents, 0)
+    const packagingTotal  = rows.reduce((s, r) => s + (r.section === 'packaging' ? r.costCents : 0), 0)
+    // The Q factor is a pricing allowance on the dish's ingredients (never
+    // its packaging) — the server's rule.
     const qFactorCents    = Math.round(totalIngredient * (qFactor / 100))
     const totalRecipe     = totalIngredient + qFactorCents
-    const plateCost       = Math.round(totalRecipe / Math.max(portions ?? 1, 1))
-    // Recipe weight = sum of gram-based recipe quantities (count items excluded).
-    const recipeWeightG   = rows.reduce((s, r) => s + (r.isCount ? 0 : (r.quantity ?? 0)), 0)
+    const plateCost       = Math.round(totalIngredient / Math.max(portions ?? 1, 1))
+    // Recipe weight = sum of gram-based ingredient quantities (count items and packaging excluded).
+    const recipeWeightG   = inDish.reduce((s, r) => s + (r.isCount ? 0 : (r.quantity ?? 0) * (r.removes ? -1 : 1)), 0)
     const portionSizeG    = recipeWeightG / Math.max(portions ?? 1, 1)
-    const opexPerPortion  = 0   // live-on-save (server computes from OpexLine)
 
-    const packagingFactor = packaging / 100
-    const targetFactor    = targetProfit / 100
-    const foodCostPrice   = Math.round(plateCost / 0.30)
-    const breakEven       = Math.round((plateCost + opexPerPortion) / Math.max(0.01, 1 - packagingFactor))
-    const target          = Math.round((plateCost + opexPerPortion) / Math.max(0.01, 1 - packagingFactor - targetFactor))
-    const actualSp        = actualSpPkr.trim() ? Math.round(parseFloat(actualSpPkr) * 100) : target
-
-    const packagingCost   = Math.round(actualSp * packagingFactor)
-    const contribMargin   = actualSp - plateCost - packagingCost
-    const contribMarginPct = actualSp > 0 ? (contribMargin / actualSp) * 100 : 0
-    const netProfit       = contribMargin - opexPerPortion
-    const netProfitPct    = actualSp > 0 ? (netProfit / actualSp) * 100 : 0
-    const foodCostPctOfSp = actualSp > 0 ? (plateCost / actualSp) * 100 : 0
-    const verdict: 'profitable' | 'covers_food_loses_opex' | 'loses_every_plate' =
-      netProfit > 0     ? 'profitable' :
-      contribMargin > 0 ? 'covers_food_loses_opex' : 'loses_every_plate'
-
-    return { rows, totalIngredient, qFactorCents, totalRecipe, plateCost,
-             recipeWeightG, portionSizeG,
-             opexPerPortion, forecastPortions: activeConcept?.forecastPortionsPerMonth ?? 0,
-             foodCostPrice, breakEven, target, actualSp,
-             packagingCost, contribMargin, contribMarginPct,
-             netProfit, netProfitPct, foodCostPctOfSp, verdict }
-  }, [ings, inventory, prepOptions, qFactor, portions, packaging, targetProfit, actualSpPkr, activeConcept])
+    return { rows, totalIngredient, packagingTotal, qFactorCents, totalRecipe, plateCost,
+             recipeWeightG, portionSizeG }
+  }, [ings, inventory, prepOptions, qFactor, portions])
 
   const allAllergens = useMemo(() => {
     const set = new Set<string>()
@@ -325,13 +371,60 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
     return Array.from(set).sort()
   }, [computed.rows])
 
-  // Resolve the actual selling price the operator wants saved. If they
-  // didn't override, fall back to the live-computed target — the backend
-  // mirrors this into MenuItem.priceCents so the menu price auto-fills
-  // from the recipe spec.
-  const resolvedActualSpCents = actualSpPkr.trim()
-    ? Math.round(parseFloat(actualSpPkr) * 100)
-    : computed.target
+  // The lines as the API takes them (save and the live preview). A row with
+  // nothing picked or no quantity is not a line.
+  const linesPayload = ings
+    // Only a dish has a Packaging section (rows left there by a kind switch are dropped).
+    .filter((r) => kind === 'plate' || r.section !== 'packaging')
+    .filter((r) => (r.quantity ?? 0) > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
+    .map((r) => {
+      const quantity = (r.quantity ?? 0) * (kind === 'modifier' && r.removes ? -1 : 1)
+      if (r.source === 'component') {
+        // Components are consumed by the gram and already yield-adjusted.
+        return { prepRecipeId: r.prepRecipeId, quantity, unit: 'g', yieldPct: 1, section: 'ingredients' as const }
+      }
+      const inv = inventory.find((i) => i.id === r.inventoryItemId)
+      // Persist yield as a fraction (0.01–1.0) per the schema; UI holds a percent.
+      const yieldFraction = r.section === 'packaging'
+        ? 1
+        : Math.min(1, Math.max(0.01, ((r.yieldPctOverride ?? inv?.yieldPct ?? 100)) / 100))
+      return {
+        inventoryItemId: r.inventoryItemId,
+        quantity,
+        unit:            inv?.unit ?? 'g',
+        yieldPct:        yieldFraction,
+        section:         kind === 'plate' ? r.section : 'ingredients' as const,
+      }
+    })
+
+  // ── Server preview: MC by class, target MC per order type, warnings ─────
+  // Debounced: the server costs the draft 400 ms after the last keystroke.
+  const previewKey = JSON.stringify({
+    kind,
+    ...(isEdit ? { recipeId: initial!.id } : {}),
+    ...(kind === 'plate' && brandId ? { conceptId: brandId } : {}),
+    ...(kind === 'modifier' && !isEdit && modifierId ? { modifierId } : {}),
+    servings: Math.max(1, Math.round(portions ?? 1)),
+    yieldGrams: yieldGrams && yieldGrams > 0 ? yieldGrams : null,
+    qFactorPct: Math.min(100, Math.max(0, qFactor)),
+    ingredients: linesPayload.map(({ unit: _unit, ...l }) => l),
+  })
+  const [debouncedKey, setDebouncedKey] = useState(previewKey)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedKey(previewKey), 400)
+    return () => clearTimeout(t)
+  }, [previewKey])
+  const preview = useQuery<PreviewResult>({
+    queryKey: ['recipes', 'costing-preview', debouncedKey],
+    queryFn: () => api.post<PreviewResult>('/recipes/costing-preview', JSON.parse(debouncedKey)),
+    // An add-on is costed for its company: wait for the add-on to be picked.
+    enabled: linesPayload.length > 0 && (kind !== 'modifier' || isEdit || !!modifierId),
+    placeholderData: keepPreviousData,
+    retry: false,
+    // The 422s (a line that breaks the rules) show in the form, not as a toast.
+    meta: { inlineErrors: true },
+  })
+  const previewError = preview.error instanceof Error ? preview.error.message : null
 
   // ── Save (POST on create, PUT on edit) ─────────────────────────────────
   const save = useMutation({
@@ -339,8 +432,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
       const payload = {
         ...(isEdit ? {} : { kind }),
         // Plate recipes always create their own menu item, deferred until the
-        // recipe is approved to production. Non-plate recipes carry their own
-        // name + yield. On edit we don't touch the menu linkage.
+        // recipe is approved to production. Sub-recipes carry their own name +
+        // yield; an add-on recipe names its add-on (its name comes from it).
+        // On edit we don't touch the menu or add-on linkage.
         ...(kind === 'plate'
           ? (isEdit ? {} : {
               newMenuItem: {
@@ -350,42 +444,29 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                 description: newItemDescription.trim() || null,
               },
             })
+          : kind === 'modifier'
+          ? (isEdit ? {} : { modifierId })
           : { name: name.trim() }),
         // Total recipe yield in grams — batch yield for components, total cooked
-        // weight for plates. Optional for plates, required (>0) for components.
-        yieldGrams: yieldGrams ?? (kind === 'component' ? 0 : null),
-        servings: portions ?? 1,
+        // weight for plates. Optional for plates, required (>0) for components,
+        // none for an add-on (costed per unit).
+        yieldGrams: kind === 'modifier' ? null : (yieldGrams ?? (kind === 'component' ? 0 : null)),
+        servings: kind === 'modifier' ? 1 : (portions ?? 1),
         // Recipe-type tag is derived from the picker (no duplicate field): a
         // finished plate is a "main"; a sub-recipe is a "sub_recipe".
-        category: kind === 'plate' ? (initial?.category ?? 'main') : 'sub_recipe',
-        // Sub-recipes carry a free-text MOP in `steps`; finished plates carry an
-        // ordered, station-tagged step list in `methodSteps`.
-        steps: kind === 'component' ? (method.trim() || null) : null,
+        category: kind === 'plate' ? (initial?.category ?? 'main') : kind === 'component' ? 'sub_recipe' : null,
+        // Sub-recipes and add-ons carry a free-text MOP in `steps`; finished
+        // plates carry an ordered, station-tagged step list in `methodSteps`.
+        steps: kind !== 'plate' ? (method.trim() || null) : null,
         methodSteps: kind === 'plate'
           ? methodSteps.map((s) => ({ station: s.station.trim(), instruction: s.instruction.trim() }))
                        .filter((s) => s.instruction)
           : null,
         qFactorPct: qFactor,
-        // Pricing (selling price, target profit, packaging) is intentionally NOT
-        // sent from the recipe form — recipes are pure cost. The Menu Engineering
+        // Pricing (selling price, target profit) is intentionally NOT sent
+        // from the recipe form — recipes are pure cost. The Menu Engineering
         // page owns the selling price and writes it via its own PUT.
-        ingredients: ings
-          .filter((r) => (r.quantity ?? 0) > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
-          .map((r) => {
-            if (r.source === 'component') {
-              // Components are consumed by the gram and already yield-adjusted.
-              return { prepRecipeId: r.prepRecipeId, quantity: r.quantity ?? 0, unit: 'g', yieldPct: 1 }
-            }
-            const inv = inventory.find((i) => i.id === r.inventoryItemId)
-            // Persist yield as a fraction (0.01–1.0) per the schema; UI holds a percent.
-            const yieldFraction = Math.min(1, Math.max(0.01, ((r.yieldPctOverride ?? inv?.yieldPct ?? 100)) / 100))
-            return {
-              inventoryItemId: r.inventoryItemId,
-              quantity:        r.quantity ?? 0,
-              unit:            inv?.unit ?? 'g',
-              yieldPct:        yieldFraction,
-            }
-          }),
+        ingredients: linesPayload,
       }
       if (isEdit) return api.put(`/recipes/${initial!.id}`, payload)
       // Create, then persist any test attempts logged before the recipe had an
@@ -426,12 +507,128 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
     // new plate recipe — an existing plate's item is already set and read-only).
     if (kind === 'plate' && !isEdit && !newItemName.trim()) return setErr('Name the menu item.')
     if (kind === 'plate' && !isEdit && !newItemCategoryId) return setErr('Pick a menu category for the item.')
-    if (kind !== 'plate' && !name.trim()) return setErr('Give the recipe a name.')
-    if (kind !== 'plate' && (yieldGrams ?? 0) <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
-    const hasIngredient = computed.rows.some((r) =>
-      (r.quantity ?? 0) > 0 && (r.source === 'component' ? !!r.prepRecipeId : !!r.inventoryItemId))
-    if (!hasIngredient) return setErr('Add at least one ingredient with quantity > 0.')
+    if (kind === 'modifier' && !isEdit && !modifierId) return setErr('Pick the dish, the add-on group and the add-on this recipe is for.')
+    if (kind === 'component' && !name.trim()) return setErr('Give the recipe a name.')
+    if (kind === 'component' && (yieldGrams ?? 0) <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
+    if (linesPayload.length === 0) return setErr('Add at least one ingredient with quantity > 0.')
     save.mutate()
+  }
+
+  // One table per section (a render function, not a component, so inputs keep
+  // focus while typing). Ingredients: raw stock that is NOT packaging, or a
+  // sub-recipe; an add-on line may remove (sent negative). Packaging:
+  // packaging-class stock only — the server refuses anything else (422).
+  const updateRow = (key: string, patch: Partial<IngredientRow>) =>
+    setIngs((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  const lineTable = (section: LineSection) => {
+    const indexed = ings.map((row, i) => ({ row, cr: computed.rows[i]! })).filter(({ row }) => row.section === section)
+    const isPack = section === 'packaging'
+    const pickable = inventory.filter((it) => isPackagingItem(it) === isPack)
+    if (isPack && indexed.length === 0) {
+      return <p className="text-[11px] text-s-dim">No packaging on this dish. A dish served only on a plate needs none.</p>
+    }
+    return (
+      <div className="overflow-x-auto rounded-lg border border-s-border">
+        <table className="w-full text-xs">
+          <thead className="text-s-muted">
+            <tr className="border-b border-s-border">
+              <th className="text-left  px-2 py-2 font-bold">{isPack ? 'Packaging item' : 'Ingredient'}</th>
+              {kind === 'modifier' && <th className="text-left px-2 py-2 font-bold">Adds / removes</th>}
+              {!isPack && <th className="text-right px-2 py-2 font-bold">Yield %</th>}
+              <th className="text-right px-2 py-2 font-bold">{isPack ? 'Cost / unit' : 'Cost / g'}</th>
+              <th className="text-right px-2 py-2 font-bold">{isPack ? 'Qty' : 'Recipe qty (g)'}</th>
+              {!isPack && <th className="text-right px-2 py-2 font-bold">Raw used (g)</th>}
+              <th className="text-right px-2 py-2 font-bold">Recipe cost</th>
+              <th className="text-right px-2 py-2 font-bold">Portion cost</th>
+              <th className="w-8"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {indexed.map(({ row, cr }) => {
+              const isComp = row.source === 'component'
+              // An older line whose item is no longer in the right list stays visible.
+              const options = row.inventoryItemId && !pickable.some((it) => it.id === row.inventoryItemId)
+                ? [...pickable, ...inventory.filter((it) => it.id === row.inventoryItemId)]
+                : pickable
+              return (
+                <tr key={row.key} className="border-t border-s-border">
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1">
+                      {/* Raw vs Component source (ingredients only). Both plates
+                          and components can pull in a finished component. */}
+                      {!isPack && (
+                        <select value={row.source}
+                          onChange={(e) => updateRow(row.key, { source: e.target.value as 'raw' | 'component', inventoryItemId: '', prepRecipeId: '' })}
+                          className={inputCls + ' w-[5.5rem]'} title="Raw inventory item, or a finished component sub-recipe">
+                          <option value="raw">Raw</option>
+                          <option value="component">Component</option>
+                        </select>
+                      )}
+                      {isComp ? (
+                        <select value={row.prepRecipeId}
+                          onChange={(e) => updateRow(row.key, { prepRecipeId: e.target.value })}
+                          className={inputCls + ' min-w-[150px]'}>
+                          <option value="">— Pick component —</option>
+                          {availablePreps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      ) : (
+                        <select value={row.inventoryItemId}
+                          onChange={(e) => updateRow(row.key, { inventoryItemId: e.target.value })}
+                          className={inputCls + ' min-w-[150px]'}>
+                          <option value="">{isPack ? '— Pick packaging —' : '— Pick ingredient —'}</option>
+                          {options.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                        </select>
+                      )}
+                    </div>
+                  </td>
+                  {kind === 'modifier' && (
+                    <td className="px-2 py-1.5">
+                      <select value={row.removes ? 'removes' : 'adds'}
+                        onChange={(e) => updateRow(row.key, { removes: e.target.value === 'removes' })}
+                        className={inputCls + ' w-[6.5rem]'}>
+                        <option value="adds">Adds</option>
+                        <option value="removes">Removes</option>
+                      </select>
+                    </td>
+                  )}
+                  {!isPack && (
+                    <td className="px-2 py-1.5 text-right">
+                      {isComp ? <span className="text-s-dim">n/a</span> : (
+                        <NumInput value={row.yieldPctOverride}
+                          placeholder={String(cr.inv?.yieldPct ?? 100)}
+                          onChange={(v) => updateRow(row.key, { yieldPctOverride: v })}
+                          className={inputCls + ' w-16 text-right'}/>
+                      )}
+                    </td>
+                  )}
+                  <td className="px-2 py-1.5 text-right font-mono text-s-muted">
+                    {cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <NumInput value={row.quantity} placeholder="0"
+                      onChange={(v) => updateRow(row.key, { quantity: v })}
+                      className={inputCls + ' w-20 text-right'}/>
+                  </td>
+                  {!isPack && (
+                    <td className="px-2 py-1.5 text-right font-mono text-s-dim">
+                      {cr.rawUsedG ? cr.rawUsedG.toLocaleString('en', { maximumFractionDigits: 0 }) : '—'}
+                    </td>
+                  )}
+                  <td className="px-2 py-1.5 text-right font-mono font-bold">{fmtPkrWhole(cr.costCents)}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-s-muted">{fmtPkrWhole(cr.portionCostCents)}</td>
+                  <td className="px-2 py-1.5">
+                    <button onClick={() => setIngs(ings.filter((r) => r.key !== row.key))}
+                      disabled={!isPack && indexed.length === 1}
+                      aria-label="Remove line"
+                      className="text-s-red hover:bg-s-red/10 rounded px-2 disabled:opacity-30">×</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
   }
 
   return (
@@ -455,10 +652,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
           {/* Type picker */}
           <section className="rounded-xl border border-s-border bg-s-surface p-4">
             <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-2">Recipe type</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {([
                 { v: 'plate' as Kind,     label: 'Finished plate', hint: 'Menu Item' },
                 { v: 'component' as Kind, label: 'Sub recipe',      hint: 'prep recipe or component recipe' },
+                { v: 'modifier' as Kind,  label: 'Add-on',          hint: 'what one add-on adds or removes' },
               ]).map((t) => (
                 <button key={t.v} type="button" disabled={isEdit}
                   onClick={() => setKind(t.v)}
@@ -509,8 +707,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
           <Section title="1 · Recipe header">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Brand always first — it scopes everything below. */}
-              <Field label="Brand *">
-                <select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) { setMenuItemId(''); setNewItemCategoryId('') } }} className={inputCls} disabled={isEdit}>
+              <Field label="Brand *" hint={kind === 'plate' && activeConcept?.serviceVessel === 'packaging' ? 'This brand serves in packaging — every order uses the dish\'s Packaging section.' : undefined}>
+                <select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) { setMenuItemId(''); setNewItemCategoryId(''); setModMenuItemId(''); setModGroupId(''); setModifierId('') } }} className={inputCls} disabled={isEdit}>
                   <option value="">— Pick brand —</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -529,10 +727,43 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                       placeholder="e.g. Chimi Shimi" className={inputCls}/>
                   </Field>
                 )
+              ) : kind === 'modifier' ? (
+                (isEdit && initial?.modifierPath) ? (
+                  <Field label="Add-on">
+                    <input value={initial.modifierPath.label} disabled className={inputCls}/>
+                  </Field>
+                ) : (
+                  <Field label="Dish *" hint={brandId ? 'The menu item the add-on belongs to' : 'Pick a brand first'}>
+                    <select value={modMenuItemId} disabled={!brandId}
+                      onChange={(e) => { setModMenuItemId(e.target.value); setModGroupId(''); setModifierId('') }} className={inputCls}>
+                      <option value="">{brandId ? '— Pick dish —' : '— Pick brand first —'}</option>
+                      {brandDishes.filter((d) => (d.modifierGroups ?? []).length > 0).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                  </Field>
+                )
               ) : (
                 <Field label="Recipe name *">
                   <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Burger sauce" className={inputCls}/>
                 </Field>
+              )}
+
+              {/* New add-on recipe: the group, then the add-on itself. */}
+              {kind === 'modifier' && !isEdit && (
+                <>
+                  <Field label="Add-on group *">
+                    <select value={modGroupId} disabled={!modMenuItemId}
+                      onChange={(e) => { setModGroupId(e.target.value); setModifierId('') }} className={inputCls}>
+                      <option value="">{modMenuItemId ? '— Pick group —' : '— Pick dish first —'}</option>
+                      {modGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Add-on *" hint="One recipe per add-on: what one of it adds to the dish, or takes off it">
+                    <select value={modifierId} disabled={!modGroupId} onChange={(e) => setModifierId(e.target.value)} className={inputCls}>
+                      <option value="">{modGroupId ? '— Pick add-on —' : '— Pick group first —'}</option>
+                      {modOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </Field>
+                </>
               )}
 
               {/* New plate only: description + category for the menu item it'll open */}
@@ -562,116 +793,19 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                     <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 1200" className={inputCls}/>
                   </Field>
                 </>
-              ) : (
+              ) : kind === 'component' ? (
                 <Field label="Batch yield (grams)">
                   <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 500" className={inputCls}/>
                 </Field>
-              )}
+              ) : null}
             </div>
           </Section>
 
           {/* Section 2 — Ingredients + costing */}
-          <Section title="2 · Ingredients & costing" subtitle="Raw items pull cost from the latest PO; components (sub-recipes) pull their cost-per-gram. Yield raises cost — to get the recipe qty you buy qty ÷ yield.">
-            <div className="overflow-x-auto rounded-lg border border-s-border">
-              <table className="w-full text-xs">
-                <thead className="text-s-muted">
-                  <tr className="border-b border-s-border">
-                    <th className="text-left  px-2 py-2 font-bold">Ingredient</th>
-                    <th className="text-right px-2 py-2 font-bold">Yield %</th>
-                    <th className="text-right px-2 py-2 font-bold">Cost / g</th>
-                    <th className="text-right px-2 py-2 font-bold">Recipe qty (g)</th>
-                    <th className="text-right px-2 py-2 font-bold">Raw used (g)</th>
-                    <th className="text-right px-2 py-2 font-bold">Recipe cost</th>
-                    <th className="text-right px-2 py-2 font-bold">Portion cost</th>
-                    <th className="w-8"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ings.map((row, i) => {
-                    const cr = computed.rows[i]!
-                    const isComp = row.source === 'component'
-                    return (
-                      <tr key={row.key} className="border-t border-s-border">
-                        <td className="px-2 py-1.5">
-                          <div className="flex items-center gap-1">
-                            {/* Raw vs Component source. Both plates and components
-                                can pull in a finished component sub-recipe. */}
-                            <select value={row.source}
-                              onChange={(e) => {
-                                const src = e.target.value as 'raw' | 'component'
-                                const next = [...ings]
-                                next[i] = { ...next[i]!, source: src, inventoryItemId: '', prepRecipeId: '' }
-                                setIngs(next)
-                              }}
-                              className={inputCls + ' w-[5.5rem]'} title="Raw inventory item, or a finished component sub-recipe">
-                              <option value="raw">Raw</option>
-                              <option value="component">Component</option>
-                            </select>
-                            {isComp ? (
-                              <select value={row.prepRecipeId}
-                                onChange={(e) => {
-                                  const next = [...ings]
-                                  next[i] = { ...next[i]!, prepRecipeId: e.target.value }
-                                  setIngs(next)
-                                }}
-                                className={inputCls + ' min-w-[150px]'}>
-                                <option value="">— Pick component —</option>
-                                {availablePreps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                              </select>
-                            ) : (
-                              <select value={row.inventoryItemId}
-                                onChange={(e) => {
-                                  const next = [...ings]
-                                  next[i] = { ...next[i]!, inventoryItemId: e.target.value }
-                                  setIngs(next)
-                                }}
-                                className={inputCls + ' min-w-[150px]'}>
-                                <option value="">— Pick ingredient —</option>
-                                {inventory.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-                              </select>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-2 py-1.5 text-right">
-                          {isComp ? <span className="text-s-dim">n/a</span> : (
-                            <NumInput value={row.yieldPctOverride}
-                              placeholder={String(cr.inv?.yieldPct ?? 100)}
-                              onChange={(v) => {
-                                const next = [...ings]
-                                next[i] = { ...next[i]!, yieldPctOverride: v }
-                                setIngs(next)
-                              }}
-                              className={inputCls + ' w-16 text-right'}/>
-                          )}
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">
-                          {cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
-                        </td>
-                        <td className="px-2 py-1.5 text-right">
-                          <NumInput value={row.quantity} placeholder="0"
-                            onChange={(v) => {
-                              const next = [...ings]
-                              next[i] = { ...next[i]!, quantity: v }
-                              setIngs(next)
-                            }}
-                            className={inputCls + ' w-20 text-right'}/>
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-mono text-s-dim">
-                          {cr.rawUsedG ? cr.rawUsedG.toLocaleString('en', { maximumFractionDigits: 0 }) : '—'}
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-mono font-bold">{fmtPkrWhole(cr.costCents)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">{fmtPkrWhole(cr.portionCostCents)}</td>
-                        <td className="px-2 py-1.5">
-                          <button onClick={() => setIngs(ings.filter((_, j) => j !== i))}
-                            disabled={ings.length === 1}
-                            className="text-s-red hover:bg-red-400/10 rounded px-2 disabled:opacity-30">×</button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <Section title="2 · Ingredients & costing" subtitle={kind === 'modifier'
+            ? 'What ONE of this add-on adds to the dish — or takes off it (pick "Removes", e.g. "No onion"). Costed per add-on.'
+            : 'Raw items pull cost from the latest PO; components (sub-recipes) pull their cost-per-gram. Yield raises cost — to get the recipe qty you buy qty ÷ yield.'}>
+            {lineTable('ingredients')}
             <button onClick={() => setIngs([...ings, blankRow()])}
               className="mt-2 text-xs text-primary-ink hover:underline font-bold">+ Add ingredient</button>
 
@@ -690,29 +824,48 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
                 <p className="font-mono font-bold text-s-text">{fmtPkrWhole(computed.totalRecipe)}</p>
               </div>
             </div>
-            {/* Q factor is a COST input (waste buffer) so it stays on the recipe.
-                Pricing inputs (target profit, packaging) live in Menu Engineering. */}
-            <div className="mt-3 grid grid-cols-3 gap-3">
-              <Field label="Q factor %" hint="Waste buffer on total">
-                <NumInput value={qFactor} onChange={(v) => setQFactor(v ?? 0)} placeholder="10" className={inputCls}/>
-              </Field>
+            {/* The Q factor is the ONE pricing allowance (plate wear, garnish,
+                oil): it goes into menu pricing, never into stock or the books.
+                Target profit and the selling price live in Menu Engineering. */}
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <Field label="Q factor — pricing allowance (plate wear, garnish, oil); not stock" hint="% of the ingredients (never the packaging). Used in menu pricing only.">
+                  <NumInput value={qFactor} onChange={(v) => setQFactor(v ?? 0)} placeholder="10" className={inputCls}/>
+                </Field>
+              </div>
             </div>
             {allAllergens.length > 0 && (
               <div className="mt-3 text-[11px] text-s-muted">
                 Allergens (auto): {allAllergens.map((a) => (
                   <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
-                    style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--erp-warning)' }}>{a}</span>
+                    style={{ background: 'color-mix(in srgb, var(--erp-warning) 15%, transparent)', color: 'var(--erp-warning)' }}>{a}</span>
                 ))}
               </div>
             )}
           </Section>
 
+          {/* Packaging — every dish has one (optional), whatever the brand. */}
+          {kind === 'plate' && (
+            <Section title="Packaging" subtitle={PACKAGING_USED_WHEN}>
+              {lineTable('packaging')}
+              <button onClick={() => setIngs([...ings, blankRow('packaging')])}
+                className="mt-2 text-xs text-primary-ink hover:underline font-bold">+ Add packaging</button>
+              {computed.packagingTotal !== 0 && (
+                <p className="mt-2 text-[11px] text-s-muted">
+                  Packaging per portion: <span className="font-mono font-bold text-s-text">{fmtPkrWhole(Math.round(computed.packagingTotal / Math.max(portions ?? 1, 1)))}</span>
+                </p>
+              )}
+            </Section>
+          )}
+
           {/* Section 3 — Method (its own section, below costing) */}
           <Section title="3 · Method"
             subtitle={kind === 'plate'
               ? 'Step-by-step, tagged by station. Read top-to-bottom — e.g. Grill cooks the protein → Assemble builds the bowl → Expo checks it and hands off.'
+              : kind === 'modifier'
+              ? 'How the kitchen adds (or leaves out) this add-on — optional.'
               : 'General method of preparation (MOP) for this sub-recipe.'}>
-            {kind === 'component' ? (
+            {kind !== 'plate' ? (
               <textarea value={method} onChange={(e) => setMethod(e.target.value)} rows={5}
                 placeholder="e.g. Blend garlic, lemon and olive oil; season; rest 30 min…"
                 className={inputCls + ' min-h-[120px]'}/>
@@ -767,15 +920,19 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId }: RecipeFo
 
         {/* Cost panel (right) */}
         <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
-          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} />
-          <div className="rounded-xl border border-s-border bg-s-surface p-4 text-[11px] text-s-muted">
+          <CostWarningBanners warnings={preview.data?.warnings} lineWarnings={preview.data?.lineWarnings} brandName={activeConcept?.name} />
+          {previewError && (
+            <div className="rounded-xl border p-3 text-xs" style={dangerBox}>{previewError}</div>
+          )}
+          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} mc={preview.data ?? null} loading={preview.isFetching} />
+          {kind === 'plate' && <div className="rounded-xl border border-s-border bg-s-surface p-4 text-[11px] text-s-muted">
             <strong className="text-s-text">Heads-up:</strong> Live Opex/Portion isn't shown until save.
             The backend reads current OpexLine entries for {activeConcept?.name ?? 'your brand'} and divides by{' '}
             <strong className="text-s-text">forecast portions/month</strong> ({activeConcept?.forecastPortionsPerMonth ?? '—'}).
             Set that on the brand in <Link href="/settings" className="text-primary-ink hover:underline">Tenants &amp; Brands</Link>.
-          </div>
+          </div>}
           {err && (
-            <div className="rounded-xl border border-red-500/40 bg-s-red/10 p-3 text-xs text-s-red">{err}</div>
+            <div className="rounded-xl border p-3 text-xs" style={dangerBox}>{err}</div>
           )}
           <div className="flex gap-2">
             <button onClick={() => router.push('/accounting/recipes')}
@@ -817,20 +974,116 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 interface ComputedShape {
-  totalIngredient: number; qFactorCents: number; totalRecipe: number; plateCost: number
+  totalIngredient: number; packagingTotal: number; qFactorCents: number; totalRecipe: number; plateCost: number
   recipeWeightG: number; portionSizeG: number
-  opexPerPortion: number; forecastPortions: number
-  foodCostPrice: number; breakEven: number; target: number; actualSp: number
-  packagingCost: number; contribMargin: number; contribMarginPct: number
-  netProfit: number; netProfitPct: number; foodCostPctOfSp: number
-  verdict: 'profitable' | 'covers_food_loses_opex' | 'loses_every_plate'
 }
+
+// Banner styles from the tokens: red = something is wrong, amber = a warning
+// that never blocks (Approve stays enabled).
+const dangerBox: React.CSSProperties = {
+  color: 'var(--erp-danger)',
+  background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)',
+  borderColor: 'color-mix(in srgb, var(--erp-danger) 35%, transparent)',
+}
+const warnBox: React.CSSProperties = {
+  color: 'var(--erp-warning)',
+  background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)',
+  borderColor: 'color-mix(in srgb, var(--erp-warning) 35%, transparent)',
+}
+
+/** Older lines that break today's rules — they still save (only new or changed lines are refused). */
+const LEGACY_LINE_TEXT: Record<string, string> = {
+  PACKAGING_ON_PLATES_ONLY: 'A packaging item sits in this sub-recipe or add-on from before. Packaging belongs in a dish\'s Packaging section — move it when you can.',
+  PACKAGING_SECTION_ONLY: 'A packaging item sits under Ingredients from before — move it to the Packaging section.',
+  NOT_PACKAGING: 'A line under Packaging is not a packaging item — move it to Ingredients.',
+  ITEM_NOT_IN_COMPANY: 'A line uses another company\'s stock — replace it with this company\'s own item.',
+  ITEM_HAS_NO_COMPANY: 'A line uses stock that belongs to no company — a sale never takes it. Replace it with this company\'s own item.',
+}
+
+/**
+ * The recipe's warnings as banners: stock of another company and a live dish
+ * costed while unapproved are RED; no packaging at a brand that serves in
+ * packaging is AMBER and never blocks saving or approval.
+ */
+export function CostWarningBanners({ warnings, lineWarnings, brandName }: {
+  warnings?: CostWarnings | null
+  lineWarnings?: string[] | null
+  brandName?: string | null
+}) {
+  const legacy = (lineWarnings ?? []).filter((c) => c in LEGACY_LINE_TEXT && !(c === 'ITEM_NOT_IN_COMPANY' && warnings?.outsideCompany.length))
+  if (!warnings && legacy.length === 0) return null
+  return (
+    <div className="space-y-2">
+      {!!warnings?.outsideCompany.length && (
+        <div className="rounded-xl border p-3 text-xs" style={dangerBox}>
+          <strong>Stock of another company:</strong> {warnings.outsideCompany.map((o) => o.itemName).join(', ')}.
+          {' '}A sale never takes it, so this cost is wrong — replace it with this company&apos;s own item.
+        </div>
+      )}
+      {warnings?.costedWhileUnapproved && (
+        <div className="rounded-xl border p-3 text-xs" style={dangerBox}>
+          <strong>On sale, not approved:</strong> this dish is on the menu and every sale is costed and taken from stock with this recipe, but the recipe is not approved yet. Submit it for approval.
+        </div>
+      )}
+      {warnings?.noPackaging && (
+        <div className="rounded-xl border p-3 text-xs" style={warnBox}>
+          <strong>No packaging:</strong> {brandName ?? 'This brand'} serves in packaging — add the vessel to the Packaging section. You can still save and approve.
+        </div>
+      )}
+      {legacy.map((c) => (
+        <div key={c} className="rounded-xl border p-3 text-xs" style={warnBox}>{LEGACY_LINE_TEXT[c]}</div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Material cost per portion: Food / Drinks / Packaging, the plate MC (food +
+ * drinks), the target MC per order type, and the Q allowance on its own line
+ * (in menu pricing, not stock). Used by the form's live panel and the
+ * recipe page's "as saved" card.
+ */
+export function McBreakdown({ mc, kind }: { mc: McFields; kind: Kind }) {
+  if (kind === 'modifier') {
+    return (
+      <div>
+        <Line label="Food" value={fmtPkrWhole(mc.stockByClass.food)} />
+        <Line label="Drinks" value={fmtPkrWhole(mc.stockByClass.beverage)} dim />
+        <Line label="Cost of one add-on" value={fmtPkrWhole(mc.standardCents)} bold highlight highlightColor="var(--erp-success)" />
+        <Line label="Q allowance — in menu pricing, not stock" value={fmtPkrWhole(mc.qCents)} dim />
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Per portion</p>
+        <Line label="Food" value={fmtPkrWhole(mc.stockByClass.food)} />
+        <Line label="Drinks" value={fmtPkrWhole(mc.stockByClass.beverage)} />
+        <Line label="Plate MC (food + drinks)" value={fmtPkrWhole(mc.standardCents)} bold />
+        <Line label="Packaging" value={fmtPkrWhole(mc.packagingCents)} dim />
+        <Line label="Q allowance — in menu pricing, not stock" value={fmtPkrWhole(mc.qCents)} dim />
+      </div>
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Target MC by order type</p>
+        <Line label="Dine-in" value={fmtPkrWhole(mc.targetMcCents.dine_in)} highlight highlightColor="var(--erp-success)" />
+        <Line label="Takeaway" value={fmtPkrWhole(mc.targetMcCents.takeout)} highlight highlightColor="var(--erp-success)" />
+        <Line label="Delivery" value={fmtPkrWhole(mc.targetMcCents.delivery)} highlight highlightColor="var(--erp-success)" />
+        <p className="text-[10px] text-s-dim mt-1">Food + drinks + the packaging where that order type uses it. A dine-in box handed over (Box given) shows in actual cost, not here.</p>
+      </div>
+    </div>
+  )
+}
+
 // Pure cost — no pricing here. Recipes carry cost only; selling price,
 // contribution margin and profitability live on the Menu Engineering page.
-function CostPanel({ computed, kind, yieldGrams }: {
+function CostPanel({ computed, kind, yieldGrams, mc, loading }: {
   computed: ComputedShape
   kind: Kind
   yieldGrams: number | null
+  /** The server's preview of this draft (null until it answers). */
+  mc: McFields | null
+  loading: boolean
 }) {
   const v = computed
 
@@ -863,18 +1116,21 @@ function CostPanel({ computed, kind, yieldGrams }: {
   return (
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
       <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)' }}>
-        <p className="text-[10px] uppercase tracking-wider text-s-muted">Recipe cost</p>
-        <p className="text-base font-black mt-0.5" style={{ color: 'var(--erp-success)' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
+        <p className="text-[10px] uppercase tracking-wider text-s-muted">{kind === 'modifier' ? 'Add-on cost' : 'Material cost (MC)'}</p>
+        <p className="text-base font-black mt-0.5" style={{ color: 'var(--erp-success)' }}>
+          {fmtPkrWhole(mc ? mc.standardCents : v.plateCost)} {kind === 'modifier' ? '/ add-on' : '/ plate'}
+        </p>
       </header>
 
       <div className="p-4 space-y-3">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Cost build-up</p>
-          <Line label="Total ingredient" value={fmtPkrWhole(v.totalIngredient)} />
-          <Line label="Q factor" value={fmtPkrWhole(v.qFactorCents)} dim />
-          <Line label="Total recipe" value={fmtPkrWhole(v.totalRecipe)} bold />
-          <Line label="Plate cost" value={fmtPkrWhole(v.plateCost)} highlight />
-        </div>
+        {mc ? <McBreakdown mc={mc} kind={kind} /> : (
+          <div>
+            <Line label="Ingredients" value={fmtPkrWhole(v.totalIngredient)} />
+            <Line label="Packaging" value={fmtPkrWhole(v.packagingTotal)} dim />
+            <Line label="Q allowance — in menu pricing, not stock" value={fmtPkrWhole(v.qFactorCents)} dim />
+          </div>
+        )}
+        {loading && <p className="text-[10px] text-s-dim">Updating…</p>}
         <p className="text-[10px] text-s-dim">
           Selling price, contribution margin and profitability live in{' '}
           <Link href="/menu-engineering" className="text-primary-ink hover:underline">Menu Engineering</Link>.

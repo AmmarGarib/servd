@@ -30,8 +30,9 @@ import { fiscalDriverOf, getConnectorFresh, buildCtx, connectorNow, ensureConnec
 import { parseFiscalSettings, reportingRequiredOf } from '../config.js'
 import { nextDelayMs, scrubMessage, withTimeout } from '../util.js'
 import { alertFiscalAuth, alertFiscalDocument, notifyConnectorPeople } from '../alerts.js'
-import { buildFiscalSaleTx, buildRefundPayload, payloadHash, totalsCheck, type RefundOriginal, type TotalsCheck } from './payload.js'
+import { buildFiscalSaleTx, buildRefundPayload, payloadHash, totalsCheck, type RefundOriginal, type TotalsCheck, type VoidReturnSplit } from './payload.js'
 import { FISCAL_VIEW_SELECT, toFiscalView, type FiscalView } from './view.js'
+import { voidSplitOf } from '../../modules/accounting/orderPosting.js'
 
 type Tx = Prisma.TransactionClient
 export type FiscalVia = 'sync_till' | 'worker' | 'sweeper' | 'manual_retry' | 'webhook'
@@ -235,6 +236,8 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
   method?: string | null
   /** The refund's tip share when known (0 for a voided line's refund — W4-FISCAL-1); omitted → pro rata. */
   tipShareCents?: number
+  /** A TILL-R3 void's exact split (orderPosting voidSplitOf + the voided line) — payload.ts buildRefundPayload. */
+  voidSplit?: VoidReturnSplit
 }): Promise<EnqueuedDoc | null> {
   const key = input.refundPaymentId ? `refund:${input.refundPaymentId}` : `void:${input.orderId}`
   const existing = await tx.fiscalDocument.findUnique({
@@ -305,6 +308,7 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
     method: input.method ?? null,
     original,
     ...(input.tipShareCents !== undefined && { tipShareCents: input.tipShareCents }),
+    ...(input.voidSplit && { voidSplit: input.voidSplit }),
   })
   // The same totals rule as the sale: a return that does not add up is never filed.
   const check = totalsCheck(payload)
@@ -535,12 +539,25 @@ async function afterFiled(doc: Pick<FiscalDocument, 'id' | 'tenantId' | 'orderId
   try { io?.to(`tenant:${doc.tenantId}:orders`).emit('fiscal.filed', { orderId: doc.orderId, documentId: doc.id }) } catch { /* best effort */ }
 }
 
-/** The refund Payment gave back a line voided on a paid, still-open order (pos/service voidOrderItem, TILL-R3). */
-async function isVoidRefund(refundPaymentId: string | null): Promise<boolean> {
-  if (!refundPaymentId) return false
-  const p = await prisma.payment.findUnique({ where: { id: refundPaymentId }, select: { gatewayMeta: true } })
-  const meta = p?.gatewayMeta as { refund?: { voidedItemId?: unknown } } | null | undefined
-  return typeof meta?.refund?.voidedItemId === 'string'
+/**
+ * How a refund row's return document is built when the row gave back a line
+ * voided on a paid, still-open order (pos/service voidOrderItem, TILL-R3): no
+ * tip share, and its exact split on its own line when the row stores one
+ * (voidRefundShape). {} for any other refund.
+ */
+async function voidRefundShapeOf(refundPaymentId: string | null): Promise<{ tipShareCents?: number; voidSplit?: VoidReturnSplit }> {
+  if (!refundPaymentId) return {}
+  const p = await prisma.payment.findUnique({ where: { id: refundPaymentId }, select: { amountCents: true, gatewayMeta: true } })
+  return p ? voidRefundShape(p) : {}
+}
+
+/** The return-document shape of one refund row (see voidRefundShapeOf). Pure. */
+export function voidRefundShape(p: { amountCents: number; gatewayMeta?: unknown }): { tipShareCents?: number; voidSplit?: VoidReturnSplit } {
+  const meta = p.gatewayMeta as { refund?: { voidedItemId?: unknown } } | null | undefined
+  const voidedItemId = meta?.refund?.voidedItemId
+  if (typeof voidedItemId !== 'string') return {}
+  const split = voidSplitOf(p)
+  return { tipShareCents: 0, ...(split && { voidSplit: { ...split, lineId: voidedItemId } }) }
 }
 
 /**
@@ -567,8 +584,9 @@ export async function promoteWaitingRefunds(saleDocumentId: string, tenantId: st
         reason: payload.reason,
         method: payload.payment?.tenders?.[0]?.method ?? null,
         original: original ?? payload.original ?? null,
-        // A voided line's refund holds no tip (W4-FISCAL-1).
-        ...((await isVoidRefund(r.refundPaymentId)) && { tipShareCents: 0 }),
+        // A voided line's refund holds no tip (W4-FISCAL-1), and goes back
+        // on its own line with its exact split when the row stores one.
+        ...(await voidRefundShapeOf(r.refundPaymentId)),
       })
       : payload
     const check = totalsCheck(next)

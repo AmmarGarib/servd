@@ -2,12 +2,14 @@ import { Worker, Queue } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { publishInstagramPost, publishFacebookPost } from '../lib/meta-social.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 const QUEUE_NAME = 'social-publish'
 
 const queue = new Queue(QUEUE_NAME, { connection: redis })
 
 export function startSocialPublishWorker() {
+  if (sandboxBlocks('worker', { summary: 'socialPublish' })) return // practice copy: posts to the real pages
   const worker = new Worker(
     QUEUE_NAME,
     async (job) => {

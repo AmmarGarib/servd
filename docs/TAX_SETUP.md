@@ -181,3 +181,209 @@ tests, the CEO goes live again. The API key can be rotated while live.
 | `409 REPORTING_OFF` on Release all held | "Fiscal reporting required" is off for the company; its held sales are kept | Switch it back on (§2), go live if needed, then release |
 | `409 NOT_LIVE` on Release all held | The fiscal POS is not live | Go live first (§4 step 5), then release |
 | A document says "Figures do not add up — not sent" | Its lines + tax + service + tip + delivery do not equal the bill, so it was held back (also in the Inbox) | A sale: check the order's stored figures and Retry (the sale is rebuilt from the order). Still wrong → file it on the authority portal and Record manual filing. A refund is never rebuilt — Retry only re-checks the same stored figures, so file it by hand and Record manual filing. If it says an earlier send's result is unknown, the fiscal POS may already have it and servd cannot ask this fiscal POS automatically (Retry will not settle it): ask the vendor outside servd; if they have it, record their fiscal number with Record manual filing; only if they confirm they never got it, file it on the portal and record that |
+
+---
+
+# Finance tax notes — what the books do with each tax (2026-10-14)
+
+Sections 1-6 above are about **filing**, which the fiscal POS does. The sections
+below are about the **books** and the **sales-tax return** that Hasnain
+prepares in **Accounting -> Sales tax return**. servd never sends a return to
+FBR, SRB, PRA, KPRA or BRA; it prepares the figures and records what was paid.
+References like (H9) are Hasnain's numbered answers.
+
+## 7. Delivery fee carries sales tax, added on top (H9)
+
+- The zone's delivery fee is entered **before GST** (Configuration -> Delivery
+  zones, field "Fee (before GST)"). At checkout GST is **added on top**.
+- The rate is the order's **tender rate**, the same as the food: **15% cash**
+  (including cash on delivery), **8% card, Raast, online and wallet** - the
+  brand's own rates (`taxRateCash`, `taxRateCard`). It is the standard rate, so
+  a zero-rated basket still pays GST on the delivery. The owner's answer:
+  brand rate by tender.
+- The fee and its GST are stored separately on the order. The customer sees
+  them on checkout, the order tracker, the admin order page, the receipt (the
+  printed GST row says how much of it is on delivery) and the tax invoice (a
+  "Delivery charge" line).
+- **Service charge and tip are never taken on the fee or its GST.**
+- **In the books**: the fee is credited to **4110 Delivery Fee Income**, tagged
+  to the brand (a sale, so it stays in the labour % base but is not "food
+  sales"); the fee's GST is inside the output tax credited to the authority.
+  A refund takes back its share of the fee. **A cancelled ticket unwinds the
+  4110 credit** as well.
+- **On the return** delivery charges are their **own supply row** (and a
+  per-brand column), at the order's rate.
+- **If the customer changes tender at the till** (cash instead of card) the
+  order is re-priced: the fee's GST changes with the rate. A dish void never
+  removes the fee's GST.
+- **To the fiscal POS** the fee is its own invoice line "Delivery charge"
+  (`DELIVERY-CHARGE`), with the GST on it. See `docs/pos-connector-api.md`.
+- **Old delivery orders** (before 2026-10-14) keep their untaxed fee; they are
+  not changed.
+
+## 8. A kept no-show deposit is other income, no sales tax (H10)
+
+When a guest with a booking deposit does not show up and the deposit is kept,
+Hasnain's answer is that it is **compensation, not a supply**: **other income,
+no sales tax**. It is booked to **4210 "No-show Deposits Kept (Other Income)"**
+(shown below operating profit, never in sales KPIs) and **is not on the
+sales-tax return**; the sales-tax return shows it in a separate box "Other
+income, not taxable (H10)" for information.
+
+Status on 2026-10-14: built. The new account 4210 is in every company's chart,
+and a kept deposit now posts **Dr 1030 card receivable / Cr 4210** (tagged with
+the brand) with **no tax line and no fiscal document**
+(`reservation.deposit_capture:<reservationId>`). **Entries for deposits kept
+before this change carry tax in the output-tax account**; the return still
+lists those as "deposit kept (pre-H10)" rows, and finance corrects them with a
+journal before filing, so the return does not declare tax on compensation.
+Check on the first real one that the credit goes to 4210 with no tax line.
+
+## 9. Gift-card breakage (H11)
+
+The value left on a **sold** gift card when it **expires** (or when the CEO
+chooses **Keep the money** on a sold card) is **breakage**: *Dr 2080 Gift Card
+Liability / Cr **4200 Gift Card Breakage (Other Income)***, no sales tax. The
+nightly sweep (00:10) expires cards and books the breakage in the card's
+company. A **promotional** card's unused value goes to 6060 Marketing & Promo
+instead. Breakage is taken **once**; value a refund later puts back on an
+expired card waits on the card for a manager to settle. If the sale of the
+card was never booked, the breakage is **held** with a flag until it can be
+booked. Only the CEO can forfeit a sold card.
+
+## 10. Card payouts: Keenu pays net, the fee is a cost (H12)
+
+Keenu pays a day's card money into the bank **net** of its merchant discount
+(MDR) and the **tax on that fee**. Book the net with the statement line and the
+whole fee (MDR and the tax on it) as a **cost on 6080** - the tax on the fee is
+not claimed back (H12): *Dr bank (net) / Dr 6080 (fee) / Cr 1030 card clearing
+(the days' gross).*
+
+In **Reconciliation -> Card payouts**:
+
+- **Settings** (finance or the CEO, per company): the **payout bank**; whether
+  the card machine ID (MID) is one for the company, per brand or per terminal;
+  the **MDR %**, the **tax on the fee %**, how many days the bank lags, how
+  many days one payout may cover (max 5), the tolerance, the largest fee
+  accepted, and the first day to match from.
+- When a statement is imported, servd tries to fit each credit on the payout
+  bank to a run of **unsettled card days**. It matches **only if exactly one
+  fit exists** - otherwise the line stays unmatched and the screen **suggests**
+  the days; finance confirms, and the settlement posts. Never a guess.
+- **Undo** (approvers): reverses the entry, frees the days and un-matches the
+  line.
+- A refused automatic payout raises one `card_payout_unmatched` flag per line.
+  Period close **blocks** while card days are unsettled (`card_unsettled`); the
+  CEO can close over it with a written reason.
+
+## 11. Input tax by charging authority, set off only against that authority (H8)
+
+Sales tax **charged to us** (on supplier bills, OpEx and CapEx) is recorded
+as **input tax on the authority that charged it**:
+
+| Authority | Output (we owe) | Input (we can claim) |
+|---|---|---|
+| FBR | 2030 | 1320 |
+| PRA (Punjab) | 2031 | 1321 |
+| SRB (Sindh) | 2032 | 1322 |
+| KPRA | 2033 | 1323 |
+| BRA | 2034 | 1324 |
+
+Each bill, OpEx or CapEx line names the **tax authority**; a supplier can carry
+a default. On the return each authority is computed on its own: **input is set
+off only against the same authority's output**; a surplus carries forward in
+that authority only. A restaurant's own tax is owed to the **province** its
+kitchen is in (Karachi brands: SRB; a brand with no province stays on FBR and
+the return flags it).
+
+**Exception (Hasnain, 2026-10-14):** federal sales tax charged on **eligible raw
+materials** - food ingredients such as meat, chicken, beverages and vegetables
+- **may be set off against SRB / PRA output "as per SRB eligibility"**. This
+applies to **food and drink stock** only (not packaging, services or
+equipment). Status: built (2026-10-14). The eligible amount is read from the
+ledger: a supplier bill's FBR input (1320) times the share of the bill that is
+the company's own **food or drink** stock (`salesTaxReturn.ts
+CROSS_SETOFF_ELIGIBLE_CLASSES`); OpEx, CapEx and petty-cash input never count.
+It is **one pool per company**, and FBR output still owed in 2030 is paid from
+1320 first. The return shows a column **"Federal input on raw materials (H8)"**
+(claimable against each provincial authority, and the net after it), and
+**Record payment** for SRB / PRA / KPRA / BRA has a field **"Federal input on
+raw materials set off"** with **Use all**. The payment posts Cr 1320 for that
+part. It is refused above what is claimable (422 `CROSS_SETOFF_TOO_LARGE`) and
+on FBR, withholding or statutory payments (422 `NO_CROSS_SET_OFF`). What is
+already used is read from the books, not from the payment list: any entry that
+credits 1320 against an SRB / PRA / KPRA / BRA output account counts, including
+a journal posted by hand that was never linked. Voiding a payment posted here
+reverses it and makes the amount claimable again; unlinking a hand-posted entry
+does not (its Cr 1320 is still on the books) — reverse that entry instead.
+
+## 12. Income tax withheld from suppliers (s.153 / s.155) - rates and register
+
+- **Rates** (Accounting -> Sales tax return -> **Withholding rates**; edited by
+  the CEO or finance, per company). Four sections, each with a filer and a
+  non-filer rate. The **placeholders** below came from the CA and **Hasnain
+  must confirm them before anyone switches withholding on**:
+
+  | Section | For | Filer | Non-filer |
+  |---|---|---|---|
+  | s.153(1)(a) | goods | 5% | 10% |
+  | s.153(1)(b) | services | 9% | 18% |
+  | s.153(1)(c) | contracts | 7% | 14% |
+  | s.155 | rent | 15% | 30% |
+
+  A rate cannot exceed 50%. The old single "withholding %" on Configuration ->
+  Operations is gone: the rates are the one source, and the operations page
+  keeps only the on/off switch.
+- **Per supplier**: filer status (filer, non-filer, exempt, unknown), the
+  exemption certificate number and the date it runs to, the usual section and
+  the usual tax authority (Procurement -> supplier). A supplier with a
+  certificate valid on the payment date is withheld **0**. An *unknown* or
+  *exempt-without-a-date* supplier gets the filer rate and an amber "**check
+  ATL status**" - look the supplier up on the FBR active-taxpayer list and fix
+  the record.
+- **Where it applies**: supplier bills (base = subtotal), OpEx payments (base =
+  invoice less the input tax), CapEx payments (base = gross less the input-tax
+  share; **deposits are never withheld**). The tax withheld is credited to
+  **2040 Income Tax Withholding Payable** and paid with a "withholding" tax
+  payment. OpEx and CapEx can carry a **one-off override amount with a reason
+  (10+ characters)**.
+- **Register** (Accounting -> Sales tax return -> **Withholding register**, CSV
+  download): one row per deduction - date, document, vendor, NTN, filer status,
+  section, rate, base, tax. Totals by section. **Caution from the CA:** the
+  register's bill withholding is fixed at the **bill date**, while s.153 deducts
+  at **payment**; check the month before issuing certificates.
+
+## 13. Sales tax a customer withholds from us (H13)
+
+Some corporate customers keep back part of our sales tax and pay it to the
+authority themselves. The invoice page records it as **1335 Sales Tax
+Withheld by Customers**; it is **netted in that authority's return** - on the
+return page each authority shows "Withheld by customers (1335)", what is still
+available, and the net. When you record a payment to an authority, enter
+**"Withheld by customers set off"** (use all/part). It can never exceed what is
+available for that authority at the payment date (`NO_WITHHELD_SET_OFF`,
+`WITHHELD_SET_OFF_TOO_LARGE`). See `docs/receivables.md`.
+
+## 14. Statutory payments: salary tax, EOBI, social security (H7)
+
+Payroll deductions and employer contributions now sit in **three separate
+payables** instead of one:
+
+- **2042 Salary Income Tax Payable (s.149)** - paid to FBR;
+- **2043 EOBI Payable** - employee 1% plus employer 5%, paid on the EOBI challan;
+- **2044 Social Security Payable (SESSI / PESSI)** - employer contribution to
+  the provincial scheme.
+
+**Accounting -> Statutory payments** shows, per month and scheme, what was
+**accrued** (from payroll), what was **paid** (challans recorded on the tax
+payments register), and what is **still owed**. Payments are recorded the same
+way as sales-tax payments (pick the scheme as the authority); month-end close
+warns while a scheme has an unpaid balance.
+
+**One-time reclass.** Months booked before this release put EOBI/SESSI on
+2090 and salary tax on 2040. The CEO or finance runs **Reclass** once per
+company (a preview first): it moves EOBI to 2043, SESSI to 2044 and salary tax
+to 2042, never more than HR booked or than the old accounts still hold. It is
+one-way: a final settlement cancelled after the reclass leaves 2043 overstated
+and is fixed with a manual journal (the preview and a close warning point it
+out).

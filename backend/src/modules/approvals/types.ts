@@ -27,6 +27,7 @@ export const APPROVAL_TYPES = [
   'raast_void',            // a Raast receipt "void, never booked" — CEO only
   'grni_writeoff',         // writing off goods received but never billed
   'cash_request_hod',      // a cash request waiting for its HOD's signature
+  'stock_difference',      // a waste / count difference waiting in 1290 for the CEO (H20)
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 

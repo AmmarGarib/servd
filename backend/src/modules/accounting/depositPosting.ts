@@ -12,7 +12,9 @@
 //
 // With this entry on the bank's code, a bank-statement import auto-matches
 // the deposit line instead of leaving it for a manual adjustment. One entry
-// per drop, keyed on the drop id.
+// per drop, keyed on the drop id. The bank's deposit slip # (when given) and
+// the tamper-bag serial are in the description and every line's memo, so the
+// statement line can be found by either (owner, 2026-10-14).
 
 import { prisma } from '../../lib/prisma.js'
 import { drawerExpectation } from '../../lib/drawer.js'
@@ -58,7 +60,8 @@ export async function postDepositDrop(dropId: string, opts: RepostOptions = {}):
     fromSafe = drop.amountCents - fromDrawer
   }
 
-  const tag = drop.bagSerial ? ` (bag ${drop.bagSerial})` : ''
+  const marks = [drop.slipNumber ? `slip ${drop.slipNumber}` : null, drop.bagSerial ? `bag ${drop.bagSerial}` : null].filter(Boolean)
+  const tag = marks.length > 0 ? ` (${marks.join(', ')})` : ''
   const lines: JournalLineInput[] = [
     { accountCode: bankCode, type: 'debit', amountCents: drop.amountCents, memo: `Cash deposited${tag}` },
   ]

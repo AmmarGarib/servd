@@ -53,6 +53,10 @@ import { startOrderAutoCancelWorker } from './workers/orderAutoCancel.js'
 import { startSitePublishWorker } from './workers/sitePublish.js'
 import { startPaymentRetryWorker } from './workers/paymentRetry.js'
 import { startRiderDispatchWorker } from './workers/riderDispatch.js'
+// Finance wave B (2026-10-14).
+import { startDepreciationWorker } from './workers/depreciation.js'
+import { startIntercompanyFleetWorker } from './workers/intercompanyFleet.js'
+import { startCashAdvanceOverdueWorker } from './workers/cashAdvanceOverdue.js'
 import { analyticsRoutes } from './modules/analytics/routes.js'
 import { startSegmentComputationWorker } from './workers/segmentComputation.js'
 import { calendarRoutes } from './modules/calendar/routes.js'
@@ -60,6 +64,7 @@ import { supplierChatRoutes } from './modules/procurement/chat.js'
 import { startSocialPublishWorker } from './workers/socialPublish.js'
 import { randomBytes } from 'crypto'
 import { getOAuthUrl, exchangeCodeForTokens } from './lib/meta-social.js'
+import { assertSandboxBoot, sandboxHealthFields, sandboxMetaRoutes, registerPracticeAccessGuard, sandboxScrub } from './lib/sandbox.js'
 import { requireAuth, MANAGERS, OTP_LOGIN_ROLES } from './modules/auth/middleware.js'
 
 // Modules
@@ -69,12 +74,18 @@ import { stationRoutes } from './modules/stations/routes.js'
 import { orderRoutes, orderItemRoutes, orderCourseRoutes } from './modules/orders/routes.js'
 import { menuRoutes } from './modules/menu/routes.js'
 import { posRoutes } from './modules/pos/routes.js'
+import posBoxGivenRoutes from './modules/pos/boxGivenRoutes.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
+import foodCostRoutes from './modules/reports/foodCostRoutes.js'
 import { managementRoutes } from './modules/management/routes.js'
 import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
+import { withholdingRoutes } from './modules/accounting/withholdingRoutes.js'
+import { statutoryRoutes } from './modules/accounting/statutoryRoutes.js'
+import { intercompanyRoutes } from './modules/intercompany/routes.js'
+import { stockDifferenceRoutes } from './modules/stockDifferences/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
 import { waitlistRoutes } from './modules/waitlist/routes.js'
 import { fixedAssetRoutes } from './modules/fixedAssets/routes.js'
@@ -97,6 +108,7 @@ import { discountRoutes } from './modules/discounts/routes.js'
 import { qrCodeRoutes } from './modules/qrcodes/routes.js'
 import { recipeRoutes } from './modules/recipes/routes.js'
 import { procurementRoutes } from './modules/procurement/routes.js'
+import { grniRoutes } from './modules/procurement/grniRoutes.js'
 import { reconciliationRoutes } from './modules/reconciliation/routes.js'
 import { allocationRoutes } from './modules/allocations/routes.js'
 import { invoiceRoutes } from './modules/invoices/routes.js'
@@ -134,7 +146,7 @@ import { kdsRoutes } from './modules/kds/routes.js'
 import { positionRoutes } from './modules/positions/routes.js'
 import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
-import { ensureChartOfAccounts, retireAggregatorAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
+import { CHART_OF_ACCOUNTS, ensureChartOfAccounts, retireAggregatorAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
 import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
 import { whatsappConfigured as isWhatsappConfigured, whatsappSecretHealth } from './lib/whatsapp.js'
 import { emailConfigured as isEmailConfigured } from './lib/mailer.js'
@@ -262,6 +274,11 @@ async function build() {
     maxAge: 3600,
   })
 
+  // Practice copy only: every request from the internet must have come
+  // through Cloudflare Access (lib/sandbox.ts). After CORS, so the refusal is
+  // readable by the practice admin. Live: registers nothing.
+  registerPracticeAccessGuard(fastify)
+
   // Global default rate limit. Hot routes override via { config: { rateLimit } }.
   // Authenticated requests get a higher allowance keyed on user ID; anon falls
   // back to IP. This keeps a single staff iPad from sharing a quota with the
@@ -353,6 +370,10 @@ async function build() {
       await api.register(orderCourseRoutes, { prefix: '/orders' })
       await api.register(menuRoutes, { prefix: '/menu' })
       await api.register(posRoutes, { prefix: '/pos' })
+      // "Box given" (the packaging rule, wave B): a dine-in plate line served
+      // in a box takes its recipe's packaging. Its own plugin under /pos
+      // (ungated by module; the route's role list decides).
+      await api.register(posBoxGivenRoutes, { prefix: '/pos' })
       // POS connector (spec §8): /connectors (config, module api_pos), /pos
       // (card machine + an order's fiscal documents), /webhooks/pos (vendor
       // events, own raw-body parser).
@@ -367,9 +388,24 @@ async function build() {
       await registerApprovalsPlugin(api)
       await api.register(inventoryRoutes, { prefix: '/inventory' })
       await api.register(tableRoutes, { prefix: '/tables' })
+      // Reports → Food cost variance (wave B; THE food-cost report — GET
+      // /recipes/food-cost is gone). Before reportRoutes; gated on module
+      // food_cost (accounting may read it) in moduleAccess.ts.
+      await api.register(foodCostRoutes, { prefix: '/reports/food-cost' })
       await api.register(reportRoutes, { prefix: '/reports' })
       await api.register(managementRoutes, { prefix: '/management' })
       await api.register(accountingRoutes, { prefix: '/accounting' })
+      // Finance wave B (2026-10-14), all under the '/accounting' module gate:
+      // the company's WHT rates + register (lib/withholding.ts is the one
+      // resolver), statutory payables 2042/2043/2044 (accrued vs paid + the
+      // one-time reclass), inter-company pairs and the shared-fleet recharge.
+      await api.register(withholdingRoutes, { prefix: '/accounting/withholding' })
+      await api.register(statutoryRoutes, { prefix: '/accounting/statutory' })
+      await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
+      // Finance → Stock differences (H20): waste and count differences wait
+      // in 1290 with their reason until the CEO approves them into cost of
+      // sales.
+      await api.register(stockDifferenceRoutes, { prefix: '/accounting/stock-differences' })
       // Base layers (2026-09-23). Under /accounting so the accounting module
       // permission gates them like the rest of the books.
       await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
@@ -395,6 +431,8 @@ async function build() {
       await api.register(qrCodeRoutes, { prefix: '/qrcodes' })
       await api.register(recipeRoutes, { prefix: '/recipes' })
       await api.register(procurementRoutes, { prefix: '/procurement' })
+      // Received, not billed (GRNI 2015): open receipt lines, CEO write-offs.
+      await api.register(grniRoutes, { prefix: '/procurement/grni' })
       await api.register(reconciliationRoutes, { prefix: '/reconciliation' })
       await api.register(allocationRoutes, { prefix: '/allocations' })
       await api.register(invoiceRoutes, { prefix: '/invoices' })
@@ -433,6 +471,7 @@ async function build() {
       await api.register(expoRoutes,              { prefix: '/expo' })
       await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
       await api.register(trackingRoutes,          { prefix: '/t' }) // public: campaign click/open tracking
+      await api.register(sandboxMetaRoutes,       { prefix: '/meta' }) // public: GET /meta/sandbox (practice copy?)
 
       // Meta OAuth.
       //   GET /api/v1/integrations/social/status    → { configured, connected, page, ig } (authed)
@@ -705,6 +744,127 @@ async function build() {
       details.ledger = (err as Error).message
     }
 
+    // ── Finance wave B (2026-10-14): the books' tie-outs and one-time steps.
+    // Each is 'ok' or 'warn', never 'error' — a register that does not tie to
+    // the ledger needs finance's attention, it does not make the API
+    // unhealthy — and a check that cannot run says 'warn' with the reason.
+    // They run side by side; each reads every company it applies to.
+    // /health is PUBLIC (no auth: api.servd.pk/health): its details carry a
+    // COUNT and where to look — never an amount, a company name, a company
+    // slug or an item name. The figures live behind the finance pages each
+    // detail names (petty-cash tie-out, card payouts, statutory payments, the
+    // fixed-asset register, the FIFO cut-over).
+    {
+      const warnOf = (key: string, err: unknown) => { checks[key] = 'warn'; details[key] = `Could not run: ${(err as Error).message}` }
+      let companies: Array<{ id: string; slug: string; isActive: boolean }> = []
+      try {
+        companies = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true, slug: true, isActive: true }, orderBy: { createdAt: 'asc' } })
+      } catch (err) {
+        for (const k of ['fixedAssets', 'pettyCash', 'fifoCutover', 'chartTemplateTypes', 'statutoryReclass', 'cardPayouts']) warnOf(k, err)
+      }
+      const active = companies.filter((t) => t.isActive)
+      if (companies.length > 0) {
+        await Promise.all([
+          // Fixed-asset register vs ledger (per class, cost and accumulated)
+          // and the automatic depreciation worker's last run per company.
+          (async () => {
+            try {
+              const { fixedAssetTieOut } = await import('./modules/fixedAssets/reports.js')
+              const off = (await fixedAssetTieOut(prisma, companies.map((t) => t.id))).filter((r) => !r.ok)
+              const runs = await Promise.all(companies.map((t) => prisma.fixedAssetRun.findFirst({
+                where: { tenantId: t.id, kind: 'depreciation' }, orderBy: { startedAt: 'desc' },
+                select: { tenantId: true, startedAt: true, failedCount: true },
+              })))
+              const failed = runs.filter((r) => r && r.failedCount > 0)
+              const stale = runs.filter((r) => r && Date.now() - r.startedAt.getTime() > 36 * 3_600_000)
+              checks.fixedAssets = off.length || failed.length || stale.length ? 'warn' : 'ok'
+              if (checks.fixedAssets === 'warn') {
+                const companiesOff = new Set(off.map((r) => r.tenantId)).size
+                details.fixedAssets = `register≠ledger: ${companiesOff} company(ies); last depreciation run failed: ${failed.length} company(ies); `
+                  + `no depreciation run in 36h: ${stale.length} company(ies) — Accounting → Fixed assets`
+              }
+            } catch (err) { warnOf('fixedAssets', err) }
+          })(),
+          // Petty cash: box floats vs 1011, open legacy advances vs 1355,
+          // movements not yet on the books.
+          (async () => {
+            try {
+              const { pettyCashTieOut } = await import('./modules/accounting/pettyCashPosting.js')
+              const off = (await pettyCashTieOut(companies.map((t) => t.id))).filter((r) => !r.ok)
+              checks.pettyCash = off.length ? 'warn' : 'ok'
+              if (off.length) {
+                details.pettyCash = `${new Set(off.map((r) => r.tenantId)).size} company(ies) where the petty-cash boxes or advances do not tie to 1011 / 1355 — Accounting → Petty cash tie-out`
+              }
+            } catch (err) { warnOf('pettyCash', err) }
+          })(),
+          // FIFO: every active company cut over to lots (boot runs it), and no
+          // company-less item still holding stock (it never gets lots).
+          (async () => {
+            try {
+              const { readFifoCutoverAt } = await import('./lib/stockLedger.js')
+              const { companyLessStockItems } = await import('./modules/inventory/fifoCutover.js')
+              const notCut: string[] = []
+              for (const t of active) if (!(await readFifoCutoverAt(prisma, t.id))) notCut.push(t.slug)
+              const loose = await companyLessStockItems()
+              checks.fifoCutover = notCut.length || loose.length ? 'warn' : 'ok'
+              if (checks.fifoCutover === 'warn') {
+                details.fifoCutover = [
+                  notCut.length ? `${notCut.length} company(ies) not cut over to FIFO lots` : '',
+                  loose.length ? `${loose.length} item(s) with stock and no company (no lots until assigned) — Inventory` : '',
+                ].filter(Boolean).join('; ')
+              }
+            } catch (err) { warnOf('fifoCutover', err) }
+          })(),
+          // A template code whose existing row has another type: the posting
+          // families that need it refuse (assertTemplateAccounts) until the
+          // operator's account is renamed.
+          (async () => {
+            try {
+              const typeOf = new Map(CHART_OF_ACCOUNTS.map((a) => [a.code, a.type]))
+              const rows = await prisma.account.findMany({
+                where: { tenantId: { in: companies.map((t) => t.id) }, code: { in: [...typeOf.keys()] } },
+                select: { tenantId: true, code: true, type: true },
+              })
+              const bad = rows.filter((r) => r.type !== typeOf.get(r.code))
+              checks.chartTemplateTypes = bad.length ? 'warn' : 'ok'
+              if (bad.length) {
+                details.chartTemplateTypes = `${bad.length} account(s) whose type is not what servd expects (codes ${[...new Set(bad.map((r) => r.code))].join(', ')}) — Configuration → Chart of accounts`
+              }
+            } catch (err) { warnOf('chartTemplateTypes', err) }
+          })(),
+          // Statutory payables (H7): HR's EOBI / SESSI / salary tax still on
+          // 2090 / 2040 until the one-time reclass to 2042/2043/2044 is posted.
+          (async () => {
+            try {
+              const { reclassPreview } = await import('./modules/accounting/statutory.js')
+              let pending = 0
+              for (const t of active) {
+                const p = await reclassPreview(prisma, t.id)
+                const cents = p.suggested.eobiCents + p.suggested.sessiCents + p.suggested.salaryTaxCents
+                if (!p.done && cents > 0) pending++
+              }
+              checks.statutoryReclass = pending ? 'warn' : 'ok'
+              if (pending) details.statutoryReclass = `${pending} company(ies) with the statutory reclass not posted — Accounting → Statutory payments`
+            } catch (err) { warnOf('statutoryReclass', err) }
+          })(),
+          // Card payouts (H12): card days past the payout lag with no Keenu
+          // payout matched (only where matching is switched on).
+          (async () => {
+            try {
+              const { unsettledCardDaysThrough } = await import('./modules/reconciliation/cardPayouts.js')
+              let late = 0
+              for (const t of active) {
+                const r = await unsettledCardDaysThrough(prisma, t.id, new Date())
+                if (r.count) late++
+              }
+              checks.cardPayouts = late ? 'warn' : 'ok'
+              if (late) details.cardPayouts = `${late} company(ies) with card days past the payout lag and no bank payout — Reconciliation → Card payouts`
+            } catch (err) { warnOf('cardPayouts', err) }
+          })(),
+        ])
+      }
+    }
+
     // Upload storage. Every upload (menu photos, the Storefront Library, brand
     // artwork) goes straight from the browser to Cloudflare R2 via a URL the
     // API presigns (lib/storage.ts). With the R2 settings unset the presigner
@@ -726,7 +886,7 @@ async function build() {
 
     const hasError = Object.values(checks).some((v) => v === 'error')
     const status = hasError ? 'degraded' : Object.values(checks).some((v) => v === 'warn') ? 'warn' : 'ok'
-    const body = { status, checks, details, ts: new Date().toISOString() }
+    const body = { status, checks, details, ts: new Date().toISOString(), ...sandboxHealthFields() } // practice copy adds sandbox + sandboxBlocked
 
     return hasError ? reply.status(503).send(body) : reply.send(body)
   })
@@ -830,6 +990,32 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
+  // Fixed assets v2 (wave B): each company's asset classes (adds only the
+  // missing keys — the CEO's edits survive), then the one-time move of the
+  // legacy accumulated depreciation off 1590 onto each class's 159x (H27; a
+  // rerun finds nothing). The depreciation worker repeats both nightly.
+  try {
+    const { ensureAssetClasses } = await import('./modules/fixedAssets/classes.js')
+    const { reclassLegacyAccumulated } = await import('./modules/fixedAssets/service.js')
+    const tenants = await prisma.tenant.findMany({ where: { isActive: true, deletedAt: null }, select: { id: true, slug: true } })
+    for (const t of tenants) {
+      try {
+        const added = await ensureAssetClasses(t.id)
+        if (added > 0) fastify.log.info(`[fixedAssets] seeded ${added} asset class(es) for "${t.slug}"`)
+      } catch (err) {
+        fastify.log.error({ err, tenantId: t.id }, '[fixedAssets] asset classes failed')
+        continue
+      }
+      try {
+        const r = await reclassLegacyAccumulated(t.id)
+        if (r.posted) fastify.log.info(`[fixedAssets] legacy accumulated depreciation ${r.cents} paisa moved off 1590 for "${t.slug}"`)
+      } catch (err) {
+        fastify.log.error({ err, tenantId: t.id }, '[fixedAssets] legacy 1590 reclass failed')
+      }
+    }
+  } catch (err) {
+    fastify.log.warn(`[fixedAssets] boot steps skipped: ${(err as Error).message}`)
+  }
   // OpEx categories that predate OpexCategory.expenseAccountCode get the account
   // their name maps to, where that company's chart has it (finance gaps 17d).
   // Idempotent: only categories with no account; never overwrites a pick.
@@ -869,13 +1055,32 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ap] supplier opening-balance sync skipped: ${(err as Error).message}`)
   }
+  // FIFO cut-over (wave B, once per company): stock becomes FIFO lots and
+  // receipts open GRNI (2015). After the chart and the supplier opening
+  // balances, before listen and the workers. Idempotent — a company already
+  // cut over costs one Setting read. Until it runs, lib/stockLedger.ts
+  // ensureFifoReady runs it on that company's first stock write.
+  try {
+    const { ensureFifoCutover } = await import('./modules/inventory/fifoCutover.js')
+    const activeTenants = await prisma.tenant.findMany({ where: { isActive: true, deletedAt: null }, select: { id: true, slug: true } })
+    for (const t of activeTenants) {
+      try {
+        const r = await ensureFifoCutover(t.id)
+        if (r.ran) fastify.log.info(`[fifo] "${t.slug}" cut over to FIFO lots at ${r.at.toISOString()}`)
+      } catch (err) {
+        fastify.log.error({ err, tenantId: t.id }, 'FIFO cut-over failed')
+      }
+    }
+  } catch (err) {
+    fastify.log.warn(`[fifo] cut-over skipped: ${(err as Error).message}`)
+  }
 
   if (workersEnabled) {
     startCartReleaseWorker()
     startLoyaltyTriggerWorker()
     startLoyaltyExpirationWorker()
-    // Gift cards past their expiry are marked expired daily at 00:10 PKT (no
-    // entry yet — breakage income is pending owner decision G10).
+    // Gift cards past their expiry are expired daily at 00:10 PKT and their unused value is booked as
+    // breakage (H11: 'giftcard.expire' Dr 2080 / Cr 4200 sold, Cr 6060 promotional); held breakage is retried each run.
     startGiftCardExpiryWorker()
     startReservationReminderWorker()
     // The daily sales email is a per-company scheduled report now; a box that
@@ -937,6 +1142,15 @@ async function build() {
     startPaymentRetryWorker()
     startRiderDispatchWorker()
     startSitePublishWorker()
+    // Finance wave B (2026-10-14), node-cron, per company:
+    //   03:20 PKT automatic monthly depreciation + prepaid releases + the
+    //         fixed-asset flags (there is no switch — owner, 2026-10-13);
+    //   03:40 PKT shared-fleet recharges between companies + the pair check;
+    //   09:10 PKT cash requests whose receipts are overdue (a flag; H3 books
+    //         nothing here).
+    startDepreciationWorker()
+    startIntercompanyFleetWorker()
+    startCashAdvanceOverdueWorker()
   } else {
     fastify.log.warn('Background workers disabled (set ENABLE_WORKERS=true to run them)')
   }
@@ -1024,6 +1238,16 @@ function validateProductionEnv() {
 
 async function start() {
   validateProductionEnv()
+  assertSandboxBoot() // practice copy: refuses a malformed SERVD_SANDBOX or a live DB / Redis host
+  // Practice copy: scrub the copied live data once per copy, before serving
+  // (lib/sandbox.ts). Live: does nothing. A copy that can't be scrubbed is
+  // not served.
+  try {
+    await sandboxScrub()
+  } catch (err) {
+    console.error(`[sandbox] FATAL: could not scrub the copied live data: ${(err as Error).message}`)
+    process.exit(1)
+  }
   const fastify = await build()
 
   try {

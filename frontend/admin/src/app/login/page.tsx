@@ -3,8 +3,18 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { STOREFRONT_URL } from '../../lib/content'
+import { PracticeCode } from '../../components/SandboxBanner'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
+
+/** The practice copy's API sends nothing out. After a correct password it
+ *  returns the 2FA code it would have sent as `practiceCode` — only there: a
+ *  code or reset link asked for by phone / email alone is never echoed (anyone
+ *  could ask). The live API never returns it. */
+function practiceCodeOf(d: unknown): string {
+  const v = (d as { practiceCode?: unknown } | null)?.practiceCode
+  return typeof v === 'string' ? v : ''
+}
 
 type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot' | 'code'
 
@@ -49,6 +59,7 @@ export default function StaffLoginPage() {
   const [mfaChallenge, setMfaChallenge] = useState('')
   const [mfaHint,      setMfaHint]      = useState('')
   const [mfaCode,      setMfaCode]      = useState('')
+  const [mfaPractice,  setMfaPractice]  = useState('')
 
   // Change-password step.
   const [cpCurrent, setCpCurrent] = useState('')
@@ -101,6 +112,7 @@ export default function StaffLoginPage() {
         setMfaChallenge(d.challengeToken)
         setMfaHint(d.phoneHint ?? '')
         setMfaCode('')
+        setMfaPractice(practiceCodeOf(d))
         setMode('twofactor')
         return
       }
@@ -199,7 +211,7 @@ export default function StaffLoginPage() {
 
   function backToSignIn() {
     setMode('password'); setError(''); setCpDone(false); setFgDone(false)
-    setMfaChallenge(''); setMfaCode('')
+    setMfaChallenge(''); setMfaCode(''); setMfaPractice('')
     setCodeSent(false); setCodeValue(''); setCodeFromManager(false)
   }
 
@@ -333,6 +345,7 @@ export default function StaffLoginPage() {
 
           ) : mode === 'twofactor' ? (
             <form onSubmit={submitTwoFactor}>
+              {mfaPractice && <PracticeCode code={mfaPractice} />}
               <input
                 type="text"
                 inputMode="numeric"

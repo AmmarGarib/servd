@@ -94,6 +94,9 @@ describe('the list and the picker', () => {
       tenantId: tenantA, supplierId: supA, openQty: 10, unitCostCents: 200, openValueCents: 2_000, ageDays: 0, stale: false, writeOffRequest: null,
     })
     expect(body.totals.openValueCents).toBe(2_500)
+    // What the page may offer: finance asks, only the CEO approves.
+    expect(body).toMatchObject({ canApprove: false, canRequestWriteOff: true })
+    expect((await call('ceoA', 'GET', '/procurement/grni')).json()).toMatchObject({ canApprove: true, canRequestWriteOff: true })
     const b = (await call('finB', 'GET', '/procurement/grni')).json()
     expect((b.lines as Array<{ receiptLineId: string }>).map((l) => l.receiptLineId)).toEqual([lineB])
     expect((await call('finB', 'GET', `/procurement/grni?tenantId=${tenantA}`)).statusCode).toBe(404)

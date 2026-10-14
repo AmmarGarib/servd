@@ -3,12 +3,15 @@
 // API docs: provided after merchant onboarding
 
 import type { PaymentAdapter, PaymentInitInput, PaymentInitResult, PaymentStatusResult, RefundInput, RefundResult } from './interface.js'
+import { AppError } from '../../lib/errors.js'
+import { sandboxBlocks } from '../../lib/sandbox.js'
 
 const BASE_URL = process.env['KEENU_BASE_URL'] ?? 'https://api.keenu.com.pk/v1'
 const API_KEY = process.env['KEENU_API_KEY'] ?? ''
 const MERCHANT_ID = process.env['KEENU_MERCHANT_ID'] ?? ''
 
 async function keenuFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (sandboxBlocks('payment', { summary: 'keenu' })) throw new AppError('SANDBOX_NO_PAYMENTS', 'Practice copy: no payment gateway is called', 422)
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {

@@ -35,7 +35,8 @@ import {
   assertMemberOfCompany, assertSupplierOfCompany, assertBankAccountOfCompany,
 } from './companyRefs.js'
 import { type DbMoney, assertMoneyFits, toCents, zMoneyCents } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, zReceiptMethod, zPaymentRef, assertPaymentReference } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { WHT_SECTIONS } from '../../lib/withholding.js'
 import { getAssetClasses, classOf, SMALLWARE_TYPES, SMALLWARE_TYPE_LABELS } from '../fixedAssets/classes.js'
@@ -138,7 +139,7 @@ async function companyLookups(tenantId: string) {
     getAssetClasses(tenantId, prisma),
     prisma.supplier.findMany({
       where: { tenantId, deletedAt: null, systemKind: null },
-      select: { id: true, name: true, filerStatus: true, whtExemptUntil: true, defaultWhtSection: true, defaultTaxAuthority: true },
+      select: { id: true, name: true, filerStatus: true, whtExemptUntil: true, whtExemptCertNo: true, defaultWhtSection: true, defaultTaxAuthority: true },
       orderBy: { name: 'asc' },
     }),
     prisma.fixedAssetPool.findMany({
@@ -847,7 +848,11 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     usefulLifeMonths: z.number().int().min(1).max(600).optional(),
     salvageCents: zMoneyCents('The salvage value').optional(),
     name: z.string().min(1).max(120).optional(),
+    // Where the asset physically is (omitted = the project's outlet).
     locationId: z.string().min(1).nullable().optional(),
+    // An individual asset's brand (omitted = the project's brand; null = shared across brands —
+    // which needs a location: 422 LOCATION_REQUIRED_FOR_SHARED, owner 2026-10-14).
+    conceptId: z.string().min(1).nullable().optional(),
     pool: z.object({ typeKey: z.string().min(1).max(40), conceptId: z.string().min(1).nullable().optional() }).optional(),
     costCents: zMoneyCents('The asset\'s cost', { sign: 'positive' }).optional(),
     inputTaxCents: zMoneyCents('The input tax').optional(),
@@ -868,7 +873,9 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         select: { id: true, project: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('CapexLine', req.params.lineId)
+      // Ids attached to the asset must be the LINE's company's (422 otherwise).
       if (body.locationId) await assertLocationOfCompany(line.project.tenantId, body.locationId)
+      if (body.conceptId) await assertConceptOfCompany(line.project.tenantId, body.conceptId)
       const result = await prepareCapitalisation({ ...body, lineId: line.id, tenantId: line.project.tenantId ?? undefined }, actorOf(req))
       await audit({
         category: 'accounting',
@@ -1018,10 +1025,21 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   // ─── Deposits (H25: refundable deposits on 1360) ──────────────────────────
 
+  // How a landlord's deposit can come back (lib/bankAccounts.ts receipt methods, card aside).
+  const DEPOSIT_RETURN_METHODS = ['cash', 'bank_transfer', 'bank_deposit', 'cheque'] as const
+
   // POST /finance/capex/payments/:paymentId/deposit-return — the landlord gave
-  // the deposit back (Dr bank / cash) and/or kept part of it (Dr 6010 rent,
-  // reason required) / Cr 1360. Totals are re-stated on each call. Dated the
-  // day the money came back: a closed month is 422 PERIOD_LOCKED.
+  // the deposit back (Dr the money account) and/or kept part of it (Dr 6010
+  // rent, reason required) / Cr 1360. Totals are re-stated on each call. Dated
+  // the day the money came back: a closed month is 422 PERIOD_LOCKED.
+  //
+  // Money returned (owner, 2026-10-14): `method` — cash, bank_transfer,
+  // bank_deposit or cheque (lib/bankAccounts.ts receipt methods; the old
+  // `payFrom` bank | cash still works as bank_transfer | cash) — and its
+  // payment reference # (`reference`, 422 PAYMENT_REFERENCE_REQUIRED when
+  // returnedCents > 0, every method). The account is moneyAccountCode of the
+  // PROJECT's company: a bank of another company is 422. A reference this
+  // company used before answers `referenceUsedBefore` — a warning only.
   fastify.post<{ Params: { paymentId: string } }>('/capex/payments/:paymentId/deposit-return',
     { preHandler: requireAuth(...CAPITAL_WRITERS) },
     async (req, reply) => {
@@ -1030,26 +1048,40 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         forfeitedCents: zMoneyCents('The amount kept by the landlord').default(0),
         reason:         z.string().trim().max(500).nullable().optional(),
         receivedAt:     isoDay,
-        payFrom:        z.enum(['bank', 'cash']).default('bank'),
+        method:         zReceiptMethod(DEPOSIT_RETURN_METHODS).optional(),
+        payFrom:        z.enum(['bank', 'cash']).optional(),   // the old spelling of `method`
+        reference:      zPaymentRef.nullable().optional(),
         bankAccountId:  z.string().min(1).nullable().optional(),
       }).parse(req.body)
+      if (body.method && body.payFrom && (body.method === 'cash') !== (body.payFrom === 'cash')) {
+        throw new AppError('PAYMENT_METHOD_CONFLICT', 'Say how the deposit came back once — method and payFrom disagree', 422)
+      }
+      const method = body.method ?? (body.payFrom === 'cash' ? 'cash' : 'bank_transfer')
       const p = await prisma.capexPayment.findFirst({
         where: { id: req.params.paymentId, line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } },
         include: { line: { select: { project: { select: { tenantId: true } } } } },
       })
       if (!p) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
-      if (body.bankAccountId) await assertInstalmentBank(p.line.project.tenantId, body.payFrom, body.bankAccountId)
+      const tenantId = p.line.project.tenantId
+      if (!tenantId) throw new AppError('PROJECT_HAS_NO_COMPANY', 'This capex project is not bound to a company', 422)
+      if (body.returnedCents > 0) assertPaymentReference(method, body.reference)
+      // The bank must be the project's company's (moneyAccountCode; recordDepositReturn re-resolves it in the transaction).
+      if (body.returnedCents > 0) await moneyAccountCode(prisma, tenantId, { method, bankAccountId: body.bankAccountId ?? null })
       const r = await prisma.$transaction((tx) => recordDepositReturn(tx, {
         paymentId: p.id, returnedCents: body.returnedCents, forfeitedCents: body.forfeitedCents, reason: body.reason,
-        receivedAt: new Date(`${body.receivedAt.slice(0, 10)}T12:00:00+05:00`), payFrom: body.payFrom,
+        receivedAt: new Date(`${body.receivedAt.slice(0, 10)}T12:00:00+05:00`), method, reference: body.reference ?? null,
         bankAccountId: body.bankAccountId ?? null, postedBy: req.staffUser!.id,
       }))
+      const referenceUsedBefore = await findPaymentReferenceUses(prisma, tenantId, r.reference, { exclude: { kind: 'capex_deposit_return', id: p.id } })
       await audit({
         category: 'accounting', action: 'capex.deposit_return', entity: 'CapexPayment', entityId: p.id,
-        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: p.line.project.tenantId,
-        after: body, metadata: { heldCents: r.heldCents, entryId: r.entryId },
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+        after: { ...body, method }, metadata: { heldCents: r.heldCents, entryId: r.entryId, referenceUsedBefore: referenceUsedBefore.length },
       })
-      return reply.status(201).send({ paymentId: p.id, ...r, returnedCents: body.returnedCents, forfeitedCents: body.forfeitedCents })
+      return reply.status(201).send({
+        paymentId: p.id, ...r, method: body.returnedCents > 0 ? method : null,
+        returnedCents: body.returnedCents, forfeitedCents: body.forfeitedCents, referenceUsedBefore,
+      })
     },
   )
 

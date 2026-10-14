@@ -22,8 +22,14 @@
 //   4. Other refused postings (finance gap 8) — the open posting_failed flags
 //      of a bank deposit, a manual waste, a stock count, a line voided after
 //      firing (incl. the older void-waste flags with no sourceType), a
-//      cancelled ticket's unwind and a till card failed after its close. See
-//      REPOSTERS below.
+//      cancelled ticket's unwind and a till card failed after its close — and
+//      (finance wave B) depreciation, prepayment releases, ad-hoc prep draws,
+//      gift-card breakage, shared-fleet recharges and the cost-of-sales moves
+//      of an order's stock events after its cost was booked. See REPOSTERS.
+//   5. Stock steps that failed (finance wave B) — open 'stock_restore_failed'
+//      flags: an order's depletion, a cancelled order's give-back / waste, a
+//      KDS remake's waste. Each re-runs its own once-only step (see
+//      rerunStockFailures); nothing here posts by itself.
 //
 // Steps 1-3: locks are respected — a posting dated inside a closed period is
 // listed as 'locked' (reopen the period to post it into its own day) and
@@ -41,10 +47,24 @@ import { flagPostingFailed, resolvePostingFailed, type RepostOptions } from '../
 import { postOrderCompletion, postOrderRefund, isShiftReceipt, giftCardAppliedOf } from '../accounting/orderPosting.js'
 import { postLoyaltyEarn, postLoyaltyRedeem } from '../accounting/loyaltyPosting.js'
 import { calculatePointsValue } from '../../lib/loyaltySettings.js'
+import { sumCents, toCents } from '../../lib/money.js'
+import { STOCK_SOURCE } from '../../lib/stockLedger.js'
+import { FLEET_CHARGE_ENTITY, FLEET_NOTHING_TO_POST, fleetChargeRefusedDoc } from '../intercompany/fleet.js'
+import {
+  ORDER_COGS_FIX_ENTITY, ORDER_COGS_FIX_NOTHING, ORDER_COGS_FIX_SOURCES, STOCK_DEPLETE, STOCK_RESTORE,
+  bookRemakeWaste, ensureOrderDepleted, flagOrderStockFailure, orderCogsFixDoc, restoreInventoryForOrder,
+  type OrderCogsFixSource,
+} from '../orders/stock.js'
 
 /** Step 4's kinds: the flag's metadata.sourceType, which is also the entry's key prefix. */
 export type RefusedPostingKind = 'deposit.drop' | 'inventory.waste' | 'inventory.count' | 'pos.void_waste' | 'order.cancel_unwind' | 'pos.card_failed' | 'reservation.deposit_capture'
-export type OrderBackfillKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund' | RefusedPostingKind
+  // Finance wave B.
+  | 'fixed_asset.depreciation' | 'prepaid.release' | 'inventory.prep_draw' | 'giftcard.expire' | 'ic.fleet_charge'
+  // An order's cost of sales moved after its cost was booked (orders/stock.ts ORDER_COGS_FIX).
+  | OrderCogsFixSource
+/** Step 5's kinds: a stock step of an order that failed ('stock_restore_failed', by metadata.phase). */
+export type StockRerunKind = 'stock.deplete' | 'stock.restore' | 'stock.remake'
+export type OrderBackfillKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund' | RefusedPostingKind | StockRerunKind
 
 export interface OrderBackfillRow {
   kind:      OrderBackfillKind
@@ -277,6 +297,12 @@ export async function backfillUnpostedOrders(opts: {
     sweepFrom: opts.sweepFrom ?? parsePktStartOfDay(UNFLAGGED_SWEEP_FROM),
   }))
 
+  // ── 5. Stock steps that failed (depletion, cancel give-back, remake) ──────
+  rows.push(...await rerunStockFailures({
+    tenantIds, dryRun: opts.dryRun, postedBy: opts.postedBy,
+    sweepFrom: opts.sweepFrom ?? parsePktStartOfDay(UNFLAGGED_SWEEP_FROM),
+  }))
+
   const summary: Record<string, number> = {}
   for (const r of rows) summary[`${r.kind}:${r.outcome}`] = (summary[`${r.kind}:${r.outcome}`] ?? 0) + 1
   return { rows, summary }
@@ -305,10 +331,15 @@ export async function backfillUnpostedOrders(opts: {
 //     as their live path does (like step 3's restores). Books closed even
 //     through today → listed 'locked', nothing posted.
 //
+// A kind whose posting is several entries under other keys (one per month,
+// '@n' revisions, a transfer's own key — `multiPost`) skips the lookup of
+// '<kind>:<sourceId>' on the books: its load() alone says whether anything is
+// still owed.
+//
 // The dry run also sweeps for misses nothing flagged — a crash between the
 // commit and the post, or a refusal from before these flags existed: bank
-// deposits, non-void waste and stock counts since UNFLAGGED_SWEEP_FROM with a
-// value and no entry in their company. They are listed ('unflagged'), never
+// deposits, non-void waste, stock counts and ad-hoc prep draws since
+// UNFLAGGED_SWEEP_FROM with a value and no entry in their company. They are listed ('unflagged'), never
 // posted straight away: one may have been booked by hand meanwhile. A real
 // run raises their flag ('flagged'), so they show in the company's inbox — a
 // flag closed there (booked by hand) is never posted; one left open posts on
@@ -346,12 +377,23 @@ export interface FlagRow { id: string; tenantId: string | null; entityType: stri
 export interface Reposter {
   /** The flag's entityType (its entityId is the sourceId). */
   entityType:    string
+  /** Other entityTypes the same kind's flags are raised on (prepaid.release: CapexPayment or OpexPayment). */
+  entityTypes?:  readonly string[]
   /** The sweep's flag title. */
   title:         string
   /** Poster reasons meaning there is nothing to post — the flag is closed. */
   nothingToPost: ReadonlySet<string>
+  /**
+   * The posting is several entries under keys other than '<kind>:<sourceId>'
+   * (one per month, '@n' revisions, a transfer's own key): the exact-reference
+   * "Already on the books" check is skipped and load() decides nothingOwed.
+   */
+  multiPost?:    boolean
   load:          (sourceId: string, flag: FlagRow | null) => Promise<RefusedDoc | null>
 }
+
+const acceptsEntity = (r: Reposter, entityType: string | null): boolean =>
+  !!entityType && (entityType === r.entityType || (r.entityTypes ?? []).includes(entityType))
 
 const pkr = (cents: number | null | undefined) => `PKR ${((cents ?? 0) / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -383,17 +425,23 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
     load: async (id) => {
       const w = await prisma.wasteLog.findUnique({
         where: { id },
-        select: { id: true, reason: true, quantity: true, unit: true, recordedAt: true, estimatedCostCents: true, inventoryItem: { select: { name: true, tenantId: true, unitCostCents: true } } },
+        select: {
+          id: true, tenantId: true, reason: true, quantity: true, unit: true, recordedAt: true, estimatedCostCents: true,
+          inventoryItem: { select: { name: true, tenantId: true, unitCostCents: true } },
+        },
       })
       if (!w) return null
-      const { postWasteLog } = await import('../accounting/supplierPosting.js')
-      // The same value postWasteLog books.
+      const { postWasteLog } = await import('../accounting/inventoryPosting.js')
+      const { VOID_WASTE_REASONS } = await import('../inventory/voidWaste.js')
+      // The STORED value postWasteLog books (the FIFO value taken; a pre-FIFO
+      // log without it: the item's cost × quantity, the old rule).
       const cost = w.estimatedCostCents ?? Math.round((w.inventoryItem.unitCostCents ?? 0) * w.quantity)
+      const soldLine = (VOID_WASTE_REASONS as readonly string[]).includes(w.reason)
       return {
-        tenantId: w.inventoryItem.tenantId, date: w.recordedAt, orderId: null, amountCents: cost,
+        tenantId: w.tenantId ?? w.inventoryItem.tenantId, date: w.recordedAt, orderId: null, amountCents: cost,
         what: `Waste: ${w.quantity} ${w.unit} ${w.inventoryItem.name} (${w.reason}), ${pkr(cost)}`,
-        nothingOwed: w.reason === 'void_after_fire'
-          ? 'Booked with its voided line (pos.void_waste) — nothing to post here.'
+        nothingOwed: soldLine
+          ? 'Booked with its sold line (pos.void_waste) — nothing to post here.'
           : cost <= 0 ? 'The waste has no cost on file — nothing to post.' : undefined,
         post: (o) => postWasteLog(id, o),
       }
@@ -406,8 +454,9 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
     load: async (id) => {
       const c = await prisma.physicalCount.findUnique({ where: { id }, select: { id: true, tenantId: true, countedAt: true } })
       if (!c) return null
-      const { postStockCount, stockCountAdjustment } = await import('../crosschecks/countPosting.js')
-      // Valued at today's moving-average cost, as postStockCount values it.
+      const { postStockCount, stockCountAdjustment } = await import('../accounting/inventoryPosting.js')
+      // Valued from the STORED line values (PhysicalCountLine.valueCents — the
+      // FIFO value of a loss, the lot of a gain or an opening), as postStockCount books it.
       const adj = await stockCountAdjustment(id)
       const valued = adj.ok ? adj.shortCents + adj.overCents : 0
       return {
@@ -420,7 +469,7 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
   },
   'pos.void_waste': {
     entityType: 'OrderItem',
-    title: 'Waste from a voided line did not reach the ledger',
+    title: 'Waste from a sold line did not reach the ledger',
     nothingToPost: new Set(['order_item_not_found', 'zero_cost']),
     load: async (orderItemId, flag) => {
       const line = await prisma.orderItem.findUnique({
@@ -430,10 +479,17 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
       if (!line) return null
       const ids = metaOf(flag?.metadata ?? null)['wasteLogIds']
       const wasteLogIds = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []
-      const { postVoidWaste, VOID_WASTE_REASON } = await import('../inventory/voidWaste.js')
-      const logs = wasteLogIds.length === 0 ? [] : await prisma.wasteLog.findMany({
-        // The logs postVoidWaste books: this line's void-after-fire waste.
-        where: { id: { in: wasteLogIds }, reason: VOID_WASTE_REASON, notes: { contains: orderItemId } },
+      const { postVoidWaste, VOID_WASTE_REASONS } = await import('../inventory/voidWaste.js')
+      // The logs postVoidWaste books: this line's sold-line waste (void /
+      // cancel after fire, returned food) — found by WasteLog.orderItemId, or
+      // for a log written before wave B by the line id in its note — limited
+      // to the flag's logs when it names any. Valued at their STORED cost.
+      const logs = await prisma.wasteLog.findMany({
+        where: {
+          reason: { in: [...VOID_WASTE_REASONS] },
+          OR: [{ orderItemId }, { orderItemId: null, notes: { contains: orderItemId } }],
+          ...(wasteLogIds.length > 0 ? { id: { in: wasteLogIds } } : {}),
+        },
         select: { recordedAt: true, estimatedCostCents: true },
       })
       const tenantId = line.order.concept.tenantId
@@ -444,7 +500,7 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
         tenantId, date, orderId: line.order.id, amountCents: cost,
         what: `Voided after firing: ${line.quantity} × ${line.name}, ${pkr(cost)}`,
         nothingOwed: logs.length === 0
-          ? 'The flag names no waste logs of this line — nothing to post; check the void by hand.'
+          ? 'No sold-line waste is logged for this line — nothing to post; check the void by hand.'
           : cost <= 0 ? 'The waste has no cost on file — nothing to post.' : undefined,
         post: (o) => tenantId
           ? postVoidWaste(tenantId, orderItemId, wasteLogIds, line.order.conceptId, o)
@@ -535,6 +591,192 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
       }
     },
   },
+
+  // ── Finance wave B ─────────────────────────────────────────────────────────
+
+  // Monthly depreciation (fixedAssets/service.ts): one entry per asset-month
+  // ('fixed_asset.depreciation:<assetId>:<YYYY-MM>'); the flag names the asset.
+  // chargeAssetThrough charges every month still owed through the last
+  // completed one and late-dates EACH month on its own (owner decision 6), so
+  // the doc has no date and the backfill's dates are not used.
+  'fixed_asset.depreciation': {
+    entityType: 'FixedAsset',
+    title: 'Depreciation did not reach the ledger',
+    multiPost: true,
+    nothingToPost: new Set(['nothing_to_charge']),
+    load: async (assetId) => {
+      const a = await prisma.fixedAsset.findUnique({ where: { id: assetId }, select: { id: true, tenantId: true, name: true, assetTag: true, status: true } })
+      if (!a) return null
+      const [{ chargeAssetThrough }, { lastCompletedPeriodPkt }] = await Promise.all([
+        import('../fixedAssets/service.js'), import('../fixedAssets/schedule.js'),
+      ])
+      const through = lastCompletedPeriodPkt()
+      return {
+        tenantId: a.tenantId, date: null, orderId: null, amountCents: null,
+        what: `Depreciation of ${a.name}${a.assetTag ? ` (${a.assetTag})` : ''} through ${through} — each month on its own date, a closed month into this month with a note`,
+        nothingOwed: a.status !== 'active' ? `The asset is ${a.status.replace(/_/g, ' ')} — nothing to charge.` : undefined,
+        post: async (o) => {
+          const run = await chargeAssetThrough(assetId, through, { postedBy: o.postedBy })
+          const res = run.results.find((x) => x.assetId === assetId)
+          if (res?.status === 'charged') return { posted: true, entryId: null }
+          if (res?.status === 'failed') return { posted: false, entryId: null, reason: res.error ?? 'refused' }
+          return { posted: false, entryId: null, reason: 'nothing_to_charge' }
+        },
+      }
+    },
+  },
+
+  // A prepayment's monthly release (accounting/prepaidReleases.ts): one entry
+  // per month ('prepaid.release:<sourceType>:<paymentId>:<YYYY-MM>'); the flag
+  // names the payment (CapexPayment or OpexPayment). Released through the last
+  // completed month, each month late-dated on its own.
+  'prepaid.release': {
+    entityType: 'CapexPayment',
+    entityTypes: ['OpexPayment'],
+    title: 'A prepayment release did not post',
+    multiPost: true,
+    nothingToPost: new Set(['nothing_to_release']),
+    load: async (paymentId, flag) => {
+      const meta = metaOf(flag?.metadata ?? null)
+      const opex = flag ? (flag.entityType === 'OpexPayment' || meta['prepaidSourceType'] === 'opex_payment') : false
+      const capexRow = opex ? null : await prisma.capexPayment.findUnique({
+        where: { id: paymentId }, select: { id: true, line: { select: { item: true, project: { select: { name: true, tenantId: true } } } } },
+      })
+      const opexRow = capexRow ? null : await prisma.opexPayment.findUnique({
+        where: { id: paymentId }, select: { id: true, line: { select: { name: true, category: { select: { name: true, tenantId: true } } } } },
+      })
+      if (!capexRow && !opexRow) return null
+      const sourceType = capexRow ? 'capex_payment' as const : 'opex_payment' as const
+      const tenantId = capexRow ? capexRow.line.project.tenantId : opexRow!.line.category.tenantId
+      const label = capexRow ? `${capexRow.line.project.name}: ${capexRow.line.item}` : `${opexRow!.line.category.name}: ${opexRow!.line.name}`
+      const [{ releaseSourceThrough }, { lastCompletedPeriodPkt }] = await Promise.all([
+        import('../accounting/prepaidReleases.js'), import('../fixedAssets/schedule.js'),
+      ])
+      const through = lastCompletedPeriodPkt()
+      const released = () => prisma.prepaidRelease.count({ where: { sourceType, sourceId: paymentId, reversedAt: null } })
+      return {
+        tenantId, date: null, orderId: null, amountCents: null,
+        what: `Prepayment release — ${label}, through ${through} (each month on its own date, a closed month into this month with a note)`,
+        post: async (o) => {
+          const before = await released()
+          await releaseSourceThrough(sourceType, paymentId, through, { postedBy: o.postedBy })
+          return (await released()) > before ? { posted: true, entryId: null } : { posted: false, entryId: null, reason: 'nothing_to_release' }
+        },
+      }
+    },
+  },
+
+  // An ad-hoc prep batch's draw on the lots (accounting/inventoryPosting.ts
+  // postPrepDraw): 'inventory.prep_draw:<batchId>', valued from its stored
+  // 'prep_draw' movements.
+  'inventory.prep_draw': {
+    entityType: 'PrepBatch',
+    title: 'Prep draw did not reach the ledger',
+    nothingToPost: new Set(['batch_not_found', 'zero_value', 'not_ad_hoc']),
+    load: async (batchId) => {
+      const b = await prisma.prepBatch.findUnique({
+        where: { id: batchId }, select: { id: true, tenantId: true, recipeId: true, itemName: true, drawValueCents: true, createdAt: true },
+      })
+      if (!b) return null
+      const drawn = b.tenantId ? await prisma.stockMovement.aggregate({
+        where: { tenantId: b.tenantId, sourceType: STOCK_SOURCE.prepBatch, sourceId: b.id, kind: 'prep_draw' },
+        _sum: { valueCents: true }, _count: true,
+      }) : null
+      // The same value postPrepDraw books: its movements (negative = drawn), else the stored draw value.
+      const value = drawn && drawn._count > 0 ? -sumCents(drawn._sum.valueCents) : (toCents(b.drawValueCents) ?? 0)
+      const { postPrepDraw } = await import('../accounting/inventoryPosting.js')
+      return {
+        tenantId: b.tenantId, date: b.createdAt, orderId: null, amountCents: value,
+        what: `Prep draw — ${b.itemName}, ${pkr(value)}`,
+        nothingOwed: b.recipeId
+          ? 'A sub-recipe batch is a yield record — the sale takes its inputs; nothing to post.'
+          : value <= 0 ? 'Nothing was drawn at a value — nothing to post.' : undefined,
+        post: (o) => postPrepDraw(batchId, o),
+      }
+    },
+  },
+
+  // Breakage at a gift card's expiry (giftCards/books.ts expireOneGiftCard,
+  // H11): owed only while the card holds breakage back (breakagePendingAt).
+  // The card's own state decides — never the exact reference (multiPost).
+  // expireOneGiftCard books it dated today, under the card lock.
+  'giftcard.expire': {
+    entityType: 'GiftCard',
+    title: 'Gift card breakage did not reach the ledger',
+    multiPost: true,
+    nothingToPost: new Set(['nothing_owed']),
+    load: async (cardId) => {
+      const c = await prisma.giftCard.findUnique({
+        where: { id: cardId },
+        select: { id: true, tenantId: true, code: true, status: true, balanceCents: true, breakageAt: true, breakagePendingAt: true, breakagePendingReason: true },
+      })
+      if (!c) return null
+      const owed = c.status === 'expired' && c.breakageAt == null && c.breakagePendingAt != null
+      const card = `Gift card ••••${c.code.slice(-4)}`
+      return {
+        tenantId: c.tenantId, date: null, orderId: null, amountCents: c.balanceCents,
+        what: `${card} expired — breakage ${pkr(c.balanceCents)}`,
+        nothingOwed: owed ? undefined
+          : c.breakageAt ? 'Its breakage is already booked — nothing to post.'
+          : c.status === 'voided' ? 'The card was voided — its value was settled there; nothing to post.'
+          : 'No breakage is held on this card — nothing to post.',
+        post: async () => {
+          const { expireOneGiftCard, EXPIRE_SOURCE } = await import('../giftCards/books.js')
+          const r = await expireOneGiftCard(cardId)
+          if (r.breakageCents > 0) {
+            const e = c.tenantId ? await prisma.journalEntry.findFirst({ where: { tenantId: c.tenantId, reference: `${EXPIRE_SOURCE}:${cardId}` }, select: { id: true } }) : null
+            return { posted: true, entryId: e?.id ?? null }
+          }
+          if (r.held) {
+            const now = await prisma.giftCard.findUnique({ where: { id: cardId }, select: { breakagePendingReason: true } })
+            const why = now?.breakagePendingReason ?? 'held'
+            return {
+              posted: false, entryId: null,
+              reason: why.startsWith('ISSUE_NOT_BOOKED')
+                ? 'held: the card\'s sale is not on the books yet — book the sale first (Gift cards → Books check)'
+                : `held: ${why}`,
+            }
+          }
+          return { posted: false, entryId: null, reason: 'nothing_owed' }
+        },
+      }
+    },
+  },
+
+  // A month's shared-fleet recharge (intercompany/fleet.ts): the flag sits in
+  // the CLIENT company, entityId '<agreementId>:<YYYY-MM>'. Its entries are
+  // the transfer's ('ic.transfer:<id>'), so the doc decides what is owed
+  // (multiPost); post() charges only for an operator who belongs to BOTH
+  // companies — anyone else gets FLEET_ASK_CEO and the flag stays open.
+  'ic.fleet_charge': {
+    entityType: FLEET_CHARGE_ENTITY,
+    title: 'A shared-fleet recharge did not reach the ledger',
+    multiPost: true,
+    nothingToPost: FLEET_NOTHING_TO_POST,
+    load: (sourceId) => fleetChargeRefusedDoc(sourceId),
+  },
+
+  ...cogsFixReposters(),
+}
+
+/**
+ * The cost-of-sales moves of an order's stock events after its cost was
+ * booked (orders/stock.ts ORDER_COGS_FIX — a give-back, "Box given" and its
+ * undo, a legacy give-back, a late depletion, a never-booked cancel's
+ * settles). Each re-derives what is owed from the movements, so a re-post
+ * books exactly what the live path would; the key is '<sourceType>:<sourceId>'.
+ */
+function cogsFixReposters(): Record<OrderCogsFixSource, Reposter> {
+  const out = {} as Record<OrderCogsFixSource, Reposter>
+  for (const k of ORDER_COGS_FIX_SOURCES) {
+    out[k] = {
+      entityType: ORDER_COGS_FIX_ENTITY[k],
+      title: 'Cost of sales not moved for an order stock event',
+      nothingToPost: ORDER_COGS_FIX_NOTHING,
+      load: (id) => orderCogsFixDoc(k, id),
+    }
+  }
+  return out
 }
 
 const isRefusedKind = (k: unknown): k is RefusedPostingKind => typeof k === 'string' && Object.prototype.hasOwnProperty.call(REPOSTERS, k)
@@ -577,13 +819,14 @@ async function backfillRefusedPostings(opts: {
       legacy = true
     }
     // The flag must name the document its poster loads.
-    if (!kind || !sourceId || f.entityType !== REPOSTERS[kind].entityType || f.entityId !== sourceId) continue
+    if (!kind || !sourceId || !acceptsEntity(REPOSTERS[kind], f.entityType) || f.entityId !== sourceId) continue
     const key = `${kind}:${sourceId}`
     if (!owed.has(key)) owed.set(key, { kind, sourceId, flag: f, legacy })
   }
 
-  const close = async (kind: RefusedPostingKind, sourceId: string, resolution: string) =>
-    resolvePostingFailed(REPOSTERS[kind].entityType, sourceId, kind, resolution, { tenantIds })
+  // Closed on the flag's own entityType (prepaid.release: CapexPayment or OpexPayment).
+  const close = async (kind: RefusedPostingKind, sourceId: string, resolution: string, entityType: string | null) =>
+    resolvePostingFailed(entityType ?? REPOSTERS[kind].entityType, sourceId, kind, resolution, { tenantIds })
 
   for (const { kind, sourceId, flag, legacy } of owed.values()) {
     const r = REPOSTERS[kind]
@@ -601,13 +844,13 @@ async function backfillRefusedPostings(opts: {
     // Nothing left to post → close the flag.
     let resolution: string | null = null
     if (!doc) resolution = 'The document no longer exists — nothing to post.'
-    else if (doc.tenantId && await prisma.journalEntry.findFirst({ where: { tenantId: doc.tenantId, reference: `${kind}:${sourceId}` }, select: { id: true } })) {
+    else if (!r.multiPost && doc.tenantId && await prisma.journalEntry.findFirst({ where: { tenantId: doc.tenantId, reference: `${kind}:${sourceId}` }, select: { id: true } })) {
       resolution = 'Already on the books.'
     } else if (doc.nothingOwed) resolution = doc.nothingOwed
     if (resolution) {
       const date = doc?.date?.toISOString() ?? null
       if (opts.dryRun) { rows.push({ ...base, date, outcome: 'would_resolve', detail: resolution }); continue }
-      await close(kind, sourceId, `${resolution} (Reconciliation → Backfill unposted)`)
+      await close(kind, sourceId, `${resolution} (Reconciliation → Backfill unposted)`, flag.entityType)
       rows.push({ ...base, date, outcome: 'resolved', detail: resolution })
       continue
     }
@@ -616,7 +859,8 @@ async function backfillRefusedPostings(opts: {
       continue
     }
     // A void-waste flag raised before automatic re-posting told finance to
-    // book Dr 5040 / Cr 1210 by hand — it may already have been. Never post
+    // book Dr 5040 / Cr 1210 by hand (today the posting is Dr 1290 suspense,
+    // H20) — it may already have been. Never post
     // it straight away: re-raise it as a review flag (like the sweep), so a
     // person closes it if it was booked by hand; the next run posts it.
     if (legacy) {
@@ -624,7 +868,7 @@ async function backfillRefusedPostings(opts: {
       const detail = `${doc!.what} — raised before automatic re-posting; its flag asked for a hand entry. Post re-raises it for review: close it if it was booked by hand, otherwise the next run posts it.`
       if (opts.dryRun) { rows.push({ ...base, date, outcome: 'unflagged', detail }); continue }
       const m = metaOf(flag.metadata)
-      await close(kind, sourceId, 'Re-raised for review as an automatic re-post (Reconciliation → Backfill unposted).')
+      await close(kind, sourceId, 'Re-raised for review as an automatic re-post (Reconciliation → Backfill unposted).', flag.entityType)
       await flagPostingFailed({
         tenantId: doc!.tenantId,
         sourceType: kind, sourceId,
@@ -633,13 +877,13 @@ async function backfillRefusedPostings(opts: {
         title: r.title,
         actorId: opts.postedBy ?? null,
         amountCents: doc!.amountCents,
-        metadata: { orderId: m['orderId'] ?? doc!.orderId, wasteLogIds: m['wasteLogIds'] ?? [] },
+        metadata: { orderId: m['orderId'] ?? doc!.orderId, wasteLogIds: m['wasteLogIds'] ?? [], ...documentDateOf(doc!) },
       })
       rows.push({ ...base, date, outcome: 'flagged', detail })
       continue
     }
     const row = await placeAndPost(doc!, doc!.tenantId, r, opts)
-    if (row.resolve) await close(kind, sourceId, row.resolve)
+    if (row.resolve) await close(kind, sourceId, row.resolve, flag.entityType)
     rows.push({ ...base, date: row.date, outcome: row.outcome, detail: row.detail })
   }
 
@@ -661,10 +905,16 @@ async function backfillRefusedPostings(opts: {
       title: r.title,
       actorId: opts.postedBy ?? null,
       amountCents: doc.amountCents,
+      metadata: documentDateOf(doc),
     })
     rows.push({ ...base, outcome: 'flagged', detail: `${doc.what} — flagged for review; the next run posts it unless the flag is closed.` })
   }
   return rows
+}
+
+/** The document's own date on a flag this backfill raises (the period close's check reads metadata.documentDate). */
+function documentDateOf(doc: RefusedDoc): { documentDate?: string } {
+  return doc.date ? { documentDate: doc.date.toISOString() } : {}
 }
 
 /**
@@ -711,15 +961,18 @@ export async function placeAndPost(
 }
 
 /**
- * Deposits, non-void waste and stock counts of `tenantIds` since `from` with
- * a value, no entry in their company and no posting_failed flag at all (an
- * open one is step 4's; a closed one was decided by a person).
+ * Deposits, waste (not of a sold line), stock counts and ad-hoc prep draws of
+ * `tenantIds` since `from` with a value, no entry in their company and no
+ * posting_failed flag at all (an open one is step 4's; a closed one was
+ * decided by a person).
  */
-async function unflaggedMisses(tenantIds: string[], from: Date): Promise<Array<{ kind: 'deposit.drop' | 'inventory.waste' | 'inventory.count'; id: string }>> {
+async function unflaggedMisses(tenantIds: string[], from: Date): Promise<Array<{ kind: 'deposit.drop' | 'inventory.waste' | 'inventory.count' | 'inventory.prep_draw'; id: string }>> {
   const latest = (a: Date, b: Date) => (a > b ? a : b)
   const dropsFrom = latest(from, parsePktStartOfDay(DEPOSIT_POSTING_FROM))
   const countsFrom = latest(from, parsePktStartOfDay(COUNT_POSTING_FROM))
-  const [drops, waste, counts] = await Promise.all([
+  const { VOID_WASTE_REASONS } = await import('../inventory/voidWaste.js')
+  const soldLineReasons = [...VOID_WASTE_REASONS] as string[]
+  const [drops, waste, counts, preps] = await Promise.all([
     prisma.$queryRaw<Array<{ id: string }>>`
       SELECT d.id FROM deposit_drops d
        WHERE d."tenantId" = ANY(${tenantIds}::text[]) AND d."amountCents" > 0 AND d."droppedAt" >= ${dropsFrom}
@@ -728,22 +981,213 @@ async function unflaggedMisses(tenantIds: string[], from: Date): Promise<Array<{
        ORDER BY d."droppedAt" ASC`,
     prisma.$queryRaw<Array<{ id: string }>>`
       SELECT w.id FROM waste_logs w JOIN inventory_items i ON i.id = w."inventoryItemId"
-       WHERE i."tenantId" = ANY(${tenantIds}::text[]) AND w.reason <> 'void_after_fire' AND w."recordedAt" >= ${from}
+       WHERE COALESCE(w."tenantId", i."tenantId") = ANY(${tenantIds}::text[])
+         AND w.reason <> ALL(${soldLineReasons}::text[]) AND w."recordedAt" >= ${from}
          AND COALESCE(w."estimatedCostCents", round(COALESCE(i."unitCostCents", 0) * w.quantity)) > 0
-         AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j."tenantId" = i."tenantId" AND j.reference = 'inventory.waste:' || w.id)
+         AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j."tenantId" = COALESCE(w."tenantId", i."tenantId") AND j.reference = 'inventory.waste:' || w.id)
          AND NOT EXISTS (SELECT 1 FROM exception_flags f WHERE f.kind = 'posting_failed' AND f."entityType" = 'WasteLog' AND f."entityId" = w.id)
        ORDER BY w."recordedAt" ASC`,
     prisma.$queryRaw<Array<{ id: string }>>`
       SELECT c.id FROM physical_counts c
        WHERE c."tenantId" = ANY(${tenantIds}::text[]) AND c."countedAt" >= ${countsFrom}
-         AND EXISTS (SELECT 1 FROM physical_count_lines l WHERE l."countId" = c.id AND l."physicalQty" <> l."systemQty")
+         AND EXISTS (SELECT 1 FROM physical_count_lines l WHERE l."countId" = c.id
+                       AND (CASE WHEN l."valueCents" IS NULL THEN l."physicalQty" <> l."systemQty" ELSE l."valueCents" <> 0 END))
          AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j."tenantId" = c."tenantId" AND j.reference = 'inventory.count:' || c.id)
          AND NOT EXISTS (SELECT 1 FROM exception_flags f WHERE f.kind = 'posting_failed' AND f."entityType" = 'PhysicalCount' AND f."entityId" = c.id)
        ORDER BY c."countedAt" ASC`,
+    // Ad-hoc prep batches that drew from the lots (their 'prep_draw'
+    // movements exist only once the company is on FIFO lots, i.e. since the
+    // prep draw posts) with no entry.
+    prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT b.id FROM prep_batches b
+       WHERE b."tenantId" = ANY(${tenantIds}::text[]) AND b."recipeId" IS NULL AND b."createdAt" >= ${from}
+         AND EXISTS (SELECT 1 FROM stock_movements m
+                      WHERE m."tenantId" = b."tenantId" AND m."sourceType" = ${STOCK_SOURCE.prepBatch} AND m."sourceId" = b.id
+                        AND m.kind = 'prep_draw' AND m."valueCents" <> 0)
+         AND NOT EXISTS (SELECT 1 FROM journal_entries j WHERE j."tenantId" = b."tenantId" AND j.reference = 'inventory.prep_draw:' || b.id)
+         AND NOT EXISTS (SELECT 1 FROM exception_flags f WHERE f.kind = 'posting_failed' AND f."entityType" = 'PrepBatch' AND f."entityId" = b.id)
+       ORDER BY b."createdAt" ASC`,
   ])
   return [
     ...drops.map((d) => ({ kind: 'deposit.drop' as const, id: d.id })),
     ...waste.map((w) => ({ kind: 'inventory.waste' as const, id: w.id })),
     ...counts.map((c) => ({ kind: 'inventory.count' as const, id: c.id })),
+    ...preps.map((b) => ({ kind: 'inventory.prep_draw' as const, id: b.id })),
   ]
+}
+
+// ─── 5. Stock steps that failed (finance wave B) ────────────────────────────
+//
+// An order's depletion, a cancelled order's give-back / waste, or a KDS
+// remake's waste that failed after (or outside) its transaction raised ONE
+// open 'stock_restore_failed' flag in the order's company (orders/stock.ts
+// flagOrderStockFailure, keyed by metadata.phase). Each step is once-only, so
+// this re-runs it — the caller's companies' orders only:
+//
+//   deplete (Order)      ensureOrderDepleted; closed once the depletion claim
+//                        exists (or the order never sold)
+//   restore (Order)      restoreInventoryForOrder (fired lines wasted
+//                        'cancelled_after_fire'); closed once the give-back
+//                        claim exists (or the stock never came out)
+//   remake (OrderItem)   bookRemakeWaste, once per failed recall still owed
+//                        (metadata.failures − metadata.rebooked, the re-runs
+//                        this step already booked for the flag; a later live
+//                        recall's own remake never counts), then closed
+//
+// A 'box_given' flag is left for a person: the tap rolled back whole, so staff
+// tap again. What these steps post goes through their own posters (a refusal
+// is flagged posting_failed and re-posted by step 4). The dry run lists what
+// would re-run; nothing is written.
+//
+// The sweep: a cancelled order whose stock is still out (a depletion claim
+// since `sweepFrom`, no give-back claim) and no 'restore' flag at all is
+// listed 'unflagged'; a real run raises its flag ('flagged') and the next run
+// re-runs it — unless a person closes the flag first.
+
+const NO_SALE_STATUSES: ReadonlySet<string> = new Set(['cancelled', 'rejected'])
+const STOCK_PHASES = ['deplete', 'restore', 'remake'] as const
+type StockPhase = (typeof STOCK_PHASES)[number]
+
+async function rerunStockFailures(opts: {
+  tenantIds: string[]
+  dryRun: boolean
+  postedBy?: string
+  sweepFrom: Date
+}): Promise<OrderBackfillRow[]> {
+  const { tenantIds } = opts
+  const rows: OrderBackfillRow[] = []
+  const flags = await prisma.exceptionFlag.findMany({
+    where: {
+      kind: 'stock_restore_failed', status: { in: [...OPEN_FLAG] }, tenantId: { in: tenantIds },
+      OR: STOCK_PHASES.map((phase) => ({ metadata: { path: ['phase'], equals: phase } })),
+    },
+    select: { id: true, tenantId: true, entityType: true, entityId: true, metadata: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  const claimed = async (orderId: string, action: string) =>
+    !!(await prisma.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action }, select: { id: true } }))
+  const resolve = (flagId: string, resolution: string) => prisma.exceptionFlag.update({
+    where: { id: flagId },
+    data: { status: 'resolved', resolvedAt: new Date(), resolution: `${resolution} (Reconciliation → Backfill unposted)` },
+  }).catch(() => {})
+
+  for (const f of flags) {
+    const m = metaOf(f.metadata)
+    const phase = m['phase'] as StockPhase
+    const onLine = phase === 'remake'
+    if (!f.entityId || f.entityType !== (onLine ? 'OrderItem' : 'Order')) continue
+    const orderId = onLine ? (typeof m['orderId'] === 'string' ? m['orderId'] : null) : f.entityId
+    const line = onLine
+      ? await prisma.orderItem.findUnique({ where: { id: f.entityId }, select: { id: true, orderId: true, name: true, quantity: true } })
+      : null
+    const order = await prisma.order.findUnique({
+      where: { id: line?.orderId ?? orderId ?? '' },
+      select: { id: true, status: true, concept: { select: { tenantId: true } } },
+    })
+    const tenantId = order?.concept.tenantId ?? f.tenantId
+    // Only this caller's companies' orders (the flag's company is the order's).
+    if (!tenantId || !tenantIds.includes(tenantId)) continue
+    const kind: StockRerunKind = `stock.${phase}`
+    const base = { kind, id: f.entityId, orderId: order?.id ?? orderId, tenantId, date: f.createdAt.toISOString() }
+
+    // What is owed, and the re-run that pays it.
+    let nothing: string | null = null
+    let todo = ''
+    let run: (() => Promise<string | null>) | null = null   // → null on success, else why not
+    if (!order || (onLine && !line)) {
+      nothing = 'The order no longer exists — nothing to re-run.'
+    } else if (phase === 'deplete') {
+      if (NO_SALE_STATUSES.has(order.status)) nothing = 'The order never sold — nothing to take out.'
+      else if (await claimed(order.id, STOCK_DEPLETE)) nothing = 'Its stock is already out.'
+      else {
+        todo = 'Take the order\'s stock out of the lots (re-run of the depletion that failed)'
+        run = async () => {
+          await ensureOrderDepleted(order.id)   // never throws: a failure stays flagged
+          return (await claimed(order.id, STOCK_DEPLETE)) ? null
+            : 'still not taken out — fix the cause (the item\'s company, the FIFO cut-over, a pre-order not released yet) and run it again'
+        }
+      }
+    } else if (phase === 'restore') {
+      if (await claimed(order.id, STOCK_RESTORE)) nothing = 'Its stock was already given back.'
+      else if (!(await claimed(order.id, STOCK_DEPLETE))) nothing = 'Its stock never came out — nothing to give back.'
+      else if (!NO_SALE_STATUSES.has(order.status)) {
+        rows.push({ ...base, outcome: 'not_cancelled', detail: `The order is ${order.status}, not cancelled — check it by hand.` })
+        continue
+      } else {
+        todo = 'Give the unfired lines back to their lots and waste the fired ones (re-run of the cancel that failed)'
+        run = async () => {
+          await restoreInventoryForOrder(order.id, { cookedFood: { wasteReason: 'cancelled_after_fire' }, actorId: opts.postedBy ?? null })
+          return (await claimed(order.id, STOCK_RESTORE)) ? null : 'still not given back'
+        }
+      }
+    } else {
+      const failures = typeof m['failures'] === 'number' && m['failures'] > 0 ? Math.floor(m['failures']) : 1
+      // Remakes this backfill already re-booked for THIS flag (metadata.rebooked,
+      // written after each one). Never the line's remake waste logs since the
+      // flag: a later live recall that succeeded books its OWN remake and must
+      // not count as paying for the one that failed.
+      const rebooked = typeof m['rebooked'] === 'number' && m['rebooked'] > 0 ? Math.floor(m['rebooked']) : 0
+      const owed = failures - rebooked
+      if (owed <= 0) nothing = 'The remake is already booked as waste.'
+      else {
+        todo = `Book ${owed} remake${owed === 1 ? '' : 's'} of ${line!.quantity} × ${line!.name} as waste (re-run of the remake that failed)`
+        run = async () => {
+          for (let i = 0; i < owed; i++) {
+            await bookRemakeWaste(line!.id, opts.postedBy ?? null)
+            // Counted at once, so a run that fails part-way resumes where it stopped.
+            await prisma.exceptionFlag.update({
+              where: { id: f.id },
+              data: { metadata: { ...m, rebooked: rebooked + i + 1 } as Prisma.InputJsonValue },
+            })
+          }
+          return null
+        }
+      }
+    }
+
+    if (nothing) {
+      if (opts.dryRun) { rows.push({ ...base, outcome: 'would_resolve', detail: nothing }); continue }
+      await resolve(f.id, nothing)
+      rows.push({ ...base, outcome: 'resolved', detail: nothing })
+      continue
+    }
+    if (opts.dryRun) { rows.push({ ...base, outcome: 'would_post', detail: todo }); continue }
+    try {
+      const why = await run!()
+      if (why) { rows.push({ ...base, outcome: 'error', detail: `${todo}: ${why}` }); continue }
+      await resolve(f.id, 'Re-run')
+      rows.push({ ...base, outcome: 'posted', detail: todo })
+    } catch (err) {
+      rows.push({ ...base, outcome: 'error', detail: (err as Error).message })
+    }
+  }
+
+  // ── The sweep: a cancelled order whose stock is still out, never flagged ──
+  const missing = await prisma.$queryRaw<Array<{ id: string; tenantId: string; depletedAt: Date }>>`
+    SELECT o.id, c."tenantId",
+           (SELECT max(a."createdAt") FROM audit_logs a
+             WHERE a.entity = 'Order' AND a."entityId" = o.id AND a.action = ${STOCK_DEPLETE}) AS "depletedAt"
+      FROM orders o
+      JOIN concepts c ON c.id = o."conceptId"
+     WHERE c."tenantId" = ANY(${tenantIds}::text[])
+       AND o.status::text IN ('cancelled', 'rejected')
+       AND EXISTS (SELECT 1 FROM audit_logs a
+                    WHERE a.entity = 'Order' AND a."entityId" = o.id AND a.action = ${STOCK_DEPLETE} AND a."createdAt" >= ${opts.sweepFrom})
+       AND NOT EXISTS (SELECT 1 FROM audit_logs a WHERE a.entity = 'Order' AND a."entityId" = o.id AND a.action = ${STOCK_RESTORE})
+       AND NOT EXISTS (SELECT 1 FROM exception_flags f
+                        WHERE f.kind = 'stock_restore_failed' AND f."entityType" = 'Order' AND f."entityId" = o.id
+                          AND f.metadata->>'phase' = 'restore')
+     ORDER BY o."updatedAt" ASC`
+  for (const o of missing) {
+    // Dated when its stock came out (the period close reads the date).
+    const base = { kind: 'stock.restore' as const, id: o.id, orderId: o.id, tenantId: o.tenantId, date: o.depletedAt ? new Date(o.depletedAt).toISOString() : null }
+    const what = 'Cancelled, but its stock was never given back or wasted'
+    if (opts.dryRun) {
+      rows.push({ ...base, outcome: 'unflagged', detail: `${what} — nothing flagged it. Post flags it for review; the next run gives it back unless the flag is closed.` })
+      continue
+    }
+    await flagOrderStockFailure(o.id, 'restore', new Error(`${what} (found by Reconciliation → Backfill unposted)`), opts.postedBy ?? null)
+    rows.push({ ...base, outcome: 'flagged', detail: `${what} — flagged for review; the next run gives it back unless the flag is closed.` })
+  }
+  return rows
 }

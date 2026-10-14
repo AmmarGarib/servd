@@ -20,6 +20,7 @@ import { audit } from '../../lib/audit.js'
 import { decryptSecret, secretKeyConfigured } from '../../lib/secretBox.js'
 import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
 import { activeTenantId } from '../../lib/tenantScope.js'
+import { sandboxBlocks } from '../../lib/sandbox.js'
 import { toCents } from '../../lib/money.js'
 import { requireAuth } from '../auth/middleware.js'
 import { parseRaastSettings, raastSenderSchema, raastTemplateSchema, raastSettingsSchema } from '../../connectors/config.js'
@@ -309,6 +310,8 @@ export async function raastConnectorRoutes(fastify: FastifyInstance) {
   // POST /connectors/raast/devices/:id/reveal — the CEO only, audited.
   fastify.post('/devices/:id/reveal', { preHandler: requireAuth(...CEO) }, async (req) => {
     const { id } = idParam.parse(req.params)
+    // Practice copy: a copied token could be a LIVE counter phone's (forged bank SMS into live servd).
+    if (sandboxBlocks('raast_token')) throw new AppError('SANDBOX', 'Practice copy: device tokens are never shown here — rotate the device to get a practice token', 403)
     const tenantId = activeTenantId(req)
     const d = await prisma.bankSmsDevice.findFirst({ where: { id, tenantId } })
     if (!d) throw new NotFoundError('Device', id)

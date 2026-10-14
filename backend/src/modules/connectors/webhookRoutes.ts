@@ -38,6 +38,7 @@ import { parseInboundEvent, handleInboundEvent } from '../../connectors/inbound.
 import type { ConnectorKindT, InboundEvent } from '../../connectors/types.js'
 import { deviceByToken, isDeviceTokenShape } from '../../connectors/raast/devices.js'
 import { extractSmsFields, intakeSms, processAlertSoon } from '../../connectors/raast/intake.js'
+import { sandboxBlocks } from '../../lib/sandbox.js'
 
 /** The connector kind an inbound event type applies to — explicit, so a raast connector applies no fiscal / terminal event. */
 export const EVENT_CONNECTOR_KIND: Record<InboundEvent['type'], ConnectorKindT> = {
@@ -95,6 +96,7 @@ const smsRateLimit = {
 }
 
 async function handleSms(req: FastifyRequest, reply: FastifyReply, viaPath: boolean) {
+  if (sandboxBlocks('raast_sms')) return reply.status(403).send({ error: { code: 'SANDBOX', message: 'Practice copy: bank SMS are not taken here' } })
   const ip = req.ip ?? 'unknown'
   const tooMany = () => reply.status(429).send({ error: { code: 'RATE_LIMITED', message: 'Too many failed attempts' } })
   const token = smsTokenOf(req)

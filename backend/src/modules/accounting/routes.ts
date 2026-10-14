@@ -768,6 +768,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           flat.push({ section: sec, code: '', name: a.netPayableCents >= 0 ? 'Net payable' : 'Excess input carried forward', value: fmtPkr(Math.abs(a.netPayableCents)) })
           if (a.withheldByCustomersCents) flat.push({ section: sec, code: '1335', name: 'Sales tax withheld by customers (H13)', value: fmtPkr(a.withheldByCustomersCents) })
           flat.push({ section: sec, code: '', name: a.netAfterWithheldCents >= 0 ? 'Net payable after withheld' : 'Carried forward after withheld', value: fmtPkr(Math.abs(a.netAfterWithheldCents)) })
+          // H8: federal input on raw materials (food / drink stock) set off against a provincial authority.
+          if (a.federalInputClaimableCents || a.crossSetOffForPeriodCents) {
+            flat.push({ section: sec, code: '1320', name: `Federal input on raw materials claimable against ${a.authority} (H8)`, value: fmtPkr(a.federalInputClaimableCents) })
+            flat.push({ section: sec, code: '', name: a.netAfterCrossSetOffCents >= 0 ? 'Net payable after federal input' : 'Carried forward after federal input', value: fmtPkr(Math.abs(a.netAfterCrossSetOffCents)) })
+          }
           if (a.otherOutputCents !== 0) {
             flat.push({ section: sec, code: '', name: 'Output tax not from order sales (manual journals, B2B invoices, older entries)', value: fmtPkr(a.otherOutputCents) })
           }
@@ -802,6 +807,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           flat.push({ section: sec, code: a.output.code, name: 'Paid for this period', value: fmtPkr(a.paidForPeriodCents) })
           if (a.inputSetOffForPeriodCents !== 0) flat.push({ section: sec, code: a.input.code, name: 'Input set off in those payments', value: fmtPkr(a.inputSetOffForPeriodCents) })
           if (a.customerWithheldSetOffForPeriodCents) flat.push({ section: sec, code: '1335', name: 'Withheld tax set off in those payments', value: fmtPkr(a.customerWithheldSetOffForPeriodCents) })
+          if (a.crossSetOffForPeriodCents) flat.push({ section: sec, code: '1320', name: 'Federal input set off in those payments (H8)', value: fmtPkr(a.crossSetOffForPeriodCents) })
           if (a.customerWithheldAvailableCents) flat.push({ section: sec, code: '1335', name: 'Withheld by customers still available', value: fmtPkr(a.customerWithheldAvailableCents) })
           flat.push({ section: sec, code: a.output.code, name: 'Ledger balance at period end', value: fmtPkr(a.ledgerBalanceAtEndCents) })
         }
@@ -814,12 +820,14 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const p of report.payments) {
           flat.push({
             section: 'Payments', code: p.authority.toUpperCase(),
-            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}${p.customerWithheldSetOffCents ? `, withheld set off ${fmtPkr(p.customerWithheldSetOffCents)}` : ''}`,
+            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}${p.customerWithheldSetOffCents ? `, withheld set off ${fmtPkr(p.customerWithheldSetOffCents)}` : ''}${p.crossSetOffCents ? `, federal input set off ${fmtPkr(p.crossSetOffCents)}` : ''}`,
             value: fmtPkr(p.paidCents),
           })
         }
         flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (each authority\'s own net after withheld)', value: fmtPkr(report.netPayableCents) })
         flat.push({ section: 'Result',     code: '',                          name: 'EXCESS INPUT CARRIED FORWARD (per authority)',   value: fmtPkr(report.carryForwardCents) })
+        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE AFTER FEDERAL INPUT ON RAW MATERIALS (H8)', value: fmtPkr(report.netPayableAfterCrossSetOffCents) })
+        flat.push({ section: 'Result',     code: '1320',                      name: 'Federal input on raw materials still claimable (H8)', value: fmtPkr(report.federalCrossSetOff.availableCents) })
         for (const n of report.notes) flat.push({ section: 'Notes', code: '', name: n, value: '' })
         return sendCsv(reply, `sales-tax-return-${report.period.from}-${report.period.to}.csv`, toCsv(flat))
       }
@@ -873,6 +881,9 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       inputSetOffCents: zMoneyCents('The input tax set off').default(0),
       // H13: sales tax customers withheld (1335) set off against this authority's payment.
       customerWithheldSetOffCents: zMoneyCents('The withheld tax set off').default(0),
+      // H8: federal input on raw materials (1320) set off against a provincial
+      // authority's payment — never above what is claimable (taxPayments.ts).
+      crossSetOffCents: zMoneyCents('The federal input set off').default(0),
       paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       method: z.enum(TAX_PAYMENT_METHODS).default('bank_transfer'),
       bankAccountId: z.string().trim().min(1).max(64).optional().nullable(),
@@ -889,6 +900,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       paidCents: body.paidCents,
       inputSetOffCents: body.inputSetOffCents,
       customerWithheldSetOffCents: body.customerWithheldSetOffCents,
+      crossSetOffCents: body.crossSetOffCents,
       paidAt: body.paidAt,
       method: body.method,
       bankAccountId: body.bankAccountId ?? null,

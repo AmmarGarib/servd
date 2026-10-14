@@ -2,13 +2,17 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { api } from '../../lib/api'
+import Link from 'next/link'
+import { api, ApiError } from '../../lib/api'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { ApAging } from '../../components/finance/ApAging'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
 import { useManagerRoles } from '../../lib/roles'
+import { canOpenPath } from '../../lib/moduleCatalog'
+import { usePermissions } from '../../hooks/useCan'
+import { stockErrorText } from '../../lib/stockUi'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
@@ -28,6 +32,13 @@ interface Supplier {
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
   _count?: { purchaseOrders: number; inventoryItems: number; bills: number; payments: number }
+  // Tax profile (H8 / H28): decides the withholding on its bills and which
+  // authority its sales tax is claimed from.
+  filerStatus?: 'filer' | 'non_filer' | 'exempt' | 'unknown' | null
+  whtExemptCertNo?: string | null
+  whtExemptUntil?: string | null
+  defaultTaxAuthority?: string | null
+  defaultWhtSection?: string | null
 }
 
 interface PoLine {
@@ -52,6 +63,9 @@ interface Bill {
   id: string; supplierId: string; poId?: string | null; billNumber: string
   billDate: string; dueDate: string; status: string
   subtotalCents: number; taxCents: number; totalCents: number; whtCents: number; paidCents: number
+  /** Who charged the sales tax (fbr / pra / srb / kpra / bra) and the withholding section applied. */
+  taxAuthority?: string | null
+  whtSection?: string | null
   creditedCents?: number
   kind?: 'bill' | 'credit_note'
   originalBillId?: string | null
@@ -123,10 +137,12 @@ interface PoDraft {
   lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string }>
 }
 
-const errText = (e: unknown) => (e instanceof Error ? e.message : 'That did not work')
+const errText = (e: unknown) => stockErrorText(e)
 const rupeesToPaisa = (v: string) => Math.round(Number(v) * 100)
+/** A stored instant (the end of a PKT day) as the PKT calendar date YYYY-MM-DD. */
+const pktDate = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3_600_000).toISOString().slice(0, 10)
 
-interface InventoryItem { id: string; name: string; unit: string }
+interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null }
 interface PriceHistoryRow {
   id: string; inventoryItemId: string; supplierId?: string | null
   oldCostCents?: number | null; newCostCents: number; source: string
@@ -182,16 +198,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function ProcurementPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('pos')
+  // /procurement?new=po[&item=<id>&qty=<n>] — opened from Inventory's
+  // "Purchase order" button: lands on Purchase Orders with the new-PO form
+  // open (and, when an item is given, that item as its first line).
+  const [newPo, setNewPo] = useState<{ item: string | null; qty: string | null } | null>(null)
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const wanted = sp.get('tab')
+      if (wanted && ['pos', 'bills', 'payments', 'suppliers', 'aging', 'reorder', 'approvals', 'history'].includes(wanted)) setTab(wanted as Tab)
+      if (sp.get('new') === 'po') { setTab('pos'); setNewPo({ item: sp.get('item'), qty: sp.get('qty') }) }
+    } catch { /* no window */ }
+  }, [])
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'pos',       label: 'Purchase Orders', icon: '📋' },
-    { id: 'bills',     label: 'Bills (AP)',       icon: '🧾' },
-    { id: 'payments',  label: 'Payments',         icon: '💳' },
-    { id: 'suppliers', label: 'Suppliers',        icon: '🏭' },
-    { id: 'aging',     label: 'Aging',            icon: '📅' },
-    { id: 'reorder',   label: 'Reorder',          icon: '🔄' },
-    { id: 'approvals', label: 'Approvals',        icon: '✅' },
-    { id: 'history',   label: 'Price History',    icon: '📈' },
+    { id: 'pos',       label: 'Purchase Orders', icon: '' },
+    { id: 'bills',     label: 'Bills (AP)',       icon: '' },
+    { id: 'payments',  label: 'Payments',         icon: '' },
+    { id: 'suppliers', label: 'Suppliers',        icon: '' },
+    { id: 'aging',     label: 'Aging',            icon: '' },
+    { id: 'reorder',   label: 'Reorder',          icon: '' },
+    { id: 'approvals', label: 'Approvals',        icon: '' },
+    { id: 'history',   label: 'Price History',    icon: '' },
   ]
 
   return (
@@ -207,13 +235,13 @@ export default function ProcurementPage() {
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg border-b-2 whitespace-nowrap transition-colors
               ${tab === t.id ? 'border-accent text-primary-ink bg-s-surface' : 'border-transparent text-s-muted hover:text-s-text'}`}>
-            <span>{t.icon}</span>{t.label}
+            {t.label}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {tab === 'pos'       && <PoTab       qc={qc} />}
+        {tab === 'pos'       && <PoTab       qc={qc} newPo={newPo} />}
         {tab === 'bills'     && <BillsTab    qc={qc} />}
         {tab === 'payments'  && <PaymentsTab qc={qc} />}
         {tab === 'suppliers' && <SuppliersTab qc={qc} />}
@@ -230,10 +258,30 @@ export default function ProcurementPage() {
 // PURCHASE ORDERS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: { item: string | null; qty: string | null } | null }) {
   const router = useRouter()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  // The deep link from Inventory opens the form once (and pre-fills one item line).
+  const { data: stockItems, isError: stockItemsFailed } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => api.get<InventoryItem[]>('/inventory'),
+    enabled: !!newPo?.item,
+  })
+  useEffect(() => { if (newPo) setShowCreate(true) }, [newPo])
+  const linkedItem = newPo?.item ? stockItems?.find((i) => i.id === newPo.item) ?? null : null
+  const linkedDraft: PoDraft | undefined = linkedItem
+    ? {
+        supplierId: linkedItem.supplierId ?? '',
+        lines: [{
+          inventoryItemId: linkedItem.id,
+          quantityOrdered: newPo?.qty && Number(newPo.qty) > 0 ? newPo.qty : '',
+          unitCostCents: linkedItem.unitCostCents ? String(linkedItem.unitCostCents / 100) : '',
+          notes: '',
+        }],
+      }
+    : undefined
+  const waitingForItem = !!newPo?.item && stockItems === undefined && !stockItemsFailed
   const [detailId, setDetailId] = useState<string | null>(null)
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
@@ -288,7 +336,10 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         </button>
       </div>
 
-      {showCreate && <CreatePoForm qc={qc} onClose={() => setShowCreate(false)} />}
+      {showCreate && !waitingForItem && (
+        <CreatePoForm key={linkedDraft ? 'linked' : 'blank'} qc={qc} initial={linkedDraft} title={linkedDraft ? `New purchase order for ${linkedItem?.name ?? 'this item'}` : undefined}
+          onClose={() => setShowCreate(false)} />
+      )}
 
       {actionMut.error && (
         <p className="text-xs text-s-red">{actionMut.error instanceof Error ? actionMut.error.message : 'That did not work'}</p>
@@ -297,7 +348,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : orders.length === 0 ? (
-        <EmptyState icon="📋" title="No purchase orders" sub="Create your first PO to get started" />
+        <EmptyState icon="" title="No purchase orders" sub="Create your first PO to get started" />
       ) : (
         <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -504,7 +555,7 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
 
 // ─── Create PO form ───────────────────────────────────────────────────────────
 
-function CreatePoForm({ qc, onClose, initial }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft }) {
+function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string }) {
   const { data: suppliers = [] } = useQuery({
     queryKey: ['procurement', 'suppliers'],
     queryFn: () => api.get<Supplier[]>('/procurement/suppliers'),
@@ -552,10 +603,10 @@ function CreatePoForm({ qc, onClose, initial }: { qc: ReturnType<typeof useQuery
   return (
     <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="font-bold text-s-text">{initial ? 'Draft purchase order from reorder suggestions' : 'New Purchase Order'}</p>
+        <p className="font-bold text-s-text">{title ?? (initial ? 'Draft purchase order from reorder suggestions' : 'New Purchase Order')}</p>
         <button onClick={onClose} className="text-s-muted hover:text-s-text text-xs">✕</button>
       </div>
-      {initial && (
+      {initial && !title && (
         <p className="text-xs text-s-muted">Quantities bring each item back to its par level, after what is already on order. Check them and the prices, then create the PO — it is a draft until you submit it.</p>
       )}
 
@@ -730,7 +781,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {view === 'bills' && (isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : bills.length === 0 ? (
-        <EmptyState icon="🧾" title="No bills" sub="Record supplier invoices here" />
+        <EmptyState icon="" title="No bills" sub="Record supplier invoices here" />
       ) : (
         <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -756,7 +807,11 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="px-4 py-3 text-s-text font-medium">{b.supplier?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(b.billDate)}</td>
                     <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-s-red font-semibold' : 'text-s-muted'}`}>{fmt(b.dueDate)}</td>
-                    <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(b.totalCents)}</td>
+                    <td className="px-4 py-3 text-s-text font-semibold text-right">
+                      {fmtPkrWhole(b.totalCents)}
+                      {b.taxCents > 0 && <p className="text-[10px] font-normal text-s-muted">incl. {fmtPkrWhole(b.taxCents)} {authorityShort(b.taxAuthority) || 'sales'} tax</p>}
+                      {b.whtCents > 0 && <p className="text-[10px] font-normal text-s-muted">{fmtPkrWhole(b.whtCents)} withheld{b.whtSection && b.whtSection !== 'none' ? ` (${whtLabel(b.whtSection).split(' — ')[0]})` : ''}</p>}
+                    </td>
                     <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-s-red' : 'text-success'}`}>
                       {fmtPkrWhole(billDue(b))}
                       {(b.creditedCents ?? 0) > 0 && <p className="text-[10px] font-normal text-s-muted">{fmtPkrWhole(b.creditedCents ?? 0)} credited</p>}
@@ -788,7 +843,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {view === 'credit_notes' && (cnLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : creditNotes.length === 0 ? (
-        <EmptyState icon="↩" title="No credit notes" sub="Record a supplier's credit note or a return from the bill it is against" />
+        <EmptyState icon="" title="No credit notes" sub="Record a supplier's credit note or a return from the bill it is against" />
       ) : (
         <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -1143,40 +1198,198 @@ function UnapplyList({ title, rows, pending, error, onUnapply, onClose }: {
   )
 }
 
+// ─── New supplier bill ────────────────────────────────────────────────────────
+//
+// POST /procurement/bills. Every line is one of two kinds:
+//   • a STOCK line — an item that came in. It is billed against the delivery
+//     that brought it ("Fill from receipt": GET /procurement/grni/unbilled-lines)
+//     or its purchase-order line ("Fill from PO": poLineId + inventoryItemId),
+//     never typed free-hand (422 STOCK_LINE_NEEDS_RECEIPT). Billing clears the
+//     goods-received-not-invoiced balance (2015).
+//   • an EXPENSE line — anything that is not stock. It names the 6xxx expense
+//     account of the supplier's company (422 EXPENSE_ACCOUNT_REQUIRED). Equipment
+//     and fit-out are refused (422 USE_CAPEX): they are bought through CapEx →
+//     Quick buy. Finance or the CEO may say "not equipment" with a reason of 10
+//     characters or more — the server decides (403 OVERRIDE_NOT_ALLOWED).
+// The bill also says which authority charged the sales tax (it decides the input
+// tax account) and which withholding section applies; left empty, both default
+// to the supplier's usual ones.
+
+interface UnbilledLine {
+  receiptLineId: string; receiptId: string; poId: string | null; poLineId: string | null; receivedAt: string
+  inventoryItemId: string | null; description: string; unit: string; openQty: number; unitCostCents: number
+}
+interface ChartAccount { code: string; name: string; type?: string; isActive: boolean; tenantId: string | null }
+
+interface BillLine {
+  key: string
+  kind: 'stock' | 'expense'
+  description: string
+  quantity: string
+  unitCostPkr: string
+  // stock
+  inventoryItemId: string
+  receiptLineId: string
+  poLineId: string
+  source: string            // "Delivery of 12 Oct" / "PO line" — shown, not sent
+  unit: string
+  maxQty: number | null     // what is still open on the receipt (a hint, the server enforces)
+  // expense
+  expenseAccountCode: string
+  notEquipment: boolean
+  notEquipmentReason: string
+}
+
+const TAX_AUTHORITIES: Array<{ key: string; label: string }> = [
+  { key: 'fbr', label: 'FBR — federal sales tax' },
+  { key: 'pra', label: 'PRA — Punjab' },
+  { key: 'srb', label: 'SRB — Sindh' },
+  { key: 'kpra', label: 'KPRA — Khyber Pakhtunkhwa' },
+  { key: 'bra', label: 'BRA — Balochistan' },
+]
+const WHT_SECTION_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: '153_1_a', label: 's.153(1)(a) — goods' },
+  { key: '153_1_b', label: 's.153(1)(b) — services' },
+  { key: '153_1_c', label: 's.153(1)(c) — contracts' },
+  { key: '155', label: 's.155 — rent' },
+  { key: 'none', label: 'None — withhold nothing' },
+]
+const authorityShort = (k?: string | null) => (k ? k.toUpperCase() : '')
+const whtLabel = (k?: string | null) => WHT_SECTION_OPTIONS.find((o) => o.key === k)?.label ?? ''
+
+let billLineSeq = 0
+const blankExpenseLine = (): BillLine => ({
+  key: `bl${++billLineSeq}`, kind: 'expense', description: '', quantity: '1', unitCostPkr: '',
+  inventoryItemId: '', receiptLineId: '', poLineId: '', source: '', unit: '', maxQty: null,
+  expenseAccountCode: '', notEquipment: false, notEquipmentReason: '',
+})
+
 function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
+  const { data: me } = usePermissions()
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
   const { data: pos = [] } = useQuery({ queryKey: ['procurement', 'pos', ''], queryFn: () => api.get<PurchaseOrder[]>('/procurement/purchase-orders') })
 
   const [form, setForm] = useState({
-    supplierId: '', poId: '', billNumber: '', billDate: '', dueDate: '', taxCents: '', notes: '', attachmentUrl: '',
+    supplierId: '', poId: '', billNumber: '', billDate: '', dueDate: '', taxPkr: '', taxAuthority: '', whtSection: '', notes: '', attachmentUrl: '',
   })
-  const [lines, setLines] = useState([{ description: '', quantity: '', unitCostCents: '' }])
+  const [lines, setLines] = useState<BillLine[]>([])
+  const [picker, setPicker] = useState<'receipt' | 'po' | null>(null)
+  const [chosen, setChosen] = useState<Record<string, boolean>>({})
 
+  const supplier = suppliers.find((s) => s.id === form.supplierId) ?? null
+
+  // What the supplier delivered and has not billed yet.
+  const { data: unbilled = [], isFetching: unbilledLoading } = useQuery({
+    queryKey: ['procurement', 'grni', 'unbilled', form.supplierId],
+    queryFn: () => api.get<UnbilledLine[]>(`/procurement/grni/unbilled-lines?supplierId=${encodeURIComponent(form.supplierId)}`),
+    enabled: !!form.supplierId,
+    retry: false,
+  })
+  // The linked PO's lines.
+  const { data: poDetail } = useQuery({
+    queryKey: ['procurement', 'po', form.poId],
+    queryFn: () => api.get<PurchaseOrder>(`/procurement/purchase-orders/${form.poId}`),
+    enabled: !!form.poId,
+  })
+  // The supplier's company's expense accounts (6xxx, active).
+  const { data: chart = [], isError: chartHidden } = useQuery({
+    queryKey: ['chart-of-accounts'],
+    queryFn: () => api.get<ChartAccount[]>('/setup/chart-of-accounts'),
+    enabled: !!form.supplierId,
+    retry: false, meta: { background: true }, staleTime: 300_000,
+  })
+  const expenseAccounts = chart
+    .filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!supplier?.tenantId || a.tenantId === supplier.tenantId))
+    .sort((a, b) => a.code.localeCompare(b.code))
+
+  function patchLine(key: string, p: Partial<BillLine>) { setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l))) }
+  function changeSupplier(id: string) {
+    // A line belongs to one supplier's deliveries and company: switching drops the stock lines.
+    setForm({ ...form, supplierId: id, poId: '', taxAuthority: '', whtSection: '' })
+    setLines((ls) => ls.filter((l) => l.kind === 'expense').map((l) => ({ ...l, expenseAccountCode: '' })))
+    setPicker(null); setChosen({})
+  }
+
+  const used = new Set(lines.map((l) => l.receiptLineId).filter(Boolean))
+  const usedPo = new Set(lines.map((l) => l.poLineId).filter(Boolean))
+
+  function addReceiptLines() {
+    const add = unbilled.filter((u) => chosen[u.receiptLineId] && !used.has(u.receiptLineId) && u.inventoryItemId).map<BillLine>((u) => ({
+      key: `bl${++billLineSeq}`, kind: 'stock', description: u.description, quantity: String(Math.round(u.openQty * 1000) / 1000),
+      unitCostPkr: String(u.unitCostCents / 100), inventoryItemId: u.inventoryItemId!, receiptLineId: u.receiptLineId, poLineId: '',
+      source: `Delivery of ${fmt(u.receivedAt)}`, unit: u.unit, maxQty: u.openQty,
+      expenseAccountCode: '', notEquipment: false, notEquipmentReason: '',
+    }))
+    setLines((ls) => [...ls, ...add]); setChosen({}); setPicker(null)
+  }
+  function addPoLines() {
+    const add = (poDetail?.lines ?? []).filter((pl) => chosen[pl.id] && !usedPo.has(pl.id)).map<BillLine>((pl) => ({
+      key: `bl${++billLineSeq}`, kind: 'stock', description: pl.inventoryItem?.name ?? 'Item', quantity: String(pl.quantityOrdered),
+      unitCostPkr: String(pl.unitCostCents / 100), inventoryItemId: pl.inventoryItemId, receiptLineId: '', poLineId: pl.id,
+      source: `PO line${poDetail?.reference ? ` (${poDetail.reference})` : ''}`, unit: pl.inventoryItem?.unit ?? '', maxQty: null,
+      expenseAccountCode: '', notEquipment: false, notEquipmentReason: '',
+    }))
+    setLines((ls) => [...ls, ...add]); setChosen({}); setPicker(null)
+  }
+
+  const toCents = (v: string) => Math.round(Number(v) * 100)
   const mut = useMutation({
     mutationFn: () => api.post('/procurement/bills', {
-      supplierId: form.supplierId, poId: form.poId || null, billNumber: form.billNumber,
+      supplierId: form.supplierId, poId: form.poId || null, billNumber: form.billNumber.trim(),
       billDate: form.billDate, dueDate: form.dueDate || null,
-      taxCents: form.taxCents ? Math.round(Number(form.taxCents) * 100) : 0,
+      taxCents: form.taxPkr ? toCents(form.taxPkr) : 0,
+      // Left empty, the server uses the supplier's usual authority / section.
+      ...(form.taxAuthority ? { taxAuthority: form.taxAuthority } : {}),
+      ...(form.whtSection ? { whtSection: form.whtSection } : {}),
       notes: form.notes || null, attachmentUrl: form.attachmentUrl || null,
-      lines: lines.map((l) => ({
-        description: l.description, quantity: Number(l.quantity),
-        unitCostCents: Math.round(Number(l.unitCostCents) * 100),
-      })),
+      lines: lines.map((l) => l.kind === 'stock'
+        ? {
+            description: l.description, inventoryItemId: l.inventoryItemId,
+            ...(l.receiptLineId ? { receiptLineId: l.receiptLineId } : { poLineId: l.poLineId }),
+            quantity: Number(l.quantity), unitCostCents: toCents(l.unitCostPkr),
+          }
+        : {
+            description: l.description, expenseAccountCode: l.expenseAccountCode.trim(),
+            quantity: Number(l.quantity), unitCostCents: toCents(l.unitCostPkr),
+            ...(l.notEquipment ? { notEquipment: true, notEquipmentReason: l.notEquipmentReason.trim() } : {}),
+          }),
     }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'bills'] }); onClose() },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['procurement'] })
+      void qc.invalidateQueries({ queryKey: ['ap-aging'] })
+      void qc.invalidateQueries({ queryKey: ['inventory'] })
+      onClose()
+    },
   })
 
-  const valid = form.supplierId && form.billNumber && form.billDate && lines.every((l) => l.description && l.quantity && l.unitCostCents)
+  const lineOk = (l: BillLine) =>
+    l.description.trim() !== '' && Number(l.quantity) > 0 && l.unitCostPkr !== '' && Number(l.unitCostPkr) >= 0
+    && (l.kind === 'stock'
+      ? !!l.inventoryItemId && (!!l.receiptLineId || !!l.poLineId)
+      : /^\d{4}$/.test(l.expenseAccountCode.trim()) && (!l.notEquipment || l.notEquipmentReason.trim().length >= 10))
+  const valid = !!form.supplierId && form.billNumber.trim() !== '' && form.billDate !== '' && lines.length > 0 && lines.every(lineOk)
+  const subtotalCents = lines.reduce((s, l) => s + Math.round((Number(l.quantity) || 0) * (Number(l.unitCostPkr) || 0) * 100), 0)
+  const taxCents = form.taxPkr ? toCents(form.taxPkr) : 0
+
+  // The equipment refusal: which lines look like what the server matched.
+  const err = mut.error as (Error & { code?: string; details?: { matched?: string; accountCode?: string } }) | null
+  const equipmentRefusal = err instanceof ApiError && (err.code === 'USE_CAPEX' || err.code === 'OVERRIDE_REASON_REQUIRED' || err.code === 'OVERRIDE_NOT_ALLOWED')
+  const matched = equipmentRefusal ? (err.details as { matched?: string } | undefined)?.matched?.toLowerCase() ?? '' : ''
+  const looksEquipment = (l: BillLine) => l.kind === 'expense' && !!matched && l.description.toLowerCase().includes(matched)
+  const canOpenCapex = !!me && canOpenPath('/finance/capex', me.role, me.modules ?? [])
+
+  const supplierAuthority = supplier?.defaultTaxAuthority ?? null
+  const supplierSection = supplier?.defaultWhtSection ?? null
 
   return (
-    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
+    <div className="rounded-xl border border-primary bg-s-surface p-4 sm:p-5 space-y-4">
       <div className="flex items-center justify-between">
         <p className="font-bold text-s-text">New Supplier Bill</p>
-        <button onClick={onClose} className="text-s-muted text-xs">✕</button>
+        <button onClick={onClose} className="text-s-muted text-xs" aria-label="Close">✕</button>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Supplier *">
-          <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} className={fi}>
+          <select value={form.supplierId} onChange={(e) => changeSupplier(e.target.value)} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
@@ -1198,8 +1411,20 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
         <Field label="Due date">
           <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={fi} />
         </Field>
-        <Field label="Tax (PKR)">
-          <input type="number" value={form.taxCents} onChange={(e) => setForm({ ...form, taxCents: e.target.value })} placeholder="0" className={fi} />
+        <Field label="Sales tax on the bill (PKR)">
+          <input type="number" min={0} step="any" value={form.taxPkr} onChange={(e) => setForm({ ...form, taxPkr: e.target.value })} placeholder="0" className={fi} />
+        </Field>
+        <Field label="Tax charged by">
+          <select value={form.taxAuthority} onChange={(e) => setForm({ ...form, taxAuthority: e.target.value })} className={fi}>
+            <option value="">{`Supplier's usual (${authorityShort(supplierAuthority) || 'FBR'})`}</option>
+            {TAX_AUTHORITIES.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Withholding section">
+          <select value={form.whtSection} onChange={(e) => setForm({ ...form, whtSection: e.target.value })} className={fi}>
+            <option value="">{`Supplier's usual (${whtLabel(supplierSection) || 's.153(1)(a) — goods'})`}</option>
+            {WHT_SECTION_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
         </Field>
         <Field label="Notes">
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
@@ -1208,41 +1433,176 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
           <input value={form.attachmentUrl} onChange={(e) => setForm({ ...form, attachmentUrl: e.target.value })} placeholder="https://…" className={fi} />
         </Field>
       </div>
+      {supplier && (
+        <p className="text-xs text-s-muted">
+          {supplier.filerStatus === 'non_filer' && 'This supplier is a non-filer, so income tax is withheld at the higher rate. '}
+          {supplier.filerStatus === 'exempt' && `This supplier holds a withholding exemption${supplier.whtExemptCertNo ? ` (certificate ${supplier.whtExemptCertNo})` : ''}${supplier.whtExemptUntil ? ` until ${fmt(supplier.whtExemptUntil)}` : ''}; nothing is withheld while it is valid. `}
+          {(!supplier.filerStatus || supplier.filerStatus === 'unknown') && 'This supplier’s filer status is not set, so the higher withholding rate applies. Set it under Suppliers → Edit. '}
+          The tax authority decides which input-tax account the sales tax is claimed on; the withholding is worked out by the server from the section and the supplier’s status.
+        </p>
+      )}
 
+      {/* Lines */}
       <div className="space-y-2">
         <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Lines</p>
+        <p className="text-xs text-s-muted">
+          Goods that came in are billed against their delivery (or purchase order) — they clear Goods received not invoiced.
+          Anything else is an expense line booked to the expense account you pick.
+        </p>
+
+        {lines.length === 0 && <p className="text-xs text-s-muted italic py-2">No lines yet. Fill from a delivery or a PO, or add an expense line.</p>}
+
         {lines.map((l, i) => (
-          <div key={i} className="grid grid-cols-12 gap-2 items-end">
-            <div className="col-span-6">
-              <input placeholder="Description *" value={l.description}
-                onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} className={fi} />
+          <div key={l.key} className="rounded-lg border border-s-border p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
+                Line {i + 1} · {l.kind === 'stock' ? 'Stock item' : 'Expense'}
+              </span>
+              <button onClick={() => setLines(lines.filter((x) => x.key !== l.key))} className="text-xs text-s-red hover:underline">Remove</button>
             </div>
-            <div className="col-span-2">
-              <input type="number" placeholder="Qty *" value={l.quantity}
-                onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x))} className={fi} />
+
+            {l.kind === 'stock' ? (
+              <>
+                <p className="text-sm font-semibold text-s-text">{l.description}</p>
+                <p className="text-xs text-s-muted">
+                  {l.source}{l.maxQty != null ? ` · ${Math.round(l.maxQty * 1000) / 1000} ${l.unit} still to bill` : ''}
+                </p>
+              </>
+            ) : (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <input placeholder="Description *" value={l.description} onChange={(e) => patchLine(l.key, { description: e.target.value })} className={fi} />
+                {chartHidden || expenseAccounts.length === 0 ? (
+                  <input placeholder="Expense account code (6xxx) *" inputMode="numeric" maxLength={4} value={l.expenseAccountCode}
+                    onChange={(e) => patchLine(l.key, { expenseAccountCode: e.target.value.replace(/\D/g, '') })} className={fi} aria-label="Expense account code" />
+                ) : (
+                  <select value={l.expenseAccountCode} onChange={(e) => patchLine(l.key, { expenseAccountCode: e.target.value })} className={fi} aria-label="Expense account">
+                    <option value="">— expense account * —</option>
+                    {expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+                  </select>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2 sm:max-w-md">
+              <label className="text-[11px] text-s-muted">Quantity{l.unit ? ` (${l.unit})` : ''} *
+                <input type="number" min={0} step="any" value={l.quantity} onChange={(e) => patchLine(l.key, { quantity: e.target.value })} className={fi + ' mt-0.5'} />
+              </label>
+              <label className="text-[11px] text-s-muted">Unit cost (PKR) *
+                <input type="number" min={0} step="any" value={l.unitCostPkr} onChange={(e) => patchLine(l.key, { unitCostPkr: e.target.value })} className={fi + ' mt-0.5'} />
+              </label>
             </div>
-            <div className="col-span-3">
-              <input type="number" placeholder="Unit cost (PKR) *" value={l.unitCostCents}
-                onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, unitCostCents: e.target.value } : x))} className={fi} />
-            </div>
-            <div className="col-span-1">
-              <button onClick={() => setLines(lines.filter((_, j) => j !== i))}
-                className="w-full rounded-lg border border-s-border text-s-red py-2 text-sm">✕</button>
-            </div>
+
+            {l.kind === 'expense' && looksEquipment(l) && (
+              <div className="rounded-lg p-2.5 space-y-1.5" style={{ background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
+                <label className="flex items-start gap-2 text-xs text-s-text cursor-pointer">
+                  <input type="checkbox" className="accent-accent mt-0.5" checked={l.notEquipment} onChange={(e) => patchLine(l.key, { notEquipment: e.target.checked })} />
+                  <span>It is not equipment (“{matched}” matched). Finance or the CEO only.</span>
+                </label>
+                {l.notEquipment && (
+                  <input value={l.notEquipmentReason} onChange={(e) => patchLine(l.key, { notEquipmentReason: e.target.value })} maxLength={500}
+                    placeholder="Why it is an expense (10 characters or more)" className={fi} />
+                )}
+              </div>
+            )}
           </div>
         ))}
-        <button onClick={() => setLines([...lines, { description: '', quantity: '', unitCostCents: '' }])}
-          className="text-xs text-primary-ink hover:underline">+ Add line</button>
+
+        <div className="flex flex-wrap gap-2 items-center">
+          <button type="button" disabled={!form.supplierId} onClick={() => { setPicker(picker === 'receipt' ? null : 'receipt'); setChosen({}) }}
+            className="rounded-lg border border-s-border px-3 py-1.5 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink disabled:opacity-50">
+            Fill from receipt
+          </button>
+          <button type="button" disabled={!form.poId} onClick={() => { setPicker(picker === 'po' ? null : 'po'); setChosen({}) }}
+            className="rounded-lg border border-s-border px-3 py-1.5 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink disabled:opacity-50">
+            Fill from PO
+          </button>
+          <button type="button" disabled={!form.supplierId} onClick={() => setLines([...lines, blankExpenseLine()])}
+            className="rounded-lg border border-s-border px-3 py-1.5 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink disabled:opacity-50">
+            + Expense line
+          </button>
+          {!form.supplierId && <span className="text-xs text-s-muted">Pick the supplier first.</span>}
+        </div>
+
+        {picker === 'receipt' && (
+          <div className="rounded-lg border border-s-border p-3 space-y-2">
+            <p className="text-xs font-bold text-s-text">Delivered and not billed yet</p>
+            {unbilledLoading && <p className="text-xs text-s-muted">Loading…</p>}
+            {!unbilledLoading && unbilled.length === 0 && (
+              <p className="text-xs text-s-muted">
+                Nothing from this supplier is waiting for a bill. Receive the goods first on{' '}
+                <Link href="/procurement/receiving" className="text-primary-ink hover:underline">Receiving</Link>, or bill a purchase order line before it arrives with Fill from PO.
+              </p>
+            )}
+            {unbilled.map((u) => {
+              const taken = used.has(u.receiptLineId)
+              return (
+                <label key={u.receiptLineId} className={`flex items-start gap-2 text-xs ${taken ? 'opacity-50' : 'cursor-pointer'}`}>
+                  <input type="checkbox" className="accent-accent mt-0.5" disabled={taken || !u.inventoryItemId} checked={!!chosen[u.receiptLineId] && !taken}
+                    onChange={(e) => setChosen({ ...chosen, [u.receiptLineId]: e.target.checked })} />
+                  <span className="text-s-text">
+                    <span className="font-semibold">{u.description}</span>
+                    <span className="text-s-muted"> · {fmt(u.receivedAt)} · {Math.round(u.openQty * 1000) / 1000} {u.unit} open · PKR {(u.unitCostCents / 100).toLocaleString('en-PK', { maximumFractionDigits: 3 })} each{taken ? ' · already on this bill' : ''}</span>
+                  </span>
+                </label>
+              )
+            })}
+            {unbilled.length > 0 && (
+              <button type="button" onClick={addReceiptLines} disabled={!unbilled.some((u) => chosen[u.receiptLineId])}
+                className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold disabled:opacity-50">Add selected</button>
+            )}
+          </div>
+        )}
+
+        {picker === 'po' && (
+          <div className="rounded-lg border border-s-border p-3 space-y-2">
+            <p className="text-xs font-bold text-s-text">Lines of {poDetail?.reference ?? 'the purchase order'}</p>
+            <p className="text-xs text-s-muted">
+              The PO line is billed at the quantity you enter: goods already received are matched to their delivery, the rest waits as billed before arrival.
+              Lower the quantity if part was billed already.
+            </p>
+            {(poDetail?.lines ?? []).length === 0 && <p className="text-xs text-s-muted">Loading the PO…</p>}
+            {(poDetail?.lines ?? []).map((pl) => {
+              const taken = usedPo.has(pl.id)
+              return (
+                <label key={pl.id} className={`flex items-start gap-2 text-xs ${taken ? 'opacity-50' : 'cursor-pointer'}`}>
+                  <input type="checkbox" className="accent-accent mt-0.5" disabled={taken} checked={!!chosen[pl.id] && !taken}
+                    onChange={(e) => setChosen({ ...chosen, [pl.id]: e.target.checked })} />
+                  <span className="text-s-text">
+                    <span className="font-semibold">{pl.inventoryItem?.name ?? 'Item'}</span>
+                    <span className="text-s-muted"> · ordered {pl.quantityOrdered} {pl.inventoryItem?.unit ?? ''} · received {pl.quantityReceived} · PKR {(pl.unitCostCents / 100).toLocaleString('en-PK', { maximumFractionDigits: 3 })} each{taken ? ' · already on this bill' : ''}</span>
+                  </span>
+                </label>
+              )
+            })}
+            {(poDetail?.lines ?? []).length > 0 && (
+              <button type="button" onClick={addPoLines} disabled={!(poDetail?.lines ?? []).some((pl) => chosen[pl.id])}
+                className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold disabled:opacity-50">Add selected</button>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="flex gap-2 pt-2 border-t border-s-border">
-        <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
-          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
-          {mut.isPending ? 'Saving…' : 'Save Bill'}
-        </button>
-        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+      <div className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t border-s-border">
+        <p className="text-sm text-s-text">
+          Subtotal <span className="font-bold">{fmtPkrWhole(subtotalCents)}</span>
+          {taxCents > 0 && <> · tax {fmtPkrWhole(taxCents)} · total <span className="font-bold">{fmtPkrWhole(subtotalCents + taxCents)}</span></>}
+        </p>
+        <div className="flex gap-2">
+          <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
+            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
+            {mut.isPending ? 'Saving…' : 'Save Bill'}
+          </button>
+          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+        </div>
       </div>
-      {mut.isError && <p className="text-xs text-s-red">{(mut.error as Error).message}</p>}
+      {mut.isError && (
+        <div role="alert" className="text-xs text-s-red space-y-1">
+          <p>{errText(mut.error)}</p>
+          {equipmentRefusal && err.code === 'USE_CAPEX' && canOpenCapex && (
+            <p><Link href="/finance/capex?quickBuy=1" className="text-primary-ink hover:underline">Buy it through CapEx → Quick buy</Link></p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1292,7 +1652,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : payments.length === 0 ? (
-        <EmptyState icon="💳" title="No payments" sub="Record supplier payments here" />
+        <EmptyState icon="" title="No payments" sub="Record supplier payments here" />
       ) : (
         <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -1578,7 +1938,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       {isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : suppliers.length === 0 ? (
-        <EmptyState icon="🏭" title="No suppliers" sub="Add your first supplier to start ordering" />
+        <EmptyState icon="" title="No suppliers" sub="Add your first supplier to start ordering" />
       ) : (
         <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -1704,6 +2064,12 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
     address: supplier?.address ?? '', taxId: supplier?.taxId ?? '', notes: supplier?.notes ?? '',
     paymentTermsDays: String(supplier?.paymentTermsDays ?? 30), leadTimeDays: String(supplier?.leadTimeDays ?? ''),
     openingBalanceCents: String(supplier?.openingBalanceCents ? supplier.openingBalanceCents / 100 : ''),
+    // Tax profile
+    filerStatus: supplier?.filerStatus ?? 'unknown',
+    whtExemptCertNo: supplier?.whtExemptCertNo ?? '',
+    whtExemptUntil: supplier?.whtExemptUntil ? pktDate(supplier.whtExemptUntil) : '',
+    defaultTaxAuthority: supplier?.defaultTaxAuthority ?? '',
+    defaultWhtSection: supplier?.defaultWhtSection ?? '',
     // Tenant chosen by the operator. Edit path locks to the existing tenantId
     // (transfer happens via the Monitor edit drawer's Company dropdown).
     tenantId: supplier?.tenantId ?? (viewAll ? '' : (tenants[0]?.id ?? '')),
@@ -1727,6 +2093,12 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         paymentTermsDays: form.paymentTermsDays ? Number(form.paymentTermsDays) : undefined,
         leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : undefined,
         openingBalanceCents: form.openingBalanceCents ? Math.round(Number(form.openingBalanceCents) * 100) : 0,
+        filerStatus: form.filerStatus,
+        // The exemption certificate only exists for an exempt supplier.
+        whtExemptCertNo: form.filerStatus === 'exempt' ? form.whtExemptCertNo.trim() || null : null,
+        whtExemptUntil: form.filerStatus === 'exempt' ? form.whtExemptUntil || null : null,
+        defaultTaxAuthority: form.defaultTaxAuthority || null,
+        defaultWhtSection: form.defaultWhtSection || null,
         ...(form.tenantId ? { tenantId: form.tenantId } : {}),
       }
       return supplier
@@ -1734,7 +2106,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         : api.post('/procurement/suppliers', data)
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] }); onClose() },
-    onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to save supplier'),
+    onError:   (e: unknown) => setErr(stockErrorText(e, 'Failed to save supplier')),
   })
 
   function submit() {
@@ -1792,7 +2164,49 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
-      {err && <p className="text-xs font-bold text-s-red pt-1">{err}</p>}
+
+      {/* Tax block — how this supplier's bills are taxed and withheld on. */}
+      <div className="rounded-lg border border-s-border p-3 space-y-3">
+        <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Tax</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Filer status">
+            <select value={form.filerStatus} onChange={(e) => setForm({ ...form, filerStatus: e.target.value as typeof form.filerStatus })} className={fi}>
+              <option value="filer">Filer (active taxpayer)</option>
+              <option value="non_filer">Non-filer (higher withholding)</option>
+              <option value="exempt">Exempt (holds a certificate)</option>
+              <option value="unknown">Not known yet (higher withholding)</option>
+            </select>
+          </Field>
+          <Field label="Sales tax usually charged by">
+            <select value={form.defaultTaxAuthority} onChange={(e) => setForm({ ...form, defaultTaxAuthority: e.target.value })} className={fi}>
+              <option value="">FBR (default)</option>
+              {TAX_AUTHORITIES.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Usual withholding section">
+            <select value={form.defaultWhtSection} onChange={(e) => setForm({ ...form, defaultWhtSection: e.target.value })} className={fi}>
+              <option value="">s.153(1)(a) — goods (default)</option>
+              {WHT_SECTION_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </Field>
+          {form.filerStatus === 'exempt' && (
+            <>
+              <Field label="Exemption certificate no.">
+                <input value={form.whtExemptCertNo} onChange={(e) => setForm({ ...form, whtExemptCertNo: e.target.value })} maxLength={100} className={fi} />
+              </Field>
+              <Field label="Certificate valid until">
+                <input type="date" value={form.whtExemptUntil} onChange={(e) => setForm({ ...form, whtExemptUntil: e.target.value })} className={fi} />
+              </Field>
+            </>
+          )}
+        </div>
+        <p className="text-xs text-s-muted">
+          The filer status sets the withholding rate on this supplier&rsquo;s bills. An exempt supplier is not withheld from while the certificate is valid
+          {form.filerStatus === 'exempt' && !form.whtExemptUntil ? ' — enter the date it runs to, or it will not count' : ''}.
+          The authority and section are the defaults a new bill starts with; each bill can change them.
+        </p>
+      </div>
+      {err && <p role="alert" className="text-xs font-bold text-s-red pt-1">{err}</p>}
       <div className="flex gap-2 pt-2 border-t border-s-border">
         <button onClick={submit} disabled={!form.name || mut.isPending}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
@@ -1837,7 +2251,7 @@ function ReorderTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
   if (isLoading) return <div className="p-6"><p className="text-s-muted text-sm">Loading…</p></div>
   if (error) return <div className="p-6"><p className="text-s-red text-sm">{errText(error)}</p></div>
-  if (data.length === 0) return <div className="p-6"><EmptyState icon="🔄" title="All stocked up" sub="No items below their par level, counting what is already on order" /></div>
+  if (data.length === 0) return <div className="p-6"><EmptyState icon="" title="All stocked up" sub="No items below their par level, counting what is already on order" /></div>
 
   const itemCount = data.reduce((s, g) => s + g.lines.length, 0)
 
@@ -1969,7 +2383,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       </div>
 
       {orders.length === 0 ? (
-        <EmptyState icon="✅" title="No pending approvals" sub="All purchase orders have been reviewed" />
+        <EmptyState icon="" title="No pending approvals" sub="All purchase orders have been reviewed" />
       ) : (
         <>
           <p className="text-sm font-bold text-s-amber">{orders.length} PO{orders.length !== 1 ? 's' : ''} awaiting approval</p>
@@ -2076,7 +2490,7 @@ function PriceHistoryTab() {
       {isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
       ) : data.length === 0 ? (
-        <EmptyState icon="📈" title="No price history" sub="Receive purchase orders to build price history" />
+        <EmptyState icon="" title="No price history" sub="Receive purchase orders to build price history" />
       ) : (
         <div className="rounded-xl border border-s-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -2130,7 +2544,7 @@ function PriceHistoryTab() {
 function EmptyState({ icon, title, sub }: { icon: string; title: string; sub: string }) {
   return (
     <div className="text-center py-16 text-s-muted">
-      <p className="text-4xl mb-3">{icon}</p>
+      {icon && <p className="text-4xl mb-3">{icon}</p>}
       <p className="font-semibold text-s-text">{title}</p>
       <p className="text-sm mt-1">{sub}</p>
     </div>

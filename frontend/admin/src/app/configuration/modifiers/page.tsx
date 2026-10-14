@@ -42,7 +42,7 @@ export default function ModifiersPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🍔 Modifier templates</h1>
+            <h1 className="text-2xl font-black text-white/90">Modifier templates</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Reusable option groups you can attach to any menu item — sauces, sizes, spice level, sides.
               Define once here, attach in the menu editor.
@@ -67,7 +67,7 @@ export default function ModifiersPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg font-black text-white/90">{t.name}</h3>
-                  {t.isRequired && <Pill bg="rgba(239,68,68,0.12)" fg="#b42318">Required</Pill>}
+                  {t.isRequired && <span className="s-badge-red">Required</span>}
                   <Pill bg="rgb(var(--fg-rgb) / 0.06)" fg="rgb(var(--fg-rgb) / 0.55)">
                     {t.minSelect === t.maxSelect ? `Pick ${t.maxSelect}` : `Pick ${t.minSelect}-${t.maxSelect}`}
                   </Pill>
@@ -97,11 +97,103 @@ export default function ModifiersPage() {
         ))}
       </div>
 
+      <AddOnIngredients />
+
       {(adding || editing) && (
         <Modal template={editing} onClose={() => { setAdding(false); setEditing(null) }}
           onSaved={() => { setAdding(false); setEditing(null); void qc.invalidateQueries({ queryKey: ['modifier-templates'] }) }} />
       )}
     </div>
+  )
+}
+
+// ─── Add-on ingredients ─────────────────────────────────────────────────────
+// Templates above are reusable option lists; the add-ons a dish actually
+// sells are its modifier groups' options (menu editor). Each add-on can have
+// ONE recipe (kind 'modifier'): what one of it adds to the dish — or takes
+// off it ("No onion") — so its stock and food cost are counted on every sale.
+// "Ingredients" opens that recipe, or starts it.
+
+interface MenuTreeGroup { id: string; name: string; modifiers: Array<{ id: string; name: string; priceDeltaCents: number }> }
+interface MenuTreeCategory { id: string; name: string; items: Array<{ id: string; name: string; modifierGroups?: MenuTreeGroup[] }> }
+interface AddOnRecipe { id: string; kind: string; modifierId?: string | null; status: string }
+
+function AddOnIngredients() {
+  const { data: brands = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get('/concepts?view=picker'),
+  })
+  const [brandId, setBrandId] = useState('')
+  const activeBrand = brandId || brands[0]?.id || ''
+  const { data: menu = [], isLoading } = useQuery<MenuTreeCategory[]>({
+    queryKey: ['recipes', 'brand-menu', activeBrand],
+    queryFn: () => api.get(`/menu/${activeBrand}`),
+    enabled: !!activeBrand,
+  })
+  // The brand's recipes include its add-on recipes (kind 'modifier').
+  const { data: recipes = [] } = useQuery<AddOnRecipe[]>({
+    queryKey: ['recipes', 'by-brand', activeBrand],
+    queryFn: () => api.get(`/recipes?conceptId=${activeBrand}`),
+    enabled: !!activeBrand,
+    // A role without the recipes module just sees "No recipe" — not an error toast.
+    meta: { background: true },
+  })
+  const recipeOf = new Map(recipes.filter((r) => r.kind === 'modifier' && r.modifierId).map((r) => [r.modifierId!, r]))
+  const dishes = menu.flatMap((c) => c.items).filter((d) => (d.modifierGroups ?? []).some((g) => g.modifiers.length > 0))
+
+  return (
+    <section className="px-4 sm:px-7 pb-10 max-w-4xl mx-auto space-y-3">
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-xs text-success">Food cost</p>
+          <h2 className="text-lg font-black text-white/90">Add-on ingredients</h2>
+          <p className="text-sm text-white/45 mt-1 max-w-2xl">
+            What one of each add-on adds to the dish, or takes off it. Without it, an add-on sells with no stock or food cost.
+          </p>
+        </div>
+        {brands.length > 1 && (
+          <select value={activeBrand} onChange={(e) => setBrandId(e.target.value)} className={fieldCls + ' w-auto'}>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        )}
+      </div>
+      {isLoading && <p className="text-sm text-white/40">Loading…</p>}
+      {!isLoading && activeBrand && dishes.length === 0 && (
+        <Empty label="No add-ons on this brand's menu" hint="Add modifier groups to a dish in the menu editor first." />
+      )}
+      {dishes.map((d) => (
+        <div key={d.id} className="rounded-2xl p-4"
+          style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+          <h3 className="font-black text-white/90">{d.name}</h3>
+          {(d.modifierGroups ?? []).filter((g) => g.modifiers.length > 0).map((g) => (
+            <div key={g.id} className="mt-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-white/45">{g.name}</p>
+              <ul className="mt-1 divide-y divide-white/[0.05]">
+                {g.modifiers.map((m) => {
+                  const r = recipeOf.get(m.id)
+                  const href = r
+                    ? `/accounting/recipes/${r.id}`
+                    : `/accounting/recipes/new?brandId=${activeBrand}&menuItemId=${d.id}&groupId=${g.id}&modifierId=${m.id}`
+                  return (
+                    <li key={m.id} className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="text-sm text-white/80 min-w-0 truncate">{m.name}</span>
+                      <span className="flex items-center gap-2 shrink-0">
+                        {r
+                          ? <span className="s-badge-green">Has a recipe</span>
+                          : <span className="s-badge-amber">No recipe</span>}
+                        <Link href={href} className="rounded-lg border border-white/10 px-3 py-1 text-xs text-primary-ink hover:bg-primary/10">
+                          Ingredients
+                        </Link>
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ))}
+    </section>
   )
 }
 

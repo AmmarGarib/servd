@@ -18,12 +18,14 @@ import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendPhoneMessage, sendEmail } from '../lib/notify.js'
 import { formatBrandName } from '../lib/brandName.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 const QUEUE_NAME = 'review-prompts'
 const RUN_EVERY_MS = 5 * 60_000
 const PROMPT_DELAY_MIN = 30
 
 export function startReviewPromptWorker() {
+  if (sandboxBlocks('worker', { summary: 'reviewPrompt' })) return // practice copy: messages real customers
   try {
     const queue = new Queue(QUEUE_NAME, {
       connection: redis,

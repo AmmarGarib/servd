@@ -354,17 +354,19 @@ describe('deposits (H25: 1360)', () => {
     expect((await call('ceoA', 'POST', `/finance/capex/lines/${d}/capitalise`, { classKey: 'kitchen_equipment' })).json().error.code).toBe('NOT_CAPITAL')
 
     const url = `/finance/capex/payments/${dp.json().id}/deposit-return`
-    expect((await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 200_000, reason: 'Paint damage', receivedAt: '2026-09-30' })).json().error.code).toBe('RETURN_EXCEEDS_DEPOSIT')
-    expect((await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 100_000, receivedAt: '2026-09-30' })).json().error.code).toBe('REASON_REQUIRED')
+    expect((await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 100_000, reason: 'Paint damage', receivedAt: '2026-09-30' })).json().error.code).toBe('PAYMENT_REFERENCE_REQUIRED')
+    expect((await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 200_000, reason: 'Paint damage', receivedAt: '2026-09-30', reference: 'IBFT-500' })).json().error.code).toBe('RETURN_EXCEEDS_DEPOSIT')
+    expect((await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 100_000, receivedAt: '2026-09-30', reference: 'IBFT-500' })).json().error.code).toBe('REASON_REQUIRED')
     expect((await call('finB', 'POST', url, { returnedCents: 500_000, receivedAt: '2026-09-30' })).statusCode).toBe(404)
-    const ret = await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 100_000, reason: 'Paint damage', receivedAt: '2026-09-30' })
+    const ret = await call('finA', 'POST', url, { returnedCents: 500_000, forfeitedCents: 100_000, reason: 'Paint damage', receivedAt: '2026-09-30', payFrom: 'bank', reference: 'IBFT-500' })
     expect(ret.statusCode, ret.body).toBe(201)
     const rj = await entry(`capex.deposit_return:${dp.json().id}`)
     expect(amt(rj!.rows, '1020', 'debit')).toBe(500_000)
     expect(amt(rj!.rows, '6010', 'debit')).toBe(100_000)
     expect(rj!.rows.find((x) => x.code === '6010')!.conceptId).toBe(conceptA)
     expect(amt(rj!.rows, '1360', 'credit')).toBe(600_000)
-    expect((await prisma.capexPayment.findUniqueOrThrow({ where: { id: dp.json().id } })).depositReturnedCents).toBe(500_000)
+    expect(rj!.rows.find((x) => x.code === '1020')!.memo).toContain('bank transfer, ref IBFT-500')
+    expect(await prisma.capexPayment.findUniqueOrThrow({ where: { id: dp.json().id } })).toMatchObject({ depositReturnedCents: 500_000, depositReturnMethod: 'bank_transfer', depositReturnRef: 'IBFT-500' })
     // A returned deposit is locked.
     expect((await call('finA', 'PATCH', `/finance/capex/payments/${dp.json().id}`, { paidAmountCents: 1 })).json().error.code).toBe('DEPOSIT_RETURNED')
     const view = (await call('finA', 'GET', `/finance/capex/${p}`)).json()
@@ -393,7 +395,7 @@ describe('deposits (H25: 1360)', () => {
     expect((await call('finA', 'PATCH', `/finance/capex/payments/${pay.id}`, { paidAmountCents: 1 })).json().error.code).toBe('DEPOSIT_RECLASSED')
     expect((await prisma.capexLine.findUniqueOrThrow({ where: { id: l } })).treatment).toBe('deposit')
     // …and it can now be returned from 1360.
-    const ret = await call('finA', 'POST', `/finance/capex/payments/${pay.id}/deposit-return`, { returnedCents: 250_000, receivedAt: '2026-10-01' })
+    const ret = await call('finA', 'POST', `/finance/capex/payments/${pay.id}/deposit-return`, { returnedCents: 250_000, receivedAt: '2026-10-01', method: 'cheque', reference: 'CHQ-250' })
     expect(ret.statusCode, ret.body).toBe(201)
   })
 })

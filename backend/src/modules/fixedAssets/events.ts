@@ -33,7 +33,9 @@ import type { FixedAsset, FixedAssetEvent, FixedAssetPool, Prisma } from '@prism
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { toCents, zMoneyCents, assertMoneyFits } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import {
+  moneyAccountCode, RECEIPT_METHODS, zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText,
+} from '../../lib/bankAccounts.js'
 import {
   ACCT, postJournalEntry, reverseJournalEntry, lateDatingFor, withLateNote, type JournalLineInput,
 } from '../accounting/journal.js'
@@ -84,6 +86,13 @@ export function needsApproval(kind: string): boolean {
 }
 
 export const DISPOSAL_KINDS = ['sale', 'scrap', 'lost', 'stolen'] as const
+/**
+ * How the buyer paid for an asset sale: THE receipt list (lib/bankAccounts.ts
+ * RECEIPT_METHODS) plus the old spellings 'bank' / 'online' that a request
+ * raised before 2026-10-14 may still carry — a pending payload is parsed
+ * again when the CEO approves it, so they must stay readable.
+ */
+export const DISPOSAL_METHODS = [...RECEIPT_METHODS, 'bank', 'online'] as const
 export const WRITE_OFF_CAUSES = ['breakage', 'loss', 'theft', 'worn_out'] as const
 
 const idSchema = z.string().min(1).max(64)
@@ -93,8 +102,13 @@ export const PAYLOAD_SCHEMAS = {
   disposal: z.object({
     kind: z.enum(DISPOSAL_KINDS),
     proceedsCents: zMoneyCents('The disposal proceeds').default(0),
-    // Where the proceeds went (lib/bankAccounts.ts moneyAccountCode): cash → 1010, bank-type → the named bank.
-    method: z.enum(['bank', 'bank_transfer', 'cheque', 'online', 'cash']).optional(),
+    // Where the proceeds went (lib/bankAccounts.ts moneyAccountCode): cash → 1010, card → 1030,
+    // bank-type → the named bank. Omitted = the old default 'bank'.
+    method: zReceiptMethod(DISPOSAL_METHODS).optional(),
+    // The payment reference # of the proceeds (owner, 2026-10-14: required for every method,
+    // cash included). Checked when the request is RAISED, never at approve — a request raised
+    // before the rule carries none. lib/paymentRefs.ts reads it (payload.reference).
+    reference: zPaymentRef.nullable().optional(),
     bankAccountId: idSchema.nullable().optional(),
   }),
   impairment: z.object({ amountCents: zMoneyCents('The write-down', { sign: 'positive' }) }),
@@ -129,7 +143,12 @@ export const PAYLOAD_SCHEMAS = {
     usefulLifeMonths: z.number().int().min(1).max(600).optional(),
     salvageCents: zMoneyCents('The salvage value').optional(),
     name: z.string().min(1).max(120).optional(),
+    // Where the asset physically is (omitted = the project's outlet). Shared equipment must
+    // have one (owner, 2026-10-14: 422 LOCATION_REQUIRED_FOR_SHARED when raised).
     locationId: idSchema.nullable().optional(),
+    // Individual (non-pooled) assets: the brand (omitted = the project's brand; null = shared
+    // across brands). A pooled class takes its brand from `pool.conceptId` instead.
+    conceptId: idSchema.nullable().optional(),
     // Pooled classes (smallwares): the pool's type and brand (omitted = the project's brand; null = shared).
     pool: z.object({ typeKey: z.string().min(1).max(40), conceptId: idSchema.nullable().optional() }).optional(),
     // Gross cost (incl. claimable input tax); omitted = negotiated, else unit cost × quantity.
@@ -208,6 +227,8 @@ interface Subject {
   tenantId: string
   asset: FixedAsset | null
   pool: FixedAssetPool | null
+  /** capitalise: the CapEx project's brand and outlet (the payload's defaults). */
+  project?: { conceptId: string | null; locationId: string | null }
 }
 
 async function resolveSubject(db: Db, input: CreateEventInput): Promise<Subject> {
@@ -225,12 +246,44 @@ async function resolveSubject(db: Db, input: CreateEventInput): Promise<Subject>
   }
   // capitalise
   if (!input.capexLineId) throw new AppError('CAPEX_LINE_REQUIRED', 'Name the CapEx line', 422)
-  const line = await db.capexLine.findUnique({ where: { id: input.capexLineId }, include: { project: { select: { tenantId: true, deletedAt: true } } } })
+  const line = await db.capexLine.findUnique({
+    where: { id: input.capexLineId },
+    include: { project: { select: { tenantId: true, deletedAt: true, conceptId: true, locationId: true } } },
+  })
   if (!line || line.project.deletedAt) throw new NotFoundError('CapexLine', input.capexLineId)
   const tenantId = line.project.tenantId
   if (!tenantId) throw new AppError('PROJECT_HAS_NO_COMPANY', 'This capex project is not bound to a company — assets belong to one company', 422)
   if (input.tenantId && tenantId !== input.tenantId) throw new NotFoundError('CapexLine', input.capexLineId)
-  return { tenantId, asset: null, pool: null }
+  return { tenantId, asset: null, pool: null, project: { conceptId: line.project.conceptId, locationId: line.project.locationId } }
+}
+
+/**
+ * Owner (2026-10-14): equipment shared across brands always says where it
+ * physically is. An asset with NO brand and NO outlet is refused when the
+ * request is raised (capitalise, transfer) — 422 LOCATION_REQUIRED_FOR_SHARED.
+ * A request already pending approves as before.
+ */
+export function assertSharedHasLocation(conceptId: string | null | undefined, locationId: string | null | undefined): void {
+  if (!conceptId && !locationId) {
+    throw new AppError('LOCATION_REQUIRED_FOR_SHARED', 'Shared equipment needs its location — name the outlet it is at', 422)
+  }
+}
+
+/**
+ * The brand and outlet a capitalisation gives its asset(s): the payload's,
+ * else the CapEx project's. Individual assets take `conceptId`, a pooled
+ * class `pool.conceptId` (the same rule applyCapitalise uses).
+ */
+export function capitaliseTarget(
+  p: Pick<CapitalisePayload, 'locationId' | 'conceptId' | 'pool'>,
+  pooled: boolean,
+  project: { conceptId: string | null; locationId: string | null },
+): { conceptId: string | null; locationId: string | null } {
+  const locationId = p.locationId !== undefined ? p.locationId : project.locationId
+  const conceptId = pooled
+    ? (p.pool && p.pool.conceptId !== undefined ? p.pool.conceptId : project.conceptId)
+    : (p.conceptId !== undefined ? p.conceptId : project.conceptId)
+  return { conceptId: conceptId ?? null, locationId: locationId ?? null }
 }
 
 function assertDisposalDate(asset: FixedAsset, effective: Date): void {
@@ -296,11 +349,15 @@ async function validateRequest(db: Db, kind: string, s: Subject, payload: Record
   }
   if (kind === 'disposal') {
     assertDisposalDate(asset!, effective)
-    const p = payload as { kind: string; proceedsCents: number; method?: string; bankAccountId?: string | null }
+    const p = payload as { kind: string; proceedsCents: number; method?: string; reference?: string | null; bankAccountId?: string | null }
     if ((p.kind === 'lost' || p.kind === 'stolen') && p.proceedsCents > 0) {
       throw new AppError('PROCEEDS_NOT_ALLOWED', 'A lost or stolen asset brings in no proceeds', 422)
     }
-    if (p.proceedsCents > 0) await moneyAccountCode(db, s.tenantId, { method: p.method ?? 'bank', bankAccountId: p.bankAccountId ?? null })
+    if (p.proceedsCents > 0) {
+      await moneyAccountCode(db, s.tenantId, { method: p.method ?? 'bank', bankAccountId: p.bankAccountId ?? null })
+      // Raise time only: a request raised before 2026-10-14 has no reference and still approves.
+      assertPaymentReference(p.method ?? 'bank', p.reference)
+    }
   }
   if (kind === 'impairment' || kind === 'change_estimate') {
     assertEffectiveDate(effective, asset!.inServiceAt ?? asset!.acquiredAt)
@@ -332,6 +389,23 @@ async function validateRequest(db: Db, kind: string, s: Subject, payload: Record
     const changes = (p.toLocationId !== undefined && p.toLocationId !== asset!.locationId)
       || (p.toConceptId !== undefined && p.toConceptId !== asset!.conceptId)
     if (!changes) throw new AppError('NOTHING_TO_TRANSFER', 'Name a different outlet or brand', 422)
+    // Moving to "shared across brands" (or off its outlet) must leave it somewhere.
+    assertSharedHasLocation(
+      p.toConceptId !== undefined ? p.toConceptId : asset!.conceptId,
+      p.toLocationId !== undefined ? p.toLocationId : asset!.locationId,
+    )
+  }
+  if (kind === 'capitalise' && s.project) {
+    const p = payload as CapitalisePayload
+    if (p.conceptId) await assertConceptOf(db, s.tenantId, p.conceptId)
+    if (p.locationId) await assertLocationOf(db, s.tenantId, p.locationId)
+    const cls = await classOf(s.tenantId, p.classKey, db)
+    const target = capitaliseTarget(p, cls.pooled, s.project)
+    if (cls.pooled) {
+      if (!target.locationId) throw new AppError('POOL_NEEDS_LOCATION', 'Smallwares are pooled per outlet — name the outlet', 422)
+    } else {
+      assertSharedHasLocation(target.conceptId, target.locationId)
+    }
   }
   if (kind === 'pool_write_off' || kind === 'pool_transfer') {
     const units = (payload as { units: number }).units
@@ -589,18 +663,20 @@ async function applyDisposal(tx: Tx, event: FixedAssetEvent, payload: Record<str
   const nbv = cost - accumulated
   const gainLoss = proceeds - nbv
   const memo = tagOf(asset)
+  // "bank deposit, ref 4471" — how the buyer paid and the payment reference # (owner, 2026-10-14).
+  const paid = money ? receiptText(p.method ?? 'bank', p.reference) : null
   const c = asset.conceptId
   const lines: JournalLineInput[] = []
   for (const [code, cents] of byCode) {
     lines.push({ accountCode: code, type: cents > 0 ? 'debit' : 'credit', amountCents: Math.abs(cents), conceptId: c, memo })
   }
-  if (money) lines.push({ accountCode: money.code, type: 'debit', amountCents: proceeds, conceptId: c, memo: `Disposal proceeds — ${memo}` })
+  if (money) lines.push({ accountCode: money.code, type: 'debit', amountCents: proceeds, conceptId: c, memo: `Disposal proceeds (${paid}) — ${memo}` })
   lines.push({ accountCode: state.cls.costAccountCode, type: 'credit', amountCents: cost, conceptId: c, memo })
   if (gainLoss > 0) lines.push({ accountCode: ACCT.ASSET_DISPOSAL, type: 'credit', amountCents: gainLoss, conceptId: c, memo: `Gain on disposal — ${memo}` })
   if (gainLoss < 0) lines.push({ accountCode: ACCT.ASSET_DISPOSAL, type: 'debit', amountCents: -gainLoss, conceptId: c, memo: `Loss on disposal — ${memo}` })
 
   const dating = await lateDate(tx, asset.tenantId, event.effectiveDate)
-  const w = withLateNote(`Disposed (${p.kind}) ${memo}`, lines, dating.memoNote)
+  const w = withLateNote(`Disposed (${p.kind}) ${memo}${paid ? ` — ${paid}` : ''}`, lines, dating.memoNote)
   const r = await syncSourcePosting({
     tenantId: asset.tenantId, sourceType: DISPOSE_SOURCE, id: asset.id,
     desired: { description: w.description, entryDate: dating.entryDate, lines: w.lines },
@@ -708,6 +784,11 @@ async function applyTransfer(tx: Tx, event: FixedAssetEvent, payload: Record<str
   if (toConcept === asset.conceptId && toLocation === asset.locationId) {
     throw new AppError('NOTHING_TO_TRANSFER', 'Name a different outlet or brand', 422)
   }
+  // Checked again here, on the asset as read under its lock: two transfers
+  // sent together (one clearing the outlet, one the brand) each pass the
+  // raise-time check against the old state, and would together leave shared
+  // equipment with no location. A refusal saves nothing (same transaction).
+  assertSharedHasLocation(toConcept, toLocation)
   await chargeAssetTx(tx, asset.id, lastCompletedPeriodPkt(), actorId)
   let entryId: string | null = null
   if (toConcept !== asset.conceptId) {
@@ -968,15 +1049,11 @@ interface CapexSeam {
 }
 
 // Dynamic import: capexPosting imports this module (prepareCapitalisation →
-// createRequest), so a static import back would be a load-time cycle.
+// createRequest), so a static import back would be a load-time cycle. The
+// dynamic import is still fully typed (a renamed export fails tsc).
 async function capexSeam(): Promise<CapexSeam> {
-  // Read by name: w2-fa-capex adds capexAdvancesForLine; until then this answers 501.
-  const mod: Record<string, unknown> = await import('../financePlanning/capexPosting.js')
-  const fn = mod['capexAdvancesForLine']
-  if (typeof fn !== 'function') {
-    throw new AppError('CAPEX_SEAM_MISSING', 'Capitalising from CapEx is not available in this build yet', 501)
-  }
-  return { capexAdvancesForLine: fn as CapexSeam['capexAdvancesForLine'] }
+  const { capexAdvancesForLine } = await import('../financePlanning/capexPosting.js')
+  return { capexAdvancesForLine }
 }
 
 /**
@@ -1048,9 +1125,14 @@ async function applyCapitalise(tx: Tx, event: FixedAssetEvent, payload: Record<s
     const toLeaseEnd = periodIndex(periodOfPkt(leaseEndsAt)) - periodIndex(periodOfPkt(inServiceAt)) + 1
     life = Math.max(1, Math.min(life, toLeaseEnd))
   }
-  const locationId = p.locationId !== undefined ? p.locationId : line.project.locationId
+  // Brand and outlet: the payload's, else the project's (an individual asset may be given its
+  // own brand or shared — owner, 2026-10-14). A request raised from now on carries the target it
+  // was checked against (capexPosting.ts checkCapitalisable snapshots locationId and, for an
+  // individual asset, conceptId), so a project edited while it waits changes nothing; the
+  // shared-needs-a-location rule is checked when the request is raised, and an older pending
+  // request (no snapshot) approves as before.
+  const { conceptId, locationId } = capitaliseTarget(p, cls.pooled, line.project)
   if (locationId) await assertLocationOf(tx, tenantId, locationId)
-  const conceptId = cls.pooled && p.pool && p.pool.conceptId !== undefined ? p.pool.conceptId : line.project.conceptId
   if (conceptId) await assertConceptOf(tx, tenantId, conceptId)
   const name = (p.name ?? line.item).trim().slice(0, 120)
   const salvage = p.salvageCents ?? 0
@@ -1106,23 +1188,4 @@ async function applyCapitalise(tx: Tx, event: FixedAssetEvent, payload: Record<s
     journalEntryId: firstEntry, amountCents: gross, assetId: assetIds[0] ?? null,
     payload: { assetIds, advancedCents: advanced, owedCents: gross - advanced, inputTaxCents: inputTax, poolId: pool?.id ?? null },
   }
-}
-
-// ─── Deprecated direct disposal (service.disposeAsset) ──────────────────────
-
-/** @deprecated Backs service.ts disposeAsset (the old register route) — applies a disposal at once. Removed by w3-fa-api. */
-export async function applyDisposalNow(
-  assetId: string,
-  opts: { disposedAt: Date; proceedsCents: number; postedBy?: string },
-): Promise<{ bookValueCents: number; proceedsCents: number; gainLossCents: number }> {
-  const asset = await serviceClient.fixedAsset.findUnique({ where: { id: assetId }, select: { status: true } })
-  if (!asset) throw new NotFoundError('FixedAsset', assetId)
-  if (asset.status !== 'active') throw new AppError('ALREADY_DISPOSED', 'This asset has already been disposed of', 409)
-  const { event } = await createRequest({
-    kind: 'disposal', assetId, effectiveDate: opts.disposedAt, reason: 'Disposed through the register (legacy route)',
-    payload: { kind: opts.proceedsCents > 0 ? 'sale' : 'scrap', proceedsCents: opts.proceedsCents, method: 'bank' },
-  }, { id: opts.postedBy ?? 'system', role: FA_APPROVER_ROLE })
-  const p = payloadOf(event)
-  const nbv = typeof p['nbvCents'] === 'number' ? p['nbvCents'] : 0
-  return { bookValueCents: nbv, proceedsCents: opts.proceedsCents, gainLossCents: opts.proceedsCents - nbv }
 }

@@ -109,6 +109,11 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   // an analytical/planning artifact, not a tenant-bound record. Picking one
   // company to "own" a multi-brand projection would be wrong.
   /^\/projections\b/,
+  // Row-level receivables writes (payments, withholding, credit notes,
+  // refunds, voids, write-offs and recoveries): the server binds each to the
+  // INVOICE's company, so the picker would only get in the way. Creating an
+  // invoice (POST /accounting/receivables, no trailing slash) still asks.
+  /^\/accounting\/receivables\//,
 ]
 
 function isPortfolioGuarded(path: string, method: string): boolean {
@@ -368,6 +373,11 @@ export interface Order {
   customerName: string | null
   deliveryNotes: string | null
   riderId: string | null
+  /** dine_in | takeout | delivery — decides whether a line can be "Box given". */
+  fulfilmentType?: 'dine_in' | 'takeout' | 'delivery'
+  /** Delivery fee charged on top of the food, and the GST on that fee (already inside taxCents). Server figures. */
+  deliveryFeeCents?: number
+  deliveryFeeTaxCents?: number
   table: { label: string } | null
   concept: { name: string; slug: string }
   rider?: { id: string; name: string; phone: string } | null
@@ -390,6 +400,11 @@ export interface OrderItem {
   firedAt: string | null
   scheduledFireAt: string | null
   bumpPhotoUrl: string | null
+  /** The service vessel snapshotted on the line: 'plate' | 'packaging' (null on old rows = read as plate). */
+  serviceVessel?: 'plate' | 'packaging' | null
+  /** "Box given": staff boxed this dine-in line's leftovers, so its packaging counts. */
+  boxGiven?: boolean
+  boxGivenAt?: string | null
   modifiers: OrderItemModifier[]
   menuItem: { imageUrl: string | null; nameUrdu: string | null; instructions: string | null; instructionsUrdu: string | null } | null
 }
@@ -454,7 +469,7 @@ export interface Payment {
 // A Raast payment completes the sale at the till; its RaastReceipt stays
 // 'provisional' until a bank-statement line shows the money ('matched').
 
-export type RaastReceiptStatus = 'awaiting' | 'provisional' | 'matched' | 'cancelled' | 'unreceived' | 'needs_attention'
+export type RaastReceiptStatus = 'awaiting' | 'provisional' | 'matched' | 'cancelled' | 'unreceived' | 'needs_attention' | 'voided'
 
 export interface RaastReceiptState {
   status: RaastReceiptStatus
@@ -472,6 +487,7 @@ export const RAAST_STATUS_LABEL: Record<RaastReceiptStatus, string> = {
   cancelled: 'Cancelled',
   unreceived: 'Written off — never received',
   needs_attention: 'Needs attention',
+  voided: 'Voided by the CEO — never booked, no ledger entry',
 }
 
 /** Short chip text for a Raast receipt's state. */
@@ -482,6 +498,7 @@ export const RAAST_STATUS_SHORT: Record<RaastReceiptStatus, string> = {
   cancelled: 'Cancelled',
   unreceived: 'Not received',
   needs_attention: 'Needs attention',
+  voided: 'Voided',
 }
 
 /**

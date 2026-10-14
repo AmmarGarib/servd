@@ -36,7 +36,7 @@ import { toCents, assertMoneyFits } from '../../lib/money.js'
 import { flagException } from '../../lib/exceptions.js'
 import { withSavepoint } from '../../lib/savepoint.js'
 import {
-  ASSET_CLASS_DEFAULTS, getAssetClasses, classOf, getFixedAssetPolicy, defaultClassOf, type AssetClassKey,
+  getAssetClasses, classOf, getFixedAssetPolicy, defaultClassOf,
 } from './classes.js'
 import {
   isPeriod, periodIndex, periodOfPkt, lastDayPkt, lastCompletedPeriodPkt, planCharges,
@@ -492,13 +492,6 @@ export interface AcquisitionAmounts {
   postedBy?: string
 }
 
-/** @deprecated The pre-v2 call shape (register form / old CapEx capitalise). Removed by w3-fa-api. */
-export interface LegacyAcquisitionOptions {
-  tx?: Tx
-  credits?: Array<{ accountCode: string; amountCents: number; memo?: string }>
-  description?: string
-}
-
 /**
  * Capitalise an asset: Dr the class's cost code (the asset's costCents — net
  * of claimable input tax) and Dr the input-tax code / Cr 1340 for what was
@@ -507,20 +500,7 @@ export interface LegacyAcquisitionOptions {
  * else today with the late note (owner decision 6). Idempotent on
  * 'fixed_asset.acquire:<assetId>'. Runs in the caller's transaction.
  */
-export function postAcquisition(tx: Tx, asset: FixedAsset, a: AcquisitionAmounts): Promise<PostJournalEntryResult>
-/** @deprecated Pre-v2 shape kept only so fixedAssets/routes.ts and financePlanning/capexPosting.ts compile until W2/W3 move them. */
-export function postAcquisition(assetId: string, postedBy?: string, opts?: LegacyAcquisitionOptions): Promise<PostJournalEntryResult>
-export async function postAcquisition(
-  first: Tx | string,
-  second?: FixedAsset | string,
-  third?: AcquisitionAmounts | LegacyAcquisitionOptions,
-): Promise<PostJournalEntryResult> {
-  if (typeof first === 'string') {
-    return postAcquisitionLegacy(first, typeof second === 'string' ? second : undefined, (third ?? {}) as LegacyAcquisitionOptions)
-  }
-  const tx = first
-  const asset = second as FixedAsset
-  const a = third as AcquisitionAmounts
+export async function postAcquisition(tx: Tx, asset: FixedAsset, a: AcquisitionAmounts): Promise<PostJournalEntryResult> {
   const cls = await classOf(asset.tenantId, asset.category, tx)
   const cost = toCents(asset.costCents)
   const amounts = [a.advancedCents, a.owedCents, a.inputTaxCents]
@@ -551,31 +531,6 @@ export async function postAcquisition(
     postedBy: a.postedBy ?? asset.createdById ?? 'system',
     lines: w.lines,
   }, { tx })
-}
-
-async function postAcquisitionLegacy(assetId: string, postedBy: string | undefined, opts: LegacyAcquisitionOptions): Promise<PostJournalEntryResult> {
-  const db = opts.tx ?? serviceClient
-  const a = await db.fixedAsset.findUniqueOrThrow({ where: { id: assetId } })
-  if (!a.acquisitionCreditCode) throw new AppError('ASSET_FUNDING', 'Say how this asset was paid for', 422)
-  const assetAccount = defaultClassOf(a.category)?.costAccountCode
-  if (!assetAccount) throw new AppError('ASSET_CATEGORY', `Unknown asset category ${a.category}`, 422)
-  const cost = toCents(a.costCents)
-  const credits = opts.credits ?? [{ accountCode: a.acquisitionCreditCode, amountCents: cost }]
-  if (credits.reduce((t, c) => t + c.amountCents, 0) !== cost) {
-    throw new AppError('ASSET_FUNDING_SPLIT', 'How the asset was paid for must add up to its cost', 422)
-  }
-  return postJournalEntry({
-    tenantId: a.tenantId,
-    sourceType: ACQUIRE_SOURCE,
-    sourceId: a.id,
-    description: opts.description ?? `Acquired ${a.name}`,
-    entryDate: a.inServiceAt ?? a.acquiredAt,
-    postedBy: postedBy ?? 'system',
-    lines: [
-      { accountCode: assetAccount, type: 'debit', amountCents: cost, conceptId: a.conceptId, memo: a.name },
-      ...credits.map((c) => ({ accountCode: c.accountCode, type: 'credit' as const, amountCents: c.amountCents, memo: c.memo ?? a.name })),
-    ],
-  }, { tx: opts.tx })
 }
 
 // ─── Legacy 1590 → 1591–1599 (H27, once per company) ────────────────────────
@@ -652,62 +607,4 @@ export async function nextAssetTag(tx: Tx, tenantId: string): Promise<string> {
     if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest))
   }
   return `${prefix}${String(max + 1).padStart(5, '0')}`
-}
-
-// ─── Deprecated aliases (removed by w3-fa-api once no importer remains) ─────
-
-/** @deprecated Use classes.ts ASSET_CLASS_DEFAULTS / getAssetClasses. Key → { label, account (cost code) }. */
-export const ASSET_CATEGORIES = Object.fromEntries(
-  ASSET_CLASS_DEFAULTS.map((c) => [c.key, { label: c.label, account: c.costAccountCode }]),
-) as Record<AssetClassKey, { label: string; account: string }>
-/** @deprecated Use AssetClassKey. */
-export type AssetCategory = AssetClassKey
-
-/**
- * How a pre-v2 asset was paid for (the old register form). Read-only: kept
- * so old rows still label; new assets come only through CapEx (Cr 1340 /
- * 2012) — owner: no opening / pre-servd assets.
- */
-export const FUNDING = {
-  bank:     { label: 'Paid from bank',                    account: '1020' },
-  cash:     { label: 'Paid in cash',                      account: '1010' },
-  payable:  { label: 'On credit from the supplier',       account: '2010' },
-  existing: { label: 'Already owned (opening balance)',   account: '3010' },
-  advance:  { label: 'Paid as supplier advances (capex)', account: '1340' },
-} as const
-export type Funding = keyof typeof FUNDING
-
-/** @deprecated Use schedule.ts periodOfPkt (PKT months). */
-export function periodOf(d: Date): string {
-  return periodOfPkt(d)
-}
-
-/**
- * @deprecated Use chargeThrough (the one path). Charges every completed month
- * through `period` (not only that month) and answers in the old shape.
- */
-export async function runDepreciation(tenantId: string, period: string, postedBy?: string) {
-  const r = await chargeThrough(tenantId, period, { postedBy: postedBy ?? 'system' })
-  return {
-    period,
-    chargedCents: r.chargedCents,
-    results: r.results.map((x) => ({
-      assetId: x.assetId, name: x.name, amountCents: x.amountCents,
-      status: (x.status === 'failed' ? 'none' : x.status) as 'charged' | 'already' | 'none',
-    })),
-  }
-}
-
-/**
- * @deprecated The register's old direct disposal. It now applies a 'disposal'
- * event at once (events.ts — the same posting a CEO-approved request makes),
- * with the proceeds banked. Removed by w3-fa-api (POST /:id/dispose becomes a
- * request).
- */
-export async function disposeAsset(
-  assetId: string,
-  opts: { disposedAt: Date; proceedsCents: number; postedBy?: string },
-): Promise<{ bookValueCents: number; proceedsCents: number; gainLossCents: number }> {
-  const { applyDisposalNow } = await import('./events.js')
-  return applyDisposalNow(assetId, opts)
 }

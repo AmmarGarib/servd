@@ -21,7 +21,9 @@
 //     'waste' row takes it as waste — lots and currentStock do not change (the
 //     food is gone either way).
 //   - One WasteLog per item (tenantId, brand, outlet, orderItemId, the FIFO
-//     value in estimatedCostCents), and ONE journal entry Dr 5040 Waste /
+//     value in estimatedCostCents), and ONE journal entry Dr 1290 Stock
+//     Differences Suspense (H20 — waits for the CEO's approval into 5040
+//     Waste; accounting/inventoryPosting.ts stockDifferenceAccount) /
 //     Cr the class inventory (1210 / 1220 / 1230 — packaging included) in the
 //     ORDER's company, keyed 'pos.void_waste:<orderItemId>' (postVoidWaste),
 //     posted behind a savepoint. A refusal (closed period, missing account)
@@ -45,6 +47,9 @@ import { relabelToWasteTx, STOCK_EPS, STOCK_SOURCE, type MovementRow } from '../
 import { consumptionPerLine } from '../../lib/recipeCost.js'
 import { postJournalEntry, withLateNote, ACCT, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
 import { orderCostBookedAt } from '../accounting/cogs.js'
+// Called inside postVoidWaste only (never at module load), so the
+// inventoryPosting ↔ stockLedger import chain stays safe.
+import { stockDifferenceAccount } from '../accounting/inventoryPosting.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -287,8 +292,11 @@ export async function wasteVoidedFiredLineTx(tx: Tx, input: {
 }
 
 /**
- * THE sold-line waste entry: Dr 5040 Waste per waste log (its FIFO value,
- * estimatedCostCents) / Cr the class inventory (1210 / 1220 / 1230 — the
+ * THE sold-line waste entry: Dr 1290 Stock Differences Suspense per waste log
+ * (H20: stockDifferenceAccount 'waste' — the CEO approves it into 5040 Waste
+ * from Finance → Stock differences; 5040 directly only for a company set
+ * straight to cost) at its FIFO value (estimatedCostCents) / Cr the class
+ * inventory (1210 / 1220 / 1230 — the
  * class of the lots it relabelled, else the item's category), in `tenantId`
  * (the order's company), keyed 'pos.void_waste:<orderItemId>' — so the live
  * void / cancel and a re-post by Reconciliation → Backfill unposted can never
@@ -298,8 +306,9 @@ export async function wasteVoidedFiredLineTx(tx: Tx, input: {
  * took the open ticket as a live sale — accounting/cogs.ts orderCostBookedAt
  * at or before the log's recordedAt), that close already credited the
  * inventory: the log's credit goes to the class COST OF SALES instead
- * (5010 / 5020 / 5030 — a reclass Dr 5040 / Cr 50x0). Re-derived the same way
- * on a re-post, so both book the same lines.
+ * (5010 / 5020 / 5030 — Dr 1290 / Cr 50x0, which the approval turns into the
+ * reclass Dr 5040 / Cr 50x0). Re-derived the same way on a re-post, so both
+ * book the same lines.
  *
  * Only this line's sold-line waste logs count (a reason in VOID_WASTE_REASONS,
  * the line on WasteLog.orderItemId — or, for logs written before wave B, in
@@ -335,6 +344,7 @@ export async function postVoidWaste(
   })
   const classOfLog = new Map(moves.map((m) => [m.sourceId, asClass(m.costClass)]))
   const bookedAt = await orderCostBookedAt(db, tenantId, line.orderId)
+  const costSide = stockDifferenceAccount(tenantId, 'waste')
   const debits: JournalLineInput[] = []
   const credits = new Map<CostClass, number>()
   const cogsCredits = new Map<CostClass, number>()
@@ -350,7 +360,7 @@ export async function postVoidWaste(
     costCents += cost
     const into = bookedAt && bookedAt <= log.recordedAt ? cogsCredits : credits
     into.set(cls, (into.get(cls) ?? 0) + cost)
-    debits.push({ accountCode: ACCT.WASTE, type: 'debit', amountCents: cost, memo: `Waste (${why}): ${log.inventoryItem.name}`.slice(0, 250), conceptId })
+    debits.push({ accountCode: costSide, type: 'debit', amountCents: cost, memo: `Waste (${why}): ${log.inventoryItem.name}`.slice(0, 250), conceptId })
   }
   if (costCents <= 0) return { posted: false, entryId: null, reason: 'zero_cost', costCents: 0 }
   const lines: JournalLineInput[] = [...debits]
@@ -363,7 +373,7 @@ export async function postVoidWaste(
   const dr = lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
   const cr = lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
   if (dr !== cr) throw new AppError('JOURNAL_UNBALANCED', `${VOID_WASTE_SOURCE}:${orderItemId}: debits (${dr}) ≠ credits (${cr})`, 500)
-  const late = withLateNote(`Waste — ${line.quantity} × ${line.name} ${[...reasons].join(' / ')}`, lines, opts.memoNote)
+  const late = withLateNote(`Waste — ${line.quantity} × ${line.name} ${[...reasons].join(' / ')}${costSide === ACCT.STOCK_DIFF_SUSPENSE ? ' — in stock differences (1290) until the CEO approves it' : ''}`, lines, opts.memoNote)
   const r = await postJournalEntry({
     tenantId,
     sourceType: VOID_WASTE_SOURCE,

@@ -9,7 +9,10 @@ import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
 import { useActiveCompany, useMyCompanies } from '../../lib/connectorsApi'
-import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
+import {
+  PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, receiptMethodLabel, isBankMethod,
+  PAYMENT_REFERENCE_ERROR_TEXT, type PaymentRefUse,
+} from '../../components/finance/PaymentReceivedFields'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -23,6 +26,12 @@ import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 // (marketing, brand_manager) read and work this page, but blocking a customer
 // (POST /crm/bans, /crm/bans/:id/lift) and crediting a wallet (POST
 // /wallet/topup) stay with managers — so those buttons show to managers only.
+//
+// A wallet top-up is either a goodwill credit (our cost, no money in, no
+// reference) or one the customer paid for — a back-office receipt (owner,
+// 2026-10-14): cash, card, bank transfer, bank deposit or cheque with its
+// payment reference # (required on every method), through the shared
+// <PaymentReceivedFields>. A reference used before is a notice, never a block.
 
 interface ActiveBan { id: string; reason: string; bannedAt: string }
 
@@ -52,11 +61,15 @@ export default function CRMPage() {
   const [walletModal, setWalletModal] = useState<{ id: string; name: string } | null>(null)
   const [walletAmount, setWalletAmount] = useState('')
   // goodwill = the company's own credit (booked as Marketing & Promo);
-  // cash / card / bank = the customer paid for it at that tender (ONL-R2-01).
-  const [walletKind, setWalletKind] = useState<'goodwill' | 'cash' | 'card' | 'bank'>('goodwill')
-  // A bank-transfer top-up names the active company's bank it landed in (the
-  // server books it there — lib/bankAccounts.ts moneyAccountCode).
+  // paid = the customer paid for it (ONL-R2-01) — how, and its reference #.
+  const [walletKind, setWalletKind] = useState<'goodwill' | 'paid'>('goodwill')
+  const [walletMethod, setWalletMethod] = useState('cash')
+  const [walletRef, setWalletRef] = useState('')
+  // A bank-type top-up names the company's bank it landed in (the server
+  // books it there — lib/bankAccounts.ts moneyAccountCode).
   const [walletBank, setWalletBank] = useState('')
+  // The last paid top-up's reference was used before (a warning — it is saved).
+  const [walletNotice, setWalletNotice] = useState<{ customerId: string; uses: PaymentRefUse[] } | null>(null)
   // The company the top-up belongs to — picked here (not by the "All
   // companies" guard) so the bank list and the write agree.
   const [walletCompany, setWalletCompany] = useState('')
@@ -105,25 +118,34 @@ export default function CRMPage() {
     onError: (e: Error) => setBanError(e.message),
   })
 
+  const resetWallet = () => {
+    setWalletModal(null)
+    setWalletAmount('')
+    setWalletKind('goodwill')
+    setWalletMethod('cash')
+    setWalletRef('')
+    setWalletBank('')
+    setWalletError(null)
+  }
   const topupWallet = useMutation({
     mutationFn: ({ id, amount }: { id: string; amount: number }) =>
-      api.post('/wallet/topup', walletKind === 'goodwill'
+      api.post<{ referenceUsedBefore?: PaymentRefUse[] }>('/wallet/topup', walletKind === 'goodwill'
         ? { customerId: id, amountCents: amount, kind: 'goodwill', description: 'Goodwill credit by staff' }
         : {
-            customerId: id, amountCents: amount, kind: 'paid', tender: walletKind, description: `Paid top-up (${walletKind})`,
-            ...(walletKind === 'bank' && walletBank ? { bankAccountId: walletBank } : {}),
+            customerId: id, amountCents: amount, kind: 'paid', tender: walletMethod, paymentRef: walletRef.trim(),
+            description: `Paid top-up (${receiptMethodLabel(walletMethod).toLowerCase()})`,
+            ...(isBankMethod(walletMethod) && walletBank ? { bankAccountId: walletBank } : {}),
           }, walletTenantId ? { tenantId: walletTenantId } : undefined),
-    onSuccess: () => {
+    onSuccess: (r, v) => {
       void qc.invalidateQueries({ queryKey: ['customer-detail', selectedId] })
       void qc.invalidateQueries({ queryKey: ['customers'] })
-      setWalletModal(null)
-      setWalletAmount('')
-      setWalletKind('goodwill')
-      setWalletBank('')
-      setWalletError(null)
+      setWalletNotice(r.referenceUsedBefore?.length ? { customerId: v.id, uses: r.referenceUsedBefore } : null)
+      resetWallet()
     },
-    onError: (e: Error) => setWalletError(e.message),
+    onError: (e: Error & { code?: string }) => setWalletError((e.code && PAYMENT_REFERENCE_ERROR_TEXT[e.code]) || e.message),
   })
+  const walletAmountOk = Number(walletAmount) > 0
+  const walletPaymentOk = walletKind === 'goodwill' || receiptFieldsValid({ method: walletMethod, reference: walletRef })
 
   // A deep-linked customer may not be in the first page of the list; the
   // detail fetch alone is enough to open the pane.
@@ -190,7 +212,7 @@ export default function CRMPage() {
       {/* Wallet top-up modal */}
       {walletModal && (
         <div className="fixed inset-0 bg-secondary/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
+          <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-4">
             <p className="font-bold text-s-text">Wallet top-up</p>
             <p className="text-sm text-s-muted">{walletModal.name}</p>
             <div>
@@ -199,12 +221,12 @@ export default function CRMPage() {
                 placeholder="500" className={inp} />
             </div>
             <div>
-              <label className="text-xs text-s-muted mb-1 block">What is it?</label>
-              <select value={walletKind} onChange={(e) => setWalletKind(e.target.value as typeof walletKind)} className={inp}>
+              <label htmlFor="wallet-kind" className="text-xs text-s-muted mb-1 block">What is it?</label>
+              <select id="wallet-kind" value={walletKind}
+                onChange={(e) => { const k = e.target.value as typeof walletKind; setWalletKind(k); if (k === 'goodwill') { setWalletRef(''); setWalletBank('') } }}
+                className={inp}>
                 <option value="goodwill">Goodwill credit (our cost)</option>
-                <option value="cash">Customer paid — cash</option>
-                <option value="card">Customer paid — card</option>
-                <option value="bank">Customer paid — bank transfer</option>
+                <option value="paid">Customer paid</option>
               </select>
               <p className="text-xs text-s-muted mt-1">
                 Credited to the customer&apos;s wallet at the company below, and spendable only at its brands.
@@ -218,18 +240,27 @@ export default function CRMPage() {
                 </select>
               </div>
             )}
-            {walletKind === 'bank' && (
-              <BankAccountSelect tenantId={walletTenantId} value={walletBank} onChange={setWalletBank} id="wallet-bank" label="Received into" className={inp} />
+            {walletKind === 'paid' && (
+              <PaymentReceivedFields
+                tenantId={walletTenantId}
+                method={walletMethod} onMethod={setWalletMethod}
+                reference={walletRef} onReference={setWalletRef}
+                bankAccountId={walletBank} onBank={setWalletBank}
+                idPrefix="wallet"
+                selectClassName={inp}
+                inputClassName={inp}
+                labelClassName="text-xs text-s-muted mb-1 block"
+              />
             )}
             {walletError && <p className="text-xs text-s-red">{walletError}</p>}
             <div className="flex gap-3">
               <button
                 onClick={() => topupWallet.mutate({ id: walletModal.id, amount: Math.round(parseFloat(walletAmount) * 100) })}
-                disabled={!walletAmount || topupWallet.isPending}
+                disabled={!walletAmountOk || !walletPaymentOk || topupWallet.isPending}
                 className="flex-1 rounded-xl bg-primary text-primary-on text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50">
                 {topupWallet.isPending ? 'Crediting…' : 'Credit wallet'}
               </button>
-              <button onClick={() => { setWalletModal(null); setWalletAmount(''); setWalletKind('goodwill'); setWalletBank(''); setWalletError(null) }}
+              <button onClick={resetWallet}
                 className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>
@@ -359,9 +390,15 @@ export default function CRMPage() {
                           ? 'bg-primary/20 text-primary-ink hover:bg-primary/30'
                           : 'bg-s-red/20 text-s-red hover:bg-s-red/30'
                       }`}>
-                      {customerDetail.activeBan ? 'Unblock' : '⛔ Block'}
+                      {customerDetail.activeBan ? 'Unblock' : 'Block'}
                     </button>
                   </div>
+                  )}
+                  {isManager && walletNotice && walletNotice.customerId === customerDetail.id && (
+                    <div className="mt-3 space-y-1">
+                      <ReferenceUsedBeforeNotice uses={walletNotice.uses} />
+                      <button onClick={() => setWalletNotice(null)} className="text-xs text-s-muted hover:text-s-text">Dismiss</button>
+                    </div>
                   )}
                 </div>
 

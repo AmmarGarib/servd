@@ -1,4 +1,4 @@
-// Accounting → Inter-company (H30). Wave Z registers this plugin at
+// Accounting → Inter-company (H30). index.ts registers this plugin at
 // /accounting/intercompany — under the existing '/accounting' module gate
 // (module 'accounting'; no widening: the CEO holds every module and the
 // approvals inbox reads the transfers list as the CEO).
@@ -7,7 +7,13 @@
 //   GET  /balances?asOf=YYYY-MM-DD        pair balances (both sides only for a member of both)
 //   GET  /transfers?status=&limit=        transfers touching the read scope
 //   GET  /transfers/:id
-//   POST /transfers                       finance / CEO prepare (CEO: postNow)
+//   POST /transfers                       finance / CEO prepare (CEO: postNow). A
+//                                         settlement: method bank_transfer | bank_deposit |
+//                                         cheque | cash (old 'bank' = bank_transfer) and
+//                                         bankReference — the payment reference #,
+//                                         required for every method (422
+//                                         PAYMENT_REFERENCE_REQUIRED). 201 → the transfer
+//                                         + referenceUsedBefore (a warning only).
 //   POST /transfers/:id/approve|reject|reverse   CEO, member of both companies
 //   GET  /fleet?from=YYYY-MM&to=YYYY-MM   shared-fleet agreements, rates, trips, charges
 //   PUT  /fleet/:agreementId/rate         CEO, member of both (new history row)
@@ -32,6 +38,8 @@ import { resolveTenantScope, activeTenantId } from '../../lib/tenantScope.js'
 import { assertBothSidesOwned, isMemberOfBoth } from '../../lib/companyPairs.js'
 import { audit } from '../../lib/audit.js'
 import { zInt4Cents, zMoneyCents } from '../../lib/money.js'
+import { zPaymentRef } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses, type PaymentRefUse } from '../../lib/paymentRefs.js'
 import { parsePktEndOfDay } from '../accounting/dates.js'
 import { counterpartiesOf, pairBalances, pairKey, sideBalances } from './accounts.js'
 import {
@@ -79,6 +87,25 @@ async function auditBoth(req: FastifyRequest, tenantIds: string[], action: strin
   }
 }
 
+/**
+ * Where else either company of a settlement already recorded its payment
+ * reference # (the caller is a member of both — assertBothSidesOwned), this
+ * transfer left out. A warning only.
+ */
+async function referenceUsesOfPair(t: TransferRow): Promise<PaymentRefUse[]> {
+  if (t.kind !== 'settlement' || !t.bankReference) return []
+  const exclude = { kind: 'intercompany_transfer' as const, id: t.id }
+  const [a, b] = await Promise.all([
+    findPaymentReferenceUses(serviceClient, t.tenantId, t.bankReference, { exclude }),
+    findPaymentReferenceUses(serviceClient, t.counterpartyTenantId, t.bankReference, { exclude }),
+  ])
+  const seen = new Set<string>()
+  return [...a, ...b]
+    .filter((u) => (seen.has(`${u.kind}:${u.id}`) ? false : (seen.add(`${u.kind}:${u.id}`), true)))
+    .sort((x, y) => y.at.localeCompare(x.at))
+    .slice(0, 5)
+}
+
 /** A transfer the caller's companies are a party to (write scope), else 404. */
 async function transferInWriteScope(req: FastifyRequest, id: string): Promise<TransferRow> {
   const members = req.staffUser!.memberTenantIds
@@ -104,10 +131,12 @@ const createSchema = z.object({
   debtorAccountCode: z.string().trim().min(1).max(20).nullable().optional(),
   creditorAccountCode: z.string().trim().min(1).max(20).nullable().optional(),
   conceptSplit: z.array(conceptShareSchema).max(100).nullable().optional(),
-  method: z.enum(SETTLEMENT_METHODS).nullable().optional(),
+  // The old 'bank' (clients before 2026-10-14) is a bank transfer.
+  method: z.preprocess((v) => (v === 'bank' ? 'bank_transfer' : v), z.enum(SETTLEMENT_METHODS).nullable().optional()),
   debtorBankAccountId: z.string().min(1).nullable().optional(),
   creditorBankAccountId: z.string().min(1).nullable().optional(),
-  bankReference: z.string().trim().max(100).nullable().optional(),
+  // The payment reference # (required for a settlement — service.ts).
+  bankReference: zPaymentRef.nullable().optional(),
   postNow: z.boolean().optional(),
 })
 
@@ -224,7 +253,7 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     const row = await createTransfer(actorOf(req), body, { postNow: body.postNow })
     const [view] = await presentTransfers([row], actorOf(req))
     await auditBoth(req, [row.tenantId, row.counterpartyTenantId], body.postNow ? 'intercompany.transfer.post' : 'intercompany.transfer.submit', 'IntercompanyTransfer', row.id, view)
-    return reply.status(201).send(view)
+    return reply.status(201).send({ ...view, referenceUsedBefore: await referenceUsesOfPair(row) })
   })
 
   fastify.post<{ Params: { id: string } }>('/transfers/:id/approve', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {

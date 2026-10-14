@@ -5,121 +5,25 @@
 // the same project, giving full TCO. Schema: CapexProject is the parent;
 // CapexLine for one-off items, OpexLine.projectId for recurring items.
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PositionsView } from '../../workforce/positions/view'
-import { useAuthStore } from '../../../store/auth'
 import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
+import { errorWords, useFaCapabilities, FA_BASE } from '../../../components/fixedAssets/shared'
+import { receiptMethodLabel } from '../../../components/finance/PaymentReceivedFields'
+import type { Phase, Status, Payment, Line, ScopeDef, Project, Treatment } from '../../../components/fixedAssets/capexTypes'
+import {
+  CapitalisePanel, QuickBuyModal, DepositReturnModal, ReclassDepositModal, OrphanBanner, ExemptionLine, WhtPreview,
+  useAdvanceFlags, useCapexLookups, useWithholdingPreview, quickBuyMessage,
+  TREATMENT_OPTIONS, TREATMENT_LABEL, WHT_SECTION_LABEL, AUTHORITY_LABEL,
+} from '../../../components/fixedAssets/CapexForms'
 
 // ─── Types ────────────────────────────────────────────────────────────────
-
-type Phase = 'planning' | 'quoting' | 'executing' | 'snagging' | 'live'
-type Status =
-  | 'not_quoted' | 'quoted' | 'ordered' | 'partial_paid'
-  | 'delivered' | 'installed' | 'commissioned' | 'snag' | 'done'
-
-interface Quote {
-  id: string
-  vendor: string
-  contactName: string | null
-  contactPhone: string | null
-  totalCents: number
-  leadTimeDays: number | null
-  validUntil: string | null
-  fileUrl: string | null
-  notes: string | null
-  isWinner: boolean
-}
-interface Payment {
-  id: string
-  label: 'deposit' | 'midpoint' | 'balance' | 'extra'
-  amountCents: number
-  dueDate: string | null
-  paidAt: string | null
-  paidAmountCents: number | null
-  paymentRef: string | null
-  // The company bank account it is paid from (the project's company's).
-  bankAccountId: string | null
-}
-interface Line {
-  id: string
-  scope: string
-  category: string | null
-  item: string
-  quantity: number
-  unitCostCents: number
-  vendor: string | null
-  vendorContact: string | null
-  quotedCents: number | null
-  negotiatedCents: number | null
-  paidCents: number
-  status: Status
-  priority: 'must_have' | 'nice_to_have' | 'future'
-  leadTimeDays: number | null
-  expectedDeliveryDate: string | null
-  actualDeliveryDate: string | null
-  installedDate: string | null
-  documentUrls: { label: string; url: string }[] | null
-  photoUrls: string[] | null
-  warrantyMonths: number | null
-  notes: string | null
-  quotes: Quote[]
-  payments: Payment[]
-  // The books' view (owner decision 24): posted instalments by kind, and the
-  // fixed asset the line was capitalised as.
-  ledger?: {
-    advancedCents: number
-    prepaidCents: number
-    expensedCents: number
-    settledPayableCents: number
-    asset: { id: string; costCents: number; status: string } | null
-    payments: Record<string, { status: 'posted' | 'unposted'; accountCode: string | null }>
-  } | null
-}
-interface ScopeDef { key: string; label: string; emoji?: string | null; hint?: string | null }
-
-interface Project {
-  id: string
-  tenantId: string | null
-  name: string
-  conceptId: string | null
-  locationId: string | null
-  projectType: string
-  phase: Phase
-  budgetEnvelopeCents: number
-  contingencyPct: number
-  consultantFeesCents: number
-  taxCents: number
-  targetOpeningDate: string | null
-  actualOpeningDate: string | null
-  address: string | null
-  floorAreaSqft: number | null
-  notes: string | null
-  scopeConfig: ScopeDef[] | null
-  isJointVenture?: boolean
-  jvPartners?: Array<{ label: string; pct: number }> | null
-  lines: Line[]
-  rollups: {
-    budgetedCents: number
-    quotedCents: number
-    committedCents: number
-    paidCents: number
-    remainingCents: number
-    contingencyCents: number
-    totalAskCents: number
-    varianceVsEnvelopeCents: number
-  }
-  books?: {
-    capitalisedCents: number
-    advancedCents: number
-    notYetCapitalisedCents: number
-    prepaidCents: number
-    expensedCents: number
-  }
-}
+// The shapes of GET /finance/capex live in components/fixedAssets/capexTypes.ts.
 
 // Scope catalog — keeps the UI legible. Operator can add lines under any
 // scope; this just orders + emojis them so the page reads naturally.
@@ -139,7 +43,7 @@ const SCOPES = [
 
 const PHASE_META: Record<Phase, { label: string; bg: string; fg: string }> = {
   planning:  { label: 'Planning',   bg: 'rgb(var(--ink-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
-  quoting:   { label: 'Quoting',    bg: 'rgba(245,158,11,0.12)',  fg: 'var(--erp-warning)' },
+  quoting:   { label: 'Quoting',    bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)',  fg: 'var(--erp-warning)' },
   executing: { label: 'Executing',  bg: 'rgb(var(--erp-primary-rgb) / 0.12)',   fg: 'var(--erp-primary-ink)' },
   snagging:  { label: 'Snagging',   bg: 'rgb(var(--erp-primary-rgb) / 0.12)',  fg: 'var(--erp-primary-ink)' },
   live:      { label: 'Live',       bg: 'rgb(var(--erp-accent-rgb) / 0.15)',   fg: 'var(--erp-success)' },
@@ -151,7 +55,7 @@ const STATUS_META: Record<Status, { label: string; fg: string }> = {
   ordered:       { label: 'Ordered',       fg: 'var(--erp-primary-ink)' },
   partial_paid:  { label: 'Paid',          fg: 'var(--erp-success)' },
   delivered:     { label: 'Delivered',     fg: 'var(--erp-success)' },
-  installed:     { label: 'Installed',     fg: '#7DD3FC' },
+  installed:     { label: 'Installed',     fg: 'var(--erp-primary-ink)' },
   commissioned:  { label: 'Commissioned',  fg: 'var(--erp-success)' },
   snag:          { label: 'Snag',          fg: 'var(--erp-danger)' },
   done:          { label: 'Done',          fg: 'var(--erp-success)' },
@@ -162,7 +66,18 @@ const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFra
 // ─── Page ─────────────────────────────────────────────────────────────────
 
 export default function CapexTrackerPage() {
+  // useSearchParams needs a Suspense boundary above it for the static build.
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-white/40">Loading…</div>}>
+      <CapexTracker />
+    </Suspense>
+  )
+}
+
+function CapexTracker() {
   const qc = useQueryClient()
+  const search = useSearchParams()
+  const caps = useFaCapabilities()
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['capex-projects'],
     queryFn: () => api.get('/finance/capex'),
@@ -173,10 +88,16 @@ export default function CapexTrackerPage() {
   // place they review projects. Otherwise selectedId is a real project id.
   const [selectedId, setSelectedId] = useState<string | 'workforce' | null>(null)
   const [creating, setCreating] = useState(false)
+  // ?quickBuy=1 (the register's "Buy equipment" and OpEx's refusal link here) opens Quick buy.
+  const [quickBuy, setQuickBuy] = useState(search?.get('quickBuy') === '1')
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'wait' | 'bad'; text: string } | null>(null)
 
   useEffect(() => {
+    // ?project=<id> (the Investment dashboard and the register link here) wins over "the first project".
+    const wanted = search?.get('project')
+    if (!selectedId && wanted && projects.some((p) => p.id === wanted)) { setSelectedId(wanted); return }
     if (!selectedId && projects.length > 0) setSelectedId(projects[0]!.id)
-  }, [projects, selectedId])
+  }, [projects, selectedId, search])
 
   const project = projects.find((p) => p.id === selectedId) ?? null
 
@@ -201,7 +122,10 @@ export default function CapexTrackerPage() {
               </Link>
             </p>
           </div>
-          <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New project</button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => { setNotice(null); setQuickBuy(true) }} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-black text-white/80 hover:text-white">Buy equipment</button>
+            <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New project</button>
+          </div>
         </div>
       </header>
 
@@ -278,7 +202,19 @@ export default function CapexTrackerPage() {
         </aside>
 
         {/* Detail */}
-        <main className="p-6 max-w-[1100px] mx-auto">
+        <main className="p-4 sm:p-6 max-w-[1100px] mx-auto min-w-0">
+          {notice && (
+            <div className="rounded-xl px-4 py-3 text-sm mb-4 flex items-start justify-between gap-3" role="status"
+              style={{
+                background: `color-mix(in srgb, ${notice.tone === 'ok' ? 'var(--erp-success)' : notice.tone === 'bad' ? 'var(--erp-danger)' : 'var(--erp-warning)'} 10%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${notice.tone === 'ok' ? 'var(--erp-success)' : notice.tone === 'bad' ? 'var(--erp-danger)' : 'var(--erp-warning)'} 30%, transparent)`,
+                color: notice.tone === 'ok' ? 'var(--erp-success)' : notice.tone === 'bad' ? 'var(--erp-danger)' : 'var(--erp-warning)',
+              }}>
+              <span>{notice.text}</span>
+              <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 opacity-70 hover:opacity-100">&times;</button>
+            </div>
+          )}
+          <OrphanBanner />
           {selectedId === 'workforce' ? (
             <PositionsView embedded />
           ) : project ? (
@@ -296,6 +232,17 @@ export default function CapexTrackerPage() {
       {creating && <CreateProjectModal
         onClose={() => setCreating(false)}
         onSaved={(id) => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setSelectedId(id); setCreating(false) }} />}
+
+      {quickBuy && <QuickBuyModal
+        onClose={() => setQuickBuy(false)}
+        onDone={(r) => {
+          setQuickBuy(false)
+          setNotice(quickBuyMessage(r, caps.canApprove))
+          void qc.invalidateQueries({ queryKey: ['capex-projects'] })
+          void qc.invalidateQueries({ queryKey: ['fa-register'] })
+          void qc.invalidateQueries({ queryKey: ['fa-pending-count'] })
+          setSelectedId(r.projectId)
+        }} />}
     </div>
   )
 }
@@ -404,11 +351,11 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
         onClose={() => setEditingProject(false)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingProject(false) }} />}
 
-      {addingLineScope && <LineModal projectId={project.id} tenantId={project.tenantId} scope={addingLineScope}
+      {addingLineScope && <LineModal project={project} projectId={project.id} tenantId={project.tenantId} scope={addingLineScope}
         onClose={() => setAddingLineScope(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setAddingLineScope(null) }} />}
 
-      {editingLine && <LineModal projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine}
+      {editingLine && <LineModal project={project} projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine}
         onClose={() => setEditingLine(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingLine(null) }} />}
     </div>
@@ -423,6 +370,8 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
   onAddLineScope: (s: string) => void
   onCustomizeScopes: () => void
 }) {
+  // Overdue advances and delivered-but-not-capitalised items, from the register's own rules.
+  const flags = useAdvanceFlags()
   return (
     <div className="space-y-5">
       {/* Roll-up cards */}
@@ -448,13 +397,17 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
       </div>
 
       {/* The books: capex instalments post as supplier advances and delivered
-          items are capitalised onto the fixed-asset register. */}
+          items are capitalised onto the fixed-asset register (disposed and
+          voided assets are not counted as assets). */}
       {project.books && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <Stat label="On the books as assets"     value={PKR(project.books.capitalisedCents)} accent="var(--erp-success)" />
           <Stat label="Advanced, not capitalised"  value={PKR(project.books.notYetCapitalisedCents)} accent="var(--erp-warning)" />
-          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents)} accent="var(--erp-primary-ink)" />
+          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents - project.books.releasedCents)} accent="var(--erp-primary-ink)" />
           <Stat label="Fees expensed"              value={PKR(project.books.expensedCents)} accent="var(--muted)" />
+          {project.books.depositHeldCents > 0 && <Stat label="Deposits held" value={PKR(project.books.depositHeldCents)} accent="var(--erp-primary-ink)" />}
+          {project.books.disposedCents > 0 && <Stat label="Sold or scrapped" value={PKR(project.books.disposedCents)} accent="var(--muted)" />}
+          {project.books.whtCents > 0 && <Stat label="Income tax withheld" value={PKR(project.books.whtCents)} accent="var(--muted)" />}
         </div>
       )}
 
@@ -495,7 +448,7 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
                 <p className="px-5 py-6 text-xs text-white/30 italic">No items in this scope.</p>
               ) : (
                 <div className="divide-y divide-white/[0.04]">
-                  {s.lines.map((l) => <LineRow key={l.id} line={l} onEdit={() => onEditLine(l)} />)}
+                  {s.lines.map((l) => <LineRow key={l.id} line={l} flags={flags.get(l.id) ?? []} onEdit={() => onEditLine(l)} />)}
                 </div>
               )}
             </section>
@@ -537,7 +490,7 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
       {/* Empty state */}
       {categories.length === 0 && (
         <div className="rounded-2xl p-8 text-center"
-          style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.18)' }}>
+          style={{ background: 'color-mix(in srgb, var(--erp-warning) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 20%, transparent)' }}>
           <p className="text-3xl mb-2">💸</p>
           <p className="font-bold text-white/85">No recurring costs tied to this project</p>
           <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
@@ -741,7 +694,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
             <label className="text-xs text-white/55">Next due</label>
             <input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
           </div>
-          {save.error && <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{(save.error as Error).message}</div>}
+          {save.error && <ErrorBanner error={save.error} />}
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
@@ -901,51 +854,68 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
   )
 }
 
-function LineRow({ line, onEdit }: { line: Line; onEdit: () => void }) {
+function LineRow({ line, flags, onEdit }: { line: Line; flags: string[]; onEdit: () => void }) {
   const status = STATUS_META[line.status]
   const totalDue = line.negotiatedCents ?? line.unitCostCents * line.quantity
   const paidPct = totalDue > 0 ? Math.min(100, (line.paidCents / totalDue) * 100) : 0
+  const assets = (line.ledger?.assets ?? []).filter((a) => a.status !== 'voided')
+  const awaiting = !!(line.capitalisation?.pendingEventId ?? line.ledger?.capitalisation.pendingEventId)
+  const treat = line.treatment && line.treatment !== 'capital' ? TREATMENT_LABEL[line.treatment] : null
 
   return (
-    <button onClick={onEdit} className="w-full text-left px-5 py-3 hover:bg-white/[0.015] transition-colors">
-      <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 items-center">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-bold text-white/90 truncate">{line.item}</p>
-            {line.priority === 'must_have' ? null : (
-              <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">{line.priority.replace('_', ' ')}</span>
-            )}
-            {line.quotes.length > 0 && (
-              <span className="text-[10px] text-white/40">📋 {line.quotes.length}q</span>
-            )}
+    <div className="px-4 sm:px-5 py-3 hover:bg-white/[0.015] transition-colors">
+      <button onClick={onEdit} className="w-full text-left" aria-label={`Open ${line.item}`}>
+        <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-2 items-center">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-bold text-white/90 break-words">{line.item}</p>
+              {line.priority === 'must_have' ? null : (
+                <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">{line.priority.replace('_', ' ')}</span>
+              )}
+              {line.quotes.length > 0 && (
+                <span className="text-[10px] text-white/40">{line.quotes.length} quote{line.quotes.length === 1 ? '' : 's'}</span>
+              )}
+            </div>
+            <p className="text-[11px] text-white/45 mt-0.5">
+              {line.vendor ?? <em>no vendor</em>}
+              {line.leadTimeDays ? ` · ${line.leadTimeDays}d lead` : ''}
+              {line.expectedDeliveryDate ? ` · ETA ${new Date(line.expectedDeliveryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}
+            </p>
           </div>
-          <p className="text-[11px] text-white/45 mt-0.5">
-            {line.vendor ?? <em>no vendor</em>}
-            {line.leadTimeDays ? ` · ${line.leadTimeDays}d lead` : ''}
-            {line.expectedDeliveryDate ? ` · ETA ${new Date(line.expectedDeliveryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}
-          </p>
-        </div>
 
-        <div className="text-right whitespace-nowrap">
-          <p className="text-xs text-white/45">qty {line.quantity}</p>
-          <p className="text-sm font-mono text-white/85">{PKR(totalDue)}</p>
-        </div>
-
-        <div className="w-24">
-          <div className="h-1 rounded-full bg-white/5 overflow-hidden">
-            <div className="h-full bg-accent" style={{ width: `${paidPct}%` }} />
+          <div className="text-right whitespace-nowrap">
+            <p className="text-xs text-white/45">qty {line.quantity}</p>
+            <p className="text-sm font-mono text-white/85">{PKR(totalDue)}</p>
           </div>
-          <p className="text-[10px] text-white/40 mt-0.5">{Math.round(paidPct)}% paid</p>
+
+          <div className="w-24 hidden sm:block">
+            <div className="h-1 rounded-full bg-white/5 overflow-hidden">
+              <div className="h-full bg-accent" style={{ width: `${paidPct}%` }} />
+            </div>
+            <p className="text-[10px] text-white/40 mt-0.5">{Math.round(paidPct)}% paid</p>
+          </div>
+
+          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full justify-self-start sm:justify-self-auto"
+            style={{ color: status.fg, background: `color-mix(in srgb, ${status.fg} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${status.fg} 25%, transparent)` }}>
+            {status.label}
+          </span>
+
+          <span className="text-white/30 text-xs hidden sm:inline">›</span>
         </div>
+      </button>
 
-        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-          style={{ color: status.fg, background: `color-mix(in srgb, ${status.fg} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${status.fg} 25%, transparent)` }}>
-          {status.label}
-        </span>
-
-        <span className="text-white/30 text-xs">›</span>
-      </div>
-    </button>
+      {(assets.length > 0 || awaiting || treat || flags.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          {treat && <span className="s-badge-purple">{treat}</span>}
+          {awaiting && <Link href={`${FA_BASE}/requests`} className="s-badge-amber">Awaiting capitalisation</Link>}
+          {flags.includes('overdue_delivery') && <span className="s-badge-red">Advance overdue</span>}
+          {flags.includes('delivered_uncapitalised') && !awaiting && <span className="s-badge-amber">Delivered, not capitalised</span>}
+          {assets.map((a) => (
+            <Link key={a.id} href={`${FA_BASE}/${a.id}`} className="s-badge-green">On the register{a.assetTag ? `: ${a.assetTag}` : ''}</Link>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1160,34 +1130,66 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   </ModalShell>
 }
 
-function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
-  projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void
+function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved }: {
+  project: Project; projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void
 }) {
   const qc = useQueryClient()
+  const lookups = useCapexLookups()
   const [item, setItem] = useState(line?.item ?? '')
   const [category, setCategory] = useState(line?.category ?? '')
   const [quantity, setQuantity] = useState(line?.quantity ?? 1)
   const [unitCostCents, setUnitCostCents] = useState(line?.unitCostCents ?? 0)
   const [vendor, setVendor] = useState(line?.vendor ?? '')
   const [vendorContact, setVendorContact] = useState(line?.vendorContact ?? '')
+  const [supplierId, setSupplierId] = useState(line?.supplierId ?? '')
+  const [treatment, setTreatment] = useState<string>(line?.treatment ?? '')
+  const [inputTaxCents, setInputTaxCents] = useState(line?.inputTaxCents ?? 0)
+  const [inputTaxAuthority, setInputTaxAuthority] = useState(line?.inputTaxAuthority ?? '')
+  const [whtSection, setWhtSection] = useState(line?.whtSection ?? '')
   const [quotedCents, setQuotedCents] = useState<number | ''>(line?.quotedCents ?? '')
   const [negotiatedCents, setNegotiatedCents] = useState<number | ''>(line?.negotiatedCents ?? '')
   const [status, setStatus] = useState<Status>(line?.status ?? 'not_quoted')
   const [priority, setPriority] = useState<'must_have' | 'nice_to_have' | 'future'>(line?.priority ?? 'must_have')
   const [leadTimeDays, setLeadTimeDays] = useState<number | ''>(line?.leadTimeDays ?? '')
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(line?.expectedDeliveryDate?.slice(0, 10) ?? '')
+  const [actualDeliveryDate, setActualDeliveryDate] = useState(line?.actualDeliveryDate?.slice(0, 10) ?? '')
+  const [installedDate, setInstalledDate] = useState(line?.installedDate?.slice(0, 10) ?? '')
   const [notes, setNotes] = useState(line?.notes ?? '')
+
+  // On the register (or waiting for the CEO) the line IS capital: what it is,
+  // what it costs and when it arrived are fixed (409 LINE_CAPITALISED). Void
+  // the asset and prepare it again to change them.
+  const onRegister = !!line && ((line.capitalisation?.assetIds.length ?? 0) > 0 || !!line.capitalisation?.pendingEventId
+    || (line.ledger?.assets ?? []).some((a) => a.status !== 'voided'))
+  // Once an instalment is on the books the treatment can no longer change (409 TREATMENT_LOCKED).
+  const treatmentLocked = !!line && Object.values(line.ledger?.payments ?? {}).some((p) => p.status === 'posted')
+
+  const suppliers = project.lookups.suppliers
+  const supplier = suppliers.find((x) => x.id === supplierId)
+  const authorities = lookups.data?.taxAuthorities ?? Object.keys(AUTHORITY_LABEL)
+  const whtSections = lookups.data?.whtSections ?? Object.keys(WHT_SECTION_LABEL)
 
   const save = useMutation({
     mutationFn: () => {
       const payload = {
-        scope, item, quantity, unitCostCents, status, priority,
-        category: category || null, vendor: vendor || null, vendorContact: vendorContact || null,
+        scope, status, priority,
+        vendor: vendor || null, vendorContact: vendorContact || null,
+        supplierId: supplierId || null,
+        treatment: treatment || null,
+        whtSection: whtSection || null,
         quotedCents: quotedCents === '' ? null : +quotedCents,
-        negotiatedCents: negotiatedCents === '' ? null : +negotiatedCents,
         leadTimeDays: leadTimeDays === '' ? null : +leadTimeDays,
         expectedDeliveryDate: expectedDeliveryDate ? `${expectedDeliveryDate}T00:00:00Z` : null,
         notes: notes || null,
+        ...(onRegister ? {} : {
+          item, quantity, unitCostCents,
+          category: category || null,
+          negotiatedCents: negotiatedCents === '' ? null : +negotiatedCents,
+          inputTaxCents,
+          inputTaxAuthority: inputTaxCents > 0 && inputTaxAuthority ? inputTaxAuthority : null,
+          actualDeliveryDate: actualDeliveryDate ? `${actualDeliveryDate}T00:00:00Z` : null,
+          installedDate: installedDate ? `${installedDate}T00:00:00Z` : null,
+        }),
       }
       if (line) return api.patch(`/finance/capex/lines/${line.id}`, payload)
       return api.post(`/finance/capex/${projectId}/lines`, payload)
@@ -1201,17 +1203,23 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
   })
 
   return <ModalShell title={`${line ? 'Edit' : 'Add'} ${scope} line`} onClose={onClose} wide>
+    {onRegister && (
+      <div className="rounded-xl px-4 py-3 text-xs text-white/70" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.08)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.25)' }}>
+        This item is on the fixed-asset register (or waiting for the CEO), so its name, cost, quantity, tax and dates are fixed.
+        Void the asset on the register and prepare it again to change them.
+      </div>
+    )}
     <Field label="Item *">
-      <input value={item} onChange={(e) => setItem(e.target.value)}
-        placeholder="Rational SCC 6-2/1 combi oven · 5-tier walk-in shelving · Emergency lighting set" className={fieldCls} autoFocus />
+      <input value={item} onChange={(e) => setItem(e.target.value)} disabled={onRegister}
+        placeholder="Rational SCC 6-2/1 combi oven · 5-tier walk-in shelving · Emergency lighting set" className={fieldCls + ' disabled:opacity-60'} autoFocus />
     </Field>
 
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <Field label="Category">
-        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Cooking · Refrigeration" className={fieldCls} />
+        <input value={category} onChange={(e) => setCategory(e.target.value)} disabled={onRegister} placeholder="Cooking · Refrigeration" className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Quantity">
-        <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(+e.target.value || 1)} className={fieldCls} />
+        <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(+e.target.value || 1)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Priority">
         <select value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)} className={fieldCls}>
@@ -1223,29 +1231,70 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
     </div>
 
     <Section heading="Money">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Budgeted unit cost (PKR)">
-          <MoneyInput value={unitCostCents} onChange={setUnitCostCents} className={fieldCls} />
+          <MoneyInput value={unitCostCents} onChange={setUnitCostCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
           <Hint>{PKR(unitCostCents * quantity)} total for qty {quantity}</Hint>
         </Field>
         <Field label="Quoted (PKR)">
           <MoneyInput value={quotedCents === '' ? 0 : quotedCents} onChange={(c) => setQuotedCents(c)} className={fieldCls} placeholder="Initial quote" />
         </Field>
         <Field label="Negotiated (PKR)">
-          <MoneyInput value={negotiatedCents === '' ? 0 : negotiatedCents} onChange={(c) => setNegotiatedCents(c)} className={fieldCls} placeholder="What you committed" />
+          <MoneyInput value={negotiatedCents === '' ? 0 : negotiatedCents} onChange={(c) => setNegotiatedCents(c)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} placeholder="What you committed" />
         </Field>
       </div>
     </Section>
 
-    <Section heading="Vendor">
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Vendor"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
+    <Section heading="Supplier">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Supplier on file">
+          <select value={supplierId} onChange={(e) => {
+            const id = e.target.value
+            setSupplierId(id)
+            const picked = suppliers.find((x) => x.id === id)
+            if (picked && !vendor) setVendor(picked.name)
+            if (picked?.defaultTaxAuthority && !inputTaxAuthority) setInputTaxAuthority(picked.defaultTaxAuthority)
+          }} className={fieldCls}>
+            <option value="">Not on file</option>
+            {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <Hint>Pick a supplier so income tax can be withheld at their filer rate.</Hint>
+        </Field>
+        <Field label="Vendor name"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
         <Field label="Contact (name · phone)"><input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="Bilal · +92 300 1234567" className={fieldCls} /></Field>
       </div>
     </Section>
 
+    <Section heading="How it is booked">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Book as">
+          <select value={treatment} onChange={(e) => setTreatment(e.target.value as Treatment | '')} disabled={treatmentLocked} className={fieldCls + ' disabled:opacity-60'}>
+            {TREATMENT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          <Hint>{treatmentLocked ? 'An instalment is already on the books as it is, so this can no longer change.' : TREATMENT_OPTIONS.find((o) => o.key === treatment)?.hint}</Hint>
+        </Field>
+        <Field label="Income tax withholding">
+          <select value={whtSection} onChange={(e) => setWhtSection(e.target.value)} className={fieldCls}>
+            <option value="">Automatic (the supplier&rsquo;s default)</option>
+            {whtSections.map((x) => <option key={x} value={x}>{WHT_SECTION_LABEL[x] ?? x}</option>)}
+          </select>
+        </Field>
+        <Field label="Sales tax in the price (PKR)">
+          <MoneyInput value={inputTaxCents} onChange={setInputTaxCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+        </Field>
+        <Field label="Sales tax charged by">
+          <select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value)} disabled={onRegister || inputTaxCents === 0} className={fieldCls + ' disabled:opacity-60'}>
+            <option value="">{inputTaxCents === 0 ? 'Not needed' : 'Pick the authority'}</option>
+            {authorities.map((x) => <option key={x} value={x}>{AUTHORITY_LABEL[x] ?? x.toUpperCase()}</option>)}
+          </select>
+          {inputTaxCents > 0 && !inputTaxAuthority && <Hint>Say which authority charged it (required to claim it).</Hint>}
+        </Field>
+      </div>
+      <ExemptionLine supplier={supplier} />
+    </Section>
+
     <Section heading="Status & schedule">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Status">
           <select value={status} onChange={(e) => setStatus(e.target.value as Status)} className={fieldCls}>
             {Object.entries(STATUS_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
@@ -1256,6 +1305,13 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
         </Field>
         <Field label="Expected delivery">
           <input type="date" value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className={fieldCls} />
+        </Field>
+        <Field label="Delivered on">
+          <input type="date" value={actualDeliveryDate} onChange={(e) => setActualDeliveryDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+        </Field>
+        <Field label="Installed on">
+          <input type="date" value={installedDate} onChange={(e) => setInstalledDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+          <Hint>Depreciation starts from the install date, else the delivery date.</Hint>
         </Field>
       </div>
     </Section>
@@ -1269,9 +1325,10 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
     {line && <QuotePanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {/* Payment schedule */}
-    {line && <PaymentPanel line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
+    {line && <PaymentPanel project={project} line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {save.error && <ErrorBanner error={save.error} />}
+    {del.error && <ErrorBanner error={del.error} />}
 
     <ModalFooter onCancel={onClose}>
       {line && (
@@ -1280,7 +1337,7 @@ function LineModal({ projectId, tenantId, scope, line, onClose, onSaved }: {
           Delete line
         </button>
       )}
-      <button onClick={() => save.mutate()} disabled={save.isPending || !item.trim()} className={primaryBtn}>
+      <button onClick={() => save.mutate()} disabled={save.isPending || !item.trim() || (inputTaxCents > 0 && !inputTaxAuthority && !onRegister)} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
       </button>
     </ModalFooter>
@@ -1366,15 +1423,20 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
 // Instalments are paid from one of the PROJECT's company's bank accounts
 // (backend lib/bankAccounts.ts moneyAccountCode): picked when scheduling or
 // when marking paid; with one bank it is used automatically, with several a
-// pick is required (BANK_ACCOUNT_REQUIRED).
-function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: string | null; onChange: () => void }) {
+// pick is required (BANK_ACCOUNT_REQUIRED). Marking one paid posts it to the
+// books at once: income tax is withheld at the supplier's filer rate (gross,
+// withheld and net are shown), a rent advance must say which months it covers,
+// and a refundable deposit can be returned or partly kept.
+function PaymentPanel({ project, line, tenantId, onChange }: { project: Project; line: Line; tenantId: string | null; onChange: () => void }) {
+  const caps = useFaCapabilities()
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState<'deposit' | 'midpoint' | 'balance' | 'extra'>('deposit')
   const [amountCents, setAmountCents] = useState(0)
   const [dueDate, setDueDate] = useState('')
   const [bankAccountId, setBankAccountId] = useState('')
   const [paying, setPaying] = useState<Payment | null>(null)
-  const [payBankId, setPayBankId] = useState('')
+  const [returning, setReturning] = useState<Payment | null>(null)
+  const [reclassing, setReclassing] = useState<Payment | null>(null)
   const { data: banks = [] } = useBankAccounts()
   const bankName = (id: string | null) => (id ? banks.find((b) => b.id === id)?.name ?? null : null)
 
@@ -1385,14 +1447,6 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
     }),
     onSuccess: () => { setAdding(false); setAmountCents(0); setDueDate(''); setBankAccountId(''); onChange() },
   })
-  const markPaid = useMutation({
-    mutationFn: (p: Payment) => api.patch(`/finance/capex/payments/${p.id}`, {
-      paidAt: new Date().toISOString(),
-      paidAmountCents: p.amountCents,
-      ...(payBankId && { bankAccountId: payBankId }),
-    }),
-    onSuccess: () => { setPaying(null); onChange() },
-  })
   const remove = useMutation({
     mutationFn: (pid: string) => api.delete(`/finance/capex/payments/${pid}`),
     onSuccess: () => onChange(),
@@ -1400,46 +1454,67 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
 
   return <Section heading={`Payment schedule · ${line.payments.length}`}>
     <div className="space-y-1.5">
-      {line.payments.map((p) => (
-        <div key={p.id} className="rounded-lg p-3"
-          style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-          <div className="grid grid-cols-[80px_auto_1fr_auto_auto] gap-2 items-center">
-            <span className="text-xs font-bold uppercase tracking-wider text-white/65">{p.label}</span>
-            <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
-            <span className="text-xs text-white/45">
-              {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
-              {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
-              {bankName(p.bankAccountId) && <span className="ml-2">· {p.paidAt ? 'from' : 'to pay from'} {bankName(p.bankAccountId)}</span>}
-            </span>
-            {p.paidAt ? (
-              line.ledger?.payments[p.id]?.status === 'posted'
-                ? <span className="text-[10px] font-black text-success" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
-                : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
-            ) : (
-              <button onClick={() => { setPaying(paying?.id === p.id ? null : p); setPayBankId(p.bankAccountId ?? '') }}
-                className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
-            )}
-            <button onClick={() => remove.mutate(p.id)} className="text-white/30 hover:text-s-red">✕</button>
-          </div>
-          {paying?.id === p.id && (
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <div className="min-w-[200px] flex-1">
-                <BankAccountSelect tenantId={tenantId} value={payBankId} onChange={setPayBankId}
-                  id={`capex-pay-bank-${p.id}`} label="Paid from" className={fieldCls} />
-              </div>
-              <button onClick={() => setPaying(null)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-              <button onClick={() => markPaid.mutate(p)} disabled={markPaid.isPending}
-                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
-                {markPaid.isPending ? 'Saving…' : `Paid ${PKR(p.amountCents)} today`}
-              </button>
+      {line.payments.map((p) => {
+        const posted = line.ledger?.payments[p.id]
+        const isDeposit = !!p.paidAt && posted?.status === 'posted' && (posted.accountCode === '1360' || line.treatment === 'deposit')
+        const isLegacyPrepaid = !!p.paidAt && posted?.status === 'posted' && posted.accountCode === '1310' && p.releasedCents === 0 && line.treatment !== 'deposit'
+        const gross = p.paidAmountCents ?? p.amountCents
+        return (
+          <div key={p.id} className="rounded-lg p-3"
+            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-white/65 w-20">{p.label}</span>
+              <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
+              <span className="text-xs text-white/45 min-w-0 flex-1 basis-40">
+                {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
+                {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
+                {bankName(p.bankAccountId) && <span className="ml-2">· {p.paidAt ? 'from' : 'to pay from'} {bankName(p.bankAccountId)}</span>}
+              </span>
+              {p.paidAt ? (
+                p.source === 'cash'
+                  ? <span className="s-badge-purple" title="Paid from petty cash or a cash request. Correct it there.">Paid in cash</span>
+                  : posted?.status === 'posted'
+                    ? <span className="text-[10px] font-black text-success" title={`Booked to ${posted.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
+                    : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books. An admin can post it.">PAID · NOT POSTED</span>
+              ) : (
+                <button onClick={() => setPaying(paying?.id === p.id ? null : p)}
+                  className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
+              )}
+              <button onClick={() => remove.mutate(p.id)} aria-label="Delete instalment" className="text-white/30 hover:text-s-red">&times;</button>
             </div>
-          )}
-        </div>
-      ))}
+
+            {p.paidAt && (p.whtCents > 0 || p.coversMonths || isDeposit || p.whtOverrideReason) && (
+              <div className="mt-2 text-[11px] text-white/55 space-y-0.5">
+                {p.whtCents > 0 && <p>Income tax withheld {PKR(p.whtCents)} · net to the bank {PKR(gross - p.whtCents)}{p.whtOverrideReason ? ` · your own figure: ${p.whtOverrideReason}` : ''}</p>}
+                {p.coversMonths && p.coversFrom && <p>Covers {p.coversMonths} month{p.coversMonths === 1 ? '' : 's'} from {p.coversFrom} · {PKR(p.releasedCents)} released to rent so far</p>}
+                {isDeposit && (
+                  <p>
+                    Refundable deposit
+                    {p.depositReturnedCents > 0 && ` · ${PKR(p.depositReturnedCents)} returned`}
+                    {p.depositReturnedCents > 0 && (p.depositReturnMethod || p.depositReturnRef) && ` (${[p.depositReturnMethod ? receiptMethodLabel(p.depositReturnMethod) : null, p.depositReturnRef ? `ref ${p.depositReturnRef}` : null].filter(Boolean).join(', ')})`}
+                    {p.depositForfeitedCents > 0 && ` · ${PKR(p.depositForfeitedCents)} kept by the landlord`}
+                    {p.depositReturnedCents + p.depositForfeitedCents === 0 && ' · still held'}
+                  </p>
+                )}
+              </div>
+            )}
+            {(isDeposit || (isLegacyPrepaid && caps.canApprove)) && (
+              <div className="mt-2 flex flex-wrap gap-3">
+                {isDeposit && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setReturning(p)}>Deposit back…</button>}
+                {isLegacyPrepaid && caps.canApprove && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setReclassing(p)}>This is a security deposit, not rent…</button>}
+              </div>
+            )}
+
+            {paying?.id === p.id && (
+              <MarkPaidForm project={project} line={line} payment={p} tenantId={tenantId} onClose={() => setPaying(null)} onDone={() => { setPaying(null); onChange() }} />
+            )}
+          </div>
+        )
+      })}
     </div>
 
-    {(markPaid.error || remove.error) && <ErrorBanner error={markPaid.error ?? remove.error} />}
-    <CapitalisePanel line={line} onChange={onChange} />
+    {remove.error && <ErrorBanner error={remove.error} />}
+    <CapitalisePanel project={project} line={line} onChange={onChange} />
 
     {adding ? (
       <div className="rounded-xl p-3 mt-2"
@@ -1452,7 +1527,7 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
             <option value="extra">Extra</option>
           </select>
           <MoneyInput value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
-          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} />
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
         </div>
         <div className="mt-2">
           <BankAccountSelect tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId}
@@ -1471,61 +1546,90 @@ function PaymentPanel({ line, tenantId, onChange }: { line: Line; tenantId: stri
         + Schedule payment
       </button>
     )}
+
+    {returning && <DepositReturnModal payment={returning} line={line} project={project} onClose={() => setReturning(null)} onDone={() => { setReturning(null); onChange() }} />}
+    {reclassing && <ReclassDepositModal payment={reclassing} line={line} project={project} onClose={() => setReclassing(null)} onDone={() => { setReclassing(null); onChange() }} />}
   </Section>
 }
 
-// Capitalise a delivered item onto the fixed-asset register (owner decision
-// 24): Dr the asset / Cr the advances already paid, Cr the supplier for the
-// rest. Admin only on the server; the register then charges depreciation.
-const ASSET_CATEGORY_OPTIONS = [
-  { key: 'kitchen_equipment',  label: 'Kitchen equipment' },
-  { key: 'furniture_fixtures', label: 'Furniture & fixtures' },
-  { key: 'it_equipment',       label: 'IT equipment' },
-  { key: 'vehicles',           label: 'Vehicles' },
-  { key: 'leasehold',          label: 'Leasehold improvements' },
-] as const
-const DELIVERED: Status[] = ['delivered', 'installed', 'commissioned', 'done'] as Status[]
+// Mark one instalment paid: from which bank, on which day, how much, what the
+// income-tax withholding comes to (gross / withheld / net) and, for a rent
+// advance, the months it covers (422 PREPAID_TERM_REQUIRED without them).
+function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
+  project: Project; line: Line; payment: Payment; tenantId: string | null; onClose: () => void; onDone: () => void
+}) {
+  const preview = useWithholdingPreview()
+  const [bankId, setBankId] = useState(payment.bankAccountId ?? '')
+  const [paidOn, setPaidOn] = useState(new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10))
+  const [amount, setAmount] = useState(payment.amountCents)
+  const [coversFrom, setCoversFrom] = useState(payment.coversFrom ?? '')
+  const [coversMonths, setCoversMonths] = useState(payment.coversMonths ? String(payment.coversMonths) : '')
+  const [needsTerm, setNeedsTerm] = useState(false)
+  const [override, setOverride] = useState(false)
+  const [overrideCents, setOverrideCents] = useState(0)
+  const [overrideReason, setOverrideReason] = useState('')
 
-function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void }) {
-  // Capitalising books Dr asset / Cr advances — the CEO's (ADMIN_ONLY on the
-  // API). Finance and the managers work the tracker; they don't see a button
-  // the server would refuse.
-  const canCapitalise = useAuthStore((s) => s.isRole('admin'))
-  const [category, setCategory] = useState<string>('kitchen_equipment')
-  const [lifeMonths, setLifeMonths] = useState(60)
-  const cap = useMutation({
-    mutationFn: () => api.post(`/finance/capex/lines/${line.id}/capitalise`, { category, usefulLifeMonths: lifeMonths }),
-    onSuccess: () => onChange(),
+  const supplier = project.lookups.suppliers.find((x) => x.id === line.supplierId)
+  const lineTotal = line.negotiatedCents ?? line.unitCostCents * line.quantity
+  const taxShare = lineTotal > 0 ? Math.round((line.inputTaxCents * amount) / lineTotal) : 0
+  const termExpected = line.treatment === 'prepaid' || (!line.treatment && /\b(rent|lease)\b/i.test(`${line.scope} ${line.category ?? ''} ${line.item}`))
+  const termRequired = line.treatment === 'prepaid' || needsTerm
+  const wht = preview({ grossCents: amount, inputTaxCents: taxShare, section: line.whtSection, supplier, paidOn, treatment: line.treatment })
+
+  const pay = useMutation({
+    mutationFn: () => api.patch(`/finance/capex/payments/${payment.id}`, {
+      paidAt: new Date(`${paidOn}T12:00:00+05:00`).toISOString(),
+      paidAmountCents: amount,
+      ...(bankId && { bankAccountId: bankId }),
+      ...((termExpected || needsTerm) && coversFrom && coversMonths ? { coversFrom, coversMonths: Number(coversMonths) } : {}),
+      ...(override ? { whtOverrideCents: overrideCents, whtOverrideReason: overrideReason.trim() } : {}),
+    }),
+    onSuccess: onDone,
+    onError: (e) => { if ((e as { code?: string }).code === 'PREPAID_TERM_REQUIRED') setNeedsTerm(true) },
   })
-  if (line.ledger?.asset) {
-    return (
-      <p className="text-[11px] text-success mt-2">
-        On the fixed-asset register at {PKR(line.ledger.asset.costCents)} — <a href="/accounting/fixed-assets" className="underline">view</a>
-      </p>
-    )
-  }
-  if (!DELIVERED.includes(line.status) && !line.actualDeliveryDate) return null
-  if ((line.ledger?.prepaidCents ?? 0) > 0 || (line.ledger?.expensedCents ?? 0) > 0) return null
-  if (!canCapitalise) {
-    return <p className="text-[11px] text-white/45 mt-2">Delivered — the CEO puts it on the fixed-asset register.</p>
-  }
+
+  const termOk = !termRequired || (!!coversFrom && Number(coversMonths) >= 1)
+  const overrideOk = !override || (overrideReason.trim().length >= 5 && overrideCents < amount)
+
   return (
-    <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
-      <p className="text-xs text-white/70 mb-2">Delivered — put it on the fixed-asset register ({PKR(line.ledger?.advancedCents ?? 0)} advanced so far).</p>
-      <div className="grid grid-cols-3 gap-2">
-        <label className="sr-only" htmlFor={`cap-cat-${line.id}`}>Asset category</label>
-        <select id={`cap-cat-${line.id}`} value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
-          {ASSET_CATEGORY_OPTIONS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </select>
-        <label className="sr-only" htmlFor={`cap-life-${line.id}`}>Useful life (months)</label>
-        <input id={`cap-life-${line.id}`} type="number" min={1} max={600} value={lifeMonths}
-          onChange={(e) => setLifeMonths(parseInt(e.target.value || '0', 10))} className={fieldCls} />
-        <button onClick={() => cap.mutate()} disabled={cap.isPending || lifeMonths < 1}
+    <div className="mt-3 space-y-3 rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-1">
+          <BankAccountSelect tenantId={tenantId} value={bankId} onChange={setBankId} id={`capex-pay-bank-${payment.id}`} label="Paid from" className={fieldCls} />
+        </div>
+        <Field label="Paid on"><input type="date" value={paidOn} max={new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} /></Field>
+        <Field label="Amount (PKR)"><MoneyInput value={amount} onChange={setAmount} className={fieldCls} /></Field>
+      </div>
+
+      {(termExpected || needsTerm) && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={`Covers from${termRequired ? ' *' : ''}`}><input type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} /></Field>
+          <Field label={`Covers how many months${termRequired ? ' *' : ''}`}><input type="number" min={1} max={240} value={coversMonths} onChange={(e) => setCoversMonths(e.target.value)} className={fieldCls} /></Field>
+          <div className="col-span-2"><Hint>A rent advance is spread over the months it covers, one month at a time.</Hint></div>
+        </div>
+      )}
+
+      <ExemptionLine supplier={supplier} />
+      <WhtPreview result={wht} grossCents={amount} override={override ? overrideCents : null} />
+      <label className="flex items-center gap-2 text-xs text-white/65">
+        <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
+        Use my own withholding figure (for example, the supplier&rsquo;s certificate is not on file yet)
+      </label>
+      {override && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Income tax withheld (PKR)"><MoneyInput value={overrideCents} onChange={setOverrideCents} className={fieldCls} /></Field>
+          <Field label="Why (at least 5 characters)"><input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} className={fieldCls} /></Field>
+        </div>
+      )}
+
+      {pay.error && <ErrorBanner error={pay.error} />}
+      <div className="flex gap-2 justify-end">
+        <button onClick={onClose} className="text-xs text-white/55 hover:text-white">Cancel</button>
+        <button onClick={() => pay.mutate()} disabled={pay.isPending || amount <= 0 || !termOk || !overrideOk}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
-          {cap.isPending ? 'Capitalising…' : 'Capitalise'}
+          {pay.isPending ? 'Saving…' : `Paid ${PKR(amount)}`}
         </button>
       </div>
-      {cap.error && <ErrorBanner error={cap.error} />}
     </div>
   )
 }
@@ -1562,8 +1666,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
-  const msg = error instanceof Error ? error.message : 'Failed'
-  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>{msg}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" role="alert" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{errorWords(error)}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

@@ -51,6 +51,8 @@ interface Concept {
   competitors?: string[]
   differentiator?: string | null
   brandVoice?: string | null
+  /** How the brand serves: 'plate' or 'packaging' (the packaging is the serving vessel). */
+  serviceVessel?: 'plate' | 'packaging'
 }
 interface Location { id: string; name: string }
 
@@ -609,6 +611,11 @@ interface BrandBriefFormProps {
 function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor, showContinueAfterCreate, existingBrand }: BrandBriefFormProps) {
   const isEdit = !!existingBrand
 
+  // How the brand serves — a REQUIRED choice on a new brand, with no default
+  // (POST /concepts answers 400 without it); on an existing brand it opens on
+  // the saved value and is sent only when changed.
+  const [serviceVessel, setServiceVessel] = useState<'plate' | 'packaging' | ''>(existingBrand?.serviceVessel ?? '')
+
   // Strategy
   const [name, setName] = useState(existingBrand?.name ?? '')
   const [conceptStatement, setConceptStatement] = useState(existingBrand?.conceptStatement ?? '')
@@ -690,9 +697,12 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
         brandVoice: brandVoice || null,
       }
       if (isEdit && existingBrand) {
-        return api.patch(`/concepts/${existingBrand.id}`, payload)
+        return api.patch(`/concepts/${existingBrand.id}`, {
+          ...payload,
+          ...(serviceVessel && serviceVessel !== existingBrand.serviceVessel ? { serviceVessel } : {}),
+        })
       }
-      return api.post('/concepts', { ...payload, slug })
+      return api.post('/concepts', { ...payload, slug, serviceVessel })
     },
     onSuccess: () => onCreated(),
   })
@@ -736,6 +746,35 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
               </button>
             ))}
           </div>
+        </Field>
+      </Section>
+
+      <Section heading="How the brand serves">
+        <Field label={isEdit ? 'How does this brand serve?' : 'How does this brand serve? *'}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="radiogroup" aria-label="How does this brand serve?">
+            {([
+              { value: 'plate', label: 'On plates', hint: 'Dine-in is served on plates' },
+              { value: 'packaging', label: 'In packaging', hint: 'The packaging is the vessel, e.g. Stackd' },
+            ] as const).map((o) => (
+              <button key={o.value} type="button" role="radio" aria-checked={serviceVessel === o.value} onClick={() => setServiceVessel(o.value)}
+                className="text-xs px-3 py-2.5 rounded-lg text-left"
+                style={serviceVessel === o.value
+                  ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
+                  : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+                <p className="font-bold">{o.label}</p>
+                <p className="text-[10px] opacity-75 mt-0.5">{o.hint}</p>
+              </button>
+            ))}
+          </div>
+          <Hint>
+            Packaging counts on takeaway and delivery always. With plates, dine-in counts packaging only when staff tap Box given. With packaging as the vessel, it counts on every order.
+          </Hint>
+          {!isEdit && serviceVessel === '' && <p role="alert" className="text-[11px] font-semibold mt-1" style={{ color: 'var(--erp-warning)' }}>Pick how this brand serves before saving.</p>}
+          {isEdit && existingBrand?.serviceVessel && serviceVessel !== '' && serviceVessel !== existingBrand.serviceVessel && (
+            <p className="text-[11px] font-semibold mt-1" style={{ color: 'var(--erp-warning)' }}>
+              Applies to orders from now on. Orders already rung up keep the vessel they were sold with.
+            </p>
+          )}
         </Field>
       </Section>
 
@@ -887,7 +926,7 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
             `Change ${name.trim() || 'this brand'}'s GST?\n\nCash ${currentRates.taxRateCash}% → ${nextRates.taxRateCash}%\nCard / digital ${currentRates.taxRateCard}% → ${nextRates.taxRateCard}%\n\nEvery order from now on is charged at the new rates.`,
           )) return
           save.mutate()
-        }} disabled={save.isPending || !name.trim() || !conceptStatement.trim() || (!isEdit && province === '')}
+        }} disabled={save.isPending || !name.trim() || !conceptStatement.trim() || (!isEdit && (province === '' || serviceVessel === ''))}
           className={primaryBtn}>
           {save.isPending
             ? (isEdit ? 'Saving changes…' : 'Saving brief…')

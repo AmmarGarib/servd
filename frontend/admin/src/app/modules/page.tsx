@@ -14,7 +14,7 @@ import { usePermissions } from '../../hooks/useCan'
 import { useWorkspaceDefs } from '../../hooks/useWorkspaces'
 import { useAuthStore } from '../../store/auth'
 import { roleLabel } from '../../lib/appRoles'
-import { pagesForModules, gapsForModules, MODULE_PAGES } from '../../lib/moduleCatalog'
+import { pagesForModules, gapsForModules, isParkedSection, MODULE_PAGES } from '../../lib/moduleCatalog'
 
 export default function WorkspacesPage() {
   const { data: me } = usePermissions()
@@ -73,6 +73,7 @@ export default function WorkspacesPage() {
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {w.sections.map((s) => {
+                  if (isParkedSection(s.modules)) return null // parked by the owner — no page yet
                   const pages = pagesForModules(s.modules)
                   const gaps = gapsForModules(s.modules)
                   return (

@@ -9,7 +9,7 @@ import type { AccountType, Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT } from './journal.js'
 import { fmtPktDate } from './dates.js'
-import { sumCents, toCents } from '../../lib/money.js'
+import { sumCents, toCents, type DbMoney } from '../../lib/money.js'
 import { fiscalYearsFor, type CompanyFiscalYear } from './fiscalYear.js'
 import { ASSET_CLASS_DEFAULTS } from '../fixedAssets/classes.js'
 import { costClassOf } from '../../lib/inventoryClass.js'
@@ -630,10 +630,15 @@ export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: 
 //     5010 / 5020 / 5030 directly; the class-less 5040 waste, 5050 count
 //     variance and 5060 cost adjustment split by the cost class of the stock
 //     behind each entry — the class inventory lines (1210 / 1220 / 1230) the
-//     same entry moved (written from the StockMovement rows' costClass), and
-//     for a 5060 with no stock line the GrniMatch bill line's (or the written-
-//     off receipt line's) item class. Only an untraceable remainder (pre-FIFO
-//     entries) stays in food. A packaging count GAIN or LOSS (a missed or
+//     same entry moved (written from the StockMovement rows' costClass) — or,
+//     when it moved none, the class cost line (5010 / 5020 / 5030) on the
+//     stock side (a sold-line waste whose cost was already booked) — and for
+//     a 5060 with no stock line the GrniMatch bill line's (or the written-
+//     off receipt line's) item class. An approved stock difference (H20,
+//     approved line by line) takes its OWN 1290 line's class: its pair in the
+//     waste / count entry, or the waste log a sold-line waste line names
+//     (clearedLineClass). Only an untraceable remainder (pre-FIFO entries)
+//     stays in food. A packaging count GAIN or LOSS (a missed or
 //     wrong "Box given") therefore shows on packaging, never inside food.
 
 export interface CostOfSalesSplit { foodCents: number; drinksCents: number; packagingCents: number }
@@ -672,6 +677,69 @@ function sourceIdOf(reference: string, sourceType: string): string | null {
   return (at >= 0 ? rest.slice(0, at) : rest) || null
 }
 
+// Source names read here as plain strings (no import of the stock modules from the report layer).
+const VOID_WASTE_REF = 'pos.void_waste'            // inventory/voidWaste.ts VOID_WASTE_SOURCE
+const WASTE_LOG_MOVES = 'waste_log'                // lib/stockLedger.ts STOCK_SOURCE.wasteLog
+
+/**
+ * The cost class of each approved 1290 stock-difference line (H20), from its
+ * OWN stock in the entry that booked it:
+ *   1. its pair — the opposite-side class line (12x0, or 50x0 when the cost
+ *      was already booked) with the same brand, amount and memo (waste and
+ *      counts post Dr/Cr pairs with one memo, inventoryPosting.ts brandPairs);
+ *   2. a sold-line waste (one 1290 debit per waste log, the stock credited per
+ *      class): the log the memo names, of the same cost — its waste movement's
+ *      class, else its item's category (as postVoidWaste chose it);
+ *   3. an entry whose opposite-side class lines are all one class.
+ * A line none of these resolves is left out (the caller falls back to the
+ * whole entry's mix — legacy entries only).
+ */
+async function clearedLineClass(
+  db: Db,
+  lines: Array<{ id: string; journalEntryId: string; type: string; amountCents: DbMoney; conceptId: string | null; memo: string | null; journalEntry: { reference: string | null } }>,
+): Promise<Map<string, CosKey>> {
+  const out = new Map<string, CosKey>()
+  if (lines.length === 0) return out
+  const classOfCode = (code: string): CosKey | undefined => INVENTORY_CLASS[code] ?? DIRECT_COS[code]
+  const partners = await db.journalLine.findMany({
+    where: { journalEntryId: { in: Array.from(new Set(lines.map((l) => l.journalEntryId))) }, account: { code: { in: [...Object.keys(INVENTORY_CLASS), ...Object.keys(DIRECT_COS)] } } },
+    select: { journalEntryId: true, type: true, amountCents: true, conceptId: true, memo: true, account: { select: { code: true } } },
+  })
+  // Sold-line waste: the logs of each voided line, with their class.
+  const orderItemIds = Array.from(new Set(lines.map((l) => sourceIdOf(l.journalEntry.reference ?? '', VOID_WASTE_REF)).filter((x): x is string => !!x)))
+  const logs = orderItemIds.length === 0 ? [] : await db.wasteLog.findMany({
+    where: { orderItemId: { in: orderItemIds } },
+    select: { id: true, orderItemId: true, estimatedCostCents: true, inventoryItem: { select: { name: true, category: true } } },
+  })
+  const moves = logs.length === 0 ? [] : await db.stockMovement.findMany({
+    where: { sourceType: WASTE_LOG_MOVES, sourceId: { in: logs.map((x) => x.id) }, kind: 'waste' },
+    select: { sourceId: true, costClass: true },
+  })
+  const movedClass = new Map(moves.map((m) => [m.sourceId, m.costClass]))
+  for (const l of lines) {
+    const amount = sumCents(l.amountCents)
+    const opposite = partners.filter((p) => p.journalEntryId === l.journalEntryId && p.type !== l.type)
+    // 1. Its pair.
+    const pair = opposite.find((p) => p.conceptId === l.conceptId && sumCents(p.amountCents) === amount && (p.memo ?? '') === (l.memo ?? ''))
+    let k = pair ? classOfCode(pair.account.code) : undefined
+    // 2. Sold-line waste: the log its memo names.
+    const orderItemId = sourceIdOf(l.journalEntry.reference ?? '', VOID_WASTE_REF)
+    if (!k && orderItemId) {
+      const item = /^Waste \([^)]*\): (.+)$/.exec((l.memo ?? '').replace(/ \[[^\]]*\]$/, ''))?.[1]?.trim()
+      const log = logs.find((x) => x.orderItemId === orderItemId && x.inventoryItem.name === item && (x.estimatedCostCents ?? 0) === amount)
+        ?? logs.find((x) => x.orderItemId === orderItemId && x.inventoryItem.name === item)
+      if (log) k = COS_OF_CLASS[movedClass.get(log.id) ?? costClassOf(log.inventoryItem.category)]
+    }
+    // 3. One class on the stock side.
+    if (!k) {
+      const keys = new Set(opposite.map((p) => classOfCode(p.account.code)).filter((x): x is CosKey => !!x))
+      if (keys.size === 1) k = [...keys][0]
+    }
+    if (k) out.set(l.id, k)
+  }
+  return out
+}
+
 /** Cost of sales by class per brand tag (null = untagged) over the window. */
 export async function costOfSalesByConcept(db: Db, tenantIds: string[], a: { from: Date; to: Date }): Promise<Map<string | null, CostOfSalesSplit>> {
   const out = new Map<string | null, CostOfSalesSplit>()
@@ -705,13 +773,50 @@ export async function costOfSalesByConcept(db: Db, tenantIds: string[], a: { fro
     select: { journalEntryId: true, type: true, amountCents: true, conceptId: true, account: { select: { code: true } }, journalEntry: { select: { reference: true, tenantId: true } } },
   })
   if (classless.length === 0) return out
-  const entryIds = Array.from(new Set(classless.map((l) => l.journalEntryId)))
+  // H20: a waste / count difference the CEO approved ('stock_difference.clear:<1290 lineId>')
+  // has no stock line of its own — read the stock behind the entry its 1290 line came from.
+  // The CEO approves LINE BY LINE (a count's beef short may clear in May, its
+  // cups short in June, or never), so the class is the cleared 1290 line's
+  // OWN stock (clearedLineClass), never the whole entry's mix.
+  const stockEntryOf = new Map<string, string>()   // clearing entry id → the waste / count entry id
+  const clearedLineIds = Array.from(new Set(classless
+    .map((l) => sourceIdOf(l.journalEntry.reference ?? '', 'stock_difference.clear'))
+    .filter((x): x is string => !!x)))
+  const clearedClassOf = new Map<string, CosKey>()   // clearing entry id → the cleared line's class
+  if (clearedLineIds.length > 0) {
+    const src = await db.journalLine.findMany({
+      where: { id: { in: clearedLineIds }, journalEntry: { tenantId: { in: tenantIds } } },
+      select: { id: true, journalEntryId: true, type: true, amountCents: true, conceptId: true, memo: true, journalEntry: { select: { reference: true } } },
+    })
+    const entryOfLine = new Map(src.map((x) => [x.id, x.journalEntryId]))
+    for (const l of classless) {
+      const id = sourceIdOf(l.journalEntry.reference ?? '', 'stock_difference.clear')
+      const e = id ? entryOfLine.get(id) : undefined
+      if (e) stockEntryOf.set(l.journalEntryId, e)
+    }
+    const classOfLine = await clearedLineClass(db, src)
+    for (const l of classless) {
+      const id = sourceIdOf(l.journalEntry.reference ?? '', 'stock_difference.clear')
+      const k = id ? classOfLine.get(id) : undefined
+      if (k) clearedClassOf.set(l.journalEntryId, k)
+    }
+  }
+  const stockEntry = (entryId: string) => stockEntryOf.get(entryId) ?? entryId
+  const entryIds = Array.from(new Set(classless.map((l) => stockEntry(l.journalEntryId))))
+  // Class evidence on the stock side: the class inventory accounts first; the
+  // class cost accounts (5010 / 5020 / 5030) when the entry has none — a
+  // sold-line waste whose cost was already booked credits the class cost, not
+  // 12x0, and a straight-to-cost void books Dr 5040 / Cr 50x0.
   const invLines = await db.journalLine.findMany({
-    where: { journalEntryId: { in: entryIds }, account: { code: { in: Object.keys(INVENTORY_CLASS) } } },
+    where: { journalEntryId: { in: entryIds }, account: { code: { in: [...Object.keys(INVENTORY_CLASS), ...Object.keys(DIRECT_COS)] } } },
     select: { journalEntryId: true, type: true, amountCents: true, conceptId: true, account: { select: { code: true } } },
   })
   const invByEntry = new Map<string, typeof invLines>()
-  for (const l of invLines) invByEntry.set(l.journalEntryId, [...(invByEntry.get(l.journalEntryId) ?? []), l])
+  const cosByEntry = new Map<string, typeof invLines>()
+  for (const l of invLines) {
+    const into = INVENTORY_CLASS[l.account.code] ? invByEntry : cosByEntry
+    into.set(l.journalEntryId, [...(into.get(l.journalEntryId) ?? []), l])
+  }
 
   // 5060 with no stock line in its entry: the bill's GRNI matches, or the written-off receipt line.
   const billIds = new Set<string>()
@@ -756,17 +861,24 @@ export async function costOfSalesByConcept(db: Db, tenantIds: string[], a: { fro
     const signed = l.type === 'debit' ? amt : -amt
     // The stock side of the same entry: a debit to 5040/5050/5060 is paired
     // with inventory CREDITS (stock out), a credit with inventory DEBITS.
-    const opposite = (invByEntry.get(l.journalEntryId) ?? []).filter((x) => x.type !== l.type)
-    const pick = (rows: typeof opposite) => {
+    // (An approved stock difference: its waste / count entry's stock lines — Dr 1290 / Cr 12x0 there
+    // pairs the same way as the Dr 5040 / Cr 1290 here.)
+    const pick = (rows: typeof invLines) => {
       const w = new Map<CosKey, number>()
       for (const x of rows) {
-        const k = INVENTORY_CLASS[x.account.code]
+        const k = INVENTORY_CLASS[x.account.code] ?? DIRECT_COS[x.account.code]
         if (k) w.set(k, (w.get(k) ?? 0) + sumCents(x.amountCents))
       }
       return w
     }
-    let weights = pick(opposite.filter((x) => x.conceptId === l.conceptId))
-    if (weights.size === 0) weights = pick(opposite)
+    const cleared = clearedClassOf.get(l.journalEntryId)
+    let weights = new Map<CosKey, number>(cleared ? [[cleared, 1]] : [])
+    for (const byEntry of [invByEntry, cosByEntry]) {
+      if (weights.size > 0) break
+      const opposite = (byEntry.get(stockEntry(l.journalEntryId)) ?? []).filter((x) => x.type !== l.type)
+      weights = pick(opposite.filter((x) => x.conceptId === l.conceptId))
+      if (weights.size === 0) weights = pick(opposite)
+    }
     if (weights.size === 0 && l.account.code === ACCT.COST_ADJUSTMENT) {
       const ref = l.journalEntry.reference ?? ''
       const bill = sourceIdOf(ref, 'supplier.bill')

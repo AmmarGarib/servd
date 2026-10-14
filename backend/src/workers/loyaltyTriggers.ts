@@ -6,6 +6,7 @@ import { reachableCustomer, reachableAtCompany } from '../lib/marketingAudience.
 import { calculatePointsValue } from '../lib/loyaltySettings.js'
 import { creditPoints, creditPointsTx, bookEarn, loyaltyProgram } from '../modules/loyalty/service.js'
 import { formatBrandName } from '../lib/brandName.js'
+import { sandboxBlocks } from '../lib/sandbox.js'
 
 // Automated customer messages and point bonuses.
 //
@@ -57,6 +58,7 @@ async function reach(c: { email: string | null; phone: string | null }, subject:
 }
 
 export function startLoyaltyTriggerWorker() {
+  if (sandboxBlocks('worker', { summary: 'loyaltyTriggers' })) return // practice copy: its job is messaging real customers
   try {
     const triggersQueue = new Queue('loyalty-triggers', {
       connection: redis,

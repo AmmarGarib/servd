@@ -31,6 +31,7 @@
 
 import { serviceClient as prisma } from './prisma.js'
 import { decryptSecret, encryptSecret, isEncrypted, secretKeyConfigured } from './secretBox.js'
+import { isSandbox, sandboxBlocks } from './sandbox.js'
 
 export const SMTP_HOST_KEY = 'integrations.smtp.host'
 export const SMTP_PORT_KEY = 'integrations.smtp.port'
@@ -175,6 +176,7 @@ export async function smtpSecretHealth(): Promise<{ check: 'ok' | 'warn' | 'off'
 
 /** Can we actually send? Used by /health and the admin screen. */
 export async function emailConfigured(): Promise<boolean> {
+  if (isSandbox()) return true // practice copy: sendEmail() answers a practice result
   const { user, pass } = await mailConfig()
   return Boolean(user && pass)
 }
@@ -189,6 +191,8 @@ export async function sendEmail(opts: {
   html: string
   replyTo?: string | null
 }): Promise<void> {
+  // Practice copy: never the SMTP server (the copied settings may hold working credentials).
+  if (sandboxBlocks('email', { to: opts.to, summary: `${opts.html.length} chars` })) return
   const cfg = await mailConfig()
   if (!cfg.user || !cfg.pass) {
     throw new Error('Email is not configured (set it in admin → Configuration → Email)')

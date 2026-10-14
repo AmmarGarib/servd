@@ -33,7 +33,9 @@
 //   receivable.payment:<paymentId>
 //       Dr the account the money went into (lib/bankAccounts.ts
 //       moneyAccountCode, the invoice's company) / Cr 1110.
-//       Both dated receivedAt (user-entered: a closed month → 422).
+//       Both dated receivedAt (user-entered: a closed month → 422). Both
+//       descriptions and the money line's memo carry the method and the
+//       payment reference # (required for every method — owner, 2026-10-14).
 //
 // Lock order: the invoice row first (lockInvoice), then the write-off row —
 // the same as every route in routes.ts. Files are decoded before the
@@ -51,10 +53,11 @@ import { audit } from '../../lib/audit.js'
 import { ACCT, postJournalEntry } from '../accounting/journal.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, zPaymentRef, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { decodeEvidenceFile, sendEvidence, EVIDENCE_MAX_BYTES } from '../../lib/evidenceFile.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
-import { findInScope, lockInvoice, restatus, assertLiveInvoice, balanceOf, totalOf } from './routes.js'
+import { findInScope, lockInvoice, restatus, assertLiveInvoice, balanceOf, totalOf, receiptMethodIn, receiptMemo } from './routes.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -214,7 +217,6 @@ async function applyWriteOffTx(tx: Tx, writeOffId: string, actorId: string, note
     description: `Bad debt written off on ${inv.number} — ${inv.customerName}: ${pending.reason}`.slice(0, 500),
     entryDate: now,
     postedBy: actorId,
-    reference: inv.number,
     lines: [
       { accountCode: BAD_DEBTS, type: 'debit', amountCents: amount, conceptId: inv.conceptId },
       { accountCode: RECEIVABLE, type: 'credit', amountCents: amount, conceptId: inv.conceptId },
@@ -394,21 +396,26 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
 
   // POST /accounting/receivables/write-offs/:id/recover — money received on
   // a written-off amount. {amountCents ≤ amount − recovered, receivedAt,
-  // method bank|cash|cheque, bankAccountId? (a bank of the INVOICE's company;
-  // another company's → 422), reference?}. One transaction: the counters,
-  // the payment row (writeOffId) and both entries.
+  // method cash|card|bank_transfer|bank_deposit|cheque (old 'bank' =
+  // bank_transfer), bankAccountId? (a bank of the INVOICE's company; another
+  // company's → 422), reference (the payment reference # — required for every
+  // method: 422 PAYMENT_REFERENCE_REQUIRED)}. One transaction: the counters,
+  // the payment row (writeOffId) and both entries. 201 → {payment, writeOff,
+  // referenceUsedBefore} (a warning only).
   fastify.post<{ Params: { id: string } }>('/:id/recover', { preHandler: requireAuth(...WRITE_OFF_REQUESTERS) }, async (req, reply) => {
     const body = z.object({
       amountCents: zMoneyCents('The amount recovered', { sign: 'positive' }),
       receivedAt: dateStr,
-      method: z.enum(['bank', 'cash', 'cheque']),
+      method: receiptMethodIn(),
       bankAccountId: z.string().min(1).nullable().optional(),
-      reference: z.string().trim().max(80).optional(),
+      reference: zPaymentRef.nullable().optional(),
     }).parse(req.body ?? {})
     const w = await findWriteOff(req, req.params.id, 'write')
     if (w.status !== 'approved') {
       throw new AppError('WRITE_OFF_NOT_APPROVED', `Only an approved write-off can be recovered — this one is ${w.status}`, 409)
     }
+    const reference = assertPaymentReference(body.method, body.reference)
+    const how = receiptText(body.method, reference)
     const receivedAt = new Date(body.receivedAt)
     if (Number.isNaN(receivedAt.getTime())) throw new AppError('BAD_DATE', 'Give the date the money was received', 400)
     if (w.decidedAt && body.receivedAt.slice(0, 10) < pktDay(w.decidedAt)) {
@@ -437,18 +444,19 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       const p = await tx.receivablePayment.create({
         data: {
           tenantId: inv.tenantId, invoiceId: inv.id, amountCents: body.amountCents, receivedAt,
-          method: body.method, bankAccountId: money.bankAccountId, reference: body.reference || null,
+          method: body.method, bankAccountId: money.bankAccountId, reference,
           createdById: me.id, writeOffId: cur.id,
         },
       })
+      // journal_entries.reference stays the dedupe key (sourceType:sourceId);
+      // the payment reference # goes in the descriptions and the money line.
       await postJournalEntry({
         tenantId: inv.tenantId,
         sourceType: 'receivable.write_off_recovery',
         sourceId: p.id,
-        description: `Bad debt recovered on ${inv.number} — ${inv.customerName}`,
+        description: `Bad debt recovered on ${inv.number} — ${inv.customerName} (${how})`.slice(0, 500),
         entryDate: receivedAt,
         postedBy: me.id,
-        reference: body.reference || inv.number,
         lines: [
           { accountCode: RECEIVABLE, type: 'debit', amountCents: body.amountCents, conceptId: inv.conceptId },
           { accountCode: BAD_DEBTS, type: 'credit', amountCents: body.amountCents, conceptId: inv.conceptId },
@@ -458,12 +466,11 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
         tenantId: inv.tenantId,
         sourceType: 'receivable.payment',
         sourceId: p.id,
-        description: `Payment on ${inv.number} — ${inv.customerName} (recovery of a written-off amount)`,
+        description: `Payment on ${inv.number} — ${inv.customerName} (recovery of a written-off amount; ${how})`.slice(0, 500),
         entryDate: receivedAt,
         postedBy: me.id,
-        reference: body.reference || inv.number,
         lines: [
-          { accountCode: money.code, type: 'debit', amountCents: body.amountCents },
+          { accountCode: money.code, type: 'debit', amountCents: body.amountCents, memo: receiptMemo(inv.number, body.method, reference) },
           { accountCode: RECEIVABLE, type: 'credit', amountCents: body.amountCents, conceptId: inv.conceptId },
         ],
       }, { tx })
@@ -474,6 +481,10 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       category: 'accounting', action: 'receivable.write_off.recover', entity: 'ReceivablePayment', entityId: payment.id,
       ...staffOf(req), tenantId: w.tenantId, after: payment, metadata: { writeOffId: w.id, invoiceId: w.invoiceId },
     })
-    return reply.status(201).send({ payment, writeOff: await reload(w.id, me) })
+    // Same reference elsewhere in the invoice's company — a warning, never a block.
+    const referenceUsedBefore = await findPaymentReferenceUses(prisma, w.tenantId, reference, {
+      exclude: { kind: 'receivable_payment', id: payment.id },
+    })
+    return reply.status(201).send({ payment, writeOff: await reload(w.id, me), referenceUsedBefore })
   })
 }

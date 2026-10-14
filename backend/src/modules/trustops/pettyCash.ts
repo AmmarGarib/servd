@@ -13,8 +13,11 @@
 //     period (422 PERIOD_LOCKED) rolls the movement and the float back
 //     together:
 //       recordPettyCashSpendTx    — a spend (manual, a bill paid in cash, or a
-//                                   cash request paid out as an advance).
-//                                   THE one way money leaves a box.
+//                                   cash request paid: expensed to its
+//                                   category, H3). THE one way money leaves a
+//                                   box. Its lines may be expense, STOCK (a
+//                                   settled goods receipt, Dr 12x0) or CAPEX
+//                                   (a CapEx cash payment, Dr 1340).
 //       recordPettyCashTopupTx    — a top-up (Garibsons cashier, safe, bank,
 //                                   till drawer, change returned on a cash
 //                                   request), and a new box's opening float
@@ -28,18 +31,22 @@
 //
 // Ledger (H1–H3, accounting/pettyCashPosting.ts has the table): 1011 Petty
 // Cash against 2210 Due to Garibsons / 1010 safe / the bank's code / 1015
-// drawer / 1355 cash advances / 8010 / the spend lines' expense codes.
+// drawer / a cash request's paid account (change returned) / 8010 / the spend
+// lines' codes (6xxx, 12x0; 1340 through the CapEx payment).
 
 import { randomBytes } from 'node:crypto'
 import type { Prisma, PettyCashMovement, UserRole } from '@prisma/client'
 import type { FastifyRequest } from 'fastify'
-import { requireAuth, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireAuth, FINANCE_TEAM, MANAGERS } from '../auth/middleware.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { assertInt4Fits } from '../../lib/money.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { ensureFifoReady, readFifoCutoverAt } from '../../lib/stockLedger.js'
 import { ACCT } from '../accounting/journal.js'
 import {
-  cashCounterAccountTx, postPettyCashMovementTx, resolveSpendLinesTx,
+  bookCashLinesTx, cashCounterAccountTx, cashRequestBrandTx, cashRequestPaidAccountTx, postPettyCashMovementTx, resolveSpendLinesTx, spendLineData,
   type ResolvedSpendLine, type SpendLineInput, type TopupSource, type ReturnDestination,
 } from '../accounting/pettyCashPosting.js'
 import { recordDrawerToBoxTx } from '../pos/drawerToBox.js'
@@ -64,6 +71,20 @@ export async function passesCashGuard(req: FastifyRequest): Promise<boolean> {
     if (err instanceof ForbiddenError) return false
     throw err
   }
+}
+
+/**
+ * May this login book goods into stock with cash (a stock line on a box spend
+ * or a cash-request settlement)? A cash keeper (CASH_GUARD's rule), or a role
+ * that holds the inventory module (Module Access: role default/override,
+ * + moduleAllow, − moduleDeny).
+ */
+export async function mayBuyStock(actor: { id: string }): Promise<boolean> {
+  const u = await serviceClient.user.findUnique({ where: { id: actor.id }, select: { role: true, moduleAllow: true, moduleDeny: true } })
+  if (!u) return false
+  const modules = await effectiveModulesForUser(u)
+  const keeper = CASH_KEEPERS.includes(u.role) && (MANAGERS.includes(u.role) || modules.has('accounting'))
+  return keeper || modules.has('inventory')
 }
 
 const pkrWhole = (cents: number) => `PKR ${(cents / 100).toFixed(0)}`
@@ -94,7 +115,7 @@ interface MovementRow {
   createdById: string
   // ── Petty cash in the ledger (wave B) ──
   source?: string | null
-  /** The counter account of the posting (2210 / 1010 / bank / 1015 / 1355 / 8010 …). */
+  /** The counter account of the posting (2210 / 1010 / bank / 1015 / a cash request's paid account / 8010 …). */
   accountCode?: string | null
   bankAccountId?: string | null
   shiftId?: string | null
@@ -151,12 +172,16 @@ async function writeMovementTx(tx: Prisma.TransactionClient, row: MovementRow): 
   })
   if (row.lines && row.lines.length > 0) {
     // One at a time, in order, so the lines keep the order they were entered in.
+    const lineIds: string[] = []
     for (const l of row.lines) {
-      await tx.pettyCashSpendLine.create({
-        data: {
-          tenantId, movementId: movement.id, kind: l.kind, categoryKey: l.categoryKey, accountCode: l.accountCode,
-          amountCents: l.amountCents, conceptId: l.conceptId, locationId: l.locationId, description: l.description,
-        },
+      const created = await tx.pettyCashSpendLine.create({ data: { ...spendLineData(tenantId, l), movementId: movement.id }, select: { id: true } })
+      lineIds.push(created.id)
+    }
+    // Stock lines → a settled goods receipt; capex lines → CapEx cash payments (Cr 1011).
+    if (row.lines.some((l) => l.kind !== 'expense')) {
+      await bookCashLinesTx(tx, {
+        tenantId, doc: { kind: 'petty_cash_movement', id: movement.id }, creditCode: ACCT.PETTY_CASH,
+        lineIds, occurredAt: movement.createdAt, actorId: row.createdById,
       })
     }
   }
@@ -207,17 +232,18 @@ export interface PettyCashSpendInput {
   supplierPaymentId?: string | null
 }
 
-export type SpendNature = 'expense' | 'advance' | 'bill'
+export type SpendNature = 'expense' | 'bill'
 
 export interface PettyCashSpendOptions {
   /**
    * What the spend is:
-   *   'expense' — expense lines (`lines`, Dr each line / Cr 1011);
-   *   'advance' — a cash request paid out (Dr 1355 / Cr 1011, receipts due);
+   *   'expense' — lines (`lines`): expense Dr 6xxx, stock Dr 12x0 (a settled
+   *               goods receipt), capex Dr 1340 (its own CapEx payment) /
+   *               Cr 1011. A cash request paid is one expense line in its
+   *               category (pettyCashPosting.ts cashRequestPayLine, H3).
    *   'bill'    — paid a supplier bill (`supplierPaymentId`; the payment
    *               booked Dr 2010 / Cr 1010, this books Dr 1010 / Cr 1011).
-   * Omitted (the pre-wave-B cash-voucher disburse, until w3-cash-requests
-   * passes it): 'bill' when supplierPaymentId is set, else 'advance'.
+   * Omitted: 'bill' when supplierPaymentId is set, else 'expense'.
    */
   nature?: SpendNature
   lines?: SpendLineInput[]
@@ -227,14 +253,21 @@ export interface PettyCashSpendOptions {
   actor?: { id: string; role: string }
   /** A cash keeper may book a line to an explicit 6xxx code. */
   allowExplicit?: boolean
+  /** May book stock lines; omitted → mayBuyStock(actor ?? createdById). */
+  stockAllowed?: boolean
+  /** false only for a cash request's pay (its receipts place equipment on CapEx). */
+  equipmentCheck?: boolean
 }
 
 /**
  * Record a petty-cash spend inside `tx`: validate its lines in the box's
  * company, lower the box's float (conditional — 400 INSUFFICIENT_FLOAT), write
- * the 'spend' movement and book it. THE one way money leaves a box: the manual
- * spend (POST /trustops/petty-cash/movements), a bill paid from a box and a
- * cash request paid out all come here.
+ * the 'spend' movement (its stock lines become a settled goods receipt, its
+ * capex lines CapEx cash payments) and book it. THE one way money leaves a
+ * box: the manual spend (POST /trustops/petty-cash/movements), a bill paid
+ * from a box and a cash request paid all come here. A spend with stock lines
+ * needs the company on FIFO lots: the caller runs ensureFifoReady before its
+ * transaction (it is run here as a fallback, before anything is written).
  */
 export async function recordPettyCashSpendTx(
   tx: Prisma.TransactionClient,
@@ -242,7 +275,7 @@ export async function recordPettyCashSpendTx(
 ): Promise<{ movementId: string; movement: PettyCashMovement; newFloatCents: number; lines: ResolvedSpendLine[] }> {
   assertPositiveAmount(input.amountCents, 'A petty-cash spend')
   const box = await boxCompanyTx(tx, input.box.id)
-  const nature: SpendNature = input.nature ?? (input.supplierPaymentId ? 'bill' : 'advance')
+  const nature: SpendNature = input.nature ?? (input.supplierPaymentId ? 'bill' : 'expense')
   let lines: ResolvedSpendLine[] = []
   let accountCode: string | null = null
   if (input.conceptId) {
@@ -250,21 +283,30 @@ export async function recordPettyCashSpendTx(
     if (!c) throw new AppError('CONCEPT_NOT_IN_COMPANY', 'That brand is not one of this box\'s company\'s', 422)
   }
   if (nature === 'expense') {
+    const actor = input.actor ?? { id: input.createdById, role: '' }
+    const wantsStock = (input.lines ?? []).some((l) => l.kind === 'stock')
     lines = await resolveSpendLinesTx(tx, box.tenantId, input.lines ?? [], {
       allowExplicit: input.allowExplicit ?? false,
-      actor: input.actor ?? { id: input.createdById, role: '' },
+      actor,
+      stockAllowed: wantsStock ? (input.stockAllowed ?? await mayBuyStock(actor)) : false,
+      equipmentCheck: input.equipmentCheck,
     })
     const total = lines.reduce((s, l) => s + l.amountCents, 0)
     if (total !== input.amountCents) {
       throw new AppError('LINES_DONT_ADD_UP', `The lines add up to ${pkrWhole(total)}, the spend is ${pkrWhole(input.amountCents)}`, 400)
     }
+    // Fallback only — the callers run it before their transaction. Nothing is
+    // written yet, so the cut-over's own transaction waits on no lock of ours.
+    if (wantsStock && !(await readFifoCutoverAt(tx, box.tenantId))) await ensureFifoReady(box.tenantId)
   } else if (nature === 'bill') {
     if (!input.supplierPaymentId) throw new AppError('BILL_PAYMENT_REQUIRED', 'A bill spend must carry its supplier payment', 400)
+    if (input.lines?.some((l) => l.kind === 'stock')) {
+      throw new AppError('STOCK_ON_BILL_SPEND', 'A spend that pays a supplier bill brings no goods in — the bill\'s own delivery did', 422)
+    }
     if (input.lines?.length) throw new AppError('LINES_ON_BILL', 'A spend that pays a supplier bill has no expense lines', 400)
     accountCode = ACCT.CASH_ON_HAND
   } else {
-    if (input.lines?.length) throw new AppError('LINES_ON_ADVANCE', 'A cash advance has no expense lines — the receipts book them', 400)
-    accountCode = ACCT.CASH_ADVANCES
+    throw new AppError('BAD_SPEND_NATURE', `Unknown spend nature "${String(nature)}"`, 400)
   }
   const newFloatCents = await moveFloatTx(tx, input.box.id, -input.amountCents)
   const category = input.category ?? (lines.length === 1 ? lines[0]!.categoryKey : null)
@@ -306,7 +348,8 @@ export interface PettyCashTopupInput {
  * the cash came from in the BOX's company, raise the float, write the 'topup'
  * movement and book it (Dr 1011 / Cr the source):
  *   garibsons → 2210 (H1) · safe → 1010 · bank → the named live linked bank of
- *   the box's company (422 otherwise) · cash_request → 1355 (change returned) ·
+ *   the box's company (422 otherwise) · cash_request → the account the
+ *   request was paid to (change returned; cashRequestPaidAccountTx) ·
  *   opening → 1010 (H2, source unknown) · till → `shiftId`, an open drawer of
  *   the box's company: a 'payout' CashMovement on it (pos/drawerToBox.ts,
  *   422 SHIFT_NOT_IN_COMPANY / INSUFFICIENT_DRAWER_CASH), booked once as
@@ -326,6 +369,7 @@ export async function recordPettyCashTopupTx(
   let bankAccountId: string | null = null
   let cashMovementId: string | null = null
   let shiftId: string | null = null
+  let conceptId: string | null = null
   if (input.source === 'till') {
     if (!input.shiftId) throw new AppError('SHIFT_REQUIRED', 'Pick the open till drawer the cash comes from', 400)
     const drawer = await recordDrawerToBoxTx(tx, {
@@ -339,12 +383,20 @@ export async function recordPettyCashTopupTx(
     if (input.source !== 'bank' && input.bankAccountId) {
       throw new AppError('BANK_ACCOUNT_NOT_EXPECTED', 'A bank account is only named when the cash comes from a bank', 400)
     }
-    if (input.source === 'cash_request' && !input.cashVoucherId) {
-      throw new AppError('CASH_REQUEST_REQUIRED', 'Change returned must name its cash request', 400)
+    if (input.source === 'cash_request') {
+      if (!input.cashVoucherId) throw new AppError('CASH_REQUEST_REQUIRED', 'Change returned must name its cash request', 400)
+      const v = await tx.cashVoucher.findUnique({ where: { id: input.cashVoucherId }, select: { tenantId: true } })
+      if (!v || v.tenantId !== box.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'Change goes back to a box of the cash request\'s own company', 422)
+      // Back to the account the request was paid to (H3), under the brand
+      // the pay was booked to — Dr 1011 / Cr paid both carry it, so the
+      // brand's expense nets (cash-brand-mismatch), whatever box takes it.
+      accountCode = await cashRequestPaidAccountTx(tx, input.cashVoucherId)
+      conceptId = await cashRequestBrandTx(tx, input.cashVoucherId)
+    } else {
+      const counter = await cashCounterAccountTx(tx, box.tenantId, input.source, input.bankAccountId)
+      accountCode = counter.code
+      bankAccountId = counter.bankAccountId
     }
-    const counter = await cashCounterAccountTx(tx, box.tenantId, input.source, input.bankAccountId)
-    accountCode = counter.code
-    bankAccountId = counter.bankAccountId
   }
   const newFloatCents = await moveFloatTx(tx, input.box.id, input.amountCents)
   const movement = await writeMovementTx(tx, {
@@ -363,6 +415,7 @@ export async function recordPettyCashTopupTx(
     shiftId,
     cashMovementId,
     cashVoucherId: input.cashVoucherId ?? null,
+    conceptId,
   })
   return { movementId: movement.id, movement, newFloatCents }
 }

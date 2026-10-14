@@ -6,7 +6,9 @@ import { requireCustomerAuth } from '../auth/middleware.js'
 import { findCustomerInScope, customerIdsInScope, tenantIdsOf } from '../crm/customerScope.js'
 import { activeTenantId, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
-import { topUpWallet, walletBalancesOf, balanceInView, TOPUP_TENDERS } from './service.js'
+import { zReceiptMethod, zPaymentRef, isBankMethod, assertPaymentReference } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
+import { topUpWallet, walletBalancesOf, balanceInView, TOPUP_TENDERS, type TopUpTender } from './service.js'
 
 // The wallet is per company (ONL-R2-01): a top-up credits the ACTIVE company's
 // wallet of the customer and posts there (modules/wallet/service.ts); reads
@@ -17,14 +19,20 @@ const topUpKind = z.object({
   // customer paid for it (Dr 1010 cash / 1030 card / the bank account of the
   // ACTIVE company it was received into — lib/bankAccounts.ts moneyAccountCode).
   kind: z.enum(['goodwill', 'paid']).default('goodwill'),
-  tender: z.enum(TOPUP_TENDERS).optional(),
-  // tender 'bank': which of the company's bank accounts. Omitted → its only
-  // bank (422 BANK_ACCOUNT_REQUIRED when it has two or more); another
+  // RECEIPT_METHODS (owner, 2026-10-14: + bank deposit, cheque). The old
+  // 'bank' still reads as bank_transfer (earlier admin builds sent it).
+  tender: z.preprocess((v) => (v === 'bank' ? 'bank_transfer' : v), zReceiptMethod(TOPUP_TENDERS)).optional(),
+  // A paid top-up's payment reference # — required on every tender (422
+  // PAYMENT_REFERENCE_REQUIRED, service); a goodwill credit takes none.
+  paymentRef: zPaymentRef.nullable().optional(),
+  // A bank-type tender: which of the company's bank accounts. Omitted → its
+  // only bank (422 BANK_ACCOUNT_REQUIRED when it has two or more); another
   // company's or an unlinked one → 422.
   bankAccountId: z.string().min(1).nullable().optional(),
 })
-  .refine((d) => d.kind !== 'paid' || !!d.tender, { message: 'a paid top-up needs its tender (cash, card or bank)', path: ['tender'] })
-  .refine((d) => !d.bankAccountId || (d.kind === 'paid' && d.tender === 'bank'), { message: 'a bank account goes with a top-up paid by bank transfer only', path: ['bankAccountId'] })
+  .refine((d) => d.kind !== 'paid' || !!d.tender, { message: 'a paid top-up needs its tender (cash, card, bank transfer, bank deposit or cheque)', path: ['tender'] })
+  .refine((d) => !d.bankAccountId || (d.kind === 'paid' && isBankMethod(d.tender)), { message: 'a bank account goes with a top-up paid into a bank only (transfer, deposit or cheque)', path: ['bankAccountId'] })
+  .refine((d) => d.kind === 'paid' || !d.paymentRef, { message: 'a goodwill credit has no payment reference', path: ['paymentRef'] })
 
 export async function walletRoutes(fastify: FastifyInstance) {
   // GET /wallet/me — customer: the wallet at ONE company (the company of
@@ -56,7 +64,10 @@ export async function walletRoutes(fastify: FastifyInstance) {
 
   // POST /wallet/topup — staff: credit a customer's wallet AT THE ACTIVE
   // COMPANY, booked in that company in the same transaction.
-  fastify.post<{ Body: { customerId: string; amountCents: number; description?: string; kind?: string; tender?: string; bankAccountId?: string | null } }>(
+  //   body: customerId, amountCents, kind, tender (RECEIPT_METHODS), paymentRef
+  //         (paid: required), bankAccountId (bank-type tender only).
+  //   201:  { newBalance, tenantId, transactionId, entryId, referenceUsedBefore }
+  fastify.post<{ Body: { customerId: string; amountCents: number; description?: string; kind?: string; tender?: string; paymentRef?: string | null; bankAccountId?: string | null } }>(
     '/topup',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
@@ -76,7 +87,8 @@ export async function walletRoutes(fastify: FastifyInstance) {
         customerId: body.customerId,
         amountCents: body.amountCents,
         kind: body.kind,
-        tender: body.tender,
+        tender: body.tender as TopUpTender | undefined,
+        paymentRef: body.paymentRef ?? null,
         bankAccountId: body.bankAccountId,
         description: body.description ?? (body.kind === 'paid' ? 'Paid top-up' : 'Admin top-up'),
         postedBy: req.staffUser!.id,
@@ -84,14 +96,22 @@ export async function walletRoutes(fastify: FastifyInstance) {
       await audit({
         category: 'accounting', action: 'wallet.topup', entity: 'WalletTransaction', entityId: r.transactionId,
         userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
-        after: { customerId: body.customerId, amountCents: body.amountCents, kind: body.kind, tender: body.tender ?? null, bankAccountId: body.bankAccountId ?? null },
+        after: { customerId: body.customerId, amountCents: body.amountCents, kind: body.kind, tender: body.tender ?? null, paymentRef: body.paymentRef?.trim() || null, bankAccountId: body.bankAccountId ?? null },
       })
-      return reply.status(201).send({ newBalance: r.balanceAfter, tenantId, transactionId: r.transactionId, entryId: r.entryId })
+      // Where else THIS company recorded the same reference — saved anyway.
+      const referenceUsedBefore = body.kind === 'paid'
+        ? await findPaymentReferenceUses(prisma, tenantId, body.paymentRef, { exclude: { kind: 'wallet_topup', id: r.transactionId } })
+        : []
+      return reply.status(201).send({ newBalance: r.balanceAfter, tenantId, transactionId: r.transactionId, entryId: r.entryId, referenceUsedBefore })
     },
   )
 
   // POST /wallet/bulk-topup — credit several customers at the active company.
-  fastify.post<{ Body: { customerIds: string[]; amountCents: number; description?: string; kind?: string; tender?: string; bankAccountId?: string | null } }>(
+  // A paid batch takes ONE payment reference # for every customer in it (one
+  // payment covering the batch — e.g. a corporate client's transfer); each
+  // top-up stores it. `referenceUsedBefore` lists uses from BEFORE this
+  // batch (the batch's own rows are not a warning).
+  fastify.post<{ Body: { customerIds: string[]; amountCents: number; description?: string; kind?: string; tender?: string; paymentRef?: string | null; bankAccountId?: string | null } }>(
     '/bulk-topup',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
@@ -104,6 +124,13 @@ export async function walletRoutes(fastify: FastifyInstance) {
       const tenantId = activeTenantId(req, 'a wallet top-up is booked in one company')
       // Customers the active company has never served are skipped, not credited.
       const allowed = await customerIdsInScope(req, [...new Set(body.customerIds)], 'create')
+      // A paid batch without its reference is refused whole (422), not
+      // customer by customer.
+      if (body.kind === 'paid') assertPaymentReference(body.tender, body.paymentRef)
+      // Read before the batch writes, so its own rows are not "used before".
+      const referenceUsedBefore = body.kind === 'paid'
+        ? await findPaymentReferenceUses(prisma, tenantId, body.paymentRef)
+        : []
       let success = 0
       const failed: Array<{ customerId: string; error: string }> = []
       for (const id of new Set(body.customerIds)) {
@@ -114,7 +141,8 @@ export async function walletRoutes(fastify: FastifyInstance) {
             customerId: id,
             amountCents: body.amountCents,
             kind: body.kind,
-            tender: body.tender,
+            tender: body.tender as TopUpTender | undefined,
+            paymentRef: body.paymentRef ?? null,
             bankAccountId: body.bankAccountId,
             description: body.description ?? 'Bulk top-up',
             postedBy: req.staffUser!.id,
@@ -130,10 +158,10 @@ export async function walletRoutes(fastify: FastifyInstance) {
         await audit({
           category: 'accounting', action: 'wallet.bulk_topup', entity: 'WalletTransaction',
           userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
-          after: { credited: success, amountCents: body.amountCents, kind: body.kind, tender: body.tender ?? null, bankAccountId: body.bankAccountId ?? null },
+          after: { credited: success, amountCents: body.amountCents, kind: body.kind, tender: body.tender ?? null, paymentRef: body.paymentRef?.trim() || null, bankAccountId: body.bankAccountId ?? null },
         })
       }
-      return { success, total: body.customerIds.length, failed }
+      return { success, total: body.customerIds.length, failed, referenceUsedBefore: success > 0 ? referenceUsedBefore : [] }
     },
   )
 

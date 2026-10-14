@@ -10,7 +10,7 @@ import { usePermissions } from '../../../hooks/useCan'
 import { useMyWorkspaces, useWorkspaceDefs } from '../../../hooks/useWorkspaces'
 import { useTeam, isInToday } from '../../../hooks/useTeam'
 import { roleLabel } from '../../../lib/appRoles'
-import { pagesForModules } from '../../../lib/moduleCatalog'
+import { pagesForModules, isParkedSection } from '../../../lib/moduleCatalog'
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 
@@ -75,6 +75,7 @@ export default function WorkspaceHomePage() {
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {ws.sections.map((s) => {
+          if (isParkedSection(s.modules)) return null // parked by the owner — no page yet
           const all = pagesForModules(s.modules)
           const pages = all.filter((p) => !p.lead)
           if (pages.length === 0 && all.length > 0) return null // only the dashboard, shown above

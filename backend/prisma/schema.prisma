@@ -756,8 +756,9 @@ model GiftCard {
   // debits the right account and a void can send the value back the same way.
   // 'promotional' cards are given away (Dr 6060 at issue, never cash).
   kind                  GiftCardKind @default(sold)
-  paymentMethod         String? // cash | card | bank_transfer; null for promotional / storefront
-  bankAccountId         String? // the bank a bank_transfer sale landed in (same company)
+  paymentMethod         String? // lib/bankAccounts.ts RECEIPT_METHODS (cash | card | bank_transfer | bank_deposit | cheque); null for promotional / storefront
+  bankAccountId         String? // the bank a bank-type sale landed in (same company)
+  paymentRef            String? // payment reference # (receipt / slip / transfer / cheque no.) — required on every paid sale since 2026-10-14
   expiredAt             DateTime?
   voidDisposition       String? // refund | payment_not_received | forfeit
   // H11 breakage (wave B, INT4: a card is ≤ PKR 100k): value taken to 4200 (sold) / 6060 (promotional) at the card's
@@ -3430,7 +3431,7 @@ model IntercompanyTransfer {
   debtorAccountCode     String? // charge: debtor's Dr account (fleet: 6035; cod: 1351)
   creditorAccountCode   String? // charge: creditor's Cr account (fleet: 6990 recharges recovered; cod: 1010)
   conceptSplit          Json? // charge: [{conceptId, cents}] on the debtor's Dr lines
-  method                String? // settlement: bank | cash
+  method                String? // settlement: bank_transfer | bank_deposit | cheque | cash (old rows may say bank = bank_transfer)
   debtorBankAccountId   String?
   creditorBankAccountId String?
   bankReference         String?
@@ -3658,6 +3659,8 @@ model WalletTransaction {
   orderId       String?
   createdAt     DateTime @default(now())
   bankAccountId String? // a top-up received into a company bank account
+  method        String? // a paid top-up's method (lib/bankAccounts.ts RECEIPT_METHODS); null for goodwill / spends / older rows
+  paymentRef    String? // a paid top-up's payment reference # (2026-10-14)
 
   customer Customer @relation(fields: [customerId], references: [id])
 
@@ -4867,6 +4870,7 @@ model CapexPayment {
   depositForfeitedCents      BigInt    @default(0)
   depositReturnedAt          DateTime?
   depositReturnMethod        String?
+  depositReturnRef           String? // payment reference # of the money the landlord returned (2026-10-14)
   depositReturnBankAccountId String?
   // 'finance' = entered in CapEx; 'cash' = created from a petty-cash spend line / cash-request settlement line of
   // kind 'capex' (that line's capexPaymentId is the one-time guard, per company).
@@ -5529,7 +5533,7 @@ model PhysicalCount {
   countedAt   DateTime @default(now())
   status      String   @default("pending") // pending | completed | reviewed
   notes       String?
-  // Food cost wave B: spot | opening (opening → 3020, H19; finance/CEO/management only). CHECK
+  // Food cost wave B: spot | opening (opening → 3010 owner's capital, H19; finance/CEO/management only). CHECK
   // physical_counts_kind_chk (SQL only).
   kind        String   @default("spot")
   locationId  String?
@@ -5816,6 +5820,7 @@ model DepositDrop {
   expectedCents Int // cash sales total
   varianceCents Int // amount - expected
   bagSerial     String? // tamper-evident bag serial
+  slipNumber    String? // the bank's deposit slip number (owner, 2026-10-14)
   receiptUrl    String? // photo of teller deposit slip
   droppedById   String // who delivered to bank
   witnessedById String? // dual-signoff (optional)

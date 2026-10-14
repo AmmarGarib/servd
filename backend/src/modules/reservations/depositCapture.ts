@@ -11,17 +11,21 @@
 //      account) rolls the claim back, so the deposit stays held and is flagged
 //      posting_failed in that company (re-posted from Backfill unposted).
 //
-// Tax (owner + accountant H10, 2026-10-13): a kept no-show deposit is TAXABLE
-// brand revenue with the tax INSIDE it. The hold is card-gateway money, so the
-// brand's CARD rate (Concept.taxRateCard) applies:
-//   T = round(D × taxRateCard / (100 + taxRateCard))
-//   Dr 1030 Card / Gateway Receivable   D      (the hold sits with the gateway
-//                                               until it settles to the bank)
-//   Cr the brand's revenue account      D − T  (revenueCodeForConcept(slug))
-//   Cr the brand's output-tax account   T      (outputTaxCodeFor — 2032 SRB
-//                                               for a Sindh brand, …)
-// No fiscal document is created: a kept deposit is not an order, and the POS
-// contract has no non-order document — the sales-tax return declares it.
+// Tax (H10 — accountant Hasnain, 2026-10-14): a kept no-show deposit is
+// UNTAXED COMPENSATION, not a supply — other income, no output tax:
+//   Dr 1030 Card / Gateway Receivable   D   (the hold is card-gateway money; it
+//                                            sits with the gateway until it
+//                                            settles to the bank)
+//   Cr 4210 No-show Deposits Kept       D   (other income — below operating
+//                                            revenue on the P&L; never the
+//                                            brand's revenue account)
+// Both lines keep the brand tag (conceptId) for reporting. Its reversal
+// ('reservation.deposit_capture.reversal:', reverseJournalEntry) mirrors the
+// lines. Captures posted before H10 (brand revenue + output tax inside, at
+// the card rate) stay as they were booked; the sales-tax return still
+// declares those ('pre-H10'), and nothing new.
+// No fiscal document is ever created: a kept deposit is not an order and not
+// a sale (the till's completeOrder is never called here).
 //
 // Idempotency: no deposit held (depositCents <= 0 — released, captured or
 // never held) is a no-op, and the posting is keyed on the reservation id.
@@ -48,7 +52,7 @@ interface CaptureArgs {
 export async function captureReservationDeposit(args: CaptureArgs): Promise<DepositCaptureResult> {
   const r = await prisma.reservation.findUnique({
     where: { id: args.reservationId },
-    include: { concept: { select: { name: true, slug: true, tenantId: true, province: true, srbPosId: true, taxRateCard: true } } },
+    include: { concept: { select: { name: true, tenantId: true } } },
   })
   if (!r) return { captured: false, reason: 'no-deposit' }
   if (r.depositCents <= 0) return { captured: false, reason: 'no-deposit' }
@@ -56,11 +60,7 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
   const tenantId = r.concept.tenantId
   const noShowAt = args.noShowAt ?? new Date()
 
-  const { postJournalEntry, flagPostingFailed, withLateNote, revenueCodeForConcept, ACCT } = await import('../accounting/journal.js')
-  const { outputTaxCodeFor } = await import('../accounting/orderPosting.js')
-  const revenueCode = revenueCodeForConcept(r.concept.slug)
-  const outputTaxCode = outputTaxCodeFor(r.concept)
-  const rate = Math.max(0, r.concept.taxRateCard)
+  const { postJournalEntry, flagPostingFailed, withLateNote, ACCT } = await import('../accounting/journal.js')
   let amountCents: number
   try {
     const claimed = await prisma.$transaction(async (tx) => {
@@ -72,14 +72,12 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
         data: { depositCents: 0, status: 'no_show', cancelReason: args.reason ?? 'No-show — deposit captured' },
       })
       if (won.count === 0) return 0
-      // H10: the tax is inside the kept deposit, at the brand's card rate.
+      // H10: untaxed compensation — the whole deposit is other income (4210).
       const D = held.depositCents
-      const T = Math.round((D * rate) / (100 + rate))
       const noted = withLateNote(`No-show fee · ${formatBrandName(r.concept.name)} · ${r.guestName}`, [
         // The hold sits with the card gateway until it settles to the bank.
         { accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: D, conceptId: r.conceptId, memo: r.depositRef ? `Deposit hold ${r.depositRef}` : 'Deposit hold' },
-        { accountCode: revenueCode, type: 'credit', amountCents: D - T, conceptId: r.conceptId, memo: 'No-show deposit kept' },
-        { accountCode: outputTaxCode, type: 'credit', amountCents: T, conceptId: r.conceptId, memo: `Sales tax in no-show deposit (${rate}%)` },
+        { accountCode: ACCT.NO_SHOW_DEPOSITS_KEPT, type: 'credit', amountCents: D, conceptId: r.conceptId, memo: 'No-show deposit kept — compensation, no sales tax (H10)' },
       ], args.memoNote)
       await postJournalEntry({
         tenantId,

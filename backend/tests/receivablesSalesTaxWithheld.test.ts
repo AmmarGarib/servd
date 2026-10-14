@@ -128,7 +128,7 @@ describe('sales tax the client withheld (H13)', () => {
     expect(listed.payments.find((p) => p.id === row.id)).toMatchObject({ kind: 'withholding', method: 'st_withheld' })
 
     // The client pays the rest; the invoice is settled.
-    const pay = await call('finA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 112_800, receivedAt: today(), method: 'cash' })
+    const pay = await call('finA', 'POST', `${AR}/${i.id}/payments`, { reference: 'STW-1', amountCents: 112_800, receivedAt: today(), method: 'cash' })
     expect(pay.statusCode, pay.body).toBe(201)
     expect((await inv(i.id)).status).toBe('paid')
   })
@@ -147,7 +147,7 @@ describe('sales tax the client withheld (H13)', () => {
 
     // Within the tax, but more than is still due.
     const j = await raise('finA')
-    expect((await call('finA', 'POST', `${AR}/${j.id}/payments`, { amountCents: 115_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
+    expect((await call('finA', 'POST', `${AR}/${j.id}/payments`, { reference: 'STW-2', amountCents: 115_000, receivedAt: today(), method: 'cash' })).statusCode).toBe(201)
     const due = await withhold('finA', j.id, { kind: 'sales_tax', amountCents: 2_000 })
     expect(due.statusCode).toBe(409)
     expect(due.json().error.code).toBe('OVER_WITHHOLDING')

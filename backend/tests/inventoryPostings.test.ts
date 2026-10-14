@@ -7,7 +7,9 @@
 //     1230 / 5030.
 //   - A brand-less waste is split across the brands that used the item, and
 //     the split sums exactly and is stored on the movements.
-//   - A cash-settled receipt posts nothing; an opening count posts to 3020,
+//   - H20: waste and spot-count differences wait in 1290 Stock Differences
+//     Suspense (stockDifferenceAccount) until the CEO approves them.
+//   - A cash-settled receipt posts nothing; an opening count posts to 3010 (H19),
 //     never 5050; the FIFO alignment posts to 3020, once, after a dry run.
 //   - A refused waste/count/prep posting in its document's transaction leaves
 //     the document standing and hands back the flag to raise.
@@ -151,7 +153,7 @@ describe('2. waste', () => {
     const r = await postWasteLog(log.id)
     expect(r.posted).toBe(true)
     const ls = (await lines(A, `inventory.waste:${log.id}`))!
-    const dr = Object.fromEntries(ls.filter((l) => l.code === '5040').map((l) => [l.conceptId, l.cents]))
+    const dr = Object.fromEntries(ls.filter((l) => l.code === '1290').map((l) => [l.conceptId, l.cents]))
     const cr = Object.fromEntries(ls.filter((l) => l.code === '1210').map((l) => [l.conceptId, l.cents]))
     expect(dr).toEqual({ [A1]: 667, [A2]: 334 })
     expect(cr).toEqual(dr)
@@ -170,9 +172,9 @@ describe('2. waste', () => {
     await postWasteLog(w1.id)
     await postWasteLog(w2.id)
     expect(await lines(A, `inventory.waste:${w1.id}`)).toEqual(expect.arrayContaining([
-      { code: '5040', type: 'debit', cents: 500, conceptId: A1 }, { code: '1220', type: 'credit', cents: 500, conceptId: A1 },
+      { code: '1290', type: 'debit', cents: 500, conceptId: A1 }, { code: '1220', type: 'credit', cents: 500, conceptId: A1 },
     ]))
-    expect((await lines(A, `inventory.waste:${w2.id}`))!.map((l) => [l.code, l.type, l.cents])).toEqual([['1230', 'credit', 50], ['5040', 'debit', 50]])
+    expect((await lines(A, `inventory.waste:${w2.id}`))!.map((l) => [l.code, l.type, l.cents])).toEqual([['1230', 'credit', 50], ['1290', 'debit', 50]])
   })
 
   it('nothing to post: sold-line waste, no cost, no log', async () => {
@@ -186,7 +188,7 @@ describe('2. waste', () => {
 })
 
 describe('3. stock counts', () => {
-  it('spot: short Dr 5050 / Cr 12x0 at the FIFO value, over Dr 12x0 / Cr 5050 at the new lot; once', async () => {
+  it('spot: short Dr 1290 / Cr 12x0 at the FIFO value, over Dr 12x0 / Cr 1290 at the new lot (H20: waiting for the CEO); once', async () => {
     const meat = await mkItem(A, 'protein')
     const juice = await mkItem(A, 'beverage')
     await lot(A, meat.id, 10, 100)
@@ -212,12 +214,12 @@ describe('3. stock counts', () => {
     expect(r).toMatchObject({ posted: true, amountCents: 0 })
     const ls = (await lines(A, `inventory.count:${count.id}`))!
     expect(ls.map((l) => [l.code, l.type, l.cents]).sort()).toEqual([
-      ['1210', 'credit', 300], ['5050', 'debit', 300], ['1220', 'debit', 300], ['5050', 'credit', 300],
+      ['1210', 'credit', 300], ['1290', 'debit', 300], ['1220', 'debit', 300], ['1290', 'credit', 300],
     ].sort())
     expect(await postStockCount(count.id)).toMatchObject({ posted: false, entryId: r.entryId })
   })
 
-  it('opening (H19): Dr 12x0 / Cr 3020 at the entered cost — never 5050', async () => {
+  it('opening (H19, accountant 2026-10-14): Dr 12x0 / Cr 3010 owner\'s capital at the entered cost — never 5050', async () => {
     const cups = await mkItem(A, 'packaging')
     const count = await prisma.physicalCount.create({
       data: { tenantId: A, countedById: 'finance', kind: 'opening', lines: { create: [{ inventoryItemId: cups.id, systemQty: 0, physicalQty: 50, unitCostCents: 20 }] } },
@@ -233,7 +235,7 @@ describe('3. stock counts', () => {
     })
     await postStockCount(count.id)
     const ls = (await lines(A, `inventory.count:${count.id}`))!
-    expect(ls.map((l) => [l.code, l.type, l.cents])).toEqual([['1230', 'debit', 1000], ['3020', 'credit', 1000]])
+    expect(ls.map((l) => [l.code, l.type, l.cents])).toEqual([['1230', 'debit', 1000], ['3010', 'credit', 1000]])
     expect(ls.some((l) => l.code === '5050')).toBe(false)
   })
 })

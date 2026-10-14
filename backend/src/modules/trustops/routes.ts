@@ -22,7 +22,8 @@ import { EXPENSE_PAYOUT_CATEGORIES } from '../accounting/expenseCategories.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { decodeEvidenceFile, sendEvidence } from '../../lib/evidenceFile.js'
 import { zInt4Cents } from '../../lib/money.js'
-import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, zPaymentRef } from '../../lib/bankAccounts.js'
+import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { cashVoucherRoutes } from './cashVouchers.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { audit } from '../../lib/audit.js'
@@ -154,7 +155,7 @@ async function withNames<T, K extends string>(rows: T[], idOf: (r: T) => string,
 /** Where a top-up's cash came from, on the routes (cash_request / opening are writer-only). */
 const TOPUP_SOURCES = ['garibsons', 'safe', 'bank', 'till'] as const
 
-/** One expense line of a spend (stock / capex kinds are accepted here and refused 422 by the writer until W3). */
+/** One line of a spend: an expense, a stock item (a settled cash-purchase receipt on FIFO lots) or a CapEx line (the writer checks each against the box's company). */
 const SPEND_LINE = z.object({
   kind:          z.enum(['expense', 'stock', 'capex']).default('expense'),
   categoryKey:   z.string().trim().min(1).max(40).nullable().optional(),
@@ -630,6 +631,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // company's ledger (postSupplierPayment resolves it from the supplier).
     let bill: { id: string; supplierId: string; billNumber: string; supplierName: string } | null = null
     if (body.supplierBillId) {
+      if (body.lines?.some((l) => l.kind === 'stock')) {
+        throw new AppError('STOCK_ON_BILL_SPEND', 'A spend that pays a supplier bill brings no goods in — the bill\'s own delivery did', 422)
+      }
       if (body.lines || body.categoryKey || body.accountCode) {
         throw new AppError('LINES_ON_BILL', 'A spend that pays a supplier bill has no expense lines — the bill carries them', 400)
       }
@@ -704,6 +708,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // authoritative check is the conditional float update inside the
     // transaction (pettyCash.ts).
     if (box.floatCents + signedAmount < 0) throw insufficientFloatError(amount, box.floatCents)
+
+    // Stock lines land on FIFO lots: the company's cut-over runs BEFORE the
+    // spend's transaction (it opens its own); the writer re-checks as a fallback.
+    if (lines?.some((l) => l.kind === 'stock')) await (await import('../../lib/stockLedger.js')).ensureFifoReady(box.tenantId)
 
     const { movement, supplierPaymentId, newFloatCents, overrides } = await prisma.$transaction(async (tx) => {
       let supplierPaymentId: string | null = null
@@ -911,10 +919,19 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }).parse(req.body ?? {})
     const movement = await prisma.pettyCashMovement.findFirst({
       where: { id: req.params.id, box: await scopeTenantWhere(req, 'write') },
-      select: { id: true, boxId: true, box: { select: { tenantId: true, name: true, conceptId: true } } },
+      select: { id: true, boxId: true, cashVoucherId: true, box: { select: { tenantId: true, name: true, conceptId: true } } },
     })
     if (!movement || !movement.box.tenantId) throw new NotFoundError('PettyCashMovement', req.params.id)
     const tenantId = movement.box.tenantId
+    // The cash request this spend paid, if any: its row is locked before the
+    // box below (cash-pay-reclass-race) — the same request → box order as the
+    // pay and the return-change — so a settlement or change that read this
+    // pay's account cannot commit alongside a reclass that moves it
+    // (CASH_REQUEST_PAID_FIXED then reads committed counters).
+    const voucherIds = (await prisma.cashVoucher.findMany({
+      where: { tenantId, OR: [{ pettyCashMovementId: movement.id }, ...(movement.cashVoucherId ? [{ id: movement.cashVoucherId }] : [])] },
+      select: { id: true },
+    })).map((v) => v.id).sort()
     const line = await prisma.pettyCashSpendLine.findFirst({ where: { id: req.params.lineId, movementId: movement.id, tenantId } })
     if (!line) throw new NotFoundError('PettyCashSpendLine', req.params.lineId)
     if (line.kind !== 'expense') {
@@ -927,6 +944,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }, { role: req.staffUser!.role })
     if (acct.code === line.accountCode && acct.categoryKey === line.categoryKey) return { line, entryId: null, outcome: 'unchanged' }
     const result = await prisma.$transaction(async (tx) => {
+      for (const id of voucherIds) await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${id} FOR UPDATE`
       await tx.$queryRaw`SELECT id FROM petty_cash_boxes WHERE id = ${movement.boxId} FOR UPDATE`
       const updated = await tx.pettyCashSpendLine.update({ where: { id: line.id }, data: { accountCode: acct.code, categoryKey: acct.categoryKey } })
       const posted = await postPettyCashMovementTx(tx, movement.id, { postedBy: req.staffUser!.id })
@@ -983,9 +1001,11 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // ════════════════════════════════════════════════════════════════════════
   // 2b. CASH VOUCHERS — /trustops/cash-vouchers (cashVouchers.ts)
   // ════════════════════════════════════════════════════════════════════════
-  // GS Foods' internal cash payment voucher: HOD signs, director signs, the
-  // cashier signs the paper and pays; the photo of the signed paper turns it
-  // into ONE petty-cash spend through recordPettyCashSpendTx.
+  // Cash requests (H3): anyone raises, the HOD signs, the director approves,
+  // the box's custodian pays — ONE petty-cash spend through
+  // recordPettyCashSpendTx, booked to the request's category (Dr 6xxx /
+  // Cr 1011) at payment. Receipts book nothing; settlements reclass out of
+  // the paid account (cashRequestSettle.ts).
   await fastify.register(cashVoucherRoutes, { prefix: '/cash-vouchers' })
 
   // ════════════════════════════════════════════════════════════════════════
@@ -1027,6 +1047,13 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // but a posting the ledger refused (a closed period, a missing account)
   // raises a posting_failed flag in the drop's company for the re-poster —
   // it used to be fire-and-forget with only a log line.
+  //
+  // The bank's deposit slip # (`slipNumber`, owner 2026-10-14) is stored, put
+  // in the posting's description and memos, and checked against the
+  // company's other payment references: a slip # used before answers
+  // `referenceUsedBefore` — a warning, never a refusal (lib/paymentRefs.ts).
+  // A drop has no separate "banked" step, so the slip # is optional here; the
+  // list shows it next to the bag serial and flags a drop without one.
   fastify.post('/deposit-drops', { preHandler: CASH_GUARD }, async (req, reply) => {
     const body = z.object({
       shiftId:       z.string().uuid().nullable().optional(),
@@ -1034,6 +1061,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       bankAccountId: z.string().min(1).nullable().optional(),
       amountCents:   zInt4Cents('The deposit'),
       bagSerial:     z.string().max(80).nullable().optional(),
+      slipNumber:    zPaymentRef.nullable().optional(),
       receiptUrl:    z.string().url().nullable().optional(),
       witnessedById: z.string().uuid().nullable().optional(),
       notes:         z.string().max(500).nullable().optional(),
@@ -1060,6 +1088,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         conceptId: body.conceptId ?? null,
         bankAccountId: bank.bankAccountId,
         bagSerial: body.bagSerial ?? null,
+        slipNumber: body.slipNumber || null,
         receiptUrl: body.receiptUrl ?? null,
         witnessedById: body.witnessedById ?? null,
         notes: body.notes ?? null,
@@ -1131,7 +1160,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       })
     }
 
-    return reply.status(201).send({ ...drop, posted, postingError })
+    const referenceUsedBefore = await findPaymentReferenceUses(prisma, tenantId, drop.slipNumber, { exclude: { kind: 'deposit_drop', id: drop.id } })
+    return reply.status(201).send({ ...drop, posted, postingError, referenceUsedBefore })
   })
 
   // ════════════════════════════════════════════════════════════════════════

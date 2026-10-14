@@ -12,11 +12,11 @@ import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLim
 import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantScope.js'
 import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, raastTotalCents, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
 import {
-  postRefundPayment, refundDueCents, isShiftReceipt, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf,
+  postRefundPayment, refundDueCents, isShiftReceipt, isVoidedRaast, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf,
   raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX,
 } from '../accounting/orderPosting.js'
 import { postJournalEntry, ACCT, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
-import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
+import { EXPENSE_PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { wasteSoldLineTx } from '../inventory/voidWaste.js'
 import { ensureOrderDepleted, returnVoidedLineStockTx } from '../orders/stock.js'
 import { orderStockCostCents } from '../accounting/cogs.js'
@@ -881,7 +881,7 @@ export async function settlePayment(input: SettleInput) {
 type TenderPricedOrder = Pick<
   Order,
   'id' | 'conceptId' | 'source' | 'rawPayload' | 'totalCents' | 'discountCents' | 'taxRatePct' | 'taxCents'
-  | 'serviceChargeCents' | 'promoDiscountCents' | 'walletAmountCents' | 'tipCents'
+  | 'serviceChargeCents' | 'promoDiscountCents' | 'walletAmountCents' | 'tipCents' | 'deliveryFeeCents'
 >
 
 /**
@@ -911,8 +911,11 @@ async function tenderPriceOf(db: Tx, order: TenderPricedOrder, methods: Array<st
     where: { orderId: order.id, status: { not: 'voided' } },
     select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
   })
+  // The delivery fee (BEFORE GST) re-prices with the bill: its GST follows
+  // the tender like the food's (H9). Till sales carry 0.
   return priceOrder(items, tender, order.source === 'pos' ? 'pos' : 'group', concept, {
     discountCents: order.discountCents,
+    deliveryFeeCents: order.deliveryFeeCents,
     db,
   })
 }
@@ -930,6 +933,7 @@ async function repriceForTenderTx(tx: Tx, order: TenderPricedOrder, methods: Arr
       taxCents: price.taxCents,
       taxRatePct: price.taxRatePct,
       serviceChargeCents: price.serviceChargeCents,
+      deliveryFeeTaxCents: price.deliveryFeeTaxCents,
       totalCents: price.totalCents,
     },
   })
@@ -960,6 +964,9 @@ export async function quoteOrderForTender(orderId: string, method: 'cash' | 'car
     taxRatePct: price?.taxRatePct ?? order.taxRatePct,
     taxCents: price?.taxCents ?? order.taxCents,
     serviceChargeCents: price?.serviceChargeCents ?? order.serviceChargeCents,
+    /** The delivery fee before GST, and its GST at this tender's rate (of taxCents; H9). */
+    deliveryFeeCents: order.deliveryFeeCents,
+    deliveryFeeTaxCents: price?.deliveryFeeTaxCents ?? order.deliveryFeeTaxCents,
     discountCents: order.discountCents,
     tipCents: order.tipCents,
     totalCents,
@@ -1525,6 +1532,10 @@ export async function getZReport(shiftId: string) {
   const raastProvisionalCents = raastByStatus('provisional')
   const raastMatchedCents = raastByStatus('matched')
   const raastUnreceivedCents = raastByStatus('unreceived')
+  // Voided by the CEO as never booked (a cancelled bill): no entry holds it and
+  // nothing is owed back for it — summariseShiftSales leaves it out of
+  // cancelledPaid, the same rule as orderPosting.refundDueCents.
+  const raastVoidedCents = raastByStatus('voided')
 
   // F-PAY02: wallet sales line stays at 0 until JazzCash/Easypaisa adapters
   // are reintroduced. Z-reports still show the row so the shape of the
@@ -1622,10 +1633,11 @@ export async function getZReport(shiftId: string) {
     /** Raast QR takings — transfers to the company's bank. */
     raastSales,
     raastCount,
-    /** Of raastSales: not yet on a bank statement / matched to one / written off as never received. */
+    /** Of raastSales: not yet on a bank statement / matched to one / written off as never received / voided by the CEO as never booked. */
     raastProvisionalCents,
     raastMatchedCents,
     raastUnreceivedCents,
+    raastVoidedCents,
     walletSales,
     compSales,
     voids,
@@ -1847,6 +1859,9 @@ type PricedLineRow = { menuItemId: string | null; unitPriceCents: number; quanti
 
 type VoidBill = { totalCents: number; taxCents: number; serviceChargeCents: number; discountCents: number }
 
+/** What a void took off the bill, by part (sums to removedCents) — stored on its refund row as gatewayMeta.refund.split. */
+type VoidRefundSplit = { revenueCents: number; taxCents: number; serviceChargeCents: number; tipCents: number; deliveryFeeCents: number }
+
 /**
  * FOH-03 / BOH-02: what a voided line takes off the bill, inside the void's
  * transaction (the order is locked). THE pricing function prices the order
@@ -1858,18 +1873,20 @@ type VoidBill = { totalCents: number; taxCents: number; serviceChargeCents: numb
  */
 async function voidBillDeltaTx(
   tx: Tx,
-  order: Pick<Order, 'id' | 'source' | 'rawPayload' | 'totalCents' | 'taxCents' | 'serviceChargeCents' | 'discountCents' | 'taxRatePct'>
+  order: Pick<Order, 'id' | 'source' | 'rawPayload' | 'totalCents' | 'taxCents' | 'serviceChargeCents' | 'discountCents' | 'taxRatePct' | 'deliveryFeeCents'>
     & { concept: { id: string; tenantId: string | null; taxRateCash: number; taxRateCard: number } },
   voidedLine: PricedLineRow,
-): Promise<{ bill: VoidBill; removedCents: number; liveLines: number }> {
+): Promise<{ bill: VoidBill; removedCents: number; liveLines: number; split: VoidRefundSplit }> {
   const remaining = await tx.orderItem.findMany({
     where: { orderId: order.id, status: { not: 'voided' } },
     select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
   })
   const tender = tenderOfRate(order.concept, order.taxRatePct)
   const channel = pricingChannelOf(order)
-  const was = await priceOrder([...remaining, voidedLine], tender, channel, order.concept, { discountCents: order.discountCents, db: tx })
-  const now = await priceOrder(remaining, tender, channel, order.concept, { discountCents: order.discountCents, db: tx })
+  // The delivery fee prices into both sides, so its GST never comes off with a dish.
+  const fee = { discountCents: order.discountCents, deliveryFeeCents: order.deliveryFeeCents, db: tx }
+  const was = await priceOrder([...remaining, voidedLine], tender, channel, order.concept, fee)
+  const now = await priceOrder(remaining, tender, channel, order.concept, fee)
 
   // Never take off more GST, service charge or discount than the bill
   // carries (an order not priced through lib/pricing, or a service charge
@@ -1888,6 +1905,10 @@ async function voidBillDeltaTx(
     },
     removedCents,
     liveLines: remaining.length,
+    // Exactly what came off, by part — the line's value net of its discount,
+    // its own GST and service charge; never the fee or the tip. A refund of
+    // the line books this split (orderPosting voidSplitOf), never pro rata.
+    split: { revenueCents: itemsOff - discountOff, taxCents: taxOff, serviceChargeCents: serviceOff, tipCents: 0, deliveryFeeCents: 0 },
   }
 }
 
@@ -2091,6 +2112,7 @@ export async function voidOrderItem(input: VoidInput) {
         approverId,
         actorId: input.actorId,
         voidedItemId: input.orderItemId,
+        voidSplit: delta.split,
         gatewayRef: raastOutRef,
         raast: raastSource,
       })
@@ -2100,7 +2122,7 @@ export async function voidOrderItem(input: VoidInput) {
     // BOH-11: a line the kitchen had not started gives its stock back into
     // the very lots it came from (orders/stock.ts). BOH-R2-03: a line it
     // already fired keeps its stock out — relabelled as waste
-    // 'void_after_fire' (WasteLog + Dr 5040 / Cr class inventory in the
+    // 'void_after_fire' (WasteLog + Dr 1290 / Cr class inventory in the
     // order's company), in this transaction (inventory/voidWaste.ts).
     const stock = unfired.count === 1
       ? await returnVoidedLineStockTx(tx, { orderId: input.orderId, tenantId, line: { id: item.id, quantity: item.quantity }, actorId: input.actorId })
@@ -2120,7 +2142,7 @@ export async function voidOrderItem(input: VoidInput) {
   }, { maxWait: 10_000, timeout: 15_000 })
   const { voided, bill, stock, refund, waste } = result
   if (waste?.postingError) {
-    // The waste is logged; only its Dr 5040 / Cr 1210 was refused. Flagged
+    // The waste is logged; only its Dr 1290 / Cr 12x0 was refused. Flagged
     // with the waste log ids so Reconciliation → Backfill unposted re-posts
     // the SAME entry (postVoidWaste, key pos.void_waste:<line>) — never a
     // hand-made journal, which would not carry the key and be booked twice.
@@ -2675,6 +2697,12 @@ async function writeRefundTx(tx: Tx, r: {
   approverId: string | null
   actorId: string
   voidedItemId?: string
+  /**
+   * A void's exact split (voidBillDeltaTx) — stored as gatewayMeta.refund.split
+   * next to voidedItemId; postRefundPayment books it exactly (no fee, no tip,
+   * the line's own GST). Only with voidedItemId.
+   */
+  voidSplit?: VoidRefundSplit
   /** How the row is booked; default postRefundPayment. (A cancelled ticket's hand-back: bookCancelledHandBackTx.) */
   post?: (tx: Tx, refundPaymentId: string) => Promise<{ entryId: string | null; reason?: string }>
   /** Card machine refunds: the gateway, its reference and the refund charge. */
@@ -2699,7 +2727,10 @@ async function writeRefundTx(tx: Tx, r: {
       gateway: r.raast ? 'raast' : r.gateway ?? 'none',
       gatewayRef: r.gatewayRef?.trim() || null,
       gatewayMeta: {
-        refund: { reason: r.reason, approverId: r.approverId, actorId: r.actorId, ...(r.voidedItemId && { voidedItemId: r.voidedItemId }) },
+        refund: {
+          reason: r.reason, approverId: r.approverId, actorId: r.actorId,
+          ...(r.voidedItemId && { voidedItemId: r.voidedItemId, ...(r.voidSplit && { split: r.voidSplit }) }),
+        },
         ...(r.terminalChargeId && { terminalChargeId: r.terminalChargeId }),
         ...(r.raast && { raast: { receiptId: r.raast.receiptId, bankAccountId: r.raast.bankAccountId, ledgerCode: r.raast.ledgerCode } }),
       },
@@ -2735,6 +2766,13 @@ export function taxableRefundCents(order: { totalCents: number; tipCents: number
   const from = Math.min(total, priorCents)
   return Math.round((taxable * upTo) / total) - Math.round((taxable * from) / total)
 }
+
+/** A payment as refundDueOf reads it: a Raast row carries its receipt's status (a CEO-voided receipt is no money taken). */
+type DuePayment = Pick<Payment, 'method' | 'status' | 'amountCents' | 'gatewayRef' | 'shiftId' | 'processedAt' | 'createdAt'>
+  & { raastReceipt?: { status: string } | null }
+
+/** Load every payment that feeds refundDueOf with this (its Raast receipt's status). */
+const DUE_PAYMENT_INCLUDE = { raastReceipt: { select: { status: true } } } as const
 
 function assertRefundableStatus(status: string): void {
   if (status === 'refunded') throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
@@ -2774,7 +2812,7 @@ export async function assertRefundAllowed(input: {
   extraInFlightCents?: number
 }): Promise<void> {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Refund amount must be positive', 400)
-  const order = await prisma.order.findUnique({ where: { id: input.orderId }, include: { payments: true } })
+  const order = await prisma.order.findUnique({ where: { id: input.orderId }, include: { payments: { include: DUE_PAYMENT_INCLUDE } } })
   if (!order) throw new NotFoundError('Order', input.orderId)
   // Card refunds in flight on the machine (inFlightTerminalRefundCents) — the
   // caller counts them under its order lock and passes them in.
@@ -2824,8 +2862,6 @@ async function refundDrawerOf(input: RefundInput, tenantId: string, method: Refu
   return shiftId
 }
 
-type DuePayment = Pick<Payment, 'method' | 'status' | 'amountCents' | 'gatewayRef' | 'shiftId' | 'processedAt' | 'createdAt'>
-
 /**
  * LEDGER-R5: what a cancelled / rejected ticket still owes back, by tender.
  * The total is refundDueCents (accounting/orderPosting.ts — drawer receipts
@@ -2836,7 +2872,10 @@ type DuePayment = Pick<Payment, 'method' | 'status' | 'amountCents' | 'gatewayRe
  */
 function refundDueOf(order: { status: string; payments: DuePayment[] }) {
   const due = refundDueCents(order)
-  const taken = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && REFUNDABLE_TENDERS.has(p.method) && isShiftReceipt(p))
+  // A Raast tender whose receipt the CEO voided as never booked is no money
+  // taken (orderPosting.refundDueCents excludes it the same way): nothing goes
+  // back for it and it is no hand-back option.
+  const taken = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && REFUNDABLE_TENDERS.has(p.method) && !isVoidedRaast(p) && isShiftReceipt(p))
   const refunds = order.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0)
   const byMethod = new Map<string, number>()
   for (const p of taken) byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + p.amountCents)
@@ -2914,7 +2953,7 @@ function assertRefundDue(state: ReturnType<typeof refundDueOf>, amountCents: num
 // and hand-back. (The unwind never touches cost of sales: the cancel's stock
 // step does — orders/stock.ts restoreInventoryForOrder moves what a pre-cancel
 // close booked back out of COGS as it returns unfired lines to their lots
-// (Dr 12x0 / Cr 50x0) and wastes fired ones (Dr 5040 / Cr 50x0).) The simple
+// (Dr 12x0 / Cr 50x0) and wastes fired ones (Dr 1290 / Cr 50x0).) The simple
 // case — every receipt on a drawer that closes after the cancel — is exactly
 // LEDGER-R5's Dr 1110 / Cr drawer, and no unwind.
 
@@ -3046,8 +3085,9 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
 
     if (order.source !== 'pos') {
       // Non-till: its cash moved 1010 → 1015 (Cr 1010); its card and its
-      // Raast money were booked nowhere.
-      for (const p of here) addParked(parked, parkAccountOf(p), p.amountCents)
+      // Raast money were booked nowhere. (A Raast receipt the CEO voided as
+      // never booked is no money taken: nothing is parked or handed back for it.)
+      for (const p of here) if (!isVoidedRaast(p)) addParked(parked, parkAccountOf(p), p.amountCents)
       continue
     }
 
@@ -3079,6 +3119,7 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
       add(revenueCodeForConcept(concept.slug), b.revenueCents)
       add(ACCT.SERVICE_CHARGE_REVENUE, b.serviceChargeCents)
       add(ACCT.TIPS_PAYABLE, b.tipCents)
+      add(ACCT.DELIVERY_FEE_REVENUE, b.deliveryFeeCents)    // the close credited 4110 (its GST is in taxCents)
       add(taxAccount, b.taxCents)
       add(ACCT.DISCOUNTS, -b.discountCents)
       add(ACCT.WALLET_LIABILITY, -b.walletAppliedCents)     // the cancel gave the wallet back
@@ -3261,7 +3302,7 @@ export async function postCancelledTicketUnwind(orderId: string, postedBy = 'sys
  */
 async function refundDueOnCancelledTicket(
   input: RefundInput,
-  order: Order & { payments: Payment[] },
+  order: Order & { payments: Array<Payment & { raastReceipt: { status: string } | null }> },
   tenantId: string,
 ) {
   // A card refund still on its way back through the card machine (no refund
@@ -3306,7 +3347,7 @@ async function refundDueOnCancelledTicket(
     await lockOrderTx(tx, input.orderId)
     const current = await tx.order.findUniqueOrThrow({
       where: { id: input.orderId },
-      select: { status: true, payments: true },
+      select: { status: true, payments: { include: DUE_PAYMENT_INCLUDE } },
     })
     const state = refundDueOf(current)
     // Exactly once per machine refund: a second booking of the same card
@@ -3373,7 +3414,7 @@ export async function refundOrder(input: RefundInput) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
     include: {
-      payments: { orderBy: { createdAt: 'asc' } },
+      payments: { orderBy: { createdAt: 'asc' }, include: DUE_PAYMENT_INCLUDE },
       concept: { select: { tenantId: true } },
     },
   })
@@ -3530,7 +3571,7 @@ export interface CashMovementInput {
   actorId: string
   actorRole: string
   managerOverridePin?: string
-  /** Pay-out only: what it was spent on (PAYOUT_CATEGORIES). */
+  /** Pay-out only: what it was spent on (an EXPENSE_PAYOUT_CATEGORIES key). */
   category?: PayoutCategory
   /** Pay-out only: the open supplier bill this cash pays. */
   supplierBillId?: string | null
@@ -3585,9 +3626,11 @@ export async function recordCashMovement(input: CashMovementInput) {
     if (input.amountCents > due) throw new AppError('OVER_APPLIED', `Only ${due} is still due on bill ${found.billNumber}`, 400)
     bill = { id: found.id, supplierId: found.supplierId, billNumber: found.billNumber, supplierName: found.supplier.name }
   } else {
-    const cat = PAYOUT_CATEGORIES.find((c) => c.key === input.category)
+    // Only an expense category: the 'cogs' keys are history only (kitchen
+    // stock bought with cash goes through the stock path, never a pay-out).
+    const cat = EXPENSE_PAYOUT_CATEGORIES.find((c) => c.key === input.category)
     if (!cat) {
-      throw new AppError('PAYOUT_CATEGORY_REQUIRED', `Say what the pay-out was for (${PAYOUT_CATEGORIES.map((c) => c.key).join(', ')}) or pick the supplier bill it pays`, 400)
+      throw new AppError('PAYOUT_CATEGORY_REQUIRED', `Say what the pay-out was for (${EXPENSE_PAYOUT_CATEGORIES.map((c) => c.key).join(', ')}) or pick the supplier bill it pays`, 400)
     }
     expenseCode = cat.code
   }

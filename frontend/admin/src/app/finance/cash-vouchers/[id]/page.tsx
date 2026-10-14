@@ -1,5 +1,5 @@
 'use client'
-// One cash voucher — its chain, its actions, the print and the signed photo.
+// One cash request — its steps, its actions, the receipts and the print.
 // The approvals inbox and the list link here.
 
 import { useParams } from 'next/navigation'

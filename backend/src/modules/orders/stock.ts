@@ -26,7 +26,8 @@
 //   cancel          line id — back into the very lots it came from
 //   fired void /    inventory/voidWaste.ts wasteSoldLineTx — relabelled to
 //   cancel          waste (sale_void + waste rows), stock unchanged, booked
-//                   Dr 5040 / Cr class inventory ('pos.void_waste:<line>')
+//                   Dr 1290 / Cr class inventory ('pos.void_waste:<line>';
+//                   H20: the CEO approves 1290 into 5040)
 //   KDS remake      bookRemakeWaste — the recipe cooked again, as waste
 //                   'remake' (its own WasteLog per recall, 'inventory.waste:<id>')
 //
@@ -51,7 +52,7 @@
 // after that is not in that entry, so it moves cost of sales itself (see
 // "Cost of sales moved after the order's cost was booked" below): a give-back
 // Dr 12x0 / Cr 50x0, a late draw Dr 50x0 / Cr 12x0, and a fired line wasted
-// Dr 5040 / Cr 50x0 instead of Cr 12x0 (voidWaste.ts). A cancelled order that
+// Dr 1290 / Cr 50x0 instead of Cr 12x0 (voidWaste.ts). A cancelled order that
 // was never booked takes the late-receipt settles of its shortfalls (already
 // Dr 50x0 / Cr 12x0 by their own posting) back out of cost of sales.
 //
@@ -664,7 +665,8 @@ export interface RestoreOptions {
  * An order ended without a sale (cancelOrder): exactly once, every live line
  * that was not fired goes back into the very lots it came from; every fired
  * line is wasted 'cancelled_after_fire' (food that never left the kitchen) —
- * Dr 5040 / Cr class inventory in the order's company. Lines voided earlier
+ * Dr 1290 / Cr class inventory in the order's company (H20 suspense; the CEO
+ * approves it into 5040). Lines voided earlier
  * were handled by their void. Menu items the depletion 86'd are NOT switched
  * back on (the kitchen re-enables them). A refused waste posting is flagged
  * posting_failed after commit; any other failure throws (the caller flags it).
@@ -1018,7 +1020,7 @@ export async function markBoxGiven(
 /**
  * A recalled line is cooked again (KDS recall → remake): its recipe — the
  * dish's ingredients and add-ons, not its packaging — is booked as waste
- * 'remake', one WasteLog per item per recall (FIFO value; Dr 5040 / Cr class
+ * 'remake', one WasteLog per item per recall (FIFO value; Dr 1290 / Cr class
  * inventory, 'inventory.waste:<wasteLogId>', brand = the order's). What the
  * lots do not hold is not invented (the note says so). A refused posting is
  * flagged posting_failed after commit; any other failure throws (the caller

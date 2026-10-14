@@ -13,6 +13,7 @@ import type { ConnectorCtx, ConnectorKindT, FiscalDriver, FiscalSettings, RaastD
 import { parseFiscalSettings, parseRaastSettings, parseTerminalSettings } from './config.js'
 import { testFiscalDriver, testTerminalDriver } from './drivers/test.js'
 import { httpFiscalDriver, httpTerminalDriver } from './drivers/http.js'
+import { isSandbox, practiceConnectorRow } from '../lib/sandbox.js'
 
 export const FISCAL_DRIVERS: Readonly<Record<string, FiscalDriver>> = {
   test: testFiscalDriver,
@@ -37,11 +38,13 @@ export function raastDriverOf(id: string | null | undefined): RaastDriver | null
 }
 
 export function fiscalDriverOf(id: string | null | undefined): FiscalDriver | null {
-  return id && Object.prototype.hasOwnProperty.call(FISCAL_DRIVERS, id) ? FISCAL_DRIVERS[id]! : null
+  const d = id && Object.prototype.hasOwnProperty.call(FISCAL_DRIVERS, id) ? FISCAL_DRIVERS[id]! : null
+  return d && isSandbox() ? testFiscalDriver : d // practice copy: only the test driver ever files
 }
 
 export function terminalDriverOf(id: string | null | undefined): TerminalDriver | null {
-  return id && Object.prototype.hasOwnProperty.call(TERMINAL_DRIVERS, id) ? TERMINAL_DRIVERS[id]! : null
+  const d = id && Object.prototype.hasOwnProperty.call(TERMINAL_DRIVERS, id) ? TERMINAL_DRIVERS[id]! : null
+  return d && isSandbox() ? testTerminalDriver : d // practice copy: no money moves
 }
 
 export function isKnownDriver(kind: ConnectorKindT, id: string): boolean {
@@ -60,7 +63,7 @@ export interface DriverInfo {
 
 export function listDrivers(): DriverInfo[] {
   const none = { label: 'None (off)', needs: { baseUrl: false, apiKey: false, webhookSecret: false } }
-  return [
+  const all: DriverInfo[] = [
     { kind: 'fiscal', id: 'none', ...none },
     ...Object.values(FISCAL_DRIVERS).map((d) => ({ kind: 'fiscal' as const, id: d.id, label: d.label, needs: d.needs })),
     { kind: 'terminal', id: 'none', ...none },
@@ -68,6 +71,7 @@ export function listDrivers(): DriverInfo[] {
     { kind: 'raast', id: 'none', label: 'Bank SMS from the counter phone', needs: none.needs },
     ...Object.values(RAAST_DRIVERS).map((d) => ({ kind: 'raast' as const, id: d.id, label: d.label, needs: d.needs })),
   ]
+  return isSandbox() ? all.filter((d) => d.id === 'none' || d.id === 'test') : all // practice copy offers no vendor drivers
 }
 
 // ─── Clock (injectable for tests) ─────────────────────────────────────────────
@@ -107,6 +111,7 @@ export function newWebhookToken(): string {
 }
 
 function load(row: PosConnector): LoadedConnector {
+  row = practiceConnectorRow(row) // practice copy: a vendor driver row loads as the test driver, no URL / secrets
   let apiKey: string | null = null
   let webhookSecret: string | null = null
   let secretError: string | null = null

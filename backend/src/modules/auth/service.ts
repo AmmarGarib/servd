@@ -78,8 +78,8 @@ export async function staffLogin(email: string, password: string) {
   // full stop — enforcing by role would have locked out every owner the moment
   // this deployed.
   if (isTwoFactorEnabled(user)) {
-    const { challengeToken, phoneHint } = await startLoginChallenge(user)
-    return { twoFactorRequired: true as const, challengeToken, phoneHint }
+    const { challengeToken, phoneHint, practiceCode } = await startLoginChallenge(user)
+    return { twoFactorRequired: true as const, challengeToken, phoneHint, ...(practiceCode !== undefined && { practiceCode }) }
   }
 
   return { twoFactorRequired: false as const, ...issueStaffSession(user) }

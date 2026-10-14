@@ -48,7 +48,14 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `payroll_run` | `GET /hr/payroll/runs` (drafts) | `POST /hr/payroll/runs/:id/approve` | admin, owner, management (never whoever prepared it) |
 | `tip_pool` | `GET /tip-pools` (window over, or posted) | opens /tip-pools (post / pay need review) | admin, owner |
 | `stock_transfer` | `GET /stock-transfers?status=requested` | `PATCH /stock-transfers/:id/approve`, `/cancel` | managers |
-| `cash_voucher` | `GET /trustops/cash-vouchers?status=hod_signed` | `POST /trustops/cash-vouchers/:id/approve`, `/reject` (note) | admin — the director (never the login that signed as HOD) |
+| `cash_request_hod` | `GET /trustops/cash-vouchers?view=hod` (rows with `canSignHod`) | `POST /trustops/cash-vouchers/:id/sign-hod`, `/reject` (note) | per item: the holder's reporting manager or a cash keeper (the route decides; never the holder) |
+| `cash_voucher` ("Cash requests") | `GET /trustops/cash-vouchers?status=hod_signed` | `POST /trustops/cash-vouchers/:id/approve`, `/reject` (note) | admin — the director (never the login that signed as HOD: Approve disabled, 409 SAME_SIGNER) |
+| `fixed_asset_request` | `GET /accounting/fixed-assets/requests?status=pending` | `POST /accounting/fixed-assets/requests/:id/approve`, `/reject` (note) | admin (finance asks: disposal, scrap, write-down, capitalisation …) |
+| `intercompany_transfer` | `GET /accounting/intercompany/transfers?status=submitted` | `POST /accounting/intercompany/transfers/:id/approve`, `/reject` (note) | admin who belongs to BOTH companies (otherwise listed with the buttons disabled); the item sits in whichever of its two companies is in view |
+| `bad_debt` | `GET /accounting/receivables/write-offs?status=requested` | `POST /accounting/receivables/write-offs/:id/approve`, `/reject` (note) | admin — the CEO approves every write-off (G12 / H15); no requester-based disabled button: the CEO is exempt from self-approval (decision 27) and the route's `assertNotSelfApproval` decides |
+| `raast_void` | `GET /reconciliation/raast/receipts?voidRequested=1` | `POST /reconciliation/raast/receipts/:id/void` (reason ≥ 10), `/void-request/reject` (note) | admin; a receipt that can no longer be voided shows the route's own reason on a disabled button |
+| `grni_writeoff` | `GET /procurement/grni?writeOffRequested=1` | `POST /procurement/grni/:receiptLineId/write-off/approve`, `/write-off/reject` (note) | admin |
+| `stock_difference` | `GET /accounting/stock-differences?status=pending` (one row per 1290 suspense line) | `POST /accounting/stock-differences/approve` `{lineIds:[id]}`, `POST /accounting/stock-differences/:id/query` (note) | admin — waste and count differences wait in 1290 until the CEO approves them into cost of sales (H20). Until that route exists it answers 404 and the type is not listed |
 
 `approverRoles` in `providers.ts` mirrors each approve route's `requireAuth`
 list. It only narrows (a queue route wider than its approve route — the
@@ -56,10 +63,21 @@ storefront list, the payroll register, stock transfers — never shows an item
 the person could not act on). It never widens: the route still decides.
 
 Not in the inbox, on purpose: manager-PIN overrides at the till (real time,
-not a queue); period reopen, manual journals, journal reversal, capex posting
-and bank-line adjustments (the CEO / approvers act directly — there is no
-"request" state to approve). If one of those gains a request step, it becomes
-a provider here.
+not a queue); period reopen, manual journals, journal reversal and bank-line
+adjustments (the CEO / approvers act directly — there is no "request" state
+to approve). If one of those gains a request step, it becomes a provider
+here. (Capitalising a CapEx line became one: finance's capitalisation now
+waits as a `fixed_asset_request`.)
+
+`delegable` is false for every finance wave B type: each approve route checks
+role `admin` itself (fixed-asset events, inter-company, write-offs, Raast
+voids, GRNI, stock differences), so a delegate could not act on them. The HOD
+step (`cash_request_hod`) is per item, like HR steps.
+
+**PARKED (owner, 2026-10-13):** `on_account_client` stays in `APPROVAL_TYPES`
+but has no provider (the on-account clients feature and its route are
+parked). The inbox lists only registered providers, so nothing else is
+needed; the resume adds the provider.
 
 ## Adding a type
 

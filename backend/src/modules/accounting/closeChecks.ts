@@ -40,6 +40,8 @@ import { intercompanyCloseChecks } from '../intercompany/closeChecks.js'
 import { fixedAssetCloseChecks } from '../fixedAssets/closeCheck.js'
 import { cardPayoutCloseChecks } from '../reconciliation/cardPayouts.js'
 import { prepaidCloseChecks } from './prepaidReleases.js'
+import { inventoryCloseChecks } from '../reports/foodCost.js'
+import { stockDifferenceCloseCheck } from '../stockDifferences/service.js'
 
 /** A close never looks further back than this many months (the oldest are dropped). */
 export const MAX_CLOSE_MONTHS = 24
@@ -368,7 +370,10 @@ export const CLOSE_CHECKS: CloseCheck[] = [
   ...fixedAssetCloseChecks,
   ...cardPayoutCloseChecks,
   ...prepaidCloseChecks,
-  // WAVE Z (orchestrator): ...inventoryCloseChecks (w3-fc-report)
+  // Stock and purchasing — grni_stale, inventory_postings_pending,
+  // stock_differences_pending (H20: waste / count differences still in 1290). All warn, overridable.
+  ...inventoryCloseChecks,
+  stockDifferenceCloseCheck,
 ]
 
 /** The key of the block a throwing check becomes. */

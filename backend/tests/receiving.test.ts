@@ -248,6 +248,23 @@ describe('receiving without a PO — manager tiers, unit cost at the dock', () =
     const posB = (await call('mgrB', 'GET', '/crosschecks/receiving/open-pos')).json() as unknown[]
     expect(posB).toEqual([])
   })
+  it('tags the outlet the goods arrived at — one of the company\'s (another\'s is 422); the cash-purchases system supplier is never a dock supplier', async () => {
+    const locA = (await prisma.location.create({ data: { slug: 'rcv-loc-a', name: 'RCV outlet A', tenantId: tenantA } })).id
+    const locB = (await prisma.location.create({ data: { slug: 'rcv-loc-b', name: 'RCV outlet B', tenantId: tenantB } })).id
+    const foreign = await call('mgr2', 'POST', '/crosschecks/receiving', { supplierId: supA, locationId: locB, photoUrl: PHOTO, lines: [{ inventoryItemId: sugar, quantityReceived: 1, unitCostCents: 100 }] })
+    expect(foreign.statusCode).toBe(422)
+    expect(foreign.json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
+    const ok = await call('mgr2', 'POST', '/crosschecks/receiving', { supplierId: supA, locationId: locA, photoUrl: PHOTO, lines: [{ inventoryItemId: sugar, quantityReceived: 1, unitCostCents: 100 }] })
+    expect(ok.statusCode, ok.body).toBe(201)
+    expect(ok.json().locationId).toBe(locA)
+    expect((await prisma.stockLot.findFirstOrThrow({ where: { receiptLineId: ok.json().lines[0].id } })).locationId).toBe(locA)
+
+    const cash = await prisma.supplier.create({ data: { name: 'Cash purchases', tenantId: tenantA, systemKind: 'cash_purchases' } })
+    const sups = (await call('mgr2', 'GET', '/crosschecks/receiving/suppliers')).json() as Array<{ id: string }>
+    expect(sups.map((x) => x.id)).not.toContain(cash.id)
+    const viaDock = await call('mgr2', 'POST', '/crosschecks/receiving', { supplierId: cash.id, photoUrl: PHOTO, lines: [{ inventoryItemId: sugar, quantityReceived: 1, unitCostCents: 100 }] })
+    expect(viaDock.statusCode).toBe(404)
+  })
 })
 
 describe('one separation-of-duties helper', () => {
