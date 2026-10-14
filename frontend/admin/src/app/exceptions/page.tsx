@@ -97,6 +97,7 @@ const KIND_LABEL: Record<string, string> = {
   stock_unrecorded:          'Count found stock the books had at zero',
   recipe_foreign_stock:      "Recipe uses another company's stock",
   stock_restore_failed:      'Stock not put back after a cancel or void',
+  fifo_cutover_review:       'FIFO cut-over: old bills to check against deliveries',
   // Period close and inter-company.
   period_close_override:     'Period closed over a blocking check',
   intercompany_mismatch:     'Inter-company balances do not agree',

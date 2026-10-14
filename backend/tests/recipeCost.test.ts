@@ -9,9 +9,13 @@
 //   - Plate cost = exploded raw cost + each recipe's own Q on its own raw
 //     lines (applied once), no labour; costing and explosion agree.
 //   - One below-par predicate: par must be set, at-par counts, on-order nets.
-//   - Sale-time depletion (DB): takes the exploded quantities, is idempotent,
-//     gives them back on cancel exactly once, and ledger COGS is costed on the
-//     same function.
+//   - MC by class (food / drinks / packaging), the plate MC without the
+//     Packaging section, the target MC per order type (wave B packaging rule),
+//     Q kept apart; negative lines only on modifier recipes.
+//   - Sale-time depletion (DB, FIFO lots): takes the exploded quantities from
+//     the lots, is idempotent, gives them back to the same lots on cancel
+//     exactly once, clamps a shortfall, and the legacy theoretical COGS
+//     helpers keep their rule.
 import { describe, it, expect, beforeAll } from 'vitest'
 import {
   buildRecipeGraph, explodeRecipe, recipeCost, isBelowPar, toPurchaseUnits,
@@ -138,6 +142,52 @@ describe('recipeCost — THE plate cost', () => {
   })
 })
 
+describe('material cost (MC) by class, packaging and order type — wave B', () => {
+  const cola: CostItem = { id: 'cola', unit: 'pcs', unitCostCents: 8_000, category: 'beverage' }
+  const box: CostItem  = { id: 'box',  unit: 'pcs', unitCostCents: 3_000, category: 'packaging' }
+  const flourF: CostItem = { ...flour, category: 'dry_goods' }
+  const pack = (item: CostItem, q: number) => ({ ...raw(item, q), section: 'packaging' })
+  const meal = (vessel: 'plate' | 'packaging'): CostRecipe => ({
+    id: 'meal', kind: 'plate', servings: 1, yieldGrams: null, qFactorPct: 10, serviceVessel: vessel,
+    ingredients: [raw(flourF, 150), raw(cola, 1), pack(box, 1)],
+  })
+
+  it('splits food / drinks / packaging; the plate MC leaves the Packaging section out; Q never touches packaging', () => {
+    const c = recipeCost(buildRecipeGraph([meal('plate')]), 'meal')
+    expect(c.stockByClass.food).toBeCloseTo(4_500, 6)
+    expect(c.stockByClass.beverage).toBeCloseTo(8_000, 6)
+    expect(c.stockByClass.packaging).toBeCloseTo(3_000, 6)
+    expect(c.packagingCents).toBeCloseTo(3_000, 6)
+    expect(c.standardCents).toBeCloseTo(12_500, 6)
+    expect(c.qCents).toBeCloseTo(1_250, 6)                 // 10% of flour + cola only — never inside the MC
+  })
+
+  it('target MC: dine-in excludes packaging at a plate brand, includes it at a packaging brand; takeaway / delivery always include it', () => {
+    const plateBrand = recipeCost(buildRecipeGraph([meal('plate')]), 'meal').targetMcCents
+    expect(plateBrand.dine_in).toBeCloseTo(12_500, 6)
+    expect(plateBrand.takeout).toBeCloseTo(15_500, 6)
+    expect(plateBrand.delivery).toBeCloseTo(15_500, 6)
+    const packBrand = recipeCost(buildRecipeGraph([meal('packaging')]), 'meal').targetMcCents
+    expect(packBrand.dine_in).toBeCloseTo(15_500, 6)
+    expect(packBrand.takeout).toBeCloseTo(15_500, 6)
+  })
+
+  it('carries a sub-recipe\'s classes up, per portion', () => {
+    const c = recipeCost(graph, 'plate')
+    // flour 4,500 + 0.2 × pastry (butter 100,000 + eggs 5,000), ex-Q
+    expect(c.stockByClass.food).toBeCloseTo(4_500 + 21_000, 6)
+    expect(c.standardCents).toBeCloseTo(25_500, 6)
+    expect(c.packagingCents).toBe(0)
+  })
+
+  it('a negative line counts only on a modifier recipe', () => {
+    const noCheese: CostRecipe = { id: 'nc', kind: 'modifier', servings: 1, yieldGrams: null, qFactorPct: 0, ingredients: [raw(butter, -20)] }
+    expect(explodeRecipe(buildRecipeGraph([noCheese]), 'nc', 1).get('butter')).toBeCloseTo(-0.02, 10)
+    const bad: CostRecipe = { ...plate, ingredients: [raw(flour, 150), raw(butter, -20)] }
+    expect(explodeRecipe(buildRecipeGraph([bad]), 'plate', 1).has('butter')).toBe(false)
+  })
+})
+
 describe('units', () => {
   it('per-measure cost and purchase conversion', () => {
     expect(costPerMeasureCents('kg', 30_000)).toBe(30)
@@ -177,25 +227,40 @@ describe('isBelowPar — THE low-stock rule', () => {
 
 // ─── Against the database: sale-time depletion, restore on cancel, COGS ──────
 
-describe('sale-time depletion and restore (DB)', () => {
+describe('sale-time depletion and restore on FIFO lots (DB)', () => {
   let conceptId: string
   let menuItemId: string
   let flourId: string
   let butterId: string
   let staffId: string
   let tenantId: string
+  let seq = 0
+
+  async function lot(itemId: string, qty: number, unitCostCents: number) {
+    const { serviceClient: prisma } = await import('../src/lib/prisma.js')
+    const { addLotTx } = await import('../src/lib/stockLedger.js')
+    const src = `rc-lot-${++seq}`
+    return prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId, inventoryItemId: itemId, qty, unitCostCents, kind: 'count_gain', lotSourceType: 'count_gain', lotSourceId: src,
+      movementSourceType: 'test', movementSourceId: src, receivedAt: new Date(Date.now() - 86_400_000 + seq),
+    }))
+  }
 
   beforeAll(async () => {
     const { serviceClient: prisma } = await import('../src/lib/prisma.js')
+    const { fifoCutoverKey } = await import('../src/lib/stockLedger.js')
     const run = Math.random().toString(36).slice(2, 8)
     tenantId = (await prisma.tenant.create({ data: { name: 'Recipe Cost Co', slug: `recipe-cost-co-${run}` } })).id
+    await prisma.setting.create({ data: { key: fifoCutoverKey(tenantId), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
     conceptId = (await prisma.concept.create({
       data: { name: 'Recipe Cost Cafe', slug: `recipe-cost-cafe-${run}`, type: 'restaurant', tenantId, taxRateCash: 0, taxRateCard: 0 },
     })).id
     const category = await prisma.category.create({ data: { conceptId, name: 'RC Bakes' } })
     menuItemId = (await prisma.menuItem.create({ data: { conceptId, categoryId: category.id, name: 'RC Tart', priceCents: 120_000 } })).id
-    flourId = (await prisma.inventoryItem.create({ data: { tenantId, name: 'RC Flour', unit: 'kg', currentStock: 20, parLevel: 5, unitCostCents: 30_000 } })).id
-    butterId = (await prisma.inventoryItem.create({ data: { tenantId, name: 'RC Butter', unit: 'kg', currentStock: 3, parLevel: 1, unitCostCents: 100_000 } })).id
+    flourId = (await prisma.inventoryItem.create({ data: { tenantId, name: 'RC Flour', unit: 'kg', parLevel: 5, unitCostCents: 30_000 } })).id
+    butterId = (await prisma.inventoryItem.create({ data: { tenantId, name: 'RC Butter', unit: 'kg', parLevel: 1, unitCostCents: 100_000 } })).id
+    await lot(flourId, 20, 30_000)
+    await lot(butterId, 3, 100_000)
     const pastryRecipe = await prisma.recipe.create({
       data: {
         kind: 'component', name: 'RC Pastry', yieldGrams: 1000, qFactorPct: 10,
@@ -216,12 +281,12 @@ describe('sale-time depletion and restore (DB)', () => {
     })).id
   })
 
-  async function order(qty: number) {
+  async function order(qty: number, item = menuItemId) {
     const { serviceClient: prisma } = await import('../src/lib/prisma.js')
     return prisma.order.create({
       data: {
         conceptId, source: 'servd', status: 'received', totalCents: 120_000 * qty, placedAt: new Date(),
-        items: { create: [{ menuItemId, name: 'RC Tart', quantity: qty, unitPriceCents: 120_000 }] },
+        items: { create: [{ menuItemId: item, name: 'RC Tart', quantity: qty, unitPriceCents: 120_000 }] },
       },
     })
   }
@@ -229,21 +294,31 @@ describe('sale-time depletion and restore (DB)', () => {
     const { serviceClient: prisma } = await import('../src/lib/prisma.js')
     return (await prisma.inventoryItem.findUniqueOrThrow({ where: { id } })).currentStock
   }
+  async function moves(orderId: string) {
+    const { serviceClient: prisma } = await import('../src/lib/prisma.js')
+    return prisma.stockMovement.findMany({ where: { orderId }, select: { kind: true, inventoryItemId: true, qty: true, sourceType: true, lotId: true } })
+  }
 
-  it('takes purchase units through the sub-recipe, once; cancel gives it back once', async () => {
+  it('takes purchase units through the sub-recipe from the lots, once; cancel puts them back in the same lots, once', async () => {
     const { deductInventoryForOrder, cancelOrder } = await import('../src/modules/orders/service.js')
     const o = await order(2)
 
     await deductInventoryForOrder(o.id)
     expect(await stock(flourId)).toBeCloseTo(20 - 0.3, 6)     // 2 × 150 g = 0.3 kg, not 300
     expect(await stock(butterId)).toBeCloseTo(3 - 0.4, 6)     // 2 × 0.2 batch × 1 kg drawn
+    const sales = (await moves(o.id)).filter((m) => m.kind === 'sale')
+    expect(sales.map((m) => [m.inventoryItemId, m.sourceType]).sort()).toEqual([[butterId, 'order_item.sale'], [flourId, 'order_item.sale']].sort())
 
     await deductInventoryForOrder(o.id)                       // replay: no second deduction
     expect(await stock(flourId)).toBeCloseTo(19.7, 6)
+    expect((await moves(o.id)).length).toBe(2)
 
     await cancelOrder(o.id, { reason: 'Customer left', actor: { id: staffId, tenantId } })
     expect(await stock(flourId)).toBeCloseTo(20, 6)
     expect(await stock(butterId)).toBeCloseTo(3, 6)
+    const back = (await moves(o.id)).filter((m) => m.kind === 'sale_return')
+    expect(back).toHaveLength(2)
+    for (const b of back) expect(b.lotId).toBe(sales.find((x) => x.inventoryItemId === b.inventoryItemId)!.lotId)
 
     await cancelOrder(o.id, { reason: 'Again', actor: { id: staffId, tenantId } })
     expect(await stock(flourId)).toBeCloseTo(20, 6)
@@ -251,22 +326,29 @@ describe('sale-time depletion and restore (DB)', () => {
     // An order already cancelled takes nothing (the depletion lost the race).
     await deductInventoryForOrder(o.id)
     expect(await stock(flourId)).toBeCloseTo(20, 6)
+    expect((await moves(o.id)).length).toBe(4)
   })
 
-  it('restores only what clamping actually took', async () => {
+  it('a shortfall clamps (recorded on the sale), and cancel returns only what the lots gave', async () => {
     const { serviceClient: prisma } = await import('../src/lib/prisma.js')
     const { deductInventoryForOrder, cancelOrder } = await import('../src/modules/orders/service.js')
-    await prisma.inventoryItem.update({ where: { id: butterId }, data: { currentStock: 0.1 } })
-    const o = await order(1)                                 // wants 0.2 kg butter, only 0.1 there
+    const cream = (await prisma.inventoryItem.create({ data: { tenantId, name: 'RC Cream', unit: 'kg', unitCostCents: 50_000 } })).id
+    await lot(cream, 0.1, 50_000)
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId } })
+    const pud = (await prisma.menuItem.create({ data: { conceptId, categoryId: cat.id, name: 'RC Pudding', priceCents: 90_000 } })).id
+    await prisma.recipe.create({ data: { kind: 'plate', menuItemId: pud, servings: 1, ingredients: { create: [{ inventoryItemId: cream, quantity: 200, unit: 'kg' }] } } })
+    const o = await order(1, pud)                            // wants 0.2 kg cream, only 0.1 there
     await deductInventoryForOrder(o.id)
-    expect(await stock(butterId)).toBe(0)
-    await cancelOrder(o.id, { reason: 'Out of butter', actor: { id: staffId, tenantId } })
-    expect(await stock(butterId)).toBeCloseTo(0.1, 6)
-    await prisma.inventoryItem.update({ where: { id: butterId }, data: { currentStock: 3 } })
-    await prisma.menuItem.update({ where: { id: menuItemId }, data: { isAvailable: true } })
+    expect(await stock(cream)).toBe(0)
+    const sale = await prisma.stockMovement.findMany({ where: { orderId: o.id, kind: 'sale' } })
+    expect(sale.reduce((s, m) => s + (m.shortfallQty ?? 0), 0)).toBeCloseTo(0.1, 6)
+    // The sale ran it out: the dish is auto-86'd.
+    expect((await prisma.menuItem.findUniqueOrThrow({ where: { id: pud } })).isAvailable).toBe(false)
+    await cancelOrder(o.id, { reason: 'Out of cream', actor: { id: staffId, tenantId } })
+    expect(await stock(cream)).toBeCloseTo(0.1, 6)
   })
 
-  it('ledger COGS is THE plate cost × quantity, no labour', async () => {
+  it('ledger COGS is THE plate cost × quantity, no labour (the legacy theoretical rule)', async () => {
     const { orderCogsCents, menuItemPlateCosts } = await import('../src/lib/recipeCost.js')
     const o = await order(3)
     // flour 4,500 + pastry 200 g × 110/g (1 kg butter drawn = 100,000 + its 10% Q, per 1000 g) = 22,000

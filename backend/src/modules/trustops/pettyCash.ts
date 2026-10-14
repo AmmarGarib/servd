@@ -1,25 +1,34 @@
 // Petty cash — the pieces shared by the petty-cash routes (routes.ts) and the
-// cash vouchers (cashVouchers.ts).
+// cash vouchers / cash requests (cashVouchers.ts).
 //
 //   • CASH_KEEPERS / CASH_GUARD — who may run petty cash (see routes.ts for
 //     the wave-3 reasoning): the manager tiers plus finance, finance only
 //     while it holds the 'accounting' module.
 //   • The movement writers — THE only code that writes a PettyCashMovement or
-//     moves a box's float. Every one of them goes through writeMovementTx, so
-//     the ledger posting (when it comes) is added in ONE place:
-//       recordPettyCashSpendTx    — a spend (manual, or a disbursed voucher)
-//       recordPettyCashTopupTx    — a top-up, and a new box's opening float
-//       recordPettyCashTransferTx — box → box, same company (two movements)
-//       recordPettyCashCountTx    — a physical count (reconcile)
+//     moves a box's float. Every one of them goes through writeMovementTx,
+//     which stamps the movement (company, source, counter account, bank,
+//     drawer, request, brand, transfer ref), writes its spend lines and books
+//     it through the ONE poster (accounting/pettyCashPosting.ts
+//     postPettyCashMovementTx) — inside the caller's transaction, so a closed
+//     period (422 PERIOD_LOCKED) rolls the movement and the float back
+//     together:
+//       recordPettyCashSpendTx    — a spend (manual, a bill paid in cash, or a
+//                                   cash request paid out as an advance).
+//                                   THE one way money leaves a box.
+//       recordPettyCashTopupTx    — a top-up (Garibsons cashier, safe, bank,
+//                                   till drawer, change returned on a cash
+//                                   request), and a new box's opening float
+//       recordPettyCashReturnTx   — cash handed back out of a box (safe, bank,
+//                                   Garibsons)
+//       recordPettyCashTransferTx — box → box, same company (two movements, no
+//                                   entry: both boxes sit on 1011)
+//       recordPettyCashCountTx    — a physical count (variance → 8010)
+// Float changes are always relative and conditional (`floatCents >= amount`
+// for money out), never "set to what we read".
 //
-// LEDGER: petty cash posts NOTHING yet — pending owner decisions C1/C2/C5
-// (finance gaps, 2026-10-13: whether petty cash gets its own balance-sheet
-// line and where the money already in the boxes came from; how a director's
-// cash voucher is booked; the spend categories). Only a spend that pays a
-// supplier bill is booked, by procurement createPaymentTx before the spend
-// helper runs (Dr 2010 / Cr 1010). When the decisions land, the posting goes
-// into writeMovementTx — inside the caller's transaction, so a closed period
-// rolls the movement and the float back together.
+// Ledger (H1–H3, accounting/pettyCashPosting.ts has the table): 1011 Petty
+// Cash against 2210 Due to Garibsons / 1010 safe / the bank's code / 1015
+// drawer / 1355 cash advances / 8010 / the spend lines' expense codes.
 
 import { randomBytes } from 'node:crypto'
 import type { Prisma, PettyCashMovement, UserRole } from '@prisma/client'
@@ -28,6 +37,12 @@ import { requireAuth, FINANCE_TEAM } from '../auth/middleware.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { assertInt4Fits } from '../../lib/money.js'
+import { ACCT } from '../accounting/journal.js'
+import {
+  cashCounterAccountTx, postPettyCashMovementTx, resolveSpendLinesTx,
+  type ResolvedSpendLine, type SpendLineInput, type TopupSource, type ReturnDestination,
+} from '../accounting/pettyCashPosting.js'
+import { recordDrawerToBoxTx } from '../pos/drawerToBox.js'
 
 export const CASH_KEEPERS: UserRole[] = FINANCE_TEAM
 /** The Module Access half of CASH_GUARD (manager tiers exempt). */
@@ -63,7 +78,7 @@ export function insufficientFloatError(spendCents: number, floatCents: number): 
 }
 
 /** What a movement row says it is. The API's /movements takes only topup|spend. */
-export type PettyCashMovementType = 'topup' | 'spend' | 'reconcile' | 'transfer'
+export type PettyCashMovementType = 'topup' | 'spend' | 'reconcile' | 'transfer' | 'return'
 
 interface MovementRow {
   boxId: string
@@ -77,17 +92,44 @@ interface MovementRow {
   approvedById?: string | null
   supplierPaymentId?: string | null
   createdById: string
+  // ── Petty cash in the ledger (wave B) ──
+  source?: string | null
+  /** The counter account of the posting (2210 / 1010 / bank / 1015 / 1355 / 8010 …). */
+  accountCode?: string | null
+  bankAccountId?: string | null
+  shiftId?: string | null
+  cashMovementId?: string | null
+  cashVoucherId?: string | null
+  conceptId?: string | null
+  transferRef?: string | null
+  /** Expense lines of a spend (already resolved in the box's company). */
+  lines?: ResolvedSpendLine[]
+}
+
+/**
+ * The box's company, or 404 / 422 BOX_HAS_NO_COMPANY — read FIRST by every
+ * writer, before any float moves (a company-less box can never be booked).
+ */
+async function boxCompanyTx(tx: Prisma.TransactionClient, boxId: string): Promise<{ tenantId: string; name: string; conceptId: string | null }> {
+  const box = await tx.pettyCashBox.findFirst({ where: { id: boxId, deletedAt: null }, select: { tenantId: true, name: true, conceptId: true } })
+  if (!box) throw new NotFoundError('PettyCashBox', boxId)
+  if (!box.tenantId) throw new AppError('BOX_HAS_NO_COMPANY', `Petty-cash box "${box.name}" belongs to no company — it cannot be used`, 422)
+  return { tenantId: box.tenantId, name: box.name, conceptId: box.conceptId }
 }
 
 /**
  * THE one place a petty-cash movement row is written. Every writer below calls
- * it inside its transaction, after the float has moved.
+ * it inside its transaction, after the float has moved: the row (stamped with
+ * the box's company), its spend lines, then the ledger posting
+ * (postPettyCashMovementTx, which stamps journalEntryId).
  */
 async function writeMovementTx(tx: Prisma.TransactionClient, row: MovementRow): Promise<PettyCashMovement> {
   assertInt4Fits(row.amountCents, 'A petty-cash movement')
+  const { tenantId } = await boxCompanyTx(tx, row.boxId)
   const movement = await tx.pettyCashMovement.create({
     data: {
       boxId: row.boxId,
+      tenantId,
       type: row.type,
       amountCents: row.amountCents,
       category: row.category ?? null,
@@ -97,12 +139,29 @@ async function writeMovementTx(tx: Prisma.TransactionClient, row: MovementRow): 
       approvedById: row.approvedById ?? null,
       supplierPaymentId: row.supplierPaymentId ?? null,
       createdById: row.createdById,
+      source: row.source ?? null,
+      accountCode: row.accountCode ?? null,
+      bankAccountId: row.bankAccountId ?? null,
+      shiftId: row.shiftId ?? null,
+      cashMovementId: row.cashMovementId ?? null,
+      cashVoucherId: row.cashVoucherId ?? null,
+      conceptId: row.conceptId ?? null,
+      transferRef: row.transferRef ?? null,
     },
   })
-  // TODO(C1/C2/C5): post the movement here — postPettyCashMovementTx(tx,
-  // movement), keyed on the movement id, in the box's company — once the
-  // owner decides how petty cash is booked (see the header).
-  return movement
+  if (row.lines && row.lines.length > 0) {
+    // One at a time, in order, so the lines keep the order they were entered in.
+    for (const l of row.lines) {
+      await tx.pettyCashSpendLine.create({
+        data: {
+          tenantId, movementId: movement.id, kind: l.kind, categoryKey: l.categoryKey, accountCode: l.accountCode,
+          amountCents: l.amountCents, conceptId: l.conceptId, locationId: l.locationId, description: l.description,
+        },
+      })
+    }
+  }
+  await postPettyCashMovementTx(tx, movement.id)
+  return tx.pettyCashMovement.findUniqueOrThrow({ where: { id: movement.id } })
 }
 
 /**
@@ -148,30 +207,85 @@ export interface PettyCashSpendInput {
   supplierPaymentId?: string | null
 }
 
+export type SpendNature = 'expense' | 'advance' | 'bill'
+
+export interface PettyCashSpendOptions {
+  /**
+   * What the spend is:
+   *   'expense' — expense lines (`lines`, Dr each line / Cr 1011);
+   *   'advance' — a cash request paid out (Dr 1355 / Cr 1011, receipts due);
+   *   'bill'    — paid a supplier bill (`supplierPaymentId`; the payment
+   *               booked Dr 2010 / Cr 1010, this books Dr 1010 / Cr 1011).
+   * Omitted (the pre-wave-B cash-voucher disburse, until w3-cash-requests
+   * passes it): 'bill' when supplierPaymentId is set, else 'advance'.
+   */
+  nature?: SpendNature
+  lines?: SpendLineInput[]
+  cashVoucherId?: string
+  conceptId?: string | null
+  /** Who records it — the equipment override is finance / CEO only. */
+  actor?: { id: string; role: string }
+  /** A cash keeper may book a line to an explicit 6xxx code. */
+  allowExplicit?: boolean
+}
+
 /**
- * Record a petty-cash spend inside `tx`: lower the box's float and write the
- * 'spend' movement. The manual spend (POST /trustops/petty-cash/movements) and
- * a disbursed cash voucher both come here.
+ * Record a petty-cash spend inside `tx`: validate its lines in the box's
+ * company, lower the box's float (conditional — 400 INSUFFICIENT_FLOAT), write
+ * the 'spend' movement and book it. THE one way money leaves a box: the manual
+ * spend (POST /trustops/petty-cash/movements), a bill paid from a box and a
+ * cash request paid out all come here.
  */
 export async function recordPettyCashSpendTx(
   tx: Prisma.TransactionClient,
-  input: PettyCashSpendInput,
-): Promise<{ movement: PettyCashMovement; newFloatCents: number }> {
+  input: PettyCashSpendInput & PettyCashSpendOptions,
+): Promise<{ movementId: string; movement: PettyCashMovement; newFloatCents: number; lines: ResolvedSpendLine[] }> {
   assertPositiveAmount(input.amountCents, 'A petty-cash spend')
+  const box = await boxCompanyTx(tx, input.box.id)
+  const nature: SpendNature = input.nature ?? (input.supplierPaymentId ? 'bill' : 'advance')
+  let lines: ResolvedSpendLine[] = []
+  let accountCode: string | null = null
+  if (input.conceptId) {
+    const c = await tx.concept.findFirst({ where: { id: input.conceptId, tenantId: box.tenantId }, select: { id: true } })
+    if (!c) throw new AppError('CONCEPT_NOT_IN_COMPANY', 'That brand is not one of this box\'s company\'s', 422)
+  }
+  if (nature === 'expense') {
+    lines = await resolveSpendLinesTx(tx, box.tenantId, input.lines ?? [], {
+      allowExplicit: input.allowExplicit ?? false,
+      actor: input.actor ?? { id: input.createdById, role: '' },
+    })
+    const total = lines.reduce((s, l) => s + l.amountCents, 0)
+    if (total !== input.amountCents) {
+      throw new AppError('LINES_DONT_ADD_UP', `The lines add up to ${pkrWhole(total)}, the spend is ${pkrWhole(input.amountCents)}`, 400)
+    }
+  } else if (nature === 'bill') {
+    if (!input.supplierPaymentId) throw new AppError('BILL_PAYMENT_REQUIRED', 'A bill spend must carry its supplier payment', 400)
+    if (input.lines?.length) throw new AppError('LINES_ON_BILL', 'A spend that pays a supplier bill has no expense lines', 400)
+    accountCode = ACCT.CASH_ON_HAND
+  } else {
+    if (input.lines?.length) throw new AppError('LINES_ON_ADVANCE', 'A cash advance has no expense lines — the receipts book them', 400)
+    accountCode = ACCT.CASH_ADVANCES
+  }
   const newFloatCents = await moveFloatTx(tx, input.box.id, -input.amountCents)
+  const category = input.category ?? (lines.length === 1 ? lines[0]!.categoryKey : null)
   const movement = await writeMovementTx(tx, {
     boxId: input.box.id,
     type: 'spend',
     amountCents: -input.amountCents,
-    category: input.category,
+    category,
     reason: input.reason,
     receiptUrl: input.receiptUrl,
     vendorName: input.vendorName,
     approvedById: input.approvedById,
     supplierPaymentId: input.supplierPaymentId,
     createdById: input.createdById,
+    source: 'box',
+    accountCode,
+    cashVoucherId: input.cashVoucherId ?? null,
+    conceptId: input.conceptId ?? null,
+    lines,
   })
-  return { movement, newFloatCents }
+  return { movementId: movement.id, movement, newFloatCents, lines }
 }
 
 export interface PettyCashTopupInput {
@@ -187,15 +301,51 @@ export interface PettyCashTopupInput {
   createdById: string
 }
 
-/** Record a top-up inside `tx` (also a new box's opening float): raise the float, write the 'topup' movement. */
+/**
+ * Record a top-up inside `tx` (also a new box's opening float): resolve where
+ * the cash came from in the BOX's company, raise the float, write the 'topup'
+ * movement and book it (Dr 1011 / Cr the source):
+ *   garibsons → 2210 (H1) · safe → 1010 · bank → the named live linked bank of
+ *   the box's company (422 otherwise) · cash_request → 1355 (change returned) ·
+ *   opening → 1010 (H2, source unknown) · till → `shiftId`, an open drawer of
+ *   the box's company: a 'payout' CashMovement on it (pos/drawerToBox.ts,
+ *   422 SHIFT_NOT_IN_COMPANY / INSUFFICIENT_DRAWER_CASH), booked once as
+ *   'pettycash.till_topup:<cashMovementId>' Dr 1011 / Cr 1015.
+ */
 export async function recordPettyCashTopupTx(
   tx: Prisma.TransactionClient,
-  input: PettyCashTopupInput,
-): Promise<{ movement: PettyCashMovement; newFloatCents: number }> {
+  input: PettyCashTopupInput & { source: TopupSource; bankAccountId?: string | null; shiftId?: string | null; cashVoucherId?: string | null },
+): Promise<{ movementId: string; movement: PettyCashMovement; newFloatCents: number }> {
   assertPositiveAmount(input.amountCents, 'A petty-cash top-up')
+  const box = await boxCompanyTx(tx, input.box.id)
   const current = await tx.pettyCashBox.findFirst({ where: { id: input.box.id, deletedAt: null }, select: { floatCents: true } })
   if (!current) throw new NotFoundError('PettyCashBox', input.box.id)
   assertInt4Fits(current.floatCents + input.amountCents, 'The box\'s float after this top-up')
+
+  let accountCode: string
+  let bankAccountId: string | null = null
+  let cashMovementId: string | null = null
+  let shiftId: string | null = null
+  if (input.source === 'till') {
+    if (!input.shiftId) throw new AppError('SHIFT_REQUIRED', 'Pick the open till drawer the cash comes from', 400)
+    const drawer = await recordDrawerToBoxTx(tx, {
+      shiftId: input.shiftId, tenantId: box.tenantId, amountCents: input.amountCents,
+      reason: `${box.name} — ${input.reason}`, createdById: input.createdById,
+    })
+    accountCode = ACCT.CASH_DRAWER
+    cashMovementId = drawer.cashMovementId
+    shiftId = input.shiftId
+  } else {
+    if (input.source !== 'bank' && input.bankAccountId) {
+      throw new AppError('BANK_ACCOUNT_NOT_EXPECTED', 'A bank account is only named when the cash comes from a bank', 400)
+    }
+    if (input.source === 'cash_request' && !input.cashVoucherId) {
+      throw new AppError('CASH_REQUEST_REQUIRED', 'Change returned must name its cash request', 400)
+    }
+    const counter = await cashCounterAccountTx(tx, box.tenantId, input.source, input.bankAccountId)
+    accountCode = counter.code
+    bankAccountId = counter.bankAccountId
+  }
   const newFloatCents = await moveFloatTx(tx, input.box.id, input.amountCents)
   const movement = await writeMovementTx(tx, {
     boxId: input.box.id,
@@ -207,8 +357,43 @@ export async function recordPettyCashTopupTx(
     vendorName: input.vendorName,
     approvedById: input.approvedById,
     createdById: input.createdById,
+    source: input.source,
+    accountCode,
+    bankAccountId,
+    shiftId,
+    cashMovementId,
+    cashVoucherId: input.cashVoucherId ?? null,
   })
-  return { movement, newFloatCents }
+  return { movementId: movement.id, movement, newFloatCents }
+}
+
+/**
+ * Hand cash back out of a box inside `tx` — to the safe (Dr 1010), a bank of
+ * the box's company (Dr its code) or the Garibsons cashier (Dr 2210) / Cr
+ * 1011. The float is claimed conditionally (400 INSUFFICIENT_FLOAT).
+ */
+export async function recordPettyCashReturnTx(
+  tx: Prisma.TransactionClient,
+  input: { boxId: string; amountCents: number; destination: ReturnDestination; bankAccountId?: string | null; reason: string; actorId: string },
+): Promise<{ movementId: string; movement: PettyCashMovement; newFloatCents: number }> {
+  assertPositiveAmount(input.amountCents, 'Cash returned from a box')
+  const box = await boxCompanyTx(tx, input.boxId)
+  if (input.destination !== 'bank' && input.bankAccountId) {
+    throw new AppError('BANK_ACCOUNT_NOT_EXPECTED', 'A bank account is only named when the cash goes to a bank', 400)
+  }
+  const counter = await cashCounterAccountTx(tx, box.tenantId, input.destination, input.bankAccountId)
+  const newFloatCents = await moveFloatTx(tx, input.boxId, -input.amountCents)
+  const movement = await writeMovementTx(tx, {
+    boxId: input.boxId,
+    type: 'return',
+    amountCents: -input.amountCents,
+    reason: input.reason,
+    createdById: input.actorId,
+    source: input.destination,
+    accountCode: counter.code,
+    bankAccountId: counter.bankAccountId,
+  })
+  return { movementId: movement.id, movement, newFloatCents }
 }
 
 export interface PettyCashTransferInput {
@@ -220,7 +405,7 @@ export interface PettyCashTransferInput {
 }
 
 export interface PettyCashTransferResult {
-  /** The shared reference both movements carry in their reason ("TRF-…"). */
+  /** The shared reference both movements carry (transferRef, and in their reason): "TRF-…". */
   ref: string
   out: PettyCashMovement
   in: PettyCashMovement
@@ -231,10 +416,9 @@ export interface PettyCashTransferResult {
 /**
  * Move cash from one box to another of the SAME company inside `tx`: two
  * 'transfer' movements (− on the source, + on the destination) carrying one
- * shared reference in their reason, the source's float claimed conditionally.
- * Both rows are locked in id order first, so two opposite transfers cannot
- * deadlock. No ledger effect even once petty cash posts: both boxes sit on
- * the same account.
+ * shared reference (transferRef + their reason), the source's float claimed
+ * conditionally. Both rows are locked in id order first, so two opposite
+ * transfers cannot deadlock. No ledger entry: both boxes sit on 1011.
  */
 export async function recordPettyCashTransferTx(
   tx: Prisma.TransactionClient,
@@ -259,6 +443,8 @@ export async function recordPettyCashTransferTx(
     amountCents: -input.amountCents,
     reason: `Transfer ${ref} to ${input.toBox.name}: ${input.reason}`,
     createdById: input.createdById,
+    source: 'box',
+    transferRef: ref,
   })
   const toFloatCents = await moveFloatTx(tx, input.toBox.id, input.amountCents)
   const inbound = await writeMovementTx(tx, {
@@ -267,6 +453,8 @@ export async function recordPettyCashTransferTx(
     amountCents: input.amountCents,
     reason: `Transfer ${ref} from ${input.fromBox.name}: ${input.reason}`,
     createdById: input.createdById,
+    source: 'box',
+    transferRef: ref,
   })
   return { ref, out, in: inbound, fromFloatCents, toFloatCents }
 }
@@ -281,8 +469,9 @@ export interface PettyCashCountInput {
 /**
  * Record a physical count inside `tx`: the variance (counted − float, against
  * the float AS LOCKED, so a spend landing during the count is never folded
- * into it) is written as a 'reconcile' movement and the float becomes the
- * count. Returns the box as it stood before the count.
+ * into it) is written as a 'reconcile' movement, booked to 8010 (short Dr
+ * 8010 / Cr 1011, over the other way, zero nothing), and the float becomes
+ * the count. Returns the box as it stood before the count.
  */
 export async function recordPettyCashCountTx(
   tx: Prisma.TransactionClient,
@@ -298,6 +487,7 @@ export async function recordPettyCashCountTx(
     select: { id: true, name: true, tenantId: true, conceptId: true, floatCents: true },
   })
   if (!box) throw new NotFoundError('PettyCashBox', input.boxId)
+  await boxCompanyTx(tx, box.id)
   const varianceCents = input.countedCents - box.floatCents
   await moveFloatTx(tx, box.id, varianceCents)
   const movement = await writeMovementTx(tx, {
@@ -306,6 +496,7 @@ export async function recordPettyCashCountTx(
     amountCents: varianceCents,
     reason: input.notes ?? 'Reconciliation',
     createdById: input.createdById,
+    accountCode: ACCT.CASH_VARIANCE,
   })
   return { movement, box, varianceCents }
 }

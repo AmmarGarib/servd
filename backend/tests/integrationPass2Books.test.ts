@@ -1,14 +1,17 @@
 // Integration pass 2 — books follow-ups (stream BK2, 2026-10-12).
 //
-//   NEEDS 12 (RB-3)  receiveGoods applies a supplier bill's carried price
-//       variance to the received quantity itself, inside its own transaction,
-//       keyed on the receipt (idempotent), in the bill's company.
-//   BK2-RV-1  a bill booked before its goods: the receipt re-averages only the
-//       share still on hand and expenses the rest to 5060 (stock -9 and -15),
-//       the same figures as goods first; a void gives the 5060 share back; a
-//       closed period refuses such a receipt. BK2-RV-2: the one-off catch-up
-//       for receipts made before the hook. (Both need the supplierPosting.ts
-//       patch in .handoff/fixes/BK2-RV-supplierPosting.patch.)
+//   NEEDS 12 (RB-3, on FIFO lots since wave B)  a bill booked before its
+//       goods debits 2015 at the billed price (a 'pending' GrniMatch); each
+//       receipt opens its lot at the billed price for that quantity, settles
+//       the match (split across partial deliveries) and credits 2015 by
+//       exactly as much — in the bill's company, inside the receipt's
+//       transaction.
+//   BK2-RV-1  stock cooked before its delivery was entered (a sale shortfall):
+//       bill first or goods first, the late receipt settles the shortfall
+//       from its lot and both orders land on the same cost of goods and the
+//       same 1210; a void re-opens GRNI at the lot value; a closed period
+//       refuses such a receipt. (BK2-RV-2's catch-up for pre-hook receipts is
+//       step 0 of the FIFO cut-over now — booksRound5 (2).)
 //   NEEDS 13  bookEarn / bookRedeem: a ledger refusal (here a closed period)
 //       raises ONE posting_failed flag in the owning company; "nothing to
 //       post" outcomes (unknown tx, wrong kind) raise none; another company's
@@ -27,9 +30,10 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { pktToday } from '../src/modules/accounting/dates.js'
-import { receiveGoods, applyReceiptLine } from '../src/modules/procurement/receiving.js'
+import { receiveGoods } from '../src/modules/procurement/receiving.js'
 import { createBill, voidBill } from '../src/modules/procurement/service.js'
-import { applyCarriedBillVarianceTx } from '../src/modules/accounting/supplierPosting.js'
+import { consumeFifoTx } from '../src/lib/stockLedger.js'
+import { ensureFifoCutover } from '../src/modules/inventory/fifoCutover.js'
 import { bookEarn, creditPoints, creditPointsTx, quoteRedemption, claimRedemption } from '../src/modules/loyalty/service.js'
 import { totalsCheck } from '../src/connectors/fiscal/payload.js'
 import type { FiscalPayload } from '../src/connectors/types.js'
@@ -66,9 +70,9 @@ beforeAll(async () => {
   await mkUser('mgrA', 'fnb_manager', tenantA)
 }, 60_000)
 
-// ─── NEEDS 12 — RB-3: receiving applies the carried bill variance itself ─────
+// ─── NEEDS 12 — RB-3 on lots: a bill first, the receipts settle it ──────────
 
-describe('NEEDS 12 — receiveGoods applies a bill\'s carried variance in its own transaction', () => {
+describe('NEEDS 12 — a bill booked before its goods: each receipt settles its share at the billed price', () => {
   let supplierA: string
   beforeAll(async () => {
     supplierA = (await prisma.supplier.create({ data: { name: `IP2 Poultry ${RUN}`, tenantId: tenantA, paymentTermsDays: 10 } })).id
@@ -85,9 +89,12 @@ describe('NEEDS 12 — receiveGoods applies a bill\'s carried variance in its ow
   }
   const receive = (poId: string, poLineId: string, qty: number) =>
     receiveGoods({ actor: { id: users['mgrA']!, role: 'fnb_manager' }, poId, photoUrl: 'https://cdn.example/grn.jpg', lines: [{ poLineId, quantityReceived: qty }] })
-  const appliedRows = (billId: string) => prisma.auditLog.findMany({ where: { entity: 'SupplierBill', entityId: billId, action: 'supplier.bill.variance_applied' }, orderBy: { createdAt: 'asc' } })
+  const net2015 = async (refs: string[]) => {
+    const lines = await prisma.journalLine.findMany({ where: { account: { code: '2015' }, journalEntry: { tenantId: tenantA, reference: { in: refs } } }, select: { type: true, amountCents: true } })
+    return lines.reduce((s, l) => s + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
+  }
 
-  it('bill first, then two partial deliveries: each receipt lands its slice once, in the bill\'s company; a re-run is a no-op', async () => {
+  it('bill first, then two partial deliveries: each receipt lands its share once, in the bill\'s company; 2015 nets to zero', async () => {
     const item = (await prisma.inventoryItem.create({ data: { name: `Beef ${RUN}`, unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 100_000 } })).id
     const { poId, poLineId } = await sentPo(item, 10, 100_000)
     const bill = await createBill({
@@ -96,41 +103,43 @@ describe('NEEDS 12 — receiveGoods applies a bill\'s carried variance in its ow
       createdBy: users['adminA']!,
     })
     const billId = bill.id as string
+    expect(await net2015([`supplier.bill:${billId}`])).toBe(1_100_000)
+    expect(await prisma.grniMatch.findMany({ where: { billId }, select: { status: true, qty: true } })).toEqual([{ status: 'pending', qty: 10 }])
 
     const r1 = await receive(poId, poLineId, 4)
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).unitCostCents).toBe(110_000)
     const r2 = await receive(poId, poLineId, 6)
     expect(await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).toMatchObject({ currentStock: 10, unitCostCents: 110_000 })
 
-    const rows = await appliedRows(billId)
-    expect(rows.map((r) => (r.metadata as { receiptId: string }).receiptId)).toEqual([r1.receipt.id, r2.receipt.id])
-    expect(rows.map((r) => (r.metadata as { qty: number }).qty)).toEqual([4, 6])
-    for (const r of rows) expect(r.tenantId).toBe(tenantA)
-
-    // The old bridge (a manual call after receiving) is now a no-op for the same receipt.
-    const moved = await prisma.$transaction((tx) => applyCarriedBillVarianceTx(tx, { poLineId, quantity: 6, supplierId: supplierA, receiptId: r2.receipt.id }))
-    expect(moved).toBe(0)
-    expect(await appliedRows(billId)).toHaveLength(2)
-    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).unitCostCents).toBe(110_000)
+    const matches = await prisma.grniMatch.findMany({ where: { billId }, orderBy: { qty: 'asc' } })
+    expect(matches.map((m) => [m.status, m.qty, m.receiptLineId])).toEqual([
+      ['live', 4, r1.receipt.lines[0]!.id],
+      ['live', 6, r2.receipt.lines[0]!.id],
+    ])
+    for (const m of matches) expect(m.tenantId).toBe(tenantA)
+    expect(await net2015([`supplier.bill:${billId}`, `procurement.receipt:${r1.receipt.id}`, `procurement.receipt:${r2.receipt.id}`])).toBe(0)
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: item } })
+    expect(lots.map((l) => [l.qtyIn, l.unitCostCents]).sort()).toEqual([[4, 110_000], [6, 110_000]])
   })
 
-  it('a delivery with no bill booked stays at the PO price and writes no applied row', async () => {
+  it('a delivery with no bill booked stays at the PO price and leaves its value in 2015 until billed', async () => {
     const item = (await prisma.inventoryItem.create({ data: { name: `Rice ${RUN}`, unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 30_000 } })).id
     const { poId, poLineId } = await sentPo(item, 5, 30_000)
-    await receive(poId, poLineId, 5)
+    const r = await receive(poId, poLineId, 5)
     expect(await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item } })).toMatchObject({ currentStock: 5, unitCostCents: 30_000 })
-    expect(await prisma.auditLog.count({ where: { action: 'supplier.bill.variance_applied', metadata: { path: ['poLineId'], equals: poLineId } } })).toBe(0)
+    expect(await prisma.grniMatch.count({ where: { poLineId } })).toBe(0)
+    expect(await net2015([`procurement.receipt:${r.receipt.id}`])).toBe(-150_000)
   })
 })
 
-// ─── BK2-RV-1 / RV-2 — carried variance split on receipt; legacy catch-up ───
+// ─── BK2-RV-1 — stock cooked before its delivery was entered ─────────────────
 //
-// Needs the supplierPosting.ts patch (applyCarriedBillVarianceTx split +
-// void true-up + applyMissedCarriedBillVariances). Its own company (C), so the
-// closed period at the end and NEEDS 13's lock on A never meet.
+// Its own company (C), so the closed period at the end and NEEDS 13's lock on
+// A never meet.
 
-describe('BK2-RV-1/2 — a bill booked before its goods: receipt splits the carried variance like posting does', () => {
+describe('BK2-RV-1 — cooked before the delivery was entered: bill first and goods first land in the same place', () => {
   let tenantC: string, supplierC: string, mgrC: string, adminC: string
+  let saleSeq = 0
   beforeAll(async () => {
     tenantC = (await prisma.tenant.create({ data: { name: 'IP2 Books C', slug: `ip2-c-${RUN}` } })).id
     await ensureChartOfAccounts(tenantC)
@@ -139,9 +148,15 @@ describe('BK2-RV-1/2 — a bill booked before its goods: receipt splits the carr
     await mkUser('adminC', 'admin', tenantC)
     mgrC = users['mgrC']!; adminC = users['adminC']!
     supplierC = (await prisma.supplier.create({ data: { name: `IP2 Butcher ${RUN}`, tenantId: tenantC, paymentTermsDays: 10 } })).id
+    await ensureFifoCutover(tenantC)
   })
-  const mkItem = async (name: string, stock: number) =>
-    (await prisma.inventoryItem.create({ data: { name: `${name} ${RUN}`, unit: 'kg', tenantId: tenantC, currentStock: stock, unitCostCents: 100_000 } })).id
+  const mkItem = async (name: string) =>
+    (await prisma.inventoryItem.create({ data: { name: `${name} ${RUN}`, unit: 'kg', tenantId: tenantC, currentStock: 0, unitCostCents: 100_000 } })).id
+  /** Sold with nothing on the books: a clamped sale leaves a shortfall the next receipt settles. */
+  const soldShort = (inventoryItemId: string, qty: number) => prisma.$transaction((tx) => consumeFifoTx(tx, {
+    tenantId: tenantC, inventoryItemId, qty, kind: 'sale', sourceType: 'order_item.sale', sourceId: `ip2-sale-${RUN}-${++saleSeq}`,
+    clamp: true, theoreticalQty: qty, occurredAt: new Date(),
+  }))
   async function sentPo(inventoryItemId: string, qty = 10) {
     const po = await prisma.purchaseOrder.create({
       data: { supplierId: supplierC, status: 'sent', totalCents: qty * 100_000, lines: { create: [{ inventoryItemId, quantityOrdered: qty, unitCostCents: 100_000 }] } },
@@ -158,130 +173,85 @@ describe('BK2-RV-1/2 — a bill booked before its goods: receipt splits the carr
   const receive = (poId: string, poLineId: string, qty: number) =>
     receiveGoods({ actor: { id: mgrC, role: 'fnb_manager' }, poId, photoUrl: 'https://cdn.example/grn.jpg', lines: [{ poLineId, quantityReceived: qty }] })
   const item = (id: string) => prisma.inventoryItem.findUniqueOrThrow({ where: { id }, select: { currentStock: true, unitCostCents: true } })
-  const appliedRows = (billId: string) => prisma.auditLog.findMany({ where: { entity: 'SupplierBill', entityId: billId, action: 'supplier.bill.variance_applied' }, orderBy: { createdAt: 'asc' } })
-  type Applied = { qty: number; targetCents: number; absorbedCents: number; usedCents: number; onHand: number }
-  /** Net debit per account over the given entry references in company C. */
+  /** Net debit per account over every entry of company C that names one of `refs` (prefix match). */
   async function net(refs: string[]) {
     const lines = await prisma.journalLine.findMany({
-      where:   { journalEntry: { tenantId: tenantC, reference: { in: refs } } },
+      where:   { journalEntry: { tenantId: tenantC, OR: refs.map((r) => ({ reference: r })) } },
       select:  { type: true, amountCents: true, account: { select: { code: true } } },
     })
     const out: Record<string, number> = {}
     for (const l of lines) out[l.account.code] = (out[l.account.code] ?? 0) + (l.type === 'debit' ? l.amountCents : -l.amountCents)
     return out
   }
-  const receiptRefs = async (billId: string) => (await appliedRows(billId)).map((r) => `supplier.bill.variance.receipt:${r.id}`)
+  const lotIdsOf = async (receiptId: string) => (await prisma.stockLot.findMany({ where: { receiptLine: { receiptId } }, select: { id: true } })).map((l) => l.id)
 
-  it('stock -9, bill first: 1 kg re-averages to the billed 1,200/kg, 9/10 of the variance goes to 5060 — same as goods first', async () => {
-    // Bill first.
-    const beef = await mkItem('Beef bill-first', -9)
+  it('9 kg sold before the delivery: bill first and goods first both cost the 9 kg at 1,200/kg and keep 1 kg at 1,200 in 1210', async () => {
+    // Bill first: the lot opens at the billed price and settles the 9 kg from it.
+    const beef = await mkItem('Beef bill-first')
+    await soldShort(beef, 9)
     const a = await sentPo(beef)
     const billA = await billAt1200(beef, a.poId, a.poLineId, 'BF9')
-    expect(await net([`supplier.bill:${billA}`])).toMatchObject({ '1210': 1_200_000 })   // whole variance carried
-    await receive(a.poId, a.poLineId, 10)
+    const ra = await receive(a.poId, a.poLineId, 10)
     expect(await item(beef)).toEqual({ currentStock: 1, unitCostCents: 120_000 })
-    const [row] = await appliedRows(billA)
-    expect(row!.tenantId).toBe(tenantC)
-    expect(row!.metadata).toMatchObject({ qty: 10, targetCents: 200_000, absorbedCents: 20_000, usedCents: 180_000, onHand: 1 } satisfies Partial<Applied>)
-    const refs = await receiptRefs(billA)
-    expect(await net(refs)).toEqual({ '5060': 180_000, '1210': -180_000 })
+    const refsA = [`supplier.bill:${billA}`, `procurement.receipt:${ra.receipt.id}`, ...(await lotIdsOf(ra.receipt.id)).map((id) => `inventory.shortfall_settle:${id}`)]
+    const na = await net(refsA)
+    expect(na['2015'] ?? 0).toBe(0)
+    expect(na['1210']).toBe(120_000)
+    expect((na['5010'] ?? 0) + (na['5060'] ?? 0)).toBe(1_080_000)
 
-    // Goods first, same figures.
-    const beef2 = await mkItem('Beef goods-first', -9)
+    // Goods first: the lot opens at the PO price; the bill re-prices the 1 kg
+    // still on hand and sends the 9 kg's difference to 5060.
+    const beef2 = await mkItem('Beef goods-first')
+    await soldShort(beef2, 9)
     const b = await sentPo(beef2)
-    await receive(b.poId, b.poLineId, 10)
+    const rb = await receive(b.poId, b.poLineId, 10)
     const billB = await billAt1200(beef2, b.poId, b.poLineId, 'GF9')
     expect(await item(beef2)).toEqual({ currentStock: 1, unitCostCents: 120_000 })
-    expect(await net([`supplier.bill:${billB}`])).toMatchObject({ '1210': 1_020_000, '5060': 180_000 })
-    // Bill first lands in the same place: 1210 +1,200,000 − 180,000.
-    expect((await net([`supplier.bill:${billA}`, ...refs]))['1210']).toBe(1_020_000)
+    expect(await net([`supplier.bill:${billB}`])).toMatchObject({ '2015': 1_000_000, '1210': 20_000, '5060': 180_000 })
+    const nb = await net([`supplier.bill:${billB}`, `procurement.receipt:${rb.receipt.id}`, ...(await lotIdsOf(rb.receipt.id)).map((id) => `inventory.shortfall_settle:${id}`)])
+    expect(nb['2015'] ?? 0).toBe(0)
+    expect(nb['1210']).toBe(na['1210'])
+    expect((nb['5010'] ?? 0) + (nb['5060'] ?? 0)).toBe(1_080_000)
   })
 
-  it('stock -15, bill first: nothing is on hand after the receipt, so the whole variance goes to 5060; a void gives it back', async () => {
-    const beef = await mkItem('Beef -15', -15)
+  it('15 kg sold, bill first: the whole delivery settles the shortfall; a void re-opens GRNI at the lot value and leaves 1210 alone', async () => {
+    const beef = await mkItem('Beef -15')
+    await soldShort(beef, 15)
     const { poId, poLineId } = await sentPo(beef)
     const billId = await billAt1200(beef, poId, poLineId, 'BF15')
-    await receive(poId, poLineId, 10)
-    expect(await item(beef)).toEqual({ currentStock: -5, unitCostCents: 100_000 })
-    const [row] = await appliedRows(billId)
-    expect(row!.metadata).toMatchObject({ qty: 10, targetCents: 200_000, absorbedCents: 0, usedCents: 200_000 })
-    const refs = await receiptRefs(billId)
-    expect(await net(refs)).toEqual({ '5060': 200_000, '1210': -200_000 })
-    // 1210 now holds the goods at the PO price, nothing more.
-    expect((await net([`supplier.bill:${billId}`, ...refs]))['1210']).toBe(1_000_000)
+    const r = await receive(poId, poLineId, 10)
+    expect(await item(beef)).toEqual({ currentStock: 0, unitCostCents: 120_000 })
 
-    // Void: the reversal takes the whole bill out of 1210; the receipt's 5060
-    // share comes back, so every account the bill touched nets to zero.
     await voidBill(billId, adminC, 'wrong price')
-    const all = await net([`supplier.bill:${billId}`, `supplier.bill.void:${billId}`, `supplier.bill.void.price:${billId}`, ...refs])
+    const all = await net([`supplier.bill:${billId}`, `supplier.bill.void:${billId}`, `supplier.bill.void.price:${billId}`])
     expect(all['1210'] ?? 0).toBe(0)
     expect(all['5060'] ?? 0).toBe(0)
-    expect(await item(beef)).toEqual({ currentStock: -5, unitCostCents: 100_000 })
+    expect(all['2010'] ?? 0).toBe(0)
+    // The received 10 kg wait for a bill again, at what the receipt booked.
+    expect((await net([`procurement.receipt:${r.receipt.id}`, `supplier.bill:${billId}`, `supplier.bill.void:${billId}`]))['2015']).toBe(-1_200_000)
+    expect((await prisma.goodsReceiptLine.findFirstOrThrow({ where: { receiptId: r.receipt.id } })).billedQty).toBe(0)
   })
 
-  it('stock at or above zero is unchanged: the whole slice re-averages and nothing posts to 5060', async () => {
-    const beef = await mkItem('Beef zero', 0)
+  it('nothing sold before: the whole delivery sits at the billed price and nothing posts to 5060', async () => {
+    const beef = await mkItem('Beef zero')
     const { poId, poLineId } = await sentPo(beef)
     const billId = await billAt1200(beef, poId, poLineId, 'BF0')
-    await receive(poId, poLineId, 10)
+    const r = await receive(poId, poLineId, 10)
     expect(await item(beef)).toEqual({ currentStock: 10, unitCostCents: 120_000 })
-    expect((await appliedRows(billId))[0]!.metadata).toMatchObject({ absorbedCents: 200_000, usedCents: 0 })
-    expect(await prisma.journalEntry.count({ where: { tenantId: tenantC, reference: { in: await receiptRefs(billId) } } })).toBe(0)
+    const n = await net([`supplier.bill:${billId}`, `procurement.receipt:${r.receipt.id}`])
+    expect(n).toMatchObject({ '2015': 0, '1210': 1_200_000 })
+    expect(n['5060'] ?? 0).toBe(0)
   })
 
-  it('RV-2 catch-up: receipts from before the hook get their missing slice once — on hand re-averages, sold goes to 5060', async () => {
-    const { applyMissedCarriedBillVariances } = await import('../src/modules/accounting/supplierPosting.js')
-    // A receipt the way it was before receiving applied the variance itself.
-    const oldReceipt = (inventoryItemId: string, poId: string, poLineId: string, qty: number) => prisma.$transaction(async (tx) => {
-      await tx.goodsReceipt.create({
-        data: { poId, supplierId: supplierC, receivedById: mgrC, status: 'accepted', lines: { create: [{ inventoryItemId, description: 'beef', receivedQty: qty, poUnitCostCents: 100_000, unit: 'kg' }] } },
-      })
-      await applyReceiptLine(tx, { inventoryItemId, quantity: qty, unitCostCents: 100_000, supplierId: supplierC, poLineId, source: 'po_receive' })
-      await tx.purchaseOrderLine.update({ where: { id: poLineId }, data: { quantityReceived: { increment: qty } } })
-    })
-
-    // (a) 4 kg received before the release, 6 kg after (which applied 6/10).
-    const partial = await mkItem('Beef partial', 0)
-    const p = await sentPo(partial)
-    const billP = await billAt1200(partial, p.poId, p.poLineId, 'CU-P')
-    await oldReceipt(partial, p.poId, p.poLineId, 4)
-    await receive(p.poId, p.poLineId, 6)
-    expect(await item(partial)).toEqual({ currentStock: 10, unitCostCents: 112_000 })   // 120,000 of 200,000 spread over 10 kg
-
-    // (b) all 10 kg received before the release and since sold.
-    const sold = await mkItem('Beef sold', 0)
-    const s = await sentPo(sold)
-    const billS = await billAt1200(sold, s.poId, s.poLineId, 'CU-S')
-    await oldReceipt(sold, s.poId, s.poLineId, 10)
-    await prisma.inventoryItem.update({ where: { id: sold }, data: { currentStock: 0 } })
-
-    const dry = await applyMissedCarriedBillVariances({ tenantIds: [tenantC], dryRun: true })
-    const byLine = (rows: typeof dry.rows, id: string) => rows.find((r) => r.poLineId === id)
-    expect(byLine(dry.rows, p.poLineId)).toMatchObject({ tenantId: tenantC, quantity: 4, onHandQty: 4, movedCents: null })
-    expect(byLine(dry.rows, s.poLineId)).toMatchObject({ tenantId: tenantC, quantity: 10, onHandQty: 0, movedCents: null })
-    expect(await item(partial)).toEqual({ currentStock: 10, unitCostCents: 112_000 })   // dry run moved nothing
-
-    const run = await applyMissedCarriedBillVariances({ tenantIds: [tenantC], dryRun: false })
-    expect(byLine(run.rows, p.poLineId)).toMatchObject({ quantity: 4, movedCents: 80_000 })
-    expect(await item(partial)).toEqual({ currentStock: 10, unitCostCents: 120_000 })
-    expect(byLine(run.rows, s.poLineId)).toMatchObject({ quantity: 10, movedCents: 0 })
-    expect(await item(sold)).toEqual({ currentStock: 0, unitCostCents: 100_000 })
-    expect(await net(await receiptRefs(billS))).toEqual({ '5060': 200_000, '1210': -200_000 })
-    expect((await appliedRows(billP)).map((r) => (r.metadata as { qty: number }).qty)).toEqual([6, 4])
-
-    // Idempotent, and another company's run never touches C's bills.
-    expect((await applyMissedCarriedBillVariances({ tenantIds: [tenantC], dryRun: false })).rows).toHaveLength(0)
-    expect((await applyMissedCarriedBillVariances({ tenantIds: [tenantB], dryRun: false })).rows).toHaveLength(0)
-  })
-
-  it('a closed period refuses the receipt that would post to 5060, and nothing moves', async () => {
-    const beef = await mkItem('Beef locked', -15)
+  it('a closed period refuses the receipt (it books on arrival), and nothing moves', async () => {
+    const beef = await mkItem('Beef locked')
     const { poId, poLineId } = await sentPo(beef)
     await billAt1200(beef, poId, poLineId, 'LOCK')
     await prisma.periodLock.create({ data: { tenantId: tenantC, lockedThrough: pktToday().to, lockedBy: adminC, note: 'ip2 C lock' } })
     await expect(receive(poId, poLineId, 10)).rejects.toMatchObject({ code: 'PERIOD_LOCKED' })
-    expect(await item(beef)).toEqual({ currentStock: -15, unitCostCents: 100_000 })
+    expect(await item(beef)).toEqual({ currentStock: 0, unitCostCents: 100_000 })
     expect((await prisma.purchaseOrderLine.findUniqueOrThrow({ where: { id: poLineId } })).quantityReceived).toBe(0)
+    expect(await prisma.stockLot.count({ where: { inventoryItemId: beef } })).toBe(0)
   })
 })
 

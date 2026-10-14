@@ -19,6 +19,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError, NotFoundError } from '../src/lib/errors.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 import { recomputeCustomerRollups } from '../src/lib/customerRollups.js'
 import {
   updateOrderStatus, cancelOrder, deductInventoryForOrder, isNoInvoiceToCredit,
@@ -62,7 +63,13 @@ beforeAll(async () => {
   const cat = (await prisma.category.create({ data: { conceptId: conceptA, name: 'Bakes' } })).id
   croissantId = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat, name: 'Butter Croissant', priceCents: 60_000 } })).id
   muffinId = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat, name: 'Muffin', priceCents: 40_000 } })).id
-  const frozen = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Croissant (frozen)', unit: 'pcs', currentStock: 3 } })).id
+  // Company A's stock is on FIFO lots (finance wave B): cut over, 3 frozen croissants in a lot.
+  await prisma.setting.create({ data: { key: fifoCutoverKey(tenantA), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+  const frozen = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Croissant (frozen)', unit: 'pcs' } })).id
+  await prisma.$transaction((tx) => addLotTx(tx, {
+    tenantId: tenantA, inventoryItemId: frozen, qty: 3, unitCostCents: 15_000, kind: 'count_gain', lotSourceType: 'count_gain',
+    lotSourceId: 'after-frozen-1', movementSourceType: 'test', movementSourceId: 'after-frozen-1', receivedAt: new Date(Date.now() - 86_400_000),
+  }))
   butterId = frozen
   await prisma.recipe.create({
     data: { kind: 'plate', menuItemId: croissantId, servings: 1, ingredients: { create: [{ inventoryItemId: frozen, quantity: 1, yieldPct: 1, unit: 'pcs' }] } },
@@ -157,6 +164,10 @@ describe('BOH-15 — auto-86\'d dishes back in stock', () => {
       },
     })
     await deductInventoryForOrder(order.id)
+    // The three croissants came off the lot, as the order's own sale rows.
+    const sale = await prisma.stockMovement.findMany({ where: { orderId: order.id, kind: 'sale' } })
+    expect(sale.reduce((s, m) => s - m.qty, 0)).toBeCloseTo(3, 6)
+    expect(sale.every((m) => m.tenantId === tenantA)).toBe(true)
     const off = await prisma.menuItem.findUniqueOrThrow({ where: { id: croissantId } })
     expect(off.isAvailable).toBe(false)
     const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'menu.auto_86', entityId: croissantId } })
@@ -171,7 +182,10 @@ describe('BOH-15 — auto-86\'d dishes back in stock', () => {
     expect(list.items).toEqual([])
 
     // The delivery comes in.
-    await prisma.inventoryItem.update({ where: { id: butterId }, data: { currentStock: 40 } })
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: tenantA, inventoryItemId: butterId, qty: 40, unitCostCents: 15_000, kind: 'count_gain', lotSourceType: 'count_gain',
+      lotSourceId: 'after-frozen-2', movementSourceType: 'test', movementSourceId: 'after-frozen-2', receivedAt: new Date(),
+    }))
     list = (await get('/kds/auto-86/back-in-stock', tokenA)).json() as { items: Array<{ menuItemId: string; name: string }> }
     expect(list.items.map((i) => i.menuItemId)).toEqual([croissantId])
     // Still off: suggesting is not switching back on.

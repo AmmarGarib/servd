@@ -20,7 +20,8 @@
 // refundShareOf, shiftPosting.ts for the till):
 //
 //   net = order value (charged + wallet credit + gift card)
-//         − GST − tips (a liability to staff, never revenue)
+//         − GST (food GST and the delivery fee's GST) − tips (a liability to
+//           staff, never revenue)
 //         − till comps (7030)
 //         + discount funded by loyalty points (7020, paid from the 2060 liability)
 //         − refunds, less the GST and tip share of each refund — tender
@@ -38,7 +39,12 @@
 // does the same: no add-back, refunds valued without the card, and the card
 // restore (which books nothing) is not a refund (R6-A).
 //
-// i.e. revenue (4xxx incl. 4100 service charge) − contra revenue (7xxx), the
+// The delivery fee ex-tax (Order.deliveryFeeCents, H9) is revenue too — 4110
+// Delivery Fee Income — so it stays in `net`; `deliveryFees` reports it apart
+// (net of each refund's fee share, the same refundShareOf split the ledger's
+// Dr 4110 uses).
+//
+// i.e. revenue (4xxx incl. 4100 service charge, 4110 delivery fees) − contra revenue (7xxx), the
 // figure /accounting/pl-ledger shows. What it can't see: postings that are not
 // sales (manual journals, allocations), and timing — a till sale reaches the
 // ledger when its drawer is closed, here when the order completed.
@@ -159,6 +165,12 @@ export interface SalesTotals {
   tax: number
   /** Tips (owed to staff — not revenue), less refunded tip shares. */
   tips: number
+  /**
+   * Delivery fees ex-tax (4110 Delivery Fee Income, H9), less the fee share of
+   * refunds in the period. Informational: already inside gross and net (it is
+   * revenue); its GST is inside `tax`. 0 for till sales and legacy deliveries.
+   */
+  deliveryFees: number
   /** Value comped at the till (7030). */
   comps: number
   /** Discount paid for with loyalty points (credited back to 7020 from the points liability). */
@@ -169,7 +181,7 @@ export interface SalesTotals {
   net: number
 }
 
-const emptyTotals = (): SalesTotals => ({ orders: 0, gross: 0, discount: 0, tax: 0, tips: 0, comps: 0, loyaltyRedeemed: 0, refunds: 0, net: 0 })
+const emptyTotals = (): SalesTotals => ({ orders: 0, gross: 0, discount: 0, tax: 0, tips: 0, deliveryFees: 0, comps: 0, loyaltyRedeemed: 0, refunds: 0, net: 0 })
 
 function finish(t: SalesTotals): SalesTotals {
   t.net = t.gross - t.refunds - t.tax - t.tips - t.comps + t.loyaltyRedeemed
@@ -220,7 +232,7 @@ function keyAt(by: BucketBy, at: Date, source: string): string {
 
 const SALE_FIELDS = {
   totalCents: true, walletAmountCents: true, taxCents: true, tipCents: true,
-  discountCents: true, promoDiscountCents: true, serviceChargeCents: true,
+  discountCents: true, promoDiscountCents: true, serviceChargeCents: true, deliveryFeeCents: true,
 } as const
 
 /**
@@ -245,6 +257,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     t.gross    += (s.totalCents ?? 0) + (s.walletAmountCents ?? 0)
     t.tax      += s.taxCents ?? 0
     t.tips     += s.tipCents ?? 0
+    t.deliveryFees += s.deliveryFeeCents ?? 0
     t.discount += (s.discountCents ?? 0) + (s.promoDiscountCents ?? 0)
   }
 
@@ -326,6 +339,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     t.refunds += amount
     t.tax     -= share.taxCents
     t.tips    -= share.tipCents
+    t.deliveryFees -= share.deliveryFeeCents
   }
   for (const p of refunds) {
     // "Before this one" exactly as postRefundPayment orders them.

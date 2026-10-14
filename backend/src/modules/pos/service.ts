@@ -17,8 +17,9 @@ import {
 } from '../accounting/orderPosting.js'
 import { postJournalEntry, ACCT, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
 import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
-import { cogsForSoldLines, consumptionForSoldLines } from '../../lib/recipeCost.js'
-import { wasteVoidedFiredLineTx } from '../inventory/voidWaste.js'
+import { wasteSoldLineTx } from '../inventory/voidWaste.js'
+import { ensureOrderDepleted, returnVoidedLineStockTx } from '../orders/stock.js'
+import { orderStockCostCents } from '../accounting/cogs.js'
 import { MANAGERS } from '../auth/middleware.js'
 import type { OrderDTO } from '@servd/types'
 import type { Order, Payment, PaymentGateway, PaymentMethod, Prisma, TerminalChargeStatus } from '@prisma/client'
@@ -1923,80 +1924,8 @@ async function lowerBillForVoidTx(tx: Tx, orderId: string, bill: VoidBill, remov
   return portions.length > 0
 }
 
-const STOCK_DEPLETE = 'stock.sale_deplete'
-const STOCK_RESTORE = 'stock.sale_restore'
-const STOCK_VOID_RESTORE = 'stock.void_restore'
 /** Lines the kitchen has not started: voiding them gives their stock back. */
 const UNFIRED = ['pending', 'held'] as const
-
-/**
- * BOH-11: give back the stock a voided, not-yet-cooked line took at ring-up,
- * inside the void's transaction (the order row is locked, as the depletion
- * and the cancel restore lock it — orders/service lockOrderForStock).
- *
- *   - Only what the order's depletion actually took (its `taken`, clamped at
- *     zero stock) and only once: the void claims the line first.
- *   - The depletion row's `taken` is kept NET of void restores (the original
- *     figures stay under `takenAtSale`), so cancelling the order later gives
- *     back only what is still out — restoreInventoryForOrder reads `taken`.
- *   - Not depleted yet (the fire-and-forget deduction has not run): nothing to
- *     give back — the line is voided now, so the deduction skips it.
- *   - A line the kitchen already started stays consumed: the food was made.
- *     It is booked as waste instead (BOH-R2-03, inventory/voidWaste.ts).
- */
-async function restoreVoidedLineStockTx(
-  tx: Tx,
-  orderId: string,
-  tenantId: string | null,
-  line: { id: string; menuItemId: string | null; quantity: number },
-  unfired: boolean,
-): Promise<{ restored: Record<string, number>; skipped: 'cooked' | 'not_depleted' | 'no_recipe' | null }> {
-  if (!unfired) return { restored: {}, skipped: 'cooked' }
-  const [depleted, restoredAll] = await Promise.all([
-    tx.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action: STOCK_DEPLETE }, select: { id: true, metadata: true } }),
-    tx.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action: STOCK_RESTORE }, select: { id: true } }),
-  ])
-  if (!depleted || restoredAll) return { restored: {}, skipped: 'not_depleted' }
-
-  const need = await consumptionForSoldLines([{ menuItemId: line.menuItemId, quantity: line.quantity, status: 'pending' }], tx)
-  if (need.size === 0) return { restored: {}, skipped: 'no_recipe' }
-  const meta = (depleted.metadata ?? {}) as { taken?: Record<string, number>; takenAtSale?: Record<string, number>; voidRestored?: Record<string, Record<string, number>> } & Record<string, unknown>
-  const taken = { ...(meta.taken ?? {}) }
-  const give: Record<string, number> = {}
-  for (const [id, qty] of need) {
-    const out = taken[id] ?? 0
-    const back = Math.min(qty, out)
-    if (back > 0) {
-      give[id] = back
-      taken[id] = out - back
-    }
-  }
-  for (const id of Object.keys(give).sort()) {
-    await tx.inventoryItem.updateMany({ where: { id }, data: { currentStock: { increment: give[id]! } } })
-  }
-  await tx.auditLog.update({
-    where: { id: depleted.id },
-    data: {
-      metadata: {
-        ...meta,
-        takenAtSale: meta.takenAtSale ?? meta.taken ?? {},
-        taken,
-        voidRestored: { ...(meta.voidRestored ?? {}), [line.id]: give },
-      } as Prisma.InputJsonValue,
-    },
-  })
-  await tx.auditLog.create({
-    data: {
-      category: 'stock',
-      tenantId,
-      action: STOCK_VOID_RESTORE,
-      entity: 'OrderItem',
-      entityId: line.id,
-      metadata: { orderId, restored: give } as Prisma.InputJsonValue,
-    },
-  })
-  return { restored: give, skipped: null }
-}
 
 export async function voidOrderItem(input: VoidInput) {
   const item = await prisma.orderItem.findUnique({
@@ -2168,18 +2097,23 @@ export async function voidOrderItem(input: VoidInput) {
       bill = { totalCents: order.totalCents, taxCents: order.taxCents, serviceChargeCents: order.serviceChargeCents, discountCents: order.discountCents }
     }
 
-    const stock = await restoreVoidedLineStockTx(tx, input.orderId, tenantId, item, unfired.count === 1)
-    // BOH-R2-03: a line the kitchen already fired keeps its stock out — and
-    // that stock is booked as waste (WasteLog + Dr 5040 / Cr 1210 in the
-    // order's company), in this transaction.
-    const waste = unfired.count === 1 ? null : await wasteVoidedFiredLineTx(tx, {
+    // BOH-11: a line the kitchen had not started gives its stock back into
+    // the very lots it came from (orders/stock.ts). BOH-R2-03: a line it
+    // already fired keeps its stock out — relabelled as waste
+    // 'void_after_fire' (WasteLog + Dr 5040 / Cr class inventory in the
+    // order's company), in this transaction (inventory/voidWaste.ts).
+    const stock = unfired.count === 1
+      ? await returnVoidedLineStockTx(tx, { orderId: input.orderId, tenantId, line: { id: item.id, quantity: item.quantity }, actorId: input.actorId })
+      : { valueCents: 0, restored: {} as Record<string, number>, skipped: 'cooked' as const }
+    const waste = unfired.count === 1 ? null : await wasteSoldLineTx(tx, {
       orderId: input.orderId,
       tenantId,
-      conceptId: item.order.conceptId,
-      line: { id: item.id, name: item.name, menuItemId: item.menuItemId, quantity: item.quantity },
+      line: { id: item.id },
+      wasteReason: 'void_after_fire',
       actorId: input.actorId,
+      conceptId: item.order.conceptId,
       approverId,
-      reason: input.reason,
+      note: input.reason,
     })
     const voided = await tx.orderItem.findUniqueOrThrow({ where: { id: input.orderItemId } })
     return { voided, bill: { ...bill, removedCents: delta.removedCents, splitCleared }, stock, refund, waste }
@@ -2205,6 +2139,13 @@ export async function voidOrderItem(input: VoidInput) {
       amountCents: waste.costCents,
       metadata: { orderId: input.orderId, wasteLogIds: waste.wasteLogIds, line: `${item.quantity} × ${item.name}`, code: waste.postingError.code },
     })
+  }
+  // An unfired line given back on a ticket whose cost a drawer close already
+  // booked moves cost of sales back to inventory (orders/stock.ts); a refused
+  // entry is flagged so Backfill unposted re-posts the same key.
+  if ('cogsFixFailure' in stock && stock.cogsFixFailure) {
+    const { flagOrderCogsFixFailures } = await import('../orders/stock.js')
+    await flagOrderCogsFixFailures([stock.cogsFixFailure], input.actorId)
   }
 
   // The kitchen screens drop the line live — this is the only void path now
@@ -2421,7 +2362,10 @@ export async function compOrder(input: CompInput) {
   // costed at the plate cost the shift close books as COGS.
   let staffMealId: string | null = null
   if (input.staffMeal && tenantId) {
-    const costCents = await cogsForSoldLines(order.items)
+    // At the real value of the lots the meal relieved (FIFO), as the shift
+    // close books it — its stock is made sure to be out first.
+    await ensureOrderDepleted(order.id)
+    const costCents = await orderStockCostCents(order.id)
     const summary = order.items.filter((i) => i.status !== 'voided').map((i) => `${i.quantity}× ${i.name}`).join(', ')
     const meal = await prisma.staffMeal.create({
       data: {
@@ -2967,9 +2911,12 @@ function assertRefundDue(state: ReturnType<typeof refundDueOf>, amountCents: num
 // — and credits the drawer, card or bank it leaves by. Together they
 // net revenue, tax, wallet, gift card, comps, 1110 and 1010 to zero for the
 // ticket once all of it is handed back, in any order of close, void, cancel
-// and hand-back. (COGS a close booked stays booked — the food was made, as on
-// any refund.) The simple case — every receipt on a drawer that closes after
-// the cancel — is exactly LEDGER-R5's Dr 1110 / Cr drawer, and no unwind.
+// and hand-back. (The unwind never touches cost of sales: the cancel's stock
+// step does — orders/stock.ts restoreInventoryForOrder moves what a pre-cancel
+// close booked back out of COGS as it returns unfired lines to their lots
+// (Dr 12x0 / Cr 50x0) and wastes fired ones (Dr 5040 / Cr 50x0).) The simple
+// case — every receipt on a drawer that closes after the cancel — is exactly
+// LEDGER-R5's Dr 1110 / Cr drawer, and no unwind.
 
 export const CANCEL_UNWIND_SOURCE = 'order.cancel_unwind'
 
@@ -3021,7 +2968,7 @@ const addParked = (m: Parked, code: string, cents: number): void => { m.set(code
 const CANCELLED_BOOKS_SELECT = {
   id: true, status: true, source: true, conceptId: true,
   totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
-  promoDiscountCents: true, serviceChargeCents: true, tipCents: true,
+  promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
   concept: { select: { id: true, slug: true, province: true, srbPosId: true, tenantId: true } },
   payments: {
     select: {

@@ -1,24 +1,27 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { postJournalEntry, reverseJournalEntry } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate, pktToday } from './dates.js'
 import { trialBalance, balanceSheet, profitAndLoss, pnlByConcept, cashFlow } from './reports.js'
-import { salesTaxReturn, taxPaymentsFor } from './salesTaxReturn.js'
+import { closeChecklist, isOverridableKey } from './closeChecks.js'
+import type { CloseProblem } from './closeCheckTypes.js'
+import { fiscalYearsFor, fiscalYearOf, fiscalYearEndMonthOf, closedAcrossYearEnd } from './fiscalYear.js'
+import { chargeForClose } from '../fixedAssets/closeCheck.js'
+import { salesTaxReturn, taxPaymentsFor, SUPPLY_LABEL } from './salesTaxReturn.js'
 import {
-  TAX_PAYMENT_AUTHORITIES, TAX_PAYMENT_METHODS, monthPeriod,
+  TAX_PAYMENT_AUTHORITIES, TAX_PAYMENT_METHODS, TAX_PAYER_ROLES, monthPeriod,
   recordTaxPayment, linkTaxPayment, linkCandidates, voidTaxPayment, postTaxReclass,
 } from './taxPayments.js'
-import type { UserRole } from '@prisma/client'
+import type { Prisma, UserRole } from '@prisma/client'
 import { resolveTenantScope, scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
-import { raastOpenThrough } from '../reconciliation/raast.js'
 
 const journalEntrySchema = z.object({
   reference: z.string().optional(),
@@ -36,6 +39,11 @@ const journalEntrySchema = z.object({
       conceptId: z.string().uuid().nullable().optional(),
     }),
   ).min(2),
+  // A line on a fixed-asset register account (1500–1599, 2012) needs the
+  // CEO's reason; the entry is then audited and flagged
+  // fixed_asset_gl_mismatch so the register tie-out explains it. The reason's
+  // length is checked by the posting engine (422 REGISTER_CONTROLLED_ACCOUNT).
+  registerOverride: z.object({ reason: z.string().trim().max(500) }).optional(),
 })
 
 // Manual journal entries carry `manual:<uuid>`; their reversal (posted by
@@ -44,9 +52,9 @@ const MANUAL_PREFIX = 'manual:'
 const MANUAL_REVERSAL_PREFIX = 'manual.reversal:'
 
 // Who records tax paid to the authorities, links entries and posts the
-// 2030 reclass: finance and the CEO (finance gap 6). Inside the /accounting
-// module gate like every route here.
-const TAX_PAYERS = ['admin', 'finance'] as UserRole[]
+// 2030 reclass: finance and the CEO (finance gap 6) — taxPayments.ts holds
+// the one list. Inside the /accounting module gate like every route here.
+const TAX_PAYERS = [...TAX_PAYER_ROLES] as UserRole[]
 
 const reverseSchema = z.object({
   reason: z.string().trim().min(5).max(500),
@@ -199,7 +207,9 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     }
 
     const reference = body.reference?.trim() || null
+    const registerReason = body.registerOverride?.reason?.trim() || null
     const posted = await postJournalEntry({
+      ...(registerReason ? { controlledOverride: { reason: registerReason } } : {}),
       tenantId,
       sourceType: 'manual',
       sourceId: randomUUID(),
@@ -230,6 +240,37 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       after: entry,
       metadata: { ip: req.ip, debits, credits, reference },
     })
+    // A register account posted to by hand (the engine let it through only
+    // with the reason): on the trail and in the inbox, so the register's
+    // tie-out explains the difference.
+    const registerLines = entry.lines.filter((l) => l.account.controlledBy === 'fixed_asset')
+    if (registerReason && registerLines.length > 0) {
+      const codes = Array.from(new Set(registerLines.map((l) => l.account.code))).sort()
+      const registerCents = registerLines.reduce((s, l) => s + toCents(l.amountCents), 0)
+      await audit({ category: 'accounting',
+        action: 'journal.register_override',
+        entity: 'JournalEntry',
+        entityId: entry.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        after: { codes, amountCents: registerCents },
+        metadata: { ip: req.ip, reason: registerReason, reference },
+      })
+      const { flagException } = await import('../../lib/exceptions.js')
+      await flagException({
+        tenantId,
+        kind: 'fixed_asset_gl_mismatch',
+        severity: 'high',
+        title: `Fixed-asset account${codes.length === 1 ? '' : 's'} ${codes.join(', ')} posted to by hand`,
+        description: `${req.staffUser!.email} posted a manual journal to the fixed-asset register's account${codes.length === 1 ? '' : 's'} (${codes.join(', ')}) for PKR ${(registerCents / 100).toFixed(0)}. `
+          + `Reason: ${registerReason}. The register no longer ties to the ledger by this amount until it is matched by a register event or reversed.`,
+        entityType: 'JournalEntry',
+        entityId: entry.id,
+        actorId: req.staffUser!.id,
+        amountCents: registerCents,
+        metadata: { codes, reason: registerReason, reference },
+      })
+    }
 
     // Every manual JE is a high-trust action. The system fires a flag for
     // owner review — not because it's wrong, but because every single one
@@ -273,7 +314,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
     const original = await prisma.journalEntry.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      include: { lines: { include: { account: { select: { code: true, name: true, isActive: true } } } } },
+      include: { lines: { include: { account: { select: { code: true, name: true, isActive: true, controlledBy: true } } } } },
     })
     if (!original || !original.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
     const tenantId = original.tenantId
@@ -302,6 +343,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     }
     const sourceId = original.reference.slice(MANUAL_PREFIX.length)
     const reversalRef = `${MANUAL_REVERSAL_PREFIX}${sourceId}`
+    // A manual entry the CEO posted to the fixed-asset register's accounts
+    // (registerOverride) is undone the same way: its reversal touches those
+    // accounts too, so it carries the reason as its override (the journal's
+    // controlled-account rule — a reason too short is refused there, 422).
+    const registerLines = original.lines.filter((l) => l.account.controlledBy === 'fixed_asset')
 
     const result = await prisma.$transaction(async (tx) => {
       // One reversal per entry, even under a double click.
@@ -314,6 +360,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         tx,
         postedBy: req.staffUser!.id,
         entryDate: body.entryDate ? new Date(body.entryDate) : new Date(),
+        ...(registerLines.length > 0 ? { controlledOverride: { reason: body.reason } } : {}),
       })
     })
     if (!result.posted) {
@@ -337,6 +384,25 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       after: reversal,
       metadata: { ip: req.ip, reason: body.reason, reversedEntryId: original.id, amountCents },
     })
+    if (registerLines.length > 0) {
+      const codes = Array.from(new Set(registerLines.map((l) => l.account.code))).sort()
+      const registerCents = registerLines.reduce((t, l) => t + toCents(l.amountCents), 0)
+      await audit({ category: 'accounting',
+        action: 'journal.register_override',
+        entity: 'JournalEntry',
+        entityId: reversal.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        after: { codes, amountCents: registerCents, reverses: original.id },
+        metadata: { ip: req.ip, reason: body.reason },
+      })
+      // The hand entry the register did not know about is gone: its open
+      // fixed_asset_gl_mismatch flag is closed by the reversal.
+      await prisma.exceptionFlag.updateMany({
+        where: { tenantId, kind: 'fixed_asset_gl_mismatch', entityType: 'JournalEntry', entityId: original.id, status: { in: ['open', 'acknowledged'] } },
+        data: { status: 'resolved', resolvedAt: new Date(), resolution: `Reversed by entry ${reversal.id.slice(0, 8)}: ${body.reason}`.slice(0, 500) },
+      })
+    }
     const { flagException } = await import('../../lib/exceptions.js')
     await flagException({
       tenantId,
@@ -359,12 +425,17 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // ─── Trial balance ───────────────────────────────────────────────────────
 
-  fastify.get<{ Querystring: { asOf?: string; format?: string } }>(
+  // ?basis=inception (default — every account since the first entry) or
+  // ?basis=year (P&L accounts from each company's fiscal-year start plus one
+  // computed 'Retained earnings b/f' row per company; still balances). The
+  // admin page asks for 'year'.
+  fastify.get<{ Querystring: { asOf?: string; format?: string; basis?: string } }>(
     '/trial-balance',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : new Date()
-      const report = await trialBalance((await resolveTenantScope(req)).tenantIds, asOf)
+      const basis = z.enum(['inception', 'year']).default('inception').parse(req.query.basis || undefined)
+      const report = await trialBalance((await resolveTenantScope(req)).tenantIds, asOf, { basis })
 
       if (req.query.format === 'csv') {
         // "All companies": every row names its company, and each company's
@@ -372,7 +443,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const multi = report.companies.length > 1
         const rows: Array<Record<string, string | number>> = report.rows.map((r) => ({
           ...(multi && { company: r.companyName ?? '' }),
-          code: r.code, account: r.name, type: r.type,
+          code: r.code, account: r.virtual ? `${r.name} (computed)` : r.name, type: r.type,
           debit: fmtPkr(r.debitCents), credit: fmtPkr(r.creditCents),
         }))
         rows.push({
@@ -385,7 +456,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             rows.push({ company: c.name, code: '', account: 'COMPANY TOTAL', type: '', debit: fmtPkr(c.debitCents), credit: fmtPkr(c.creditCents) })
           }
         }
-        return sendCsv(reply, `trial-balance-${report.asOf}.csv`, toCsv(rows))
+        return sendCsv(reply, `trial-balance-${report.basis === 'year' ? 'year-' : ''}${report.asOf}.csv`, toCsv(rows))
       }
       return report
     },
@@ -410,8 +481,17 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const l of report.liabilities) flat.push({ section: 'Liabilities', ...co(l.companyName), code: l.code, name: l.name, balance: fmtPkr(l.balanceCents) })
         flat.push({ section: 'Liabilities', ...co(''), code: '', name: 'TOTAL LIABILITIES', balance: fmtPkr(report.totals.liabilitiesCents) })
         for (const e of report.equity)      flat.push({ section: 'Equity',      ...co(e.companyName), code: e.code, name: e.name, balance: fmtPkr(e.balanceCents) })
-        flat.push({ section: 'Equity',      ...co(''), code: '', name: 'Current Period Earnings', balance: fmtPkr(report.totals.currentEarningsCents) })
+        // Virtual roll-forward (H29): each company's own fiscal year.
+        for (const e of report.earningsByCompany) {
+          flat.push({ section: 'Equity', ...co(e.companyName), code: '', name: `Retained earnings b/f (before ${e.fiscalYear.start})`, balance: fmtPkr(e.retainedEarningsBroughtForwardCents) })
+          flat.push({ section: 'Equity', ...co(e.companyName), code: '', name: `Profit for the year to date (${e.fiscalYear.label})`, balance: fmtPkr(e.currentYearEarningsCents) })
+        }
+        const unowned = report.totals.currentYearEarningsCents - report.earningsByCompany.reduce((s, e) => s + e.currentYearEarningsCents, 0)
+        if (unowned !== 0) flat.push({ section: 'Equity', ...co(''), code: '', name: 'Profit on accounts with no company', balance: fmtPkr(unowned) })
         flat.push({ section: 'Equity',      ...co(''), code: '', name: 'TOTAL EQUITY', balance: fmtPkr(report.totals.equityCents + report.totals.currentEarningsCents) })
+        for (const p of report.ppe) {
+          flat.push({ section: 'Fixed assets by class', ...co(p.companyName), code: [p.costCode, p.accumCode].filter(Boolean).join(' / '), name: `${p.label}: cost ${fmtPkr(p.costCents)}, accumulated ${fmtPkr(p.accumulatedCents)}`, balance: fmtPkr(p.netCents) })
+        }
         return sendCsv(reply, `balance-sheet-${report.asOf}.csv`, toCsv(flat))
       }
       return report
@@ -438,6 +518,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         flat.push({ section: 'Margin', code: '', name: 'GROSS MARGIN %', amount: report.totals.grossMarginPct })
         for (const r of report.opex)          flat.push({ section: 'OpEx', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
         flat.push({ section: 'OpEx', code: '', name: 'TOTAL OPEX', amount: fmtPkr(report.totals.opexCents) })
+        if (report.totals.depreciationCents !== 0) flat.push({ section: 'OpEx', code: '', name: 'of which depreciation', amount: fmtPkr(report.totals.depreciationCents) })
+        if (report.totals.impairmentCents !== 0)   flat.push({ section: 'OpEx', code: '', name: 'of which impairment',   amount: fmtPkr(report.totals.impairmentCents) })
+        flat.push({ section: 'Result', code: '', name: 'OPERATING PROFIT', amount: fmtPkr(report.totals.operatingProfitCents) })
+        for (const r of report.otherIncome)   flat.push({ section: 'Other income', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
+        flat.push({ section: 'Other income', code: '', name: 'TOTAL OTHER INCOME', amount: fmtPkr(report.totals.otherIncomeCents) })
         flat.push({ section: 'Result', code: '', name: 'NET PROFIT', amount: fmtPkr(report.totals.netProfitCents) })
         return sendCsv(reply, `pl-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
       }
@@ -467,7 +552,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const row = (b: (typeof buckets)[number]) => {
         const netRevenueCents  = b.revenueCents - b.contraRevenueCents
         const grossProfitCents = netRevenueCents - b.cogsCents
-        const netProfitCents   = grossProfitCents - b.opexCents
+        // 42xx other income is below the operating result — in net profit, never revenue.
+        const netProfitCents   = grossProfitCents - b.opexCents + b.otherIncomeCents
         return {
           conceptId: b.conceptId,
           name: b.conceptId ? (byId.get(b.conceptId)?.name ?? 'Unknown brand') : 'Shared / unallocated',
@@ -478,6 +564,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           cogsCents: b.cogsCents,
           grossProfitCents,
           opexCents: b.opexCents,
+          otherIncomeCents: b.otherIncomeCents,
           netProfitCents,
           grossMarginPct: b.revenueCents > 0 ? Number(((grossProfitCents / b.revenueCents) * 100).toFixed(2)) : 0,
         }
@@ -494,9 +581,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           cogsCents: t.cogsCents + r.cogsCents,
           grossProfitCents: t.grossProfitCents + r.grossProfitCents,
           opexCents: t.opexCents + r.opexCents,
+          otherIncomeCents: t.otherIncomeCents + r.otherIncomeCents,
           netProfitCents: t.netProfitCents + r.netProfitCents,
         }),
-        { revenueCents: 0, contraRevenueCents: 0, netRevenueCents: 0, cogsCents: 0, grossProfitCents: 0, opexCents: 0, netProfitCents: 0 },
+        { revenueCents: 0, contraRevenueCents: 0, netRevenueCents: 0, cogsCents: 0, grossProfitCents: 0, opexCents: 0, otherIncomeCents: 0, netProfitCents: 0 },
       )
       const report = { dateFrom: fmtPktDate(from), dateTo: fmtPktDate(to), brands, shared, totals }
 
@@ -509,6 +597,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           cogs: fmtPkr(r.cogsCents),
           grossProfit: fmtPkr(r.grossProfitCents),
           opex: fmtPkr(r.opexCents),
+          otherIncome: fmtPkr(r.otherIncomeCents),
           netProfit: fmtPkr(r.netProfitCents),
         }))
         return sendCsv(reply, `pl-by-brand-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
@@ -667,6 +756,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         flat.push({ section: 'Sales',      code: '',                          name: 'Total taxable sales', value: fmtPkr(report.taxableSalesCents) })
         for (const c of report.taxableValueByConceptCents) {
           flat.push({ section: 'Sales',    code: c.conceptSlug,                name: c.conceptName,         value: fmtPkr(c.revenueCents) })
+          if (c.deliveryFeeCents) flat.push({ section: 'Sales', code: c.conceptSlug, name: `${c.conceptName} — delivery fees (4110)`, value: fmtPkr(c.deliveryFeeCents) })
         }
         // Per authority (F3 / BOOKS-10): each files its own return — its own
         // output less its own input, never one authority's input against
@@ -676,6 +766,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           flat.push({ section: sec, code: a.output.code, name: `Output tax (${a.output.name})`, value: fmtPkr(a.output.totalCents) })
           flat.push({ section: sec, code: a.input.code,  name: `Input tax (${a.input.name})`,   value: fmtPkr(a.input.totalCents) })
           flat.push({ section: sec, code: '', name: a.netPayableCents >= 0 ? 'Net payable' : 'Excess input carried forward', value: fmtPkr(Math.abs(a.netPayableCents)) })
+          if (a.withheldByCustomersCents) flat.push({ section: sec, code: '1335', name: 'Sales tax withheld by customers (H13)', value: fmtPkr(a.withheldByCustomersCents) })
+          flat.push({ section: sec, code: '', name: a.netAfterWithheldCents >= 0 ? 'Net payable after withheld' : 'Carried forward after withheld', value: fmtPkr(Math.abs(a.netAfterWithheldCents)) })
           if (a.otherOutputCents !== 0) {
             flat.push({ section: sec, code: '', name: 'Output tax not from order sales (manual journals, B2B invoices, older entries)', value: fmtPkr(a.otherOutputCents) })
           }
@@ -684,7 +776,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         // Per rate: the brand's cash (15%) and card (8%) rates, refunds netted.
         for (const r of report.byRate) {
           const rate = r.ratePct == null ? 'rate not stored' : `${r.ratePct}%`
-          const label = `${r.authority} ${r.tender} ${rate}`
+          const label = `${r.authority} ${SUPPLY_LABEL[r.supply]} ${r.tender} ${rate}`
           flat.push({ section: 'By rate', code: r.authority, name: `${label} — orders`,                    value: r.orders })
           flat.push({ section: 'By rate', code: r.authority, name: `${label} — sales value / tax`,         value: `${fmtPkr(r.salesValueCents)} / ${fmtPkr(r.salesTaxCents)}` })
           flat.push({ section: 'By rate', code: r.authority, name: `${label} — refunds value / tax`,       value: `${fmtPkr(r.refundValueCents)} / ${fmtPkr(r.refundTaxCents)}` })
@@ -709,6 +801,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           const sec = `Paid — ${a.authority}`
           flat.push({ section: sec, code: a.output.code, name: 'Paid for this period', value: fmtPkr(a.paidForPeriodCents) })
           if (a.inputSetOffForPeriodCents !== 0) flat.push({ section: sec, code: a.input.code, name: 'Input set off in those payments', value: fmtPkr(a.inputSetOffForPeriodCents) })
+          if (a.customerWithheldSetOffForPeriodCents) flat.push({ section: sec, code: '1335', name: 'Withheld tax set off in those payments', value: fmtPkr(a.customerWithheldSetOffForPeriodCents) })
+          if (a.customerWithheldAvailableCents) flat.push({ section: sec, code: '1335', name: 'Withheld by customers still available', value: fmtPkr(a.customerWithheldAvailableCents) })
           flat.push({ section: sec, code: a.output.code, name: 'Ledger balance at period end', value: fmtPkr(a.ledgerBalanceAtEndCents) })
         }
         for (const w of report.withholding) {
@@ -720,11 +814,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const p of report.payments) {
           flat.push({
             section: 'Payments', code: p.authority.toUpperCase(),
-            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}`,
+            name: `${p.periodFrom} – ${p.periodTo}, paid ${p.paidAt}${p.cprNumber ? `, CPR ${p.cprNumber}` : ''}${p.linked ? ' (linked entry)' : ''}${p.inputSetOffCents ? `, input set off ${fmtPkr(p.inputSetOffCents)}` : ''}${p.customerWithheldSetOffCents ? `, withheld set off ${fmtPkr(p.customerWithheldSetOffCents)}` : ''}`,
             value: fmtPkr(p.paidCents),
           })
         }
-        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (sum of each authority\'s own net)', value: fmtPkr(report.netPayableCents) })
+        flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE (each authority\'s own net after withheld)', value: fmtPkr(report.netPayableCents) })
         flat.push({ section: 'Result',     code: '',                          name: 'EXCESS INPUT CARRIED FORWARD (per authority)',   value: fmtPkr(report.carryForwardCents) })
         for (const n of report.notes) flat.push({ section: 'Notes', code: '', name: n, value: '' })
         return sendCsv(reply, `sales-tax-return-${report.period.from}-${report.period.to}.csv`, toCsv(flat))
@@ -750,7 +844,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   const authority = z.enum(TAX_PAYMENT_AUTHORITIES)
   const optText = (max: number) => z.string().trim().max(max).optional().nullable().transform((v) => v || null)
 
-  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string } }>(
+  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; statutory?: string } }>(
     '/sales-tax-return/payments',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
@@ -758,7 +852,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const { from, to } = req.query.dateFrom || req.query.dateTo
         ? resolveDateRange(req.query.dateFrom, req.query.dateTo)
         : { from: new Date(0), to: new Date(8.64e15) }
-      return { payments: await taxPaymentsFor(tenantId, from, to) }
+      return { payments: await taxPaymentsFor(tenantId, from, to, { statutory: req.query.statutory === '1' }) }
     },
   )
 
@@ -777,6 +871,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       authority,
       paidCents: zMoneyCents('The amount paid'),
       inputSetOffCents: zMoneyCents('The input tax set off').default(0),
+      // H13: sales tax customers withheld (1335) set off against this authority's payment.
+      customerWithheldSetOffCents: zMoneyCents('The withheld tax set off').default(0),
       paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       method: z.enum(TAX_PAYMENT_METHODS).default('bank_transfer'),
       bankAccountId: z.string().trim().min(1).max(64).optional().nullable(),
@@ -792,6 +888,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       periodFrom: p.from, periodTo: p.to,
       paidCents: body.paidCents,
       inputSetOffCents: body.inputSetOffCents,
+      customerWithheldSetOffCents: body.customerWithheldSetOffCents,
       paidAt: body.paidAt,
       method: body.method,
       bankAccountId: body.bankAccountId ?? null,
@@ -905,6 +1002,18 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // close and reopen is on the books' audit trail (category 'accounting').
   // Reopening (owner decision 21) is admin only, removes only the LATEST
   // lock, needs a reason, is audited and raises a high-severity exception.
+  //
+  // Closing runs ONE checklist (closeChecks.ts CLOSE_CHECKS) for the active
+  // company only. A block stops the close (409 CLOSE_NOT_READY) unless the
+  // CEO acknowledges it with a reason (acknowledge {keys, reason ≥ 10}) —
+  // stored on the lock (overrides / overrideReason), audited
+  // 'period.close_override' and flagged 'period_close_override' (high). The
+  // trial balance can never be closed over. Raast alone keeps its old answer
+  // (409 RAAST_UNMATCHED) and its old switch (closeWithUnmatchedRaast, no
+  // reason, audited 'period.close_with_unmatched_raast'), which works ONLY
+  // when Raast is the one block. A close whose range passes the company's
+  // fiscal year end is a year-end close (audited 'period.year_end_close');
+  // the roll-forward is virtual, so nothing is posted.
 
   fastify.get('/period-close/history', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const tenantId = req.staffUser!.tenantId
@@ -913,7 +1022,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       where: { tenantId },
       orderBy: { lockedThrough: 'desc' },
       take: 60,
-      select: { id: true, lockedThrough: true, lockedAt: true, lockedBy: true, note: true },
+      select: { id: true, lockedThrough: true, lockedAt: true, lockedBy: true, note: true, overrides: true, overrideReason: true },
     })
     const users = await prisma.user.findMany({
       where: { id: { in: Array.from(new Set(locks.map((l) => l.lockedBy))) } },
@@ -963,33 +1072,62 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     return { reopened: { lockedThrough: latest.lockedThrough }, lockedThrough: now?.lockedThrough ?? null }
   })
 
+  // The active company's close state and, for the date being closed
+  // (?lockedThrough=YYYY-MM-DD, else yesterday — the latest a close can
+  // take), the whole checklist. raastUnmatched is kept for older pages.
   fastify.get<{ Querystring: { lockedThrough?: string } }>('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     // Each company closes its own books, so this reports the ACTIVE company's
     // close — a lock elsewhere never shows here.
     const tenantId = req.staffUser!.tenantId
-    const lock = await prisma.periodLock.findFirst({
+    const lock = tenantId ? await prisma.periodLock.findFirst({
       where: { tenantId },
       orderBy: { lockedThrough: 'desc' },
-      select: { lockedThrough: true, lockedAt: true, lockedBy: true, note: true },
-    })
-    // Raast payments finance has not cleared (S6) through the date being
-    // closed (?lockedThrough=YYYY-MM-DD), else through yesterday — the
-    // latest date a close can take.
-    let raastUnmatched = { count: 0, cents: 0, through: null as string | null }
-    if (tenantId) {
-      const asked = req.query.lockedThrough ? parsePktEndOfDay(req.query.lockedThrough) : null
-      const through = asked && !Number.isNaN(asked.getTime()) ? asked : new Date(pktToday().from.getTime() - 1)
-      raastUnmatched = { ...(await raastOpenThrough(prisma, tenantId, through)), through: fmtPktDate(through) }
+      select: { lockedThrough: true, lockedAt: true, lockedBy: true, note: true, overrides: true, overrideReason: true },
+    }) : null
+    const base = {
+      lockedThrough: lock?.lockedThrough ?? null, lockedAt: lock?.lockedAt ?? null, lockedBy: lock?.lockedBy ?? null,
+      note: lock?.note ?? null, overrides: lock?.overrides ?? null, overrideReason: lock?.overrideReason ?? null,
     }
-    return { lockedThrough: lock?.lockedThrough ?? null, lockedAt: lock?.lockedAt ?? null, lockedBy: lock?.lockedBy ?? null, note: lock?.note ?? null, raastUnmatched }
+    if (!tenantId) {
+      return { ...base, tenantId: null, closesFiscalYear: null, raastUnmatched: { count: 0, cents: 0, through: null }, through: null, checks: [], months: [], isYearEnd: false, fiscalYear: null, ready: false }
+    }
+    const asked = req.query.lockedThrough ? parsePktEndOfDay(req.query.lockedThrough) : null
+    const through = asked && !Number.isNaN(asked.getTime()) ? asked : new Date(pktToday().from.getTime() - 1)
+    // serviceClient: the checks read ONLY this company (every query names it),
+    // but an inter-company check reads its pair's accounts, which RLS would
+    // hide in single-company mode.
+    const list = await closeChecklist(serviceClient, tenantId, through)
+    const raast = list.problems.find((p) => p.key === 'raast')
+    const endMonth = await fiscalYearEndMonthOf(prisma, tenantId)
+    const fy = fiscalYearOf(endMonth, through)
+    // The fiscal year this close completes (the latest one ending on or before the date).
+    const ended = fy.end.getTime() <= through.getTime() ? fy : fiscalYearOf(endMonth, new Date(fy.start.getTime() - 1))
+    return {
+      ...base,
+      tenantId,
+      closesFiscalYear: list.isYearEnd ? ended.label : null,
+      raastUnmatched: { count: raast?.count ?? 0, cents: raast?.cents ?? 0, through: fmtPktDate(through) },
+      through: fmtPktDate(through),
+      checks: list.problems,
+      months: list.months,
+      isYearEnd: list.isYearEnd,
+      fiscalYear: { endMonth, label: fy.label, start: fmtPktDate(fy.start), end: fmtPktDate(fy.end) },
+      // Nothing blocks: the close needs no acknowledgement.
+      ready: list.blocks.length === 0,
+    }
   })
 
   fastify.post('/period-close', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
       lockedThrough: z.string(),
-      note: z.string().optional(),
-      // Close even though Raast payments up to the date are still not matched
-      // to a bank statement (S6). The CEO's explicit choice, audited.
+      note: z.string().max(500).optional(),
+      // The CEO closes over these blocking checks, with a reason.
+      acknowledge: z.object({
+        keys: z.array(z.string().trim().min(1).max(120)).max(50),
+        reason: z.string().trim().max(1000).optional(),
+      }).optional(),
+      // Old switch: close even though Raast payments up to the date are still
+      // not matched to a bank statement (S6) — only when that is the ONE block.
       closeWithUnmatchedRaast: z.boolean().optional(),
     }).parse(req.body)
 
@@ -1016,59 +1154,185 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         422,
       )
     }
-    const existing = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
-    if (existing && newLock <= existing.lockedThrough) {
+
+    // The CEO's acknowledgement: every key closable-over, and a real reason.
+    const ackKeys = Array.from(new Set(body.acknowledge?.keys ?? []))
+    const reason = body.acknowledge?.reason?.trim() ?? ''
+    if (ackKeys.length > 0) {
+      const fixed = ackKeys.filter((k) => !isOverridableKey(k))
+      if (fixed.length > 0) {
+        throw new AppError('NOT_OVERRIDABLE', `${fixed.join(', ')} cannot be closed over — fix it first (the trial balance must balance).`, 422, { keys: fixed })
+      }
+      if (reason.length < 10) {
+        throw new AppError('OVERRIDE_REASON_REQUIRED', 'Say why the books are closed over these checks (at least 10 characters) — it is kept on the close and the audit trail.', 422)
+      }
+    }
+    const ack = new Set(ackKeys)
+
+    const before = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+    if (before && newLock <= before.lockedThrough) {
       throw new AppError(
         'LOCK_CANNOT_REGRESS',
-        `Period is already locked through ${fmtPktDate(existing.lockedThrough)}. Lock dates can only move forward.`,
+        `Period is already locked through ${fmtPktDate(before.lockedThrough)}. Lock dates can only move forward.`,
         422,
       )
     }
 
-    // Raast QR (spec §7.4, S6): a Raast payment still 'provisional' (no bank
-    // statement has shown it) or 'needs_attention' (a customer transfer the
-    // till could not book cleanly) dated up to the close — by its
-    // confirmation, else its creation — means the period's bank money is not
-    // proven. Refused unless the CEO closes with them on purpose.
-    const raastOpen = await raastOpenThrough(prisma, tenantId, newLock)
-    if (raastOpen.count > 0 && body.closeWithUnmatchedRaast !== true) {
-      throw new AppError(
-        'RAAST_UNMATCHED',
-        `${raastOpen.count} Raast payment(s), PKR ${(raastOpen.cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}, up to ${fmtPktDate(newLock)} are not matched to a bank statement yet. Match them on Finance → Reconciliation → Raast (or mark them not received), or close anyway.`,
-        409,
-        { count: raastOpen.count, cents: raastOpen.cents },
-      )
+    // Depreciation for every completed month the close covers is charged
+    // first (idempotent; a refusal is flagged and the 'depreciation' check
+    // then reports it).
+    try {
+      await chargeForClose(tenantId, newLock, req.staffUser!.id)
+    } catch (err) {
+      console.error(`[period-close] depreciation before the close of ${tenantId} failed:`, (err as Error).message)
     }
 
-    const created = await prisma.periodLock.create({
-      data: {
-        tenantId,
-        lockedThrough: newLock,
-        lockedBy: req.staffUser!.id,
-        note: body.note ?? null,
-      },
-    })
+    const result = await serviceClient.$transaction(async (tx) => {
+      // Two closes of one company never run side by side.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`period-close:${tenantId}`}))`
+      const existing = await tx.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
+      if (existing && newLock <= existing.lockedThrough) {
+        throw new AppError(
+          'LOCK_CANNOT_REGRESS',
+          `Period is already locked through ${fmtPktDate(existing.lockedThrough)}. Lock dates can only move forward.`,
+          422,
+        )
+      }
+      const list = await closeChecklist(tx, tenantId, newLock)
+      const blocks = list.blocks
+      const fixedBlocks = blocks.filter((b) => !b.overridable)
+      const raastOnly = blocks.length === 1 && blocks[0]!.key === 'raast'
+      const aliasUsed = raastOnly && body.closeWithUnmatchedRaast === true && !ack.has('raast')
+      const open = blocks.filter((b) => !b.overridable || !(ack.has(b.key) || (aliasUsed && b.key === 'raast')))
+      if (open.length > 0) {
+        if (raastOnly) {
+          const r = blocks[0]!
+          throw new AppError(
+            'RAAST_UNMATCHED',
+            `${r.count} Raast payment(s), PKR ${((r.cents ?? 0) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}, up to ${fmtPktDate(newLock)} are not matched to a bank statement yet. Match them on Finance → Reconciliation → Raast (or mark them not received), or close anyway.`,
+            409,
+            { count: r.count, cents: r.cents ?? 0, problems: list.problems },
+          )
+        }
+        const names = open.map((b) => b.title).join('; ')
+        throw new AppError(
+          'CLOSE_NOT_READY',
+          fixedBlocks.length > 0
+            ? `The books cannot be closed through ${fmtPktDate(newLock)}: ${names}. ${fixedBlocks.map((b) => b.title).join('; ')} cannot be closed over.`
+            : `The books cannot be closed through ${fmtPktDate(newLock)} yet: ${names}. Fix them, or (CEO) close over them with a reason.`,
+          409,
+          { problems: list.problems, open: open.map((b) => b.key) },
+        )
+      }
+      const overridden: CloseProblem[] = blocks
+      const created = await tx.periodLock.create({
+        data: {
+          tenantId,
+          lockedThrough: newLock,
+          lockedBy: req.staffUser!.id,
+          note: body.note ?? null,
+          ...(overridden.length > 0 ? {
+            overrides: overridden.map((b) => ({
+              key: b.key, title: b.title, count: b.count,
+              ...(b.cents !== undefined ? { cents: b.cents } : {}),
+              ...(b.months ? { months: b.months } : {}),
+              ...(aliasUsed && b.key === 'raast' ? { via: 'closeWithUnmatchedRaast' } : {}),
+            })) as Prisma.InputJsonValue,
+            overrideReason: aliasUsed ? null : reason,
+          } : {}),
+        },
+      })
+      return { created, existing, list, overridden, aliasUsed }
+    }, { maxWait: 15_000, timeout: 180_000 })
+
+    const { created, existing, list, overridden, aliasUsed } = result
+    const endMonth = await fiscalYearEndMonthOf(prisma, tenantId)
+    const fy = fiscalYearOf(endMonth, newLock)
     await audit({ category: 'accounting',
       action: 'period.close',
       entity: 'PeriodLock',
       entityId: created.id,
-      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
+      userId: req.staffUser!.id, tenantId,
       userEmail: req.staffUser!.email,
       before: existing,
       after: created,
-      metadata: { ip: req.ip },
+      metadata: { ip: req.ip, months: list.months, isYearEnd: list.isYearEnd, warnings: list.warnings.map((w) => w.key) },
     })
-    if (raastOpen.count > 0) {
+    const reasoned = overridden.filter((b) => !(aliasUsed && b.key === 'raast'))
+    if (reasoned.length > 0) {
+      await audit({ category: 'accounting',
+        action: 'period.close_override',
+        entity: 'PeriodLock',
+        entityId: created.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        after: { lockedThrough: created.lockedThrough, overrides: created.overrides },
+        metadata: { ip: req.ip, reason, keys: reasoned.map((b) => b.key) },
+      })
+      const { flagException } = await import('../../lib/exceptions.js')
+      await flagException({
+        tenantId,
+        kind: 'period_close_override',
+        severity: 'high',
+        title: `Books closed through ${fmtPktDate(newLock)} over ${reasoned.length} blocking check${reasoned.length === 1 ? '' : 's'}`,
+        description: `${req.staffUser!.email} closed the books over: ${reasoned.map((b) => `${b.title} (${b.count})`).join('; ')}. Reason: ${reason}. `
+          + 'Whatever these checks found is still unresolved and now sits in a closed period — fix it in the open month (late postings carry a note naming the original date).',
+        entityType: 'PeriodLock',
+        entityId: created.id,
+        actorId: req.staffUser!.id,
+        amountCents: reasoned.reduce((s, b) => s + Math.abs(b.cents ?? 0), 0) || null,
+        metadata: { lockedThrough: created.lockedThrough, keys: reasoned.map((b) => b.key), reason },
+      })
+    }
+    const raastClosedOver = overridden.find((b) => b.key === 'raast')
+    if (raastClosedOver) {
       await audit({ category: 'accounting',
         action: 'period.close_with_unmatched_raast',
         entity: 'PeriodLock',
         entityId: created.id,
         userId: req.staffUser!.id, tenantId,
         userEmail: req.staffUser!.email,
-        after: { lockedThrough: created.lockedThrough, raastUnmatchedCount: raastOpen.count, raastUnmatchedCents: raastOpen.cents },
-        metadata: { ip: req.ip, note: body.note ?? null },
+        after: { lockedThrough: created.lockedThrough, raastUnmatchedCount: raastClosedOver.count, raastUnmatchedCents: raastClosedOver.cents ?? 0 },
+        metadata: { ip: req.ip, note: body.note ?? null, via: aliasUsed ? 'closeWithUnmatchedRaast' : 'acknowledge' },
       })
     }
-    return reply.status(201).send(created)
+    if (list.isYearEnd) {
+      await audit({ category: 'accounting',
+        action: 'period.year_end_close',
+        entity: 'PeriodLock',
+        entityId: created.id,
+        userId: req.staffUser!.id, tenantId,
+        userEmail: req.staffUser!.email,
+        after: { lockedThrough: created.lockedThrough, fiscalYearEndMonth: endMonth },
+        metadata: { ip: req.ip, prevLock: existing?.lockedThrough ?? null, currentFiscalYear: fy.label },
+      })
+    }
+    return reply.status(201).send({ ...created, checks: list.problems, months: list.months, isYearEnd: list.isYearEnd })
+  })
+
+  // ─── Fiscal year (H29) ───────────────────────────────────────────────────
+  // Each company in view: its year end month and the fiscal year it is in
+  // today, and whether its books were already closed across a year end (then
+  // changing the year end needs the CEO's reason — PATCH /tenants/:id).
+  fastify.get('/fiscal-year', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const scope = await resolveTenantScope(req)
+    const [years, names] = await Promise.all([
+      fiscalYearsFor(prisma, scope.tenantIds, new Date()),
+      prisma.tenant.findMany({ where: { id: { in: scope.tenantIds } }, select: { id: true, name: true } }),
+    ])
+    const nameOf = new Map(names.map((n) => [n.id, n.name]))
+    const companies = []
+    for (const y of years) {
+      companies.push({
+        tenantId: y.tenantId,
+        name: nameOf.get(y.tenantId) ?? '',
+        endMonth: y.endMonth,
+        label: y.label,
+        currentStart: fmtPktDate(y.start),
+        currentEnd: fmtPktDate(y.end),
+        closedAcrossYearEnd: await closedAcrossYearEnd(prisma, y.tenantId, [y.endMonth]),
+      })
+    }
+    return { companies: companies.sort((a, b) => a.name.localeCompare(b.name)) }
   })
 }

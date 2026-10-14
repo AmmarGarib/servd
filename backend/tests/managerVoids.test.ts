@@ -10,6 +10,9 @@
 //   - 403 MANAGER_OVERRIDE_REQUIRED without a PIN; 403 INVALID_MANAGER_PIN
 //     for a wrong PIN or another company's manager's PIN.
 //   - approverId is ALWAYS recorded (the manager's own id when they act).
+//   - A fired line's void is food cost: a refused void wastes nothing; the
+//     manager's void books it as waste (void_after_fire, FIFO value) with the
+//     approver, in the order's company.
 // Two companies: B's manager PIN never unlocks A's till; B gets 404 on A.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
@@ -22,12 +25,15 @@ import { setManagerPin } from '../src/modules/auth/managerPin.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { setFiscalKicker } from '../src/connectors/fiscal/outbox.js'
 import { prisma, mkCompany, mkUser, caller, resetConnectorCache, type Company, type Who } from './connectorsFixtures.js'
+import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
+import { deductInventoryForOrder } from '../src/modules/orders/service.js'
 
 let app: FastifyInstance
 let A: Company, B: Company
 let cashierA: Who, waiterA: Who, mgrA: Who, cashierB: Who, mgrB: Who
 const PIN_A = '5821'
 const PIN_B = '7394'
+let beefA: string
 
 async function build(): Promise<FastifyInstance> {
   const a = Fastify()
@@ -70,6 +76,16 @@ beforeAll(async () => {
   mgrB = await mkUser('mvoid-mgr-b', 'foh_management', B.tenantId)
   await setManagerPin(mgrA.id, PIN_A)
   await setManagerPin(mgrB.id, PIN_B)
+  // A's nihari takes 150 g of beef from its FIFO lot (finance wave B), so a fired void has food cost to waste.
+  await prisma.setting.create({ data: { key: fifoCutoverKey(A.tenantId), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+  beefA = (await prisma.inventoryItem.create({ data: { tenantId: A.tenantId, name: 'Beef', unit: 'kg' } })).id
+  await prisma.$transaction((tx) => addLotTx(tx, {
+    tenantId: A.tenantId, inventoryItemId: beefA, qty: 20, unitCostCents: 200_000, kind: 'count_gain', lotSourceType: 'count_gain',
+    lotSourceId: 'mvoid-beef', movementSourceType: 'test', movementSourceId: 'mvoid-beef', receivedAt: new Date(Date.now() - 86_400_000),
+  }))
+  await prisma.recipe.create({
+    data: { kind: 'plate', menuItemId: A.items.nihari, servings: 1, qFactorPct: 0, ingredients: { create: [{ inventoryItemId: beefA, quantity: 150, unit: 'kg' }] } },
+  })
   // A generous cashier void cap: §17.4 says it no longer lets a cashier void alone.
   await prisma.refundPolicy.create({ data: { scope: 'global', scopeId: null, tenantId: A.tenantId, cashierVoidLimitCents: 1_000_000, managerVoidLimitCents: 1_000_000 } })
   invalidateSetupCache()
@@ -135,6 +151,23 @@ describe('line voids are manager-only', () => {
       await prisma.refundPolicy.updateMany({ where: { tenantId: A.tenantId }, data: { managerVoidLimitCents: 1_000_000 } })
       invalidateSetupCache()
     }
+  })
+
+  it('a fired line: a refused void wastes nothing; the manager\'s void books it as waste (void_after_fire) with the approver, in A', async () => {
+    const o = await ticket(cashierA, A)
+    await deductInventoryForOrder(o.id)
+    const nihari = o.items.find((i) => i.name === 'Beef Nihari')!
+    await prisma.orderItem.update({ where: { id: nihari.id }, data: { status: 'preparing' } })
+    const refused = await call(cashierA, 'POST', `/pos/orders/${o.id}/void`, { orderItemId: nihari.id, reason: 'burnt' })
+    expect(refused.statusCode).toBe(403)
+    expect(await prisma.wasteLog.count({ where: { orderItemId: nihari.id } })).toBe(0)
+    expect(await prisma.stockMovement.count({ where: { orderItemId: nihari.id, kind: { in: ['sale_void', 'waste'] } } })).toBe(0)
+
+    const ok = await call(cashierA, 'POST', `/pos/orders/${o.id}/void`, { orderItemId: nihari.id, reason: 'burnt', managerOverridePin: PIN_A })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const logs = await prisma.wasteLog.findMany({ where: { orderItemId: nihari.id } })
+    expect(logs.map((l) => [l.reason, l.tenantId, l.approvedById, l.estimatedCostCents])).toEqual([['void_after_fire', A.tenantId, mgrA.id, 30_000]])
+    expect((await prisma.journalEntry.findFirst({ where: { reference: `pos.void_waste:${nihari.id}` } }))?.tenantId).toBe(A.tenantId)
   })
 
   it('company B gets 404 on A\'s ticket, even with A\'s PIN', async () => {

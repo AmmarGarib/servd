@@ -137,17 +137,6 @@ export async function readFifoCutoverAt(db: Db, tenantId: string): Promise<Date 
   return Number.isNaN(at.getTime()) ? null : at
 }
 
-// The cut-over arrives with the AP build (wave B W2). Imported by a computed
-// specifier so this file compiles and runs before it exists.
-const FIFO_CUTOVER_MODULE = '../modules/inventory/fifoCutover.js'
-
-function isMissingModule(err: unknown): boolean {
-  const e = err as { code?: string; message?: string } | null
-  const msg = e?.message ?? ''
-  return (e?.code === 'ERR_MODULE_NOT_FOUND' || /Failed to load url|Cannot find module|Does the file exist/i.test(msg))
-    && /fifoCutover/.test(msg)
-}
-
 /**
  * Make sure the company's stock is held as FIFO lots: when the cut-over marker
  * is missing, run the one-time cut-over. Call it BEFORE opening a transaction
@@ -157,21 +146,9 @@ function isMissingModule(err: unknown): boolean {
 export async function ensureFifoReady(tenantId: string): Promise<void> {
   if (!tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', 'Stock belongs to a company — none was given', 422)
   if (await readFifoCutoverAt(prisma, tenantId)) return
-  let mod: { ensureFifoCutover?: (tenantId: string) => Promise<unknown> }
-  try {
-    mod = (await import(/* @vite-ignore */ FIFO_CUTOVER_MODULE)) as typeof mod
-  } catch (err) {
-    if (isMissingModule(err)) {
-      console.warn(`[stockLedger] FIFO cut-over module not installed yet — company ${tenantId} stays as it is`)
-      return
-    }
-    throw err
-  }
-  if (typeof mod.ensureFifoCutover !== 'function') {
-    console.warn('[stockLedger] fifoCutover.ts has no ensureFifoCutover export — cut-over not run')
-    return
-  }
-  await mod.ensureFifoCutover(tenantId)
+  // Imported lazily: fifoCutover.ts imports this file.
+  const { ensureFifoCutover } = await import('../modules/inventory/fifoCutover.js')
+  await ensureFifoCutover(tenantId)
 }
 
 // ─── Locks, items, the cache ─────────────────────────────────────────────────
@@ -789,7 +766,9 @@ export async function reclassItemLotsTx(tx: Tx, a: {
  *     (before its receivedAt, or since) FIFO from itself — one
  *     'shortfall_settle' row per sale row settled, valued at this lot, posted
  *     Dr 50x0 / Cr 12x0 per brand (postShortfallSettleTx) — skipping lines
- *     since returned or voided and cancelled orders;
+ *     voided (even a fully-short one, which wrote no movement) or since
+ *     returned / wasted for that item, cancelled orders, and "Box given"
+ *     taps since undone;
  *   • when the item is issue-on-receipt (unmeasured consumables), is consumed
  *     in full at once ('issue_on_receipt', brand shares by usage) and posted
  *     Dr 50x0 / Cr 12x0 (postIssueOnReceiptTx).
@@ -904,7 +883,7 @@ async function settleShortfallsTx(tx: Tx, item: StockItem, lot: LotNow, received
   const sales = await tx.stockMovement.findMany({
     where: { tenantId: item.tenantId, inventoryItemId: item.id, kind: 'sale', shortfallQty: { gt: STOCK_EPS }, occurredAt: { gte: from } },
     orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-    select: { id: true, shortfallQty: true, orderId: true, orderItemId: true, conceptId: true, locationId: true },
+    select: { id: true, shortfallQty: true, orderId: true, orderItemId: true, conceptId: true, locationId: true, sourceType: true, sourceId: true },
   })
   if (sales.length === 0) return 0
 
@@ -914,14 +893,34 @@ async function settleShortfallsTx(tx: Tx, item: StockItem, lot: LotNow, received
     _sum: { qty: true },
   })
   const settledBy = new Map(settledSoFar.map((r) => [r.settlesMovementId, -(r._sum.qty ?? 0)]))
-  // Food that was never eaten: a line since returned or voided, an order cancelled.
+  // Food that was never eaten: a line voided (a fully-short line's void
+  // writes no movement — the line's own status says it), a line since
+  // returned or wasted for THIS item (a "Box given" undo gives back the
+  // packaging, not the food), an order cancelled, a "Box given" tap since
+  // undone (its draw was its packaging; the line no longer carries that tap).
   const lineIds = [...new Set(sales.map((s) => s.orderItemId).filter((x): x is string => !!x))]
-  const undoneLines = lineIds.length === 0 ? [] : await tx.stockMovement.findMany({
-    where: { tenantId: item.tenantId, orderItemId: { in: lineIds }, kind: { in: ['sale_return', 'sale_void'] } },
-    select: { orderItemId: true },
-    distinct: ['orderItemId'],
-  })
+  const [lines, undoneLines] = lineIds.length === 0 ? [[], []] : await Promise.all([
+    tx.orderItem.findMany({ where: { id: { in: lineIds } }, select: { id: true, status: true, voidedAt: true, boxGiven: true, boxGivenAt: true } }),
+    tx.stockMovement.findMany({
+      where: {
+        tenantId: item.tenantId, orderItemId: { in: lineIds }, inventoryItemId: item.id, kind: { in: ['sale_return', 'sale_void'] },
+        sourceType: { not: 'order_item.box_given_undo' },
+      },
+      select: { orderItemId: true },
+      distinct: ['orderItemId'],
+    }),
+  ])
+  const lineById = new Map(lines.map((l) => [l.id, l]))
   const undone = new Set(undoneLines.map((r) => r.orderItemId))
+  const tapUndone = (s: { orderItemId: string | null; sourceType: string; sourceId: string }): boolean => {
+    if (s.sourceType !== 'order_item.box_given' || !s.orderItemId) return false
+    const l = lineById.get(s.orderItemId)
+    return !l || !l.boxGiven || `${l.id}@${l.boxGivenAt ? l.boxGivenAt.getTime() : 0}` !== s.sourceId
+  }
+  const lineVoided = (id: string | null): boolean => {
+    const l = id ? lineById.get(id) : undefined
+    return !!l && (!!l.voidedAt || l.status === 'voided')
+  }
   const orderIds = [...new Set(sales.map((s) => s.orderId).filter((x): x is string => !!x))]
   const deadOrders = orderIds.length === 0 ? [] : await tx.order.findMany({
     where: { id: { in: orderIds }, status: { in: ['cancelled', 'rejected'] } },
@@ -935,7 +934,7 @@ async function settleShortfallsTx(tx: Tx, item: StockItem, lot: LotNow, received
   const byConcept = new Map<string, { conceptId: string | null; costClass: CostClass; cents: number }>()
   for (const s of sales) {
     if (qtyLeft < STOCK_EPS) break
-    if ((s.orderItemId && undone.has(s.orderItemId)) || (s.orderId && dead.has(s.orderId))) continue
+    if ((s.orderItemId && (undone.has(s.orderItemId) || lineVoided(s.orderItemId))) || (s.orderId && dead.has(s.orderId)) || tapUndone(s)) continue
     const open = (s.shortfallQty ?? 0) - (settledBy.get(s.id) ?? 0)
     if (open < STOCK_EPS) continue
     const d = planDraws([{ ...lot, remainingQty: qtyLeft, remainingValueCents: valueLeft }], open).draws[0]

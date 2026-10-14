@@ -84,6 +84,7 @@ export type ExceptionKind =
   | 'stock_unrecorded'           // an item counted or used with no receipt or opening cost on record
   | 'recipe_foreign_stock'       // a recipe draws an item of another company (skipped, never depleted)
   | 'stock_restore_failed'       // returning or wasting a cancelled / voided line's stock failed after commit
+  | 'fifo_cutover_review'        // the FIFO cut-over met legacy bills it could not tie to receipts — the accountant reviews GRNI
   // People, close and inter-company
   | 'period_close_override'      // the CEO closed a period over a blocking close check
   | 'intercompany_mismatch'      // the two sides of a company pair's due-to / due-from disagree

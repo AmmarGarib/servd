@@ -214,7 +214,7 @@ describe('10 — petty-cash top-up over the box limit', () => {
     })).id
   })
   const topup = (who: Who, pin?: string) => call(who, 'POST', '/trustops/petty-cash/movements', {
-    boxId: boxA, type: 'topup', amountCents: 20_000, reason: 'float', ...(pin !== undefined && { managerOverridePin: pin }),
+    boxId: boxA, type: 'topup', amountCents: 20_000, reason: 'float', source: 'safe', ...(pin !== undefined && { managerOverridePin: pin }),
   })
 
   // A top-up is a cash keeper's or the box custodian's: each cashier below

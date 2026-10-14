@@ -10,7 +10,7 @@
 //   BOOKS-02 finance reads Z-reports (its reconciliation module)
 //   FOH-22   an unknown customer on a ring-up is a 422, not a 500
 //   FOH-23   a refunded order's receipt says so; reprints say DUPLICATE
-//   BOH-11   voiding an unfired line gives its stock back — once
+//   BOH-11   voiding an unfired line gives its stock back into the same FIFO lot — once
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -23,6 +23,7 @@ import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { posRoutes } from '../src/modules/pos/routes.js'
 import { orderRoutes } from '../src/modules/orders/routes.js'
+import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 
 const PIN = '5831'
 let app: FastifyInstance
@@ -85,7 +86,13 @@ beforeAll(async () => {
   item['kheer'] = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat.id, name: 'Kheer', priceCents: 55_000 } })).id
   item['classic'] = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat.id, name: 'Classic Smash', priceCents: 145_000 } })).id
   item['fries'] = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat.id, name: 'Fries', priceCents: 45_000 } })).id
-  beefId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Beef mince', unit: 'kg', currentStock: 9.85, parLevel: 1, unitCostCents: 200_000 } })).id
+  // Company A's stock is on FIFO lots (finance wave B): cut over, 9.85 kg of beef in one lot.
+  await prisma.setting.create({ data: { key: fifoCutoverKey(tenantA), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+  beefId = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Beef mince', unit: 'kg', parLevel: 1, unitCostCents: 200_000 } })).id
+  await prisma.$transaction((tx) => addLotTx(tx, {
+    tenantId: tenantA, inventoryItemId: beefId, qty: 9.85, unitCostCents: 200_000, kind: 'count_gain', lotSourceType: 'count_gain',
+    lotSourceId: 'tillshift-beef', movementSourceType: 'test', movementSourceId: 'tillshift-beef', receivedAt: new Date(Date.now() - 86_400_000),
+  }))
   await prisma.recipe.create({
     data: {
       kind: 'plate', menuItemId: item['classic']!, servings: 1, qFactorPct: 0, laborMinutes: 5,
@@ -285,8 +292,11 @@ describe('BOH-11 — a voided, unfired line gives its stock back, once', () => {
     expect(v.json().stockRestored).toEqual({ [beefId]: expect.closeTo(0.15, 6) })
     expect(v.json().order.totalCents).toBe(51_750)
     expect(await beef()).toBeCloseTo(start, 6)
-    const trail = await prisma.auditLog.findFirst({ where: { action: 'stock.void_restore', entityId: classic.id } })
-    expect(trail?.tenantId).toBe(tenantA)
+    // Back into the very lot it came from, in A, keyed on the line (once).
+    const sale = await prisma.stockMovement.findMany({ where: { orderItemId: classic.id, kind: 'sale' } })
+    const back = await prisma.stockMovement.findMany({ where: { orderItemId: classic.id, kind: 'sale_return' } })
+    expect(back.map((m) => [m.tenantId, m.sourceType, m.sourceId, m.lotId])).toEqual([[tenantA, 'order_item.return', classic.id, sale[0]!.lotId]])
+    expect(back[0]!.qty).toBeCloseTo(0.15, 6)
 
     // The whole order is then cancelled: only what is still out comes back (nothing).
     expect((await call('mgr', 'POST', `/orders/${o.id}/cancel`, { reason: 'guest left' })).statusCode).toBe(200)

@@ -13,6 +13,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { flagException } from '../src/lib/exceptions.js'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { runOnce as runShrinkageTrend } from '../src/workers/shrinkageTrend.js'
@@ -56,6 +57,9 @@ async function deliveryOrder(conceptId: string, otp: string | null) {
 beforeAll(async () => {
   tenantA = (await prisma.tenant.create({ data: { name: 'Trust A', slug: 'trust-a' } })).id
   tenantB = (await prisma.tenant.create({ data: { name: 'Trust B', slug: 'trust-b' } })).id
+  // Petty cash is on the books (finance wave B): each company has its chart (1011, 2210, 8010 …).
+  await ensureChartOfAccounts(tenantA)
+  await ensureChartOfAccounts(tenantB)
   conceptA = (await prisma.concept.create({ data: { name: 'Trust Cafe A', slug: 'trust-cafe-a', type: 'restaurant', tenantId: tenantA } })).id
   conceptB = (await prisma.concept.create({ data: { name: 'Trust Cafe B', slug: 'trust-cafe-b', type: 'restaurant', tenantId: tenantB } })).id
   await mkUser('mgrA', 'admin', tenantA, [tenantA], PIN)
@@ -144,9 +148,9 @@ describe('petty cash boxes belong to one company', () => {
   })
 
   it('B cannot top up or spend from A\'s box', async () => {
-    const topup = await call('mgrB', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'topup', amountCents: 5_000, reason: 'float' })
+    const topup = await call('mgrB', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'topup', amountCents: 5_000, reason: 'float', source: 'safe' })
     expect(topup.statusCode).toBe(404)
-    const spend = await call('cookB', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'spend', amountCents: 5_000, reason: 'milk' })
+    const spend = await call('cookB', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'spend', amountCents: 5_000, reason: 'milk', categoryKey: 'staff_welfare' })
     expect(spend.statusCode).toBe(404)
     const box = await prisma.pettyCashBox.findUnique({ where: { id: boxA } })
     expect(box!.floatCents).toBe(100_000)
@@ -166,11 +170,14 @@ describe('petty cash boxes belong to one company', () => {
 
   it('B\'s manager PIN cannot lift A\'s top-up limit; A\'s can', async () => {
     await prisma.pettyCashBox.update({ where: { id: boxA }, data: { topUpLimitCents: 10_000 } })
-    const withB = await call('mgrA', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'topup', amountCents: 50_000, reason: 'float', managerOverridePin: '6147' })
+    const withB = await call('mgrA', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'topup', amountCents: 50_000, reason: 'float', source: 'safe', managerOverridePin: '6147' })
     expect(withB.statusCode).toBe(403)
-    const withA = await call('mgrA', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'topup', amountCents: 50_000, reason: 'float', managerOverridePin: PIN })
+    const withA = await call('mgrA', 'POST', '/trustops/petty-cash/movements', { boxId: boxA, type: 'topup', amountCents: 50_000, reason: 'float', source: 'safe', managerOverridePin: PIN })
     expect(withA.statusCode).toBe(201)
     expect(withA.json().newFloatCents).toBe(150_000)
+    // Booked in the BOX's company only.
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { reference: `pettycash.topup:${withA.json().movement.id}` } })
+    expect(je.tenantId).toBe(tenantA)
   })
 
   it('a spend can only pay a bill of the box\'s own company', async () => {

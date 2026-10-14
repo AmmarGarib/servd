@@ -1,6 +1,8 @@
 'use client'
 // THE P&L — from the ledger. Two tabs over one date range:
-//   Statement — revenue, discounts/refunds, COGS, opex (GET /accounting/pl-ledger)
+//   Statement — revenue, discounts/refunds, COGS, opex, operating profit,
+//               other income (42xx, below the operating line) and net profit
+//               (GET /accounting/pl-ledger)
 //   By brand  — each brand's measured lines plus the shared bucket
 //               (GET /accounting/pl-ledger/brands)
 // The old /finance "P&L" summed the sales register (GST-inclusive, discount
@@ -18,9 +20,14 @@ interface PL {
   cogs:    Array<{ code: string; name: string; amountCents: number }>
   opex:    Array<{ code: string; name: string; amountCents: number }>
   contraRevenue: Array<{ code: string; name: string; amountCents: number }>
+  /** 42xx other income (kept deposits, breakage, …): below the operating result, never revenue. */
+  otherIncome?: Array<{ code: string; name: string; amountCents: number }>
   totals: {
     revenueCents: number; cogsCents: number; grossProfitCents: number
     grossMarginPct: number; opexCents: number; contraRevenueCents: number; netProfitCents: number
+    operatingProfitCents?: number; otherIncomeCents?: number
+    /** Inside opexCents — shown as "of which". */
+    depreciationCents?: number; impairmentCents?: number
   }
 }
 
@@ -28,6 +35,7 @@ interface BrandRow {
   conceptId: string | null; name: string
   revenueCents: number; contraRevenueCents: number; netRevenueCents: number
   cogsCents: number; grossProfitCents: number; opexCents: number; netProfitCents: number
+  otherIncomeCents?: number
   grossMarginPct: number
 }
 interface ByBrand {
@@ -96,6 +104,29 @@ function Statement({ data }: { data: PL }) {
       </div>
 
       <Section title="Operating Expenses" rows={data.opex} total={data.totals.opexCents} neg />
+      {((data.totals.depreciationCents ?? 0) !== 0 || (data.totals.impairmentCents ?? 0) !== 0) && (
+        <div className="px-4 -mt-2 mb-3 text-xs text-s-muted space-y-0.5">
+          {(data.totals.depreciationCents ?? 0) !== 0 && (
+            <div className="flex justify-between"><span>of which depreciation</span><span className="font-mono">({fmtPkr(data.totals.depreciationCents ?? 0)})</span></div>
+          )}
+          {(data.totals.impairmentCents ?? 0) !== 0 && (
+            <div className="flex justify-between"><span>of which impairment</span><span className="font-mono">({fmtPkr(data.totals.impairmentCents ?? 0)})</span></div>
+          )}
+        </div>
+      )}
+
+      {data.totals.operatingProfitCents !== undefined && (
+        <div className="s-card p-4 mb-4">
+          <div className="flex justify-between text-base font-bold">
+            <span className="text-s-text">Operating Profit</span>
+            <span className={data.totals.operatingProfitCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkr(data.totals.operatingProfitCents)}</span>
+          </div>
+        </div>
+      )}
+
+      {(data.otherIncome?.length ?? 0) > 0 && (
+        <Section title="Other Income" rows={data.otherIncome ?? []} total={data.totals.otherIncomeCents ?? 0} />
+      )}
 
       <div className="s-card p-4 border-2 border-accent">
         <div className="flex justify-between text-lg font-bold">
@@ -129,6 +160,7 @@ function BrandTable({ data }: { data: ByBrand }) {
                 <th className="px-3 py-2 text-right">COGS</th>
                 <th className="px-3 py-2 text-right">Gross profit</th>
                 <th className="px-3 py-2 text-right">Opex</th>
+                <th className="px-3 py-2 text-right">Other income</th>
                 <th className="px-3 py-2 text-right">Net profit</th>
                 <th className="px-3 py-2 text-right">Gross margin</th>
               </tr>
@@ -142,12 +174,13 @@ function BrandTable({ data }: { data: ByBrand }) {
                   {cell(r.cogsCents, true)}
                   {cell(r.grossProfitCents)}
                   {cell(r.opexCents, true)}
+                  {cell(r.otherIncomeCents ?? 0)}
                   {cell(r.netProfitCents)}
                   <td className="px-3 py-2 text-right text-xs text-s-muted">{r.revenueCents > 0 ? `${r.grossMarginPct}%` : '—'}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-3 text-xs text-s-muted">Nothing posted in this period.</td></tr>
+                <tr><td colSpan={9} className="px-3 py-3 text-xs text-s-muted">Nothing posted in this period.</td></tr>
               )}
               <tr className="border-t-2 border-s-border bg-s-bg-soft font-semibold">
                 <td className="px-3 py-2 text-s-text">Total</td>
@@ -156,6 +189,7 @@ function BrandTable({ data }: { data: ByBrand }) {
                 {cell(data.totals.cogsCents, true)}
                 {cell(data.totals.grossProfitCents)}
                 {cell(data.totals.opexCents, true)}
+                {cell(data.totals.otherIncomeCents ?? 0)}
                 {cell(data.totals.netProfitCents)}
                 <td />
               </tr>

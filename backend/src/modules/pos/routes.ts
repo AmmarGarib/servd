@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
 import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer, keenuQrRetired } from './service.js'
-import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
+import { EXPENSE_PAYOUT_CATEGORIES, EXPENSE_PAYOUT_KEYS, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, shiftWhere, findShiftInScope, assertShiftOf } from '../../lib/tenantScope.js'
@@ -566,8 +566,10 @@ export async function posRoutes(fastify: FastifyInstance) {
         reason:      z.string().min(1).max(200),
         managerOverridePin: z.string().min(4).max(8).optional(),
         // Pay-out to a vendor (owner decision 5): what it paid for, or the
-        // supplier bill it pays. Manager PIN and the pay-out cap apply.
-        category:       z.enum(PAYOUT_CATEGORIES.map((c) => c.key) as [string, ...string[]]).optional(),
+        // supplier bill it pays. Manager PIN and the pay-out cap apply. Only
+        // the 'expense' categories: the 'cogs' keys (kitchen food / drinks /
+        // packaging) are petty-cash history-backfill picks, never a pay-out.
+        category:       z.enum(EXPENSE_PAYOUT_KEYS).optional(),
         supplierBillId: z.string().uuid().nullable().optional(),
         vendorName:     z.string().max(120).nullable().optional(),
         receiptUrl:     z.string().url().nullable().optional(),
@@ -593,7 +595,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
-        // zod checked it against PAYOUT_CATEGORIES above.
+        // zod checked it against the 'expense' PAYOUT_CATEGORIES above.
         category: body.category as PayoutCategory | undefined,
         supplierBillId: body.supplierBillId ?? null,
         vendorName: body.vendorName ?? null,
@@ -603,8 +605,9 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /pos/payout-categories — what a till pay-out can be for.
-  fastify.get('/payout-categories', { preHandler: requireAuth(...CASHIERS) }, async () => ({ categories: PAYOUT_CATEGORIES }))
+  // GET /pos/payout-categories — what a till pay-out can be for: the
+  // 'expense' PAYOUT_CATEGORIES only (the 'cogs' keys are history picks).
+  fastify.get('/payout-categories', { preHandler: requireAuth(...CASHIERS) }, async () => ({ categories: EXPENSE_PAYOUT_CATEGORIES }))
 
   fastify.get<{ Params: { id: string } }>(
     '/shifts/:id/cash-movements',

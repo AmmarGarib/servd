@@ -19,11 +19,12 @@
 //     (the petty-cash / till path) posts in its caller's transaction; voids
 //     reverse with the void; POST /procurement/post-unposted backfills the
 //     caller's companies only and reports closed-month rows.
-//   - BOH-13: a bill above / below the PO price re-averages the item cost
-//     (ItemPriceHistory 'bill_match') so 1210 moves by exactly what stock
-//     valuation moved by; the share of the billed quantity already used goes
-//     to 5060; posting twice changes nothing; a void restores the cost and
-//     trues up 5060 for stock used in between.
+//   - BOH-13 (FIFO lots, wave B): the receipt booked the goods at the PO
+//     price (Dr 1210 / Cr 2015); a bill above / below it clears 2015 at that
+//     cost and re-prices the lot (ItemPriceHistory 'bill_match') — the share
+//     still on hand to 1210, the share already used to 5060; posting twice
+//     changes nothing; a void restores the lot cost and trues up 5060 for
+//     stock used in between.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -36,6 +37,7 @@ import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { createPo, submitPo, createPaymentTx, agingReport } from '../src/modules/procurement/service.js'
 import { postSupplierBill } from '../src/modules/accounting/supplierPosting.js'
+import { consumeFifoTx } from '../src/lib/stockLedger.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 
 let tenantA: string
@@ -146,7 +148,7 @@ describe('BOH-09: the buyer role can buy', () => {
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poA}/mark-sent`, { channel: 'phone' })).json().status).toBe('sent')
 
     billA = (await call('ceoA', 'POST', '/procurement/bills', {
-      supplierId: supA, billNumber: 'CBS-1', billDate: iso(0), lines: [{ description: 'Flour', quantity: 1, unitCostCents: 1_000 }],
+      supplierId: supA, billNumber: 'CBS-1', billDate: iso(0), lines: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: 1_000, expenseAccountCode: '6040' }],
     })).json().id
 
     for (const url of ['/procurement/bills', `/procurement/bills/${billA}`, `/procurement/bills/${billA}/match`, '/procurement/payments',
@@ -284,7 +286,7 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
   it('a bill dated in a closed period is 422 PERIOD_LOCKED and nothing is saved', async () => {
     const r = await call('ceoB', 'POST', '/procurement/bills', {
       supplierId: supB, billNumber: 'KMC-10388', billDate: iso(-5 * DAY), dueDate: iso(10 * DAY),
-      lines: [{ description: 'Mutton 10kg', quantity: 10, unitCostCents: 220_000 }],
+      lines: [{ description: 'Kitchen cleaning 10 packs', quantity: 10, unitCostCents: 220_000, expenseAccountCode: '6040' }],
     })
     expect(r.statusCode).toBe(422)
     expect(r.json().error.code).toBe('PERIOD_LOCKED')
@@ -293,7 +295,7 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
 
   it('a bill in the open period is on the books the moment it is saved', async () => {
     const r = await call('ceoB', 'POST', '/procurement/bills', {
-      supplierId: supB, billNumber: 'KMC-10389', billDate: iso(0), lines: [{ description: 'Mutton 10kg', quantity: 10, unitCostCents: 220_000 }],
+      supplierId: supB, billNumber: 'KMC-10389', billDate: iso(0), lines: [{ description: 'Kitchen cleaning 10 packs', quantity: 10, unitCostCents: 220_000, expenseAccountCode: '6040' }],
     })
     expect(r.statusCode).toBe(201)
     openBill = r.json().id
@@ -328,7 +330,7 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
 
   it("company B's closed period does not block company A", async () => {
     const r = await call('ceoA', 'POST', '/procurement/bills', {
-      supplierId: supA, billNumber: 'CBS-OLD', billDate: iso(-5 * DAY), lines: [{ description: 'Flour', quantity: 1, unitCostCents: 3_000 }],
+      supplierId: supA, billNumber: 'CBS-OLD', billDate: iso(-5 * DAY), lines: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: 3_000, expenseAccountCode: '6040' }],
     })
     expect(r.statusCode).toBe(201)
     expect(await entry(tenantA, `supplier.bill:${r.json().id}`)).not.toBeNull()
@@ -336,7 +338,7 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
 
   it('the petty-cash / till path (createPaymentTx) posts inside its caller\'s transaction', async () => {
     const bill = (await call('ceoB', 'POST', '/procurement/bills', {
-      supplierId: supB, billNumber: 'KMC-PC', billDate: iso(0), lines: [{ description: 'Eggs', quantity: 1, unitCostCents: 40_000 }],
+      supplierId: supB, billNumber: 'KMC-PC', billDate: iso(0), lines: [{ description: 'Detergent', quantity: 1, unitCostCents: 40_000, expenseAccountCode: '6040' }],
     })).json()
     await expect(prisma.$transaction((tx) => createPaymentTx(tx, {
       supplierId: supB, paymentDate: iso(-4 * DAY), method: 'cash', amountCents: 40_000,
@@ -353,7 +355,7 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
 
   it('voiding a bill reverses it in the same transaction', async () => {
     const bill = (await call('ceoB', 'POST', '/procurement/bills', {
-      supplierId: supB, billNumber: 'KMC-VOID', billDate: iso(0), lines: [{ description: 'Ghee', quantity: 1, unitCostCents: 90_000 }],
+      supplierId: supB, billNumber: 'KMC-VOID', billDate: iso(0), lines: [{ description: 'Pest control', quantity: 1, unitCostCents: 90_000, expenseAccountCode: '6050' }],
     })).json()
     expect((await call('ceoB', 'POST', `/procurement/bills/${bill.id}/void`, { reason: 'duplicate' })).statusCode).toBe(200)
     expect(await entry(tenantB, `supplier.bill.void:${bill.id}`)).not.toBeNull()
@@ -364,7 +366,9 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
   it("the backfill posts the caller's companies' unposted bills and payments, and lists closed-period ones", async () => {
     // Legacy rows saved before posting moved into the save's transaction.
     const mk = (supplierId: string, billNumber: string, billDate: string, cents: number) => prisma.supplierBill.create({
+      // createdAt before the company's FIFO cut-over: a pre-FIFO bill posts the old way (Dr 1210).
       data: { supplierId, billNumber, billDate: new Date(billDate), dueDate: new Date(billDate), subtotalCents: cents, totalCents: cents, status: 'open',
+        createdAt: new Date(Date.now() - 60 * DAY),
         lines: { create: [{ description: 'legacy', quantity: 1, unitCostCents: cents, lineTotalCents: cents }] } },
     })
     const openB   = await mk(supB, 'LEG-1', iso(0), 10_000)
@@ -391,11 +395,15 @@ describe('BOOKS-04: supplier bills and payments post with their save', () => {
 
 // ─── BOH-13 ──────────────────────────────────────────────────────────────────
 
-describe('BOH-13: a bill priced off the PO re-costs the item; 1210 follows stock', () => {
+describe('BOH-13: a bill priced off the PO re-prices the lot; 1210 follows the lots', () => {
   async function stockItem(name: string, cost: number) {
     return (await prisma.inventoryItem.create({ data: { name, unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: cost } })).id
   }
   const item = (id: string) => prisma.inventoryItem.findUniqueOrThrow({ where: { id } })
+  const lotValue = async (id: string) => (await prisma.stockLot.findMany({ where: { inventoryItemId: id } })).reduce((s, l) => s + Number(l.remainingValueCents), 0)
+  const use = (inventoryItemId: string, qty: number, key: string) => prisma.$transaction((tx) => consumeFifoTx(tx, {
+    tenantId: tenantA, inventoryItemId, qty, kind: 'waste', sourceType: 'test.use', sourceId: key, clamp: false, occurredAt: new Date(),
+  }))
   const billFor = async (number: string, poId: string, poLineId: string, inventoryItemId: string, qty: number, cost: number) => {
     const r = await call('ceoA', 'POST', '/procurement/bills', {
       supplierId: supMailA, poId, billNumber: number, billDate: iso(0),
@@ -405,7 +413,7 @@ describe('BOH-13: a bill priced off the PO re-costs the item; 1210 follows stock
     return r.json().id as string
   }
 
-  it('billed above the PO price: the item re-averages to the billed price and 1210 carries exactly the stock value', async () => {
+  it('billed above the PO price: 2015 clears at the PO cost, the lot is re-priced and 1210 carries the difference', async () => {
     const beef = await stockItem('Beef', 180_000)
     const { poId, poLineId } = await sentPoFor(supMailA, beef, 20, 180_000)
     await receive(poId, poLineId, 20)
@@ -415,54 +423,60 @@ describe('BOH-13: a bill priced off the PO re-costs the item; 1210 follows stock
     const after = await item(beef)
     expect(after.unitCostCents).toBe(185_000)
     const ref = `supplier.bill:${billId}`
-    expect(await netDebit(tenantA, '1210', ref)).toBe(3_700_000)
-    expect(await netDebit(tenantA, '1210', ref)).toBe(after.currentStock * after.unitCostCents!)
+    expect(await netDebit(tenantA, '2015', ref)).toBe(3_600_000)
+    expect(await netDebit(tenantA, '1210', ref)).toBe(100_000)
     expect(await netDebit(tenantA, '5060', ref)).toBe(0)
     expect(await netDebit(tenantA, '2010', ref)).toBe(-3_700_000)
+    expect(await lotValue(beef)).toBe(3_700_000)
     const history = await prisma.itemPriceHistory.findMany({ where: { inventoryItemId: beef, source: 'bill_match' } })
     expect(history).toHaveLength(1)
     expect(history[0]).toMatchObject({ oldCostCents: 180_000, newCostCents: 185_000, supplierId: supMailA, poLineId })
 
-    // Posting again is a no-op — the variance is applied once.
+    // Posting again is a no-op — the difference is applied once.
     expect((await postSupplierBill(billId)).posted).toBe(false)
     expect((await item(beef)).unitCostCents).toBe(185_000)
     expect(await prisma.itemPriceHistory.count({ where: { inventoryItemId: beef, source: 'bill_match' } })).toBe(1)
   })
 
-  it('stock used before the bill: the used share of the difference goes to 5060, the rest re-averages', async () => {
+  it('stock used before the bill: the used share of the difference goes to 5060, the rest re-prices the lot', async () => {
     const cheese = await stockItem('Cheese', 100_000)
     const { poId, poLineId } = await sentPoFor(supMailA, cheese, 10, 100_000)
     await receive(poId, poLineId, 10)
-    await prisma.inventoryItem.update({ where: { id: cheese }, data: { currentStock: 6 } })   // 4 kg sold at 1,000
+    await use(cheese, 4, 'cheese-1')   // 4 kg used at 1,000
 
     const billId = await billFor('KMC-CHEESE', poId, poLineId, cheese, 10, 110_000)
     expect((await item(cheese)).unitCostCents).toBe(110_000)
     const ref = `supplier.bill:${billId}`
-    expect(await netDebit(tenantA, '1210', ref)).toBe(1_060_000)   // 6 on hand × 1,100 + 4 used × 1,000
+    expect(await netDebit(tenantA, '2015', ref)).toBe(1_000_000)
+    expect(await netDebit(tenantA, '1210', ref)).toBe(60_000)      // 6 on hand × 100 difference
     expect(await netDebit(tenantA, '5060', ref)).toBe(40_000)      // 4 used × 100 difference
     expect(await netDebit(tenantA, '2010', ref)).toBe(-1_100_000)
+    expect(await lotValue(cheese)).toBe(660_000)
 
-    // 3 more kg used at the new cost, then the bill is voided: the cost goes
+    // 3 more kg used at the new cost, then the bill is voided: the lot goes
     // back to the PO price and 5060 gives back what those 3 kg over-costed.
-    await prisma.inventoryItem.update({ where: { id: cheese }, data: { currentStock: 3 } })
+    await use(cheese, 3, 'cheese-2')
     expect((await call('ceoA', 'POST', `/procurement/bills/${billId}/void`, { reason: 'wrong price' })).statusCode).toBe(200)
     expect((await item(cheese)).unitCostCents).toBe(100_000)
-    expect(await netDebit(tenantA, '1210', `supplier.bill.void:${billId}`)).toBe(-1_060_000)
+    expect(await netDebit(tenantA, '1210', `supplier.bill.void:${billId}`)).toBe(-60_000)
     expect(await netDebit(tenantA, '5060', `supplier.bill.void:${billId}`)).toBe(-40_000)
+    expect(await netDebit(tenantA, '2015', `supplier.bill.void:${billId}`)).toBe(-1_000_000)   // GRNI re-opened
     expect(await netDebit(tenantA, '1210', `supplier.bill.void.price:${billId}`)).toBe(30_000)
     expect(await netDebit(tenantA, '5060', `supplier.bill.void.price:${billId}`)).toBe(-30_000)
-    expect(await prisma.itemPriceHistory.count({ where: { inventoryItemId: cheese, source: 'bill_void' } })).toBe(1)
+    expect(await lotValue(cheese)).toBe(300_000)                    // 3 kg left at 1,000
+    expect((await prisma.goodsReceiptLine.findFirstOrThrow({ where: { poLineId } })).billedQty).toBe(0)
   })
 
-  it('billed below the PO price: the item cost comes down with it', async () => {
+  it('billed below the PO price: the lot cost comes down with it', async () => {
     const oil = await stockItem('Oil', 50_000)
     const { poId, poLineId } = await sentPoFor(supMailA, oil, 10, 50_000)
     await receive(poId, poLineId, 10)
     const billId = await billFor('KMC-OIL', poId, poLineId, oil, 10, 45_000)
     const after = await item(oil)
     expect(after.unitCostCents).toBe(45_000)
-    expect(await netDebit(tenantA, '1210', `supplier.bill:${billId}`)).toBe(after.currentStock * after.unitCostCents!)
+    expect(await netDebit(tenantA, '1210', `supplier.bill:${billId}`)).toBe(-50_000)
     expect(await netDebit(tenantA, '5060', `supplier.bill:${billId}`)).toBe(0)
+    expect(await lotValue(oil)).toBe(450_000)
   })
 
   it("company A's bill never re-costs company B's item", async () => {

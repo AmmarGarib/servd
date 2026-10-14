@@ -7,9 +7,11 @@
 //
 // What the customer still owes on an invoice is ONE figure everywhere
 // (balanceOf — status, aging, the overpayment check):
-//     total − paid − credited − withheld
+//     total − paid − credited − withheld − written off
 // Negative = the customer is in credit (a credit note on money already
-// received), which a refund pays out.
+// received), which a refund pays out. "Withheld" is both kinds of tax the
+// client kept back and paid to the authority for us (income tax → 1330,
+// sales tax → 1335).
 //
 // Postings — every one inside the document's transaction (a closed period is
 // 422 and nothing is saved), in the INVOICE's company, idempotent on
@@ -23,6 +25,16 @@
 //   receivable.wht          Dr 1330 Income Tax (WHT) Receivable / Cr 1110 —
 //                           income tax the client withheld (s.153) and paid to
 //                           FBR for us
+//   receivable.st_withheld  Dr 1335 Sales Tax Withheld by Customers / Cr 1110 —
+//                           sales tax the client withheld as a withholding
+//                           agent (H13); netted in the return of the authority
+//                           the invoice's tax was credited to
+//                           (ReceivablePayment.taxAuthority)
+//   receivable.write_off    Dr 6160 Bad Debts / Cr 1110 — a bad debt the CEO
+//                           approved (G12 / H15, writeOffs.ts)
+//   receivable.write_off_recovery
+//                           Dr 1110 / Cr 6160 — money later received on a
+//                           written-off amount, with its receivable.payment
 //   receivable.credit_note  Dr the invoice's revenue account (net) + Dr the
 //                           output-tax account the invoice credited (tax) /
 //                           Cr 1110 (total)
@@ -31,9 +43,10 @@
 //                           certificate withdrawn, a refund that never went
 //                           out, a credit note voided, an unpaid invoice voided
 //
-// Not here yet (pending owner decisions): bad-debt write-off (G12), sales tax
-// withheld by the customer as a withholding agent (G13), the on-account
-// tender at the till (G14).
+// Done: bad-debt write-off with recovery (G12 / H15 — writeOffs.ts, the CEO
+// approves every one) and sales tax withheld by the customer (G13 / H13).
+// PARKED (owner, 2026-10-13): the on-account tender at the till and on-account
+// statements (G14 / H14) — kind 'statement' and customerAccountId stay unused.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma, ReceivableInvoice, ReceivablePayment } from '@prisma/client'
@@ -45,19 +58,29 @@ import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/
 import { audit } from '../../lib/audit.js'
 import { ACCT, postJournalEntry, reverseJournalEntry } from '../accounting/journal.js'
 import { outputTaxCodeFor, OUTPUT_TAX_ACCOUNTS, refundTaxAccountFor } from '../accounting/orderPosting.js'
+import { authorityOfOutputCode, AUTHORITIES, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { assertMoneyFits, sumCents, toCents, zMoneyCents, type DbMoney } from '../../lib/money.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
-import { CHART_OF_ACCOUNTS } from '../../lib/chartOfAccounts.js'
+import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
+import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
+import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
 
 type Tx = Prisma.TransactionClient
 
 const RECEIVABLE = ACCT.CUSTOMER_AR          // 1110
 const WHT_RECEIVABLE = ACCT.WHT_RECEIVABLE   // 1330
+const ST_WITHHELD = ACCT.ST_WITHHELD_BY_CUSTOMERS // 1335
 
 export const INVOICE = 'invoice'
 export const CREDIT_NOTE = 'credit_note'
 /** ReceivablePayment.method of a withholding row (income tax the client withheld). */
 export const WHT_METHOD = 'wht'
+/**
+ * ReceivablePayment.method of sales tax the CLIENT withheld from us (H13, 1335).
+ * Never 'stwh' — that key is OUR withholding as an agent (2041, tax payments).
+ */
+export const ST_WITHHELD_METHOD = 'st_withheld'
+const WITHHOLDING_METHODS: ReadonlySet<string> = new Set([WHT_METHOD, ST_WITHHELD_METHOD])
 
 /** A credit note this long after its invoice is flagged for the accountant (sales-tax adjustment window). */
 const CREDIT_NOTE_WARN_DAYS = 180
@@ -85,61 +108,77 @@ interface Figures {
   paidCents: DbMoney
   creditedCents: DbMoney
   whtCents: DbMoney
+  writtenOffCents: DbMoney
 }
 
 export const totalOf = (inv: Pick<Figures, 'amountCents' | 'taxCents'>): number => toCents(inv.amountCents) + toCents(inv.taxCents)
 
 /**
- * What the customer still owes: total − paid − credited − withheld. Negative
- * = the customer is in credit. 0 for a void invoice and for a credit note
- * (its value sits on the invoice it credits).
+ * What the customer still owes: total − paid − credited − withheld − written
+ * off. Negative = the customer is in credit. 0 for a void invoice and for a
+ * credit note (its value sits on the invoice it credits).
  */
 export function balanceOf(inv: Figures): number {
   if (inv.status === 'void' || inv.kind === CREDIT_NOTE) return 0
-  return totalOf(inv) - toCents(inv.paidCents) - toCents(inv.creditedCents) - toCents(inv.whtCents)
+  return totalOf(inv) - toCents(inv.paidCents) - toCents(inv.creditedCents) - toCents(inv.whtCents) - toCents(inv.writtenOffCents)
 }
 
 /**
  * An invoice's status from its figures: open (nothing against it), partial,
  * paid (settled with money or withholding received), credited (settled by
- * credit notes alone — nothing was ever received).
+ * credit notes alone — nothing was ever received), written_off (settled, and
+ * part or all of it was written off as a bad debt — out of aging).
  */
-export function statusFor(inv: Figures): 'open' | 'partial' | 'paid' | 'credited' {
+export function statusFor(inv: Figures): 'open' | 'partial' | 'paid' | 'credited' | 'written_off' {
   const received = toCents(inv.paidCents) !== 0 || toCents(inv.whtCents) !== 0
-  if (balanceOf({ ...inv, status: 'open', kind: INVOICE }) <= 0) return received ? 'paid' : 'credited'
-  return received || toCents(inv.creditedCents) !== 0 ? 'partial' : 'open'
+  const writtenOff = toCents(inv.writtenOffCents) !== 0
+  if (balanceOf({ ...inv, status: 'open', kind: INVOICE }) <= 0) {
+    if (writtenOff) return 'written_off'
+    return received ? 'paid' : 'credited'
+  }
+  return received || writtenOff || toCents(inv.creditedCents) !== 0 ? 'partial' : 'open'
 }
 
-/** payment = money received · withholding = income tax the client withheld · refund = money handed back. */
+/**
+ * payment = money received (a write-off recovery too — it carries writeOffId)
+ * · withholding = tax the client withheld (income tax 'wht' or sales tax
+ * 'st_withheld') · refund = money handed back.
+ */
 export function paymentKind(p: Pick<ReceivablePayment, 'method' | 'amountCents'>): 'payment' | 'withholding' | 'refund' {
-  if (p.method === WHT_METHOD) return 'withholding'
+  if (WITHHOLDING_METHODS.has(p.method)) return 'withholding'
   return toCents(p.amountCents) < 0 ? 'refund' : 'payment'
 }
-const SOURCE_OF_KIND = { payment: 'receivable.payment', withholding: 'receivable.wht', refund: 'receivable.refund' } as const
+
+/** The sourceType of a payment row's journal entry ('receivable.payment', 'receivable.wht', 'receivable.st_withheld', 'receivable.refund'). */
+export function sourceOfPayment(p: Pick<ReceivablePayment, 'method' | 'amountCents'>): string {
+  if (p.method === ST_WITHHELD_METHOD) return 'receivable.st_withheld'
+  if (p.method === WHT_METHOD) return 'receivable.wht'
+  return toCents(p.amountCents) < 0 ? 'receivable.refund' : 'receivable.payment'
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** The invoice (or credit note), or 404 — never another company's. */
-async function findInScope(req: FastifyRequest, id: string): Promise<ReceivableInvoice> {
+export async function findInScope(req: FastifyRequest, id: string): Promise<ReceivableInvoice> {
   const inv = await prisma.receivableInvoice.findFirst({ where: { id, ...(await scopeTenantWhere(req, 'write')) } })
   if (!inv) throw new NotFoundError('ReceivableInvoice', id)
   return inv
 }
 
 /** Lock the invoice row for the rest of `tx` and read it fresh. Every change to an invoice's figures takes this first. */
-async function lockInvoice(tx: Tx, id: string): Promise<ReceivableInvoice> {
+export async function lockInvoice(tx: Tx, id: string): Promise<ReceivableInvoice> {
   await tx.$queryRaw`SELECT id FROM receivable_invoices WHERE id = ${id} FOR UPDATE`
   return tx.receivableInvoice.findUniqueOrThrow({ where: { id } })
 }
 
 /** 409 unless this is a live invoice (not a credit note, not void). */
-function assertLiveInvoice(inv: ReceivableInvoice): void {
+export function assertLiveInvoice(inv: ReceivableInvoice): void {
   if (inv.kind !== INVOICE) throw new AppError('NOT_AN_INVOICE', 'This is a credit note — record this against the invoice it credits', 409)
   if (inv.status === 'void') throw new AppError('INVOICE_VOID', 'This invoice has been voided', 409)
 }
 
 /** Write the status the invoice's figures now give. */
-async function restatus(tx: Tx, id: string): Promise<ReceivableInvoice> {
+export async function restatus(tx: Tx, id: string): Promise<ReceivableInvoice> {
   const inv = await tx.receivableInvoice.findUniqueOrThrow({ where: { id } })
   if (inv.status === 'void' || inv.kind === CREDIT_NOTE) return inv
   const status = statusFor(inv)
@@ -197,6 +236,9 @@ const staffOf = (req: FastifyRequest) => ({ userId: req.staffUser!.id, userEmail
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
 export async function receivableRoutes(fastify: FastifyInstance) {
+  // Bad-debt write-offs (G12 / H15): /accounting/receivables/write-offs.
+  await fastify.register(writeOffRoutes, { prefix: '/write-offs' })
+
   // GET /accounting/receivables — list + aging summary.
   //   ?status= outstanding (open / partial invoices) · in_credit (customers we
   //   owe a refund) · credit_notes · paid · credited · void · '' (everything).
@@ -248,7 +290,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     const invoiceIds = rows.filter((r) => r.kind === INVOICE).map((r) => r.id)
     const originalIds = [...new Set(rows.map((r) => r.originalInvoiceId).filter((x): x is string => !!x))]
     const bankIds = [...new Set(rows.flatMap((r) => r.payments.map((p) => p.bankAccountId)).filter((x): x is string => !!x))]
-    const [notes, originals, banks] = await Promise.all([
+    const [notes, originals, banks, writeOffs] = await Promise.all([
       invoiceIds.length
         ? prisma.receivableInvoice.findMany({
             where: { ...scope, kind: CREDIT_NOTE, originalInvoiceId: { in: invoiceIds } },
@@ -262,7 +304,16 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       bankIds.length
         ? prisma.bankAccount.findMany({ where: { ...scope, id: { in: bankIds } }, select: { id: true, name: true, accountCode: true } })
         : [],
+      invoiceIds.length
+        ? prisma.receivableWriteOff.findMany({
+            where: { ...scope, invoiceId: { in: invoiceIds } },
+            select: { id: true, invoiceId: true, status: true, amountCents: true, recoveredCents: true, reason: true, requestedAt: true, decidedAt: true },
+            orderBy: { requestedAt: 'asc' },
+          })
+        : [],
     ])
+    // What the caller may do — the admin keeps no role list (server capability flags).
+    const mayRequestWriteOff = (WRITE_OFF_REQUESTERS as readonly string[]).includes(req.staffUser!.role)
     const bankById = new Map(banks.map((b) => [b.id, b]))
     const numberOf = new Map(originals.map((o) => [o.id, o.number]))
 
@@ -277,6 +328,11 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         creditNotes: r.kind === INVOICE
           ? notes.filter((n) => n.originalInvoiceId === r.id).map((n) => ({ ...n, totalCents: totalOf(n) }))
           : [],
+        // Bad-debt write-offs of this invoice (details, evidence and the
+        // approve / recover buttons: GET /write-offs?invoiceId=).
+        writeOffs: writeOffs.filter((w) => w.invoiceId === r.id),
+        canRequestWriteOff: mayRequestWriteOff && r.kind === INVOICE && r.status !== 'void' && balance > 0
+          && !writeOffs.some((w) => w.invoiceId === r.id && w.status === 'requested'),
         payments: r.payments.map((p) => ({
           ...p,
           kind: paymentKind(p),
@@ -410,7 +466,13 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       const inv = await lockInvoice(tx, found.id)
       assertLiveInvoice(inv)
       if (body.amountCents > balanceOf(inv)) {
-        throw new AppError('OVERPAYMENT', 'That is more than the balance owed on this invoice', 409)
+        throw new AppError(
+          'OVERPAYMENT',
+          toCents(inv.writtenOffCents) > 0
+            ? 'That is more than the balance owed on this invoice — money received on the written-off part is recorded as a recovery of the write-off'
+            : 'That is more than the balance owed on this invoice',
+          409,
+        )
       }
       const money = await moneyAccountCode(tx, inv.tenantId, { method: body.method, bankAccountId: body.bankAccountId })
       await tx.receivableInvoice.update({ where: { id: inv.id }, data: { paidCents: { increment: body.amountCents } } })
@@ -444,18 +506,23 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(payment)
   })
 
-  // POST /accounting/receivables/:id/withholding — income tax the client
-  // withheld at source (ITO 2001 s.153) and paid to FBR for us. It settles
-  // that part of the invoice and is a tax credit on our own return: Dr 1330
-  // / Cr 1110. Capped at what is still due. A withholding-only entry is fine
-  // (the certificate often arrives after the money).
-  //
-  // TODO(pending owner decision G13): sales tax the client withholds as a
-  // withholding agent (SRB / PRA) is NOT recorded here — the account (a
-  // separate 1335 netted in the return, or the output account itself) is the
-  // accountant's call.
+  // POST /accounting/receivables/:id/withholding — tax the client withheld at
+  // source and paid to the authority for us. It settles that part of the
+  // invoice. Capped at what is still due (409 OVER_WITHHOLDING). A
+  // withholding-only entry is fine (the certificate often arrives after the
+  // money).
+  //   kind 'income_tax' (default — ITO 2001 s.153, paid to FBR): a credit on
+  //     our income-tax return. Dr 1330 / Cr 1110 ('receivable.wht').
+  //   kind 'sales_tax' (H13 — the client is a sales-tax withholding agent of
+  //     SRB / PRA / …): Dr 1335 Sales Tax Withheld by Customers / Cr 1110
+  //     ('receivable.st_withheld'), netted in the return of the authority the
+  //     invoice's own entry credited its tax to (stored on the row as
+  //     taxAuthority). An invoice with no output tax → 422 NO_OUTPUT_TAX; never
+  //     more than the invoice's tax − tax credited by credit notes − sales tax
+  //     already withheld (409 OVER_SALES_TAX_WITHHOLDING).
   fastify.post<{ Params: { id: string } }>('/:id/withholding', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const body = z.object({
+      kind: z.enum(['income_tax', 'sales_tax']).default('income_tax'),
       amountCents: zMoneyCents('The tax withheld', { sign: 'positive' }),
       certificateNo: z.string().trim().max(80).optional(),
       date: dateStr,
@@ -463,10 +530,51 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     const found = await findInScope(req, req.params.id)
     assertLiveInvoice(found)
     const date = new Date(body.date)
+    const salesTax = body.kind === 'sales_tax'
+
+    // Sales tax: the authority is the one the invoice's own entry credited
+    // (read outside the transaction — the issue entry never changes), and
+    // 1335 must be in the company's chart before anything is saved.
+    let authority: AuthorityKey | null = null
+    if (salesTax) {
+      const issue = await prisma.journalEntry.findFirst({
+        where: { tenantId: found.tenantId, reference: `receivable.issue:${found.id}` },
+        select: { lines: { select: { type: true, amountCents: true, account: { select: { code: true } } } } },
+      })
+      const taxLine = issue?.lines.find((l) => l.type === 'credit' && OUTPUT_TAX_ACCOUNTS.includes(l.account.code) && toCents(l.amountCents) > 0)
+      authority = taxLine ? authorityOfOutputCode(taxLine.account.code) : null
+      if (!authority || toCents(found.taxCents) <= 0) {
+        throw new AppError('NO_OUTPUT_TAX', `Invoice ${found.number} charged no sales tax, so the client cannot have withheld any`, 422)
+      }
+      await assertTemplateAccounts(prisma, found.tenantId, [ST_WITHHELD, RECEIVABLE])
+    }
 
     const row = await prisma.$transaction(async (tx) => {
       const inv = await lockInvoice(tx, found.id)
       assertLiveInvoice(inv)
+      if (salesTax) {
+        // Under the invoice lock: credit notes and earlier sales-tax rows on
+        // this invoice cannot change while we read them.
+        const [credited, withheld] = await Promise.all([
+          tx.receivableInvoice.aggregate({
+            where: { originalInvoiceId: inv.id, kind: CREDIT_NOTE, status: { not: 'void' } },
+            _sum: { taxCents: true },
+          }),
+          tx.receivablePayment.aggregate({
+            where: { invoiceId: inv.id, method: ST_WITHHELD_METHOD, reversedAt: null },
+            _sum: { amountCents: true },
+          }),
+        ])
+        const leftCents = toCents(inv.taxCents) - sumCents(credited._sum.taxCents) - sumCents(withheld._sum.amountCents)
+        if (body.amountCents > leftCents) {
+          throw new AppError(
+            'OVER_SALES_TAX_WITHHOLDING',
+            `That is more than the sales tax left on ${inv.number} (PKR ${(Math.max(0, leftCents) / 100).toLocaleString('en-PK')})`,
+            409,
+            { leftCents: Math.max(0, leftCents) },
+          )
+        }
+      }
       if (body.amountCents > balanceOf(inv)) {
         throw new AppError('OVER_WITHHOLDING', 'That is more than is still due on this invoice', 409)
       }
@@ -474,19 +582,24 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       const w = await tx.receivablePayment.create({
         data: {
           tenantId: inv.tenantId, invoiceId: inv.id, amountCents: body.amountCents,
-          receivedAt: date, method: WHT_METHOD, reference: body.certificateNo || null, createdById: req.staffUser!.id,
+          receivedAt: date, method: salesTax ? ST_WITHHELD_METHOD : WHT_METHOD,
+          taxAuthority: authority,
+          reference: body.certificateNo || null, createdById: req.staffUser!.id,
         },
       })
+      const certificate = body.certificateNo ? ` (certificate ${body.certificateNo})` : ''
       await postJournalEntry({
         tenantId: inv.tenantId,
-        sourceType: 'receivable.wht',
+        sourceType: sourceOfPayment(w),
         sourceId: w.id,
-        description: `Income tax withheld by ${inv.customerName} on ${inv.number}${body.certificateNo ? ` (certificate ${body.certificateNo})` : ''}`,
+        description: salesTax
+          ? `Sales tax (${AUTHORITIES[authority!].label}) withheld by ${inv.customerName} on ${inv.number}${certificate}`
+          : `Income tax withheld by ${inv.customerName} on ${inv.number}${certificate}`,
         entryDate: date,
         postedBy: req.staffUser!.id,
         reference: body.certificateNo || inv.number,
         lines: [
-          { accountCode: WHT_RECEIVABLE, type: 'debit', amountCents: body.amountCents },
+          { accountCode: salesTax ? ST_WITHHELD : WHT_RECEIVABLE, type: 'debit', amountCents: body.amountCents },
           { accountCode: RECEIVABLE, type: 'credit', amountCents: body.amountCents, conceptId: inv.conceptId },
         ],
       }, { tx })
@@ -494,7 +607,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       return w
     })
     await audit({
-      category: 'accounting', action: 'receivable.withholding', entity: 'ReceivablePayment', entityId: row.id,
+      category: 'accounting', action: salesTax ? 'receivable.st_withheld' : 'receivable.withholding', entity: 'ReceivablePayment', entityId: row.id,
       ...staffOf(req), tenantId: found.tenantId, after: row,
     })
     return reply.status(201).send(row)
@@ -533,7 +646,22 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       })
       const leftAmount = toCents(inv.amountCents) - sumCents(prior._sum.amountCents)
       const leftTax = toCents(inv.taxCents) - sumCents(prior._sum.taxCents)
-      if (body.amountCents > leftAmount || body.taxCents > leftTax || toCents(inv.creditedCents) + credit > totalOf(inv)) {
+      // What the CEO wrote off as a bad debt (net of recoveries) was already
+      // booked out of 1110 — tax included — so a credit note can never credit
+      // it again: that would lower revenue and output tax a second time and
+      // leave a credit balance /refunds could pay out. Recover or reverse the
+      // write-off first.
+      const writtenOff = toCents(inv.writtenOffCents)
+      const creditable = totalOf(inv) - writtenOff
+      if (writtenOff > 0 && toCents(inv.creditedCents) + credit > creditable) {
+        throw new AppError(
+          'WRITTEN_OFF_FIRST',
+          `Part of ${inv.number} was written off as a bad debt — a credit note can only credit what was not written off (PKR ${(Math.max(0, creditable - toCents(inv.creditedCents)) / 100).toLocaleString('en-PK')} left). Recover or reverse the write-off first.`,
+          409,
+          { leftCents: Math.max(0, creditable - toCents(inv.creditedCents)), writtenOffCents: writtenOff },
+        )
+      }
+      if (body.amountCents > leftAmount || body.taxCents > leftTax || toCents(inv.creditedCents) + credit > creditable) {
         throw new AppError(
           'OVER_CREDIT',
           `That is more than is left to credit on ${inv.number} (PKR ${(leftAmount / 100).toLocaleString('en-PK')} before tax, PKR ${(leftTax / 100).toLocaleString('en-PK')} tax)`,
@@ -654,10 +782,14 @@ export async function receivableRoutes(fastify: FastifyInstance) {
 
   // POST /accounting/receivables/:id/payments/:paymentId/reverse — a receipt
   // that did not stick (a bounced cheque, a transfer recalled), a withholding
-  // certificate withdrawn, or a refund that never went out. The row stays on
-  // record stamped reversed; its entry is reversed (dated `date`, default
-  // today) and the invoice owes it again. Idempotent: a second call changes
-  // nothing.
+  // certificate withdrawn (income tax or sales tax), or a refund that never
+  // went out. The row stays on record stamped reversed; its entry is reversed
+  // (dated `date`, default today) and the invoice owes it again. A bounced
+  // RECOVERY of a written-off amount (the row carries writeOffId) puts the
+  // amount back as written off instead: the write-off's recoveredCents and
+  // the invoice's writtenOffCents are restored and both its entries
+  // (receivable.payment and receivable.write_off_recovery) are reversed, in
+  // the same transaction. Idempotent: a second call changes nothing.
   fastify.post<{ Params: { id: string; paymentId: string } }>(
     '/:id/payments/:paymentId/reverse',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
@@ -680,18 +812,40 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         // A voided invoice is closed: its receipts are settled by the void's
         // own reversals, never one by one afterwards.
         if (inv.status === 'void') throw new AppError('INVOICE_VOID', 'This invoice is void — nothing on it can be reversed', 409)
+        // Sales tax a client withheld (1335) that a tax payment already set
+        // off cannot be reversed: 1335 would go into credit and the set-off
+        // would have nothing behind it (409 WITHHELD_ALREADY_SET_OFF — void or
+        // correct the tax payment first). Under the authority's withheld lock.
+        if (pay.method === ST_WITHHELD_METHOD && pay.taxAuthority) {
+          await assertWithheldNotSetOff(tx, inv.tenantId, pay.taxAuthority as AuthorityKey, amount)
+        }
         const claimed = await tx.receivablePayment.updateMany({
           where: { id: pay.id, reversedAt: null },
           data: { reversedAt: new Date(), reversedReason: body.reason },
         })
         if (claimed.count === 0) return null // another call reversed it first
+        const recovery = pay.writeOffId && kind === 'payment' ? pay.writeOffId : null
         await tx.receivableInvoice.update({
           where: { id: inv.id },
-          data: kind === 'withholding' ? { whtCents: { decrement: amount } } : { paidCents: { increment: -amount } },
+          data: kind === 'withholding'
+            ? { whtCents: { decrement: amount } }
+            : recovery
+              ? { paidCents: { decrement: amount }, writtenOffCents: { increment: amount } }
+              : { paidCents: { increment: -amount } },
         })
-        await reverseJournalEntry(inv.tenantId, SOURCE_OF_KIND[kind], pay.id, body.reason, {
-          tx, postedBy: req.staffUser!.id, entryDate: body.date ? new Date(body.date) : undefined,
-        })
+        const reverseOpts = { tx, postedBy: req.staffUser!.id, entryDate: body.date ? new Date(body.date) : undefined }
+        if (recovery) {
+          // Under the invoice lock (every write-off change takes it first).
+          const restored = await tx.receivableWriteOff.updateMany({
+            where: { id: recovery, invoiceId: inv.id, recoveredCents: { gte: amount } },
+            data: { recoveredCents: { decrement: amount } },
+          })
+          if (restored.count === 0) {
+            throw new AppError('RECOVERY_MISMATCH', 'This recovery no longer matches its write-off — ask the accountant to check the write-off', 409)
+          }
+          await reverseJournalEntry(inv.tenantId, 'receivable.write_off_recovery', pay.id, body.reason, reverseOpts)
+        }
+        await reverseJournalEntry(inv.tenantId, sourceOfPayment(pay), pay.id, body.reason, reverseOpts)
         await restatus(tx, inv.id)
         return tx.receivablePayment.findUniqueOrThrow({ where: { id: pay.id } })
       })
@@ -702,15 +856,17 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       await audit({
         category: 'accounting', action: `receivable.${kind}.reverse`, entity: 'ReceivablePayment', entityId: pay.id,
         ...staffOf(req), tenantId: found.tenantId, before: pay, after: done,
+        ...(pay.writeOffId ? { metadata: { writeOffId: pay.writeOffId, recoveryReversed: true } } : {}),
       })
       return { ...done, kind, alreadyReversed: false }
     },
   )
 
   // POST /accounting/receivables/:id/void — cancel an invoice raised in error
-  // (only while nothing has been received, credited or withheld on it — after
-  // that the fix is a credit note), or withdraw a credit note (the invoice it
-  // credited owes that amount again).
+  // (only while nothing has been received, credited, withheld or written off
+  // on it — after that the fix is a credit note), or withdraw a credit note
+  // (the invoice it credited owes that amount again). A write-off still
+  // waiting for the CEO on a voided invoice is cancelled with it.
   fastify.post<{ Params: { id: string } }>('/:id/void', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const body = z.object({ reason: z.string().min(3).max(300) }).parse(req.body)
     const found = await findInScope(req, req.params.id)
@@ -744,12 +900,19 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         // Nothing received, credited or withheld — and no live receipt or
         // refund row either (a payment and a refund that net to zero still
         // sit in 1110 until reversed).
-        where: { id: found.id, kind: INVOICE, status: 'open', paidCents: 0, creditedCents: 0, whtCents: 0, payments: { none: { reversedAt: null } } },
+        where: {
+          id: found.id, kind: INVOICE, status: 'open', paidCents: 0, creditedCents: 0, whtCents: 0, writtenOffCents: 0,
+          payments: { none: { reversedAt: null } },
+        },
         data: { status: 'void', voidedAt: new Date(), voidReason: body.reason },
       })
       if (claimed.count === 0) {
-        throw new AppError('CANNOT_VOID', 'Only an invoice with nothing received, credited, withheld or refunded can be voided — reverse those first, or issue a credit note instead', 409)
+        throw new AppError('CANNOT_VOID', 'Only an invoice with nothing received, credited, withheld, written off or refunded can be voided — reverse those first, or issue a credit note instead', 409)
       }
+      await tx.receivableWriteOff.updateMany({
+        where: { invoiceId: found.id, status: 'requested' },
+        data: { status: 'cancelled', decidedById: req.staffUser!.id, decidedAt: new Date(), decisionNote: `Invoice voided: ${body.reason}`.slice(0, 500) },
+      })
       await reverseJournalEntry(found.tenantId, 'receivable.issue', found.id, body.reason, {
         tx, postedBy: req.staffUser!.id,
       })

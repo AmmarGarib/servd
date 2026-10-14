@@ -50,6 +50,9 @@ import { syncSupplierOpeningBalance } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
 import { audit } from '../../lib/audit.js'
 import { type DbMoney, toCents, zInt4Cents, zMoneyCents } from '../../lib/money.js'
+import { FILER_STATUSES, WHT_SECTIONS } from '../../lib/withholding.js'
+import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
+import { parsePktEndOfDay } from '../accounting/dates.js'
 
 const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
 
@@ -111,11 +114,19 @@ const poCreateSchema = z.object({
 })
 
 const billLineSchema = z.object({
-  inventoryItemId: z.string().uuid().optional().nullable(),
-  poLineId:        z.string().uuid().optional().nullable(),
-  description:     z.string().min(1),
-  quantity:        z.number().positive().finite(),
-  unitCostCents:   zMoneyCents('A unit cost'),
+  inventoryItemId:    z.string().uuid().optional().nullable(),
+  poLineId:           z.string().uuid().optional().nullable(),
+  // A stock line names the receipt (or PO line) it bills — "receive it at the
+  // dock first"; a line that is not stock names its 6xxx expense account.
+  receiptLineId:      z.string().min(1).optional().nullable(),
+  expenseAccountCode: z.string().trim().regex(/^\d{4}$/, 'An account code is four digits').optional().nullable(),
+  // An expense line that looks like equipment, booked as an expense anyway
+  // (finance / the CEO only, with a reason — audited and flagged).
+  notEquipment:       z.boolean().optional(),
+  notEquipmentReason: z.string().trim().max(500).optional().nullable(),
+  description:        z.string().min(1),
+  quantity:           z.number().positive().finite(),
+  unitCostCents:      zMoneyCents('A unit cost'),
 })
 
 const billCreateSchema = z.object({
@@ -125,10 +136,27 @@ const billCreateSchema = z.object({
   billDate:      z.string(),
   dueDate:       z.string().optional().nullable(),
   taxCents:      zMoneyCents('The bill\'s tax').optional(),
+  // H8: who charged the sales tax (its input account); default the supplier's usual one, else FBR.
+  taxAuthority:  z.enum(TAX_AUTHORITY_KEYS).optional().nullable(),
+  // The withholding section (lib/withholding.ts); default the supplier's usual one, else 153(1)(a).
+  whtSection:    z.enum([...WHT_SECTIONS, 'none']).optional().nullable(),
   notes:         z.string().optional().nullable(),
   attachmentUrl: z.string().optional().nullable(),
   lines:         z.array(billLineSchema).min(1),
 })
+
+// A supplier's tax profile (H8 / H28) — the ONE vendor master: OpEx and CapEx
+// vendors are Suppliers too. whtExemptUntil is a PKT date; the certificate
+// covers that whole day (stored as its last instant).
+const supplierTaxFields = {
+  filerStatus:         z.enum(FILER_STATUSES).optional(),
+  whtExemptCertNo:     z.string().trim().max(100).nullable().optional(),
+  whtExemptUntil:      z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'A date (YYYY-MM-DD)').nullable().optional(),
+  defaultTaxAuthority: z.enum(TAX_AUTHORITY_KEYS).nullable().optional(),
+  defaultWhtSection:   z.enum([...WHT_SECTIONS, 'none']).nullable().optional(),
+}
+const exemptUntilOf = (v: string | null | undefined): Date | null | undefined =>
+  v === undefined ? undefined : v === null ? null : parsePktEndOfDay(v)
 
 const paymentApplicationSchema = z.object({
   billId:             z.string().uuid(),
@@ -177,12 +205,39 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get('/suppliers', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const user = req.staffUser!
+    const q = z.object({
+      view:       z.enum(['picker']).optional(),
+      categoryId: z.string().min(1).optional(),
+      tenantId:   z.string().min(1).optional(),
+    }).parse(req.query ?? {})
+    // The OpEx / CapEx vendor picker: the suppliers of ONE company — the OpEx
+    // category's, else the one named, else the active one — resolved in write
+    // scope (a foreign category or company is 404), with their tax profile.
+    if (q.view === 'picker') {
+      let tenantId: string | null = null
+      if (q.categoryId) {
+        const cat = await prisma.opexCategory.findUnique({ where: { id: q.categoryId }, select: { tenantId: true } })
+        if (!cat?.tenantId || !user.memberTenantIds.includes(cat.tenantId)) throw new NotFoundError('OpexCategory', q.categoryId)
+        tenantId = cat.tenantId
+      } else if (q.tenantId) {
+        if (!user.memberTenantIds.includes(q.tenantId)) throw new NotFoundError('Company', q.tenantId)
+        tenantId = q.tenantId
+      } else {
+        tenantId = activeTenantOr422(req, null)
+      }
+      return prisma.supplier.findMany({
+        where:   { tenantId, deletedAt: null, systemKind: null },
+        select:  { id: true, name: true, filerStatus: true, whtExemptUntil: true, defaultWhtSection: true, defaultTaxAuthority: true },
+        orderBy: { name: 'asc' },
+      })
+    }
     // Finance reads every supplier of its companies (AP), as the buyer does.
     const isManager = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'procurement', 'finance'].includes(user.role)
     const tenantWhere = await supplierScopeWhere(req, 'read')
+    // System suppliers ('Cash purchases') are never listed.
     const scopeWhere = isManager
-      ? { deletedAt: null, ...tenantWhere }
-      : { deletedAt: null, assignedStaffId: user.id, ...tenantWhere }
+      ? { deletedAt: null, systemKind: null, ...tenantWhere }
+      : { deletedAt: null, systemKind: null, assignedStaffId: user.id, ...tenantWhere }
     return prisma.supplier.findMany({
       where: scopeWhere,
       include: {
@@ -226,6 +281,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       paymentTermsDays:    z.number().int().min(0).max(365).optional(),
       leadTimeDays:        z.number().int().min(0).max(365).optional(),
       openingBalanceCents: zMoneyCents('The opening balance').optional(),
+      ...supplierTaxFields,
       // Explicit company picker from the Add Supplier modal. In portfolio
       // view the frontend renders a required dropdown so the CEO doesn't
       // have to bounce out of portfolio to add suppliers per company.
@@ -250,9 +306,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
     // Strip body.tenantId before spreading — Prisma needs the resolved value,
     // not the body field which may be undefined.
-    const { tenantId: _bodyTenantId, ...rest } = body
+    const { tenantId: _bodyTenantId, whtExemptUntil, ...rest } = body
     const supplier = await prisma.supplier.create({
-      data: { ...rest, tenantId },
+      data: { ...rest, ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}), tenantId },
       include: {
         assignedStaff: { select: { id: true, name: true } },
         tenant:        { select: { id: true, name: true, slug: true } },
@@ -283,7 +339,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         paymentTermsDays:    z.number().int().min(0).max(365).optional(),
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
         openingBalanceCents: zMoneyCents('The opening balance').optional(),
+        ...supplierTaxFields,
       }).parse(req.body)
+      if (existing.systemKind) {
+        throw new AppError('SYSTEM_SUPPLIER', `${existing.name} is a system supplier — it cannot be edited`, 422)
+      }
       assertManagerFields(req, body, existing)
       // A supplier moves between the operator's companies, never out of them:
       // clearing its company would make it (and its POs, bills and threads)
@@ -307,9 +367,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         })
         if (!staff) throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member does not work for this supplier\'s company', 422)
       }
+      const { whtExemptUntil, ...fields } = body
       const updated = await prisma.supplier.update({
         where: { id: req.params.id },
-        data:  body,
+        data:  { ...fields, ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}) },
         include: {
           assignedStaff: { select: { id: true, name: true } },
           tenant:        { select: { id: true, name: true, slug: true } },
@@ -473,8 +534,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // Receive against a PO — the same receiveGoods() the dock page
   // (POST /crosschecks/receiving) calls: writes the GoodsReceipt, the PO line
-  // quantities, stock and moving-average cost in one transaction, with the
-  // photo threshold and the raiser-can't-receive rule (CEO exempt).
+  // quantities, the FIFO lots (a quantity a bill already priced at the billed
+  // price) and Dr 12x0 / Cr 2015 GRNI in one transaction, with the photo
+  // threshold and the raiser-can't-receive rule (CEO exempt).
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/receive',
     { preHandler: requireAuth(...MANAGERS) },
@@ -483,6 +545,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const body = z.object({
         photoUrl: z.string().url().nullable().optional(),
         notes:    z.string().max(500).nullable().optional(),
+        // The outlet the goods arrived at (one of the supplier's company's — else 422 LOCATION_NOT_IN_COMPANY).
+        locationId: z.string().min(1).nullable().optional(),
         lines: z.array(z.object({
           poLineId:           z.string().uuid(),
           quantityReceived:   z.number().min(0),
@@ -495,6 +559,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const result = await receiveGoods({
         actor:    req.staffUser!,
         poId:     req.params.id,
+        locationId: body.locationId ?? null,
         photoUrl: body.photoUrl ?? null,
         notes:    body.notes ?? null,
         lines:    body.lines.map((l) => ({
@@ -579,7 +644,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     // and posts the bill in the same transaction that saves it (a closed
     // month is PERIOD_LOCKED 422 — nothing saved half-way).
     await findSupplierInScope(req, body.supplierId, 'write', { live: true })
-    const bill = await createBill({ ...body, createdBy: req.staffUser!.id })
+    const bill = await createBill({
+      ...body, createdBy: req.staffUser!.id, actorRole: req.staffUser!.role, actorEmail: req.staffUser!.email ?? null,
+    })
     return reply.status(201).send(bill)
   })
 

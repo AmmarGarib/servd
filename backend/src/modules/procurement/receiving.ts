@@ -1,37 +1,52 @@
-// Goods receiving — THE one path that brings stock in from a supplier.
+// Goods receiving — THE one path that brings stock in from outside (finance
+// wave B: FIFO lots + GRNI, H16 / H17; owner decision 30's moving average is
+// replaced by lots at the price actually paid).
 //
-// There used to be three: the Procurement "Receive" modal (receivePo), the
-// dock-door GRN page (POST /crosschecks/receiving) and the legacy
-// /recipes/purchase-orders/:id/receive. They disagreed: the GRN never updated
-// the PO or the cost and bumped stock outside a transaction (errors
-// swallowed), the PO path wrote no GoodsReceipt and had no photo or
-// separation-of-duties check, and the legacy path would receive a draft or an
-// already-received PO. Receiving one delivery through two of them added the
-// stock twice.
+// Every caller — the dock page (POST /crosschecks/receiving), the PO receive
+// route, and the cash areas (inventory/cashPurchase.ts for food bought with
+// petty cash or a cash request) — ends in receiveGoodsTx(), which in the
+// caller's transaction:
+//   - writes the GoodsReceipt (tenantId = the receiving company, locationId =
+//     one of ITS locations, else 422 LOCATION_NOT_IN_COMPANY) and its lines;
+//   - opens the FIFO lots of each line through lib/stockLedger.ts addLotTx — a
+//     line may open SEVERAL lots: quantity a supplier bill already charged for
+//     (a pending GrniMatch on the PO line, oldest bill first) opens a lot at
+//     the BILLED price and the match turns 'live' ('<lineId>:<matchId>'); the
+//     rest opens one lot at the PO price ('<lineId>:po') or the price entered
+//     at the dock ('<lineId>:dock'). lotUnitCostCents stores the cost of the
+//     line's still-unbilled quantity. addLotTx records the purchase price
+//     (ItemPriceHistory), settles recent sale shortfalls and issues
+//     issue-on-receipt items;
+//   - against a PO: raises PurchaseOrderLine.quantityReceived;
+//   - posts 'procurement.receipt:<receiptId>' Dr 12x0 per class / Cr 2015
+//     (accounting/inventoryPosting.ts postGoodsReceiptTx) — a pending-bill
+//     quantity is credited at the billed price, netting that bill's Dr 2015.
+// receiveGoods() (the dock and PO routes) wraps it: request checks,
+// ensureFifoReady, ONE transaction (PO lock, receiveGoodsTx, discrepancy log,
+// PO status + activity log), then the variance / short-shipment flags after
+// commit.
 //
-// Now every caller — the dock page, the PO receive route — calls
-// receiveGoods(). In ONE transaction it:
-//   - writes the GoodsReceipt (the receiving document) and its lines
-//   - against a PO: bumps PurchaseOrderLine.quantityReceived, logs
-//     ReceivingDiscrepancy rows, moves the PO to partial / received and
-//     writes the PO activity log
-//   - moves stock and the moving-average unit cost through applyReceiptLine
-//     (owner decision 30: ingredient cost = moving average of actual
-//     deliveries), with ItemPriceHistory when the cost moves
-//   - against a PO line a supplier bill was booked for before this delivery:
-//     applies the bill's carried price variance to the received quantity
-//     (applyCarriedBillVarianceTx, RB-3) — the share still on hand after the
-//     receipt re-averages the item, the share that only filled stock already
-//     sold below zero goes to 5060 in the bill's company (BK2-RV-1), so a
-//     closed period refuses the receipt the way it refuses the bill
-// After commit it raises the variance / short-shipment exception flags.
+// Company: the supplier's company receives. A supplier or item with no
+// company is refused on EVERY path (422 SUPPLIER_HAS_NO_COMPANY /
+// ITEM_HAS_NO_COMPANY), an item of another company is 422 ITEM_NOT_IN_COMPANY.
 //
-// Owner decision 27 (2026-09-27):
+// Cash-settled receipts (decision P6): `settledBy` names the cash document
+// (a petty-cash movement or a cash-request settlement). The supplier is the
+// company's system supplier 'Cash purchases' (ensureCashPurchaseSupplier —
+// never listed, never billed), the lines are born billed (billedQty =
+// receivedQty), the receipt is unique per cash document (the same food can't
+// come in twice) and it posts NOTHING — the cash document's own entry carries
+// Dr 12x0 / Cr its cash account.
+//
+// Owner decision 27 (2026-09-27), receiveGoods only:
 //   - receiving WITHOUT a PO is allowed (market runs, ad-hoc deliveries), but
 //     the unit cost must be entered at the dock;
 //   - only manager tiers may receive (MANAGERS);
 //   - whoever raised the PO cannot receive it — everyone except the CEO.
+// A cash-settled receipt is not a delivery taken at the dock: the cash area
+// restricts its stock lines to stock keepers itself.
 
+import { randomUUID } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
@@ -39,8 +54,11 @@ import { flagException, type ExceptionKind } from '../../lib/exceptions.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
 import { MANAGERS } from '../auth/middleware.js'
-import { applyCarriedBillVarianceTx } from '../accounting/supplierPosting.js'
-import { assertInt4Fits, assertMoneyFits } from '../../lib/money.js'
+import { assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
+import { toPurchaseUnits } from '../../lib/recipeCost.js'
+import { costClassOf, type CostClass } from '../../lib/inventoryClass.js'
+import { addLotTx, ensureFifoReady, lockItemsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
+import { postGoodsReceiptTx } from '../accounting/inventoryPosting.js'
 
 /** Line variance above this (either way) raises an exception flag. */
 export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
@@ -52,7 +70,299 @@ export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
  */
 export const RECEIVABLE_PO_STATUSES = ['sent', 'partial'] as const
 
+/** Supplier.systemKind of the company's cash-purchases supplier (decision P6). */
+export const CASH_PURCHASE_SUPPLIER_KIND = 'cash_purchases'
+
 export type DiscrepancyReason = 'short_shipment' | 'over_shipment' | 'damaged' | 'wrong_item' | 'quality_issue'
+
+type Tx = Prisma.TransactionClient
+const EPS = 1e-9
+
+// ─── receiveGoodsTx — the one stock-in contract ──────────────────────────────
+
+export interface SettledBy {
+  kind: 'petty_cash_movement' | 'cash_voucher_settlement'
+  id: string
+  /** The credit side the cash document books (1011 box / 1355 advance). */
+  creditAccountCode: string
+}
+
+export interface ReceiveGoodsInput {
+  tenantId: string
+  supplierId?: string
+  poId?: string
+  locationId?: string | null
+  receivedById: string
+  receivedAt?: Date
+  lines: Array<{
+    inventoryItemId: string
+    receivedQty: number
+    unit: string
+    /** Per `unit`. Required without a PO line (the dock price); a PO line uses its PO price. */
+    unitCostCents?: number
+    poLineId?: string
+    description?: string
+    /** Book exactly this value for the line (a cash buy's total) instead of quantity × unit cost. */
+    valueCents?: number
+    /** Receipt-line extras the dock / PO routes record. */
+    poQty?: number | null
+    variancePct?: number | null
+    notes?: string | null
+  }>
+  settledBy?: SettledBy
+  /** Receipt extras the dock / PO routes record. */
+  photoUrl?: string | null
+  notes?: string | null
+  status?: string
+  varianceFlag?: boolean
+}
+
+export interface ReceiveGoodsTxResult {
+  receiptId: string
+  lines: Array<{ receiptLineId: string; lotIds: string[]; valueCents: number; costClass: CostClass }>
+}
+
+/**
+ * The company's system supplier of cash-bought goods ('Cash purchases',
+ * Supplier.systemKind 'cash_purchases'), created on first use. Never listed,
+ * never billed. Race-safe (ON CONFLICT on the per-company unique key).
+ */
+export async function ensureCashPurchaseSupplier(tx: Tx, tenantId: string): Promise<{ id: string }> {
+  const found = await tx.supplier.findFirst({ where: { tenantId, systemKind: CASH_PURCHASE_SUPPLIER_KIND }, select: { id: true } })
+  if (found) return found
+  await tx.$executeRaw`
+    INSERT INTO suppliers (id, "tenantId", name, "systemKind", notes, "updatedAt")
+    VALUES (${randomUUID()}, ${tenantId}, 'Cash purchases', ${CASH_PURCHASE_SUPPLIER_KIND},
+            'System supplier: food bought with petty cash or a cash request (never billed)', now())
+    ON CONFLICT ("tenantId", "systemKind") DO NOTHING`
+  return tx.supplier.findFirstOrThrow({ where: { tenantId, systemKind: CASH_PURCHASE_SUPPLIER_KIND }, select: { id: true } })
+}
+
+/**
+ * Bring goods in (header): receipt + lines + lots + pending-bill settlement +
+ * PO quantities + 'procurement.receipt' posting, in the caller's
+ * transaction. The caller has called ensureFifoReady(tenantId) BEFORE opening
+ * it. Refusals: 422 SUPPLIER_HAS_NO_COMPANY / ITEM_HAS_NO_COMPANY /
+ * ITEM_NOT_IN_COMPANY / LOCATION_NOT_IN_COMPANY / UNIT_MISMATCH /
+ * UNIT_COST_REQUIRED; 404 an unknown item / supplier / PO line; 409
+ * ALREADY_RECEIVED for a cash document already received.
+ */
+export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<ReceiveGoodsTxResult> {
+  const tenantId = input.tenantId
+  if (!tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Goods are received into a company — none was given', 422)
+  if (input.lines.length === 0) throw new AppError('NO_LINES', 'Nothing to receive', 400)
+  const settled = input.settledBy ?? null
+  if (settled && input.poId) throw new AppError('SETTLED_RECEIPT_NO_PO', 'Goods bought with cash are received without a purchase order', 400)
+
+  // ── Supplier ──
+  let supplierId: string
+  if (settled) {
+    supplierId = (await ensureCashPurchaseSupplier(tx, tenantId)).id
+    const dup = await tx.goodsReceipt.findFirst({ where: { tenantId, settledByType: settled.kind, settledById: settled.id }, select: { id: true } })
+    if (dup) throw new AppError('ALREADY_RECEIVED', 'The goods of this cash document are already in stock', 409, { goodsReceiptId: dup.id })
+  } else {
+    let sid = input.supplierId ?? null
+    if (input.poId) {
+      // The PO's lock serialises receipts and bills of its lines (pending matches).
+      await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${input.poId} FOR UPDATE`
+      const po = await tx.purchaseOrder.findUnique({ where: { id: input.poId }, select: { supplierId: true } })
+      if (!po) throw new NotFoundError('PurchaseOrder', input.poId)
+      if (sid && sid !== po.supplierId) throw new AppError('SUPPLIER_MISMATCH', 'That PO belongs to a different supplier', 400)
+      sid = po.supplierId
+    }
+    if (!sid) throw new AppError('SUPPLIER_REQUIRED', 'Pick the supplier for a delivery without a PO', 400)
+    const supplier = await tx.supplier.findUnique({ where: { id: sid }, select: { id: true, name: true, tenantId: true } })
+    if (!supplier) throw new NotFoundError('Supplier', sid)
+    if (!supplier.tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', `Assign ${supplier.name} to a company before receiving from it`, 422)
+    if (supplier.tenantId !== tenantId) throw new AppError('SUPPLIER_NOT_IN_COMPANY', `${supplier.name} belongs to a different company`, 422)
+    supplierId = supplier.id
+  }
+
+  // ── Location: one of the receiving company's ──
+  if (input.locationId) {
+    const loc = await tx.location.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { tenantId: true } })
+    if (!loc || loc.tenantId !== tenantId) {
+      throw new AppError('LOCATION_NOT_IN_COMPANY', 'That outlet is not one of this company\'s', 422)
+    }
+  }
+
+  // ── Items + PO lines ──
+  const itemIds = [...new Set(input.lines.map((l) => l.inventoryItemId))]
+  const items = await tx.inventoryItem.findMany({
+    where: { id: { in: itemIds } },
+    select: { id: true, name: true, unit: true, tenantId: true, category: true },
+  })
+  const itemById = new Map(items.map((i) => [i.id, i]))
+  for (const id of itemIds) {
+    const it = itemById.get(id)
+    if (!it) throw new NotFoundError('InventoryItem', id)
+    if (!it.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', `${it.name} belongs to no company — assign it to a company before receiving it`, 422)
+    if (it.tenantId !== tenantId) throw new AppError('ITEM_NOT_IN_COMPANY', `${it.name} belongs to a different company`, 422)
+  }
+  const poLineIds = input.lines.map((l) => l.poLineId).filter((x): x is string => !!x)
+  const poLines = poLineIds.length === 0 ? [] : await tx.purchaseOrderLine.findMany({
+    where: { id: { in: poLineIds } },
+    select: { id: true, purchaseOrderId: true, inventoryItemId: true, unitCostCents: true },
+  })
+  const poLineById = new Map(poLines.map((p) => [p.id, p]))
+
+  interface Prepared { line: ReceiveGoodsInput['lines'][number]; item: NonNullable<ReturnType<typeof itemById.get>>; qty: number; unitCost: number | null; poLine: (typeof poLines)[number] | null }
+  const prepared: Prepared[] = input.lines.map((l) => {
+    const item = itemById.get(l.inventoryItemId)!
+    if (!Number.isFinite(l.receivedQty) || l.receivedQty < 0) throw new AppError('INVALID_QTY', 'Received quantity must be zero or more', 400)
+    let poLine: Prepared['poLine'] = null
+    if (l.poLineId) {
+      poLine = poLineById.get(l.poLineId) ?? null
+      if (!poLine) throw new NotFoundError('PurchaseOrderLine', l.poLineId)
+      if ((input.poId && poLine.purchaseOrderId !== input.poId) || poLine.inventoryItemId !== item.id) {
+        throw new AppError('LINE_NOT_ON_PO', `Line ${l.poLineId} is not ${item.name} on this purchase order`, 400)
+      }
+    }
+    // Quantities are held in the item's purchase unit.
+    let qty = l.receivedQty
+    let unitCost: number | null = poLine ? poLine.unitCostCents : (l.unitCostCents ?? null)
+    if (!poLine && l.unit && l.unit !== item.unit) {
+      const pu = toPurchaseUnits(l.receivedQty, l.unit, item.unit)
+      if (pu == null) throw new AppError('UNIT_MISMATCH', `${item.name} is counted in ${item.unit} — ${l.unit} cannot be converted to it`, 422)
+      if (unitCost != null && pu > EPS) unitCost = Math.round((unitCost * l.receivedQty) / pu)
+      qty = pu
+    }
+    if (qty > EPS && l.valueCents != null) {
+      if (!Number.isInteger(l.valueCents) || l.valueCents < 0) throw new AppError('INVALID_AMOUNT', `${item.name}: the value must be whole paisa, zero or more`, 400)
+      assertMoneyFits(l.valueCents, `${item.name}'s value`)
+      unitCost = Math.round(l.valueCents / qty)
+    }
+    if (qty > EPS && (unitCost == null || !Number.isInteger(unitCost) || unitCost < 0)) {
+      throw new AppError('UNIT_COST_REQUIRED', `Enter the unit cost paid for ${item.name}`, 400)
+    }
+    if (unitCost != null) {
+      assertInt4Fits(unitCost, `${item.name}'s unit cost`)
+      assertMoneyFits(Math.round(unitCost * qty), `${item.name} (quantity × unit cost)`)
+    }
+    return { line: l, item, qty, unitCost, poLine }
+  })
+
+  // Every item's row, locked in id order, before the first lot is written.
+  await lockItemsTx(tx, itemIds)
+
+  const receivedAt = input.receivedAt ?? new Date()
+  let receipt: { id: string }
+  try {
+    receipt = await tx.goodsReceipt.create({
+      data: {
+        poId:               input.poId ?? null,
+        supplierId,
+        receivedById:       input.receivedById,
+        receivedAt,
+        photoUrl:           input.photoUrl ?? null,
+        notes:              input.notes ?? null,
+        status:             input.status ?? 'accepted',
+        varianceFlag:       input.varianceFlag ?? false,
+        tenantId,
+        locationId:         input.locationId ?? null,
+        settledByType:      settled?.kind ?? null,
+        settledById:        settled?.id ?? null,
+        settledAccountCode: settled?.creditAccountCode ?? null,
+      },
+      select: { id: true },
+    })
+  } catch (err) {
+    if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+      throw new AppError('ALREADY_RECEIVED', 'The goods of this cash document are already in stock', 409)
+    }
+    throw err
+  }
+
+  const out: ReceiveGoodsTxResult['lines'] = []
+  for (const p of prepared) {
+    const rl = await tx.goodsReceiptLine.create({
+      data: {
+        receiptId:       receipt.id,
+        inventoryItemId: p.item.id,
+        poLineId:        p.poLine?.id ?? null,
+        description:     p.line.description ?? p.item.name,
+        poQty:           p.line.poQty ?? null,
+        receivedQty:     p.qty,
+        poUnitCostCents: p.unitCost,
+        unit:            p.item.unit,
+        variancePct:     p.line.variancePct ?? null,
+        notes:           p.line.notes ?? null,
+        billedQty:       settled ? p.qty : 0,
+      },
+      select: { id: true },
+    })
+    const lotIds: string[] = []
+    let valueCents = 0
+    let restCost: number | null = null
+    let pendingCost: number | null = null
+    if (p.qty > EPS) {
+      let left = p.qty
+      let billed = 0
+      const lotArgs = {
+        tenantId, inventoryItemId: p.item.id, kind: 'receipt' as const, lotSourceType: 'goods_receipt_line' as const,
+        movementSourceType: STOCK_SOURCE.receiptLine, movementSourceId: rl.id, receiptLineId: rl.id,
+        locationId: input.locationId ?? null, receivedAt, createdById: input.receivedById,
+      }
+      // 1. Quantity a bill already charged for (oldest bill first): at the billed price.
+      if (p.poLine && !settled) {
+        const pending = await tx.grniMatch.findMany({
+          where: { tenantId, poLineId: p.poLine.id, status: 'pending' },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        })
+        for (const pm of pending) {
+          if (left < EPS) break
+          if (!(pm.qty > EPS)) continue
+          const take = Math.min(pm.qty, left)
+          const pmGrni = toCents(pm.grniCents)
+          const whole = take >= pm.qty - EPS
+          const part = whole ? pmGrni : Math.round((pmGrni * take) / pm.qty)
+          if (!whole) {
+            await tx.grniMatch.create({
+              data: {
+                tenantId, billId: pm.billId, billLineId: pm.billLineId, receiptLineId: null, poLineId: pm.poLineId,
+                qty: pm.qty - take, billedUnitCostCents: pm.billedUnitCostCents, grniCents: pmGrni - part, status: 'pending',
+              },
+            })
+          }
+          await tx.grniMatch.update({
+            where: { id: pm.id },
+            data: { qty: take, grniCents: part, receiptLineId: rl.id, receiptUnitCostCents: pm.billedUnitCostCents, status: 'live', settledAt: new Date() },
+          })
+          const lot = await addLotTx(tx, { ...lotArgs, qty: take, unitCostCents: pm.billedUnitCostCents, valueCents: part, lotSourceId: `${rl.id}:${pm.id}` })
+          lotIds.push(lot.lotId)
+          valueCents += part
+          pendingCost ??= pm.billedUnitCostCents
+          billed += take
+          left -= take
+        }
+      }
+      // 2. The rest at the PO price, else the dock price (a cash buy: its exact total).
+      if (left > EPS) {
+        const exact = p.line.valueCents != null && billed === 0 ? p.line.valueCents : undefined
+        const unitCost = p.unitCost ?? 0
+        const value = exact ?? Math.round(left * unitCost)
+        const lot = await addLotTx(tx, { ...lotArgs, qty: left, unitCostCents: unitCost, valueCents: value, lotSourceId: `${rl.id}:${p.poLine ? 'po' : 'dock'}` })
+        lotIds.push(lot.lotId)
+        valueCents += value
+        restCost = unitCost
+      }
+      await tx.goodsReceiptLine.update({
+        where: { id: rl.id },
+        data: { lotUnitCostCents: restCost ?? pendingCost, ...(billed > 0 && !settled ? { billedQty: billed } : {}) },
+      })
+      if (p.poLine) {
+        await tx.purchaseOrderLine.update({ where: { id: p.poLine.id }, data: { quantityReceived: { increment: p.qty } } })
+      }
+    }
+    out.push({ receiptLineId: rl.id, lotIds, valueCents, costClass: costClassOf(p.item.category) })
+  }
+
+  // Dr 12x0 / Cr 2015 for the lots opened (a cash-settled receipt posts nothing).
+  await postGoodsReceiptTx(tx, receipt.id)
+  return { receiptId: receipt.id, lines: out }
+}
+
+// ─── receiveGoods — the dock page and the PO receive route ───────────────────
 
 export interface ReceiveGoodsLine {
   /** Required on a PO receipt; must be a line of that PO. */
@@ -63,20 +373,21 @@ export interface ReceiveGoodsLine {
   quantityReceived:   number
   /**
    * Unit cost in paisa. Required on a receipt without a PO (entered at the
-   * dock). On a PO line the agreed PO cost is used; when the supplier's bill
-   * later charges a different price, postSupplierBill re-averages the item at
-   * the billed price (accounting/supplierPosting.ts).
+   * dock). On a PO line the agreed PO price opens the lot; a bill at another
+   * price re-prices the lot later (accounting/supplierPosting.ts).
    */
   unitCostCents?:     number | null
   discrepancyReason?: DiscrepancyReason | null
   notes?:             string | null
 }
 
-export interface ReceiveGoodsInput {
+export interface ReceiveGoodsRequest {
   actor:       { id: string; role: string }
   poId?:       string | null
   /** Required without a PO; must match the PO's supplier when both are given. */
   supplierId?: string | null
+  /** The outlet the goods arrived at — one of the supplier's company's locations. */
+  locationId?: string | null
   photoUrl?:   string | null
   notes?:      string | null
   lines:       ReceiveGoodsLine[]
@@ -87,62 +398,6 @@ export interface ReceiveGoodsResult {
   poStatus: string | null
   flagged:  number
 }
-
-type Tx = Prisma.TransactionClient
-
-// ─── Stock + moving-average cost ─────────────────────────────────────────────
-
-/**
- * Bring `qty` of an item into stock at `unitCostCents`, re-averaging the
- * item's unit cost over what was on hand and what arrived (negative stock
- * counts as zero on hand, so a count error can't drag the average). Records
- * ItemPriceHistory when the cost moves. The item row is locked so two
- * receipts of the same item can't both average against the same old stock.
- * Returns the new unit cost (null when nothing arrived).
- */
-export async function applyReceiptLine(tx: Tx, input: {
-  inventoryItemId: string
-  quantity:        number
-  unitCostCents:   number
-  supplierId:      string | null
-  poLineId?:       string | null
-  source:          'po_receive' | 'dock_receive'
-}): Promise<number | null> {
-  if (!(input.quantity > 0)) return null
-  await tx.$queryRaw`SELECT id FROM inventory_items WHERE id = ${input.inventoryItemId} FOR UPDATE`
-  const item = await tx.inventoryItem.findFirst({
-    where:  { id: input.inventoryItemId, deletedAt: null },
-    select: { id: true, currentStock: true, unitCostCents: true },
-  })
-  if (!item) throw new NotFoundError('InventoryItem', input.inventoryItemId)
-
-  const onHand  = Math.max(0, item.currentStock)
-  const oldCost = item.unitCostCents
-  const newCost = oldCost == null || onHand + input.quantity <= 0
-    ? input.unitCostCents
-    : Math.round((oldCost * onHand + input.unitCostCents * input.quantity) / (onHand + input.quantity))
-
-  await tx.inventoryItem.update({
-    where: { id: item.id },
-    data:  { currentStock: { increment: input.quantity }, unitCostCents: newCost },
-  })
-
-  if (oldCost !== newCost) {
-    await tx.itemPriceHistory.create({
-      data: {
-        inventoryItemId: item.id,
-        supplierId:      input.supplierId,
-        oldCostCents:    oldCost,
-        newCostCents:    newCost,
-        source:          input.source,
-        poLineId:        input.poLineId ?? null,
-      },
-    })
-  }
-  return newCost
-}
-
-// ─── receiveGoods ────────────────────────────────────────────────────────────
 
 interface PreparedLine {
   poLineId:         string | null
@@ -159,7 +414,7 @@ interface PreparedLine {
   variancePct:      number | null
 }
 
-export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoodsResult> {
+export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveGoodsResult> {
   if (!(MANAGERS as string[]).includes(input.actor.role)) {
     throw new ForbiddenError('Only managers can receive goods.')
   }
@@ -186,19 +441,26 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
   }
   const supplierId = po?.supplierId ?? input.supplierId
   if (!supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick the supplier for a delivery without a PO', 400)
-  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true, tenantId: true } })
+  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true, tenantId: true, systemKind: true } })
   if (!supplier) throw new NotFoundError('Supplier', supplierId)
+  if (supplier.systemKind) {
+    throw new AppError('SYSTEM_SUPPLIER', `${supplier.name} is for goods bought with cash — record them on the petty-cash spend or cash request`, 422)
+  }
+  // Company-less suppliers are refused on the PO path too (critic): the
+  // receipt books into the supplier's company.
+  if (!supplier.tenantId) {
+    throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before receiving from it', 422)
+  }
+  const tenantId = supplier.tenantId
 
   if (po) {
     assertReceivable(po.status)
     await assertNotSelfApproval({
-      tenantId: supplier.tenantId,
+      tenantId,
       actor: input.actor, creatorId: po.createdBy,
       action: 'receive goods', entity: 'PurchaseOrder', entityId: po.id,
       message: 'You raised this purchase order, so someone else has to receive it (or the CEO).',
     })
-  } else if (!supplier.tenantId) {
-    throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before receiving from it', 422)
   }
 
   // ── Prepare lines ──────────────────────────────────────────────────────────
@@ -211,9 +473,10 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
       seen.add(l.poLineId)
       const pl = po.lines.find((x) => x.id === l.poLineId)
       if (!pl) throw new AppError('LINE_NOT_FOUND', `Line ${l.poLineId} is not part of this PO`, 400)
-      // createPo refuses another company's item now; a PO raised before that
-      // could still carry one, and receiving it would move that company's stock.
-      if (supplier.tenantId && pl.inventoryItem.tenantId && pl.inventoryItem.tenantId !== supplier.tenantId) {
+      if (!pl.inventoryItem.tenantId) {
+        throw new AppError('ITEM_HAS_NO_COMPANY', `${pl.inventoryItem.name} belongs to no company — assign it to a company before receiving it`, 422)
+      }
+      if (pl.inventoryItem.tenantId !== tenantId) {
         throw new AppError('ITEM_NOT_IN_COMPANY', `${pl.inventoryItem.name} belongs to a different company than ${supplier.name}`, 422)
       }
       const outstanding = Math.max(0, pl.quantityOrdered - pl.quantityReceived)
@@ -236,7 +499,10 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
     for (const l of input.lines) {
       const it = items.find((x) => x.id === l.inventoryItemId)
       if (!it) throw new NotFoundError('InventoryItem', l.inventoryItemId!)
-      if (it.tenantId && it.tenantId !== supplier.tenantId) {
+      if (!it.tenantId) {
+        throw new AppError('ITEM_HAS_NO_COMPANY', `${it.name} belongs to no company — assign it to a company before receiving it`, 422)
+      }
+      if (it.tenantId !== tenantId) {
         throw new AppError('ITEM_NOT_IN_COMPANY', `${it.name} belongs to a different company than ${supplier.name}`, 422)
       }
       if (l.unitCostCents == null || !Number.isInteger(l.unitCostCents) || l.unitCostCents < 0) {
@@ -256,7 +522,7 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
   }
 
   // ── Dock-door photo above the company's threshold ──────────────────────────
-  const ops = await getOperationsConfig(supplier.tenantId)
+  const ops = await getOperationsConfig(tenantId)
   const photoThreshold = ops?.photoRequiredAboveCents ?? 50_000
   const totalValue = prepared.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityReceived), 0)
   if (totalValue >= photoThreshold && !input.photoUrl) {
@@ -269,12 +535,17 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
 
   const flagged = prepared.filter((l) => l.variancePct != null && Math.abs(l.variancePct) > RECEIVING_VARIANCE_THRESHOLD)
 
-  // ── One transaction: receipt, PO, stock, cost ──────────────────────────────
+  // The company's stock must be on FIFO lots before the first lot is written
+  // (the one-time cut-over runs here if it has not yet) — outside the tx.
+  await ensureFifoReady(tenantId)
+
+  // ── One transaction: receipt, lots, GRNI, PO ───────────────────────────────
   const { receipt, poStatus } = await prisma.$transaction(async (tx) => {
     let poStatus: string | null = null
     if (po) {
-      // Serialise receipts of the same PO and re-read it under the lock, so two
-      // receivers can't both receive the "outstanding" quantity.
+      // Serialise receipts of the same PO (and bills billing it) and re-read
+      // it under the lock, so two receivers can't both receive the
+      // "outstanding" quantity.
       await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${po.id} FOR UPDATE`
       const fresh = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
       assertReceivable(fresh.status)
@@ -286,82 +557,47 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
       }
     }
 
-    const receipt = await tx.goodsReceipt.create({
-      data: {
-        poId:         po?.id ?? null,
-        supplierId:   supplier.id,
-        receivedById: input.actor.id,
-        photoUrl:     input.photoUrl ?? null,
-        notes:        input.notes ?? null,
-        status:       flagged.length > 0 ? 'disputed' : 'accepted',
-        varianceFlag: flagged.length > 0,
-        lines: {
-          create: prepared.map((l) => ({
-            inventoryItemId: l.inventoryItemId,
-            poLineId:        l.poLineId,      // the PO line it was matched to (traceable; null without a PO)
-            description:     l.description,
-            poQty:           l.expectedQty,
-            receivedQty:     l.quantityReceived,
-            poUnitCostCents: l.unitCostCents,
-            unit:            l.unit,
-            variancePct:     l.variancePct,
-            notes:           l.notes,
-          })),
-        },
-      },
-      include: { lines: true },
+    const done = await receiveGoodsTx(tx, {
+      tenantId,
+      supplierId: supplier.id,
+      ...(po ? { poId: po.id } : {}),
+      locationId: input.locationId ?? null,
+      receivedById: input.actor.id,
+      photoUrl: input.photoUrl ?? null,
+      notes: input.notes ?? null,
+      status: flagged.length > 0 ? 'disputed' : 'accepted',
+      varianceFlag: flagged.length > 0,
+      lines: prepared.map((l) => ({
+        inventoryItemId: l.inventoryItemId,
+        receivedQty:     l.quantityReceived,
+        unit:            l.unit,
+        unitCostCents:   l.unitCostCents,
+        ...(l.poLineId ? { poLineId: l.poLineId } : {}),
+        description:     l.description,
+        poQty:           l.expectedQty,
+        variancePct:     l.variancePct,
+        notes:           l.notes,
+      })),
     })
 
-    for (const l of prepared) {
-      if (l.quantityReceived > 0) {
-        await applyReceiptLine(tx, {
-          inventoryItemId: l.inventoryItemId,
-          quantity:        l.quantityReceived,
-          unitCostCents:   l.unitCostCents,
-          supplierId:      supplier.id,
-          poLineId:        l.poLineId,
-          source:          po ? 'po_receive' : 'dock_receive',
-        })
-      }
-      if (!po || !l.poLineId) continue
-
-      if (l.quantityReceived > 0) {
-        await tx.purchaseOrderLine.update({
-          where: { id: l.poLineId },
-          data:  { quantityReceived: { increment: l.quantityReceived } },
-        })
-        // A supplier bill booked before this delivery carried its price
-        // variance for the not-yet-received quantity (RB-3). Apply that slice
-        // now, in the same transaction, after the stock moved: what of it is
-        // still on hand is valued at the billed price as it lands; what only
-        // covered stock already sold below zero goes to 5060 (BK2-RV-1), the
-        // same split as a bill booked after the goods. Idempotent per receipt
-        // (keyed on receipt.id). A closed period (PERIOD_LOCKED) refuses the
-        // whole receipt rather than leave 1210 holding variance with no stock.
-        await applyCarriedBillVarianceTx(tx, {
-          poLineId:   l.poLineId,
-          quantity:   l.quantityReceived,
-          supplierId: supplier.id,
-          receiptId:  receipt.id,
-        })
-      }
-      const cumulative = l.alreadyReceived + l.quantityReceived
-      const variance   = cumulative - (l.orderedQty ?? 0)
-      if (l.discrepancyReason || variance !== 0) {
-        await tx.receivingDiscrepancy.create({
-          data: {
-            poLineId:     l.poLineId,
-            expectedQty:  l.orderedQty ?? 0,
-            receivedQty:  cumulative,
-            reason:       l.discrepancyReason ?? (variance < 0 ? 'short_shipment' : 'over_shipment'),
-            notes:        l.notes,
-            recordedById: input.actor.id,
-          },
-        })
-      }
-    }
-
     if (po) {
+      for (const l of prepared) {
+        if (!l.poLineId) continue
+        const cumulative = l.alreadyReceived + l.quantityReceived
+        const variance   = cumulative - (l.orderedQty ?? 0)
+        if (l.discrepancyReason || variance !== 0) {
+          await tx.receivingDiscrepancy.create({
+            data: {
+              poLineId:     l.poLineId,
+              expectedQty:  l.orderedQty ?? 0,
+              receivedQty:  cumulative,
+              reason:       l.discrepancyReason ?? (variance < 0 ? 'short_shipment' : 'over_shipment'),
+              notes:        l.notes,
+              recordedById: input.actor.id,
+            },
+          })
+        }
+      }
       const lines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: po.id } })
       const allReceived = lines.every((l) => l.quantityReceived >= l.quantityOrdered)
       poStatus = allReceived ? 'received' : 'partial'
@@ -374,19 +610,20 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
           purchaseOrderId: po.id,
           userId:          input.actor.id,
           action:          allReceived ? 'received' : 'received_partial',
-          details:         { goodsReceiptId: receipt.id, lineCount: prepared.length, photo: !!input.photoUrl },
+          details:         { goodsReceiptId: done.receiptId, lineCount: prepared.length, photo: !!input.photoUrl },
         },
       })
     }
+    const receipt = await tx.goodsReceipt.findUniqueOrThrow({ where: { id: done.receiptId }, include: { lines: true } })
     return { receipt, poStatus }
-  })
+  }, { timeout: 30_000 })
 
   // ── Exception flags (after commit, so a failed flag never undoes a receipt) ─
   for (const l of flagged) {
     const pct  = l.variancePct!
     const kind: ExceptionKind = pct < 0 ? 'short_shipment' : 'receiving_variance'
     await flagException({
-      tenantId: supplier.tenantId,
+      tenantId,
       kind,
       severity: kind === 'short_shipment' && Math.abs(pct) > 0.15 ? 'high' : 'medium',
       title: `${kind === 'short_shipment' ? 'Short shipment' : 'Receiving variance'}: ${l.description}`,
@@ -394,7 +631,7 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
       entityType: 'GoodsReceipt',
       entityId: receipt.id,
       actorId: input.actor.id,
-      metadata: { poId: po?.id ?? null, poLineId: l.poLineId, supplierId: supplier.id, tenantId: supplier.tenantId, variancePct: pct },
+      metadata: { poId: po?.id ?? null, poLineId: l.poLineId, supplierId: supplier.id, tenantId, variancePct: pct },
     })
   }
 

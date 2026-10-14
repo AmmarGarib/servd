@@ -611,7 +611,8 @@ export async function postGrniOpeningTx(tx: Tx, tenantId: string, a: { received:
  * reconciling items − GL balance, posted Dr/Cr 12x0 against 3020 (a prior-
  * period difference; the report shows it on its own line, never as
  * unexplained). Reconciling items = cost already out of the lots but not yet
- * booked (open orders, till orders on open drawers — cogs.ts
+ * booked (open orders, and till orders whose home drawer's close is not
+ * posted — an open ticket whose first drawer closed is already booked; cogs.ts
  * unbookedSalesCostByClass), or what the caller passes (the valuation
  * report's own figure). `dryRun` only computes. 409 CUTOVER_NOT_RUN before the
  * cut-over; 409 ALREADY_ALIGNED once posted. Nothing to align → posted false.

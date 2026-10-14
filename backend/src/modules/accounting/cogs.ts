@@ -126,25 +126,109 @@ export async function orderStockCostCents(orderId: string, db: Db = prisma): Pro
 }
 
 /**
+ * When `orderId`'s cost of sales reached `tenantId`'s ledger, or null while it
+ * has not:
+ *   - its own 'order.complete:<id>' entry (online orders; a till bill a gift
+ *     card paid in full), else
+ *   - a till order: its HOME drawer's 'shift.close:<shiftId>' (homeShiftOf —
+ *     the drawer of its earliest receipt), when that close booked it as a live
+ *     sale — not when the close saw it cancelled (a REFUND DUE line naming the
+ *     order, or a close posted after the cancel with no money of it to hold).
+ * The entry's createdAt is returned: a lot movement written AFTER it is not in
+ * that entry, so giving such a booked line back or wasting it moves cost of
+ * sales, not inventory again (orders/stock.ts, inventory/voidWaste.ts). Pass
+ * the transaction to see what it has written.
+ */
+export async function orderCostBookedAt(db: Db, tenantId: string, orderId: string): Promise<Date | null> {
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true, source: true, status: true, cancelledAt: true,
+      payments: { select: { id: true, shiftId: true, method: true, status: true, gatewayRef: true, amountCents: true, createdAt: true, raastReceipt: { select: { status: true } } } },
+    },
+  })
+  if (!order) return null
+  // Lazy: orderPosting.ts imports this module.
+  const { homeShiftOf, isShiftReceipt, isVoidedRaast, REFUND_DUE_PREFIX } = await import('./orderPosting.js')
+  const completeRef = `order.complete:${order.id}`
+  const home = order.source === 'pos' ? homeShiftOf(order) : null
+  const closeRef = home ? `shift.close:${home}` : null
+  const entries = await db.journalEntry.findMany({
+    where: { tenantId, reference: { in: closeRef ? [completeRef, closeRef] : [completeRef] } },
+    select: { id: true, reference: true, createdAt: true },
+  })
+  const complete = entries.find((e) => e.reference === completeRef)
+  if (complete) return complete.createdAt
+  const close = closeRef ? entries.find((e) => e.reference === closeRef) : undefined
+  if (!close) return null
+  const due = await db.journalLine.findFirst({
+    where: {
+      journalEntryId: close.id, type: 'credit', account: { tenantId, code: ACCT.CUSTOMER_AR },
+      AND: [{ memo: { startsWith: REFUND_DUE_PREFIX } }, { memo: { contains: order.id } }],
+    },
+    select: { id: true },
+  })
+  if (due) return null
+  const dead = order.status === 'cancelled' || order.status === 'rejected'
+  if (dead && order.cancelledAt && order.cancelledAt <= close.createdAt) {
+    // Posted after the cancel: the close treated it as no sale. With money it
+    // holds a REFUND DUE (above); with none (a comp, a voided Raast) nothing.
+    const money = order.payments.some((p) => p.shiftId === home && p.amountCents > 0 && p.method !== 'comp' && !isVoidedRaast(p) && isShiftReceipt(p))
+    if (!money) return null
+  }
+  return close.createdAt
+}
+
+/**
  * Cost of sales already taken out of the lots (or, before the cut-over, out of
- * stock) but not yet booked to the ledger, per class: open orders (received →
- * ready) and completed till orders still on an open drawer (their COGS posts
- * at the shift close). FIFO orders count their relieved lot value; a
- * pre-cut-over order with no movements counts its legacy plate cost (food).
- * The FIFO alignment and the valuation tie-out read it as a reconciling item:
- * it shrinks as those orders complete, close or cancel. Completions whose
- * posting was REFUSED are not included — they are open posting_failed flags.
+ * stock) but not yet booked to the ledger, per class — an order counts only
+ * while its cost is NOT in the ledger (orderCostBookedAt's rule):
+ *   - open orders (received → ready) — a till ticket only while its home
+ *     drawer (homeShiftOf) has no posted 'shift.close' (an open ticket whose
+ *     first drawer has closed was booked by that close);
+ *   - completed till orders whose home drawer's close is not posted yet (the
+ *     drawer is still open, or its close was refused — the cost is out of the
+ *     lots and not in the GL either way). A completed till order whose home
+ *     close posted is booked, even with a later payment on an open drawer.
+ * Any order with an 'order.complete' entry is booked. FIFO orders count their
+ * relieved lot value; a pre-cut-over order with no movements counts its legacy
+ * plate cost (food). The FIFO alignment and the valuation tie-out read it as a
+ * reconciling item: it shrinks as those orders complete, close or cancel.
  */
 export async function unbookedSalesCostByClass(db: Db, tenantId: string): Promise<Record<CostClass, number>> {
   const out = zeroByClass()
+  // The company's posted drawer closes ('shift.close:' is 12 characters).
   const rows = await db.$queryRaw<Array<{ id: string }>>`
+    WITH posted AS (
+      SELECT substr(je.reference, 13) AS sid FROM journal_entries je
+       WHERE je."tenantId" = ${tenantId} AND je.reference LIKE 'shift.close:%'
+    )
     SELECT o.id FROM orders o JOIN concepts c ON c.id = o."conceptId"
      WHERE c."tenantId" = ${tenantId}
        AND (o.status::text IN ('received', 'confirmed', 'preparing', 'ready')
             OR (o.status::text = 'completed' AND o.source::text = 'pos' AND EXISTS (
                   SELECT 1 FROM payments p JOIN shifts s ON s.id = p."shiftId"
-                   WHERE p."orderId" = o.id AND s."closedAt" IS NULL)))`
-  const ids = rows.map((r) => r.id)
+                   WHERE p."orderId" = o.id
+                     AND (s."closedAt" IS NULL OR NOT EXISTS (SELECT 1 FROM posted WHERE posted.sid = s.id)))))`
+  if (rows.length === 0) return out
+  const candidates = await db.order.findMany({
+    where: { id: { in: rows.map((r) => r.id) } },
+    select: { id: true, source: true, status: true, payments: { select: { id: true, shiftId: true, method: true, status: true, gatewayRef: true, createdAt: true } } },
+  })
+  const { homeShiftOf } = await import('./orderPosting.js')
+  const homeOf = new Map(candidates.map((o) => [o.id, o.source === 'pos' ? homeShiftOf(o) : null]))
+  const refs = [
+    ...candidates.map((o) => `order.complete:${o.id}`),
+    ...[...new Set([...homeOf.values()].filter((s): s is string => !!s))].map((s) => `shift.close:${s}`),
+  ]
+  const bookedRefs = new Set((await db.journalEntry.findMany({ where: { tenantId, reference: { in: refs } }, select: { reference: true } })).map((e) => e.reference))
+  const ids = candidates.filter((o) => {
+    if (bookedRefs.has(`order.complete:${o.id}`)) return false
+    if (o.source !== 'pos') return o.status !== 'completed'
+    const home = homeOf.get(o.id)
+    if (!home) return o.status !== 'completed'   // a completed till order with no drawer receipt is booked by its own entry
+    return !bookedRefs.has(`shift.close:${home}`)
+  }).map((o) => o.id)
   if (ids.length === 0) return out
   const { byClass, withMovements } = await relievedByClass(db, tenantId, ids)
   for (const c of COST_CLASSES) out[c] += byClass[c]

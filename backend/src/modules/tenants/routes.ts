@@ -4,6 +4,8 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, ConflictError, NotFoundError } from '../../lib/errors.js'
 import { TEMPLATES, getTemplate, TEMPLATE_KEYS } from './templates.js'
+import { audit } from '../../lib/audit.js'
+import { closedAcrossYearEnd, DEFAULT_FISCAL_YEAR_END_MONTH } from '../accounting/fiscalYear.js'
 
 function slugify(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
@@ -402,22 +404,70 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         label: z.string().min(1).max(80),
         pct:   z.number().min(0).max(100),
       })).nullable().optional(),
+      // H29: the last month of the company's fiscal year (6 = 30 June). The
+      // roll-forward is virtual, so a change re-presents every year at once.
+      fiscalYearEndMonth: z.number().int().min(1).max(12).optional(),
+      // Required to move the year end once the books were closed across one.
+      reason: z.string().trim().max(500).optional(),
     }).parse(req.body)
     // memberTenantIds = every company the operator belongs to (non-GET, so
     // never narrowed by the active-company header).
     if (!req.staffUser!.memberTenantIds.includes(req.params.id)) throw new NotFoundError('Tenant', req.params.id)
     const existing = await prisma.tenant.findFirst({
       where: { id: req.params.id, deletedAt: null },
-      select: { id: true },
+      select: { id: true, name: true, fiscalYearEndMonth: true },
     })
     if (!existing) throw new NotFoundError('Tenant', req.params.id)
-    return prisma.tenant.update({
+    const { reason, fiscalYearEndMonth, ...profile } = body
+    const fromMonth = existing.fiscalYearEndMonth ?? DEFAULT_FISCAL_YEAR_END_MONTH
+    const fyChange = fiscalYearEndMonth !== undefined && fiscalYearEndMonth !== fromMonth
+    // Once a close has spanned a year end (under the old or the new month),
+    // a change re-presents closed years: the CEO says why, it is audited and
+    // flagged.
+    const afterYearEndClose = fyChange && await closedAcrossYearEnd(prisma, existing.id, [fromMonth, fiscalYearEndMonth!])
+    if (afterYearEndClose && (reason?.length ?? 0) < 10) {
+      throw new AppError(
+        'FY_CHANGE_AFTER_YEAR_END_CLOSE',
+        `${existing.name}'s books are already closed across a fiscal year end — moving the year end re-presents those closed years. Give a reason (at least 10 characters) to change it.`,
+        409,
+      )
+    }
+    const updated = await prisma.tenant.update({
       where: { id: existing.id },
       data: {
-        ...body,
-        jvPartners: body.jvPartners === undefined ? undefined : (body.jvPartners ?? undefined),
+        ...profile,
+        ...(fyChange ? { fiscalYearEndMonth } : {}),
+        jvPartners: profile.jvPartners === undefined ? undefined : (profile.jvPartners ?? undefined),
       },
     })
+    if (fyChange) {
+      await audit({ category: 'accounting',
+        action: 'tenant.fiscal_year_end',
+        entity: 'Tenant',
+        entityId: existing.id,
+        userId: req.staffUser!.id, tenantId: existing.id,
+        userEmail: req.staffUser!.email,
+        before: { fiscalYearEndMonth: fromMonth },
+        after: { fiscalYearEndMonth },
+        metadata: { ip: req.ip, reason: reason ?? null, afterYearEndClose },
+      })
+      if (afterYearEndClose) {
+        const { flagException } = await import('../../lib/exceptions.js')
+        await flagException({
+          tenantId: existing.id,
+          kind: 'period_close_override',
+          severity: 'high',
+          title: `Fiscal year end moved after a year-end close (month ${fromMonth} → ${fiscalYearEndMonth})`,
+          description: `${req.staffUser!.email} changed ${existing.name}'s fiscal year end from month ${fromMonth} to ${fiscalYearEndMonth} after its books were closed across a year end. `
+            + `Retained earnings b/f and profit for the year are now split on the new boundary for every year, closed ones included. Reason: ${reason}.`,
+          entityType: 'Tenant',
+          entityId: existing.id,
+          actorId: req.staffUser!.id,
+          metadata: { from: fromMonth, to: fiscalYearEndMonth, reason },
+        })
+      }
+    }
+    return updated
   })
 
   // ── Apply a template to the ACTIVE company (in-app — for owners who want
