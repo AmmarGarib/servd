@@ -9,7 +9,8 @@
 //     delete or add a brand to A's scenario; brands must be the scenario's
 //     company's; computed actuals come from that company only.
 //   - Capex / capital ledger / opex / fixed assets refuse another company's
-//     brand, location, owner, bank account (422), including on partial PATCH.
+//     brand, location, owner, bank account (422), including on partial PATCH;
+//     equipment reaches the register only through CapEx (POST / is 422 USE_CAPEX).
 //   - Payment gateway overrides are scoped through the brand.
 //   - Contributions need both sides to be the operator's companies, and fail
 //     with a real HTTP status, not `{ error }` + 200.
@@ -278,13 +279,21 @@ describe('finance planning references stay inside the company', () => {
     expect(after?.conceptId).toBeNull()
   })
 
-  it('fixed assets: another company\'s location is refused (422)', async () => {
+  it('fixed assets: no hand-added asset (422 USE_CAPEX); another company\'s location on the capitalise body is refused (422)', async () => {
     const r = await call(tokenA, 'POST', '/accounting/fixed-assets', {
       name: 'oven', category: 'kitchen_equipment', funding: 'cash', acquiredAt: '2026-01-10',
       costCents: 100_000, usefulLifeMonths: 60, locationId: locationB,
     })
     expect(r.statusCode).toBe(422)
+    expect(r.json().error.code).toBe('USE_CAPEX')
+    const project = await prisma.capexProject.create({ data: { tenantId: tenantA, name: 'A kitchen', locationId: locationA } })
+    const line = await prisma.capexLine.create({ data: { projectId: project.id, scope: 'Equipment', item: 'Combi oven', unitCostCents: 100_000, status: 'delivered', actualDeliveryDate: new Date() } })
+    const cap = await call(tokenA, 'POST', `/finance/capex/lines/${line.id}/capitalise`, { classKey: 'kitchen_equipment', locationId: locationB })
+    expect(cap.statusCode).toBe(422)
+    expect(cap.json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
+    expect((await call(tokenB, 'POST', `/finance/capex/lines/${line.id}/capitalise`, { classKey: 'kitchen_equipment' })).statusCode).toBe(404)
     expect(await prisma.fixedAsset.count({ where: { tenantId: tenantA } })).toBe(0)
+    expect(await prisma.fixedAssetEvent.count({ where: { tenantId: tenantA } })).toBe(0)
   })
 })
 
@@ -306,12 +315,12 @@ describe('payment gateways are scoped through the brand', () => {
 })
 
 describe('contributions need both sides to be the operator\'s companies', () => {
-  it('a member of A only cannot book a transfer out of B (422)', async () => {
+  it('a member of A only cannot book a transfer out of B (403)', async () => {
     const r = await call(tokenA, 'POST', '/positions/contributions', {
       sourceTenantId: tenantB, destinationTenantId: tenantA, monthlyCents: 500_000, label: 'grab',
     })
-    expect(r.statusCode).toBe(422)
-    expect(r.json().error.code).toBe('CONTRIBUTION_NOT_YOURS')
+    expect(r.statusCode).toBe(403)
+    expect(r.json().error.code).toBe('NOT_IN_BOTH_COMPANIES')
   })
 
   it('a member of both can, and a one-sided member cannot edit or end it', async () => {

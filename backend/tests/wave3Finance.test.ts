@@ -37,6 +37,8 @@ import { setupRoutes } from '../src/modules/setup/routes.js'
 import { opexRoutes } from '../src/modules/opex/routes.js'
 import { positionRoutes } from '../src/modules/positions/routes.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
+import { fixedAssetRoutes } from '../src/modules/fixedAssets/routes.js'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 
 const stamp = Date.now()
 let app: FastifyInstance
@@ -155,6 +157,7 @@ beforeAll(async () => {
     await api.register(opexRoutes, { prefix: '/opex' })
     await api.register(positionRoutes, { prefix: '/positions' })
     await api.register(procurementRoutes, { prefix: '/procurement' })
+    await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
   }, { prefix: '/api/v1' })
   await app.ready()
 }, 120_000)
@@ -293,7 +296,6 @@ describe('UI-07 finance does the workspace\'s normal work, bound to its active c
   it('approvals, CEO postings and governance stay where they were', async () => {
     const refused: Array<[string, 'POST' | 'DELETE', string, unknown]> = [
       ['adjust a statement line (journal)', 'POST', `/reconciliation/bank/lines/${ids.lineA}/adjust`, { memo: 'x', contraAccountCode: '6080' }],
-      ['capitalise a capex line', 'POST', `/finance/capex/lines/${ids.capexLineA}/capitalise`, { category: 'kitchen_equipment', usefulLifeMonths: 60 }],
       ['post old capex instalments', 'POST', `/finance/capex/${ids.pA}/post-payments`, {}],
       ['post old opex payments', 'POST', '/opex/payments/post-unposted', {}],
       ['void a customer\'s gift card', 'POST', `/gift-cards/${ids.gA}/void`, { reason: 'test' }],
@@ -306,6 +308,8 @@ describe('UI-07 finance does the workspace\'s normal work, bound to its active c
     for (const [what, method, url, body] of refused) {
       expect((await call('finA', method, url, body)).statusCode, what).toBe(403)
     }
+    // Capitalising is finance's to prepare now (the CEO approves) — an undelivered line is refused for what it is.
+    expect((await call('finA', 'POST', `/finance/capex/lines/${ids.capexLineA}/capitalise`, { classKey: 'kitchen_equipment' })).json().error.code).toBe('NOT_DELIVERED')
   })
 })
 
@@ -462,5 +466,51 @@ describe('W3B-RV-3 a seat cannot take another company\'s shift band', () => {
     // with the edit form re-sending that band.
     await prisma.position.update({ where: { id: ids.posA }, data: { shiftBandId: ids.bandArchA } })
     expect((await call('hrA', 'PATCH', `/positions/${ids.posA}`, { shiftBandId: ids.bandArchA, headcount: 1 })).statusCode).toBe(200)
+  })
+})
+
+describe('fixed assets: finance prepares, the CEO approves, the F&B manager reads', () => {
+  it('finance capitalises a delivered line → 202 pending; the CEO approves → posted; finance cannot approve', async () => {
+    await ensureChartOfAccounts(tenantA)
+    const line = await prisma.capexLine.create({
+      data: { projectId: ids.pA!, scope: 'Equipment', item: 'Deep fryer', unitCostCents: 250_000, status: 'delivered', actualDeliveryDate: new Date(Date.now() - 5 * 86_400_000) },
+    })
+    const prep = await call('finA', 'POST', `/finance/capex/lines/${line.id}/capitalise`, { classKey: 'kitchen_equipment' })
+    expect(prep.statusCode).toBe(202)
+    expect(prep.json()).toMatchObject({ status: 'pending', applied: false })
+    const eventId = prep.json().eventId as string
+    const queue = (await get('adminA', '/accounting/fixed-assets/requests?status=pending')).json().requests
+    expect(queue.find((e: { id: string }) => e.id === eventId)).toMatchObject({ kind: 'capitalise', canDecide: true, capexLine: { item: 'Deep fryer' } })
+    expect((await call('finA', 'POST', `/accounting/fixed-assets/requests/${eventId}/approve`, {})).statusCode).toBe(403)
+    expect((await call('fnbA', 'POST', `/accounting/fixed-assets/requests/${eventId}/approve`, {})).statusCode).toBe(403)
+
+    const ok = await call('adminA', 'POST', `/accounting/fixed-assets/requests/${eventId}/approve`, {})
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json()).toMatchObject({ status: 'posted', event: { status: 'posted', tenantId: tenantA } })
+    const asset = await prisma.fixedAsset.findFirstOrThrow({ where: { capexLineId: line.id } })
+    expect(asset).toMatchObject({ tenantId: tenantA, category: 'kitchen_equipment', status: 'active' })
+    ids.faA = asset.id
+    // B's finance sees none of it.
+    expect((await get('finB', `/accounting/fixed-assets/${asset.id}`)).statusCode).toBe(404)
+    expect((await get('finB', '/accounting/fixed-assets')).json().assets.map((a: { id: string }) => a.id)).not.toContain(asset.id)
+  })
+
+  it('the F&B manager: every fixed-asset read 200, every write 403 (a smallwares count aside)', async () => {
+    for (const p of ['/accounting/fixed-assets', '/accounting/fixed-assets/lookups', '/accounting/fixed-assets/requests', '/accounting/fixed-assets/pools',
+      '/accounting/fixed-assets/runs', '/accounting/fixed-assets/classes', '/accounting/fixed-assets/policy', `/accounting/fixed-assets/${ids.faA}`,
+      '/accounting/fixed-assets/reports/nbv', '/accounting/fixed-assets/reports/tie-out']) {
+      expect((await get('fnbA', p)).statusCode, p).toBe(200)
+    }
+    const writes: Array<['POST' | 'PATCH', string, unknown]> = [
+      ['POST', '/accounting/fixed-assets', { name: 'x' }],
+      ['PATCH', `/accounting/fixed-assets/${ids.faA}`, { name: 'x' }],
+      ['POST', `/accounting/fixed-assets/${ids.faA}/requests`, { kind: 'disposal', reason: 'Broken beyond repair', payload: { kind: 'scrap' } }],
+      ['POST', `/accounting/fixed-assets/${ids.faA}/dispose`, { disposedAt: new Date().toISOString().slice(0, 10) }],
+      ['POST', '/accounting/fixed-assets/depreciate', {}],
+      ['PATCH', '/accounting/fixed-assets/policy', { capexAdvanceOverdueDays: 10 }],
+      ['POST', `/finance/capex/lines/${ids.capexLineA}/capitalise`, { classKey: 'kitchen_equipment' }],
+    ]
+    for (const [method, url, body] of writes) expect((await call('fnbA', method, url, body)).statusCode, `${method} ${url}`).toBe(403)
+    expect(await prisma.fixedAssetEvent.count({ where: { tenantId: tenantA, requestedById: ids.fnbA } })).toBe(0)
   })
 })

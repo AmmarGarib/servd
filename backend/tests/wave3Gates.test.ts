@@ -12,6 +12,9 @@
 //   UI-15  foh_management / boh_management hold 'reports' but /reports/sales
 //          was FINANCIALS_VIEWERS; the operational reports are open to the
 //          roles holding 'reports', per company.
+//   Wave B (2026-10-14) Reports → Food cost variance (/reports/food-cost) is
+//          its own module, food_cost — the 'reports' module does not open it;
+//          GET also answers the accounting module (the Accounting hub's gauge).
 //
 // Every widened route is checked across two companies: company B's role sees
 // nothing of company A's.
@@ -31,13 +34,15 @@ const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { issueRiderSession } = await import('../src/modules/riderAuth/service.js')
 const { AppError } = await import('../src/lib/errors.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
-const { DEFAULT_MODULE_ACCESS, enforceModuleAccess, invalidateModuleAccessCache } = await import('../src/lib/moduleAccess.js')
+const { DEFAULT_MODULE_ACCESS, enforceModuleAccess, invalidateModuleAccessCache, MODULE_GRANTS, rolesGrantedByDefault } = await import('../src/lib/moduleAccess.js')
+const { FINANCE_TEAM } = await import('../src/modules/auth/middleware.js')
 const { orderRoutes, orderCourseRoutes } = await import('../src/modules/orders/routes.js')
 const { riderRoutes } = await import('../src/modules/riders/routes.js')
 const { dispatchRoutes } = await import('../src/modules/dispatch/routes.js')
 const { expoRoutes } = await import('../src/modules/expo/routes.js')
 const { crmRoutes } = await import('../src/modules/crm/routes.js')
 const { reportRoutes } = await import('../src/modules/reports/routes.js')
+const { default: foodCostRoutes } = await import('../src/modules/reports/foodCostRoutes.js')
 const { conceptRoutes } = await import('../src/modules/concepts/routes.js')
 const { riderAppRoutes } = await import('../src/modules/rider/routes.js')
 const { timeClockRoutes } = await import('../src/modules/timeclock/routes.js')
@@ -115,6 +120,8 @@ beforeAll(async () => {
     await api.register(dispatchRoutes, { prefix: '/dispatch' })
     await api.register(expoRoutes, { prefix: '/expo' })
     await api.register(crmRoutes, { prefix: '/crm' })
+    // Registered BEFORE reportRoutes, as index.ts does (wave Z).
+    await api.register(foodCostRoutes, { prefix: '/reports/food-cost' })
     await api.register(reportRoutes, { prefix: '/reports' })
     await api.register(conceptRoutes, { prefix: '/concepts' })
     await api.register(riderAppRoutes, { prefix: '/rider' })
@@ -312,6 +319,47 @@ describe('UI-15 the operational reports follow the Reports module', () => {
     expect((await get('financeB', `/reports/menu-engineering?conceptId=${conceptA}`)).statusCode).toBe(404)
     expect((await get('procurement', `/reports/menu-engineering?conceptId=${conceptA}`)).statusCode).toBe(403)
     expect((await get('cashier', `/reports/sales?${range}`)).statusCode).toBe(403)
+  })
+})
+
+describe('wave B: Reports → Food cost variance follows the food_cost module', () => {
+  it('every role: 200 when it is in the finance team and holds food_cost (reads: or accounting), else 403', async () => {
+    const mismatches: string[] = []
+    for (const role of ALL_ROLES) {
+      const expected = FINANCE_TEAM.includes(role as UserRole) && (holds(role, 'food_cost') || holds(role, 'accounting')) ? 200 : 403
+      const got = (await get(role, '/reports/food-cost/summary')).statusCode
+      if (got !== expected) mismatches.push(`${role} → ${got} (want ${expected})`)
+    }
+    expect(mismatches).toEqual([])
+    // Holding 'reports' alone never opens it (foh_management, procurement).
+    expect((await get('foh_management', '/reports/food-cost/summary')).statusCode).toBe(403)
+    expect((await get('procurement', '/reports/food-cost/summary')).statusCode).toBe(403)
+    expect((await get('procurement', '/reports/sales')).statusCode).toBe(200)
+  })
+
+  it('the gate row: food_cost writes, accounting reads too; it sits before /reports', async () => {
+    const url = '/api/v1/reports/food-cost/summary'
+    await expect(enforceModuleAccess(url, { role: 'foh_management' }, 'GET')).rejects.toThrow(/food_cost/)
+    await expect(enforceModuleAccess(url, { role: 'finance', moduleDeny: ['food_cost'] }, 'GET')).resolves.toBeUndefined()
+    await expect(enforceModuleAccess('/api/v1/reports/food-cost/align-inventory', { role: 'finance', moduleDeny: ['food_cost'] }, 'POST')).rejects.toThrow()
+    await expect(enforceModuleAccess(url, { role: 'boh_management', moduleDeny: ['food_cost'] }, 'GET')).rejects.toThrow()
+  })
+
+  it('company B never reads company A\'s food cost', async () => {
+    expect((await get('financeB', `/reports/food-cost/summary?conceptId=${conceptA}`)).statusCode).toBe(404)
+    expect((await get('boh_managementB', `/reports/food-cost/valuation?tenantId=${tenantA}`)).statusCode).toBe(404)
+    const b = (await get('financeB', '/reports/food-cost/summary')).json() as { companies: Array<{ tenantId: string }> }
+    expect(b.companies.map((c) => c.tenantId)).toEqual([tenantB])
+  })
+
+  it('the page guard and MODULE_GRANTS agree with the API', () => {
+    for (const role of ALL_ROLES) {
+      const mods = DEFAULT_MODULE_ACCESS[role as UserRole] ?? []
+      expect(canOpenPath('/reports/food-cost', role, mods), role).toBe(role === 'admin' || mods.includes('food_cost'))
+    }
+    expect(MODULE_GRANTS).toContain('food_cost')
+    expect(rolesGrantedByDefault('food_cost')).toEqual(expect.arrayContaining(['fnb_manager', 'boh_management', 'finance']))
+    expect(rolesGrantedByDefault('food_cost')).not.toContain('foh_management')
   })
 })
 

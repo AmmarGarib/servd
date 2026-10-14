@@ -12,8 +12,10 @@
 //          their own defaults (par_sheet, food_safety) answer 200.
 //          procurement (holds `inventory`) reads stock with costs and keeps
 //          the item master (the Sourcing sheet), in its own company.
-//   UI-07  finance reads GET /recipes/food-cost (Finance -> Food cost) and the
-//          recipe list, scoped to its own company.
+//   UI-07  finance reads the food-cost variance report (GET
+//          /reports/food-cost/summary — Reports -> Food cost variance; the old
+//          GET /recipes/food-cost is gone, wave B) and the recipe list,
+//          scoped to its own company.
 // Every widened route is two-company: company B's role gets 404 / nothing on
 // company A's rows, and creates bind to the active company.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -30,6 +32,7 @@ import { recipeRoutes } from '../src/modules/recipes/routes.js'
 import { parSheetRoutes } from '../src/modules/par-sheet/routes.js'
 import { foodSafetyRoutes } from '../src/modules/foodSafety/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
+import foodCostRoutes from '../src/modules/reports/foodCostRoutes.js'
 
 let app: FastifyInstance
 let tenantA: string
@@ -120,6 +123,7 @@ beforeAll(async () => {
   await app.register(parSheetRoutes, { prefix: '/par-sheet' })
   await app.register(foodSafetyRoutes, { prefix: '/food-safety' })
   await app.register(crosschecksRoutes, { prefix: '/crosschecks' })
+  await app.register(foodCostRoutes, { prefix: '/reports/food-cost' })
   await app.ready()
 })
 
@@ -297,7 +301,9 @@ describe('boh reads recipes in its own company, without costs (UI-10)', () => {
     expect((await call('cookA', 'DELETE', `/recipes/${recipeA}`)).statusCode).toBe(403)
     expect((await call('cookA', 'POST', `/recipes/${recipeA}/approve`, {})).statusCode).toBe(403)
     expect((await call('cookA', 'GET', '/recipes/pending-approval')).statusCode).toBe(403)
-    expect((await call('cookA', 'GET', '/recipes/food-cost')).statusCode).toBe(403)
+    // The food-cost report moved to /reports/food-cost (wave B); the line cook reads neither.
+    expect((await call('cookA', 'GET', '/recipes/food-cost')).statusCode).not.toBe(200)
+    expect((await call('cookA', 'GET', '/reports/food-cost/summary')).statusCode).toBe(403)
     expect((await call('cookA', 'GET', `/recipes/${recipeA}/test-attempts`)).statusCode).toBe(403)
   })
 })
@@ -305,21 +311,22 @@ describe('boh reads recipes in its own company, without costs (UI-10)', () => {
 // ─── UI-07: finance reads food cost, per company ─────────────────────────────
 
 describe('finance reads food cost and the recipe list, scoped per company (UI-07)', () => {
-  it('GET /recipes/food-cost: 200, only its own company\'s sales', async () => {
-    const a = await call('financeA', 'GET', '/recipes/food-cost')
+  it('GET /reports/food-cost/summary: 200, only its own company\'s sales', async () => {
+    const a = await call('financeA', 'GET', '/reports/food-cost/summary')
     expect(a.statusCode).toBe(200)
-    const items = (a.json().byItem as Array<{ menuItemId: string; qtySold: number; costPerPortion: number }>)
-    expect(items.map((i) => i.menuItemId)).toEqual([burgerA])
-    expect(items[0]!.qtySold).toBe(2)
-    expect(items[0]!.costPerPortion).toBeGreaterThan(0)
+    const blocks = a.json().companies as Array<{ tenantId: string; items: Array<{ menuItemId: string; qtySold: number; hasRecipe: boolean }> }>
+    expect(blocks.map((b) => b.tenantId)).toEqual([tenantA])
+    expect(blocks[0]!.items.map((i) => i.menuItemId)).toEqual([burgerA])
+    expect(blocks[0]!.items[0]!.qtySold).toBe(2)
+    expect(blocks[0]!.items[0]!.hasRecipe).toBe(true)
 
-    const b = (await call('financeB', 'GET', '/recipes/food-cost')).json()
-    expect((b.byItem as Array<{ menuItemId: string }>).map((i) => i.menuItemId)).toEqual([burgerB])
+    const b = (await call('financeB', 'GET', '/reports/food-cost/summary')).json()
+    expect((b.companies[0].items as Array<{ menuItemId: string }>).map((i) => i.menuItemId)).toEqual([burgerB])
 
-    // Naming company A's brand from company B returns the empty shape, not A's numbers.
-    const peek = (await call('financeB', 'GET', `/recipes/food-cost?conceptId=${conceptA}`)).json()
-    expect(peek.byItem).toEqual([])
-    expect(peek.revenue.grossCents).toBe(0)
+    // Naming company A's brand from company B is a 404 — never A's numbers.
+    expect((await call('financeB', 'GET', `/reports/food-cost/summary?conceptId=${conceptA}`)).statusCode).toBe(404)
+    // The old route is gone.
+    expect((await call('financeA', 'GET', '/recipes/food-cost')).statusCode).not.toBe(200)
   })
 
   it('GET /recipes: own company, with costs; edits stay closed', async () => {
@@ -329,7 +336,9 @@ describe('finance reads food cost and the recipe list, scoped per company (UI-07
     expect(((await call('financeB', 'GET', '/recipes')).json() as Row[]).map((r) => r.id)).toEqual([recipeB])
     expect((await call('financeA', 'PUT', `/recipes/${recipeA}`, { servings: 2 })).statusCode).toBe(403)
     expect((await call('financeA', 'GET', `/recipes/${recipeA}/costing`)).statusCode).toBe(403)
-    expect((await call('financeA', 'GET', '/inventory')).statusCode).toBe(403)
+    // Finance reads the item list since wave B (opening counts and the item's
+    // company are finance's — w3-stockdocs ITEM_READERS); it still never edits recipes.
+    expect((await call('financeA', 'GET', '/inventory')).statusCode).toBe(200)
   })
 })
 
@@ -458,7 +467,8 @@ describe('company-less legacy items stay with managers (W3D-RV-1, -2, -5)', () =
 // ─── The Count page: the line cook submits a count in its own company ────────
 describe('boh takes stock counts in its own company (UI-10, physical counts)', () => {
   it('boh A counts A\'s item; stock becomes the count; the list shows only A\'s counts', async () => {
-    const res = await call('cookA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: beefA, physicalQty: 4.5 }] })
+    // A count that differs from the books names a reason (wave B, w3-stockdocs: COUNT_REASON_REQUIRED).
+    const res = await call('cookA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: beefA, physicalQty: 4.5, reason: 'trim loss' }] })
     expect(res.statusCode).toBe(201)
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: beefA } })).currentStock).toBe(4.5)
     const listA = await call('cookA', 'GET', '/crosschecks/physical-counts')

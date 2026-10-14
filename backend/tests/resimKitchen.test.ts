@@ -31,6 +31,7 @@ import { createPosOrder, processPayment } from '../src/modules/pos/service.js'
 import { expoRoutes } from '../src/modules/expo/routes.js'
 import { orderCourseRoutes } from '../src/modules/orders/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
+import { addLotTx, ensureFifoReady } from '../src/lib/stockLedger.js'
 
 let app: FastifyInstance
 let tenantA: string
@@ -67,6 +68,18 @@ const lines = async (orderId: string) => {
   return Object.fromEntries(rows.map((r) => [r.name, r]))
 }
 const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms))
+
+/** Stock is held on FIFO lots (finance wave B): an item with stock on hand gets one lot for it. */
+async function stockItem(data: { tenantId: string; name: string; unit: string; currentStock: number; unitCostCents?: number }) {
+  await ensureFifoReady(data.tenantId)
+  const item = await prisma.inventoryItem.create({ data: { ...data, currentStock: 0 } })
+  await prisma.$transaction((tx) => addLotTx(tx, {
+    tenantId: data.tenantId, inventoryItemId: item.id, qty: data.currentStock, unitCostCents: data.unitCostCents ?? 0,
+    kind: 'fifo_cutover', lotSourceType: 'fifo_cutover', lotSourceId: `test-seed:${item.id}`,
+    movementSourceType: 'test.seed', movementSourceId: item.id, receivedAt: new Date(Date.now() - 86_400_000),
+  }))
+  return item
+}
 
 beforeAll(async () => {
   tenantA = (await prisma.tenant.create({ data: { name: 'Resim K A', slug: 'resim-k-a' } })).id
@@ -325,8 +338,8 @@ describe('BOH-R2-04 — a prep batch cites only the active company\'s sub-recipe
   let attaB: string
 
   beforeAll(async () => {
-    const mayoA = (await prisma.inventoryItem.create({ data: { tenantId: tenantA, name: 'Mayo', unit: 'kg', currentStock: 10 } })).id
-    attaB = (await prisma.inventoryItem.create({ data: { tenantId: tenantB, name: 'Atta', unit: 'kg', currentStock: 70 } })).id
+    const mayoA = (await stockItem({ tenantId: tenantA, name: 'Mayo', unit: 'kg', currentStock: 10 })).id
+    attaB = (await stockItem({ tenantId: tenantB, name: 'Atta', unit: 'kg', currentStock: 70, unitCostCents: 9_000 })).id
     sauceA = (await prisma.recipe.create({ data: { kind: 'component', name: 'Smash sauce', ingredients: { create: [{ inventoryItemId: mayoA, quantity: 100, unit: 'g' }] } } })).id
     doughB = (await prisma.recipe.create({ data: { kind: 'component', name: 'Viva dough', ingredients: { create: [{ inventoryItemId: attaB, quantity: 1000, unit: 'g' }] } } })).id
     // A's burger plate uses the sauce.
@@ -365,8 +378,11 @@ describe('BOH-R2-04 — a prep batch cites only the active company\'s sub-recipe
     expect(await stock()).toBe(70)
 
     const adHoc = await call('cookB', 'POST', '/crosschecks/prep-batches', batch(null))
-    expect(adHoc.statusCode).toBe(201)
+    expect(adHoc.statusCode, adHoc.body).toBe(201)
     expect(await stock()).toBe(68)
+    // Drawn FIFO at the lot's cost (2 kg × PKR 90); a line cook sees no cost, only the ledger result.
+    expect(adHoc.json()).toMatchObject({ drawValueCents: null, costsHidden: true, ledger: expect.objectContaining({ posted: expect.any(Boolean) }) })
+    expect(Number((await prisma.prepBatch.findUniqueOrThrow({ where: { id: adHoc.json().id } })).drawValueCents)).toBe(18_000)
 
     // Company A's list never shows B's batches.
     const listA = (await call('adminA', 'GET', '/crosschecks/prep-batches')).json() as Array<{ tenantId: string }>

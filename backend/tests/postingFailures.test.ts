@@ -24,6 +24,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { addLotTx, ensureFifoReady } from '../src/lib/stockLedger.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
@@ -89,8 +90,17 @@ async function lockThrough(tenantId: string, through: Date) {
 }
 
 let seq = 0
+/** An item whose stock on hand is held on one FIFO lot at its cost (finance wave B: stock lives on lots). */
 async function inventoryItem(tenantId: string, name: string, unitCostCents: number, currentStock = 100) {
-  return prisma.inventoryItem.create({ data: { name: `${name} ${++seq}`, unit: 'kg', currentStock, unitCostCents, tenantId } })
+  await ensureFifoReady(tenantId)
+  const item = await prisma.inventoryItem.create({ data: { name: `${name} ${++seq}`, unit: 'kg', currentStock: 0, unitCostCents, tenantId } })
+  if (currentStock > 0) {
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId, inventoryItemId: item.id, qty: currentStock, unitCostCents, kind: 'fifo_cutover', lotSourceType: 'fifo_cutover',
+      lotSourceId: `test-seed:${item.id}`, movementSourceType: 'test.seed', movementSourceId: item.id, receivedAt: new Date(Date.now() - DAY),
+    }))
+  }
+  return prisma.inventoryItem.findUniqueOrThrow({ where: { id: item.id } })
 }
 async function order(conceptId: string, status: 'received' | 'completed' | 'cancelled' = 'completed', totalCents = 100_000) {
   return prisma.order.create({
@@ -235,7 +245,7 @@ describe('stock count — a refused adjustment is flagged and re-posted', () => 
     let countId: string
     let flatId: string
     try {
-      const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: bun.id, physicalQty: 30 }] })
+      const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: bun.id, physicalQty: 30, reason: 'five missing' }] })
       expect(res.statusCode, res.body).toBe(201)
       expect(res.json().ledger).toMatchObject({ posted: false })
       countId = res.json().id

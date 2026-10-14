@@ -896,7 +896,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // Warnings per row (outside company / costed while unapproved / no
       // packaging at a packaging brand) — the 'No packaging' badge and filter.
       const contexts = await ownerContexts(recipes, scope)
-      const names = await itemNames(recipes.flatMap((r) => linesOutside(graph, r.id, contexts.get(r.id)?.owners ?? new Set()).map((x) => x.itemId)))
+      const names = await itemNames(recipes.flatMap((r) => {
+        const owners = contexts.get(r.id)?.owners
+        return owners ? linesOutside(graph, r.id, owners).map((x) => x.itemId) : []
+      }))
 
       const rows = recipes.map((r) => {
         const cost = recipeCost(graph, r.id, memo)
@@ -1196,7 +1199,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           allergens:        inv?.allergens ?? [],
         }
       })
-      const names = await itemNames(linesOutside(graph, recipe.id, ctx.owners ?? new Set()).map((x) => x.itemId))
+      const names = await itemNames(ctx.owners ? linesOutside(graph, recipe.id, ctx.owners).map((x) => x.itemId) : [])
       const warnings = costWarnings(graph, recipe.id, { owners: ctx.owners, kind: recipe.kind, status: recipe.status, live: ctx.live, serviceVessel: ctx.serviceVessel }, names)
 
       const totalIngredientCents = Math.round(cost.ingredientCents)

@@ -54,7 +54,7 @@ const MIN_REASON = 10
 
 // ─── Shared helpers (routes.ts and pools.routes.ts use them too) ────────────
 
-export interface Actor { id: string; email: string; role: string }
+export interface Actor { id: string; email: string | null; role: string }
 
 export function actorOf(req: FastifyRequest): Actor {
   return { id: req.staffUser!.id, email: req.staffUser!.email, role: req.staffUser!.role }

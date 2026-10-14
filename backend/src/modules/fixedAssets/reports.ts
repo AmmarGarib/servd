@@ -404,14 +404,14 @@ export async function fixedAssetTieOut(db: Db, tenantIds: string[], asOf?: Date)
       const registerCostCents = reg(c.costAccountCode)
       const glCostCents = gl.get(c.costAccountCode) ?? 0
       const registerAccumCents = c.accumAccountCode ? reg(c.accumAccountCode) : 0
-      const glAccumCents = c.accumAccountCode ? -(gl.get(c.accumAccountCode) ?? 0) : 0
+      const glAccumCents = c.accumAccountCode ? 0 - (gl.get(c.accumAccountCode) ?? 0) : 0
       return {
         classKey: c.key, label: c.label, costAccountCode: c.costAccountCode, accumAccountCode: c.accumAccountCode,
         registerCostCents, glCostCents, costDiffCents: glCostCents - registerCostCents,
         registerAccumCents, glAccumCents, accumDiffCents: glAccumCents - registerAccumCents,
       }
     })
-    const legacy1590Cents = -(gl.get(ACCT.ACC_DEP_LEGACY) ?? 0)
+    const legacy1590Cents = 0 - (gl.get(ACCT.ACC_DEP_LEGACY) ?? 0)
     const legacy1590RegisterCents = reg(ACCT.ACC_DEP_LEGACY)
     const legacy1590DiffCents = legacy1590Cents - legacy1590RegisterCents
     out.push({
@@ -463,8 +463,8 @@ export async function tieOutReport(db: Db, tenantIds: string[], asOf?: Date) {
   const companies = []
   for (const r of register) {
     const gl = await ledgerBalancesByCode(r.tenantId, [ACCT.CAPITAL_PAYABLES, ACCT.PREPAID, ACCT.SECURITY_DEPOSITS], { asOf, db })
-    const owedSources = -(capexOwed.get(r.tenantId) ?? 0)
-    const owedGl = -(gl.get(ACCT.CAPITAL_PAYABLES) ?? 0)
+    const owedSources = 0 - (capexOwed.get(r.tenantId) ?? 0)
+    const owedGl = 0 - (gl.get(ACCT.CAPITAL_PAYABLES) ?? 0)
     const prepaidSources = prepaidHeld.get(r.tenantId) ?? 0
     const prepaidGl = gl.get(ACCT.PREPAID) ?? 0
     const depSources = depositsHeld.get(r.tenantId) ?? 0
@@ -544,7 +544,7 @@ export async function rollForward(db: Db, tenantIds: string[], from: Date, to: D
       const openingAccumCents = sumOf(l.accum, (m) => m.at.getTime() < f)
       const closingAccumCents = sumOf(l.accum, (m) => m.at.getTime() <= t)
       const glCostCents = l.cost ? gl.get(l.cost) ?? 0 : 0
-      const glAccumCents = l.accum ? -(gl.get(l.accum) ?? 0) : 0
+      const glAccumCents = l.accum ? 0 - (gl.get(l.accum) ?? 0) : 0
       const moved = [...Object.values(COST_COLUMNS), ...Object.values(ACCUM_COLUMNS)].some((kinds) => sumOf(l.cost, inPeriod(kinds)) || sumOf(l.accum, inPeriod(kinds)))
       if (!moved && !openingCostCents && !closingCostCents && !openingAccumCents && !closingAccumCents && !glCostCents && !glAccumCents) continue
       const row: Record<string, string | number | null> = {
@@ -644,7 +644,7 @@ export async function nbvReport(db: Db, tenantIds: string[], asOf: Date, by: Nbv
     groups.set(k, row)
   }
   const rows = [...groups.values()].sort((x, y) => String(x['companyName']).localeCompare(String(y['companyName'])) || String(x['label']).localeCompare(String(y['label'])))
-  const totals = rows.reduce((t, r) => ({
+  const totals = rows.reduce<{ costCents: number; accumulatedCents: number; nbvCents: number }>((t, r) => ({
     costCents: t.costCents + (r['costCents'] as number),
     accumulatedCents: t.accumulatedCents + (r['accumulatedCents'] as number),
     nbvCents: t.nbvCents + (r['nbvCents'] as number),

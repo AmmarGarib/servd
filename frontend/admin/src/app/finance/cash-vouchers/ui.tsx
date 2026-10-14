@@ -1,9 +1,9 @@
 'use client'
-// Small building blocks shared by the cash-voucher screens — the same look as
+// Small building blocks shared by the cash-request screens — the same look as
 // the Petty cash page (modal, field, buttons), on the ERP tokens only.
 
 import type { ReactNode } from 'react'
-import { statusMeta } from './data'
+import { stageMeta } from './data'
 
 export const fieldCls = 'w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none'
 export const primaryBtn = 'rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50'
@@ -49,8 +49,9 @@ export function ErrorBanner({ message }: { message: string }) {
   return <div className="rounded-xl px-4 py-3 text-sm bg-s-red-dim text-s-red border border-s-red/30">{message}</div>
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  const m = statusMeta(status)
+/** The request's step (its `stage`), in words, with its badge colour. */
+export function StatusBadge({ stage }: { stage: string }) {
+  const m = stageMeta(stage)
   return <span className={m.badge}>{m.label}</span>
 }
 

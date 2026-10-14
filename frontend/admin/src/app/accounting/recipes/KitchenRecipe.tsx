@@ -10,6 +10,11 @@
 //
 // The only reads here are ones the API gives every recipe reader:
 // GET /recipes/:id (a sub-recipe's name) and GET /recipes/:id/steps.
+//
+// A dish's lines come in two sections (owner's packaging rule, 2026-10-13):
+// what goes IN the dish, and what it is packed in ("Pack in"). An add-on
+// (modifier) recipe may also take an ingredient OFF the dish — a negative
+// quantity, shown as "Removes".
 
 import Link from 'next/link'
 import { useQueries, useQuery } from '@tanstack/react-query'
@@ -49,11 +54,25 @@ export interface KitchenIngredient {
   notes: string | null
   /** Set when the line is a sub-recipe — links to its own recipe. */
   subRecipeId: string | null
+  /** 'ingredients' (default) | 'packaging' — see splitBySection. */
+  section?: string | null
 }
 
-export function KitchenIngredients({ rows }: { rows: KitchenIngredient[] }) {
+/** When a dish's Packaging section is used — the one sentence every recipe screen shows. */
+export const PACKAGING_USED_WHEN =
+  'Used on takeaway and delivery, on every order at a brand that serves in packaging, and on dine-in when staff tap Box given.'
+
+/** A recipe's lines split into what goes in the dish and what it is packed in. */
+export function splitBySection<T extends { section?: string | null }>(rows: T[]): { ingredients: T[]; packaging: T[] } {
+  return {
+    ingredients: rows.filter((r) => r.section !== 'packaging'),
+    packaging:   rows.filter((r) => r.section === 'packaging'),
+  }
+}
+
+export function KitchenIngredients({ rows, empty = 'No ingredients on this recipe yet.' }: { rows: KitchenIngredient[]; empty?: string }) {
   if (rows.length === 0) {
-    return <p className="text-xs text-s-dim">No ingredients on this recipe yet.</p>
+    return <p className="text-xs text-s-dim">{empty}</p>
   }
   const anyNotes = rows.some((r) => r.notes)
   return (
@@ -84,12 +103,15 @@ export function KitchenIngredients({ rows }: { rows: KitchenIngredient[] }) {
                   ) : r.name}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-s-text whitespace-nowrap">
-                  {qty(r.quantity)}{r.unit ? ` ${r.unit}` : ''}
+                  {r.quantity < 0 && (
+                    <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-s-red">Removes</span>
+                  )}
+                  {qty(Math.abs(r.quantity))}{r.unit ? ` ${r.unit}` : ''}
                 </td>
                 <td className="px-3 py-2 text-right text-xs whitespace-nowrap">
                   {r.yieldPct == null ? (
                     <span className="text-s-dim">—</span>
-                  ) : trimmed ? (
+                  ) : trimmed && r.quantity > 0 ? (
                     <span className="text-s-amber font-semibold">
                       {Math.round(r.yieldPct * 100)}% · start with {qty(r.quantity / r.yieldPct!)}{r.unit ? ` ${r.unit}` : ''}
                     </span>
@@ -225,7 +247,7 @@ export function KitchenServiceSteps({ recipeId, variant = 'inline' }: { recipeId
 /** GET /recipes/:id as a kitchen floor role receives it (costsHidden). */
 export interface KitchenRecipeDetail {
   id: string
-  kind: 'plate' | 'component'
+  kind: 'plate' | 'component' | 'modifier'
   status: RecipeStatus
   name: string | null
   servings: number
@@ -238,6 +260,8 @@ export interface KitchenRecipeDetail {
   notes?: string | null
   menuItem: { name?: string; concept?: { name: string } | null } | null
   pendingMenuItem: { name: string } | null
+  /** kind 'modifier': the add-on and the dish it belongs to. */
+  modifier?: { name: string; group: { name: string; menuItem: { name: string } } } | null
   ingredients: Array<{
     id: string
     inventoryItemId: string | null
@@ -245,8 +269,37 @@ export interface KitchenRecipeDetail {
     quantity: number
     yieldPct: number | null
     notes?: string | null
+    section?: string | null
     inventoryItem?: { name: string; unit: string } | null
   }>
+}
+
+/** Kind badge text and style, one place for every recipe screen. */
+export const KIND_META: Record<KitchenRecipeDetail['kind'], { label: string; cls: string }> = {
+  plate:     { label: 'Plate',      cls: 'bg-accent-dim text-success' },
+  component: { label: 'Sub-recipe', cls: 'bg-primary/10 text-primary-ink' },
+  modifier:  { label: 'Add-on',     cls: 'bg-primary/10 text-primary-ink' },
+}
+
+/** The Ingredients and Pack in blocks of a recipe, read-only. */
+export function KitchenSections({ rows, kind, Wrap }: {
+  rows: KitchenIngredient[]
+  kind: KitchenRecipeDetail['kind']
+  Wrap: (p: { title: string; subtitle?: string; children: React.ReactNode }) => React.ReactElement
+}) {
+  const { ingredients, packaging } = splitBySection(rows)
+  return (
+    <>
+      <Wrap title={kind === 'modifier' ? 'What this add-on adds or removes' : 'Ingredients'}>
+        <KitchenIngredients rows={ingredients} />
+      </Wrap>
+      {kind === 'plate' && (
+        <Wrap title="Pack in" subtitle={PACKAGING_USED_WHEN}>
+          <KitchenIngredients rows={packaging} empty="No packaging on this dish." />
+        </Wrap>
+      )}
+    </>
+  )
 }
 
 export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
@@ -271,16 +324,17 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
   })
 
   const title = recipe.menuItem?.name ?? recipe.pendingMenuItem?.name ?? recipe.name ?? 'Recipe'
-  const brand = recipe.menuItem?.concept?.name ?? null
+  const brand = recipe.menuItem?.concept?.name
+    ?? (recipe.modifier ? `${recipe.modifier.group.menuItem.name} — ${recipe.modifier.group.name}` : null)
   const rows: KitchenIngredient[] = recipe.ingredients.map((ing) => ing.prepRecipeId
     ? {
         id: ing.id, name: subName.get(ing.prepRecipeId) ?? 'Sub-recipe', quantity: ing.quantity,
-        unit: 'g', yieldPct: null, notes: ing.notes ?? null, subRecipeId: ing.prepRecipeId,
+        unit: 'g', yieldPct: null, notes: ing.notes ?? null, subRecipeId: ing.prepRecipeId, section: ing.section,
       }
     : {
         id: ing.id, name: ing.inventoryItem?.name ?? '—', quantity: ing.quantity,
         unit: measureUnit(ing.inventoryItem?.unit), yieldPct: ing.yieldPct ?? 1,
-        notes: ing.notes ?? null, subRecipeId: null,
+        notes: ing.notes ?? null, subRecipeId: null, section: ing.section,
       })
 
   // Plates written by the recipe form carry the total yield; older ones a
@@ -289,7 +343,9 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
     ?? (recipe.portionSizeG && recipe.servings > 0 ? recipe.portionSizeG * recipe.servings : null)
   const portionG = recipe.portionSizeG
     ?? (recipe.yieldGrams && recipe.servings > 0 ? recipe.yieldGrams / recipe.servings : null)
-  const facts: Array<{ label: string; value: string }> = recipe.kind === 'plate'
+  const facts: Array<{ label: string; value: string }> = recipe.kind === 'modifier'
+    ? [{ label: 'Per', value: 'one add-on' }]
+    : recipe.kind === 'plate'
     ? [
         { label: 'Portions per recipe', value: String(recipe.servings) },
         { label: 'Total yield',         value: totalG ? `${qty(totalG)} g` : '—' },
@@ -308,9 +364,8 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-black">{title}</h1>
-            <span className={`text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${
-              recipe.kind === 'plate' ? 'bg-accent-dim text-success' : 'bg-primary/10 text-primary-ink'}`}>
-              {recipe.kind === 'plate' ? 'Plate' : 'Sub-recipe'}
+            <span className={`text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${KIND_META[recipe.kind].cls}`}>
+              {KIND_META[recipe.kind].label}
             </span>
             {recipe.status !== 'production' && (
               <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
@@ -333,9 +388,7 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
           ))}
         </section>
 
-        <Section title="Ingredients">
-          <KitchenIngredients rows={rows} />
-        </Section>
+        <KitchenSections rows={rows} kind={recipe.kind} Wrap={Section} />
 
         <Section title="Method">
           <KitchenMethod methodSteps={recipe.methodSteps} steps={recipe.steps} stepsUrdu={recipe.stepsUrdu} />
@@ -353,10 +406,11 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-s-border bg-s-surface p-5">
-      <h2 className="text-base font-black mb-3">{title}</h2>
+      <h2 className={`text-base font-black ${subtitle ? '' : 'mb-3'}`}>{title}</h2>
+      {subtitle && <p className="text-[11px] text-s-muted mt-0.5 mb-3">{subtitle}</p>}
       {children}
     </section>
   )

@@ -15,6 +15,8 @@ import { getZReport } from '../modules/pos/service.js'
 import { salesTotals, topItems, salesByChannel, type SalesQuery } from '../modules/reports/service.js'
 import { agingReport } from '../modules/procurement/service.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../modules/accounting/dates.js'
+import { buildFoodCostEmail } from '../modules/reports/foodCost.js'
+import { getMenuEngineering } from '../modules/reports/menu-engineering.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
 
@@ -31,59 +33,63 @@ async function tick(): Promise<void> {
   const now = new Date()
   const reports = await prisma.scheduledReport.findMany({
     where: { isActive: true, deletedAt: null },
+    select: { id: true, cron: true },
   })
   for (const r of reports) {
     if (!matchesCron(r.cron, now)) continue
     if (RUNNING.has(r.id)) continue
     RUNNING.add(r.id)
-    // Every report runs for ONE company: the brand's, or for "all brands"
-    // schedules the company that owns the schedule. A schedule with no
-    // company at all (pre-migration row) is skipped rather than emailed
-    // org-wide.
-    if (!r.tenantId) { console.warn(`[scheduledReports] ${r.id} has no company — skipped`); continue }
-    void run(r.id, r.reportType as ReportType, r.recipients, r.conceptId, r.tenantId, r.name, r.lastRunAt)
+    void runScheduledReport(r.id)
       .catch((err) => console.warn(`[scheduledReports] ${r.id} failed:`, (err as Error).message))
       .finally(() => RUNNING.delete(r.id))
   }
 }
 
-async function run(
-  id: string,
-  reportType: ReportType,
-  recipients: string[],
-  conceptId: string | null,
-  tenantId: string,
-  name: string,
-  lastRunAt: Date | null,
-): Promise<void> {
+/**
+ * Run one schedule now and record the outcome on it (lastRunAt, lastStatus).
+ * Every report runs for ONE company — the schedule's own (its brand's, when
+ * it names one). A schedule with no company never runs unscoped: it is
+ * recorded 'failed: no company'. A report type with no builder fails too
+ * ('failed: …'), never a placeholder email. Throws what the builder threw
+ * (after recording it).
+ */
+export async function runScheduledReport(id: string, now: Date = new Date()): Promise<void> {
+  const r = await prisma.scheduledReport.findUnique({ where: { id } })
+  if (!r || r.deletedAt) return
   let html = ''
-  let subject = `[servd] ${name}`
+  let subject = `[servd] ${r.name}`
   let send = true
   try {
+    if (!r.tenantId) throw new Error('no company')
+    const tenantId = r.tenantId
+    const reportType = r.reportType as ReportType
     if (reportType === 'sales_daily') {
-      ({ subject, html } = await buildDailySalesReport(conceptId, tenantId))
+      ({ subject, html } = await buildDailySalesReport(r.conceptId, tenantId))
     } else if (reportType === 'shift_summary') {
-      const report = await buildShiftSummaryReport(tenantId, lastRunAt)
+      const report = await buildShiftSummaryReport(tenantId, r.lastRunAt)
       if (report) ({ subject, html } = report)
       else send = false                                    // no drawer closed since the last run
     } else if (reportType === 'low_stock') {
       ({ subject, html } = await buildLowStockReport(tenantId))
     } else if (reportType === 'ap_aging') {
       ({ subject, html } = await buildApAgingReport(tenantId))
+    } else if (reportType === 'food_cost') {
+      // THE food-cost engine (reports/foodCost.ts), for the schedule's own company.
+      ({ subject, html } = await buildFoodCostEmail(prisma, r, now))
+    } else if (reportType === 'menu_engineering') {
+      ({ subject, html } = await buildMenuEngineeringReport(tenantId, r.conceptId, r.lastRunAt, now))
     } else {
-      // Stub for food_cost / menu_engineering — wire to real computers once
-      // their report endpoints stabilise.
-      html = `<p>Report ${reportType} is queued but not yet implemented.</p>`
+      throw new Error(`report type '${String(r.reportType)}' has no builder`)
     }
-    if (send) await Promise.all(recipients.map((to) => sendEmail(to, subject, html)))
+    if (send) await Promise.all(r.recipients.map((to) => sendEmail(to, subject, html)))
     await prisma.scheduledReport.update({
       where: { id },
-      data: { lastRunAt: new Date(), lastStatus: send ? 'success' : 'success: nothing to send' },
+      data: { lastRunAt: now, lastStatus: send ? 'success' : 'success: nothing to send' },
     })
   } catch (err) {
     await prisma.scheduledReport.update({
       where: { id },
-      data: { lastRunAt: new Date(), lastStatus: `failed: ${(err as Error).message.slice(0, 200)}` },
+      data: { lastRunAt: now, lastStatus: `failed: ${(err as Error).message.slice(0, 200)}` },
     }).catch(() => {})
     throw err
   }
@@ -310,5 +316,40 @@ export async function buildApAgingReport(tenantId: string): Promise<{ subject: s
         ${aging.bySupplier.map((r) => row(esc(r.supplierName), r)).join('')}
         ${row('<strong>Total</strong>', aging.total)}
       </table>`,
+  }
+}
+
+/**
+ * The menu-engineering email IS the Sales quadrants report
+ * (reports/menu-engineering.ts getMenuEngineering): per brand of the
+ * schedule's company (or its one brand — which must be that company's), over
+ * the period since the last run (else the previous 30 PKT days).
+ */
+export async function buildMenuEngineeringReport(tenantId: string, conceptId: string | null, lastRunAt: Date | null, now: Date = new Date()): Promise<{ subject: string; html: string }> {
+  const brands = await prisma.concept.findMany({
+    where: { tenantId, deletedAt: null, ...(conceptId ? { id: conceptId } : {}) },
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  })
+  if (conceptId && brands.length === 0) throw new Error('brand not in the schedule\'s company')
+  const today = fmtPktDate(now)
+  const daysAgo = (n: number) => new Date(new Date(`${today}T00:00:00Z`).getTime() - n * 86_400_000).toISOString().slice(0, 10)
+  const since = lastRunAt && lastRunAt < now
+  const from = since ? lastRunAt : parsePktStartOfDay(daysAgo(30))
+  const to = since ? now : parsePktEndOfDay(daysAgo(1))
+  const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!))
+  const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+  const QUADRANT: Record<string, string> = { star: 'Star', plowHorse: 'Plowhorse', puzzle: 'Puzzle', dog: 'Dog' }
+  const sections: string[] = []
+  for (const b of brands) {
+    const rows = await getMenuEngineering({ conceptId: b.id, dateFrom: from, dateTo: to })
+    const body = rows.length === 0
+      ? '<tr><td colspan="5">No sales.</td></tr>'
+      : rows.slice(0, 30).map((r) => `<tr><td>${esc(r.name)}</td><td>${QUADRANT[r.quadrant] ?? r.quadrant}</td><td>${r.qtySold}</td><td>${fmt(r.priceCents)}</td><td>${r.hasRecipe ? `${r.grossMarginPct.toFixed(1)}%` : 'no recipe'}</td></tr>`).join('')
+    sections.push(`<h3>${esc(b.name)}</h3><table cellpadding="6" border="1" style="border-collapse:collapse"><tr><th>Item</th><th>Quadrant</th><th>Sold</th><th>Price</th><th>Margin</th></tr>${body}</table>`)
+  }
+  return {
+    subject: `[servd] Sales quadrants ${fmtPktDate(from)} to ${fmtPktDate(to)}`,
+    html: `<h2>Sales quadrants (menu engineering)</h2><p>${fmtPktDate(from)} to ${fmtPktDate(to)} (PKT).</p>${sections.join('') || '<p>No brands.</p>'}`,
   }
 }

@@ -37,6 +37,7 @@ import { inventoryRoutes } from '../src/modules/inventory/routes.js'
 import { foodSafetyRoutes } from '../src/modules/foodSafety/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { postStockCount } from '../src/modules/crosschecks/countPosting.js'
+import { addLotTx, ensureFifoReady } from '../src/lib/stockLedger.js'
 
 let app: FastifyInstance
 let tenantA: string
@@ -50,6 +51,18 @@ let burgerId: string
 let conceptB: string
 const users: Record<string, { id: string; token: string }> = {}
 const PHOTO = 'https://example.com/waste.jpg'
+
+/** Stock is held on FIFO lots (finance wave B): an item with stock on hand gets one lot at its cost. */
+async function stockItem(data: { name: string; unit: string; currentStock: number; unitCostCents: number; tenantId: string }) {
+  await ensureFifoReady(data.tenantId)
+  const item = await prisma.inventoryItem.create({ data: { ...data, currentStock: 0 } })
+  await prisma.$transaction((tx) => addLotTx(tx, {
+    tenantId: data.tenantId, inventoryItemId: item.id, qty: data.currentStock, unitCostCents: data.unitCostCents,
+    kind: 'fifo_cutover', lotSourceType: 'fifo_cutover', lotSourceId: `test-seed:${item.id}`,
+    movementSourceType: 'test.seed', movementSourceId: item.id, receivedAt: new Date(Date.now() - 86_400_000),
+  }))
+  return prisma.inventoryItem.findUniqueOrThrow({ where: { id: item.id } })
+}
 
 async function mkUser(key: string, role: string, tenantId: string) {
   const u = await prisma.user.create({
@@ -327,7 +340,7 @@ describe('station delete (BOH-03)', () => {
 describe('waste log cost (BOH-07)', () => {
   let beef: string
   beforeAll(async () => {
-    beef = (await prisma.inventoryItem.create({ data: { name: 'Beef mince', unit: 'kg', currentStock: 10, unitCostCents: 180_000, tenantId: tenantA } })).id
+    beef = (await stockItem({ name: 'Beef mince', unit: 'kg', currentStock: 10, unitCostCents: 180_000, tenantId: tenantA })).id
   })
 
   it('a typed cost does not dodge the photo rule', async () => {
@@ -396,8 +409,8 @@ describe('food-safety breach flag (BOH-08)', () => {
 // ─── BOH-12: stock counts reach the ledger ───────────────────────────────────
 
 describe('stock-count adjustment posting (BOH-12)', () => {
-  it('a shortage posts Dr 5050 / Cr 1210 at moving-average cost, in the count’s company', async () => {
-    const bun = await prisma.inventoryItem.create({ data: { name: 'Potato bun', unit: 'pcs', currentStock: 35, unitCostCents: 6_000, tenantId: tenantA } })
+  it('a shortage posts Dr 5050 / Cr 1210 at the FIFO value of the lots, in the count’s company', async () => {
+    const bun = await stockItem({ name: 'Potato bun', unit: 'pcs', currentStock: 35, unitCostCents: 6_000, tenantId: tenantA })
     const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: bun.id, physicalQty: 30, reason: 'end of day count' }] })
     expect(res.statusCode).toBe(201)
     expect(res.json().ledger).toMatchObject({ posted: true })
@@ -418,10 +431,10 @@ describe('stock-count adjustment posting (BOH-12)', () => {
   })
 
   it('a surplus posts the other way, and a mixed count nets correctly', async () => {
-    const milk = await prisma.inventoryItem.create({ data: { name: 'Milk', unit: 'litres', currentStock: 10, unitCostCents: 25_000, tenantId: tenantA } })
-    const eggs = await prisma.inventoryItem.create({ data: { name: 'Eggs', unit: 'pcs', currentStock: 100, unitCostCents: 3_000, tenantId: tenantA } })
+    const milk = await stockItem({ name: 'Milk', unit: 'litres', currentStock: 10, unitCostCents: 25_000, tenantId: tenantA })
+    const eggs = await stockItem({ name: 'Eggs', unit: 'pcs', currentStock: 100, unitCostCents: 3_000, tenantId: tenantA })
     const res = await call('chefA', 'POST', '/crosschecks/physical-counts', {
-      lines: [{ inventoryItemId: milk.id, physicalQty: 12 }, { inventoryItemId: eggs.id, physicalQty: 90 }],
+      lines: [{ inventoryItemId: milk.id, physicalQty: 12, reason: 'delivery not entered' }, { inventoryItemId: eggs.id, physicalQty: 90, reason: 'broken tray' }],
     })
     expect(res.statusCode).toBe(201)
     const je = await entry(tenantA, `inventory.count:${res.json().id}`)
@@ -436,7 +449,7 @@ describe('stock-count adjustment posting (BOH-12)', () => {
   })
 
   it('a count that matches the system posts nothing', async () => {
-    const salt = await prisma.inventoryItem.create({ data: { name: 'Salt', unit: 'kg', currentStock: 4, unitCostCents: 5_000, tenantId: tenantA } })
+    const salt = await stockItem({ name: 'Salt', unit: 'kg', currentStock: 4, unitCostCents: 5_000, tenantId: tenantA })
     const res = await call('chefA', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: salt.id, physicalQty: 4 }] })
     expect(res.statusCode).toBe(201)
     expect(res.json().ledger).toMatchObject({ posted: false, reason: 'no_variance' })
@@ -444,7 +457,7 @@ describe('stock-count adjustment posting (BOH-12)', () => {
   })
 
   it('company B cannot count company A’s item, and nothing posts in either company', async () => {
-    const oil = await prisma.inventoryItem.create({ data: { name: 'Oil', unit: 'litres', currentStock: 20, unitCostCents: 50_000, tenantId: tenantA } })
+    const oil = await stockItem({ name: 'Oil', unit: 'litres', currentStock: 20, unitCostCents: 50_000, tenantId: tenantA })
     const before = await prisma.journalEntry.count({ where: { reference: { startsWith: 'inventory.count:' } } })
     const res = await call('ceoB', 'POST', '/crosschecks/physical-counts', { lines: [{ inventoryItemId: oil.id, physicalQty: 1 }] })
     expect(res.statusCode).toBe(404)

@@ -1,5 +1,5 @@
-// Fixed assets v2 — the automatic depreciation run (engine part; w3-fa-api adds
-// the worker cases).
+// Fixed assets v2 — the automatic depreciation run (engine part, and the
+// nightly worker — workers/depreciation.ts).
 //
 //   - missing months are charged strictly in order, idempotently, on the
 //     class's own accumulated account (1591…);
@@ -12,7 +12,9 @@
 //   - two companies charge into their own ledgers;
 //   - the legacy 1590 reclass runs once;
 //   - the close check blocks and chargeForClose clears it;
-//   - tax depreciation (IA + WDV), the CEO's freeze, deferred tax (report only).
+//   - tax depreciation (IA + WDV), the CEO's freeze, deferred tax (report only);
+//   - the worker: every company into its own ledger, idempotently, with
+//     FixedAssetRun rows; prepaid releases; de-duplicated flags.
 import { describe, it, expect } from 'vitest'
 import type { FixedAsset } from '@prisma/client'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
@@ -29,6 +31,7 @@ import { fixedAssetCloseChecks, chargeForClose } from '../src/modules/fixedAsset
 import type { CloseCheckContext } from '../src/modules/accounting/closeCheckTypes.js'
 import { taxSchedule, freezeTaxYear, deferredTax } from '../src/modules/fixedAssets/tax.js'
 import { taxYearOf } from '../src/modules/accounting/fiscalYear.js'
+import { runDepreciationOnce, runForTenant } from '../src/workers/depreciation.js'
 
 const cur = currentPeriodPkt()
 const m = (k: number) => addMonths(cur, k) // m(-1) = the last completed month
@@ -360,5 +363,85 @@ describe('tax depreciation (H23) and deferred tax (H24)', () => {
       deferredTaxCents: Math.round(((nbv - 637_500) * 2900) / 10_000),
     })])
     expect(d.totals.deferredTaxCents).toBe(Math.round(((nbv - 637_500) * 2900) / 10_000))
+  })
+})
+
+describe('the nightly worker (workers/depreciation.ts)', () => {
+  it('charges every company into its own ledger, idempotently, and writes its run rows', async () => {
+    const X = await mkCo('worker-x')
+    const Y = await mkCo('worker-y')
+    const ax = await mkAsset(X, { name: 'X oven', costCents: 120_000, inServiceAt: mid(m(-2)), life: 12 })
+    const ay = await mkAsset(Y, { name: 'Y oven', costCents: 240_000, inServiceAt: mid(m(-2)), life: 12 })
+
+    const [first, overlapping] = await Promise.all([runDepreciationOnce(), runDepreciationOnce()])
+    expect(overlapping).toEqual([]) // the in-process guard: one run at a time
+    expect(first.find((r) => r.tenantId === X.tenantId)).toEqual({ tenantId: X.tenantId, charged: 2, failed: 0 })
+    expect(first.find((r) => r.tenantId === Y.tenantId)).toEqual({ tenantId: Y.tenantId, charged: 2, failed: 0 })
+    expect(await balance(X.tenantId, '6150')).toBe(20_000)
+    expect(await balance(Y.tenantId, '6150')).toBe(40_000)
+    expect(await balance(Y.tenantId, '1591')).toBe(-40_000)
+    for (const [co, a] of [[X, ax], [Y, ay]] as const) {
+      const es = await prisma.journalEntry.findMany({ where: { reference: { startsWith: `fixed_asset.depreciation:${a.id}` } }, select: { tenantId: true } })
+      expect(es).toHaveLength(2)
+      expect(es.every((e) => e.tenantId === co.tenantId)).toBe(true)
+    }
+
+    const second = await runDepreciationOnce()
+    expect(second.find((r) => r.tenantId === X.tenantId)).toEqual({ tenantId: X.tenantId, charged: 0, failed: 0 })
+    expect(await balance(X.tenantId, '6150')).toBe(20_000)
+    const runs = await prisma.fixedAssetRun.findMany({ where: { tenantId: X.tenantId }, orderBy: { startedAt: 'asc' } })
+    expect(runs.map((r) => r.kind).sort()).toEqual(['checks', 'checks', 'depreciation', 'depreciation', 'prepaid_release', 'prepaid_release'])
+    expect(runs.every((r) => r.finishedAt && r.throughPeriod === m(-1) && r.triggeredBy === 'worker')).toBe(true)
+    expect(runs.filter((r) => r.kind === 'depreciation').map((r) => r.chargedCount)).toEqual([2, 0])
+    expect(await trialBalance(X.tenantId)).toBe(0)
+    expect(await trialBalance(Y.tenantId)).toBe(0)
+    expect(await prisma.exceptionFlag.count({ where: { tenantId: { in: [X.tenantId, Y.tenantId] }, kind: 'fixed_asset_gl_mismatch' } })).toBe(0)
+  })
+
+  it('releases prepaid rent and raises each CapEx flag once', async () => {
+    const Z = await mkCo('worker-z')
+    const DAY = 86_400_000
+    const project = (await prisma.capexProject.create({ data: { tenantId: Z.tenantId, name: `Z kitchen ${seq}` } })).id
+    const line = (item: string, extra: Record<string, unknown> = {}) => prisma.capexLine.create({ data: { projectId: project, scope: 'Equipment', item, unitCostCents: 1_000_000, ...extra } })
+    const pay = async (lineId: string | null, code: string, cents: number, extra: Record<string, unknown> = {}) => {
+      const p = lineId ? await prisma.capexPayment.create({ data: { lineId, label: 'deposit', amountCents: cents, paidAt: mid(m(-2)), paidAmountCents: cents, ...extra } }) : null
+      const id = p?.id ?? `gone-${seq}-${cents}`
+      await postJournalEntry({
+        tenantId: Z.tenantId, sourceType: 'capex.payment', sourceId: id, description: 'CapEx payment', entryDate: mid(m(-2)),
+        lines: [{ accountCode: code, type: 'debit', amountCents: cents }, { accountCode: '1020', type: 'credit', amountCents: cents }],
+      })
+      return id
+    }
+    const rent = await line('Rent advance (3 months)', { treatment: 'prepaid' })
+    const rentPay = await pay(rent.id, '1310', 300_000, { coversFrom: m(-2), coversMonths: 3 })
+    const legacyRent = await line('Old rent advance', { treatment: 'prepaid' })
+    const legacyPay = await pay(legacyRent.id, '1310', 90_000)
+    const chiller = await line('Blast chiller', { status: 'delivered', actualDeliveryDate: new Date(Date.now() - 40 * DAY) })
+    await pay(chiller.id, '1340', 200_000)
+    const walkIn = await line('Walk-in cold room', { status: 'ordered', expectedDeliveryDate: new Date(Date.now() - 90 * DAY) })
+    await pay(walkIn.id, '1340', 400_000)
+    const orphan = await pay(null, '1340', 50_000)
+
+    const r = await runForTenant(Z.tenantId)
+    expect(r).toEqual({ tenantId: Z.tenantId, charged: 0, failed: 0 })
+    const releases = await prisma.prepaidRelease.findMany({ where: { tenantId: Z.tenantId, sourceId: rentPay }, orderBy: { period: 'asc' } })
+    expect(releases.map((x) => [x.period, Number(x.amountCents)])).toEqual([[m(-2), 100_000], [m(-1), 100_000]])
+    expect(await balance(Z.tenantId, '6010')).toBe(200_000)
+    const prepaidRun = await prisma.fixedAssetRun.findFirstOrThrow({ where: { tenantId: Z.tenantId, kind: 'prepaid_release' } })
+    expect(prepaidRun).toMatchObject({ chargedCount: 2, failedCount: 0 })
+    expect(Number(prepaidRun.chargedCents)).toBe(200_000)
+
+    await runForTenant(Z.tenantId)
+    expect(await prisma.prepaidRelease.count({ where: { tenantId: Z.tenantId } })).toBe(2)
+    const flags = await prisma.exceptionFlag.findMany({ where: { tenantId: Z.tenantId }, select: { kind: true, entityType: true, entityId: true, status: true } })
+    const of = (kind: string) => flags.filter((f) => f.kind === kind)
+    expect(of('capex_prepaid_unscheduled')).toEqual([{ kind: 'capex_prepaid_unscheduled', entityType: 'CapexPayment', entityId: legacyPay, status: 'open' }])
+    expect(of('capex_uncapitalised')).toEqual([{ kind: 'capex_uncapitalised', entityType: 'CapexLine', entityId: chiller.id, status: 'open' }])
+    expect(of('capex_advance_overdue')).toEqual([{ kind: 'capex_advance_overdue', entityType: 'CapexLine', entityId: walkIn.id, status: 'open' }])
+    expect(of('capex_orphan_advance')).toEqual([{ kind: 'capex_orphan_advance', entityType: 'CapexPayment', entityId: orphan, status: 'open' }])
+    expect(of('fixed_asset_gl_mismatch')).toEqual([])
+    const checks = await prisma.fixedAssetRun.findMany({ where: { tenantId: Z.tenantId, kind: 'checks' }, orderBy: { startedAt: 'asc' } })
+    expect(checks.map((c) => [c.chargedCount, c.failedCount])).toEqual([[4, 0], [0, 0]])
+    expect(await trialBalance(Z.tenantId)).toBe(0)
   })
 })

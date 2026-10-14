@@ -1,15 +1,18 @@
-// Cash vouchers (owner, 2026-10-13): draft → HOD → director → the photo of the
-// cashier-signed paper turns it into ONE petty-cash spend.
+// Cash requests (owner 2026-10-13; accountant H3 2026-10-14: "expense at
+// payment; receipts kept for the file").
 //
-//   - Two companies, A and B: a voucher binds to the active company; B gets
-//     404 on every one of A's vouchers (read, edit, sign, approve, pay, photo);
-//     A cannot pay from B's box; numbers are per company.
-//   - Preparing, signing and approving never touch cash; only the disburse
-//     (photo upload) does — exactly one spend, exactly once, rolled back whole
-//     when the box cannot cover it.
-//   - The director is the CEO (admin) and never the login that signed as HOD.
-//   - The manual petty-cash spend goes through the same helper.
-//   - The approvals inbox lists the voucher waiting for the director, per company.
+//   - Anyone raises in the ACTIVE company (draft, holder = self by default);
+//     the holder, box and brand must be that company's.
+//   - HOD = a cash keeper or the holder's direct reporting manager's login
+//     (HR's rule); anyone else 403 NOT_HOD; the holder 409 SELF_SIGN_HOD.
+//   - The director is the CEO (ADMIN_ONLY) and never the HOD signer.
+//   - POST /:id/pay (no photo) by the box's custodian is the ONLY step that
+//     moves cash: Dr <category 6xxx> / Cr 1011, dueBy set, float lowered —
+//     once, rolled back whole on INSUFFICIENT_FLOAT. The old /disburse and
+//     /photo are gone.
+//   - Two companies: B gets 404 on every route of A's request.
+//   - Legacy rows with no holder are 'needs review': keepers only, until
+//     finance names the holder.
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -20,9 +23,10 @@ import type { UserRole } from '@prisma/client'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { registerApprovalsPlugin } from '../src/modules/approvals/index.js'
-import { CASH_VOUCHER_PHOTO_MAX_BYTES } from '../src/modules/trustops/cashVouchers.js'
 
 const P = `cv${Date.now()}`
 let app: FastifyInstance
@@ -31,9 +35,7 @@ const C: Record<'A' | 'B', string> = { A: '', B: '' }
 const U: Record<string, { id: string; name: string; email: string; role: UserRole }> = {}
 const box: Record<string, string> = {}
 
-// A real 1×1 JPEG (134 bytes).
 const JPEG_B64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA='
-const JPEG = Buffer.from(JPEG_B64, 'base64')
 const PHOTO = { photo: JPEG_B64, mime: 'image/jpeg' }
 
 async function mkUser(key: string, role: UserRole, tenants: string[], primary: string | null = tenants[0] ?? null) {
@@ -47,45 +49,50 @@ async function mkUser(key: string, role: UserRole, tenants: string[], primary: s
   })
   U[key] = { id: u.id, name: u.name, email: u.email!, role: u.role }
 }
-function auth(key: string, extra: Record<string, string> = {}) {
-  const u = U[key]!
-  return { authorization: `Bearer ${issueStaffSession(u).accessToken}`, ...extra }
+function auth(key: string) {
+  return { authorization: `Bearer ${issueStaffSession(U[key]!).accessToken}` }
 }
-const call = (key: string, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown, extra: Record<string, string> = {}) =>
-  app.inject({ method, url: `/api/v1${url}`, headers: auth(key, extra), ...(payload !== undefined && { payload: payload as object }) })
+const call = (key: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown) =>
+  app.inject({ method, url: `/api/v1${url}`, headers: auth(key), ...(payload !== undefined && { payload: payload as object }) })
 
 const V = '/trustops/cash-vouchers'
-type Voucher = {
-  id: string; tenantId: string; number: string; seq: number; status: string; amountCents: number; boxId: string
-  preparedById: string; hodSignedById: string | null; directorSignedById: string | null; disbursedById: string | null
-  pettyCashMovementId: string | null; cashierName: string | null; hasPhoto: boolean; boxName: string
-  custodianName: string | null; preparedByName: string | null; hodSignedByName: string | null; directorSignedByName: string | null
-  companyName: string | null; rejectNote: string | null; cancelNote: string | null
+type Req = {
+  id: string; tenantId: string; number: string; seq: number; status: string; stage: string; amountCents: number; boxId: string | null
+  preparedById: string; payeeUserId: string | null; payeeName: string; category: string | null; hodSignedById: string | null
+  directorSignedById: string | null; disbursedById: string | null; pettyCashMovementId: string | null; cashierName: string | null
+  dueBy: string | null; companyName: string | null; holderName: string | null; canSignHod: boolean; canApprove: boolean; canPay: boolean
+  remainingCents: number; needsReview: boolean
 }
 
 let n = 0
-const draft = (overrides: Record<string, unknown> = {}) => ({
-  payeeName: 'Ammar Garib', purpose: `Site visit cash ${++n}`, category: 'transport', amountCents: 10_000, boxId: box['A'], ...overrides,
-})
-async function create(key: string, overrides: Record<string, unknown> = {}): Promise<Voucher> {
+const draft = (overrides: Record<string, unknown> = {}) => ({ purpose: `Site visit cash ${++n}`, categoryKey: 'transport', amountCents: 10_000, ...overrides })
+async function raise(key: string, overrides: Record<string, unknown> = {}): Promise<Req> {
   const r = await call(key, 'POST', V, draft(overrides))
   expect(r.statusCode, r.body).toBe(201)
-  return r.json() as Voucher
+  return r.json() as Req
 }
-/** A voucher at `approved`: prepared + HOD-signed by `hod`, signed by `director`. */
-async function approved(overrides: Record<string, unknown> = {}, hod = 'finA', director = 'ceoA'): Promise<Voucher> {
-  const v = await create(hod, overrides)
-  expect((await call(hod, 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
-  const r = await call(director, 'POST', `${V}/${v.id}/approve`)
+/** Raised by finA for cookA, HOD-signed by mgrA, approved by ceoA. */
+async function approved(overrides: Record<string, unknown> = {}): Promise<Req> {
+  const v = await raise('finA', { holderUserId: U['cookA']!.id, ...overrides })
+  const s = await call('mgrA', 'POST', `${V}/${v.id}/sign-hod`)
+  expect(s.statusCode, s.body).toBe(200)
+  const r = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
   expect(r.statusCode, r.body).toBe(200)
-  return r.json() as Voucher
+  return r.json() as Req
 }
 const floatOf = async (id: string) => (await prisma.pettyCashBox.findUniqueOrThrow({ where: { id } })).floatCents
 const movementsOf = (id: string) => prisma.pettyCashMovement.count({ where: { boxId: id } })
+async function linesOf(reference: string, tenantId: string) {
+  const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId, reference }, include: { lines: { include: { account: { select: { code: true } } } } } })
+  return je.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()
+}
 
 beforeAll(async () => {
   T.A = (await prisma.tenant.create({ data: { name: 'Voucher Co A', slug: `${P}-a` } })).id
   T.B = (await prisma.tenant.create({ data: { name: 'Voucher Co B', slug: `${P}-b` } })).id
+  await ensureChartOfAccounts(T.A)
+  await ensureChartOfAccounts(T.B)
+  invalidateSetupCache()
   C.A = (await prisma.concept.create({ data: { name: `${P} brand A`, slug: `${P}-brand-a`, type: 'restaurant', tenantId: T.A } })).id
   C.B = (await prisma.concept.create({ data: { name: `${P} brand B`, slug: `${P}-brand-b`, type: 'restaurant', tenantId: T.B } })).id
   await mkUser('ceoA', 'admin', [T.A])
@@ -96,14 +103,25 @@ beforeAll(async () => {
   await mkUser('mgrA', 'management', [T.A])
   await mkUser('cashA', 'cashier', [T.A])
   await mkUser('cashA2', 'cashier', [T.A])
+  await mkUser('cashA3', 'cashier', [T.A])
   await mkUser('cashB', 'cashier', [T.B])
+  await mkUser('cookA', 'boh', [T.A])
+  await mkUser('hodA', 'hr', [T.A])
+  await mkUser('waiterA', 'foh', [T.A])
+  await mkUser('cookB', 'boh', [T.B])
   await mkUser('finNoCompany', 'finance', [], null)
   await mkUser('finNoBooks', 'finance', [T.A])
   await prisma.user.update({ where: { id: U['finNoBooks']!.id }, data: { moduleDeny: ['accounting'] } })
 
-  box['A'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Head office box', custodianId: U['cashA']!.id, floatCents: 100_000 } })).id
+  // HR's reporting line: cookA reports to hodA (a login that is no cash keeper).
+  const hodEmp = await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-1`, fullName: 'HOD A', userId: U['hodA']!.id, status: 'active' } })
+  await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-2`, fullName: 'Cook A', userId: U['cookA']!.id, managerId: hodEmp.id, status: 'active' } })
+  await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-3`, fullName: 'Waiter A', userId: U['waiterA']!.id, status: 'active' } })
+
+  box['A'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Head office box', custodianId: U['cashA']!.id, floatCents: 200_000 } })).id
   box['A_small'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Small box', custodianId: U['cashA']!.id, floatCents: 1_000 } })).id
   box['A_closed'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Closed box', custodianId: U['cashA']!.id, floatCents: 100_000, isActive: false } })).id
+  box['A_one'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Kitchen box', custodianId: U['cashA3']!.id, floatCents: 50_000 } })).id
   box['B'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.B, name: 'B box', custodianId: U['cashB']!.id, floatCents: 50_000 } })).id
 
   app = Fastify()
@@ -121,337 +139,403 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(async () => {
+  invalidateSetupCache()
   await app?.close()
 })
 
-// ─── Create ───────────────────────────────────────────────────────────────────
+// ─── Raise ────────────────────────────────────────────────────────────────────
 
-describe('a voucher binds to the active company', () => {
-  it('create: draft, stamped with the active company, numbered per company, no cash moves', async () => {
+describe('anyone raises a request in the active company', () => {
+  it('a cashier and a cook raise: draft, holder = self, numbered per company, category stored, no cash moves', async () => {
     const before = await floatOf(box['A']!)
-    const a1 = await create('finA', { conceptId: C.A, department: 'Head office', payeeUserId: U['ceoA']!.id })
+    const a1 = await raise('cookA', { conceptId: C.A, department: 'Kitchen' })
     expect(a1).toMatchObject({
-      tenantId: T.A, status: 'draft', preparedById: U['finA']!.id, boxName: 'Head office box',
-      custodianName: `${P} cashA`, preparedByName: `${P} finA`, companyName: 'Voucher Co A', hasPhoto: false, pettyCashMovementId: null,
+      tenantId: T.A, status: 'draft', stage: 'draft', preparedById: U['cookA']!.id, payeeUserId: U['cookA']!.id,
+      payeeName: `${P} cookA`, holderName: `${P} cookA`, category: 'transport', companyName: 'Voucher Co A', boxId: null, pettyCashMovementId: null,
     })
     expect(a1.number).toBe('CV-00001')
-    const a2 = await create('finA')
-    expect(a2.number).toBe('CV-00002')
-    const b1 = await create('finB', { boxId: box['B'] })
+    const a2 = await raise('cashA')
+    expect(a2).toMatchObject({ number: 'CV-00002', payeeUserId: U['cashA']!.id })
+    const b1 = await raise('cookB')
     expect(b1).toMatchObject({ tenantId: T.B, number: 'CV-00001', seq: 1 })
-    // Generating a voucher never puts it in the cash section.
+    // Raising never puts anything in cash.
     expect(await floatOf(box['A']!)).toBe(before)
     expect(await movementsOf(box['A']!)).toBe(0)
     const audit = await prisma.auditLog.findFirst({ where: { action: 'cash_voucher.create', entityId: a1.id } })
     expect(audit?.tenantId).toBe(T.A)
+    // A keeper raises for someone else, names the box and an explicit 6xxx.
+    const k = await raise('finA', { holderUserId: U['cookA']!.id, payeeName: 'Cook (market run)', boxId: box['A'], categoryKey: null, accountCode: '6170' })
+    expect(k).toMatchObject({ payeeUserId: U['cookA']!.id, payeeName: 'Cook (market run)', boxId: box['A'], category: '6170', preparedById: U['finA']!.id })
   })
 
-  it("another company's box, brand or payee is refused; a closed box too", async () => {
+  it("another company's holder, box or brand is refused; the box is a keeper's pick; the category is checked", async () => {
+    const holder = await call('finA', 'POST', V, draft({ holderUserId: U['cookB']!.id }))
+    expect(holder.statusCode).toBe(422)
+    expect(holder.json().error.code).toBe('PAYEE_NOT_IN_COMPANY')
     const foreignBox = await call('finA', 'POST', V, draft({ boxId: box['B'] }))
-    expect(foreignBox.statusCode).toBe(422)
     expect(foreignBox.json().error.code).toBe('BOX_NOT_IN_COMPANY')
-    const closed = await call('finA', 'POST', V, draft({ boxId: box['A_closed'] }))
-    expect(closed.statusCode).toBe(422)
-    expect(closed.json().error.code).toBe('BOX_NOT_IN_COMPANY')
+    expect((await call('finA', 'POST', V, draft({ boxId: box['A_closed'] }))).json().error.code).toBe('BOX_NOT_IN_COMPANY')
+    const notKeeper = await call('cookA', 'POST', V, draft({ boxId: box['A'] }))
+    expect(notKeeper.statusCode).toBe(403)
+    expect(notKeeper.json().error.code).toBe('BOX_PICK_KEEPERS_ONLY')
     expect((await call('finA', 'POST', V, draft({ conceptId: C.B }))).statusCode).toBe(404)
-    const payee = await call('finA', 'POST', V, draft({ payeeUserId: U['cashB']!.id }))
-    expect(payee.statusCode).toBe(422)
-    expect(payee.json().error.code).toBe('PAYEE_NOT_IN_COMPANY')
-    expect(await prisma.cashVoucher.count({ where: { tenantId: T.B, boxId: box['B'], preparedById: U['finA']!.id } })).toBe(0)
+    // The category: required, never a kitchen 'cogs' key, an explicit code a keeper's only.
+    expect((await call('cookA', 'POST', V, draft({ categoryKey: null }))).json().error.code).toBe('SPEND_CATEGORY_REQUIRED')
+    expect((await call('cookA', 'POST', V, draft({ categoryKey: 'kitchen_food' }))).json().error.code).toBe('USE_STOCK_LINE')
+    const explicit = await call('cookA', 'POST', V, draft({ categoryKey: null, accountCode: '6170' }))
+    expect(explicit.statusCode).toBe(403)
+    expect(explicit.json().error.code).toBe('EXPLICIT_ACCOUNT_NOT_ALLOWED')
+    expect((await call('finA', 'POST', V, draft({ categoryKey: null, accountCode: '1210' }))).json().error.code).toBe('NOT_AN_EXPENSE_CODE')
+    expect(await prisma.cashVoucher.count({ where: { tenantId: T.B, preparedById: U['finA']!.id } })).toBe(0)
   })
 
-  it('amount must be positive and fit INT4; no active company → 422; cashier and finance without the module → 403', async () => {
-    expect((await call('finA', 'POST', V, draft({ amountCents: 0 }))).statusCode).toBe(400)
-    const big = await call('finA', 'POST', V, draft({ amountCents: 2_147_483_648 }))
+  it('amount must be positive and fit INT4; no active company → 422', async () => {
+    expect((await call('cookA', 'POST', V, draft({ amountCents: 0 }))).statusCode).toBe(400)
+    const big = await call('cookA', 'POST', V, draft({ amountCents: 2_147_483_648 }))
     expect(big.statusCode).toBe(422)
     expect(big.json().error.code).toBe('AMOUNT_TOO_LARGE')
     const none = await call('finNoCompany', 'POST', V, draft())
     expect(none.statusCode).toBe(422)
     expect(none.json().error.code).toBe('NO_ACTIVE_COMPANY')
-    expect((await call('cashA', 'POST', V, draft())).statusCode).toBe(403)
-    expect((await call('finNoBooks', 'POST', V, draft())).statusCode).toBe(403)
-    // Not a cash keeper and holds no box: the list opens but is empty.
-    const noBooks = await call('finNoBooks', 'GET', V)
-    expect(noBooks.statusCode).toBe(200)
-    expect((noBooks.json() as { items: Voucher[] }).items).toHaveLength(0)
   })
 })
 
-// ─── Company B ────────────────────────────────────────────────────────────────
+// ─── HOD ──────────────────────────────────────────────────────────────────────
 
-describe("company B never reaches company A's voucher", () => {
-  it('404 on read, edit, sign, approve, reject, cancel, pay and photo; the list is per company', async () => {
-    const a = await approved()
-    // Give A's voucher a photo-less approved state and check every door from B.
-    expect((await call('finB', 'GET', `${V}/${a.id}`)).statusCode).toBe(404)
-    expect((await call('cashB', 'GET', `${V}/${a.id}`)).statusCode).toBe(404)
-    expect((await call('finB', 'PATCH', `${V}/${a.id}`, { amountCents: 1 })).statusCode).toBe(404)
-    expect((await call('finB', 'POST', `${V}/${a.id}/sign-hod`)).statusCode).toBe(404)
-    expect((await call('ceoB', 'POST', `${V}/${a.id}/approve`)).statusCode).toBe(404)
-    expect((await call('ceoB', 'POST', `${V}/${a.id}/reject`, { note: 'not ours' })).statusCode).toBe(404)
-    expect((await call('finB', 'POST', `${V}/${a.id}/cancel`, { note: 'not ours' })).statusCode).toBe(404)
-    expect((await call('finB', 'POST', `${V}/${a.id}/disburse`, PHOTO)).statusCode).toBe(404)
-    expect((await call('cashB', 'POST', `${V}/${a.id}/disburse`, PHOTO)).statusCode).toBe(404)
-    expect((await call('finB', 'GET', `${V}/${a.id}/photo`)).statusCode).toBe(404)
-    const still = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: a.id } })
-    expect(still.status).toBe('approved')
-    expect(await prisma.cashVoucherAttachment.count({ where: { voucherId: a.id } })).toBe(0)
+describe("the HOD is HR's reporting manager (or a cash keeper)", () => {
+  it('an unrelated staff member → 403 NOT_HOD; the holder → 409 SELF_SIGN_HOD; the direct manager signs', async () => {
+    const v = await raise('cookA')
+    // Waiting for my signature: the direct manager sees it, an unrelated login does not.
+    const hodList = (await call('hodA', 'GET', `${V}?view=hod`)).json() as { items: Req[] }
+    expect(hodList.items.map((x) => x.id)).toContain(v.id)
+    expect(hodList.items.find((x) => x.id === v.id)!.canSignHod).toBe(true)
+    expect(((await call('waiterA', 'GET', `${V}?view=hod`)).json() as { items: Req[] }).items).toHaveLength(0)
+    expect((await call('waiterA', 'GET', `${V}/${v.id}`)).statusCode).toBe(403)
 
-    const listB = (await call('finB', 'GET', V)).json() as { items: Voucher[] }
-    expect(listB.items.every((v) => v.tenantId === T.B)).toBe(true)
-    expect(listB.items.map((v) => v.id)).not.toContain(a.id)
-    const listA = (await call('finA', 'GET', V)).json() as { items: Voucher[] }
-    expect(listA.items.map((v) => v.id)).toContain(a.id)
-    expect(listA.items.every((v) => v.tenantId === T.A)).toBe(true)
-  })
-
-  it('the list filters by status and pages with a cursor; a foreign cursor is refused', async () => {
-    const page1 = (await call('finA', 'GET', `${V}?limit=2`)).json() as { items: Voucher[]; nextCursor: string | null }
-    expect(page1.items).toHaveLength(2)
-    expect(page1.nextCursor).toBe(page1.items[1]!.id)
-    const page2 = (await call('finA', 'GET', `${V}?limit=2&cursor=${page1.nextCursor}`)).json() as { items: Voucher[] }
-    expect(page2.items.length).toBeGreaterThan(0)
-    for (const v of page2.items) expect(page1.items.map((x) => x.id)).not.toContain(v.id)
-    const drafts = (await call('finA', 'GET', `${V}?status=draft`)).json() as { items: Voucher[] }
-    expect(drafts.items.length).toBeGreaterThan(0)
-    expect(drafts.items.every((v) => v.status === 'draft')).toBe(true)
-    // The list never carries the photo bytes.
-    expect(JSON.stringify(drafts)).not.toContain('"data"')
-    const bVoucher = await prisma.cashVoucher.findFirstOrThrow({ where: { tenantId: T.B } })
-    expect((await call('finA', 'GET', `${V}?cursor=${bVoucher.id}`)).statusCode).toBe(400)
-    expect((await call('finA', 'GET', `${V}?status=nope`)).statusCode).toBe(400)
-  })
-})
-
-describe('the cashier who holds the box finds the vouchers to pay', () => {
-  it('lists only approved / paid vouchers on boxes they hold — never drafts, never another box or company', async () => {
-    const draftV = await create('finA')
-    const ready = await approved()
-    const list = (await call('cashA', 'GET', V)).json() as { items: Voucher[] }
-    const ids = list.items.map((v) => v.id)
-    expect(ids).toContain(ready.id)
-    expect(ids).not.toContain(draftV.id)
-    expect(list.items.every((v) => v.tenantId === T.A && ['approved', 'disbursed'].includes(v.status))).toBe(true)
-    // Asking for drafts by status still shows none (nothing to pay yet).
-    const drafts = (await call('cashA', 'GET', `${V}?status=draft`)).json() as { items: Voucher[] }
-    expect(drafts.items).toHaveLength(0)
-    // A cashier of the same company who holds no box sees nothing; company B's cashier never sees A's.
-    expect(((await call('cashA2', 'GET', V)).json() as { items: Voucher[] }).items).toHaveLength(0)
-    const b = (await call('cashB', 'GET', V)).json() as { items: Voucher[] }
-    expect(b.items.map((v) => v.id)).not.toContain(ready.id)
-    expect(b.items.every((v) => v.tenantId === T.B)).toBe(true)
-  })
-})
-
-// ─── The full flow ────────────────────────────────────────────────────────────
-
-describe('draft → HOD → director → the signed photo pays it, once', () => {
-  it('only the disburse moves cash: one spend, the float drops once, the voucher links the movement', async () => {
-    const boxId = box['A']!
-    const start = await floatOf(boxId)
-    const startMovements = await movementsOf(boxId)
-
-    const v = await create('finA', { amountCents: 25_000, purpose: 'Diesel for the generator' })
-    // The preparer edits the draft.
-    const edited = await call('finA', 'PATCH', `${V}/${v.id}`, { amountCents: 30_000, department: 'Ops' })
-    expect(edited.statusCode, edited.body).toBe(200)
-    expect(edited.json().amountCents).toBe(30_000)
-    // Not approved yet: paying is refused.
-    const early = await call('cashA', 'POST', `${V}/${v.id}/disburse`, PHOTO)
-    expect(early.statusCode).toBe(409)
-    expect(early.json().error.code).toBe('VOUCHER_NOT_APPROVED')
-
-    // The HOD signs (a manager); a draft can no longer be edited.
-    const hod = await call('mgrA', 'POST', `${V}/${v.id}/sign-hod`)
-    expect(hod.statusCode).toBe(200)
-    expect(hod.json()).toMatchObject({ status: 'hod_signed', hodSignedById: U['mgrA']!.id, hodSignedByName: `${P} mgrA` })
-    const late = await call('finA', 'PATCH', `${V}/${v.id}`, { amountCents: 1 })
+    const unrelated = await call('waiterA', 'POST', `${V}/${v.id}/sign-hod`)
+    expect(unrelated.statusCode).toBe(403)
+    expect(unrelated.json().error.code).toBe('NOT_HOD')
+    const self = await call('cookA', 'POST', `${V}/${v.id}/sign-hod`)
+    expect(self.statusCode).toBe(409)
+    expect(self.json().error.code).toBe('SELF_SIGN_HOD')
+    const ok = await call('hodA', 'POST', `${V}/${v.id}/sign-hod`)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json()).toMatchObject({ status: 'hod_signed', hodSignedById: U['hodA']!.id })
+    // Signed: the draft can no longer be edited by its raiser.
+    const late = await call('cookA', 'PATCH', `${V}/${v.id}`, { amountCents: 1 })
     expect(late.statusCode).toBe(409)
     expect(late.json().error.code).toBe('VOUCHER_NOT_DRAFT')
+  })
 
-    // Finance cannot sign as director; the CEO does.
+  it('a cash keeper may sign as HOD; a keeper who holds the cash may not', async () => {
+    const v = await raise('waiterA')
+    expect((await call('mgrA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
+    const own = await raise('finA')
+    expect((await call('finA', 'POST', `${V}/${own.id}/sign-hod`)).json().error.code).toBe('SELF_SIGN_HOD')
+  })
+
+  it('the HOD can reject a draft with a note; the director a HOD-signed one; nobody else', async () => {
+    const d = await raise('cookA')
+    expect((await call('waiterA', 'POST', `${V}/${d.id}/reject`, { note: 'not mine' })).statusCode).toBe(403)
+    const r = await call('hodA', 'POST', `${V}/${d.id}/reject`, { note: 'Use the market float' })
+    expect(r.statusCode).toBe(200)
+    expect(r.json()).toMatchObject({ status: 'rejected', rejectNote: 'Use the market float' })
+    const s = await raise('cookA')
+    expect((await call('hodA', 'POST', `${V}/${s.id}/sign-hod`)).statusCode).toBe(200)
+    expect((await call('hodA', 'POST', `${V}/${s.id}/reject`, { note: 'changed mind' })).statusCode).toBe(403)
+    expect((await call('ceoA', 'POST', `${V}/${s.id}/reject`, { note: 'no' })).statusCode).toBe(400)
+    expect((await call('ceoA', 'POST', `${V}/${s.id}/reject`, { note: 'Not this month' })).json().status).toBe('rejected')
+    expect((await call('ceoA', 'POST', `${V}/${s.id}/approve`)).statusCode).toBe(409)
+  })
+})
+
+// ─── Director ─────────────────────────────────────────────────────────────────
+
+describe('the director is the CEO, never the HOD who signed', () => {
+  it('finance / a manager → 403; HOD signer → 409 SAME_SIGNER; another CEO approves', async () => {
+    const v = await raise('ceoA', { holderUserId: U['cookA']!.id })
+    expect((await call('ceoA', 'POST', `${V}/${v.id}/approve`)).json().error.code).toBe('VOUCHER_NOT_HOD_SIGNED')
+    expect((await call('ceoA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
     expect((await call('finA', 'POST', `${V}/${v.id}/approve`)).statusCode).toBe(403)
     expect((await call('mgrA', 'POST', `${V}/${v.id}/approve`)).statusCode).toBe(403)
-    const dir = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
-    expect(dir.statusCode).toBe(200)
-    expect(dir.json()).toMatchObject({ status: 'approved', directorSignedById: U['ceoA']!.id })
-    // Signed and printable — still nothing in the cash section.
+    const same = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
+    expect(same.statusCode).toBe(409)
+    expect(same.json().error.code).toBe('SAME_SIGNER')
+    const other = await call('ceoA2', 'POST', `${V}/${v.id}/approve`)
+    expect(other.statusCode).toBe(200)
+    expect(other.json()).toMatchObject({ status: 'approved', hodSignedById: U['ceoA']!.id, directorSignedById: U['ceoA2']!.id })
+  })
+})
+
+// ─── Pay ──────────────────────────────────────────────────────────────────────
+
+describe('the custodian pays — no photo — and the money is expensed at once (H3)', () => {
+  it('pay posts Dr <category> / Cr 1011, sets dueBy and lowers the float; only this moves cash', async () => {
+    const boxId = box['A']!
+    const start = await floatOf(boxId)
+    const v = await approved({ amountCents: 25_000, purpose: 'Diesel for the generator', categoryKey: 'transport', conceptId: C.A })
     expect(await floatOf(boxId)).toBe(start)
-    expect(await movementsOf(boxId)).toBe(startMovements)
+    const seen = (await call('cashA', 'GET', `${V}/${v.id}`)).json() as Req
+    expect(seen.canPay).toBe(true)
+    // cashA holds two open boxes: he must say which.
+    const which = await call('cashA', 'POST', `${V}/${v.id}/pay`, {})
+    expect(which.statusCode).toBe(422)
+    expect(which.json().error.code).toBe('BOX_REQUIRED')
 
-    // A cashier who does not hold the box can neither open nor pay it.
-    expect((await call('cashA2', 'GET', `${V}/${v.id}`)).statusCode).toBe(403)
-    expect((await call('cashA2', 'POST', `${V}/${v.id}/disburse`, PHOTO)).statusCode).toBe(403)
-    // The custodian (the cashier) opens it…
-    const seen = await call('cashA', 'GET', `${V}/${v.id}`)
-    expect(seen.statusCode).toBe(200)
-    expect(seen.json()).toMatchObject({ boxName: 'Head office box', custodianName: `${P} cashA`, hasPhoto: false })
-
-    // …and uploads the photo of the signed paper: the cash leaves the box.
-    const paid = await call('cashA', 'POST', `${V}/${v.id}/disburse`, PHOTO)
+    const paid = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(paid.statusCode, paid.body).toBe(200)
-    const body = paid.json() as { voucher: Voucher; movement: { id: string; amountCents: number }; newFloatCents: number }
-    expect(body.voucher).toMatchObject({ status: 'disbursed', disbursedById: U['cashA']!.id, cashierName: `${P} cashA`, hasPhoto: true })
+    const body = paid.json() as { voucher: Req; movement: { id: string; amountCents: number; journalEntryId: string | null }; newFloatCents: number }
+    expect(body.voucher).toMatchObject({ status: 'disbursed', stage: 'paid', boxId, disbursedById: U['cashA']!.id, cashierName: `${P} cashA`, remainingCents: 25_000 })
     expect(body.voucher.pettyCashMovementId).toBe(body.movement.id)
-    expect(body.movement.amountCents).toBe(-30_000)
-    expect(body.newFloatCents).toBe(start - 30_000)
-    expect(await floatOf(boxId)).toBe(start - 30_000)
-    expect(await movementsOf(boxId)).toBe(startMovements + 1)
-    const m = await prisma.pettyCashMovement.findUniqueOrThrow({ where: { id: body.movement.id } })
-    expect(m).toMatchObject({
-      type: 'spend', amountCents: -30_000, category: 'transport', vendorName: 'Ammar Garib',
-      approvedById: U['ceoA']!.id, createdById: U['cashA']!.id, reason: `Cash voucher ${v.number}: Diesel for the generator`,
-    })
+    const due = new Date(body.voucher.dueBy!).getTime() - Date.now()
+    expect(due).toBeGreaterThan(29 * 86_400_000)
+    expect(due).toBeLessThan(31 * 86_400_000)
+    expect(body.movement.amountCents).toBe(-25_000)
+    expect(body.movement.journalEntryId).toBeTruthy()
+    expect(body.newFloatCents).toBe(start - 25_000)
+    expect(await floatOf(boxId)).toBe(start - 25_000)
+    // Expensed at once: Dr 6140 Travel / Cr 1011 — never 1355.
+    expect(await linesOf(`pettycash.spend:${body.movement.id}`, T.A)).toEqual([['1011', 'credit', 25_000], ['6140', 'debit', 25_000]])
+    const m = await prisma.pettyCashMovement.findUniqueOrThrow({ where: { id: body.movement.id }, include: { lines: true } })
+    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['cashA']!.id, approvedById: U['ceoA']!.id })
+    expect(m.lines).toHaveLength(1)
+    expect(m.lines[0]).toMatchObject({ kind: 'expense', categoryKey: 'transport', accountCode: '6140', amountCents: 25_000 })
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A, lines: { some: { account: { code: '1355' } } } } })).toBe(0)
 
-    // A second upload can never pay twice.
-    const again = await call('finA', 'POST', `${V}/${v.id}/disburse`, PHOTO)
+    // Paying twice is refused, and nothing moves.
+    const again = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(again.statusCode).toBe(409)
-    expect(again.json().error.code).toBe('ALREADY_DISBURSED')
-    expect(await floatOf(boxId)).toBe(start - 30_000)
-    expect(await movementsOf(boxId)).toBe(startMovements + 1)
-    expect(await prisma.cashVoucherAttachment.count({ where: { voucherId: v.id } })).toBe(1)
+    expect(again.json().error.code).toBe('ALREADY_PAID')
+    expect(await floatOf(boxId)).toBe(start - 25_000)
 
-    // The photo: the same bytes back, for finance and the custodian; nobody else.
-    const img = await call('finA', 'GET', `${V}/${v.id}/photo`)
-    expect(img.statusCode).toBe(200)
-    expect(img.headers['content-type']).toBe('image/jpeg')
-    expect(img.rawPayload.equals(JPEG)).toBe(true)
-    expect((await call('cashA', 'GET', `${V}/${v.id}/photo`)).statusCode).toBe(200)
-    expect((await call('cashA2', 'GET', `${V}/${v.id}/photo`)).statusCode).toBe(403)
-    expect((await call('ceoB', 'GET', `${V}/${v.id}/photo`)).statusCode).toBe(404)
-
-    // Every step is on the audit trail, in company A.
     const steps = await prisma.auditLog.findMany({ where: { entity: 'CashVoucher', entityId: v.id }, select: { action: true, tenantId: true } })
-    expect(steps.map((s) => s.action).sort()).toEqual(
-      ['cash_voucher.approve', 'cash_voucher.create', 'cash_voucher.disburse', 'cash_voucher.sign_hod', 'cash_voucher.update'],
-    )
+    expect(steps.map((s) => s.action).sort()).toEqual(['cash_voucher.approve', 'cash_voucher.create', 'cash_voucher.pay', 'cash_voucher.sign_hod'])
     expect(steps.every((s) => s.tenantId === T.A)).toBe(true)
   })
 
-  it('two uploads at the same moment pay once', async () => {
+  it("a custodian with ONE open box pays from it by default; a keeper's explicit category code is booked", async () => {
+    const v = await approved({ amountCents: 3_000, categoryKey: null, accountCode: '6170' })
+    const r = await call('cashA3', 'POST', `${V}/${v.id}/pay`, {})
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().voucher.boxId).toBe(box['A_one'])
+    expect(await linesOf(`pettycash.spend:${r.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 3_000], ['6170', 'debit', 3_000]])
+  })
+
+  it('two pays at the same moment pay once', async () => {
     const boxId = box['A']!
     const v = await approved({ amountCents: 4_000 })
     const float = await floatOf(boxId)
     const moves = await movementsOf(boxId)
     const [r1, r2] = await Promise.all([
-      call('cashA', 'POST', `${V}/${v.id}/disburse`, PHOTO),
-      call('finA', 'POST', `${V}/${v.id}/disburse`, PHOTO),
+      call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId }),
+      call('finA', 'POST', `${V}/${v.id}/pay`, { boxId }),
     ])
     expect([r1.statusCode, r2.statusCode].sort()).toEqual([200, 409])
-    expect([r1, r2].find((r) => r.statusCode === 409)!.json().error.code).toBe('ALREADY_DISBURSED')
+    expect([r1, r2].find((r) => r.statusCode === 409)!.json().error.code).toBe('ALREADY_PAID')
     expect(await floatOf(boxId)).toBe(float - 4_000)
     expect(await movementsOf(boxId)).toBe(moves + 1)
-    expect(await prisma.cashVoucherAttachment.count({ where: { voucherId: v.id } })).toBe(1)
   })
 
-  it('a voucher with no photo yet answers 404 on /photo', async () => {
-    const v = await create('finA')
-    expect((await call('finA', 'GET', `${V}/${v.id}/photo`)).statusCode).toBe(404)
-  })
-
-  it('two different people sign: the HOD cannot also sign as director (409 SAME_SIGNER)', async () => {
-    const v = await create('ceoA')
-    const notYet = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
-    expect(notYet.statusCode).toBe(409)
-    expect(notYet.json().error.code).toBe('VOUCHER_NOT_HOD_SIGNED')
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
-    const same = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
-    expect(same.statusCode).toBe(409)
-    expect(same.json().error.code).toBe('SAME_SIGNER')
-    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('hod_signed')
-    const other = await call('ceoA2', 'POST', `${V}/${v.id}/approve`)
-    expect(other.statusCode).toBe(200)
-    expect(other.json()).toMatchObject({ status: 'approved', hodSignedById: U['ceoA']!.id, directorSignedById: U['ceoA2']!.id })
-  })
-
-  it('INSUFFICIENT_FLOAT rolls the whole payment back: still approved, no photo, no movement', async () => {
+  it('INSUFFICIENT_FLOAT rolls the whole payment back: still approved, no box, no movement, no entry', async () => {
     const boxId = box['A_small']!
-    const v = await approved({ boxId, amountCents: 5_000 })
-    const r = await call('cashA', 'POST', `${V}/${v.id}/disburse`, PHOTO)
+    const v = await approved({ amountCents: 5_000 })
+    const entries = await prisma.journalEntry.count({ where: { tenantId: T.A } })
+    const r = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(r.statusCode).toBe(400)
     expect(r.json().error.code).toBe('INSUFFICIENT_FLOAT')
     const after = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })
-    expect(after).toMatchObject({ status: 'approved', pettyCashMovementId: null, disbursedAt: null, disbursedById: null, cashierName: null })
-    expect(await prisma.cashVoucherAttachment.count({ where: { voucherId: v.id } })).toBe(0)
+    expect(after).toMatchObject({ status: 'approved', boxId: null, pettyCashMovementId: null, disbursedAt: null, dueBy: null, cashierName: null })
     expect(await movementsOf(boxId)).toBe(0)
     expect(await floatOf(boxId)).toBe(1_000)
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entries)
+  })
+
+  it('a non-custodian non-keeper → 403; a closed or foreign box is refused; not approved → 409', async () => {
+    const v = await approved({ amountCents: 1_000 })
+    const other = await call('cashA2', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    expect(other.statusCode).toBe(403)
+    expect(other.json().error.code).toBe('NOT_CUSTODIAN')
+    expect((await call('cashA2', 'POST', `${V}/${v.id}/pay`, {})).json().error.code).toBe('NOT_CUSTODIAN')
+    expect((await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['B'] })).json().error.code).toBe('BOX_NOT_IN_COMPANY')
+    expect((await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A_closed'] })).json().error.code).toBe('BOX_UNAVAILABLE')
+    const d = await raise('cookA')
+    const early = await call('cashA', 'POST', `${V}/${d.id}/pay`, { boxId: box['A'] })
+    expect(early.statusCode).toBe(409)
+    expect(early.json().error.code).toBe('VOUCHER_NOT_APPROVED')
+    // A box named on the request: only a keeper changes it.
+    const named = await approved({ amountCents: 1_000, boxId: box['A_one'] })
+    const swap = await call('cashA', 'POST', `${V}/${named.id}/pay`, { boxId: box['A'] })
+    expect(swap.statusCode).toBe(403)
+    expect(swap.json().error.code).toBe('BOX_PICK_KEEPERS_ONLY')
+  })
+
+  it('the old photo flow is gone: /disburse and /photo → 404', async () => {
+    const v = await approved({ amountCents: 1_000 })
+    expect((await call('cashA', 'POST', `${V}/${v.id}/disburse`, PHOTO)).statusCode).toBe(404)
+    expect((await call('cashA', 'POST', `${V}/${v.id}/photo`, PHOTO)).statusCode).toBe(404)
+    expect((await call('finA', 'GET', `${V}/${v.id}/photo`)).statusCode).toBe(404)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('approved')
   })
 })
 
-// ─── Reject / cancel ──────────────────────────────────────────────────────────
+// ─── Category until paid ──────────────────────────────────────────────────────
 
-describe('reject and cancel', () => {
-  it('the director rejects a HOD-signed voucher with a note; finance cannot; it can never be paid', async () => {
-    const v = await create('finA')
-    expect((await call('finA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/reject`, { note: 'no' })).statusCode).toBe(400)
-    expect((await call('finA', 'POST', `${V}/${v.id}/reject`, { note: 'not needed' })).statusCode).toBe(403)
-    const r = await call('ceoA', 'POST', `${V}/${v.id}/reject`, { note: 'Use the company card' })
-    expect(r.statusCode).toBe(200)
-    expect(r.json()).toMatchObject({ status: 'rejected', rejectNote: 'Use the company card' })
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/reject`, { note: 'again please' })).statusCode).toBe(409)
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/approve`)).statusCode).toBe(409)
-    const pay = await call('cashA', 'POST', `${V}/${v.id}/disburse`, PHOTO)
-    expect(pay.statusCode).toBe(409)
-    expect(pay.json().error.code).toBe('VOUCHER_NOT_APPROVED')
+describe('finance may change the category until the request is paid', () => {
+  it('keeper PATCH after HOD / director; the raiser cannot; after pay 409', async () => {
+    const v = await approved({ amountCents: 2_000, categoryKey: 'transport' })
+    expect((await call('finA', 'PATCH', `${V}/${v.id}`, { amountCents: 5 })).json().error.code).toBe('VOUCHER_NOT_DRAFT')
+    expect((await call('cookA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })).statusCode).toBe(403)
+    const ok = await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().category).toBe('office')
+    const paid = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    expect(await linesOf(`pettycash.spend:${paid.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 2_000], ['6170', 'debit', 2_000]])
+    expect((await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'transport' })).statusCode).toBe(409)
   })
 
-  it('cancel works before payment (draft, HOD-signed, approved), needs a note, and never after payment', async () => {
-    const d = await create('finA')
-    expect((await call('finA', 'POST', `${V}/${d.id}/cancel`, { note: 'x' })).statusCode).toBe(400)
-    expect((await call('cashA', 'POST', `${V}/${d.id}/cancel`, { note: 'typo' })).statusCode).toBe(403)
-    const c1 = await call('finA', 'POST', `${V}/${d.id}/cancel`, { note: 'Raised twice' })
+  it('a legacy approved request with a free-text category cannot be paid until finance sets one', async () => {
+    const legacy = await prisma.cashVoucher.create({
+      data: {
+        tenantId: T.A, seq: 900, number: 'CV-00900', voucherDate: new Date(), payeeName: 'Legacy payee', payeeUserId: U['cookA']!.id,
+        purpose: 'Old voucher', category: 'fuel & transport', amountCents: 1_500, status: 'approved', preparedById: U['finA']!.id,
+        hodSignedById: U['mgrA']!.id, hodSignedAt: new Date(), directorSignedById: U['ceoA']!.id, directorSignedAt: new Date(),
+      },
+    })
+    const r = await call('cashA', 'POST', `${V}/${legacy.id}/pay`, { boxId: box['A'] })
+    expect(r.statusCode).toBe(400)
+    expect(r.json().error.code).toBe('SPEND_CATEGORY_UNKNOWN')
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: legacy.id } })).status).toBe('approved')
+    expect((await call('finA', 'PATCH', `${V}/${legacy.id}`, { categoryKey: 'transport' })).statusCode).toBe(200)
+    expect((await call('cashA', 'POST', `${V}/${legacy.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+  })
+})
+
+// ─── Lists and company B ──────────────────────────────────────────────────────
+
+describe("company B never reaches company A's request", () => {
+  it('404 on every route of an A request; the list is per company', async () => {
+    const a = await approved({ amountCents: 1_000 })
+    const p = await approved({ amountCents: 1_000 })
+    expect((await call('cashA', 'POST', `${V}/${p.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+    const all = ['finB', 'ceoB', 'cashB']
+    // [method, url, body, the B logins its role guard lets through to the lookup]
+    const routes: Array<['GET' | 'POST' | 'PATCH' | 'DELETE', string, unknown, string[]]> = [
+      ['GET', `${V}/${a.id}`, undefined, all],
+      ['PATCH', `${V}/${a.id}`, { amountCents: 1 }, all],
+      ['POST', `${V}/${a.id}/sign-hod`, undefined, all],
+      ['POST', `${V}/${a.id}/approve`, undefined, ['ceoB']],
+      ['POST', `${V}/${a.id}/reject`, { note: 'not ours' }, all],
+      ['POST', `${V}/${a.id}/cancel`, { note: 'not ours' }, all],
+      ['POST', `${V}/${a.id}/pay`, { boxId: box['B'] }, all],
+      ['GET', `${V}/${p.id}/attachments/whatever`, undefined, all],
+      ['POST', `${V}/${p.id}/receipts`, PHOTO, all],
+      ['DELETE', `${V}/${p.id}/receipts/whatever`, undefined, all],
+      ['POST', `${V}/${p.id}/settlements`, { lines: [{ categoryKey: 'transport', amountCents: 100, description: 'x' }], receiptIds: ['x'] }, all],
+      ['PATCH', `${V}/${p.id}/settlements/s/lines/l`, { categoryKey: 'office' }, ['finB', 'ceoB']],
+      ['POST', `${V}/${p.id}/return-change`, { amountCents: 100, boxId: box['B'] }, all],
+    ]
+    for (const [method, url, body, whos] of routes) {
+      for (const who of whos) {
+        const r = await call(who, method, url, body)
+        expect(r.statusCode, `${who} ${method} ${url}`).toBe(404)
+      }
+    }
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('approved')
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: p.id } })).status).toBe('disbursed')
+
+    const listB = (await call('finB', 'GET', V)).json() as { items: Req[] }
+    expect(listB.items.every((v) => v.tenantId === T.B)).toBe(true)
+    expect(listB.items.map((v) => v.id)).not.toContain(a.id)
+    const listA = (await call('finA', 'GET', V)).json() as { items: Req[] }
+    expect(listA.items.map((v) => v.id)).toContain(a.id)
+    expect(listA.items.every((v) => v.tenantId === T.A)).toBe(true)
+  })
+
+  it('who sees what: the cashier sees what he pays, the holder his own, nobody else a stranger\'s', async () => {
+    const d = await raise('cookA')
+    const ready = await approved({ amountCents: 1_000 })
+    const cash = (await call('cashA', 'GET', V)).json() as { items: Req[] }
+    const ids = cash.items.map((v) => v.id)
+    expect(ids).toContain(ready.id)
+    expect(ids).not.toContain(d.id)
+    expect(cash.items.every((v) => v.tenantId === T.A && (['approved', 'disbursed', 'settled'].includes(v.status) || v.preparedById === U['cashA']!.id || v.payeeUserId === U['cashA']!.id))).toBe(true)
+    const toPay = (await call('cashA', 'GET', `${V}?view=to_pay`)).json() as { items: Req[] }
+    expect(toPay.items.map((v) => v.id)).toContain(ready.id)
+    expect(toPay.items.every((v) => v.status === 'approved')).toBe(true)
+    // cashA2 holds no box: only what he raised or holds himself.
+    const c2 = (await call('cashA2', 'GET', V)).json() as { items: Req[] }
+    expect(c2.items.every((v) => v.preparedById === U['cashA2']!.id || v.payeeUserId === U['cashA2']!.id)).toBe(true)
+    // The holder sees his own requests.
+    const mine = (await call('cookA', 'GET', `${V}?view=mine`)).json() as { items: Req[] }
+    expect(mine.items.map((v) => v.id)).toEqual(expect.arrayContaining([d.id, ready.id]))
+    // A cashier of company B never sees A's.
+    const b = (await call('cashB', 'GET', V)).json() as { items: Req[] }
+    expect(b.items.every((v) => v.tenantId === T.B)).toBe(true)
+  })
+
+  it('the list filters by status and pages with a cursor; a foreign cursor is refused; never file bytes', async () => {
+    const page1 = (await call('finA', 'GET', `${V}?limit=2`)).json() as { items: Req[]; nextCursor: string | null }
+    expect(page1.items).toHaveLength(2)
+    expect(page1.nextCursor).toBe(page1.items[1]!.id)
+    const page2 = (await call('finA', 'GET', `${V}?limit=2&cursor=${page1.nextCursor}`)).json() as { items: Req[] }
+    expect(page2.items.length).toBeGreaterThan(0)
+    for (const v of page2.items) expect(page1.items.map((x) => x.id)).not.toContain(v.id)
+    const drafts = (await call('finA', 'GET', `${V}?status=draft`)).json() as { items: Req[] }
+    expect(drafts.items.length).toBeGreaterThan(0)
+    expect(drafts.items.every((v) => v.status === 'draft')).toBe(true)
+    expect(JSON.stringify(drafts)).not.toContain('"data"')
+    const bVoucher = await prisma.cashVoucher.findFirstOrThrow({ where: { tenantId: T.B } })
+    expect((await call('finA', 'GET', `${V}?cursor=${bVoucher.id}`)).statusCode).toBe(400)
+    expect((await call('finA', 'GET', `${V}?status=nope`)).statusCode).toBe(400)
+    expect((await call('finA', 'GET', `${V}?view=nope`)).statusCode).toBe(400)
+  })
+})
+
+// ─── Cancel ───────────────────────────────────────────────────────────────────
+
+describe('cancel', () => {
+  it('the raiser cancels a draft; a keeper until it is paid; never after payment', async () => {
+    const d = await raise('cookA')
+    expect((await call('cookA', 'POST', `${V}/${d.id}/cancel`, { note: 'x' })).statusCode).toBe(400)
+    expect((await call('waiterA', 'POST', `${V}/${d.id}/cancel`, { note: 'not mine' })).statusCode).toBe(403)
+    const c1 = await call('cookA', 'POST', `${V}/${d.id}/cancel`, { note: 'Raised twice' })
     expect(c1.statusCode).toBe(200)
     expect(c1.json()).toMatchObject({ status: 'cancelled', cancelNote: 'Raised twice' })
 
-    const a = await approved()
-    const c2 = await call('mgrA', 'POST', `${V}/${a.id}/cancel`, { note: 'Trip called off' })
-    expect(c2.statusCode).toBe(200)
-    expect(c2.json().status).toBe('cancelled')
-    expect((await call('cashA', 'POST', `${V}/${a.id}/disburse`, PHOTO)).statusCode).toBe(409)
+    const a = await approved({ amountCents: 1_000 })
+    expect((await call('cookA', 'POST', `${V}/${a.id}/cancel`, { note: 'I changed my mind' })).statusCode).toBe(403)
+    expect((await call('mgrA', 'POST', `${V}/${a.id}/cancel`, { note: 'Trip called off' })).json().status).toBe('cancelled')
+    expect((await call('cashA', 'POST', `${V}/${a.id}/pay`, { boxId: box['A'] })).statusCode).toBe(409)
 
-    const p = await approved()
-    expect((await call('cashA', 'POST', `${V}/${p.id}/disburse`, PHOTO)).statusCode).toBe(200)
+    const p = await approved({ amountCents: 1_000 })
+    expect((await call('cashA', 'POST', `${V}/${p.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
     const c3 = await call('finA', 'POST', `${V}/${p.id}/cancel`, { note: 'Too late now' })
     expect(c3.statusCode).toBe(409)
     expect(c3.json().error.code).toBe('VOUCHER_NOT_CANCELLABLE')
   })
 })
 
-// ─── The photo ────────────────────────────────────────────────────────────────
+// ─── Legacy rows ──────────────────────────────────────────────────────────────
 
-describe('the signed-voucher photo is checked', () => {
-  it('bad type, mismatched bytes, junk, bad base64 and oversize are 400 BAD_PHOTO and pay nothing', async () => {
-    const v = await approved()
-    const boxId = box['A']!
-    const float = await floatOf(boxId)
-    const moves = await movementsOf(boxId)
-    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)])
-    const huge = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(CASH_VOUCHER_PHOTO_MAX_BYTES)])
-    const cases: Array<[string, { photo: string; mime: string }]> = [
-      ['gif', { photo: JPEG_B64, mime: 'image/gif' }],
-      ['pdf', { photo: JPEG_B64, mime: 'application/pdf' }],
-      ['png said, jpeg sent', { photo: JPEG_B64, mime: 'image/png' }],
-      ['jpeg said, png sent', { photo: png.toString('base64'), mime: 'image/jpeg' }],
-      ['junk', { photo: Buffer.alloc(200, 7).toString('base64'), mime: 'image/jpeg' }],
-      ['not base64', { photo: '%%%not-base64%%%', mime: 'image/jpeg' }],
-      ['data url disagrees', { photo: `data:image/png;base64,${JPEG_B64}`, mime: 'image/jpeg' }],
-      ['too large', { photo: huge.toString('base64'), mime: 'image/jpeg' }],
-    ]
-    for (const [label, payload] of cases) {
-      const r = await call('cashA', 'POST', `${V}/${v.id}/disburse`, payload)
-      expect(r.statusCode, label).toBe(400)
-      expect(r.json().error.code, label).toBe('BAD_PHOTO')
-    }
-    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('approved')
-    expect(await prisma.cashVoucherAttachment.count({ where: { voucherId: v.id } })).toBe(0)
-    expect(await floatOf(boxId)).toBe(float)
-    expect(await movementsOf(boxId)).toBe(moves)
-
-    // A data URL of the right type is accepted.
-    const ok = await call('cashA', 'POST', `${V}/${v.id}/disburse`, { photo: `data:image/jpeg;base64,${JPEG_B64}`, mime: 'image/jpeg' })
-    expect(ok.statusCode, ok.body).toBe(200)
-    expect(await floatOf(boxId)).toBe(float - v.amountCents)
+describe('a legacy paid voucher with no holder is "needs review"', () => {
+  it('keepers only; finance names the holder (audited); never shown to whoever prepared it', async () => {
+    const legacy = await prisma.cashVoucher.create({
+      data: {
+        tenantId: T.A, seq: 950, number: 'CV-00950', voucherDate: new Date(), payeeName: 'Old payee', purpose: 'Old flow',
+        amountCents: 2_000, boxId: box['A'], status: 'disbursed', preparedById: U['hodA']!.id, disbursedAt: new Date(),
+      },
+    })
+    const hodList = (await call('hodA', 'GET', V)).json() as { items: Req[] }
+    expect(hodList.items.map((v) => v.id)).not.toContain(legacy.id)
+    expect((await call('hodA', 'GET', `${V}/${legacy.id}`)).statusCode).toBe(403)
+    const review = (await call('finA', 'GET', `${V}?view=needs_review`)).json() as { items: Req[] }
+    expect(review.items.find((v) => v.id === legacy.id)).toMatchObject({ stage: 'needs_review', needsReview: true })
+    expect((await call('hodA', 'PATCH', `${V}/${legacy.id}`, { holderUserId: U['cookA']!.id })).statusCode).toBe(403)
+    expect((await call('finA', 'PATCH', `${V}/${legacy.id}`, { amountCents: 5 })).statusCode).toBe(409)
+    const named = await call('finA', 'PATCH', `${V}/${legacy.id}`, { holderUserId: U['cookA']!.id })
+    expect(named.statusCode, named.body).toBe(200)
+    expect(named.json()).toMatchObject({ payeeUserId: U['cookA']!.id, stage: 'paid', needsReview: false })
+    expect(await prisma.auditLog.count({ where: { action: 'cash_voucher.name_holder', entityId: legacy.id, tenantId: T.A } })).toBe(1)
   })
 })
 
@@ -461,19 +545,15 @@ describe('the manual petty-cash spend goes through the same helper', () => {
   it('spend lowers the float; over the float is 400 INSUFFICIENT_FLOAT; a top-up still works', async () => {
     const boxId = box['A']!
     const float = await floatOf(boxId)
-    const r = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId, type: 'spend', amountCents: 2_000, reason: 'Milk', vendorName: 'Dairy shop', category: 'cleaning' })
+    const r = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId, type: 'spend', amountCents: 2_000, reason: 'Milk', vendorName: 'Dairy shop', categoryKey: 'cleaning' })
     expect(r.statusCode, r.body).toBe(201)
     expect(r.json().newFloatCents).toBe(float - 2_000)
-    expect(r.json().movement).toMatchObject({ type: 'spend', amountCents: -2_000, vendorName: 'Dairy shop', createdById: U['finA']!.id })
     expect(await floatOf(boxId)).toBe(float - 2_000)
-
-    const over = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId: box['A_small'], type: 'spend', amountCents: 5_000, reason: 'Too much' })
+    const over = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId: box['A_small'], type: 'spend', amountCents: 5_000, reason: 'Too much', categoryKey: 'office' })
     expect(over.statusCode).toBe(400)
     expect(over.json().error.code).toBe('INSUFFICIENT_FLOAT')
-    expect(await floatOf(box['A_small']!)).toBe(1_000)
-
-    const up = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId, type: 'topup', amountCents: 2_000, reason: 'Refill' })
-    expect(up.statusCode).toBe(201)
+    const up = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId, type: 'topup', amountCents: 2_000, reason: 'Refill', source: 'safe' })
+    expect(up.statusCode, up.body).toBe(201)
     expect(up.json().newFloatCents).toBe(float)
   })
 })
@@ -485,53 +565,28 @@ type Inbox = {
   items: Array<{ type: string; id: string; tenantId: string | null; actions: Array<{ kind: string; method: string; path: string; body: Record<string, unknown>; input?: { field: string; required: boolean }; disabledReason?: string }> }>
 }
 
-describe('approvals inbox: the voucher waiting for the director', () => {
-  it("lists company A's HOD-signed voucher for A's CEO only; Approve calls the voucher route", async () => {
-    const a = await create('finA', { purpose: 'Inbox item A' })
-    expect((await call('finA', 'POST', `${V}/${a.id}/sign-hod`)).statusCode).toBe(200)
-    const b = await create('finB', { purpose: 'Inbox item B', boxId: box['B'] })
+describe('approvals inbox: the request waiting for the director', () => {
+  it("lists company A's HOD-signed request for A's CEO only; Approve calls the request route", async () => {
+    const a = await raise('cookA', { purpose: 'Inbox item A' })
+    expect((await call('hodA', 'POST', `${V}/${a.id}/sign-hod`)).statusCode).toBe(200)
+    const b = await raise('cookB', { purpose: 'Inbox item B' })
     expect((await call('finB', 'POST', `${V}/${b.id}/sign-hod`)).statusCode).toBe(200)
 
     const inboxA = (await call('ceoA', 'GET', '/approvals')).json() as Inbox
-    const typeA = inboxA.types.find((t) => t.type === 'cash_voucher')
-    expect(typeA).toMatchObject({ module: 'accounting' })
     const itemsA = inboxA.items.filter((i) => i.type === 'cash_voucher')
-    expect(typeA!.count).toBe(itemsA.length)
     expect(itemsA.map((i) => i.id)).toContain(a.id)
     expect(itemsA.map((i) => i.id)).not.toContain(b.id)
     expect(itemsA.every((i) => i.tenantId === T.A)).toBe(true)
-
-    const inboxB = (await call('ceoB', 'GET', '/approvals')).json() as Inbox
-    const idsB = inboxB.items.filter((i) => i.type === 'cash_voucher').map((i) => i.id)
+    const idsB = ((await call('ceoB', 'GET', '/approvals')).json() as Inbox).items.filter((i) => i.type === 'cash_voucher').map((i) => i.id)
     expect(idsB).toContain(b.id)
     expect(idsB).not.toContain(a.id)
 
-    // Not a director: no cash-voucher type at all.
-    const fin = (await call('finA', 'GET', '/approvals/counts')).json() as Inbox
-    expect(fin.types.map((t) => t.type)).not.toContain('cash_voucher')
-
-    // The buttons call the module's own routes, whose guards decide.
     const item = itemsA.find((i) => i.id === a.id)!
     const approve = item.actions.find((x) => x.kind === 'approve')!
     expect(approve).toMatchObject({ method: 'POST', path: `${V}/${a.id}/approve` })
-    expect(approve.disabledReason).toBeUndefined()
-    const reject = item.actions.find((x) => x.kind === 'reject')!
-    expect(reject).toMatchObject({ method: 'POST', path: `${V}/${a.id}/reject` })
-    expect(reject.input).toMatchObject({ field: 'note', required: true })
     expect((await call('ceoB', 'POST', approve.path, approve.body)).statusCode).toBe(404)
     expect((await call('ceoA', 'POST', approve.path, approve.body)).statusCode).toBe(200)
     const after = (await call('ceoA', 'GET', '/approvals')).json() as Inbox
     expect(after.items.map((i) => i.id)).not.toContain(a.id)
-  })
-
-  it('a CEO who signed as HOD sees the voucher with Approve disabled', async () => {
-    const v = await create('ceoA', { purpose: 'Signed by the CEO as HOD' })
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
-    const inbox = (await call('ceoA', 'GET', '/approvals')).json() as Inbox
-    const item = inbox.items.find((i) => i.id === v.id)!
-    expect(item.actions.find((x) => x.kind === 'approve')!.disabledReason).toMatch(/HOD/)
-    expect(item.actions.find((x) => x.kind === 'reject')!.disabledReason).toBeUndefined()
-    const other = (await call('ceoA2', 'GET', '/approvals')).json() as Inbox
-    expect(other.items.find((i) => i.id === v.id)!.actions.find((x) => x.kind === 'approve')!.disabledReason).toBeUndefined()
   })
 })

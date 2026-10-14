@@ -15,7 +15,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
-import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
+import { profitAndLoss, cashFlow, pnlByConcept, brandSalesByConcept, costOfSalesByConcept, type CostOfSalesSplit } from '../accounting/reports.js'
 import { outputTaxCollectedCents } from '../accounting/salesTaxReturn.js'
 import { labourPctReport } from '../../lib/labour.js'
 import { isBelowPar } from '../../lib/recipeCost.js'
@@ -45,11 +45,18 @@ async function computeBrandPl(
   tenantIds: string[],
   company: TenantIdWhere,
 ) {
-  const [pl, labour, conceptPnl, concepts] = await Promise.all([
+  const [pl, labour, conceptPnl, concepts, brandSales, cosByBrand] = await Promise.all([
     profitAndLoss(tenantIds, from, to),
     labourPctReport(tenantIds, from, to),
     pnlByConcept(tenantIds, from, to),
     prisma.concept.findMany({ where: { ...company, deletedAt: null }, select: { id: true, name: true } }),
+    // THE cost-of-sales denominator and class split (accounting/reports.ts —
+    // the brand P&L and the food-cost report read the same two): brand sales
+    // 40xx net of 7010 / 7020, and cost of sales split food / drinks /
+    // packaging. 4100 service charge, 4110 delivery fees and 42xx other
+    // income are not brand sales.
+    brandSalesByConcept(prisma, tenantIds, { from, to }),
+    costOfSalesByConcept(prisma, tenantIds, { from, to }),
   ])
   const companyCogs   = pl.totals.cogsCents
   const companyContra = pl.totals.contraRevenueCents
@@ -57,11 +64,13 @@ async function computeBrandPl(
   const companyLabour = labour.labourCents
   const names = new Map(concepts.map((c) => [c.id, c.name]))
 
-  const measured = new Map<string, { revenue: number; cogs: number; contra: number; opex: number }>()
+  // `other` = 42xx other income (gift-card breakage, kept deposits): below
+  // operating revenue — in net profit, never in revenue or a ratio's base.
+  const measured = new Map<string, { revenue: number; cogs: number; contra: number; opex: number; other: number }>()
   let taggedRevenue = 0, taggedCogs = 0, taggedContra = 0, taggedOpex = 0
   for (const b of conceptPnl) {
     if (!b.conceptId || !names.has(b.conceptId)) continue
-    measured.set(b.conceptId, { revenue: b.revenueCents, cogs: b.cogsCents, contra: b.contraRevenueCents, opex: b.opexCents })
+    measured.set(b.conceptId, { revenue: b.revenueCents, cogs: b.cogsCents, contra: b.contraRevenueCents, opex: b.opexCents, other: b.otherIncomeCents })
     taggedRevenue += b.revenueCents
     taggedCogs += b.cogsCents; taggedContra += b.contraRevenueCents; taggedOpex += b.opexCents
   }
@@ -69,11 +78,25 @@ async function computeBrandPl(
   const sharedContra = Math.max(0, companyContra - taggedContra)
   const sharedOpex   = Math.max(0, companyOpex   - taggedOpex)
   const measuredCogsPct = companyCogs > 0 ? Number(((taggedCogs / companyCogs) * 100).toFixed(1)) : 0
+  const zeroCos: CostOfSalesSplit = { foodCents: 0, drinksCents: 0, packagingCents: 0 }
+
+  // Cost-of-sales ratios over BRAND SALES (one definition): costOfSalesPct
+  // (was 'foodCostPct', which counted every 5xxx over total revenue) and its
+  // food / drinks / packaging parts. null when there are no brand sales.
+  function cosRatios(sales: number, cos: CostOfSalesSplit) {
+    const r = (c: number) => (sales > 0 ? Number(((c / sales) * 100).toFixed(2)) : null)
+    return {
+      brandSalesCents: sales,
+      foodCents: cos.foodCents, drinksCents: cos.drinksCents, packagingCents: cos.packagingCents,
+      costOfSalesPct: r(cos.foodCents + cos.drinksCents + cos.packagingCents),
+      foodPct: r(cos.foodCents), drinksPct: r(cos.drinksCents), packagingPct: r(cos.packagingCents),
+    }
+  }
 
   // Allocation base = every brand's measured ledger revenue in the scope, so
   // shares are stable even when a single brand is requested.
   function alloc(brandId: string) {
-    const m = measured.get(brandId) ?? { revenue: 0, cogs: 0, contra: 0, opex: 0 }
+    const m = measured.get(brandId) ?? { revenue: 0, cogs: 0, contra: 0, opex: 0, other: 0 }
     const share = taggedRevenue > 0 ? m.revenue / taggedRevenue : 0
     const revenueCents = m.revenue
     const cogsCents   = m.cogs   + Math.round(sharedCogs   * share)
@@ -81,15 +104,16 @@ async function computeBrandPl(
     const opexCents   = m.opex   + Math.round(sharedOpex   * share)
     const labourCents = Math.round(companyLabour * share)
     const grossProfitCents = revenueCents - cogsCents - contraCents
-    const netProfitCents   = grossProfitCents - opexCents
+    // Other income (42xx) is the brand's below operating profit (as /pl-ledger/brands).
+    const netProfitCents   = grossProfitCents - opexCents + m.other
     const pctOf = (c: number) => (revenueCents > 0 ? Number(((c / revenueCents) * 100).toFixed(2)) : 0)
     return {
       revenueCents, netRevenueCents: revenueCents - contraCents,
-      cogsCents, contraCents, opexCents, labourCents,
+      cogsCents, contraCents, opexCents, labourCents, otherIncomeCents: m.other,
       grossProfitCents, netProfitCents,
       grossMarginPct: pctOf(grossProfitCents),
       netMarginPct:   pctOf(netProfitCents),
-      foodCostPct:    pctOf(cogsCents),
+      ...cosRatios(brandSales.get(brandId) ?? 0, cosByBrand.get(brandId) ?? zeroCos),
       labourPct:      pctOf(labourCents),
       primeCostPct:   pctOf(cogsCents + labourCents),
     }
@@ -98,13 +122,20 @@ async function computeBrandPl(
   const brands = Array.from(measured.keys()).map((id) => ({ conceptId: id, name: names.get(id) ?? id, ...alloc(id) }))
   const revenue = pl.totals.revenueCents
   const pct = (c: number) => (revenue > 0 ? Number(((c / revenue) * 100).toFixed(2)) : 0)
+  let companySales = 0
+  for (const v of brandSales.values()) companySales += v
+  const companyCos: CostOfSalesSplit = { foodCents: 0, drinksCents: 0, packagingCents: 0 }
+  for (const v of cosByBrand.values()) {
+    companyCos.foodCents += v.foodCents; companyCos.drinksCents += v.drinksCents; companyCos.packagingCents += v.packagingCents
+  }
   const companyBlock = {
     revenueCents: revenue, netRevenueCents: revenue - companyContra,
     cogsCents: companyCogs, contraCents: companyContra, opexCents: companyOpex, labourCents: companyLabour,
+    otherIncomeCents: pl.totals.otherIncomeCents,
     grossProfitCents: pl.totals.grossProfitCents, netProfitCents: pl.totals.netProfitCents,
     grossMarginPct: pl.totals.grossMarginPct,
     netMarginPct: pct(pl.totals.netProfitCents),
-    foodCostPct: pct(companyCogs),
+    ...cosRatios(companySales, companyCos),
     labourPct: labour.labourPct,
     primeCostPct: pct(companyCogs + companyLabour),
   }

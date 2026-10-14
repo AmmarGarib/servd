@@ -12,7 +12,7 @@ import { isExecutive } from '../../../lib/appRoles'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { fmtPkr } from '../../../lib/money'
 import { useKitchenView } from '../../inventory/kitchenView'
-import { KitchenIngredients, KitchenMethod, KitchenServiceSteps, measureUnit, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
+import { KitchenMethod, KitchenSections, KitchenServiceSteps, KIND_META, measureUnit, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
 
 const Q_FACTOR = 0.05
 
@@ -34,8 +34,18 @@ interface RecipeIngredient {
   notes: string | null
   inventoryItem: { id: string; name: string; unit: string; unitCostCents: number | null } | null
   prepRecipe?:   { id: string; name: string | null } | null
+  // 'ingredients' | 'packaging' — a dish's Packaging section ("Pack in").
+  section?: string
   purchaseQty: number           // computed by API
   ingredientCostCents: number   // computed by API
+}
+
+// GET /recipes row warnings (never a block). noPackaging is only ever true at
+// a brand whose primary service vessel is packaging (e.g. Stackd).
+interface RecipeWarnings {
+  outsideCompany: Array<{ lineId: string; itemName: string }>
+  costedWhileUnapproved: boolean
+  noPackaging: boolean
 }
 
 interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
@@ -47,9 +57,14 @@ interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: {
 interface Recipe {
   id: string
   costsHidden?: boolean
-  kind: 'plate' | 'component'
+  kind: 'plate' | 'component' | 'modifier'
   status: 'iteration' | 'pending_approval' | 'production'
   menuItemId: string | null
+  // A plate's brand vessel ('plate' | 'packaging'); null for sub-recipes and add-ons.
+  serviceVessel?: string | null
+  warnings?: RecipeWarnings
+  // kind 'modifier': the add-on, its group and dish.
+  modifier?: { name: string; group: { name: string; menuItem: { name: string; conceptId: string } } } | null
   name:       string | null
   yieldGrams: number | null
   servings: number
@@ -118,7 +133,9 @@ export default function RecipesPage() {
   // backend still blocks an owner from approving their OWN submission.
   const isCeo = isExecutive(me?.role)
   const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
-  const [kindFilter,    setKindFilter]    = useState<'' | 'plate' | 'component'>('')
+  const [kindFilter,    setKindFilter]    = useState<'' | 'plate' | 'component' | 'modifier'>('')
+  // Only dishes of a packaging-vessel brand with no Packaging line.
+  const [noPackagingOnly, setNoPackagingOnly] = useState(false)
   const [search,        setSearch]        = useState('')
   const [expanded,      setExpanded]      = useState<string | null>(null)
   const [modal,         setModal]         = useState<'create' | Recipe | null>(null)
@@ -317,6 +334,7 @@ export default function RecipesPage() {
 
   const filtered = (recipes ?? []).filter((r) => {
     if (kindFilter && r.kind !== kindFilter) return false
+    if (noPackagingOnly && !r.warnings?.noPackaging) return false
     if (conceptFilter) {
       // Components are cross-concept by design (one caramel serves every
       // brand) — keep them visible under a brand filter rather than blanking
@@ -327,6 +345,8 @@ export default function RecipesPage() {
         const brandId = r.menuItem?.conceptId ?? r.pendingMenuItem?.conceptId ?? null
         if (brandId !== conceptFilter) return false
       }
+      // An add-on belongs to its dish's brand.
+      if (r.kind === 'modifier' && r.modifier?.group.menuItem.conceptId !== conceptFilter) return false
     }
     if (search) {
       // Search across menuItem name (plate) AND recipe name (component) so the
@@ -341,6 +361,9 @@ export default function RecipesPage() {
   // summary stats — pure cost (pricing/margins live in Menu Engineering)
   const plateCount     = (recipes ?? []).filter((r) => r.kind === 'plate').length
   const componentCount = (recipes ?? []).filter((r) => r.kind === 'component').length
+  const noPackagingCount = (recipes ?? []).filter((r) => r.warnings?.noPackaging).length
+  // The 'No packaging' filter only means something when a brand serves in packaging.
+  const anyPackagingBrand = (recipes ?? []).some((r) => r.serviceVessel === 'packaging')
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -435,8 +458,9 @@ export default function RecipesPage() {
           <div className="flex rounded-lg overflow-hidden text-xs font-bold border border-s-border">
             {([
               { key: '',          label: 'All' },
-              { key: 'plate',     label: '🍽 Plates' },
-              { key: 'component', label: '🧩 Components' },
+              { key: 'plate',     label: 'Plates' },
+              { key: 'component', label: 'Components' },
+              { key: 'modifier',  label: 'Add-ons' },
             ] as const).map((k) => (
               <button key={k.key || 'all'} type="button"
                 onClick={() => setKindFilter(k.key)}
@@ -447,6 +471,13 @@ export default function RecipesPage() {
               </button>
             ))}
           </div>
+          {anyPackagingBrand && (
+            <label className="flex items-center gap-1.5 text-xs text-s-muted cursor-pointer px-2 py-1.5 rounded-lg border border-s-border"
+              title="Dishes of a brand that serves in packaging, with no Packaging line">
+              <input type="checkbox" checked={noPackagingOnly} onChange={(e) => setNoPackagingOnly(e.target.checked)} className="accent-accent" />
+              No packaging{noPackagingCount > 0 ? ` (${noPackagingCount})` : ''}
+            </label>
+          )}
           <span className="ml-auto text-xs text-s-muted">
             {filtered.length} recipe{filtered.length !== 1 ? 's' : ''}
           </span>
@@ -495,15 +526,28 @@ export default function RecipesPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Kind badge — quick visual differentiation between
                             plate vs component recipes in the mixed list. */}
-                        {r.kind === 'component' ? (
-                          <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--ink-rgb) / 0.3)' }}>
-                            🧩 Component
+                        <span className={`text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${KIND_META[r.kind].cls}`}>
+                          {KIND_META[r.kind].label}
+                        </span>
+                        {/* Warnings, never a block: a packaging brand's dish with
+                            no Packaging line (amber); stock of another company,
+                            or a live dish costed from an unapproved recipe (red). */}
+                        {r.warnings?.noPackaging && (
+                          <span className="s-badge-amber text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                            title="This brand serves in packaging — add the vessel to the dish's Packaging section">
+                            No packaging
                           </span>
-                        ) : (
-                          <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            style={{ background: 'rgb(var(--erp-accent-rgb) / 0.15)', color: 'var(--erp-success)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.4)' }}>
-                            🍽 Plate
+                        )}
+                        {!!r.warnings?.outsideCompany.length && (
+                          <span className="s-badge-red text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                            title={r.warnings.outsideCompany.map((o) => o.itemName).join(', ')}>
+                            Other company&apos;s stock
+                          </span>
+                        )}
+                        {r.warnings?.costedWhileUnapproved && (
+                          <span className="s-badge-red text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                            title="This dish is on sale and its cost comes from a recipe that is not approved yet">
+                            On sale, not approved
                           </span>
                         )}
                         {/* Lifecycle status — only call out non-live recipes so
@@ -528,6 +572,10 @@ export default function RecipesPage() {
                             {r.servings > 1 && ` · ${r.servings} portions`}
                             {r.portionSizeG  && ` · ${r.portionSizeG}g each`}
                             {recipeWeightG   && ` · ${recipeWeightG.toFixed(0)}g batch`}
+                          </>
+                        ) : r.kind === 'modifier' ? (
+                          <>
+                            Add-on · {r.modifier ? `${r.modifier.group.menuItem.name} — ${r.modifier.group.name}` : 'its add-on was removed'}
                           </>
                         ) : (
                           <>
@@ -554,6 +602,8 @@ export default function RecipesPage() {
                             downstream plate costing). Margins live in Menu Engineering. */}
                         {r.kind === 'plate' ? (
                           <Metric label="Plate Cost"   value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
+                        ) : r.kind === 'modifier' ? (
+                          <Metric label="Cost / Add-on" value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
                         ) : (
                           <Metric
                             label="Cost / Gram"
@@ -608,6 +658,8 @@ export default function RecipesPage() {
                                 { label: 'PORTION SIZE', value: r.portionSizeG ? `${r.portionSizeG}g` : '—' },
                                 { label: 'PORTIONS',     value: String(r.servings)                          },
                               ]
+                            : r.kind === 'modifier'
+                            ? [{ label: 'PER', value: 'one add-on' }]
                             : [
                                 { label: 'BATCH YIELD',  value: r.yieldGrams ? `${r.yieldGrams}g` : '—' },
                               ]),
@@ -615,6 +667,8 @@ export default function RecipesPage() {
                           { label: 'TOTAL RECIPE COST', value: fmtPkr(r.totalCostCents)                              },
                           ...(r.kind === 'plate'
                             ? [{ label: 'PLATE COST',     value: fmtPkr(r.costPerPortionCents ?? 0) }]
+                            : r.kind === 'modifier'
+                            ? [{ label: 'COST / ADD-ON',  value: fmtPkr(r.costPerPortionCents ?? 0) }]
                             : [{ label: 'COST / GRAM',    value: r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—' }]),
                         ].map(({ label, value }) => (
                           <div key={label}>
@@ -657,7 +711,14 @@ export default function RecipesPage() {
                                 <tr key={ing.id}
                                   style={{ borderTop: idx > 0 ? '1px solid rgb(var(--fg-rgb) / 0.04)' : undefined }}>
                                   <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>
-                                    {isPrep && <span className="mr-1 text-[9px] text-indigo-700">🧩</span>}
+                                    {isPrep && <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-primary-ink">Sub</span>}
+                                    {ing.section === 'packaging' && (
+                                      <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-success"
+                                        title="Packaging: used on takeaway and delivery, on every order at a brand that serves in packaging, and on dine-in when staff tap Box given">
+                                        Pack in
+                                      </span>
+                                    )}
+                                    {ing.quantity < 0 && <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-s-red">Removes</span>}
                                     {sourceName}
                                   </td>
                                   <td className="px-4 py-2.5 text-s-muted">
@@ -703,7 +764,7 @@ export default function RecipesPage() {
                             </tr>
                             <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.04)', background: 'rgb(var(--fg-rgb) / 0.01)' }}>
                               <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
-                                Q Factor — {r.qFactorPct ?? 10}% misc. (salt, oil, unmeasured items)
+                                Q factor — {r.qFactorPct ?? 10}% pricing allowance (plate wear, garnish, oil); not stock
                               </td>
                               <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.qFactorCents)}</td>
                             </tr>
@@ -730,7 +791,13 @@ export default function RecipesPage() {
                           plates moved to the Menu Engineering page. */}
                       <div className="px-5 py-3 flex flex-wrap items-center gap-6 border-t border-s-border/40"
                         style={{ background: 'rgb(var(--fg-rgb) / 0.01)' }}>
-                        {r.kind === 'plate' ? (
+                        {r.kind === 'modifier' ? (
+                          <span className="text-xs">
+                            <span className="text-s-muted">Cost of one add-on: </span>
+                            <span className="font-bold text-s-text">{fmtPkr(r.costPerPortionCents ?? 0)}</span>
+                            <span className="text-s-dim"> — taken from stock on every sale of the add-on (a line that removes an ingredient takes less).</span>
+                          </span>
+                        ) : r.kind === 'plate' ? (
                           <>
                             <span className="text-xs">
                               <span className="text-s-muted">Plate cost: </span>
@@ -1209,19 +1276,21 @@ function KitchenSheet({ r }: { r: Recipe }) {
   const rows: KitchenIngredient[] = r.ingredients.map((ing) => ing.prepRecipeId
     ? {
         id: ing.id, name: ing.prepRecipe?.name ?? 'Sub-recipe', quantity: ing.quantity,
-        unit: 'g', yieldPct: null, notes: ing.notes, subRecipeId: ing.prepRecipeId,
+        unit: 'g', yieldPct: null, notes: ing.notes, subRecipeId: ing.prepRecipeId, section: ing.section,
       }
     : {
         id: ing.id, name: ing.inventoryItem?.name ?? '—', quantity: ing.quantity,
         unit: measureUnit(ing.inventoryItem?.unit), yieldPct: ing.yieldPct,
-        notes: ing.notes, subRecipeId: null,
+        notes: ing.notes, subRecipeId: null, section: ing.section,
       })
   const fmtG = (g: number) => `${g.toLocaleString('en', { maximumFractionDigits: 1 })}g`
   // Plates written by the recipe form carry the total yield; older ones a
   // portion size. Show whichever the recipe has.
   const totalG   = r.yieldGrams ?? (r.portionSizeG && r.servings ? r.portionSizeG * r.servings : null)
   const portionG = r.portionSizeG ?? (r.yieldGrams && r.servings > 0 ? r.yieldGrams / r.servings : null)
-  const facts = r.kind === 'plate'
+  const facts = r.kind === 'modifier'
+    ? [{ label: 'PER', value: 'one add-on' }]
+    : r.kind === 'plate'
     ? [
         { label: 'PORTIONS',     value: String(r.servings) },
         { label: 'PORTION SIZE', value: portionG ? fmtG(portionG) : '—' },
@@ -1240,8 +1309,8 @@ function KitchenSheet({ r }: { r: Recipe }) {
           </div>
         ))}
       </div>
-      <div className="px-3 py-3">
-        <KitchenIngredients rows={rows} />
+      <div className="px-3 py-3 space-y-3">
+        <KitchenSections rows={rows} kind={r.kind} Wrap={SheetBlock} />
       </div>
       <div className="px-6 py-4 border-t border-s-border/40 space-y-4">
         <div>
@@ -1251,6 +1320,17 @@ function KitchenSheet({ r }: { r: Recipe }) {
         <KitchenServiceSteps recipeId={r.id} />
         {r.notes && <p className="text-[11px] text-s-dim italic">{r.notes}</p>}
       </div>
+    </div>
+  )
+}
+
+/** A titled block inside the kitchen sheet (KitchenSections' wrapper). */
+function SheetBlock({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-black uppercase tracking-wider text-s-muted px-3">{title}</p>
+      {subtitle && <p className="text-[10px] text-s-dim px-3 mb-1">{subtitle}</p>}
+      {children}
     </div>
   )
 }

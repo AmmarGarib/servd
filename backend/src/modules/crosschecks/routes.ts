@@ -22,7 +22,7 @@ import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { activeTenantId, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
 import { assertLocationOfCompany } from '../financePlanning/companyRefs.js'
-import { assertInt4Fits, sumCents, toCents } from '../../lib/money.js'
+import { assertInt4Fits, sumCents, toCents, zInt4Cents } from '../../lib/money.js'
 import {
   addLotTx, consumeFifoTx, ensureFifoReady, latestPurchaseCostCents, lockItemsTx, STOCK_EPS, STOCK_SOURCE,
 } from '../../lib/stockLedger.js'
@@ -460,7 +460,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
         reason:          z.string().max(200).nullable().optional(),
         // Opening counts: the unit cost per purchase unit (paisa). Default the
         // latest purchase price, else the item's typed estimate.
-        unitCostCents:   z.number().int().min(0).max(2_147_483_647).nullable().optional(),
+        unitCostCents:   zInt4Cents('The unit cost').nullable().optional(),
       })).min(1),
       notes: z.string().max(500).nullable().optional(),
     }).parse(req.body)

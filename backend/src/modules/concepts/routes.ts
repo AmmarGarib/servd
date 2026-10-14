@@ -95,6 +95,8 @@ const BRAND_EDITOR_CONCEPT_SELECT = {
   name: true,
   slug: true,
   type: true,
+  // Read-only here: only management changes the service vessel (PATCH, full form).
+  serviceVessel: true,
   isActive: true,
   storefrontVisible: true,
   reservationsEnabled: true,

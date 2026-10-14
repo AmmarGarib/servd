@@ -8,7 +8,7 @@ import { assertConceptOwned, resolveTenantScope } from '../../lib/tenantScope.js
 import { belowParWhere, isBelowPar } from '../../lib/recipeCost.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { INVENTORY_CATEGORIES, costClassOf, COST_CLASSES } from '../../lib/inventoryClass.js'
-import { assertInt4Fits, sumCents } from '../../lib/money.js'
+import { assertInt4Fits, sumCents, zInt4Cents } from '../../lib/money.js'
 import { consumeFifoTx, ensureFifoReady, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, postItemReclassTx, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
@@ -75,8 +75,10 @@ export const OPENING_COUNT_ROLES = ['admin', 'owner', 'management', 'finance'] a
 // item its company — nothing else here.
 const ITEM_READERS = [...STOCK_READERS, 'finance'] as UserRole[]
 const ITEM_PATCHERS = [...ITEM_MASTER_EDITORS, 'finance'] as UserRole[]
-// The waste dashboard: managers, finance, and the kitchen (quantities only).
-const WASTE_ANALYTICS_READERS = [...MANAGERS, 'finance', 'boh'] as UserRole[]
+// The waste-cost dashboard: managers and finance. The line cook reads the
+// waste log, never the cost dashboard (UI-10); a floor role that ever reaches
+// it gets quantities only.
+const WASTE_ANALYTICS_READERS = [...MANAGERS, 'finance'] as UserRole[]
 // The value of stock on hand: the financial viewers and the stock keepers.
 const VALUE_VIEWERS = new Set<string>([...FINANCIALS_VIEWERS, ...MANAGERS])
 /** Waste reasons staff may log. The sold-line reasons, transit_loss and remake are written by the system only. */
@@ -223,7 +225,7 @@ const createItemSchema = z.object({
   parLevel: z.number().min(0).default(0),
   // Opening cost estimate in paisa per purchase unit. The FIFO head cost
   // replaces it once the item has lots.
-  unitCostCents: z.number().int().min(0).max(2_147_483_647).nullable().optional(),
+  unitCostCents: zInt4Cents('The unit cost').nullable().optional(),
   // The category decides the cost class (lib/inventoryClass.ts): food /
   // drinks / packaging and their ledger accounts. Anything else is 400.
   category: z.enum(INVENTORY_CATEGORIES).nullable().optional(),
@@ -244,7 +246,7 @@ const updateItemSchema = z.object({
   unit: z.string().min(1).optional(),
   // The estimate of an item with no lots / deliveries; when assigning a
   // company to a company-less item that holds stock, the opening unit cost.
-  unitCostCents: z.number().int().min(0).max(2_147_483_647).nullable().optional(),
+  unitCostCents: zInt4Cents('The unit cost').nullable().optional(),
   category: z.enum(INVENTORY_CATEGORIES).nullable().optional(),
   // Unmeasured consumables (oil, salt): each receipt is issued straight to
   // cost of sales. Managers with the inventory module; audited.

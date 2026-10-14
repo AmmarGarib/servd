@@ -299,6 +299,55 @@ describe('nightly workers run per company', () => {
     expect(await prisma.exceptionFlag.count({ where: { kind: 'shrinkage_trend', entityId: itemA.id } })).toBe(1)
   })
 
+  it('a zero-book line (stock_unrecorded) is left out of the trend; one stock_shortfall flag per item, per company, until settled', async () => {
+    // Two counts that found stock on a zero book: no % — never a trend.
+    const found = await prisma.inventoryItem.create({ data: { name: 'Found ghee', unit: 'kg', tenantId: tenantA } })
+    for (let i = 0; i < 2; i++) {
+      await prisma.physicalCount.create({
+        data: { tenantId: tenantA, countedById: users['mgrA']!.id, status: 'completed', lines: { create: [{ inventoryItemId: found.id, systemQty: 0, physicalQty: 3, variancePct: null }] } },
+      })
+    }
+    // Sales that took more than the lots held, in each company; B's partly settled by a later delivery.
+    const short = async (tenantId: string, name: string, qty: number) => {
+      const it = await prisma.inventoryItem.create({ data: { name, unit: 'kg', tenantId } })
+      const sale = await prisma.stockMovement.create({
+        data: {
+          tenantId, inventoryItemId: it.id, kind: 'sale', qty: 0, valueCents: 0, unitCostCents: 20_000, costClass: 'food', shortfallQty: qty,
+          shortfallValueCents: qty * 20_000, sourceType: 'order_item.sale', sourceId: `sale-${name}`, occurredAt: new Date(Date.now() - 86_400_000),
+        },
+      })
+      return { it, sale }
+    }
+    const a = await short(tenantA, 'Short beef A', 2)
+    const b = await short(tenantB, 'Short beef B', 1)
+    const settled = await short(tenantB, 'Settled beef B', 1)
+    await prisma.stockMovement.create({
+      data: {
+        tenantId: tenantB, inventoryItemId: settled.it.id, kind: 'shortfall_settle', qty: -1, valueCents: -20_000, unitCostCents: 20_000, costClass: 'food',
+        settlesMovementId: settled.sale.id, sourceType: 'shortfall_settle', sourceId: settled.sale.id, occurredAt: new Date(),
+      },
+    })
+    const old = await prisma.inventoryItem.create({ data: { name: 'Old short B', unit: 'kg', tenantId: tenantB } })
+    await prisma.stockMovement.create({
+      data: {
+        tenantId: tenantB, inventoryItemId: old.id, kind: 'sale', qty: 0, valueCents: 0, unitCostCents: 1, costClass: 'food', shortfallQty: 5,
+        sourceType: 'order_item.sale', sourceId: 'sale-old', occurredAt: new Date(Date.now() - 10 * 86_400_000),
+      },
+    })
+
+    await runShrinkageTrend()
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'shrinkage_trend', entityId: found.id } })).toBe(0)
+    const fa = await prisma.exceptionFlag.findMany({ where: { kind: 'stock_shortfall', entityId: a.it.id } })
+    expect(fa).toHaveLength(1)
+    expect(fa[0]).toMatchObject({ tenantId: tenantA, entityType: 'InventoryItem', amountCents: 40_000 })
+    expect((await prisma.exceptionFlag.findFirstOrThrow({ where: { kind: 'stock_shortfall', entityId: b.it.id } })).tenantId).toBe(tenantB)
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'stock_shortfall', entityId: settled.it.id } })).toBe(0)
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'stock_shortfall', entityId: old.id } })).toBe(0)
+    // One open flag per item: the next night adds none.
+    await runShrinkageTrend()
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'stock_shortfall', entityId: a.it.id } })).toBe(1)
+  })
+
   it('rider scoring flags a company\'s rider into that company\'s inbox, on its own orders', async () => {
     const riderA = await prisma.rider.create({ data: { name: 'Rider A', phone: '+923000000901', tenantId: tenantA } })
     for (let i = 0; i < 5; i++) {

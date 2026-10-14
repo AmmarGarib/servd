@@ -99,7 +99,6 @@ const PAID_STATUSES: CashVoucherStatus[] = ['disbursed', 'settled', 'converted']
 export interface Viewer {
   id: string
   role: string
-  email: string
   /** Passes CASH_GUARD (the manager tiers, finance with the accounting module). */
   keeper: boolean
   isAdmin: boolean
@@ -122,7 +121,6 @@ export async function viewerOf(req: FastifyRequest): Promise<Viewer> {
   return {
     id: su.id,
     role: su.role,
-    email: su.email,
     keeper,
     isAdmin: su.role === 'admin',
     heldBoxIds: new Set(boxes.map((b) => b.id)),

@@ -1,8 +1,11 @@
 'use client'
 import { useState } from 'react'
+import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
+import { usePermissions } from '../../hooks/useCan'
+import { canOpenPath } from '../../lib/moduleCatalog'
 
 // Completed orders (GET /reports/sales): gross = order value incl. GST, before
 // refunds; net = the P&L's net revenue for them (ex-GST, after discounts,
@@ -152,6 +155,10 @@ function RankDelta({ curr, prev }: { curr: number; prev: number | null }) {
 
 export default function ReportsPage() {
   const [tab, setTab] = useState<Tab>('sales')
+  // Food cost variance is its own page and module (food_cost) — a link-tab,
+  // shown when the page guard would open it.
+  const { data: me } = usePermissions()
+  const showFoodCost = !!me && canOpenPath('/reports/food-cost', me.role, me.modules)
   const [preset, setPreset] = useState<number | null>(7)
   const [dateFrom, setDateFrom] = useState(() => buildRange(7).from)
   const [dateTo,   setDateTo]   = useState(() => buildRange(7).to)
@@ -282,7 +289,7 @@ export default function ReportsPage() {
           </p>
         )}
 
-        <div className="flex gap-1 mt-3 -mb-px">
+        <div className="flex gap-1 mt-3 -mb-px overflow-x-auto">
           {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -291,6 +298,12 @@ export default function ReportsPage() {
               {TAB_LABELS[t]}
             </button>
           ))}
+          {showFoodCost && (
+            <Link href="/reports/food-cost"
+              className="whitespace-nowrap border-b-2 border-transparent px-4 py-2 text-sm font-medium text-s-muted transition-colors hover:text-s-text">
+              Food cost variance
+            </Link>
+          )}
         </div>
       </header>
 
